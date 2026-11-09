@@ -1,0 +1,10 @@
+name = "editor"
+defaultTargets = ["Editor"]
+
+# One library holding both the user-facing prelude (`Editor`, imported by
+# user config at runtime) and the embedding API (`EditorHost`, called from
+# Rust). Built as oleans (for runtime import) and as a static lib (linked
+# into the Rust binary).
+[[lean_lib]]
+name = "Editor"
+roots = ["Editor", "EditorHost"]
