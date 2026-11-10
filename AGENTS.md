@@ -1,8 +1,10 @@
 # AGENTS.md
 
-An Emacs-style editor: a Rust core hosting Lean 4 as its extension
-language. Rust owns text, layout, rendering and I/O; Lean owns behaviour
-(commands, modes, keymaps, config).
+An Emacs-style editor written in Lean 4. Lean owns the process and is the
+editor: its state, the command loop, commands, modes, keymaps and config.
+A Rust library, linked into the Lean executable, provides text storage,
+layout, rendering, the window, and process and terminal management. The
+design is in `docs/design/`.
 
 ## Test-driven development
 
@@ -22,15 +24,22 @@ Write all code test-first:
 
 Structure the code as ports and adapters (hexagonal architecture):
 
-- **Core logic** (text storage, edits, undo, layout, keymaps, the command
-  loop) is plain Rust that talks to the outside world only through ports.
+The pattern applies in both languages. In Rust the core logic is the
+library's (text storage, edits, undo, layout, process management) and ports
+are traits. In Lean the core logic is the editor's (state, keymaps, the
+command loop, commands) and ports are interfaces; see "Lean is the editor,
+Rust is its library" below. The rules in this section are written for Rust
+and hold for Lean with "trait" read as "interface".
+
+- **Core logic** is plain code that talks to the outside world only through
+  ports.
 - **Ports** are traits that the core defines. Each one describes a capability
   the core needs, in the core's own terms (e.g. "read the bytes of a file",
   "shape this run of text", "run this command"), not in terms of a specific
   technology.
 - **Adapters** are concrete implementations of ports that touch real things:
-  the filesystem, the clock, processes, fonts, the GPU, the window system,
-  the Lean runtime. Keep adapters thin; put decisions in the core.
+  the filesystem, the clock, processes, fonts, the GPU, the window system.
+  Keep adapters thin; put decisions in the core.
 
 When building a component:
 
@@ -54,20 +63,41 @@ small enough to fake by hand:
 - The port's module docs say where each kind of addition goes and where it is
   pinned.
 
-### Lean is an adapter
+### Lean is the editor, Rust is its library
 
-The Lean runtime sits behind a port like any other real thing. The core
-never calls Lean directly. It depends on a port (for example "evaluate this
-config chunk" or "run this command"), and the Lean bridge (the C shim plus
-`EditorHost.lean`) is that port's adapter. This keeps the core's tests free
-of the Lean toolchain, and keeps what crosses the boundary as plain data.
+- **Calls go one way.** Lean calls the Rust library. Rust never calls Lean:
+  it queues events and Lean pulls them. Don't add a callback from Rust into
+  Lean.
+- **One crate knows about Lean.** `editor-ffi` exposes the C functions Lean
+  binds to. Every other crate is ordinary Rust, built and tested with
+  `cargo` alone.
+- **What crosses the boundary** is a handle to a Rust object (a rope, a
+  process, a terminal), wrapped on the Lean side as an external object with
+  a finaliser, or plain data (strings, numbers, structures of them). Never
+  a Lean closure or a pointer into Lean's heap.
+- **The Lean editor reaches the library through interfaces it defines**, not
+  through the bindings directly. Each interface has the real binding and a
+  pure Lean model. Editor logic is tested in Lean, run by Lake, against the
+  models, with no Rust build.
+- **A contract check per interface** runs the same properties against the
+  model and the real binding, so the model cannot drift from the library.
+- **Commands and jobs are different types.** A command (`EditorM`) may
+  change editor state and may not block. A job (`JobM`) may block or await
+  and may not change editor state. Don't add an operation that crosses that
+  line; see `docs/design/concurrency.md`.
+- **Child processes belong to the Rust process service.** Don't spawn them
+  with Lean's `IO.Process`: it never kills or reaps them.
+- **Every call from compiled Lean into interpreted config goes through the
+  guard** in the glue file, which turns a C++ exception from the interpreter
+  into an ordinary error.
 
-- Values crossing the Rust/Lean boundary are plain data (strings, numbers,
-  structures of them), never closures or pointers into either side's heap,
-  so that state survives an environment swap.
-- Lean-side behaviour (the `Editor` API that config programs against) is
-  tested in Lean, run by Lake, against a fake host. Rust-side behaviour is
-  tested in Rust against a fake of the port.
+### Prefer an existing library, behind a port
+
+Where a library exists for a job (shaping, rendering, glyph caching, the
+rope, the terminal), use it, even if it is young or still changing, and
+keep it behind a port so no type of it appears outside its adapter crate.
+Pin its exact version. Write our own implementation only when no library
+fits or a measured problem requires it, and record why.
 
 ## Testing with hand-written mocks
 
@@ -125,9 +155,9 @@ order, in parallel, and leaves the developer's machine exactly as it found it.
 ## Toolchains
 
 - Rust: stable, edition 2024.
-- Lean: pinned in `lean/lean-toolchain`. Lean's C ABI and `.olean` format
-  change between releases, so bump it deliberately, in its own commit, and
-  fix the bridge in the same commit.
+- Lean: pinned in `lean/lean-toolchain`. Lean's C ABI, Lake's build API and
+  the `.olean` format change between releases, so bump it deliberately, in
+  its own commit, and fix the bindings and the build in the same commit.
 
 ## Conventional commits
 
