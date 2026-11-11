@@ -1,6 +1,17 @@
 # Dependency rules, checked by `mise run deny` (AGENTS.md, "Test behaviour,
 # never text"). Add one `deny` entry per workspace edge as crates appear:
 #   { crate = "<name>", wrappers = ["<the crates allowed to depend on it>"], reason = "<why>" }
+#
+# A third-party library kept behind a port (AGENTS.md, "Prefer an existing
+# library, behind a port") gets an entry whose only wrapper is its adapter
+# crate, so no other crate can name its types.
+#
+# `deny` is empty while `editor-ffi` is the only crate: a workspace of one has
+# no edges. The rule that will apply to it, "no crate depends on `editor-ffi`",
+# has no entry that passes the gate. With `wrappers = ["editor-ffi"]` the
+# wrapper matches nothing and `-D unused-wrapper` rejects it; with no wrappers
+# the entry is a plain ban and fires on the workspace member itself. The first
+# entries arrive with the second crate.
 
 [graph]
 all-features = false
