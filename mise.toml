@@ -111,7 +111,7 @@ run = "git ls-files -z '*.c' '*.h' '*.cc' '*.cpp' '*.hpp' | xargs -0 clang-forma
 # The time limit turns a hang into a failure: a deadlock in the main-thread
 # hand-off, or a process that waits for a task still blocked in the library.
 [tasks.ffi-test]
-description = "Run the checks and scenarios of the Lean/Rust boundary (lean/FfiTest.lean) and the editor executable"
+description = "Run the checks and scenarios of the Lean/Rust boundary (lean/FfiTest.lean), the text port's contract against its real binding (lean/ContractTest.lean) and the editor executable"
 depends = ["lean"]
 dir = "lean"
 timeout = "60s"
@@ -122,6 +122,9 @@ run = [
   # Quit is for good and process-wide, so shutdown has processes of its own.
   ".lake/build/bin/ffi-test shutdown",
   ".lake/build/bin/ffi-test exit-while-blocked",
+  # The same properties `lean-test` runs against the pure model, here against
+  # the Rust library.
+  ".lake/build/bin/contract-test",
   ".lake/build/bin/editor",
 ]
 
