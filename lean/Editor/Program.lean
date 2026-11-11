@@ -19,9 +19,10 @@ type per request, not by a functor. So a program can be the result of an `IO`
 action, sit in a reference, and be fetched from interpreted config at one
 concrete type.
 
-A port value is an `abbrev`, so that a handler written over the request type
-itself (`(request : TextRequest) → …`) is accepted where one over
-`port.Request` is expected.
+Define a port value as an `abbrev`. A handler is written over the request
+type itself (`(request : TextRequest) → …`), and with the port a plain `def`
+the lemmas about `run` below no longer rewrite a run against such a handler,
+so the proofs about commands fail.
 -/
 
 namespace Editor
