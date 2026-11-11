@@ -50,6 +50,7 @@ target rustlib pkg : FilePath :=
 (`ffi/glue.c`), compiled against the toolchain's own `lean.h`. Nothing lints C
 for us, so every warning is an error. -/
 target glue.o pkg : FilePath := do
+  requireMacOS
   let oFile := pkg.buildDir / "ffi" / "glue.o"
   let srcJob ← inputTextFile <| pkg.dir / "ffi" / "glue.c"
   buildLeanO oFile srcJob #[] #["-O2", "-Wall", "-Wextra", "-Werror"]
