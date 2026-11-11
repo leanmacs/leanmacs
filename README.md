@@ -75,11 +75,32 @@ mise run ci
 This is everything that must pass before review and before landing: Rust
 formatting, clippy, cargo-deny, rustdoc and the Rust tests; the Lean build,
 lean-fmt's format and lint checks; the checks of the Lean/Rust boundary
-(`mise run ffi-test`, which runs `lean/.lake/build/bin/ffi-test` and the
-editor); and the C format check. `hk check` runs the same task.
+(`mise run ffi-test`); and the C format check. `hk check` runs the same task.
 
 The Rust half needs no Lean toolchain: `mise run test` (`cargo test
 --workspace`) builds and tests every crate with Cargo alone.
+
+`mise run ffi-test` runs `lean/.lake/build/bin/ffi-test`, the test executable
+linked against the real library, and then the editor. With no arguments
+`ffi-test` runs its checks of handles, plain data and the event queues. Four
+scenarios need a process each:
+
+| Command | Shows |
+|---|---|
+| `ffi-test exit 7` | The entry point passes arguments to Lean's `main` and its result is the exit status. |
+| `ffi-test shutdown` | Quitting the queues wakes every task blocked in a pull, and the process then exits. |
+| `ffi-test exit-while-blocked` | An explicit exit ends the process although a task is still blocked in the library. |
+| `ffi-test overflow <sysroot> <olean dir>` | A stack overflow in interpreted code is not caught: the process aborts. |
+
+The last one is meant to crash. The task requires it to die of SIGABRT after
+it has printed the line that says it is entering the recursion, and no core
+file is written. On macOS the system still writes a crash report for
+`ffi-test` under `~/Library/Logs/DiagnosticReports` on every run; that
+report is this scenario, not a failure.
+
+The conventions every binding follows, and the test that pins each, are in
+the crate docs of `crates/editor-ffi/src/lib.rs` and the module docs of
+`lean/Editor/Ffi.lean`.
 
 ### Formatting
 

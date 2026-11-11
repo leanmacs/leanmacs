@@ -3,10 +3,98 @@
 
 The functions `editor-ffi` (`crates/editor-ffi`) exposes, as Lean
 declarations. A pure function over plain numbers binds straight to its Rust
-symbol. An `IO` function binds to a wrapper in `ffi/glue.c`, which calls the
-Rust function and builds the `IO` result with `lean.h`.
+symbol. Any other function binds to a wrapper in `ffi/glue.c`, which calls the
+Rust function and builds the Lean value for its result with `lean.h`.
 
-Nothing here runs at initialisation: call these from `main` or later.
+## Conventions
+
+Every binding follows the rules below. Each has one small real example in this
+module and names the tests that pin it. This is Lean's side of each rule;
+Rust's side is in the crate docs of `crates/editor-ffi/src/lib.rs`.
+
+`ffi-test` is the test executable (`FfiTest.lean`), linked against the real
+library like the editor. `mise run ffi-test` runs its checks and its
+scenarios.
+
+### Handles
+
+A Rust object is a Lean external object with a finaliser, never a number. Its
+Lean type is opaque (`opaque …Pointed : NonemptyType`), so the only way to get
+one is the binding that makes it, and no binding takes or returns an address
+or frees anything. Lean runs the finaliser when the last reference is dropped,
+on whichever thread drops it, and that is the only thing that frees the Rust
+object. A handle therefore cannot be used after it is freed: while any
+reference exists, on any thread, the object is alive.
+
+Pass a handle to a binding as `@&`, so the call does not take a reference.
+
+Example: `Counter`. Tests: the four counter checks of `ffi-test`
+(`FfiTest.handleChecks`); `tests/c_api.rs` in `editor-ffi`.
+
+### Plain data
+
+| Kind | Lean to Rust | Rust to Lean |
+|---|---|---|
+| String | `@& String`; the glue passes its bytes and byte length, and Rust copies what it keeps | The glue copies the library's buffer into a `String` and hands the buffer back |
+| Enum | An enumeration inductive, which Lean passes as a `UInt8` tag that Rust checks | A `UInt64` tag in a private raw structure, decoded here (`EventKind.ofTag?`); an unknown tag is an `IO` error |
+| Small structure | The wrapper passes the fields as scalar arguments | The glue builds the structure in one call. Declare object fields first, then `UInt64` fields and nothing else, so the declaration order is the layout the glue writes |
+| Option | The wrapper passes a presence flag and a value | The glue builds `none` or `some` |
+| Byte range | Two scalars | `ByteRange`: two `UInt64`, half-open, in bytes |
+
+Prefer a few scalar arguments or one structure to many calls: one `nextEvent`
+returns one whole event. A raw structure whose shape the glue knows stays
+private to this module; what a caller sees is the typed value.
+
+Examples: `find` (an option in, an option of a byte range out) and `Event`
+with `postEvent` and `nextEvent` (a string, enums and a structure, in both
+directions). Tests: the `find` and event checks of `ffi-test`
+(`FfiTest.dataChecks`); the unit tests of `text.rs` and the tag tests of
+`events.rs` in `editor-ffi`.
+
+### The event queues
+
+Rust never calls a Lean function. Rust threads push events onto a queue, and
+Lean pulls them with `nextEvent`, which blocks in Rust: call it from a
+dedicated task, never from the thread pool. An event is plain data tagged with
+its source. There are two queues (`Queue`): the editor queue, for input and
+events for the editor thread, and the completion queue, for the results of
+service requests, pulled by a dedicated task. `feedScript` drives the library's
+fake event source, for tests.
+
+Tests: the three queue checks of `ffi-test` (`FfiTest.queueChecks`); the unit
+tests of `events.rs` in `editor-ffi`, which need no Lean.
+
+### An exception from the interpreter ends the process
+
+Deep recursion or a missing native symbol in interpreted code makes Lean's
+interpreter throw a C++ exception. A `try`/`catch` in Lean does not see it,
+and nothing else catches it: a call from compiled Lean into interpreted code
+is an ordinary call, with no guard around it, and the exception terminates the
+process. That is deliberate. The exception skips the compiled frames between
+the interpreter and whatever would catch it, and they release nothing they
+hold: references leak, `finally` blocks do not run, locks stay locked. State
+cannot be cleanly restored after that, so the editor does not carry on. Do not
+add a guard, and do not add a C++ source to hold one.
+
+Test: `ffi-test overflow`, which the `ffi-test` task requires to die of
+SIGABRT once it has entered the recursion.
+
+### Shutdown
+
+`quit` makes every `nextEvent`, parked or later, return a `quit` event, so
+every dedicated task blocked in a pull returns. Then end the process with
+`IO.Process.exit`. Never return from `main` while a dedicated task may still
+be blocked in the library: Lean waits for it, for ever.
+
+Tests: `ffi-test shutdown` and `ffi-test exit-while-blocked`; the quit tests
+of `events.rs` in `editor-ffi`.
+
+### Nothing runs at initialisation
+
+A module initialiser must not call the library: make library objects from
+`main` or later. The `lean` compiler runs a module's initialisers when it
+compiles a module that imports it, in a process where the Rust symbols do not
+exist, so `mise run lean` fails on an initialiser that calls a binding.
 -/
 
 namespace Editor.Ffi

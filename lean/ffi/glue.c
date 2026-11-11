@@ -7,7 +7,14 @@
 // wrappers never call Lean code. The entry point at the bottom of the file
 // starts Lean, once, by calling the `main` Lean generates.
 //
-// `FfiTest.lean` pins what this file does, as Lean sees it.
+// This file stays C, and it installs no terminate or signal handler. A C++
+// exception from Lean's interpreter is not caught anywhere: it ends the
+// process, on purpose (`Editor/Ffi.lean`, "An exception from the interpreter
+// ends the process").
+//
+// The conventions the wrappers follow are in the module docs of
+// `Editor/Ffi.lean`. `FfiTest.lean` pins what this file does, as Lean sees
+// it.
 
 #include <lean/lean.h>
 #include <pthread.h>
