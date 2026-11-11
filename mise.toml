@@ -39,9 +39,31 @@ run = "cargo doc --workspace --no-deps --document-private-items --locked"
 description = "Rust unit, integration and doc tests"
 run = "cargo test --workspace --locked"
 
+# The model tests: editor logic run in Lean alone, against hand-written fakes
+# and the pure models of the editor's ports (lean/ModelTest.lean). They must
+# pass without the Rust library being built, and the task shows that by
+# behaviour: `lean/no-cargo/cargo` is a fake `cargo` that always fails, put
+# first on the PATH, and Lake's `rustlib` target runs `cargo` on every build
+# that reaches it. So this passes only if nothing the test driver needs
+# reaches `rustlib`, on a tree where the archive is already built as well as
+# on a clean one. Seen to bite once by hand: with the same PATH,
+# `LEAN_CC=/usr/bin/cc lake build editor` fails at `editor/rustlib`.
+#
+# No LEAN_CC: the test driver links no C glue, so Lean's bundled compiler
+# builds it.
+[tasks.lean-test]
+description = "Run the Lean model tests with `lake test`, with a `cargo` that fails first on the PATH: they need no Rust library (lean/ModelTest.lean)"
+dir = "lean"
+run = 'PATH="$PWD/no-cargo:$PATH" lake test --wfail'
+
 # Runs in lean/, so mise picks the toolchain `lean/lean-toolchain` pins.
+#
+# It waits for `lean-test` only so that two Lake builds never run in lean/ at
+# once: the Lake tasks run in one chain, `lean-test`, `lean`, then `lean-fmt`
+# and `ffi-test`.
 [tasks.lean]
 description = "Build the Lean package and the executables with Lake, which runs Cargo for the Rust static library; every linter is on and a warning fails the build (lean/lakefile.lean)"
+depends = ["lean-test"]
 dir = "lean"
 # On macOS the executables must be compiled and linked by the system compiler:
 # the clang bundled with Lean has no `pthread.h` for the C glue, and its linker
@@ -131,4 +153,4 @@ run = '''status=0; out=$( (ulimit -c 0; LEAN_STACK_SIZE_KB=16384 exec .lake/buil
 
 [tasks.ci]
 description = "The whole gate; `hk check` runs this, and it gates review and landing (rdm's dispatch.verify)"
-depends = ["fmt", "lint", "deny", "doc", "test", "lean", "lean-fmt", "ffi-test", "c-fmt"]
+depends = ["fmt", "lint", "deny", "doc", "test", "lean-test", "lean", "lean-fmt", "ffi-test", "c-fmt"]

@@ -37,7 +37,12 @@ up-to-date check, so it runs on every `lake build`. The archive's content hash
 is the trace, so the executables relink only when the archive changed.
 
 The target directory is passed explicitly, so a `CARGO_TARGET_DIR` in the
-environment cannot make Cargo write the archive somewhere else. -/
+environment cannot make Cargo write the archive somewhere else.
+
+`cargo` is found through the `PATH`, and `mise run lean-test` relies on that:
+it puts a `cargo` that always fails first on the `PATH` (`no-cargo/cargo`) to
+show that the model tests build without this target. Keep it a bare command
+name, or that task shows nothing. -/
 target rustlib pkg : FilePath :=
   Job.async do
     requireMacOS

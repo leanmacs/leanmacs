@@ -1,0 +1,6 @@
+#!/bin/sh
+# A fake `cargo` that always fails. `mise run lean-test` puts this directory
+# first on the PATH, so a Lake target that reaches the Rust library
+# (`rustlib` in lakefile.lean) fails instead of building it.
+echo "cargo was run: the model tests must not build the Rust library (mise run lean-test)" >&2
+exit 1
