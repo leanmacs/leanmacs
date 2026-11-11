@@ -21,4 +21,11 @@ on a thread Lean creates, so in Lean code this is `false`. -/
 @[extern "editor_glue_is_main_thread"]
 opaque isMainThread : IO Bool
 
+/-- Whether work handed to the main-thread service runs on the process's main
+thread. Blocks until the service has answered. `true` in an executable whose
+entry point parks the main thread in the service (`editor_entry` in
+`ffi/glue.c`); this is the path a window will take. -/
+@[extern "editor_glue_main_thread_probe"]
+opaque mainThreadProbe : IO Bool
+
 end Editor.Ffi

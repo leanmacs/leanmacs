@@ -14,4 +14,6 @@ def main : IO UInt32 := do
   IO.println s!"Rust says 2 + 3 = {sum}"
   let leanOnMain ← Editor.Ffi.isMainThread
   IO.println s!"Lean's main is on the process's main thread: {leanOnMain}"
-  return if sum == 5 && !leanOnMain then 0 else 1
+  let serviceOnMain ← Editor.Ffi.mainThreadProbe
+  IO.println s!"The main-thread service is on the process's main thread: {serviceOnMain}"
+  return if sum == 5 && !leanOnMain && serviceOnMain then 0 else 1

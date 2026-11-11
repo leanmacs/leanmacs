@@ -19,6 +19,13 @@ user config at runtime) and the embedding API (`EditorHost`, the config
 session). -/
 @[default_target] lean_lib Editor where roots := #[`Editor, `EditorHost]
 
+/-- Fails the build with a reason anywhere but macOS. The entry point, its
+link flag and the Rust library's main-thread check are written for macOS;
+Linux and Windows get theirs with the phase that ports the build. -/
+def requireMacOS : JobM Unit := do
+  unless Platform.isOSX do
+    error "the editor executables build only on macOS for now; see `requireMacOS` in lakefile.lean"
+
 /-- The Rust static library (`crates/editor-ffi`). Cargo does its own
 up-to-date check, so it runs on every `lake build`. The archive's content hash
 is the trace, so the executables relink only when the archive changed.
@@ -27,6 +34,7 @@ The target directory is passed explicitly, so a `CARGO_TARGET_DIR` in the
 environment cannot make Cargo write the archive somewhere else. -/
 target rustlib pkg : FilePath :=
   Job.async do
+    requireMacOS
     let root := pkg.dir / ".."
     let targetDir := root / "target"
     proc (quiet := true)
@@ -57,6 +65,10 @@ def leanSystemLibDir : FilePath :=
 
 /-- The link arguments both executables need beyond their objects.
 
+`-Wl,-e`: `editor_entry` (`ffi/glue.c`) is the entry point instead of `main`.
+It keeps the process's main thread for the Rust library and runs Lean's
+generated `main` on a second thread.
+
 `-L`: with `LEAN_CC` set (see the `lean` task in `mise.toml`), Lake no longer
 adds the toolchain's own library directory to the link.
 
@@ -66,7 +78,7 @@ Today that is `-lSystem -lc -lm`, which the system compiler links anyway, so
 nothing is listed. The frameworks a window needs are added here with the crate
 that needs them. -/
 def linkArgs : Array String :=
-  #["-L", leanSystemLibDir.toString]
+  #["-L", leanSystemLibDir.toString, "-Wl,-e,_editor_entry"]
 
 /-- The editor. `supportInterpreter` exports the executable's symbols, so
 interpreted config can find compiled definitions and `@[extern]` symbols. -/
