@@ -1,8 +1,10 @@
 /-!
 # Code for the interpreter to run
 
-`ffi-test overflow` loads this module from its `.olean` at runtime and has
-Lean's interpreter run it. Nothing imports it, so it is never linked into an
+`ffi-test overflow`, which `mise run ffi-overflow` runs on demand, loads this
+module from its `.olean` at runtime and has Lean's interpreter run it. The
+gate builds it but does not run it. Nothing imports it, so it is never linked
+into an
 executable. Were it linked, `tooDeep` would run as native code and overflow
 the real stack, instead of tripping the interpreter's stack check.
 -/

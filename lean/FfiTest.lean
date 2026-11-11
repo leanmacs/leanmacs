@@ -13,7 +13,9 @@ Some behaviour needs a process of its own, so it is a scenario chosen by an
 argument (see `main`): `exit <code>` for the exit status, `shutdown` and
 `exit-while-blocked` because quitting the queues is for good, and `overflow`
 because it ends in an abort. `mise run ffi-test` runs the checks and every
-scenario, under a time limit.
+scenario but `overflow`, under a time limit, and is part of the gate.
+`mise run ffi-overflow` runs `overflow`, on demand only: on macOS every abort
+leaves a crash report on the machine.
 
 Each check pins what the C glue and the entry point do, as Lean sees it. What
 the Rust functions themselves compute is pinned by `editor-ffi`'s own tests.
@@ -235,8 +237,9 @@ def say (line : String) : IO Unit := do
   IO.println s!"ffi-test overflow: {line}"
   (← IO.getStdout).flush
 
-/-- What the overflow scenario says just before it recurses. The `ffi-test`
-task in `mise.toml` requires this to be the last line of stdout. -/
+/-- What the overflow scenario says just before it recurses. The
+`ffi-overflow` task in `mise.toml` requires this to be the last line of
+stdout. -/
 def overflowMarker : String :=
   "entering the recursion"
 
@@ -313,8 +316,8 @@ for.
 
 `overflow <sysroot> <olean dir>` has the interpreter run a recursion deeper
 than its stack. Nothing catches the C++ exception the interpreter throws, so
-the process dies of SIGABRT, and the `ffi-test` task requires exactly that.
-Any exit status of its own means the scenario went wrong. -/
+the process dies of SIGABRT, and the `ffi-overflow` task requires exactly
+that. Any exit status of its own means the scenario went wrong. -/
 def main (args : List String) : IO UInt32 := do
   match args with
   | [] =>

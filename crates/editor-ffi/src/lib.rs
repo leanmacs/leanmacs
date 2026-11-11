@@ -19,7 +19,8 @@
 //!
 //! `ffi-test` is the Lean test executable (`lean/FfiTest.lean`). It is
 //! linked against this library like the editor, and `mise run ffi-test` runs
-//! its checks and its scenarios. The Rust tests run under `mise run test`.
+//! its checks and its scenarios, all but `overflow`, in the gate. The Rust
+//! tests run under `mise run test`.
 //!
 //! ## Handles
 //!
@@ -96,8 +97,10 @@
 //! Because calls go one way, no Rust frame is ever beneath Lean code, so the
 //! exception never crosses this crate.
 //!
-//! Test: `ffi-test overflow`, which the `ffi-test` task requires to die of
-//! SIGABRT once it has entered the recursion.
+//! Test: `mise run ffi-overflow`, which runs `ffi-test overflow` and
+//! requires it to die of SIGABRT once it has entered the recursion. It is
+//! run on demand, not by the gate: every abort makes macOS write a crash
+//! report on the developer's machine.
 //!
 //! ## Shutdown
 //!

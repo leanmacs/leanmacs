@@ -111,7 +111,9 @@ a noticeable pause and over a gigabyte of memory before it ends the process.
 Which stack size the threads that run config get is decided with the config
 work.
 
-`ffi-test overflow` (`lean/FfiTest.lean`) pins the abort.
+`mise run ffi-overflow` shows the abort (the `overflow` scenario of
+`lean/FfiTest.lean`). It is run on demand and is not part of the gate,
+because every abort makes macOS write a crash report on the machine.
 
 ## The editor API is an interface
 

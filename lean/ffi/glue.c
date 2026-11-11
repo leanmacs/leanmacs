@@ -10,7 +10,8 @@
 // This file stays C, and it installs no terminate or signal handler. A C++
 // exception from Lean's interpreter is not caught anywhere: it ends the
 // process, on purpose (`Editor/Ffi.lean`, "An exception from the interpreter
-// ends the process").
+// ends the process"). `mise run ffi-overflow` shows it, on demand; it is not
+// part of the gate.
 //
 // The conventions the wrappers follow are in the module docs of
 // `Editor/Ffi.lean`. `FfiTest.lean` pins what this file does, as Lean sees

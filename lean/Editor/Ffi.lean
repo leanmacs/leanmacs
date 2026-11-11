@@ -14,7 +14,7 @@ Rust's side is in the crate docs of `crates/editor-ffi/src/lib.rs`.
 
 `ffi-test` is the test executable (`FfiTest.lean`), linked against the real
 library like the editor. `mise run ffi-test` runs its checks and its
-scenarios.
+scenarios, all but `overflow`, in the gate.
 
 ### Handles
 
@@ -76,8 +76,10 @@ hold: references leak, `finally` blocks do not run, locks stay locked. State
 cannot be cleanly restored after that, so the editor does not carry on. Do not
 add a guard, and do not add a C++ source to hold one.
 
-Test: `ffi-test overflow`, which the `ffi-test` task requires to die of
-SIGABRT once it has entered the recursion.
+Test: `mise run ffi-overflow`, which runs `ffi-test overflow` and requires it
+to die of SIGABRT once it has entered the recursion. It is run on demand, not
+by the gate: every abort makes macOS write a crash report on the developer's
+machine.
 
 ### Shutdown
 

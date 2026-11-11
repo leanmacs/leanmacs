@@ -20,8 +20,9 @@ session). -/
 @[default_target] lean_lib Editor where roots := #[`Editor, `EditorHost]
 
 /-- Code that `ffi-test overflow` has Lean's interpreter run
-(`InterpretedFixture.lean`). It is a library of its own that no executable
-imports, so it is compiled to an `.olean` and never linked. -/
+(`InterpretedFixture.lean`; `mise run ffi-overflow`). It is a library of its
+own that no executable imports, so it is compiled to an `.olean` and never
+linked. -/
 @[default_target] lean_lib InterpretedFixture
 
 /-- Fails the build with a reason anywhere but macOS. The entry point, its
