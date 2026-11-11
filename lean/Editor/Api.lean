@@ -1,9 +1,12 @@
 /-!
 # Editor API
 
-The surface user config programs against. The `host*` primitives are
-implemented in Rust (bridged through `shim/shim.c`); everything else is
-ordinary Lean built on top of them.
+The surface user config programs against. The `host*` primitives are to be
+implemented in Rust; everything else is ordinary Lean built on top of them.
+
+Nothing implements the `host*` symbols at present: the prototype's C shim,
+which did, is gone. This module still builds as a library, but an executable
+that imports it does not link until the config-session work supplies them.
 -/
 
 namespace Editor
