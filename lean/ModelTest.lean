@@ -1,4 +1,5 @@
-import Editor.Program
+import Editor.Text.Contract
+import Editor.Text.Model
 
 /-!
 # The model tests
@@ -11,6 +12,9 @@ exits non-zero if any did.
 
 The checks of the program type run programs over a small port of their own
 (`Ask`) against a fake that records the requests it receives.
+
+The text port's contract (`Editor/Text/Contract.lean`) is run against its pure
+model here. `contract-test` runs the same list against the real binding.
 -/
 
 namespace ModelTest
@@ -140,15 +144,26 @@ def failures (checks : List Check) : IO (List String) :=
     catch error =>
       return some s!"{check.name} ({error})"
 
+/-- The properties the text model must have: the text port's contract. -/
+def textProperties : List TextContract.Property :=
+  TextContract.properties
+
+/-- The names of the `textProperties` that do not hold of the text model, each
+run from a model with no texts. -/
+def textFailures : IO (List String) := do
+  let failed ← TextContract.failures (fun command => pure (command.runModel {}).1) textProperties
+  return failed.map (s!"the text model: {·}")
+
 end ModelTest
 
-/-- Runs the checks: exits 0 when all hold, and 1 after naming on stderr the
-ones that do not. -/
+/-- Runs the checks, then the text port's contract against its model: exits 0
+when all hold, and 1 after naming on stderr the ones that do not. -/
 def main : IO UInt32 := do
-  let failed ← ModelTest.failures ModelTest.checks
+  let failed := (← ModelTest.failures ModelTest.checks) ++ (← ModelTest.textFailures)
   for name in failed do
     IO.eprintln s!"FAILED: {name}"
   unless failed.isEmpty do
     return 1
-  IO.println s!"model-test: {ModelTest.checks.length} checks passed"
+  IO.println
+      s!"model-test: {ModelTest.checks.length} checks passed, and {ModelTest.textProperties.length} properties hold of the text model"
   return 0

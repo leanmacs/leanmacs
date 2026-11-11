@@ -1,0 +1,68 @@
+import Editor.Text
+
+/-!
+# The pure model of the text port
+
+The text store as a value: the texts made so far, and a pure function that
+answers each request of the port (`Editor/Text.lean`). Editor logic is tested
+against it, with no Rust library, and theorems about commands are stated
+about `EditorM.runModel`.
+
+The contract (`Editor/Text/Contract.lean`) is what says the model and the real
+binding agree. A clause added to `TextModel.handle` needs its property there.
+-/
+
+namespace Editor
+
+/-- The model of the text store: every text made so far. A text's id is its
+index here. -/
+structure TextModel where
+  /-- The texts, in the order they were made. -/
+  texts : Array String := #[]
+  deriving Repr
+
+namespace TextModel
+
+/-- `text` with its bytes from `start` up to, not including, `stop` replaced by
+`s`. `none` unless both offsets are character boundaries of `text`, within
+it, and `start ≤ stop`: the ranges the port refuses. -/
+def splice (text : String) (start stop : Nat) (s : String) : Option String :=
+  if valid :
+      (String.Pos.Raw.mk start).IsValid text ∧
+        (String.Pos.Raw.mk stop).IsValid text ∧ start ≤ stop then
+    some
+      ((text.sliceTo (text.pos ⟨start⟩ valid.1)).copy ++ s ++
+        (text.sliceFrom (text.pos ⟨stop⟩ valid.2.1)).copy)
+  else none
+
+/-- The model's answer to an edit of the text `id`, replacing its bytes from
+`start` up to `stop` by `s`, and the model after it. A refused edit leaves the
+model as it was. -/
+def edit (model : TextModel) (id : TextId) (start stop : Nat) (s : String) :
+    Except TextError Unit × TextModel :=
+  match model.texts[id.index]? with
+  | none => (.error .noSuchText, model)
+  | some text =>
+    match splice text start stop s with
+    | none => (.error .badRange, model)
+    | some text => (.ok (), { model with texts := model.texts.setIfInBounds id.index text })
+
+/-- The model's answer to each request, and the model after it. -/
+def handle : (request : TextRequest) → TextModel → request.Reply × TextModel
+  | .create initial, model => (⟨model.texts.size⟩, { model with texts := model.texts.push initial })
+  | .insert id offset s, model => model.edit id offset offset s
+  | .delete id start stop, model => model.edit id start stop ""
+  | .read id, model =>
+    match model.texts[id.index]? with
+    | none => (.error .noSuchText, model)
+    | some text => (.ok text, model)
+
+end TextModel
+
+/-- Runs a command against the model `model`: its result, or the refusal it
+failed with, and the model after its last request. -/
+def EditorM.runModel {α : Type} (command : EditorM α) (model : TextModel) :
+    Except TextError α × TextModel :=
+  Program.run (port := textPort) TextModel.handle command.run model
+
+end Editor
