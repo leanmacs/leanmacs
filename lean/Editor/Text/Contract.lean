@@ -79,6 +79,21 @@ def properties : List Property :=
         let split ← refusedWith .badRange (text.delete 0 2)
         let pastEnd ← refusedWith .badRange (text.delete 3 7)
         return backwards && split && pastEnd && (← text.read) == "héllo" },
+    -- In the next two, only one offset is beyond a machine word. Cut down to
+    -- a 64-bit word, `2 ^ 64 + 1` is 1, a character boundary of "héllo", so
+    -- an implementation that converted it without looking would delete.
+    { name := "a delete whose stop no machine word holds is refused and changes nothing"
+      holds := do
+        let text ← createText "héllo"
+        -- With the stop cut down to 1, this would delete "h".
+        let refused ← refusedWith .badRange (text.delete 0 (2 ^ 64 + 1))
+        return refused && (← text.read) == "héllo" },
+    { name := "a delete whose start no machine word holds is refused and changes nothing"
+      holds := do
+        let text ← createText "héllo"
+        -- With the start cut down to 1, this would delete "é".
+        let refused ← refusedWith .badRange (text.delete (2 ^ 64 + 1) 3)
+        return refused && (← text.read) == "héllo" },
     { name := "two texts are independent and have different ids"
       holds := do
         let first ← createText "a"
