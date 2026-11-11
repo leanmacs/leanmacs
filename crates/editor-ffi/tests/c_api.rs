@@ -76,16 +76,21 @@ fn next_blocking(queue: u8) -> Option<Event> {
     })
 }
 
-/// One pull from the queue `queue`, run on a detached thread so a pull that
-/// never returns fails the test at the deadline instead of hanging it.
-fn next(queue: u8) -> Option<Event> {
+/// What `call` returns, run on a detached thread so a call that never
+/// returns fails the test at the deadline instead of hanging it.
+fn within_deadline<T: Send + 'static>(what: &str, call: impl FnOnce() -> T + Send + 'static) -> T {
     let (done, result) = mpsc::channel();
     thread::spawn(move || {
-        let _ = done.send(next_blocking(queue));
+        let _ = done.send(call());
     });
     result
         .recv_timeout(DEADLINE)
-        .unwrap_or_else(|_| panic!("a pull from queue {queue} did not return within {DEADLINE:?}"))
+        .unwrap_or_else(|_| panic!("{what} did not return within {DEADLINE:?}"))
+}
+
+/// One pull from the queue `queue`, bounded by the deadline.
+fn next(queue: u8) -> Option<Event> {
+    within_deadline("a pull", move || next_blocking(queue))
 }
 
 /// Waits until `pulls` pulls are parked on the queue `queue`; panics if they
@@ -218,4 +223,12 @@ fn the_process_wide_queues_carry_events_until_they_are_quit() {
     assert_eq!(next(COMPLETION), Some(Event::quit()));
     assert_eq!(next(COMPLETION), Some(Event::quit()));
     assert!(!post(EDITOR, 7, 2, "after quit"));
+
+    // A feed of any length returns at once: the script is not built before
+    // the thread starts. The queue is quit, so the feeder stops at its first
+    // push and nothing is queued.
+    assert!(within_deadline("a feed of the longest script", || {
+        editor_ffi_events_script_feed(COMPLETION, 9, u64::MAX)
+    }));
+    assert_eq!(next(COMPLETION), Some(Event::quit()));
 }

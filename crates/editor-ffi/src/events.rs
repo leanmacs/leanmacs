@@ -235,20 +235,25 @@ impl Default for Queue {
 
 /// A fake event source: feeds a script of events to a queue, in order.
 pub struct ScriptedSource {
-    /// The events to feed, first to last.
-    script: Vec<Event>,
+    /// The events to feed, first to last. Each is made as it is fed, so a
+    /// script costs nothing until then, however long it is.
+    script: Box<dyn Iterator<Item = Event> + Send>,
 }
 
 impl ScriptedSource {
     /// A source that will feed `script`.
-    pub const fn new(script: Vec<Event>) -> Self {
-        Self { script }
+    pub fn new(script: Vec<Event>) -> Self {
+        Self {
+            script: Box::new(script.into_iter()),
+        }
     }
 
     /// Feeds the script to `queue` on the calling thread.
     pub fn feed(self, queue: &Queue) {
         for event in self.script {
-            queue.push(event);
+            if !queue.push(event) {
+                break;
+            }
         }
     }
 
@@ -259,11 +264,12 @@ impl ScriptedSource {
             kind: SourceKind::Script,
             id: source_id,
         };
-        Self::new(
-            (0..count)
-                .map(|code| Event::message(source, code, format!("scripted {code}")))
-                .collect(),
-        )
+        Self {
+            script: Box::new(
+                (0..count)
+                    .map(move |code| Event::message(source, code, format!("scripted {code}"))),
+            ),
+        }
     }
 
     /// Feeds the script to `queue` from a new thread. Fails only if the
@@ -624,6 +630,29 @@ mod tests {
             let event = pull(&queue);
             assert_eq!((event.source, event.kind), (source, EventKind::Message));
             assert_eq!(event.code, code);
+        }
+    }
+
+    #[test]
+    fn a_script_too_long_to_build_delivers_its_first_events_and_stops_when_the_queue_quits() {
+        let queue = Arc::new(Queue::new());
+
+        // The longest script there is. Built before it is fed, it could not
+        // be allocated; fed to its end, it would never finish.
+        let feeder = ScriptedSource::numbered(9, u64::MAX)
+            .feed_from_thread(Arc::clone(&queue))
+            .expect("a thread starts");
+        let codes: Vec<u64> = (0..3).map(|_| pull(&queue).code).collect();
+        queue.quit();
+
+        assert_eq!(codes, [0, 1, 2]);
+        let deadline = Instant::now() + DEADLINE;
+        while !feeder.is_finished() {
+            assert!(
+                Instant::now() < deadline,
+                "the source was still feeding a quit queue after {DEADLINE:?}"
+            );
+            thread::sleep(Duration::from_millis(1));
         }
     }
 
