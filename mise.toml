@@ -96,6 +96,9 @@ run = [
   ".lake/build/bin/ffi-test",
   # Arguments reach Lean's `main`, and its result is the exit status.
   "status=0; .lake/build/bin/ffi-test exit 7 || status=$?; test \"$status\" -eq 7",
+  # Quit is for good and process-wide, so shutdown has processes of its own.
+  ".lake/build/bin/ffi-test shutdown",
+  ".lake/build/bin/ffi-test exit-while-blocked",
   ".lake/build/bin/editor",
 ]
 

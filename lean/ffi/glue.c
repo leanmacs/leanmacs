@@ -162,6 +162,7 @@ typedef struct {
 bool editor_ffi_events_post(uint8_t queue, uint64_t source_id, uint64_t code,
                             const uint8_t *text, size_t text_len);
 bool editor_ffi_events_next(uint8_t queue, editor_ffi_raw_event *out);
+void editor_ffi_events_quit(void);
 uint64_t editor_ffi_events_waiting(uint8_t queue);
 bool editor_ffi_events_script_feed(uint8_t queue, uint64_t source_id,
                                    uint64_t count);
@@ -192,6 +193,12 @@ lean_obj_res editor_glue_events_next(uint8_t queue) {
   lean_ctor_set_uint64(event, uint64_field(1, 2), raw.kind);
   lean_ctor_set_uint64(event, uint64_field(1, 3), raw.code);
   return lean_io_result_mk_ok(event);
+}
+
+// `Editor.Ffi.quit : IO Unit`
+lean_obj_res editor_glue_events_quit(void) {
+  editor_ffi_events_quit();
+  return lean_io_result_mk_ok(lean_box(0));
 }
 
 // `Editor.Ffi.waiting : Queue → IO UInt64`

@@ -188,6 +188,15 @@ def nextEvent (queue : Queue) : IO Event := do
   return { source := { kind := sourceKind, id := raw.sourceId }, kind, code := raw.code,
            text := raw.text }
 
+/-- Quits both queues, for good. Events already queued are still delivered;
+after them every `nextEvent`, parked or later, returns a `quit` event at once,
+and `postEvent` is refused.
+
+This is the first step of shutdown: it lets every dedicated task parked in
+`nextEvent` return. The second is `IO.Process.exit`. -/
+@[extern "editor_glue_events_quit"]
+opaque quit : IO Unit
+
 /-- How many pulls are parked on `queue`. A readout for tests, which use it to
 know a pull is parked before they post. -/
 @[extern "editor_glue_events_waiting"]

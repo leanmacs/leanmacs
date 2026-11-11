@@ -187,9 +187,52 @@ def failures (checks : List Check) : IO (List String) :=
     catch error =>
       return some s!"{check.name} ({error})"
 
+/-- The checks of shutdown, run by `ffi-test shutdown` in a process of their
+own because quit is for good. They run in order: the first quits the queues. -/
+def shutdownChecks (_ : Unit) : List Check :=
+  [{ name := "quit wakes a task parked on each queue with a quit event",
+     run := do
+       let editor ← IO.asTask (prio := .dedicated) (Editor.Ffi.nextEvent .editor)
+       let completion ← IO.asTask (prio := .dedicated) (Editor.Ffi.nextEvent .completion)
+       let parked ←
+         eventually do
+             return (← Editor.Ffi.waiting .editor) == 1 && (← Editor.Ffi.waiting .completion) == 1
+       Editor.Ffi.quit
+       let returned ←
+         eventually do
+             return (← IO.hasFinished editor) && (← IO.hasFinished completion)
+       unless parked && returned do
+         return false
+       let woken := [← IO.ofExcept editor.get, ← IO.ofExcept completion.get]
+       return woken.all (·.kind == .quit) },
+    { name := "after quit every pull returns a quit event at once"
+      run := do
+        let pulled := [← pull .editor, ← pull .completion, ← pull .editor]
+        return pulled.all fun event => (event.map (·.kind)) == some .quit },
+    { name := "after quit a post is refused"
+      run := return !(← Editor.Ffi.postEvent .editor 1 1 "after quit") }]
+
+/-- Parks a dedicated task in a pull that nothing will ever wake. `true` once
+it is parked. -/
+def blockForGood : IO Bool := do
+  discard <| IO.asTask (prio := .dedicated) (Editor.Ffi.nextEvent .editor)
+  eventually (return (← Editor.Ffi.waiting .editor) == 1)
+
+/-- Runs `checks`, names on stderr the ones that failed, and returns the exit
+status: 0 when all hold, 1 otherwise. `scenario` names the run in the line
+printed on success. -/
+def run (scenario : String) (checks : List Check) : IO UInt8 := do
+  let failed ← failures checks
+  for name in failed do
+    IO.eprintln s!"FAILED: {name}"
+  unless failed.isEmpty do
+    return 1
+  IO.println s!"{scenario}: {checks.length} checks passed"
+  return 0
+
 /-- Reports a command line `main` does not understand; the exit status is 2. -/
 def usage : IO UInt32 := do
-  IO.eprintln "usage: ffi-test [exit <code>]"
+  IO.eprintln "usage: ffi-test [exit <code> | shutdown | exit-while-blocked]"
   return 2
 
 end FfiTest
@@ -199,21 +242,29 @@ naming the ones that do not.
 
 With the arguments `exit <code>`, exits with that status and does nothing
 else. The `ffi-test` task uses this to see that the entry point passes the
-arguments to Lean's `main` and makes its result the process's exit status. -/
+arguments to Lean's `main` and makes its result the process's exit status.
+
+`shutdown` runs the shutdown sequence: tasks parked in a pull on each queue,
+quit, then an explicit exit, with status 0 when every task came back with a
+quit event.
+
+`exit-while-blocked` parks a task in a pull, never quits, and exits
+explicitly with status 0. It shows that the process ends although a dedicated
+task is still blocked in the library, which returning from `main` would wait
+for. -/
 def main (args : List String) : IO UInt32 := do
   match args with
   | [] =>
-    let checks := FfiTest.checks ()
-    let failed ← FfiTest.failures checks
-    for name in failed do
-      IO.eprintln s!"FAILED: {name}"
-    if failed.isEmpty then
-      IO.println s!"ffi-test: {checks.length} checks passed"
+    if (← FfiTest.run "ffi-test" (FfiTest.checks ())) == 0 then
       return 0
     else
       -- A failed check may have left a task parked in the library, and
       -- returning from `main` would wait for it for ever.
       IO.Process.exit 1
+  | ["shutdown"] =>
+    IO.Process.exit (← FfiTest.run "ffi-test shutdown" (FfiTest.shutdownChecks ()))
+  | ["exit-while-blocked"] =>
+    IO.Process.exit (if ← FfiTest.blockForGood then 0 else 1)
   | ["exit", code] =>
     match code.toNat? with
     | some status =>
