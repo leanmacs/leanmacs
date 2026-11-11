@@ -1,9 +1,15 @@
 amends "package://github.com/jdx/hk/releases/download/v2.4.0/hk@2.4.0#/Config.pkl"
 
+// The C and C++ sources: the glue between Lean and the Rust library.
+local c_sources = List("**/*.c", "**/*.h", "**/*.cc", "**/*.cpp", "**/*.hpp")
+
+// What the Rust static library is built from.
+local rust_sources = List("**/*.rs", "**/Cargo.toml", "Cargo.lock")
+
 // The full gate, defined once in mise.toml's `ci` task.
 local ci = new Mapping<String, Step> {
     ["mise_ci"] {
-        glob = List("**/*.rs", "**/Cargo.toml", "Cargo.lock", "mise.toml", "deny.toml", "lean/**")
+        glob = rust_sources + c_sources + List("mise.toml", "deny.toml", ".clang-format", "lean/**")
         check = "mise run ci"
         exclusive = true
     }
@@ -20,13 +26,20 @@ local changed = new Mapping<String, Step> {
         exclusive = true
     }
     ["rust"] {
-        glob = List("**/*.rs", "**/Cargo.toml", "Cargo.lock", "mise.toml")
+        glob = rust_sources + List("mise.toml")
         check = "mise run lint && mise run test"
         exclusive = true
     }
+    ["c"] {
+        glob = c_sources + List(".clang-format", "mise.toml")
+        check = "mise run c-fmt"
+        exclusive = true
+    }
+    // Lake links the Rust static library and the C glue into the executables
+    // `ffi-test` runs, so a change to either reruns this step.
     ["lean"] {
-        glob = List("lean/**", "mise.toml")
-        check = "mise run lean-fmt"
+        glob = rust_sources + c_sources + List("lean/**", "mise.toml")
+        check = "mise run lean-fmt && mise run ffi-test"
         exclusive = true
     }
 }
