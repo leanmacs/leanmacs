@@ -10,7 +10,8 @@ rendering, the window, and process and terminal management.
   adapters, hand-written fakes, hermetic tests.
 
 The editor does nothing useful yet. The executable shows that the build
-works: Lean calls the Rust library and prints what comes back.
+works: Lean calls the Rust library and prints what comes back, and it runs
+one editor command against the library.
 
 ## Building
 
@@ -47,7 +48,11 @@ $ lean/.lake/build/bin/editor
 Rust says 2 + 3 = 5
 Lean's main is on the process's main thread: false
 The main-thread service is on the process's main thread: true
+A command appended to a text held by Rust: héllo wörld
 ```
+
+The last line is a command, `Editor.append`, run against the Rust library.
+The model tests run the same source against a pure Lean model.
 
 Lake relinks the executables only when the Rust archive's contents change,
 so a second `mise run lean` does nothing.

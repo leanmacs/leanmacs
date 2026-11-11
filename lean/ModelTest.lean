@@ -1,3 +1,4 @@
+import Editor.Command.Append
 import Editor.Text.Contract
 import Editor.Text.Model
 
@@ -15,6 +16,10 @@ The checks of the program type run programs over a small port of their own
 
 The text port's contract (`Editor/Text/Contract.lean`) is run against its pure
 model here. `contract-test` runs the same list against the real binding.
+
+A command is tested the same way: as a property, a command that returns
+whether it held, run against the model (`commandProperties`). The `editor`
+executable runs the same command source against the real binding.
 -/
 
 namespace ModelTest
@@ -144,9 +149,18 @@ def failures (checks : List Check) : IO (List String) :=
     catch error =>
       return some s!"{check.name} ({error})"
 
-/-- The properties the text model must have: the text port's contract. -/
+/-- What the editor's commands do, observed against the text model. -/
+def commandProperties : List TextContract.Property :=
+  [{ name := "append adds to the end of a text, after its last character",
+     holds := do
+       let text ← createText "héllo"
+       append text " wörld"
+       return (← text.read) == "héllo wörld" }]
+
+/-- The properties run against the text model: the text port's contract, then
+those of the commands. -/
 def textProperties : List TextContract.Property :=
-  TextContract.properties
+  TextContract.properties ++ commandProperties
 
 /-- The names of the `textProperties` that do not hold of the text model, each
 run from a model with no texts. -/
