@@ -102,3 +102,11 @@ exactly like `editor`. `mise run ffi-test` runs it. -/
   supportInterpreter := true
   moreLinkObjs := #[glue.o, rustlib]
   moreLinkArgs := linkArgs
+
+/-- The model tests (`ModelTest.lean`): `lake test` builds and runs this
+(`mise run lean-test`). It is not a default target and links no glue and no
+Rust archive, so nothing it needs reaches `rustlib`. `-L`: as in `linkArgs`,
+so it links under either compiler. It starts at Lean's `main`. -/
+@[test_driver] lean_exe «model-test» where
+  root := `ModelTest
+  moreLinkArgs := #["-L", leanSystemLibDir.toString]
