@@ -140,8 +140,7 @@ def sessionEval (s : Session) (src : String) : IO EvalResult := do
   return { ok, output }
 
 private def entryTypeOk (ty : Expr) : Bool :=
-  ty == mkApp (mkConst ``Editor.EditorM) (mkConst ``Unit) ||
-    ty == mkApp (mkConst ``IO) (mkConst ``Unit)
+  ty == mkApp (mkConst ``IO) (mkConst ``Unit)
 
 private unsafe def runUnsafe (s : Session) (name : String) : IO EvalResult := do
   let st ← s.state.get
@@ -149,8 +148,8 @@ private unsafe def runUnsafe (s : Session) (name : String) : IO EvalResult := do
   let some info := st.env.find? n
     | return { ok := false, output := s!"unknown declaration '{name}'" }
   unless entryTypeOk info.type do
-    return { ok := false, output := s!"'{name}' : {info.type}, expected EditorM Unit" }
-  match st.env.evalConst (Editor.EditorM Unit) defaultOpts n with
+    return { ok := false, output := s!"'{name}' : {info.type}, expected IO Unit" }
+  match st.env.evalConst (IO Unit) defaultOpts n with
   | .error e =>
     return { ok := false, output := e }
   | .ok act =>
@@ -163,7 +162,11 @@ private unsafe def runUnsafe (s : Session) (name : String) : IO EvalResult := do
 @[implemented_by runUnsafe]
 private opaque runSafe (s : Session) (name : String) : IO EvalResult
 
-/-- Run a declaration of type `EditorM Unit` (a "command"). -/
+/-- Run a declaration of type `IO Unit`, and of no other type.
+
+It does not run a command. A command is an `Editor.EditorM`, a program over
+the editor's port, and running one needs the editor's runner and its table of
+texts (`Editor/Text/Real.lean`), which the config session does not have yet. -/
 @[export editor_session_run]
 def sessionRun (s : Session) (name : String) : IO EvalResult :=
   runSafe s name
