@@ -37,9 +37,11 @@ run = "cargo test --workspace --locked"
 
 # Runs in lean/, so mise picks the toolchain `lean/lean-toolchain` pins.
 [tasks.lean]
-description = "Build the Lean package with Lake"
+description = "Build the Lean package with Lake; every linter is on and a warning fails the build (lean/lakefile.toml)"
 dir = "lean"
-run = "lake build"
+# --wfail also fails on warnings Lake itself logs, which `warningAsError` in
+# the lakefile does not reach.
+run = "lake build --wfail"
 
 [tasks.ci]
 description = "The whole gate; `hk check` runs this, and it gates review and landing (rdm's dispatch.verify)"

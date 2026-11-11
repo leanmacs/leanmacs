@@ -30,22 +30,32 @@ open Lean Elab
 
 namespace EditorHost
 
+/-- One named unit of config source, like a file, with the state it produced. -/
 structure Chunk where
+  /-- The chunk's name; setting a chunk with the same name replaces it. -/
   name : String
+  /-- The chunk's Lean source. -/
   src : String
   /-- Elaborator state after this chunk. -/
   after : Command.State
 
+/-- A config session: the prelude state, the loaded chunks and the current state. -/
 structure Session where
+  /-- State right after `import Editor` and `open Editor`; every reload starts here. -/
   base : Command.State
+  /-- The loaded chunks, in elaboration order. -/
   chunks : IO.Ref (Array Chunk)
   /-- Current state: last chunk's `after`, plus any scratch evals. -/
   state : IO.Ref Command.State
 
+/-- The outcome of a session operation, as the host reads it. -/
 structure EvalResult where
+  /-- Whether the operation succeeded. -/
   ok : Bool
+  /-- Rendered messages, or the reason for failure. -/
   output : String
 
+/-- The options every elaboration in a session runs with. -/
 def defaultOpts : Options :=
   -- Elaborate synchronously so every message lands in the command state.
   ({} : Options).setBool `Elab.async false
@@ -60,6 +70,8 @@ def elabOn (st : Command.State) (fileName src : String) :
   let rendered ← cst.messages.toList.mapM fun m => m.toString
   return (cst, !cst.messages.hasErrors, String.join rendered)
 
+/-- Open a session: import `Editor` from `oleanDir` (toolchain at `sysroot`) and
+elaborate the prelude. -/
 @[export editor_session_new]
 def sessionNew (sysroot : String) (oleanDir : String) : IO Session := do
   initSearchPath ⟨sysroot⟩ [⟨oleanDir⟩]
@@ -152,12 +164,15 @@ private opaque runSafe (s : Session) (name : String) : IO EvalResult
 def sessionRun (s : Session) (name : String) : IO EvalResult :=
   runSafe s name
 
+/-- Render an `IO.Error` for the host. -/
 @[export editor_io_error_to_string]
 def ioErrorToString (e : IO.Error) : String := toString e
 
+/-- `EvalResult.ok`, exported for the host. -/
 @[export editor_result_ok]
 def resultOk (r : EvalResult) : Bool := r.ok
 
+/-- `EvalResult.output`, exported for the host. -/
 @[export editor_result_output]
 def resultOutput (r : EvalResult) : String := r.output
 

@@ -8,12 +8,15 @@ ordinary Lean built on top of them.
 
 namespace Editor
 
+/-- Host primitive: append `s` to the current buffer. -/
 @[extern "editor_host_insert"]
 opaque hostInsert (s : @& String) : IO Unit
 
+/-- Host primitive: the full text of the current buffer. -/
 @[extern "editor_host_buffer_text"]
 opaque hostBufferText : IO String
 
+/-- Host primitive: show `s` in the echo area. -/
 @[extern "editor_host_message"]
 opaque hostMessage (s : @& String) : IO Unit
 
