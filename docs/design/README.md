@@ -31,7 +31,7 @@ file says how.
 | The split | Rust: text storage, layout, rendering, the window, processes and terminals, parsing. Lean: editor state, the command loop, every feature | 2026-11-10 |
 | Editing style | evil (Vim-style modal), written in Lean, from the first milestone | 2026-11-09 |
 | First front end | GUI (winit, wgpu). The frame is device-independent, and a cell grid shaper and renderer are built early as test adapters, so a terminal front end stays possible | 2026-11-09, revised 2026-11-11 |
-| Lean editor API | Interfaces with a real binding and a pure model, not direct library calls | 2026-11-09 |
+| Lean editor API | Interfaces with a real binding and a pure model, not direct library calls. An interface is a port (requests, and a reply type for each), and a command or a job is a program over it, run against either handler; not type classes | 2026-11-09, representation 2026-11-11 |
 | Syntax | Tree-sitter, right after the first milestone | 2026-11-09 |
 | Agent protocol | Agent Client Protocol (ACP), with the client written in Lean | 2026-11-09, client placement 2026-11-10 |
 | Terminal | libghostty (state of the library to be verified first) | 2026-11-09 |

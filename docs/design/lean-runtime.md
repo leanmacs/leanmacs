@@ -135,10 +135,86 @@ This is ports and adapters in Lean, and it gives:
 - A contract check per interface: one suite of properties run against both
   the model and the real bindings, so the model cannot drift from Rust.
 
-How the interface is represented (type classes with commands polymorphic
-over the monad, or a free-monad program with two interpreters) is decided
-in rdm `workspace-and-ports`. The constraint is that config needs one
-concrete type to be evaluated at.
+### An interface is a port, and a command is a program over it
+
+Decided 2026-11-11, from prototypes of both candidates: a free-monad program
+type with two interpreters, not type classes with commands polymorphic over
+the monad.
+
+- A **port** is a type of requests and, for each request, the type of its
+  reply. A **program** over a port is plain data: it is finished, or it
+  makes a request and continues with the reply. `EditorM` is the type of
+  programs over the editor's port and `JobM` the type of programs over the
+  job port. Both are ordinary monads, and a command reads as a `do` block.
+- A port has two **handlers**. The model is a pure function from a request
+  and the model's state to a reply and a new state. The real binding answers
+  each request with a call into the Rust library. One runner for each kind
+  of handler runs any program, so the same command source runs against both.
+- The contract check is a list of commands that both run.
+- A theorem about a command is stated about its run against the model and
+  proved from the port's lemmas.
+
+The program type is indexed by a request type with a reply type per request.
+It is not the textbook free monad over a functor, which lives in `Type 1`.
+
+What decided it:
+
+- **Config is evaluated at one concrete type**, and `EditorM α` is that
+  type: it is the type the model runs too. With classes the concrete type is
+  the real monad, over `IO`, and a command written at it cannot run on the
+  model or appear in a theorem. One that can has a type in `Type 1`, which
+  `evalConst` refuses, as it does the textbook free monad. A value in
+  `Type 1` also cannot be the result of an `IO` action or sit in a
+  reference.
+- **The split is checked without any discipline.** A program holds no `IO`,
+  so there is nothing to smuggle in: a text request in a job, a job in a
+  command, and `IO` in either are type errors. With classes the concrete
+  command monad would also need a private constructor, or a bare function
+  over `IO` is accepted as a command.
+- Both read the same in `do` notation, both state theorems against the
+  model with the same proofs, and both are clean under every linter.
+
+What it gives up:
+
+- **Direct calls on the real path.** Each request allocates a program node
+  and its continuation and goes through the runner: several times the cost
+  of a direct call, tens of nanoseconds more, against the 6 to 12 µs a key
+  takes. Binds nested to the left cost in proportion to their depth. That
+  the cost stays small is assumed, not measured in the editor.
+- **Library handles as values in the interface.** A request is plain data,
+  so a text is named by an id and the real binding keeps the table from ids
+  to handles. A text lives until the table drops it, not until the last
+  Lean reference goes.
+- **A request that carries a program over its own port** (a job's result
+  handler, a key binding made from inside a command): the port would refer
+  to itself. Registration from a later port type-checks, and so does a
+  program type written for the editor in place of the generic one. The
+  config session and the job system choose.
+- **A command's type no longer lists the capabilities it uses.** Every
+  command has the whole port.
+
+Set aside: a concrete `EditorM` that reads a record of operations over `IO`
+(the model's state is then behind a reference, so no theorem about a command
+can be proved). Left open as a later step, if the runner's cost becomes a
+measured problem: classes for compiled commands, with the program type as
+the instance config uses. Commands written at `EditorM` would not change.
+
+The pattern is built for one deliberately small interface, text:
+
+| Piece | Where |
+|---|---|
+| Programs, and the two runners | `lean/Editor/Program.lean` |
+| The text port: create, insert, delete, read | `lean/Editor/Text.lean` |
+| Its pure model | `lean/Editor/Text/Model.lean` |
+| Its real binding, over a placeholder string in Rust until the text-storage crate lands | `lean/Editor/Text/Real.lean` |
+| Its contract, run against the model by `lake test` (`mise run lean-test`) and against the real binding by `contract-test` (`mise run ffi-test`) | `lean/Editor/Text/Contract.lean` |
+| A command, `append`, with a theorem about it | `lean/Editor/Command/Append.lean` |
+| `JobM`, and the compile-time checks of the split | `lean/Editor/Job.lean` |
+
+The job port has no request yet, so "a wait is not a command" is not
+checked: that check arrives with the job system and the port's first
+request. Until then "a command may not block" is checked only as far as
+`IO` goes.
 
 ## Where state lives
 

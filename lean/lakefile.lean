@@ -75,7 +75,8 @@ def leanSystemLibDir : FilePath :=
         findLeanInstall? | throw <| IO.userError "cannot find the Lean toolchain to link against"
       return lean.systemLibDir
 
-/-- The link arguments both executables need beyond their objects.
+/-- The link arguments every executable linked with the Rust library needs
+beyond its objects.
 
 `-Wl,-e`: `editor_entry` (`ffi/glue.c`) is the entry point instead of `main`.
 It keeps the process's main thread for the Rust library and runs Lean's

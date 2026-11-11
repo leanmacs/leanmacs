@@ -196,7 +196,10 @@ elaborate, or whose setup throws, is rejected and the old one stays.
 - Linux and Windows. The entry point and linker workarounds are for macOS.
 - The multi-millisecond worst-case key latency seen while background I/O
   ran (median was unaffected). The machine was under load; not isolated.
-- Whether `JobM` is built on `Std.Async` or on plain tasks and promises.
+- Whether the runner of `JobM` is built on `Std.Async` or on plain tasks
+  and promises. `JobM` itself is a program type with no request yet
+  (`lean/Editor/Job.lean`); its awaitable requests and their runner arrive
+  with the job system.
 
 ## Open questions
 
@@ -206,6 +209,13 @@ elaborate, or whose setup throws, is rejected and the old one stays.
   the foreground drains them?
 - **Raw `IO`.** Lean code can reach `IO` directly (files, processes) and
   bypass the interfaces, which breaks the pure model and the fakes, and for
-  processes leaves orphans. Should the API make that impossible (commands
-  and jobs polymorphic over the interface, no `IO` in scope) or merely
+  processes leaves orphans. For commands and jobs this is answered: neither
+  can express `IO`. Both are programs over a port
+  ([lean-runtime.md](lean-runtime.md), "The editor API is an interface"),
+  a program is plain data that holds no `IO`, and an `IO` action offered
+  as a command or as a job is a type error, checked when
+  `lean/Editor/Job.lean` is compiled. What remains open is Lean code outside
+  them: compiled runtime code (the command loop, the runners, the config
+  session) is in `IO`, and config can still define an `IO` action, which
+  the config session runs today. Should that be impossible too, or merely
   discouraged?

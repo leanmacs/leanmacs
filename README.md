@@ -55,7 +55,11 @@ The last line is a command, `Editor.append`, run against the Rust library.
 The model tests run the same source against a pure Lean model.
 
 Lake relinks the executables only when the Rust archive's contents change,
-so a second `mise run lean` does nothing.
+so a second `mise run lean` rebuilds nothing.
+
+`mise run lean` runs the model tests first (`mise run lean-test`, below).
+That is only so that two Lake builds never run in `lean/` at once: the tasks
+that run Lake form one chain.
 
 Use `mise run lean`, not a bare `lake build`. On macOS the executables have
 to be compiled and linked by the system compiler, and the task sets
@@ -78,17 +82,32 @@ mise run ci
 ```
 
 This is everything that must pass before review and before landing: Rust
-formatting, clippy, cargo-deny, rustdoc and the Rust tests; the Lean build,
-lean-fmt's format and lint checks; the checks of the Lean/Rust boundary
-(`mise run ffi-test`); and the C format check. `hk check` runs the same task.
+formatting, clippy, cargo-deny, rustdoc and the Rust tests; the Lean model
+tests (`mise run lean-test`); the Lean build, lean-fmt's format and lint
+checks; the checks of the Lean/Rust boundary and the contract check against
+the real binding (`mise run ffi-test`); and the C format check. `hk check`
+runs the same task.
 
 The Rust half needs no Lean toolchain: `mise run test` (`cargo test
 --workspace`) builds and tests every crate with Cargo alone.
 
+The Lean half's logic needs no Rust library. The editor reaches the library
+through interfaces it defines, each with a pure Lean model, and
+`mise run lean-test` runs `lake test`: the model tests
+(`lean/ModelTest.lean`), which run editor commands and the text interface's
+contract against the model. The task shows by behaviour that they build
+without the library. It puts a `cargo` that always fails
+(`lean/no-cargo/cargo`) first on the `PATH`, and Lake runs `cargo` on every
+build that reaches the Rust archive, so the task passes only if the test
+driver does not need it.
+
 `mise run ffi-test` runs `lean/.lake/build/bin/ffi-test`, the test executable
-linked against the real library, and then the editor. With no arguments
-`ffi-test` runs its checks of handles, plain data and the event queues. Three
-scenarios need a process each:
+linked against the real library, then `contract-test`, and then the editor.
+`contract-test` runs the text interface's contract, the same list of
+properties the model tests run, against the real binding, so the model
+cannot drift from the library. With no arguments `ffi-test` runs its checks
+of handles, plain data, the event queues and the document. Three scenarios
+need a process each:
 
 | Command | Shows |
 |---|---|
