@@ -37,8 +37,16 @@ run = "cargo test --workspace --locked"
 
 # Runs in lean/, so mise picks the toolchain `lean/lean-toolchain` pins.
 [tasks.lean]
-description = "Build the Lean package with Lake; every linter is on and a warning fails the build (lean/lakefile.lean)"
+description = "Build the Lean package and the executables with Lake, which runs Cargo for the Rust static library; every linter is on and a warning fails the build (lean/lakefile.lean)"
 dir = "lean"
+# On macOS the executables must be compiled and linked by the system compiler:
+# the clang bundled with Lean has no `pthread.h` for the C glue, and its linker
+# cannot link the system frameworks the Rust library will need. This is set
+# here and not in the top-level [env] because lean-fmt must keep building with
+# Lean's bundled compiler: under /usr/bin/cc its link fails (`library 'gmp'
+# not found`). It is the absolute path because `cc` on mise's PATH may be a
+# shim for another compiler.
+env = { LEAN_CC = "/usr/bin/cc" }
 # --wfail also fails on warnings Lake itself logs, which `warningAsError` in
 # the lakefile does not reach.
 run = "lake build --wfail"
@@ -63,6 +71,18 @@ run = [
   "lake exe lean-fmt check --fix",
 ]
 
+# Runs the built executables only (no Lake), so it needs just `lean` before it.
+# The time limit turns a deadlock in the main-thread hand-off into a failure.
+[tasks.ffi-test]
+description = "Run the checks of the Lean/Rust boundary (lean/FfiTest.lean) and the editor executable"
+depends = ["lean"]
+dir = "lean"
+timeout = "60s"
+run = [
+  ".lake/build/bin/ffi-test",
+  ".lake/build/bin/editor",
+]
+
 [tasks.ci]
 description = "The whole gate; `hk check` runs this, and it gates review and landing (rdm's dispatch.verify)"
-depends = ["fmt", "lint", "deny", "doc", "test", "lean", "lean-fmt"]
+depends = ["fmt", "lint", "deny", "doc", "test", "lean", "lean-fmt", "ffi-test"]
