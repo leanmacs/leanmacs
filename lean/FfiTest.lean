@@ -235,26 +235,40 @@ def say (line : String) : IO Unit := do
   IO.println s!"ffi-test overflow: {line}"
   (← IO.getStdout).flush
 
+/-- What the overflow scenario says just before it recurses. The `ffi-test`
+task in `mise.toml` requires this to be the last line of stdout. -/
+def overflowMarker : String :=
+  "entering the recursion"
+
 /-- The overflow scenario; see `overflow`. It is `unsafe` because evaluating a
 constant from an environment trusts the type it is given. -/
 unsafe def overflowUnsafe (sysroot oleanDir : String) : IO UInt8 := do
-  Lean.initSearchPath ⟨sysroot⟩ [⟨oleanDir⟩]
-  let env ← Lean.importModules #[{ module := `InterpretedFixture }] {}
-  let shallow ← IO.ofExcept (env.evalConst (IO Nat) {} `InterpretedFixture.shallow)
-  unless (← shallow) == 10 do
-    say "the interpreter did not run the fixture's shallow recursion"
+  try
+    Lean.initSearchPath ⟨sysroot⟩ [⟨oleanDir⟩]
+    let env ← Lean.importModules #[{ module := `InterpretedFixture }] {}
+    let shallow ← IO.ofExcept (env.evalConst (IO Nat) {} `InterpretedFixture.shallow)
+    let tooDeep ← IO.ofExcept (env.evalConst (IO Nat) {} `InterpretedFixture.tooDeep)
+    unless (← shallow) == 10 do
+      say "the interpreter did not run the fixture's shallow recursion"
+      return 1
+    say overflowMarker
+    let depth ← tooDeep
+    say s!"the recursion returned {depth}, and the process is still running"
     return 1
-  say "the interpreter runs the fixture; now a recursion deeper than its stack"
-  let tooDeep ← IO.ofExcept (env.evalConst (IO Nat) {} `InterpretedFixture.tooDeep)
-  let depth ← tooDeep
-  say s!"the recursion returned {depth}, and the process is still running"
-  return 1
+  catch error =>
+    say s!"Lean caught an error: {error}"
+    return 1
 
 /-- Has Lean's interpreter run a recursion that overflows its stack, on this
-thread, with nothing in the way. The interpreter's stack check throws a C++
-exception, nothing catches it, and the process dies of SIGABRT: that is the
-outcome the scenario exists to show, so this returns only when something is
-wrong, with the exit status 1.
+thread, inside a Lean `try`/`catch`. The interpreter's stack check throws a
+C++ exception, which the Lean handler does not see and nothing else catches,
+and the process dies of SIGABRT: that is the outcome the scenario exists to
+show. So this returns only when something is wrong, with the exit status 1.
+
+Before it recurses it has the interpreter run a shallow recursion from the
+same module and checks the value, then prints the marker line. The marker is
+therefore the last line of stdout exactly when the process died in the deep
+recursion and nowhere earlier.
 
 `sysroot` is the Lean toolchain's directory and `oleanDir` the directory
 holding `InterpretedFixture.olean`. -/
