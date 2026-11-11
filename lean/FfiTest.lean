@@ -26,7 +26,9 @@ This is a function, not a constant, because Lean evaluates a module's
 constants in its initialiser, and an initialiser must not call the Rust
 library (`docs/design/lean-runtime.md`). -/
 def checks (_ : Unit) : List Check :=
-  [{ name := "a Rust function's result crosses into Lean", run := pure (Editor.Ffi.add 2 3 == 5) }]
+  [{ name := "a Rust function's result crosses into Lean", run := pure (Editor.Ffi.add 2 3 == 5) },
+    { name := "Lean code does not run on the process's main thread",
+      run := return !(← Editor.Ffi.isMainThread) }]
 
 /-- Runs `checks` and returns the names of those that failed. -/
 def failures (checks : List Check) : IO (List String) :=

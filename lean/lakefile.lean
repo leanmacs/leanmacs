@@ -38,6 +38,14 @@ target rustlib pkg : FilePath :=
     setTrace (← computeTrace lib)
     return lib
 
+/-- The C glue between `@[extern]` declarations and the Rust library
+(`ffi/glue.c`), compiled against the toolchain's own `lean.h`. Nothing lints C
+for us, so every warning is an error. -/
+target glue.o pkg : FilePath := do
+  let oFile := pkg.buildDir / "ffi" / "glue.o"
+  let srcJob ← inputTextFile <| pkg.dir / "ffi" / "glue.c"
+  buildLeanO oFile srcJob #[] #["-O2", "-Wall", "-Wextra", "-Werror"]
+
 /-- The directory of the static libraries Lean's runtime needs (libgmp, libuv
 and the rest), inside the Lean toolchain Lake itself is using. -/
 def leanSystemLibDir : FilePath :=
@@ -65,7 +73,7 @@ interpreted config can find compiled definitions and `@[extern]` symbols. -/
 @[default_target] lean_exe editor where
   root := `Main
   supportInterpreter := true
-  moreLinkObjs := #[rustlib]
+  moreLinkObjs := #[glue.o, rustlib]
   moreLinkArgs := linkArgs
 
 /-- The checks of the boundary with the Rust library (`FfiTest.lean`), linked
@@ -73,5 +81,5 @@ exactly like `editor`. `mise run ffi-test` runs it. -/
 @[default_target] lean_exe «ffi-test» where
   root := `FfiTest
   supportInterpreter := true
-  moreLinkObjs := #[rustlib]
+  moreLinkObjs := #[glue.o, rustlib]
   moreLinkArgs := linkArgs

@@ -16,4 +16,9 @@ The trivial function that shows a call crossing the boundary. -/
 @[extern "editor_ffi_add"]
 opaque add (a b : UInt32) : UInt32
 
+/-- Whether the calling thread is the process's main thread. Lean's `main` runs
+on a thread Lean creates, so in Lean code this is `false`. -/
+@[extern "editor_glue_is_main_thread"]
+opaque isMainThread : IO Bool
+
 end Editor.Ffi

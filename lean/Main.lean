@@ -12,4 +12,6 @@ not what it should be. -/
 def main : IO UInt32 := do
   let sum := Editor.Ffi.add 2 3
   IO.println s!"Rust says 2 + 3 = {sum}"
-  return if sum == 5 then 0 else 1
+  let leanOnMain ← Editor.Ffi.isMainThread
+  IO.println s!"Lean's main is on the process's main thread: {leanOnMain}"
+  return if sum == 5 && !leanOnMain then 0 else 1
