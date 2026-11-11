@@ -10,6 +10,8 @@
 //! object built or taken apart (an `IO` result, a string), the glue does that
 //! with `lean.h` and calls the function here with the plain values.
 
+pub mod main_thread;
+
 /// The sum of `a` and `b`, wrapping on overflow.
 ///
 /// This is the trivial function that shows a call crossing from Lean into

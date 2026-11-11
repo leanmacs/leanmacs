@@ -10,3 +10,8 @@ publish = false
 # `staticlib` is what Lake links into the Lean executables. `rlib` is only so
 # the integration tests under `tests/` can link the crate.
 crate-type = ["staticlib", "rlib"]
+
+# No harness: its `main` must be the process's main thread.
+[[test]]
+name = "main_thread"
+harness = false
