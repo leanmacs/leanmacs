@@ -100,24 +100,34 @@ run = [
   # Quit is for good and process-wide, so shutdown has processes of its own.
   ".lake/build/bin/ffi-test shutdown",
   ".lake/build/bin/ffi-test exit-while-blocked",
-  # A stack overflow in interpreted code is not caught: the process must die
-  # of SIGABRT, which the shell reports as status 134. Lean gives each thread
-  # it creates a 1 GiB stack, and the interpreter overflows only once that is
-  # full; LEAN_STACK_SIZE_KB makes it 16 MiB here, so the overflow takes
-  # milliseconds. The runtime's own message has one line per interpreter
-  # frame, over half a megabyte, so stderr is dropped. `ulimit -c 0`: no core
-  # file. The sysroot and the directory of `InterpretedFixture.olean` are
-  # passed in, so the scenario reads nothing from the environment.
-  #
-  # The status alone is not enough: an abort before the recursion would give
-  # it too. The scenario prints one marker line once interpreted code has run
-  # and just before it recurses, so the marker must be the last line of
-  # stdout as well.
-  #
-  # This entry stands alone: nothing else in the task depends on it.
-  '''status=0; out=$( (ulimit -c 0; LEAN_STACK_SIZE_KB=16384 exec .lake/build/bin/ffi-test overflow "$(lean --print-prefix)" .lake/build/lib/lean 2>/dev/null) ) || status=$?; printf '%s\n' "$out" "ffi-test overflow: exit status $status"; test "$status" -eq 134 && test "$(printf '%s\n' "$out" | tail -n 1)" = "ffi-test overflow: entering the recursion"''',
   ".lake/build/bin/editor",
 ]
+
+# Opt-in: run it by hand, and do not add it to `ci` or to hk.pkl. It ends in
+# an abort, and on macOS every abort makes the system write a crash report
+# under ~/Library/Logs/DiagnosticReports, so in the gate it would leave a file
+# on the developer's machine on every run. The `overflow` scenario itself and
+# its fixture are still built by `lean`, inside the gate.
+#
+# A stack overflow in interpreted code is not caught: the process must die of
+# SIGABRT, which the shell reports as status 134. Lean gives each thread it
+# creates a 1 GiB stack, and the interpreter overflows only once that is full;
+# LEAN_STACK_SIZE_KB makes it 16 MiB here, so the overflow takes milliseconds.
+# The runtime's own message has one line per interpreter frame, over half a
+# megabyte, so stderr is dropped. `ulimit -c 0`: no core file. The sysroot and
+# the directory of `InterpretedFixture.olean` are passed in, so the scenario
+# reads nothing from the environment.
+#
+# The status alone is not enough: an abort before the recursion would give it
+# too. The scenario prints one marker line once interpreted code has run and
+# just before it recurses, so the marker must be the last line of stdout as
+# well.
+[tasks.ffi-overflow]
+description = "Opt-in, never part of ci: check that a stack overflow in interpreted Lean code aborts the process (lean/FfiTest.lean). Each run makes macOS write a crash report under ~/Library/Logs/DiagnosticReports"
+depends = ["lean"]
+dir = "lean"
+timeout = "60s"
+run = '''status=0; out=$( (ulimit -c 0; LEAN_STACK_SIZE_KB=16384 exec .lake/build/bin/ffi-test overflow "$(lean --print-prefix)" .lake/build/lib/lean 2>/dev/null) ) || status=$?; printf '%s\n' "$out" "ffi-test overflow: exit status $status"; test "$status" -eq 134 && test "$(printf '%s\n' "$out" | tail -n 1)" = "ffi-test overflow: entering the recursion"'''
 
 [tasks.ci]
 description = "The whole gate; `hk check` runs this, and it gates review and landing (rdm's dispatch.verify)"
