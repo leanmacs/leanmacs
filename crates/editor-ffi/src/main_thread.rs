@@ -135,9 +135,12 @@ impl<A: Fn(Request) -> Reply> Service<A> {
         let _ = job.reply.send((self.answer)(job.request));
     }
 
-    /// Opens the service and serves requests on the calling thread forever.
+    /// Serves requests on the calling thread forever.
+    ///
+    /// This does not open the service. Call [`open`](Self::open) first:
+    /// until the service is open, requests are answered on their callers'
+    /// threads and never reach this one.
     pub fn serve(&self) -> ! {
-        self.open();
         loop {
             self.serve_next();
         }
@@ -191,6 +194,9 @@ pub extern "C" fn editor_ffi_main_thread_open() {
 /// Parks the calling thread, which must be the process's main thread, serving
 /// requests from other threads. Never returns; the process ends when another
 /// thread exits it.
+///
+/// This does not open the service: call [`editor_ffi_main_thread_open`]
+/// first, as the entry point does.
 #[unsafe(no_mangle)]
 pub extern "C" fn editor_ffi_main_thread_serve() -> ! {
     MAIN_THREAD.serve()
