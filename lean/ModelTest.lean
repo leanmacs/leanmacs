@@ -1,4 +1,5 @@
 import Editor.Command.Append
+import Editor.Config.Stores
 import Editor.Text.Contract
 
 /-!
@@ -135,9 +136,202 @@ def programChecks : List Check :=
         let sum ← (sumOfNumbers million).runM (Fake.handleIO fake)
         return sum == millionSum && (← fake.get).seen.size == million }]
 
+/-- A command that makes one text holding `text`. What a registered command
+does is observed by running it: commands are programs, and cannot be compared. -/
+def makes (text : String) : EditorM Unit :=
+  discard <| createText text
+
+/-- The texts `command` leaves when it runs against a text model with none. -/
+def textsOf (command : EditorM Unit) : Array String :=
+  (command.runModel {}).2.texts
+
+/-- The texts a registered command leaves when it is a plain command, run
+against a text model with none; `none` for a command over a store. -/
+def plainTexts : Config.Action → Option (Array String)
+  | .plain run => some (textsOf run)
+  | .store .. => none
+
+/-- A store of one number, at version 1. -/
+def counter : Store Nat :=
+  { name := "counter", version := 1, initial := 0, encode := .nat,
+    decode := fun
+      | .nat n => some n
+      | _ => none }
+
+/-- The message a `setup` was refused with, if it was. -/
+def refusal (setup : SetupM Unit) : Option String :=
+  match Config.Registrations.ofSetup setup with
+  | .error message => some message
+  | .ok _ => none
+
+/-- The checks of `setup`: a program over the setup port (`Editor/Setup.lean`),
+run against the handler that collects what it registers
+(`Editor/Config/Registry.lean`). -/
+def setupChecks : List Check :=
+  [{
+      name :=
+        "running a setup against the collecting handler returns its commands and store declarations, in order",
+      run :=
+        let setup : SetupM Unit := do
+          command "first" (makes "1")
+          counter.declare
+          counter.command "bump" fun n => pure (n + 1)
+          command "second" (makes "2")
+        match Config.Registrations.ofSetup setup with
+        | .error _ => pure false
+        | .ok collected =>
+          pure
+            (collected.commands.map (·.name) == #["first", "bump", "second"] &&
+              collected.commands.map (plainTexts ·.action) == #[some #["1"], none, some #["2"]] &&
+              collected.stores.map (fun store => (store.name, store.version, store.initial)) ==
+                #[("counter", 1, .nat 0)]) },
+    { name := "a setup that throws after registering returns its message and nothing else"
+      run :=
+        let setup : SetupM Unit := do
+          command "first" (makes "1")
+          throw "no thanks"
+        pure (refusal setup == some "no thanks") },
+    { name := "a setup that declares a store name twice is refused"
+      run :=
+        let setup : SetupM Unit := do
+          counter.declare
+          counter.declare
+        pure (refusal setup).isSome },
+    { name := "a setup that registers a command over a store it does not declare is refused"
+      run :=
+        let setup : SetupM Unit := counter.command "bump" fun n => pure (n + 1)
+        pure (refusal setup).isSome },
+    { name := "a store step decodes the tree, runs the command and encodes the result"
+      run :=
+        let step :=
+          counter.step fun n => do
+            discard <| createText s!"was {n}"
+            return n + 5
+        match (step (.nat 2)).runModel {} with
+        | (.ok tree, model) => pure (tree == .nat 7 && model.texts == #["was 2"])
+        | (.error _, _) => pure false }]
+
+/-- A registration of the plain command `name`, which makes the text `text`. -/
+def registration (name text : String) : Config.Registration :=
+  { name, action := .plain (makes text) }
+
+/-- An owner that is not the config. -/
+def other : Config.Owner :=
+  { name := "other" }
+
+/-- The texts the command `registry` holds under `name` leaves, run against a
+text model with none; `none` if there is no such plain command. -/
+def registeredTexts (registry : Config.Registry) (name : String) : Option (Array String) :=
+  (registry.find? name).bind (plainTexts ·.registration.action)
+
+/-- The checks of the registry (`Editor/Config/Registry.lean`). -/
+def registryChecks : List Check :=
+  [{
+      name :=
+        "replace for an owner leaves exactly the new commands of that owner, and a second replace does not add to the first",
+      run :=
+        let once : Config.Registry :=
+          ({} : Config.Registry).replace .config
+            #[registration "greet" "1", registration "part" "1"]
+        let twice := once.replace .config #[registration "greet" "2"]
+        pure
+          (once.names == #["greet", "part"] && twice.names == #["greet"] &&
+            twice.entries.size == 1 &&
+            registeredTexts twice "greet" == some #["2"]) },
+    { name := "replace leaves another owner's entries alone"
+      run :=
+        let registry : Config.Registry :=
+          (({} : Config.Registry).replace other #[registration "theirs" "t"]).replace .config
+            #[registration "greet" "1"]
+        let replaced := registry.replace .config #[]
+        pure
+          (registry.names == #["theirs", "greet"] && replaced.names == #["theirs"] &&
+            registeredTexts replaced "theirs" == some #["t"]) },
+    { name := "a lookup returns the latest entry of a name, and none for a name nobody registered"
+      run :=
+        let registry : Config.Registry :=
+          (({} : Config.Registry).replace other #[registration "greet" "theirs"]).replace .config
+            #[registration "greet" "ours"]
+        pure
+          (registeredTexts registry "greet" == some #["ours"] && registry.names == #["greet"] &&
+            (registry.find? "missing").isNone) }]
+
+/-- A declaration of the store `name` at `version`, which starts at the
+number 0 and accepts any number. It migrates a number written at version 1 by
+adding 100 to it, and, wrongly, anything written at version 5 to a string,
+which it does not accept. -/
+def numbers (name : String) (version : Nat) : StoreDeclaration :=
+  { name, version, initial := .nat 0,
+    accepts := fun
+      | .nat _ => true
+      | _ => false,
+    migrate := fun
+      | 1, .nat n => some (.nat (n + 100))
+      | 5, _ => some (.str "not a number")
+      | _, _ => none }
+
+/-- A cell of the config's. -/
+def cell (name : String) (version : Nat) (value : Value) : Config.Cell :=
+  { owner := .config, name, version, value }
+
+/-- Installs `declarations` for the config over `cells`, and returns the
+cells after it and the source and severity of each diagnostic. -/
+def installed (cells : Array Config.Cell) (declarations : Array StoreDeclaration) :
+    Array Config.Cell × Array (String × Config.Severity) :=
+  let (after, diagnostics) := ({ cells } : Config.Cells).install .config declarations
+  (after.cells, diagnostics.map fun diagnostic => (diagnostic.source, diagnostic.severity))
+
+/-- The checks of the rule that meets a new config's stores with the cells
+there are (`Editor/Config/Stores.lean`), one for each case. -/
+def storeChecks : List Check :=
+  [{ name := "installing a store with no cell makes one from its initial value",
+     run := pure (installed #[] #[numbers "counter" 1] == (#[cell "counter" 1 (.nat 0)], #[])) },
+    { name := "a cell at the declared version that the store accepts is kept"
+      run :=
+        pure
+          (installed #[cell "counter" 1 (.nat 7)] #[numbers "counter" 1] ==
+            (#[cell "counter" 1 (.nat 7)], #[])) },
+    { name :=
+        "a cell the store does not accept is reset to the initial value, and a diagnostic says so"
+      run :=
+        pure
+          (installed #[cell "counter" 1 (.str "seven")] #[numbers "counter" 1] ==
+            (#[cell "counter" 1 (.nat 0)], #[("store counter", .warning)])) },
+    { name :=
+        "a cell at another version becomes the store's migration of it, at the declared version"
+      run :=
+        pure
+          (installed #[cell "counter" 1 (.nat 7)] #[numbers "counter" 2] ==
+            (#[cell "counter" 2 (.nat 107)], #[])) },
+    { name :=
+        "a cell the store's migration drops is reset to the initial value, and a diagnostic says so"
+      run :=
+        pure
+          (installed #[cell "counter" 3 (.nat 7)] #[numbers "counter" 2] ==
+            (#[cell "counter" 2 (.nat 0)], #[("store counter", .warning)])) },
+    { name :=
+        "a cell migrated to a tree the store does not accept is reset to the initial value, and a diagnostic says so"
+      run :=
+        pure
+          (installed #[cell "counter" 5 (.nat 7)] #[numbers "counter" 2] ==
+            (#[cell "counter" 2 (.nat 0)], #[("store counter", .warning)])) },
+    { name := "a cell of the owner that is no longer declared is removed, and a diagnostic says so"
+      run :=
+        pure
+          (installed #[cell "old" 1 (.nat 7), cell "counter" 1 (.nat 1)] #[numbers "counter" 1] ==
+            (#[cell "counter" 1 (.nat 1)], #[("store old", .warning)])) },
+    { name := "another owner's cell is left alone, whatever its name"
+      run :=
+        let theirs : Config.Cell :=
+          { owner := other, name := "counter", version := 9, value := .str "theirs" }
+        pure
+          (installed #[theirs] #[numbers "counter" 1] ==
+              (#[theirs, cell "counter" 1 (.nat 0)], #[]) &&
+            installed #[theirs] #[] == (#[theirs], #[])) }]
+
 /-- Every check, in the order they run. -/
 def checks : List Check :=
-  programChecks
+  programChecks ++ setupChecks ++ registryChecks ++ storeChecks
 
 /-- Runs `checks` and returns the names of those that failed. A check that
 throws has failed, and its error is reported with its name. -/
