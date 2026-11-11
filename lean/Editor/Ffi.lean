@@ -29,8 +29,10 @@ reference exists, on any thread, the object is alive.
 
 Pass a handle to a binding as `@&`, so the call does not take a reference.
 
-Example: `Counter`. Tests: the four counter checks of `ffi-test`
-(`FfiTest.handleChecks`); `tests/c_api.rs` in `editor-ffi`.
+Examples: `Counter`, and `Document`, the placeholder text the text port's real
+binding holds. Tests: the four counter checks of `ffi-test`
+(`FfiTest.handleChecks`) and its check that a document is freed
+(`FfiTest.documentChecks`); `tests/c_api.rs` in `editor-ffi`.
 
 ### Plain data
 
@@ -46,11 +48,19 @@ Prefer a few scalar arguments or one structure to many calls: one `nextEvent`
 returns one whole event. A raw structure whose shape the glue knows stays
 private to this module; what a caller sees is the typed value.
 
-Examples: `find` (an option in, an option of a byte range out) and `Event`
-with `postEvent` and `nextEvent` (a string, enums and a structure, in both
-directions). Tests: the `find` and event checks of `ffi-test`
-(`FfiTest.dataChecks`); the unit tests of `text.rs` and the tag tests of
-`events.rs` in `editor-ffi`.
+Examples: `find` (an option in, an option of a byte range out), `Event` with
+`postEvent` and `nextEvent` (a string, enums and a structure, in both
+directions) and `Document` (a string in, to `Document.new` and
+`Document.replace`; a string out, from `Document.read`; byte offsets as
+`USize`; a refusal as a `Bool`). Tests: the `find` and event checks of
+`ffi-test` (`FfiTest.dataChecks`) and its document checks
+(`FfiTest.documentChecks`); the unit tests of `text.rs` and `document.rs` and
+the tag tests of `events.rs` in `editor-ffi`.
+
+The editor does not call these bindings. It reaches the library through a
+port it defines (`Editor/Text.lean`), whose real binding
+(`Editor/Text/Real.lean`) is the one caller of `Document`, and whose contract
+(`Editor/Text/Contract.lean`) runs against that binding in `contract-test`.
 
 ### The event queues
 
@@ -175,6 +185,45 @@ opaque Counter.increment (counter : @& Counter) : IO UInt64
 This exists for `FfiTest`, which uses it to see a counter's finaliser run. -/
 @[extern "editor_glue_counter_live"]
 opaque Counter.live : IO UInt64
+
+/-- The type behind `Document`. It is opaque, so the only way to get a
+document is `Document.new`. -/
+opaque DocumentPointed : NonemptyType
+
+/-- Text held by the Rust library, edited in place: a second handle, and the
+example of a string going in and one coming back. It is the placeholder the
+text port's real binding runs against (`Editor/Text/Real.lean`), and the
+editor reaches it only through that port. -/
+def Document : Type :=
+  DocumentPointed.type
+
+instance : Nonempty Document :=
+  DocumentPointed.property
+
+/-- A new document holding `text`. -/
+@[extern "editor_glue_document_new"]
+opaque Document.new (text : @& String) : IO Document
+
+/-- Replaces the bytes of the document from `start` up to, not including,
+`stop` with `text`, and returns whether the library did. An empty range
+inserts, and an empty `text` deletes.
+
+`false`, with nothing changed, unless both offsets are character boundaries
+of the document's text, within it, and `start ≤ stop`. -/
+@[extern "editor_glue_document_replace"]
+opaque Document.replace (document : @& Document) (start stop : USize) (text : @& String) : IO Bool
+
+/-- A copy of the whole text of the document. -/
+@[extern "editor_glue_document_read"]
+opaque Document.read (document : @& Document) : IO String
+
+/-- How many documents the Rust library holds that have not been freed.
+
+This exists for tests: `FfiTest` uses it to see a document's finaliser run,
+and `ContractTest` to see that the text port's table is the only holder of
+its documents. -/
+@[extern "editor_glue_document_live"]
+opaque Document.live : IO UInt64
 
 /-- A range of byte offsets into text: from `start` up to, not including,
 `stop`. -/

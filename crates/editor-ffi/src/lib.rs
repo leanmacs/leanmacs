@@ -41,7 +41,8 @@
 //! `a_counter_is_live_from_new_until_free` and
 //! `a_document_is_edited_and_read_through_c_and_is_live_from_new_until_free`
 //! in `tests/c_api.rs`; the four counter checks of `ffi-test`
-//! (`handleChecks`).
+//! (`handleChecks`) and its check that a document is freed
+//! (`documentChecks`).
 //!
 //! ## Plain data
 //!
@@ -64,7 +65,7 @@
 //! tests in `text.rs` and `document.rs`; the tag tests in `events.rs`;
 //! `find_fills_the_range_it_found_and_reports_whether_it_found_one` and the
 //! document test in `tests/c_api.rs`; the `find` and event checks of
-//! `ffi-test` (`dataChecks`).
+//! `ffi-test` (`dataChecks`) and its document checks (`documentChecks`).
 //!
 //! ## The event queues
 //!

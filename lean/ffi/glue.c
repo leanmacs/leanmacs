@@ -152,6 +152,80 @@ lean_obj_res editor_glue_text_find(b_lean_obj_arg haystack,
   return some;
 }
 
+// ---- The document ----
+//
+// A second handle, whose functions take a string and hand one back. It is
+// the placeholder text the editor's text port is bound to
+// (`Editor/Text/Real.lean`).
+
+// The Rust library's document.
+typedef struct editor_ffi_document editor_ffi_document;
+// The library's `RawText`.
+typedef struct {
+  uint8_t *text;
+  size_t text_len;
+} editor_ffi_raw_text;
+editor_ffi_document *editor_ffi_document_new(const uint8_t *text, size_t len);
+bool editor_ffi_document_replace(const editor_ffi_document *document,
+                                 size_t start, size_t end, const uint8_t *text,
+                                 size_t len);
+void editor_ffi_document_read(const editor_ffi_document *document,
+                              editor_ffi_raw_text *out);
+void editor_ffi_document_free(editor_ffi_document *document);
+uint64_t editor_ffi_document_live(void);
+
+static lean_external_class *document_class;
+static pthread_once_t document_class_once = PTHREAD_ONCE_INIT;
+
+// Runs when Lean drops the last reference to a document, on whichever thread
+// dropped it. The only caller of the library's `free`.
+static void document_finalize(void *document) {
+  editor_ffi_document_free(document);
+}
+
+// A document holds no Lean objects, so there is nothing to visit.
+static void document_foreach(void *document, b_lean_obj_arg visitor) {
+  (void)document;
+  (void)visitor;
+}
+
+static void document_class_register(void) {
+  document_class =
+      lean_register_external_class(document_finalize, document_foreach);
+}
+
+// `Editor.Ffi.Document.new : @& String → IO Document`
+lean_obj_res editor_glue_document_new(b_lean_obj_arg text) {
+  pthread_once(&document_class_once, document_class_register);
+  return lean_io_result_mk_ok(lean_alloc_external(
+      document_class,
+      editor_ffi_document_new(string_bytes(text), string_len(text))));
+}
+
+// `Editor.Ffi.Document.replace : @& Document → USize → USize → @& String →
+// IO Bool`
+lean_obj_res editor_glue_document_replace(b_lean_obj_arg document, size_t start,
+                                          size_t stop, b_lean_obj_arg text) {
+  return lean_io_result_mk_ok(lean_box(
+      editor_ffi_document_replace(lean_get_external_data(document), start, stop,
+                                  string_bytes(text), string_len(text))));
+}
+
+// `Editor.Ffi.Document.read : @& Document → IO String`
+lean_obj_res editor_glue_document_read(b_lean_obj_arg document) {
+  editor_ffi_raw_text raw;
+  editor_ffi_document_read(lean_get_external_data(document), &raw);
+  lean_object *text =
+      lean_mk_string_from_bytes((const char *)raw.text, raw.text_len);
+  editor_ffi_text_free(raw.text, raw.text_len);
+  return lean_io_result_mk_ok(text);
+}
+
+// `Editor.Ffi.Document.live : IO UInt64`
+lean_obj_res editor_glue_document_live(void) {
+  return lean_io_result_mk_ok(lean_box_uint64(editor_ffi_document_live()));
+}
+
 // ---- The event queues ----
 //
 // Rust threads push events and Lean pulls them: nothing here calls Lean. A
