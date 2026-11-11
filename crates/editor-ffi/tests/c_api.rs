@@ -44,6 +44,11 @@ fn message(kind: SourceKind, id: u64, code: u64, text: &str) -> Event {
 
 /// Posts a message to the queue `queue` and returns whether it was accepted.
 fn post(queue: u8, source_id: u64, code: u64, text: &str) -> bool {
+    post_bytes(queue, source_id, code, text.as_bytes())
+}
+
+/// [`post`] with text given as bytes, which need not be UTF-8.
+fn post_bytes(queue: u8, source_id: u64, code: u64, text: &[u8]) -> bool {
     // SAFETY: the pointer and length are those of `text`, alive for the call.
     unsafe { editor_ffi_events_post(queue, source_id, code, text.as_ptr(), text.len()) }
 }
@@ -108,6 +113,11 @@ fn wait_for_parked(queue: u8, pulls: u64) {
 
 /// `editor_ffi_text_find` over string slices; `None` when it returns false.
 fn find(haystack: &str, needle: &str, start: Option<usize>) -> Option<(u64, u64)> {
+    find_bytes(haystack.as_bytes(), needle.as_bytes(), start)
+}
+
+/// [`find`] with both texts given as bytes, which need not be UTF-8.
+fn find_bytes(haystack: &[u8], needle: &[u8], start: Option<usize>) -> Option<(u64, u64)> {
     let mut range = MaybeUninit::<ByteRange>::uninit();
     // SAFETY: the pointers and lengths are those of the two slices, and
     // `range` is writable for one record.
@@ -163,6 +173,30 @@ fn find_fills_the_range_it_found_and_reports_whether_it_found_one() {
     assert_eq!(find("héllo wörld, hello", "llo", Some(2)), None);
 }
 
+#[test]
+fn find_searches_bytes_that_are_not_utf8_as_text_with_replacement_characters() {
+    // 0xFF is never valid UTF-8. It is read as U+FFFD, which is three bytes
+    // long, so the offsets are those of the text after the replacement and
+    // not of the bytes passed in, where "bc" starts at 2.
+    assert_eq!(
+        find_bytes(&[b'a', 0xFF, b'b', b'c'], b"bc", None),
+        Some((4, 6))
+    );
+    // A start offset counts in the replaced text too: 4 is where "bc"
+    // starts, and 2 is inside the replacement character.
+    assert_eq!(
+        find_bytes(&[b'a', 0xFF, b'b', b'c'], b"bc", Some(4)),
+        Some((4, 6))
+    );
+    assert_eq!(find_bytes(&[b'a', 0xFF, b'b', b'c'], b"bc", Some(2)), None);
+    // A needle that is not UTF-8 is read the same way, so it matches a
+    // replacement character in the haystack.
+    assert_eq!(
+        find_bytes("a\u{FFFD}b".as_bytes(), &[0xFF], None),
+        Some((1, 4))
+    );
+}
+
 /// The whole life of the two process-wide queues, in order, because quit is
 /// for good.
 #[test]
@@ -177,6 +211,14 @@ fn the_process_wide_queues_carry_events_until_they_are_quit() {
     assert_eq!(
         next(EDITOR),
         Some(message(SourceKind::Lean, 8, u64::MAX, ""))
+    );
+
+    // Text that is not UTF-8 is accepted, with U+FFFD for each invalid
+    // sequence: there is no failure to report, and no panic.
+    assert!(post_bytes(EDITOR, 7, 43, &[b'a', 0xFF, b'b']));
+    assert_eq!(
+        next(EDITOR),
+        Some(message(SourceKind::Lean, 7, 43, "a\u{FFFD}b"))
     );
 
     // A pull parks on its own queue, and a post to that queue wakes it.

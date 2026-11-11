@@ -357,6 +357,10 @@ pub struct RawEvent {
 /// Returns false, queueing nothing, if `queue` names no queue or if the
 /// queue has been quit.
 ///
+/// `text` is expected to be UTF-8, as a Lean string is. Text that is not is
+/// still accepted: the event's text has U+FFFD in place of each invalid
+/// sequence.
+///
 /// # Safety
 ///
 /// `text` points to `text_len` readable bytes.

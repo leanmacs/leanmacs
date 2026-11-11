@@ -29,6 +29,12 @@ pub struct ByteRange {
 /// [`find`] for C: returns whether there is a match, and if so fills `out`
 /// with its range. `start` is read only when `has_start` is set.
 ///
+/// Both texts are expected to be UTF-8, as a Lean string is. Bytes that are
+/// not are read as text with U+FFFD in place of each invalid sequence, in
+/// the haystack and in the needle alike. The search runs over that text, so
+/// `start` and the range filled in are byte offsets into it, not into the
+/// bytes passed in: a replacement character is three bytes long.
+///
 /// # Safety
 ///
 /// `haystack` and `needle` point to `haystack_len` and `needle_len` readable
@@ -62,7 +68,9 @@ pub unsafe extern "C" fn editor_ffi_text_find(
 ///
 /// A Lean string is UTF-8, so this borrows. The conversion is the lossy one
 /// only so that a caller that breaks that rule gets replacement characters
-/// and not undefined behaviour; there is no failure to report.
+/// and not undefined behaviour; there is no failure to report. Each invalid
+/// sequence becomes U+FFFD, which is three bytes long, so the result can be
+/// longer than `len`.
 ///
 /// # Safety
 ///
