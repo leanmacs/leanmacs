@@ -12,10 +12,10 @@
 //!
 //! # Conventions
 //!
-//! Every binding follows the rules below. Each rule has one small real
-//! example in this crate and names the tests that pin it. This is Rust's
-//! side of each rule; Lean's side is in the module docs of
-//! `lean/Editor/Ffi.lean`.
+//! Every binding follows the rules below. Each rule that can have one has a
+//! small real example in this crate, and each names the tests that pin it
+//! or says that none does. This is Rust's side of each rule; Lean's side is
+//! in the module docs of `lean/Editor/Ffi.lean`.
 //!
 //! `ffi-test` is the Lean test executable (`lean/FfiTest.lean`). It is
 //! linked against this library like the editor, and `mise run ffi-test` runs
@@ -78,9 +78,21 @@
 //! Lean calls this library. The library never calls a Lean function and
 //! holds no Lean closure: it queues an event and Lean pulls it.
 //!
-//! Test: `mise run test` builds and runs this crate's tests with no Lean
-//! runtime to link against, so a reference to a Lean function would fail
-//! the link.
+//! No test pins this rule, and the build enforces only part of it; the rest
+//! is kept by review.
+//!
+//! `mise run test` links this crate's tests with no Lean runtime. A test
+//! that reaches a function which calls a Lean runtime function therefore
+//! fails to link, with that function as an undefined symbol. Seen once by
+//! hand, with a function that called `lean_io_mk_world` and a unit test
+//! that called it.
+//!
+//! A function that no test reaches is not caught. The same experiment
+//! without the test passed `mise run test`, `mise run lint` and the release
+//! build of the archive: the linker drops the unreached function from the
+//! test executables, and an archive is not linked at all. The Lean
+//! executables were not built with it; they link the Lean runtime, which
+//! defines that function.
 //!
 //! ## An exception from the interpreter ends the process
 //!
@@ -118,10 +130,21 @@
 //! `const`-initialised statics, so the library needs no start-up call
 //! either.
 //!
-//! What holds Lean to this is the build. The `lean` compiler runs a module's
-//! initialisers when it compiles a module that imports it, in a process
-//! where this library's symbols do not exist, so `mise run lean` fails on an
-//! initialiser that calls the library.
+//! No test pins this rule, and the build enforces only part of it; the rest
+//! is kept by review.
+//!
+//! A Lean `initialize` declaration that calls a binding fails
+//! `mise run lean`. The `lean` compiler runs such a declaration when it
+//! compiles a module that imports the one holding it, in a process where
+//! this library's symbols do not exist, and reports "Could not find native
+//! implementation of external declaration" for the importing module. Seen
+//! once by hand, with an `initialize` in `lean/Editor/Ffi.lean` that called
+//! `Counter.live`.
+//!
+//! A plain Lean constant whose value calls a binding is not caught. It
+//! builds, and Lean evaluates it in the module's initialiser when the
+//! executable starts, where the symbols exist. Seen once by hand, with a
+//! constant defined as `add 2 3`.
 
 pub mod counter;
 pub mod events;

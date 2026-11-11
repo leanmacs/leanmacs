@@ -8,9 +8,10 @@ Rust function and builds the Lean value for its result with `lean.h`.
 
 ## Conventions
 
-Every binding follows the rules below. Each has one small real example in this
-module and names the tests that pin it. This is Lean's side of each rule;
-Rust's side is in the crate docs of `crates/editor-ffi/src/lib.rs`.
+Every binding follows the rules below. Each rule that can have one has a small
+real example in this module, and each names the tests that pin it or says that
+none does. This is Lean's side of each rule; Rust's side is in the crate docs
+of `crates/editor-ffi/src/lib.rs`.
 
 `ffi-test` is the test executable (`FfiTest.lean`), linked against the real
 library like the editor. `mise run ffi-test` runs its checks and its
@@ -64,6 +65,15 @@ fake event source, for tests.
 Tests: the three queue checks of `ffi-test` (`FfiTest.queueChecks`); the unit
 tests of `events.rs` in `editor-ffi`, which need no Lean.
 
+### Calls go one way
+
+Lean calls the library, and the library never calls Lean: no binding hands
+Rust a closure or a Lean function to call back, and the glue's wrappers call
+no Lean code. What Rust has to say arrives as an event.
+
+No test pins this rule, and nothing in the build enforces it; it is kept by
+review. The crate docs of `editor-ffi` say how far the Rust build goes.
+
 ### An exception from the interpreter ends the process
 
 Deep recursion or a missing native symbol in interpreted code makes Lean's
@@ -94,9 +104,21 @@ of `events.rs` in `editor-ffi`.
 ### Nothing runs at initialisation
 
 A module initialiser must not call the library: make library objects from
-`main` or later. The `lean` compiler runs a module's initialisers when it
-compiles a module that imports it, in a process where the Rust symbols do not
-exist, so `mise run lean` fails on an initialiser that calls a binding.
+`main` or later.
+
+No test pins this rule, and the build enforces only part of it.
+
+- An `initialize` declaration that calls a binding fails `mise run lean`. The
+  `lean` compiler runs such a declaration when it compiles a module that
+  imports this one, in a process where the Rust symbols do not exist, and
+  reports "Could not find native implementation of external declaration" for
+  the importing module. Seen once by hand, with an `initialize` that called
+  `Counter.live` here: `Main` and `FfiTest` failed to build.
+- A plain constant whose value calls a binding builds. Lean evaluates it in
+  the module's initialiser when the executable starts, where the symbols do
+  exist, so nothing stops it. Seen once by hand, with a constant defined as
+  `add 2 3`. Keeping such constants out is left to review; a list of checks
+  is a function of `Unit` in `FfiTest.lean` for this reason.
 -/
 
 namespace Editor.Ffi
