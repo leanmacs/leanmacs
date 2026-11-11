@@ -17,10 +17,10 @@ Lake builds the executable. The Rust library is a Lake target that runs
 - **`supportInterpreter := true`** on the executable. It exports the
   program's symbols so that interpreted config can call compiled code.
   Without it the interpreter aborts on the first missing symbol.
-- **A small glue file** in C/C++ holds what neither language can express:
+- **A small glue file** in C holds what neither language can express:
   one-line wrappers where a Lean `@[extern]` signature needs `lean.h`
-  (which is mostly inline functions Rust cannot call), the guard described
-  below, and the entry point. The spike's was 133 lines.
+  (which is mostly inline functions Rust cannot call), and the entry point.
+  The spike's was 133 lines.
 - **macOS** needs the system linker (`LEAN_CC=/usr/bin/cc`), because Lean's
   bundled linker cannot link Apple frameworks, plus the toolchain's library
   directory and the framework list winit needs.
@@ -91,13 +91,27 @@ once. This needs `supportInterpreter`, `enableInitializersExecution` before
 the import, and `importModules (loadExts := true)`. Every other combination
 failed loudly instead of producing a second copy.
 
-### The guard
+### An exception from the interpreter ends the process
 
 Deep recursion or a missing native symbol in interpreted code raises a C++
 exception that Lean's `try`/`catch` does not see, and the process aborts.
-Every call from compiled code into config (running a command, a handler, a
-job, `setup`) goes through a C++ `try`/`catch` in the glue file that returns
-an ordinary error.
+That is left as it is. A call from compiled code into config (running a
+command, a handler, a job, `setup`) is an ordinary call with no guard around
+it, and the glue has no C++, no terminate handler and no signal handler.
+
+Only a C++ `try`/`catch` could stop the exception, and it could not restore
+the state from before it. The compiled Lean frames the exception passes
+through are C, so they release nothing: references leak, and `finally`
+blocks and lock releases do not run. A crash is safer than carrying on in
+that state.
+
+Lean gives each thread it creates a 1 GiB stack, and the interpreter's check
+fires only once that is full. A runaway recursion in config therefore takes
+a noticeable pause and over a gigabyte of memory before it ends the process.
+Which stack size the threads that run config get is decided with the config
+work.
+
+`ffi-test overflow` (`lean/FfiTest.lean`) pins the abort.
 
 ## The editor API is an interface
 

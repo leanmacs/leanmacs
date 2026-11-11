@@ -128,7 +128,7 @@ Cargo for the static library:
 
 | Part | Contents |
 |---|---|
-| `Editor.Ffi` | Bindings to the library, and a small C/C++ glue file. |
+| `Editor.Ffi` | Bindings to the library, and a small C glue file. |
 | `Editor` | The interfaces and their models, editor state, the command loop, jobs, the config session. |
 | Standard library | evil, the minibuffer; later agents, review, version control, the rdm client. |
 | `Main` | Wires the real bindings together and starts the loop. |
