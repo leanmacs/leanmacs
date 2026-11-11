@@ -1,4 +1,5 @@
 import Editor.Command.Append
+import Editor.Job
 
 /-!
 # The editor
