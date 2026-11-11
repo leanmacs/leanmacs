@@ -15,3 +15,11 @@ warningAsError = true
 [[lean_lib]]
 name = "Editor"
 roots = ["Editor", "EditorHost"]
+
+# The Lean formatter (`mise run lean-fmt`, `mise run lean-format`). Its
+# releases are tagged with the Lean toolchain they are built for, so bump
+# this together with `lean-toolchain`.
+[[require]]
+name = "lean-fmt"
+git = "https://github.com/jcreinhold/lean-fmt"
+rev = "v4.35.0"

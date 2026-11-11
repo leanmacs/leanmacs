@@ -26,7 +26,7 @@ local changed = new Mapping<String, Step> {
     }
     ["lean"] {
         glob = List("lean/**", "mise.toml")
-        check = "mise run lean"
+        check = "mise run lean-fmt"
         exclusive = true
     }
 }

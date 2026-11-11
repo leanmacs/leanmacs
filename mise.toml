@@ -43,6 +43,26 @@ dir = "lean"
 # the lakefile does not reach.
 run = "lake build --wfail"
 
+# lean-fmt is a Lake dependency (lean/lakefile.toml), pinned to the tag named
+# after the Lean toolchain. Both tasks wait for `lean`, so two Lake builds
+# never run in lean/ at once.
+[tasks.lean-fmt]
+description = "Check Lean formatting and lean-fmt's lints; changes nothing"
+depends = ["lean"]
+dir = "lean"
+run = [
+  "lake exe lean-fmt format --check",
+  "lake exe lean-fmt check",
+]
+
+[tasks.lean-format]
+description = "Rewrite the Lean sources in lean-fmt's style and apply its safe lint fixes"
+dir = "lean"
+run = [
+  "lake exe lean-fmt format",
+  "lake exe lean-fmt check --fix",
+]
+
 [tasks.ci]
 description = "The whole gate; `hk check` runs this, and it gates review and landing (rdm's dispatch.verify)"
-depends = ["fmt", "lint", "deny", "doc", "test", "lean"]
+depends = ["fmt", "lint", "deny", "doc", "test", "lean", "lean-fmt"]
