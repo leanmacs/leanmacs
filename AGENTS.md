@@ -87,9 +87,12 @@ small enough to fake by hand:
   line; see `docs/design/concurrency.md`.
 - **Child processes belong to the Rust process service.** Don't spawn them
   with Lean's `IO.Process`: it never kills or reaps them.
-- **Every call from compiled Lean into interpreted config goes through the
-  guard** in the glue file, which turns a C++ exception from the interpreter
-  into an ordinary error.
+- **An exception from the interpreter ends the process.** A C++ exception
+  that Lean's interpreter throws inside a call from compiled Lean into
+  interpreted config (a stack overflow, a missing native symbol) is not
+  caught, and the process aborts: state cannot be restored cleanly once
+  compiled frames are skipped. Don't add a guard, a terminate or signal
+  handler, or a C++ source to the glue to catch it.
 
 ### Prefer an existing library, behind a port
 
