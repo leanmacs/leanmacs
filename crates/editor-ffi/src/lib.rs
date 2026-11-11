@@ -36,8 +36,12 @@
 //! An object cannot be used after it is freed, because nothing can name it:
 //! it is freed only when no reference to it is left.
 //!
-//! Example: [`counter`]. Tests: `a_counter_is_live_from_new_until_free` in
-//! `tests/c_api.rs`; the four counter checks of `ffi-test` (`handleChecks`).
+//! Examples: [`counter`], and [`document`], the placeholder text the
+//! editor's text interface is bound to. Tests:
+//! `a_counter_is_live_from_new_until_free` and
+//! `a_document_is_edited_and_read_through_c_and_is_live_from_new_until_free`
+//! in `tests/c_api.rs`; the four counter checks of `ffi-test`
+//! (`handleChecks`).
 //!
 //! ## Plain data
 //!
@@ -54,11 +58,13 @@
 //! dereferences a pointer is `unsafe` and says what it requires.
 //!
 //! Examples: [`text::editor_ffi_text_find`] (an option in, an option of a
-//! byte range out) and an event (a string, enums and a structure, in both
-//! directions). Tests: the unit tests in `text.rs`; the tag tests in
-//! `events.rs`; `find_fills_the_range_it_found_and_reports_whether_it_found_one`
-//! in `tests/c_api.rs`; the `find` and event checks of `ffi-test`
-//! (`dataChecks`).
+//! byte range out), an event (a string, enums and a structure, in both
+//! directions) and a document (a string in, to `new` and `replace`; a string
+//! out, in [`document::RawText`]; a refusal as a `bool`). Tests: the unit
+//! tests in `text.rs` and `document.rs`; the tag tests in `events.rs`;
+//! `find_fills_the_range_it_found_and_reports_whether_it_found_one` and the
+//! document test in `tests/c_api.rs`; the `find` and event checks of
+//! `ffi-test` (`dataChecks`).
 //!
 //! ## The event queues
 //!
@@ -147,6 +153,7 @@
 //! constant defined as `add 2 3`.
 
 pub mod counter;
+pub mod document;
 pub mod events;
 pub mod main_thread;
 pub mod text;

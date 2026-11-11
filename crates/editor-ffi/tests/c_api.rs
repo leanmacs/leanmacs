@@ -1,11 +1,12 @@
-//! The C functions over the counter, the event queues and `find`, called the
-//! way the C glue calls them: with raw pointers, lengths and tags.
+//! The C functions over the counter, the document, the event queues and
+//! `find`, called the way the C glue calls them: with raw pointers, lengths
+//! and tags.
 //!
 //! This is an integration test because the functions work on state the whole
-//! process shares (the count of live counters, the two queues), and an
-//! integration test is its own process. Each piece of that state belongs to
-//! one test function, so the harness running them in parallel cannot make one
-//! disturb another.
+//! process shares (the counts of live counters and of live documents, the two
+//! queues), and an integration test is its own process. Each piece of that
+//! state belongs to one test function, so the harness running them in
+//! parallel cannot make one disturb another.
 
 use std::mem::MaybeUninit;
 use std::slice;
@@ -16,6 +17,10 @@ use std::time::{Duration, Instant};
 use editor_ffi::counter::{
     editor_ffi_counter_free, editor_ffi_counter_increment, editor_ffi_counter_live,
     editor_ffi_counter_new,
+};
+use editor_ffi::document::{
+    Document, RawText, editor_ffi_document_free, editor_ffi_document_live, editor_ffi_document_new,
+    editor_ffi_document_read, editor_ffi_document_replace,
 };
 use editor_ffi::events::{
     Event, EventKind, QueueId, RawEvent, Source, SourceKind, editor_ffi_events_next,
@@ -163,6 +168,108 @@ fn a_counter_is_live_from_new_until_free() {
     // one time it is freed.
     unsafe { editor_ffi_counter_free(other) };
     assert_eq!(editor_ffi_counter_live(), before);
+}
+
+/// A new document holding `text`, given as bytes, which need not be UTF-8.
+fn document_new(text: &[u8]) -> *mut Document {
+    // SAFETY: the pointer and length are those of `text`, alive for the call.
+    unsafe { editor_ffi_document_new(text.as_ptr(), text.len()) }
+}
+
+/// Replaces the bytes `start..end` of `document` with `text`, given as
+/// bytes, which need not be UTF-8. Returns whether the library did.
+///
+/// # Safety
+///
+/// `document` came from [`document_new`] and has not been freed.
+unsafe fn document_replace(
+    document: *const Document,
+    start: usize,
+    end: usize,
+    text: &[u8],
+) -> bool {
+    // SAFETY: the caller guarantees `document`; the pointer and length are
+    // those of `text`, alive for the call.
+    unsafe { editor_ffi_document_replace(document, start, end, text.as_ptr(), text.len()) }
+}
+
+/// The text of `document`, read as the glue reads it: fill the record, copy
+/// the text, hand the buffer back.
+///
+/// # Safety
+///
+/// `document` came from [`document_new`] and has not been freed.
+unsafe fn document_read(document: *const Document) -> String {
+    let mut raw = MaybeUninit::<RawText>::uninit();
+    // SAFETY: the caller guarantees `document`, and `raw` is writable for
+    // one record.
+    unsafe { editor_ffi_document_read(document, raw.as_mut_ptr()) };
+    // SAFETY: the call filled the record.
+    let raw = unsafe { raw.assume_init() };
+    // SAFETY: the record's buffer is `text_len` bytes, owned by this caller
+    // until it is handed back.
+    let text = unsafe { slice::from_raw_parts(raw.text, raw.text_len) }.to_vec();
+    // SAFETY: the buffer came from the library in this record, and is handed
+    // back once.
+    unsafe { editor_ffi_text_free(raw.text, raw.text_len) };
+    String::from_utf8(text).expect("a document's text is UTF-8")
+}
+
+#[test]
+fn a_document_is_edited_and_read_through_c_and_is_live_from_new_until_free() {
+    let before = editor_ffi_document_live();
+
+    // "é" and "ö" are two bytes each, and the NUL is a byte of the text.
+    let document = document_new("héllo\0wörld".as_bytes());
+    assert_eq!(editor_ffi_document_live(), before + 1);
+    // SAFETY: here and below, `document` came from `document_new` and is
+    // not freed until the call that says so.
+    unsafe {
+        assert_eq!(document_read(document), "héllo\0wörld");
+
+        // A replace changes the text at its byte offsets and returns true.
+        assert!(document_replace(document, 6, 7, b" "));
+        assert_eq!(document_read(document), "héllo wörld");
+        assert!(document_replace(document, 13, 13, "!".as_bytes()));
+        assert!(document_replace(document, 0, 1, b""));
+        assert_eq!(document_read(document), "éllo wörld!");
+
+        // A refused replace returns false and changes nothing: an offset
+        // inside a character, a backwards range, an offset past the end.
+        assert!(!document_replace(document, 1, 1, b"x"));
+        assert!(!document_replace(document, 4, 2, b"x"));
+        assert!(!document_replace(document, 0, usize::MAX, b""));
+        assert_eq!(document_read(document), "éllo wörld!");
+    }
+
+    // Text that is not UTF-8 is accepted, with U+FFFD for each invalid
+    // sequence: there is no failure to report, and no panic. 0xFF is never
+    // valid UTF-8.
+    let other = document_new(&[b'a', 0xFF, b'b']);
+    assert_eq!(editor_ffi_document_live(), before + 2);
+    // SAFETY: here and below, `other` came from `document_new` and is not
+    // freed until the call that says so.
+    unsafe {
+        assert_eq!(document_read(other), "a\u{FFFD}b");
+        // Offsets are those of the text the document holds, where the
+        // replacement character is three bytes long and "b" is at 4, not of
+        // the bytes passed in, where it was at 2.
+        assert!(!document_replace(other, 2, 3, b""));
+        assert!(document_replace(other, 4, 5, &[0xFF, b'c']));
+        assert_eq!(document_read(other), "a\u{FFFD}\u{FFFD}c");
+    }
+
+    // SAFETY: `document` came from `document_new`, and this is the one time
+    // it is freed.
+    unsafe { editor_ffi_document_free(document) };
+    assert_eq!(editor_ffi_document_live(), before + 1);
+    // SAFETY: `other` is not freed yet.
+    assert_eq!(unsafe { document_read(other) }, "a\u{FFFD}\u{FFFD}c");
+
+    // SAFETY: `other` came from `document_new`, and this is the one time it
+    // is freed.
+    unsafe { editor_ffi_document_free(other) };
+    assert_eq!(editor_ffi_document_live(), before);
 }
 
 #[test]
