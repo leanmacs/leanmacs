@@ -19,7 +19,9 @@ fn find_tool(name: &str) -> PathBuf {
             }
         }
     }
-    let elan = PathBuf::from(env::var("HOME").unwrap()).join(".elan/bin").join(name);
+    let elan = PathBuf::from(env::var("HOME").unwrap())
+        .join(".elan/bin")
+        .join(name);
     if elan.is_file() {
         return elan;
     }
@@ -27,7 +29,9 @@ fn find_tool(name: &str) -> PathBuf {
 }
 
 fn run(cmd: &mut Command) -> String {
-    let out = cmd.output().unwrap_or_else(|e| panic!("failed to run {cmd:?}: {e}"));
+    let out = cmd
+        .output()
+        .unwrap_or_else(|e| panic!("failed to run {cmd:?}: {e}"));
     if !out.status.success() {
         panic!(
             "{cmd:?} failed:\n{}\n{}",
@@ -41,8 +45,8 @@ fn run(cmd: &mut Command) -> String {
 /// The generated module initializer's symbol name varies across Lean
 /// versions (it may carry a package prefix), so read it from the IR.
 fn module_init_symbol(ir_c: &Path) -> String {
-    let src = fs::read_to_string(ir_c)
-        .unwrap_or_else(|e| panic!("reading {}: {e}", ir_c.display()));
+    let src =
+        fs::read_to_string(ir_c).unwrap_or_else(|e| panic!("reading {}: {e}", ir_c.display()));
     src.lines()
         .filter_map(|l| {
             let start = l.find("initialize_")?;
@@ -58,7 +62,13 @@ fn module_init_symbol(ir_c: &Path) -> String {
 fn main() {
     let manifest = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap());
     let lean_dir = manifest.join("lean");
-    for f in ["lakefile.toml", "lean-toolchain", "Editor.lean", "Editor", "EditorHost.lean"] {
+    for f in [
+        "lakefile.toml",
+        "lean-toolchain",
+        "Editor.lean",
+        "Editor",
+        "EditorHost.lean",
+    ] {
         println!("cargo:rerun-if-changed=lean/{f}");
     }
     println!("cargo:rerun-if-changed=shim/shim.c");
@@ -71,9 +81,11 @@ fn main() {
         .current_dir(&lean_dir)
         .args(["build", "Editor", "Editor:static"]));
 
-    let prefix = run(Command::new(&lean).current_dir(&lean_dir).arg("--print-prefix"))
-        .trim()
-        .to_string();
+    let prefix = run(Command::new(&lean)
+        .current_dir(&lean_dir)
+        .arg("--print-prefix"))
+    .trim()
+    .to_string();
     let prefix = PathBuf::from(prefix);
     let build = lean_dir.join(".lake/build");
 
@@ -97,7 +109,10 @@ fn main() {
     // dlsym-able: the Lean interpreter calls compiled code (and our
     // @[extern] wrappers) by looking up symbols in the running executable.
     if cfg!(target_os = "macos") {
-        println!("cargo:rustc-link-arg=-Wl,-force_load,{}", static_lib.display());
+        println!(
+            "cargo:rustc-link-arg=-Wl,-force_load,{}",
+            static_lib.display()
+        );
         println!("cargo:rustc-link-arg=-Wl,-export_dynamic");
     } else {
         println!("cargo:rustc-link-arg=-Wl,--whole-archive");
@@ -112,5 +127,8 @@ fn main() {
     println!("cargo:rustc-link-arg=-Wl,-rpath,{}", lean_lib.display());
 
     println!("cargo:rustc-env=EDITOR_LEAN_SYSROOT={}", prefix.display());
-    println!("cargo:rustc-env=EDITOR_OLEAN_DIR={}", lib_dir.join("lean").display());
+    println!(
+        "cargo:rustc-env=EDITOR_OLEAN_DIR={}",
+        lib_dir.join("lean").display()
+    );
 }

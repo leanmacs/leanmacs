@@ -18,8 +18,11 @@ use std::time::Instant;
 
 unsafe extern "C" {
     fn shim_init() -> *mut c_char;
-    fn shim_session_new(sysroot: *const c_char, olean_dir: *const c_char, err: *mut *mut c_char)
-    -> *mut c_void;
+    fn shim_session_new(
+        sysroot: *const c_char,
+        olean_dir: *const c_char,
+        err: *mut *mut c_char,
+    ) -> *mut c_void;
     fn shim_session_free(s: *mut c_void);
     fn shim_session_eval(s: *mut c_void, src: *const c_char, out: *mut *mut c_char) -> c_int;
     fn shim_session_run(s: *mut c_void, name: *const c_char, out: *mut *mut c_char) -> c_int;
@@ -29,8 +32,11 @@ unsafe extern "C" {
         src: *const c_char,
         out: *mut *mut c_char,
     ) -> c_int;
-    fn shim_session_remove_chunk(s: *mut c_void, name: *const c_char, out: *mut *mut c_char)
-    -> c_int;
+    fn shim_session_remove_chunk(
+        s: *mut c_void,
+        name: *const c_char,
+        out: *mut *mut c_char,
+    ) -> c_int;
     fn shim_free(p: *mut c_char);
 }
 
@@ -100,7 +106,11 @@ impl Session {
         let oleans = cstr(env!("EDITOR_OLEAN_DIR"));
         let mut err = std::ptr::null_mut();
         let s = unsafe { shim_session_new(sysroot.as_ptr(), oleans.as_ptr(), &mut err) };
-        if s.is_null() { Err(take_string(err)) } else { Ok(Session(s)) }
+        if s.is_null() {
+            Err(take_string(err))
+        } else {
+            Ok(Session(s))
+        }
     }
 
     fn call(f: impl FnOnce(*mut *mut c_char) -> c_int) -> Outcome {
@@ -124,7 +134,9 @@ impl Session {
     /// Add or replace a config chunk. Atomic: on failure nothing changes.
     fn set_chunk(&self, name: &str, src: &str) -> Outcome {
         let (name, src) = (cstr(name), cstr(src));
-        Self::call(|out| unsafe { shim_session_set_chunk(self.0, name.as_ptr(), src.as_ptr(), out) })
+        Self::call(|out| unsafe {
+            shim_session_set_chunk(self.0, name.as_ptr(), src.as_ptr(), out)
+        })
     }
 
     fn remove_chunk(&self, name: &str) -> Outcome {
@@ -163,21 +175,43 @@ enum Step {
 
 const DEMO: &[Step] = &[
     Step::Note("Two config chunks: `util` defines helpers, `cmds` uses them."),
-    Step::Chunk("util", "def greeting : String := \"hello\"\ndef line (s : String) : EditorM Unit := insertText (s ++ \"\\n\")"),
-    Step::Chunk("cmds", "def greet : EditorM Unit := line s!\"{greeting}, world\""),
+    Step::Chunk(
+        "util",
+        "def greeting : String := \"hello\"\ndef line (s : String) : EditorM Unit := insertText (s ++ \"\\n\")",
+    ),
+    Step::Chunk(
+        "cmds",
+        "def greet : EditorM Unit := line s!\"{greeting}, world\"",
+    ),
     Step::Run("greet"),
     Step::Note("Redefine `greet` by replacing its chunk: only `cmds` is re-elaborated."),
-    Step::Chunk("cmds", "def greet : EditorM Unit := line s!\"{greeting.toUpper}!!\""),
+    Step::Chunk(
+        "cmds",
+        "def greet : EditorM Unit := line s!\"{greeting.toUpper}!!\"",
+    ),
     Step::Run("greet"),
     Step::Note("Change `util`: `cmds` depends on it, so both are re-elaborated."),
-    Step::Chunk("util", "def greeting : String := \"bonjour\"\ndef line (s : String) : EditorM Unit := insertText (\"> \" ++ s ++ \"\\n\")"),
+    Step::Chunk(
+        "util",
+        "def greeting : String := \"bonjour\"\ndef line (s : String) : EditorM Unit := insertText (\"> \" ++ s ++ \"\\n\")",
+    ),
     Step::Run("greet"),
-    Step::Note("Break `util` (drop `line`): `cmds` no longer elaborates, so the reload is rejected."),
+    Step::Note(
+        "Break `util` (drop `line`): `cmds` no longer elaborates, so the reload is rejected.",
+    ),
     Step::Chunk("util", "def greeting : String := \"hola\""),
     Step::Run("greet"),
-    Step::Note("Proofs in config are checked against the current definitions (`greeting` is \"bonjour\")."),
-    Step::Chunk("facts", "theorem greeting_short : greeting.length < 5 := by decide"),
-    Step::Chunk("facts", "theorem greeting_short : greeting.length < 10 := by decide"),
+    Step::Note(
+        "Proofs in config are checked against the current definitions (`greeting` is \"bonjour\").",
+    ),
+    Step::Chunk(
+        "facts",
+        "theorem greeting_short : greeting.length < 5 := by decide",
+    ),
+    Step::Chunk(
+        "facts",
+        "theorem greeting_short : greeting.length < 10 := by decide",
+    ),
     Step::Note("Scratch evals live on top of the config, until the next reload."),
     Step::Eval("def scratch : EditorM Unit := line \"from scratch\""),
     Step::Run("scratch"),
@@ -224,7 +258,9 @@ fn demo(session: &Session) {
 fn soak(session: &Session) {
     let rss_mb = || -> f64 {
         let pid = std::process::id().to_string();
-        let out = std::process::Command::new("ps").args(["-o", "rss=", "-p", &pid]).output();
+        let out = std::process::Command::new("ps")
+            .args(["-o", "rss=", "-p", &pid])
+            .output();
         out.ok()
             .and_then(|o| String::from_utf8(o.stdout).ok())
             .and_then(|s| s.trim().parse::<f64>().ok())
@@ -243,7 +279,10 @@ fn soak(session: &Session) {
         assert!(ok, "reload failed: {out}");
         if round % 100 == 0 {
             let avg = start.elapsed().as_secs_f64() * 1000.0 / round as f64;
-            println!("after {round:>3} reloads: rss {:.1} MB, avg {avg:.2} ms/reload", rss_mb());
+            println!(
+                "after {round:>3} reloads: rss {:.1} MB, avg {avg:.2} ms/reload",
+                rss_mb()
+            );
         }
     }
 }
@@ -269,7 +308,14 @@ fn repl(session: &Session) {
     let stdin = io::stdin();
     let mut pending = String::new();
     loop {
-        print!("{}", if pending.is_empty() { "lean> " } else { "....> " });
+        print!(
+            "{}",
+            if pending.is_empty() {
+                "lean> "
+            } else {
+                "....> "
+            }
+        );
         io::stdout().flush().unwrap();
         let mut line = String::new();
         if stdin.lock().read_line(&mut line).unwrap() == 0 {
