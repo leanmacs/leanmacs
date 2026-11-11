@@ -1,0 +1,12 @@
+[package]
+name = "editor-ffi"
+version = "0.1.0"
+description = "The C functions the Lean editor binds to"
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[lib]
+# `staticlib` is what Lake links into the Lean executables. `rlib` is only so
+# the integration tests under `tests/` can link the crate.
+crate-type = ["staticlib", "rlib"]

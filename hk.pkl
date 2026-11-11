@@ -3,7 +3,7 @@ amends "package://github.com/jdx/hk/releases/download/v2.4.0/hk@2.4.0#/Config.pk
 // The full gate, defined once in mise.toml's `ci` task.
 local ci = new Mapping<String, Step> {
     ["mise_ci"] {
-        glob = List("**/*.rs", "**/Cargo.toml", "Cargo.lock", "mise.toml", "deny.toml", "lean/**", "shim/**")
+        glob = List("**/*.rs", "**/Cargo.toml", "Cargo.lock", "mise.toml", "deny.toml", "lean/**")
         check = "mise run ci"
         exclusive = true
     }
@@ -20,7 +20,7 @@ local changed = new Mapping<String, Step> {
         exclusive = true
     }
     ["rust"] {
-        glob = List("**/*.rs", "**/Cargo.toml", "Cargo.lock", "mise.toml", "shim/**")
+        glob = List("**/*.rs", "**/Cargo.toml", "Cargo.lock", "mise.toml")
         check = "mise run lint && mise run test"
         exclusive = true
     }
