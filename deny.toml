@@ -1,0 +1,11 @@
+# Dependency rules, checked by `mise run deny` (AGENTS.md, "Test behaviour,
+# never text"). Add one `deny` entry per workspace edge as crates appear:
+#   { crate = "<name>", wrappers = ["<the crates allowed to depend on it>"], reason = "<why>" }
+
+[graph]
+all-features = false
+no-default-features = false
+
+[bans]
+multiple-versions = "allow"
+deny = []

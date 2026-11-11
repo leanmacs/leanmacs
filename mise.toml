@@ -1,0 +1,46 @@
+[tools]
+rust = { version = "1.98.1", components = "rustfmt,clippy" }
+# cargo-deny is a prebuilt release binary that aqua's registry names with its
+# checksum, so installing it never compiles.
+"aqua:EmbarkStudios/cargo-deny" = "0.19.9"
+hk = "2.4.0"
+pkl = "0.32.1"
+# Lean (lean, lake) is not listed here: `lean/lean-toolchain` is its one pin
+# (AGENTS.md, "Toolchains"). mise reads that file through the `lean` plugin,
+# which the global mise config declares along with
+# `idiomatic_version_file_enable_tools = ["lean"]`.
+
+[env]
+RDM_ROOT = "{{env.HOME | default(value=env.USERPROFILE | default(value=''))}}/Projects/rdm-atlas-repo"
+RDM_PROJECT = "editor-project"
+
+[tasks.fmt]
+description = "Check Rust formatting"
+run = "cargo fmt --all --check"
+
+[tasks.lint]
+description = "Clippy over every crate and target, warnings are errors"
+run = "cargo clippy --workspace --all-targets --locked -- -D warnings"
+
+[tasks.deny]
+description = "cargo-deny's bans over the dependency graph (deny.toml); stale `wrappers` are errors"
+run = "cargo deny --locked check -D unused-wrapper bans"
+
+[tasks.doc]
+description = "Rustdoc over every crate, private items included, with broken intra-doc links denied"
+env = { RUSTDOCFLAGS = "-D rustdoc::broken_intra_doc_links" }
+run = "cargo doc --workspace --no-deps --document-private-items --locked"
+
+[tasks.test]
+description = "Rust unit, integration and doc tests"
+run = "cargo test --workspace --locked"
+
+# Runs in lean/, so mise picks the toolchain `lean/lean-toolchain` pins.
+[tasks.lean]
+description = "Build the Lean package with Lake"
+dir = "lean"
+run = "lake build"
+
+[tasks.ci]
+description = "The whole gate; `hk check` runs this, and it gates review and landing (rdm's dispatch.verify)"
+depends = ["fmt", "lint", "deny", "doc", "test", "lean"]

@@ -1,0 +1,42 @@
+amends "package://github.com/jdx/hk/releases/download/v2.4.0/hk@2.4.0#/Config.pkl"
+
+// The full gate, defined once in mise.toml's `ci` task.
+local ci = new Mapping<String, Step> {
+    ["mise_ci"] {
+        glob = List("**/*.rs", "**/Cargo.toml", "Cargo.lock", "mise.toml", "deny.toml", "lean/**", "shim/**")
+        check = "mise run ci"
+        exclusive = true
+    }
+}
+
+// The pre-commit gate: only the steps whose files are staged. `exclusive`
+// runs them one after another rather than contending for the target-dir
+// lock. Rustdoc and cargo-deny are left to the full gate (`hk check`,
+// `mise run ci`), run before review and on landing.
+local changed = new Mapping<String, Step> {
+    ["fmt"] {
+        glob = List("**/*.rs")
+        check = "mise run fmt"
+        exclusive = true
+    }
+    ["rust"] {
+        glob = List("**/*.rs", "**/Cargo.toml", "Cargo.lock", "mise.toml", "shim/**")
+        check = "mise run lint && mise run test"
+        exclusive = true
+    }
+    ["lean"] {
+        glob = List("lean/**", "mise.toml")
+        check = "mise run lean"
+        exclusive = true
+    }
+}
+
+// Check-only: the hooks report problems but never rewrite staged files.
+hooks {
+    ["pre-commit"] {
+        steps = changed
+    }
+    ["check"] {
+        steps = ci
+    }
+}
