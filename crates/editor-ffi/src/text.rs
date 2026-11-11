@@ -1,7 +1,9 @@
 //! Text search: the example of options and a byte range crossing the
 //! boundary.
 
+use std::borrow::Cow;
 use std::ops::Range;
+use std::{ptr, slice};
 
 /// The byte offsets of the first occurrence of `needle` in `haystack` at or
 /// after the byte offset `start` (the beginning, if `None`).
@@ -12,6 +14,84 @@ pub fn find(haystack: &str, needle: &str, start: Option<usize>) -> Option<Range<
     let start = start.unwrap_or(0);
     let found = start + haystack.get(start..)?.find(needle)?;
     Some(found..found + needle.len())
+}
+
+/// A range of byte offsets into text, half-open, as it crosses the boundary.
+#[repr(C)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ByteRange {
+    /// The offset of the first byte.
+    pub start: u64,
+    /// The offset one past the last byte.
+    pub end: u64,
+}
+
+/// [`find`] for C: returns whether there is a match, and if so fills `out`
+/// with its range. `start` is read only when `has_start` is set.
+///
+/// # Safety
+///
+/// `haystack` and `needle` point to `haystack_len` and `needle_len` readable
+/// bytes, and `out` to a writable [`ByteRange`].
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn editor_ffi_text_find(
+    haystack: *const u8,
+    haystack_len: usize,
+    needle: *const u8,
+    needle_len: usize,
+    has_start: bool,
+    start: usize,
+    out: *mut ByteRange,
+) -> bool {
+    // SAFETY: the caller guarantees both pointers and lengths.
+    let (haystack, needle) =
+        unsafe { (borrow(haystack, haystack_len), borrow(needle, needle_len)) };
+    let Some(found) = find(&haystack, &needle, has_start.then_some(start)) else {
+        return false;
+    };
+    let range = ByteRange {
+        start: found.start as u64,
+        end: found.end as u64,
+    };
+    // SAFETY: the caller guarantees `out` is writable.
+    unsafe { out.write(range) };
+    true
+}
+
+/// The text Lean lent for the length of a call: `len` bytes at `text`.
+///
+/// A Lean string is UTF-8, so this borrows. The conversion is the lossy one
+/// only so that a caller that breaks that rule gets replacement characters
+/// and not undefined behaviour; there is no failure to report.
+///
+/// # Safety
+///
+/// `text` points to `len` readable bytes that stay unchanged for `'a`.
+pub(crate) unsafe fn borrow<'a>(text: *const u8, len: usize) -> Cow<'a, str> {
+    // SAFETY: the caller guarantees the pointer, the length and the lifetime.
+    String::from_utf8_lossy(unsafe { slice::from_raw_parts(text, len) })
+}
+
+/// Gives `text` up as a buffer for a result record: its pointer and its
+/// length in bytes. The caller hands both back to [`editor_ffi_text_free`].
+pub(crate) fn lend(text: String) -> (*mut u8, usize) {
+    let bytes = text.into_bytes().into_boxed_slice();
+    let len = bytes.len();
+    (Box::into_raw(bytes).cast(), len)
+}
+
+/// Takes back a text buffer the library handed out in a result record, and
+/// frees it.
+///
+/// # Safety
+///
+/// `text` and `len` are the pointer and length of a buffer the library
+/// handed out, which has not been handed back and is not used again.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn editor_ffi_text_free(text: *mut u8, len: usize) {
+    // SAFETY: the caller guarantees these are the parts of a boxed slice
+    // `lend` gave up, taken back this once.
+    drop(unsafe { Box::from_raw(ptr::slice_from_raw_parts_mut(text, len)) });
 }
 
 #[cfg(test)]

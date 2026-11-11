@@ -15,18 +15,28 @@
 //! every pull, parked or later, returns [`Event::quit`] at once, and a push
 //! is dropped.
 //!
+//! The process has two queues, named by [`QueueId`]: the editor queue
+//! (input and events for the editor thread) and the completion queue
+//! (results of service requests, pulled by a dedicated Lean task). The C
+//! functions at the bottom only forward to those two instances; an event
+//! crosses as one [`RawEvent`], filled in a single call.
+//!
 //! [`ScriptedSource`] is the fake event source. It is public, not
-//! `cfg(test)`, so the tests of any crate can feed a queue a script of
+//! `cfg(test)`, so the tests of any crate, and the Lean test executable
+//! through [`editor_ffi_events_script_feed`], can feed a queue a script of
 //! events.
 //!
-//! The queue lives in `editor-ffi` because no other crate may depend on this
-//! one. A service crate defines its own port for reporting, and `editor-ffi`
-//! adapts that port to a queue.
+//! The queue lives in `editor-ffi`, which no other crate depends on. A
+//! service crate therefore defines its own port for reporting, and
+//! `editor-ffi` adapts that port to a queue.
 
 use std::collections::VecDeque;
+use std::io;
 use std::ops::Deref;
 use std::sync::{Condvar, Mutex, MutexGuard, PoisonError};
 use std::thread::{self, JoinHandle};
+
+use crate::text;
 
 /// What an [`Event`] says happened.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -242,13 +252,170 @@ impl ScriptedSource {
         }
     }
 
-    /// Feeds the script to `queue` from a new thread.
-    pub fn feed_from_thread<Q>(self, queue: Q) -> JoinHandle<()>
+    /// A source that will feed `count` messages from the script source
+    /// `source_id`, with the codes 0, 1, 2 and so on.
+    pub fn numbered(source_id: u64, count: u64) -> Self {
+        let source = Source {
+            kind: SourceKind::Script,
+            id: source_id,
+        };
+        Self::new(
+            (0..count)
+                .map(|code| Event::message(source, code, format!("scripted {code}")))
+                .collect(),
+        )
+    }
+
+    /// Feeds the script to `queue` from a new thread. Fails only if the
+    /// operating system refuses the thread.
+    pub fn feed_from_thread<Q>(self, queue: Q) -> io::Result<JoinHandle<()>>
     where
         Q: Deref<Target = Queue> + Send + 'static,
     {
-        thread::spawn(move || self.feed(&queue))
+        thread::Builder::new().spawn(move || self.feed(&queue))
     }
+}
+
+/// Which of the process's two queues a C function works on.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum QueueId {
+    /// The editor queue: input and events for the editor thread.
+    Editor = 0,
+    /// The completion queue: results of service requests, pulled by a
+    /// dedicated Lean task.
+    Completion = 1,
+}
+
+impl QueueId {
+    /// The number that stands for this queue across the boundary.
+    pub const fn tag(self) -> u8 {
+        self as u8
+    }
+
+    /// The queue `tag` stands for, if it is one.
+    pub const fn from_tag(tag: u8) -> Option<Self> {
+        match tag {
+            0 => Some(Self::Editor),
+            1 => Some(Self::Completion),
+            _ => None,
+        }
+    }
+
+    /// The process-wide queue this names.
+    const fn queue(self) -> &'static Queue {
+        match self {
+            Self::Editor => &EDITOR,
+            Self::Completion => &COMPLETION,
+        }
+    }
+}
+
+/// The process's editor queue.
+static EDITOR: Queue = Queue::new();
+
+/// The process's completion queue.
+static COMPLETION: Queue = Queue::new();
+
+/// The process-wide queue the tag `queue` names, if it names one.
+fn queue(queue: u8) -> Option<&'static Queue> {
+    QueueId::from_tag(queue).map(QueueId::queue)
+}
+
+/// An [`Event`] as it crosses the boundary: one record, filled in one call.
+#[repr(C)]
+pub struct RawEvent {
+    /// The [`SourceKind`]'s tag.
+    pub source_kind: u64,
+    /// The source's id.
+    pub source_id: u64,
+    /// The [`EventKind`]'s tag.
+    pub kind: u64,
+    /// The event's code.
+    pub code: u64,
+    /// The event's text: a buffer of `text_len` bytes of UTF-8, owned by the
+    /// caller until it is handed back.
+    pub text: *mut u8,
+    /// The length of `text` in bytes.
+    pub text_len: usize,
+}
+
+/// Posts a message from the Lean source `source_id` to the queue `queue`,
+/// and returns whether it was accepted.
+///
+/// # Safety
+///
+/// `text` points to `text_len` readable bytes.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn editor_ffi_events_post(
+    queue: u8,
+    source_id: u64,
+    code: u64,
+    text: *const u8,
+    text_len: usize,
+) -> bool {
+    let Some(queue) = self::queue(queue) else {
+        return false;
+    };
+    let source = Source {
+        kind: SourceKind::Lean,
+        id: source_id,
+    };
+    // SAFETY: the caller guarantees the pointer and the length.
+    let text = unsafe { text::borrow(text, text_len) };
+    queue.push(Event::message(source, code, text))
+}
+
+/// Takes the oldest event of the queue `queue`, parking the calling thread
+/// until there is one, and fills `out` with it. Returns false, leaving `out`
+/// alone, if `queue` names no queue.
+///
+/// # Safety
+///
+/// `out` points to a writable [`RawEvent`].
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn editor_ffi_events_next(queue: u8, out: *mut RawEvent) -> bool {
+    let Some(queue) = self::queue(queue) else {
+        return false;
+    };
+    let event = queue.next();
+    let (text, text_len) = text::lend(event.text);
+    let raw = RawEvent {
+        source_kind: event.source.kind.tag(),
+        source_id: event.source.id,
+        kind: event.kind.tag(),
+        code: event.code,
+        text,
+        text_len,
+    };
+    // SAFETY: the caller guarantees `out` is writable.
+    unsafe { out.write(raw) };
+    true
+}
+
+/// Quits both queues.
+#[unsafe(no_mangle)]
+pub extern "C" fn editor_ffi_events_quit() {
+    EDITOR.quit();
+    COMPLETION.quit();
+}
+
+/// How many pulls are parked on the queue `queue`; 0 if it names no queue.
+#[unsafe(no_mangle)]
+pub extern "C" fn editor_ffi_events_waiting(queue: u8) -> u64 {
+    self::queue(queue).map_or(0, |queue| queue.waiting() as u64)
+}
+
+/// Feeds the queue `queue` the script [`ScriptedSource::numbered`] makes of
+/// `source_id` and `count`, from a new Rust thread. Returns whether the
+/// thread was started.
+#[unsafe(no_mangle)]
+pub extern "C" fn editor_ffi_events_script_feed(queue: u8, source_id: u64, count: u64) -> bool {
+    let Some(queue) = self::queue(queue) else {
+        return false;
+    };
+    ScriptedSource::numbered(source_id, count)
+        .feed_from_thread(queue)
+        .is_ok()
 }
 
 #[cfg(test)]
@@ -341,7 +508,9 @@ mod tests {
         let queue = Arc::new(Queue::new());
 
         for id in 0..SOURCES {
-            ScriptedSource::new(script(id, EVENTS)).feed_from_thread(Arc::clone(&queue));
+            ScriptedSource::new(script(id, EVENTS))
+                .feed_from_thread(Arc::clone(&queue))
+                .expect("a thread starts");
         }
 
         let pulled: Vec<Event> = (0..SOURCES * EVENTS).map(|_| pull(&queue)).collect();
@@ -432,11 +601,44 @@ mod tests {
         let queue = Arc::new(Queue::new());
         let caller = thread::current().id();
 
-        let feeder = ScriptedSource::new(script(7, 3)).feed_from_thread(Arc::clone(&queue));
+        let feeder = ScriptedSource::new(script(7, 3))
+            .feed_from_thread(Arc::clone(&queue))
+            .expect("a thread starts");
 
         let pulled: Vec<Event> = (0..3).map(|_| pull(&queue)).collect();
         assert_eq!(pulled, script(7, 3));
         assert_ne!(feeder.thread().id(), caller);
+    }
+
+    #[test]
+    fn a_numbered_script_is_messages_from_one_script_source_numbered_from_zero() {
+        let queue = Arc::new(Queue::new());
+        let source = Source {
+            kind: SourceKind::Script,
+            id: 9,
+        };
+
+        ScriptedSource::numbered(9, 3).feed(&queue);
+
+        for code in 0..3 {
+            let event = pull(&queue);
+            assert_eq!((event.source, event.kind), (source, EventKind::Message));
+            assert_eq!(event.code, code);
+        }
+    }
+
+    #[test]
+    fn every_queue_converts_from_its_tag() {
+        assert_eq!(QueueId::from_tag(0), Some(QueueId::Editor));
+        assert_eq!(QueueId::from_tag(1), Some(QueueId::Completion));
+        assert_eq!(QueueId::Editor.tag(), 0);
+        assert_eq!(QueueId::Completion.tag(), 1);
+    }
+
+    #[test]
+    fn an_unknown_queue_tag_is_refused() {
+        assert_eq!(QueueId::from_tag(2), None);
+        assert_eq!(QueueId::from_tag(u8::MAX), None);
     }
 
     #[test]

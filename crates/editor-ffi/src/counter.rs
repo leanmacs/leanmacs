@@ -24,6 +24,50 @@ impl Counter {
     }
 }
 
+/// How many counters [`editor_ffi_counter_new`] has handed out that
+/// [`editor_ffi_counter_free`] has not taken back.
+static LIVE: AtomicU64 = AtomicU64::new(0);
+
+/// A new counter starting at `start`, owned by the caller, who must hand it
+/// to [`editor_ffi_counter_free`] exactly once.
+#[unsafe(no_mangle)]
+pub extern "C" fn editor_ffi_counter_new(start: u64) -> *mut Counter {
+    LIVE.fetch_add(1, Ordering::Relaxed);
+    Box::into_raw(Box::new(Counter::new(start)))
+}
+
+/// Adds one to `counter` and returns the new value.
+///
+/// # Safety
+///
+/// `counter` came from [`editor_ffi_counter_new`] and has not been freed.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn editor_ffi_counter_increment(counter: *const Counter) -> u64 {
+    // SAFETY: the caller guarantees `counter` points to a live counter.
+    unsafe { &*counter }.increment()
+}
+
+/// Frees `counter`.
+///
+/// # Safety
+///
+/// `counter` came from [`editor_ffi_counter_new`], has not been freed, and
+/// is not used again.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn editor_ffi_counter_free(counter: *mut Counter) {
+    // SAFETY: the caller guarantees `counter` is a box
+    // `editor_ffi_counter_new` gave up, taken back this once.
+    drop(unsafe { Box::from_raw(counter) });
+    LIVE.fetch_sub(1, Ordering::Relaxed);
+}
+
+/// How many counters [`editor_ffi_counter_new`] has made that have not been
+/// freed. This is what makes a handle's finaliser observable to a test.
+#[unsafe(no_mangle)]
+pub extern "C" fn editor_ffi_counter_live() -> u64 {
+    LIVE.load(Ordering::Relaxed)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
