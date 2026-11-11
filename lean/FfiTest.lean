@@ -40,6 +40,12 @@ on it, and a thread's default stack is 512 KiB. -/
 def entryStackSize : USize :=
   64 * 1024 * 1024
 
+/-- Whether `size`, in bytes, is the stack the entry point gives every thread
+Lean creates: 64 MiB, to which Lean adds 128 KiB. Lean's own default is a
+gigabyte, and a thread's default is 512 KiB. -/
+def isEditorStack (size : USize) : Bool :=
+  size >= 64 * 1024 * 1024 && size < 65 * 1024 * 1024
+
 /-- The checks of the entry point and of a plain call.
 
 This and the lists after it are functions, not constants, because Lean
@@ -52,7 +58,16 @@ def entryChecks (_ : Unit) : List Check :=
     { name := "work handed to the main-thread service runs on the process's main thread",
       run := Editor.Ffi.mainThreadProbe },
     { name := "Lean's generated main runs on a thread with a large stack",
-      run := return (← Editor.Ffi.entryStackSize) >= entryStackSize }]
+      run := return (← Editor.Ffi.entryStackSize) >= entryStackSize },
+    { name :=
+        "every thread Lean creates has the editor's stack: Lean's main thread, a dedicated task and a pool task"
+      run := do
+        let onMain ← Editor.Ffi.threadStackSize
+        let dedicated ← IO.asTask (prio := .dedicated) Editor.Ffi.threadStackSize
+        let pool ← IO.asTask Editor.Ffi.threadStackSize
+        let onDedicated ← IO.ofExcept (← IO.wait dedicated)
+        let onPool ← IO.ofExcept (← IO.wait pool)
+        return isEditorStack onMain && isEditorStack onDedicated && isEditorStack onPool }]
 
 /-- Makes a counter starting at `start`, increments it twice and drops it. Only
 plain data leaves: the second count. -/

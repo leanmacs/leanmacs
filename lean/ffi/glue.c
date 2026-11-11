@@ -309,6 +309,23 @@ lean_obj_res editor_glue_events_script_feed(uint8_t queue, uint64_t source_id,
 // Lean's generated `main`.
 int main(int argc, char **argv);
 
+// Lean's runtime: sets the stack size of every thread Lean creates from now
+// on (Lean's own main thread, dedicated tasks, the pool), to which the
+// runtime adds 128 KiB. `lean.h` does not declare it; Lean's own `lean`
+// binary calls it. It returns a boxed unit, which needs no release.
+lean_obj_res lean_internal_set_thread_stack_size(size_t size);
+
+// The stack of every thread Lean creates, so of every thread that runs
+// config or elaborates it. Lean's default is a gigabyte, and the
+// interpreter's stack check fires only once the stack is full: at this size
+// a runaway recursion in config ends the process in milliseconds, and the
+// elaborator still has ten times the deepest stack it was seen to use
+// (`docs/design/lean-runtime.md`). It is set here, not through
+// `LEAN_STACK_SIZE_KB` in the process's environment, which every child
+// process would inherit. A user can still override it with that variable:
+// Lean reads it when its `main` starts, after this.
+#define LEAN_THREAD_STACK_SIZE ((size_t)64 << 20)
+
 struct entry_args {
   int argc;
   char **argv;
@@ -328,6 +345,13 @@ lean_obj_res editor_glue_entry_stack_size(void) {
   return lean_io_result_mk_ok(lean_box_usize(entry_stack_size));
 }
 
+// `Editor.Ffi.threadStackSize : IO USize`. The stack size of the calling
+// thread, as the operating system reports it.
+lean_obj_res editor_glue_thread_stack_size(void) {
+  return lean_io_result_mk_ok(
+      lean_box_usize(pthread_get_stacksize_np(pthread_self())));
+}
+
 // The second thread: runs Lean, and ends the process with Lean's exit status
 // while the main thread is still parked.
 static void *run_lean_main(void *arg) {
@@ -343,6 +367,9 @@ int editor_entry(int argc, char **argv) {
 
   // Open the service before Lean can ask it for anything.
   editor_ffi_main_thread_open();
+
+  // Before Lean starts, so that it holds for the first thread Lean creates.
+  lean_internal_set_thread_stack_size(LEAN_THREAD_STACK_SIZE);
 
   pthread_attr_t attr;
   pthread_t thread;

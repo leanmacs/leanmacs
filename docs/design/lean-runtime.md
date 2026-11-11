@@ -105,15 +105,51 @@ through are C, so they release nothing: references leak, and `finally`
 blocks and lock releases do not run. A crash is safer than carrying on in
 that state.
 
-Lean gives each thread it creates a 1 GiB stack, and the interpreter's check
-fires only once that is full. A runaway recursion in config therefore takes
-a noticeable pause and over a gigabyte of memory before it ends the process.
-Which stack size the threads that run config get is decided with the config
-work.
+The interpreter's check fires only once its thread's stack is full, so the
+stack's size is how long a runaway recursion in config runs before it ends
+the process. Lean's default for each thread it creates is 1 GiB. **Every
+thread Lean creates in the editor has a 64 MiB stack** instead: Lean's main
+thread, dedicated tasks and the pool, so every thread that runs config or
+elaborates it.
 
-`mise run ffi-overflow` shows the abort (the `overflow` scenario of
-`lean/FfiTest.lean`). It is run on demand and is not part of the gate,
-because every abort makes macOS write a crash report on the machine.
+- **How it is set.** The entry point (`editor_entry` in `lean/ffi/glue.c`)
+  calls the runtime's `lean_internal_set_thread_stack_size` before it starts
+  Lean. The size is one process-wide value that Lean reads each time it
+  creates a thread, and Lean adds 128 KiB to it. `lean.h` does not declare
+  the function; Lean's own `lean` binary calls it. A toolchain that renames
+  it fails the link.
+- **Not through the environment.** `LEAN_STACK_SIZE_KB` set in the editor's
+  own environment would be inherited by every child process, and a Lean
+  language server started from the editor would get 64 MiB threads.
+- **A user can change it** with `LEAN_STACK_SIZE_KB`: Lean reads the variable
+  when its `main` starts, after the entry point has set the default. The
+  editor adds no setting of its own.
+- **Why 64 MiB.** Measured in a prototype, with recursions that returned:
+
+  | | 16 MiB | 64 MiB | 1 GiB (Lean's default) |
+  |---|---|---|---|
+  | Interpreted frames before the stack check fires, at the 832 bytes a frame measured | about 20,000 | about 80,000 | about 1.29 million |
+  | Time to recurse that deep | 3.7 ms for 19,000 frames | 14 ms for 70,000 frames | 191 ms for 1,000,000 frames, with resident memory up by about 950 MB |
+  | Nesting depth of source the parser survives, at the 3.9 KB a level measured | about 4,000 | about 16,000 | |
+
+  The deepest stack the elaborator used was 6.2 MB, on input it then
+  rejected with "maximum recursion depth has been reached"; a chunk of 50
+  definitions and a `simp` proof used 78 KB. So 64 MiB is ten times the
+  elaborator's worst case, and a runaway recursion in config ends in about
+  15 ms having touched 64 MiB instead of a gigabyte. 16 MiB would abort
+  sooner, but leaves 2.6 times the elaborator's worst case and aborts honest
+  recursion a quarter as deep; an abort ends the session, so the larger of
+  the quick sizes is chosen.
+- **What it costs.** Honest deep recursion is fatal sooner than under Lean's
+  default: a config function that recurses 80,000 frames without a tail
+  call aborts the editor where a gigabyte would have let it finish.
+
+`ffi-test` checks the size on each kind of thread (`FfiTest.entryChecks`,
+in the gate); a thread reports its own stack size, so the check aborts
+nothing. `mise run ffi-overflow` shows the abort itself, under that size
+(the `overflow` scenario of `lean/FfiTest.lean`). It is run on demand and is
+not part of the gate, because every abort makes macOS write a crash report
+on the machine.
 
 ## The editor API is an interface
 

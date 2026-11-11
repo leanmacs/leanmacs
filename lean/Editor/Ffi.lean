@@ -96,10 +96,18 @@ hold: references leak, `finally` blocks do not run, locks stay locked. State
 cannot be cleanly restored after that, so the editor does not carry on. Do not
 add a guard, and do not add a C++ source to hold one.
 
-Test: `mise run ffi-overflow`, which runs `ffi-test overflow` and requires it
-to die of SIGABRT once it has entered the recursion. It is run on demand, not
-by the gate: every abort makes macOS write a crash report on the developer's
-machine.
+The interpreter's stack check fires only once its thread's stack is full, so
+the stack's size is how soon a runaway recursion ends. The entry point
+(`editor_entry` in `ffi/glue.c`) gives every thread Lean creates a 64 MiB
+stack in place of Lean's gigabyte. `threadStackSize` reads a thread's size
+back.
+
+Tests: the check of `ffi-test` that Lean's main thread, a dedicated task and
+a pool task each have that stack (`FfiTest.entryChecks`), which aborts
+nothing. `mise run ffi-overflow`, which runs `ffi-test overflow` and requires
+it to die of SIGABRT once it has entered the recursion. It is run on demand,
+not by the gate: every abort makes macOS write a crash report on the
+developer's machine.
 
 ### Shutdown
 
@@ -158,6 +166,14 @@ This exists for `FfiTest`, which checks the entry point asked for a large
 stack. The editor has no use for it. -/
 @[extern "editor_glue_entry_stack_size"]
 opaque entryStackSize : IO USize
+
+/-- The stack size, in bytes, of the calling thread, as the operating system
+reports it.
+
+This exists for `FfiTest`, which checks that every thread Lean creates has the
+stack the entry point sets. The editor has no use for it. -/
+@[extern "editor_glue_thread_stack_size"]
+opaque threadStackSize : IO USize
 
 /-- The type behind `Counter`. It is opaque, so the only way to get a counter
 is `Counter.new`. -/
