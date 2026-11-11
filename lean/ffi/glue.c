@@ -2,11 +2,12 @@
 // plain C ABI (`crates/editor-ffi`).
 //
 // Building and taking apart Lean objects is done with `lean.h`, most of which
-// is `static inline`, so it has to be done in C. Each wrapper here calls one
-// Rust function and builds the Lean value for its result. Calls go one way:
-// nothing in this file calls Lean code.
+// is `static inline`, so it has to be done in C. A wrapper here calls one Rust
+// function and builds the Lean value for its result. Calls go one way: the
+// wrappers never call Lean code. The entry point at the bottom of the file
+// starts Lean, once, by calling the `main` Lean generates.
 //
-// `FfiTest.lean` pins what these functions do, as Lean sees it.
+// `FfiTest.lean` pins what this file does, as Lean sees it.
 
 #include <lean/lean.h>
 #include <pthread.h>
@@ -48,10 +49,25 @@ struct entry_args {
   char **argv;
 };
 
+// The stack of the thread that runs Lean's `main`. Lean runs the module
+// initialisers on it. Left alone it would get the default for a second
+// thread, 512 KiB, in place of the main thread's 8 MiB.
+#define ENTRY_STACK_SIZE ((size_t)64 << 20)
+
+// The stack size of the thread `run_lean_main` runs on, as the operating
+// system reports it. Read back by `FfiTest`, and by nothing else.
+static size_t entry_stack_size;
+
+// `Editor.Ffi.entryStackSize : IO USize`
+lean_obj_res editor_glue_entry_stack_size(void) {
+  return lean_io_result_mk_ok(lean_box_usize(entry_stack_size));
+}
+
 // The second thread: runs Lean, and ends the process with Lean's exit status
 // while the main thread is still parked.
 static void *run_lean_main(void *arg) {
   struct entry_args *args = arg;
+  entry_stack_size = pthread_get_stacksize_np(pthread_self());
   exit(main(args->argc, args->argv));
 }
 
@@ -63,8 +79,11 @@ int editor_entry(int argc, char **argv) {
   // Open the service before Lean can ask it for anything.
   editor_ffi_main_thread_open();
 
+  pthread_attr_t attr;
   pthread_t thread;
-  if (pthread_create(&thread, NULL, run_lean_main, &args) != 0) {
+  if (pthread_attr_init(&attr) != 0 ||
+      pthread_attr_setstacksize(&attr, ENTRY_STACK_SIZE) != 0 ||
+      pthread_create(&thread, &attr, run_lean_main, &args) != 0) {
     fputs("editor: cannot start the thread that runs Lean\n", stderr);
     return 70;
   }

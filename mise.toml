@@ -94,6 +94,8 @@ dir = "lean"
 timeout = "60s"
 run = [
   ".lake/build/bin/ffi-test",
+  # Arguments reach Lean's `main`, and its result is the exit status.
+  "status=0; .lake/build/bin/ffi-test exit 7 || status=$?; test \"$status\" -eq 7",
   ".lake/build/bin/editor",
 ]
 

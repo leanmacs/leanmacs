@@ -28,4 +28,13 @@ entry point parks the main thread in the service (`editor_entry` in
 @[extern "editor_glue_main_thread_probe"]
 opaque mainThreadProbe : IO Bool
 
+/-- The stack size, in bytes, of the thread the entry point runs Lean's
+generated `main` on, as the operating system reports it; 0 if the executable
+did not start at the entry point. Module initialisers run on that thread.
+
+This exists for `FfiTest`, which checks the entry point asked for a large
+stack. The editor has no use for it. -/
+@[extern "editor_glue_entry_stack_size"]
+opaque entryStackSize : IO USize
+
 end Editor.Ffi
