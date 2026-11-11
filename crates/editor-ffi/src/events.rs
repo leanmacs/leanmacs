@@ -248,7 +248,13 @@ impl ScriptedSource {
         }
     }
 
-    /// Feeds the script to `queue` on the calling thread.
+    /// Feeds the script to `queue` on the calling thread, making each event
+    /// as it is pushed.
+    ///
+    /// Feeding stops at the first event the queue refuses, which is once the
+    /// queue has been quit. That event and the rest of the script are
+    /// dropped, and nothing reports it: a script fed to a queue that has
+    /// already been quit delivers nothing.
     pub fn feed(self, queue: &Queue) {
         for event in self.script {
             if !queue.push(event) {
@@ -348,6 +354,9 @@ pub struct RawEvent {
 /// Posts a message from the Lean source `source_id` to the queue `queue`,
 /// and returns whether it was accepted.
 ///
+/// Returns false, queueing nothing, if `queue` names no queue or if the
+/// queue has been quit.
+///
 /// # Safety
 ///
 /// `text` points to `text_len` readable bytes.
@@ -412,8 +421,19 @@ pub extern "C" fn editor_ffi_events_waiting(queue: u8) -> u64 {
 }
 
 /// Feeds the queue `queue` the script [`ScriptedSource::numbered`] makes of
-/// `source_id` and `count`, from a new Rust thread. Returns whether the
-/// thread was started.
+/// `source_id` and `count`, from a new Rust thread.
+///
+/// Returns false, feeding nothing, if `queue` names no queue or if the
+/// operating system refuses the thread. Otherwise it returns true as soon as
+/// the thread has started. The events are made on that thread as they are
+/// pushed, so no `count` is too large and the caller never waits for the
+/// script.
+///
+/// True says only that the thread started, not that anything was delivered.
+/// The thread stops at the first event the queue refuses
+/// ([`ScriptedSource::feed`]), so a feed to a queue that has been quit
+/// delivers nothing, and one that is quit part-way delivers only what was
+/// queued before the quit.
 #[unsafe(no_mangle)]
 pub extern "C" fn editor_ffi_events_script_feed(queue: u8, source_id: u64, count: u64) -> bool {
     let Some(queue) = self::queue(queue) else {
