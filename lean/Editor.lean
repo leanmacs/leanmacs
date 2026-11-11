@@ -1,5 +1,4 @@
 import Editor.Command.Append
-import Editor.Text.Model
 
 /-!
 # The editor

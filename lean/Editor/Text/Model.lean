@@ -65,4 +65,63 @@ def EditorM.runModel {α : Type} (command : EditorM α) (model : TextModel) :
     Except TextError α × TextModel :=
   Program.run (port := textPort) TextModel.handle command.run model
 
+/-! What `runModel` does to each way of building a command: `pure`, a bind,
+and each operation of the port. They are `simp` lemmas, so a theorem about a
+command is proved by unfolding the command and calling `simp`, which is left
+with facts about the model alone. A new operation gets its lemma here. -/
+
+namespace EditorM
+
+variable {α β : Type}
+
+@[simp]
+theorem runModel_pure (value : α) (model : TextModel) :
+    (pure value : EditorM α).runModel model = (.ok value, model) :=
+  rfl
+
+@[simp]
+theorem runModel_bind (command : EditorM α) (after : α → EditorM β) (model : TextModel) :
+    (command >>= after).runModel model =
+      match command.runModel model with
+      | (.ok value, model) => (after value).runModel model
+      | (.error refusal, model) => (.error refusal, model) := by
+  -- A bind in `EditorM` is a bind of programs, whose second part goes on to
+  -- `after` on a result and stops on a refusal.
+  have unfolded : (command >>= after).run = command.run >>= ExceptT.bindCont after := rfl
+  simp only [runModel, unfolded, Program.run_bind]
+  generalize Program.run TextModel.handle command.run model = outcome
+  obtain ⟨_ | _, _⟩ := outcome <;> rfl
+
+@[simp]
+theorem runModel_createText (initial : String) (model : TextModel) :
+    (createText initial).runModel model =
+      (.ok ⟨model.texts.size⟩, { model with texts := model.texts.push initial }) :=
+  rfl
+
+@[simp]
+theorem runModel_read (id : TextId) (model : TextModel) :
+    id.read.runModel model = TextModel.handle (.read id) model :=
+  rfl
+
+@[simp]
+theorem runModel_insert (id : TextId) (offset : Nat) (s : String) (model : TextModel) :
+    (id.insert offset s).runModel model = model.edit id offset offset s :=
+  rfl
+
+@[simp]
+theorem runModel_delete (id : TextId) (start stop : Nat) (model : TextModel) :
+    (id.delete start stop).runModel model = model.edit id start stop "" :=
+  rfl
+
+end EditorM
+
+/-- A splice at the end of a text is an append: the length of a text in bytes
+is a character boundary of it, and nothing follows it. -/
+theorem TextModel.splice_end (text s : String) :
+    TextModel.splice text text.utf8ByteSize text.utf8ByteSize s = some (text ++ s) := by
+  have valid : (String.Pos.Raw.mk text.utf8ByteSize).IsValid text :=
+    String.Pos.Raw.isValid_rawEndPos
+  have atEnd : text.pos ⟨text.utf8ByteSize⟩ valid = text.endPos := String.Pos.ext rfl
+  simp [TextModel.splice, valid, atEnd, String.sliceTo_endPos]
+
 end Editor

@@ -83,6 +83,30 @@ def runM [Monad m] (handle : (request : port.Request) → m (port.Reply request)
     let reply ← handle request
     (next reply).runM handle
 
+/-! The three facts about `run` that a proof about a program needs. With
+them `simp` takes a program written in `do` notation apart into its requests,
+so a theorem about a command is proved from the port's own lemmas. -/
+
+@[simp]
+theorem run_pure (handle : (request : port.Request) → σ → port.Reply request × σ) (value : α)
+    (state : σ) : (pure value : Program port α).run handle state = (value, state) :=
+  rfl
+
+@[simp]
+theorem run_request (handle : (request : port.Request) → σ → port.Reply request × σ)
+    (request : port.Request) (state : σ) :
+    (Program.request request).run handle state = handle request state :=
+  rfl
+
+@[simp]
+theorem run_bind (handle : (request : port.Request) → σ → port.Reply request × σ)
+    (program : Program port α) (after : α → Program port β) (state : σ) :
+    (program >>= after).run handle state =
+      (after (program.run handle state).1).run handle (program.run handle state).2 := by
+  induction program generalizing state with
+  | done value => rfl
+  | step request next ih => exact ih (handle request state).1 (handle request state).2
+
 end Program
 
 end Editor

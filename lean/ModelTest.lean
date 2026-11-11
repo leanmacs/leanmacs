@@ -1,6 +1,5 @@
 import Editor.Command.Append
 import Editor.Text.Contract
-import Editor.Text.Model
 
 /-!
 # The model tests
