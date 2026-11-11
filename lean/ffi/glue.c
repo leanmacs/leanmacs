@@ -85,6 +85,112 @@ lean_obj_res editor_glue_counter_live(void) {
   return lean_io_result_mk_ok(lean_box_uint64(editor_ffi_counter_live()));
 }
 
+// ---- Plain data ----
+//
+// A string goes to Rust as a pointer and a byte length, borrowed for the
+// call. A structure comes back as one C record filled through an out-pointer
+// in a single call, and the Lean structure is built from it here. Text in a
+// record is a buffer the library owns: it is copied into a Lean string and
+// handed straight back with `editor_ffi_text_free`.
+//
+// A Lean structure built here declares its object fields first and `UInt64`
+// fields after them and nothing else, so the order of its declaration is its
+// layout: object field `i` is `lean_ctor_set(o, i, …)`, and `UInt64` field
+// `j` is at byte `objects * sizeof(void *) + 8 * j`.
+
+// The byte offset of the `index`th `UInt64` field of a constructor with
+// `objects` object fields.
+static unsigned uint64_field(unsigned objects, unsigned index) {
+  return objects * sizeof(void *) + index * sizeof(uint64_t);
+}
+
+// The bytes of a Lean string, without the terminating NUL `lean.h` counts.
+static const uint8_t *string_bytes(b_lean_obj_arg string) {
+  return (const uint8_t *)lean_string_cstr(string);
+}
+static size_t string_len(b_lean_obj_arg string) {
+  return lean_string_size(string) - 1;
+}
+
+void editor_ffi_text_free(uint8_t *text, size_t len);
+
+// The library's `ByteRange`.
+typedef struct {
+  uint64_t start;
+  uint64_t end;
+} editor_ffi_byte_range;
+bool editor_ffi_text_find(const uint8_t *haystack, size_t haystack_len,
+                          const uint8_t *needle, size_t needle_len,
+                          bool has_start, size_t start,
+                          editor_ffi_byte_range *out);
+
+// `Editor.Ffi.findRaw : @& String → @& String → Bool → USize → Option
+// ByteRange`. Pure, so the result is the value itself, not an `IO` result.
+lean_obj_res editor_glue_text_find(b_lean_obj_arg haystack,
+                                   b_lean_obj_arg needle, uint8_t has_start,
+                                   size_t start) {
+  editor_ffi_byte_range found;
+  if (!editor_ffi_text_find(string_bytes(haystack), string_len(haystack),
+                            string_bytes(needle), string_len(needle), has_start,
+                            start, &found)) {
+    return lean_box(0); // `none`
+  }
+  // `ByteRange`: no object fields, then `start` and `stop`.
+  lean_object *range = lean_alloc_ctor(0, 0, 2 * sizeof(uint64_t));
+  lean_ctor_set_uint64(range, uint64_field(0, 0), found.start);
+  lean_ctor_set_uint64(range, uint64_field(0, 1), found.end);
+  lean_object *some = lean_alloc_ctor(1, 1, 0);
+  lean_ctor_set(some, 0, range);
+  return some;
+}
+
+// ---- The event queues ----
+//
+// Rust threads push events and Lean pulls them: nothing here calls Lean. A
+// queue is named by the tag of Lean's `Editor.Ffi.Queue`, which the library
+// checks.
+
+// The library's `RawEvent`.
+typedef struct {
+  uint64_t source_kind;
+  uint64_t source_id;
+  uint64_t kind;
+  uint64_t code;
+  uint8_t *text;
+  size_t text_len;
+} editor_ffi_raw_event;
+bool editor_ffi_events_post(uint8_t queue, uint64_t source_id, uint64_t code,
+                            const uint8_t *text, size_t text_len);
+bool editor_ffi_events_next(uint8_t queue, editor_ffi_raw_event *out);
+
+// `Editor.Ffi.postEvent : Queue → UInt64 → UInt64 → @& String → IO Bool`
+lean_obj_res editor_glue_events_post(uint8_t queue, uint64_t source_id,
+                                     uint64_t code, b_lean_obj_arg text) {
+  return lean_io_result_mk_ok(lean_box(editor_ffi_events_post(
+      queue, source_id, code, string_bytes(text), string_len(text))));
+}
+
+// `Editor.Ffi.nextRaw : Queue → IO RawEvent`. Blocks in Rust until the queue
+// has an event.
+lean_obj_res editor_glue_events_next(uint8_t queue) {
+  editor_ffi_raw_event raw;
+  if (!editor_ffi_events_next(queue, &raw)) {
+    return lean_io_result_mk_error(lean_mk_io_user_error(
+        lean_mk_string("the Rust library knows no such event queue")));
+  }
+  lean_object *text =
+      lean_mk_string_from_bytes((const char *)raw.text, raw.text_len);
+  editor_ffi_text_free(raw.text, raw.text_len);
+  // `RawEvent`: `text`, then `sourceKind`, `sourceId`, `kind` and `code`.
+  lean_object *event = lean_alloc_ctor(0, 1, 4 * sizeof(uint64_t));
+  lean_ctor_set(event, 0, text);
+  lean_ctor_set_uint64(event, uint64_field(1, 0), raw.source_kind);
+  lean_ctor_set_uint64(event, uint64_field(1, 1), raw.source_id);
+  lean_ctor_set_uint64(event, uint64_field(1, 2), raw.kind);
+  lean_ctor_set_uint64(event, uint64_field(1, 3), raw.code);
+  return lean_io_result_mk_ok(event);
+}
+
 // ---- The process entry point ----
 //
 // Lean's generated `main` runs the Lean `main` on a thread Lean creates, so

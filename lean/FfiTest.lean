@@ -75,9 +75,46 @@ def handleChecks (_ : Unit) : List Check :=
         let fromTask ← IO.ofExcept (← IO.wait task)
         return fromTask == 6 && (← Editor.Ffi.Counter.live) == before }]
 
+/-- Text whose byte offsets and character counts differ: "é" and "ö" are two
+bytes each. -/
+def haystack : String :=
+  "héllo wörld, hello"
+
+/-- Posts a message to the editor queue and pulls it back; `true` when what
+comes back is that message, from the Lean source `sourceId`. A refused post
+fails the check at once, so the pull cannot park. -/
+def roundTrips (sourceId code : UInt64) (text : String) : IO Bool := do
+  unless ← Editor.Ffi.postEvent .editor sourceId code text do
+    return false
+  let event ← Editor.Ffi.nextEvent .editor
+  return event == { source := { kind := .lean, id := sourceId }, kind := .message, code, text }
+
+/-- The checks of plain data: an option and a byte range (`Editor.Ffi.find`),
+and a string, enums and a small structure (an event), in both directions. -/
+def dataChecks (_ : Unit) : List Check :=
+  [{ name := "find returns the byte range of the first match",
+     run := pure (Editor.Ffi.find haystack "llo" == some { start := 3, stop := 6 }) },
+    { name := "find starts looking at the start offset it is given"
+      run := pure (Editor.Ffi.find haystack "llo" (some 4) == some { start := 17, stop := 20 }) },
+    { name := "find returns none when there is no match from a usable start"
+      run :=
+        pure
+          (Editor.Ffi.find haystack "zzz" == none &&
+            Editor.Ffi.find haystack "llo" (some 2) == none &&
+            Editor.Ffi.find haystack "llo" (some 21) == none) },
+    { name := "an event posted to a queue is pulled back whole"
+      run := roundTrips 7 42 "héllo wörld" },
+    { name := "an event's text keeps an embedded NUL byte"
+      run := roundTrips 8 43 "before\x00after" },
+    { name := "an event with empty text and the largest code crosses"
+      run := roundTrips 9 0xFFFFFFFFFFFFFFFF "" },
+    { name := "a tag the bindings do not know is refused"
+      run :=
+        pure ((Editor.Ffi.EventKind.ofTag? 2).isNone && (Editor.Ffi.SourceKind.ofTag? 3).isNone) }]
+
 /-- Every check, in the order they run. -/
 def checks (_ : Unit) : List Check :=
-  entryChecks () ++ handleChecks ()
+  entryChecks () ++ handleChecks () ++ dataChecks ()
 
 /-- Runs `checks` and returns the names of those that failed. -/
 def failures (checks : List Check) : IO (List String) :=
