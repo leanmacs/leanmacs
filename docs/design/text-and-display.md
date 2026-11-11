@@ -90,9 +90,59 @@ A **face** is a set of optional attributes (family, size, weight, slant,
 colours, underline, strike-through, line height) with a documented merge
 order. Faces are named and defined in Lean.
 
-Blocks are laid out by the library from a small layout description that Lean
-supplies (text runs, rows, columns, buttons with a command name). They are
-not arbitrary drawing code.
+### Text is the only layout engine
+
+The library is a text display engine, not a GUI toolkit (decided
+2026-11-11). It has no widget tree, no general layout system, no style
+cascade and no focus traversal. Everything shown is text, or a box that
+text layout places:
+
+- **A block is text**: a small piece of text with faces and clickable
+  spans, each span naming a command. It has no rows, columns or buttons of
+  its own.
+- **Tables, lists and pickers** are text views over generated text.
+- **Columns are aligned with align-to stops** in text layout, the one
+  primitive this adds. Tab stops are the same mechanism.
+- **A popup** (completion, hover, a picker) is a text view in a floating
+  rectangle that Lean places against a position it asks layout for.
+- **Anything that is not text is a box.**
+
+### Boxes
+
+A box is a rectangle reserved by text layout, inline in a line or between
+lines, plus a handle to its content. The content is one of the kinds a
+view can show:
+
+| Content | Drawn from | On a cell grid |
+|---|---|---|
+| Image | A texture, cached by content hash, size and scale | Its label, or a terminal graphics protocol where the front end reports one |
+| Terminal grid | The emulator's cell state, as a grid view | Cells passed through |
+| Text view | Another buffer, such as an editable comment draft | The same |
+
+Three limits keep a box from becoming a widget:
+
+- **Sizing is one pass.** The available width goes down and the box
+  reports a height: the image's own, or a row count Lean sets. Nothing is
+  solved for.
+- **The library holds no interaction state.** A click is answered by the
+  same hit-test query as any other, as a box and coordinates within it,
+  and Lean decides what it means.
+- **Focus is Lean's.** A terminal in a box takes keys through the same
+  explicit "keys go to the terminal" state as one in a window.
+
+Images are raster files or SVG, decoded behind an image port (`resvg` as
+the planned adapter for SVG) at the display's scale. SVG generated in Lean
+is the way to draw what text cannot: icons, tags, progress bars, diagrams.
+Every image carries a label, which is its fallback on a cell grid and its
+name to a screen reader.
+
+Web views and video are out of scope: each needs a second compositor.
+
+If a requirement ever calls for sizing rules or widget state in Rust, the
+answer is to host the text view inside an existing toolkit on the same
+stack (Masonry is built on Parley, Vello, winit and AccessKit), not to
+grow our own. That would cost the terminal front end and put a second
+owner of interface state beside Lean, so it is a last resort.
 
 ## Display layers
 
@@ -112,7 +162,10 @@ A view shows something in a window. There is more than one kind:
 |---|---|---|
 | Text view | A buffer or excerpt buffer | The normal case: pixels, variable line heights, wrapping |
 | Grid view | A terminal's cell grid | Drawn straight from the emulator's state; never copied into a buffer per frame (the `edmacs` redraw ceiling came from doing exactly that) |
-| Table and list views | Rows from Lean state | The agent list, pickers, review queues. Possibly a text view over generated text plus decorations; see open questions |
+
+The agent list, pickers and review queues are text views over generated
+text, so evil motions and search work in them. A grid can also appear
+inside a text view, as a box.
 
 Windows are arranged in a split tree per frame, held in Lean. A view's
 scroll position is an anchor. Layout invariants (for example, a minibuffer
@@ -198,6 +251,32 @@ geometry, so tests can assert where things are, not only what state says.
 The cell shaper and cell grid renderer cover unit tests; the headless
 adapter covers the cases that depend on real metrics.
 
+## Accessibility
+
+Screen-reader support is a requirement (decided 2026-11-11). Because
+everything shown is text or a labelled box, the accessibility tree is
+derived from the scene and layout, with no second description to keep in
+step.
+
+- **The tree is plain data built in the core**, like the frame, and handed
+  to an `Accessibility` port. AccessKit is the planned adapter. Tests
+  assert on the tree itself.
+- **Each text view is a document node** with its laid-out lines as text
+  runs, its cursor and its selections. A grid view is a terminal node. A
+  popup is a node of its own.
+- **Each box is a child node**: an image under its label, a terminal, or a
+  nested document.
+- **Each clickable span is an actionable node** named by its text.
+- **Requests from assistive technology** (focus, activate, move the
+  selection, scroll) are events Lean pulls, and Lean handles them as
+  commands. The library does not act on them itself.
+- **Announcements**: Lean posts text to be spoken, for echo-area messages
+  and for state that is otherwise only visual (the evil state, "keys go to
+  the terminal").
+
+A cell grid front end is read by the terminal's own screen reader and
+needs none of this.
+
 ## Instrumentation
 
 The library keeps a frame journal (timestamps at input, draw and present
@@ -216,15 +295,18 @@ these hunks" is a fact the editor can state.
   boxes, or split runs.
 - **The other choices the survey left open** are listed in
   [rendering-prior-art.md](rendering-prior-art.md).
-- **Table and list views**: a dedicated view kind, or text views over
-  generated text? A dedicated kind is faster for long lists; text views
-  reuse evil motions and search for free.
-- **Block layout language**: how much does Lean get to describe? Text runs
-  and buttons are enough for review comments; a diagram needs more.
+- **Embedded terminals**: a fixed row count, or growing with output up to
+  a cap? And how scrolling the buffer interacts with the terminal's own
+  scrollback.
+- **Box sizes** on a cell grid: which units Lean states a size in so that
+  one description serves pixels and cells.
 - **Capabilities**: the exact set, and whether a face or block can name a
   fallback for a front end that lacks one.
 - **Viewed-range tracking** granularity and whether it is on by default.
 - **Large files and long lines**: what is the plan when a single line is
   megabytes?
-- **Accessibility**: screen-reader support (AccessKit) has to be designed
-  into the view model, not added to the renderer.
+- **Accessibility of text not laid out**: only visible lines have layout,
+  but a screen reader may want to read past the viewport. Expose the
+  viewport and scroll on request, or supply unlaid-out text as well?
+- **Accessibility coverage**: what AccessKit supports on each platform,
+  and how its text model fits ours, have not been checked.
