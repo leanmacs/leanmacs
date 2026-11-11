@@ -37,13 +37,13 @@ run = "cargo test --workspace --locked"
 
 # Runs in lean/, so mise picks the toolchain `lean/lean-toolchain` pins.
 [tasks.lean]
-description = "Build the Lean package with Lake; every linter is on and a warning fails the build (lean/lakefile.toml)"
+description = "Build the Lean package with Lake; every linter is on and a warning fails the build (lean/lakefile.lean)"
 dir = "lean"
 # --wfail also fails on warnings Lake itself logs, which `warningAsError` in
 # the lakefile does not reach.
 run = "lake build --wfail"
 
-# lean-fmt is a Lake dependency (lean/lakefile.toml), pinned to the tag named
+# lean-fmt is a Lake dependency (lean/lakefile.lean), pinned to the tag named
 # after the Lean toolchain. Both tasks wait for `lean`, so two Lake builds
 # never run in lean/ at once.
 [tasks.lean-fmt]
