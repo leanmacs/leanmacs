@@ -22,15 +22,19 @@ opaque hostMessage (s : @& String) : IO Unit
 
 /-- The editor monad. Plain `IO` for the prototype; later a richer stack
 (editor state, capabilities) without changing user-facing signatures. -/
-abbrev EditorM := IO
+abbrev EditorM :=
+  IO
 
 /-- Insert text at the end of the current buffer. -/
-def insertText (s : String) : EditorM Unit := hostInsert s
+def insertText (s : String) : EditorM Unit :=
+  hostInsert s
 
 /-- The full text of the current buffer. -/
-def bufferText : EditorM String := hostBufferText
+def bufferText : EditorM String :=
+  hostBufferText
 
 /-- Show a message in the echo area (stdout for now). -/
-def message (s : String) : EditorM Unit := hostMessage s
+def message (s : String) : EditorM Unit :=
+  hostMessage s
 
 end Editor

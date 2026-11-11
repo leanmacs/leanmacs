@@ -1,5 +1,5 @@
-import Lean
 import Editor
+import Lean
 
 /-!
 # Embedding API
@@ -62,8 +62,7 @@ def defaultOpts : Options :=
 
 /-- Elaborate `src` on top of `st`. Returns the new state, whether it
 elaborated without errors, and the rendered messages. -/
-def elabOn (st : Command.State) (fileName src : String) :
-    IO (Command.State × Bool × String) := do
+def elabOn (st : Command.State) (fileName src : String) : IO (Command.State × Bool × String) := do
   let inputCtx := Parser.mkInputContext src fileName
   let fs ← IO.processCommands inputCtx {} { st with messages := {} }
   let cst := fs.commandState
@@ -78,7 +77,8 @@ def sessionNew (sysroot : String) (oleanDir : String) : IO Session := do
   unsafe enableInitializersExecution
   let env ← importModules #[{ module := `Editor }] defaultOpts (loadExts := true)
   let (base, ok, out) ← elabOn (Command.mkState env {} defaultOpts) "<prelude>" "open Editor"
-  unless ok do throw <| IO.userError s!"prelude failed:\n{out}"
+  unless ok do
+    throw <| IO.userError s!"prelude failed:\n{out}"
   return { base, chunks := ← IO.mkRef #[], state := ← IO.mkRef base }
 
 /-- Each chunk starts from the previous chunk's environment but with the
@@ -114,7 +114,8 @@ every later chunk; a new chunk is appended. -/
 def sessionSetChunk (s : Session) (name src : String) : IO EvalResult := do
   let chunks ← s.chunks.get
   match chunks.findIdx? (·.name == name) with
-  | none => rebuild s chunks [(name, src)]
+  | none =>
+    rebuild s chunks [(name, src)]
   | some i =>
     let later := (chunks.extract (i + 1) chunks.size).toList.map fun c => (c.name, c.src)
     rebuild s (chunks.extract 0 i) ((name, src) :: later)
@@ -124,7 +125,8 @@ def sessionSetChunk (s : Session) (name src : String) : IO EvalResult := do
 def sessionRemoveChunk (s : Session) (name : String) : IO EvalResult := do
   let chunks ← s.chunks.get
   match chunks.findIdx? (·.name == name) with
-  | none => return { ok := false, output := s!"no chunk named '{name}'" }
+  | none =>
+    return { ok := false, output := s!"no chunk named '{name}'" }
   | some i =>
     let later := (chunks.extract (i + 1) chunks.size).toList.map fun c => (c.name, c.src)
     rebuild s (chunks.extract 0 i) later
@@ -133,12 +135,13 @@ def sessionRemoveChunk (s : Session) (name : String) : IO EvalResult := do
 @[export editor_session_eval]
 def sessionEval (s : Session) (src : String) : IO EvalResult := do
   let (st, ok, output) ← elabOn (← s.state.get) "<scratch>" src
-  if ok then s.state.set st
+  if ok then
+    s.state.set st
   return { ok, output }
 
 private def entryTypeOk (ty : Expr) : Bool :=
   ty == mkApp (mkConst ``Editor.EditorM) (mkConst ``Unit) ||
-  ty == mkApp (mkConst ``IO) (mkConst ``Unit)
+    ty == mkApp (mkConst ``IO) (mkConst ``Unit)
 
 private unsafe def runUnsafe (s : Session) (name : String) : IO EvalResult := do
   let st ← s.state.get
@@ -148,7 +151,8 @@ private unsafe def runUnsafe (s : Session) (name : String) : IO EvalResult := do
   unless entryTypeOk info.type do
     return { ok := false, output := s!"'{name}' : {info.type}, expected EditorM Unit" }
   match st.env.evalConst (Editor.EditorM Unit) defaultOpts n with
-  | .error e => return { ok := false, output := e }
+  | .error e =>
+    return { ok := false, output := e }
   | .ok act =>
     try
       act
@@ -166,14 +170,17 @@ def sessionRun (s : Session) (name : String) : IO EvalResult :=
 
 /-- Render an `IO.Error` for the host. -/
 @[export editor_io_error_to_string]
-def ioErrorToString (e : IO.Error) : String := toString e
+def ioErrorToString (e : IO.Error) : String :=
+  toString e
 
 /-- `EvalResult.ok`, exported for the host. -/
 @[export editor_result_ok]
-def resultOk (r : EvalResult) : Bool := r.ok
+def resultOk (r : EvalResult) : Bool :=
+  r.ok
 
 /-- `EvalResult.output`, exported for the host. -/
 @[export editor_result_output]
-def resultOutput (r : EvalResult) : String := r.output
+def resultOutput (r : EvalResult) : String :=
+  r.output
 
 end EditorHost
