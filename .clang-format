@@ -1,0 +1,3 @@
+# The style for the C glue (`mise run c-fmt` checks it, `mise run c-format`
+# applies it).
+BasedOnStyle: LLVM

@@ -5,6 +5,10 @@ rust = { version = "1.98.1", components = "rustfmt,clippy" }
 "aqua:EmbarkStudios/cargo-deny" = "0.19.9"
 hk = "2.4.0"
 pkl = "0.32.1"
+# The formatter for the C glue (`mise run c-fmt`, `mise run c-format`). The
+# PyPI wheel is an exact pin of the binary; mise installs it with `uv` or
+# `pipx`, whichever the machine has.
+"pipx:clang-format" = "23.1.4"
 # Lean (lean, lake) is not listed here: `lean/lean-toolchain` is its one pin
 # (AGENTS.md, "Toolchains"). mise reads that file through the `lean` plugin,
 # which the global mise config declares along with
@@ -71,6 +75,16 @@ run = [
   "lake exe lean-fmt check --fix",
 ]
 
+# Tracked files only, so Lake's fetched packages and build output are never
+# looked at. A new C file is checked once it is `git add`ed.
+[tasks.c-fmt]
+description = "Check the formatting of the C and C++ sources (.clang-format); changes nothing"
+run = "git ls-files -z '*.c' '*.h' '*.cc' '*.cpp' '*.hpp' | xargs -0 clang-format --dry-run --Werror"
+
+[tasks.c-format]
+description = "Rewrite the C and C++ sources in the style .clang-format sets"
+run = "git ls-files -z '*.c' '*.h' '*.cc' '*.cpp' '*.hpp' | xargs -0 clang-format -i"
+
 # Runs the built executables only (no Lake), so it needs just `lean` before it.
 # The time limit turns a deadlock in the main-thread hand-off into a failure.
 [tasks.ffi-test]
@@ -85,4 +99,4 @@ run = [
 
 [tasks.ci]
 description = "The whole gate; `hk check` runs this, and it gates review and landing (rdm's dispatch.verify)"
-depends = ["fmt", "lint", "deny", "doc", "test", "lean", "lean-fmt", "ffi-test"]
+depends = ["fmt", "lint", "deny", "doc", "test", "lean", "lean-fmt", "ffi-test", "c-fmt"]
