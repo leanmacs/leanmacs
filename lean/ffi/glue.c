@@ -162,6 +162,9 @@ typedef struct {
 bool editor_ffi_events_post(uint8_t queue, uint64_t source_id, uint64_t code,
                             const uint8_t *text, size_t text_len);
 bool editor_ffi_events_next(uint8_t queue, editor_ffi_raw_event *out);
+uint64_t editor_ffi_events_waiting(uint8_t queue);
+bool editor_ffi_events_script_feed(uint8_t queue, uint64_t source_id,
+                                   uint64_t count);
 
 // `Editor.Ffi.postEvent : Queue → UInt64 → UInt64 → @& String → IO Bool`
 lean_obj_res editor_glue_events_post(uint8_t queue, uint64_t source_id,
@@ -189,6 +192,19 @@ lean_obj_res editor_glue_events_next(uint8_t queue) {
   lean_ctor_set_uint64(event, uint64_field(1, 2), raw.kind);
   lean_ctor_set_uint64(event, uint64_field(1, 3), raw.code);
   return lean_io_result_mk_ok(event);
+}
+
+// `Editor.Ffi.waiting : Queue → IO UInt64`
+lean_obj_res editor_glue_events_waiting(uint8_t queue) {
+  return lean_io_result_mk_ok(
+      lean_box_uint64(editor_ffi_events_waiting(queue)));
+}
+
+// `Editor.Ffi.feedScript : Queue → UInt64 → UInt64 → IO Bool`
+lean_obj_res editor_glue_events_script_feed(uint8_t queue, uint64_t source_id,
+                                            uint64_t count) {
+  return lean_io_result_mk_ok(
+      lean_box(editor_ffi_events_script_feed(queue, source_id, count)));
 }
 
 // ---- The process entry point ----

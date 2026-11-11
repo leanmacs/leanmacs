@@ -80,14 +80,40 @@ bytes each. -/
 def haystack : String :=
   "héllo wörld, hello"
 
+/-- How many times a check polls, a millisecond apart, for something that
+should happen at once: about five seconds. Only broken code takes this long,
+and the check then fails instead of hanging. -/
+def patience : Nat :=
+  5000
+
+/-- Polls `condition` until it holds; `false` if it still does not after
+`patience` polls. -/
+def eventually (condition : IO Bool) : IO Bool := do
+  for _ in [0:patience] do
+    if ← condition then
+      return true
+    IO.sleep 1
+  return false
+
+/-- One event pulled from `queue`, or `none` if the pull does not return in
+time. The pull runs on a dedicated task, so one that never returns fails its
+check instead of hanging the executable. -/
+def pull (queue : Editor.Ffi.Queue) : IO (Option Editor.Ffi.Event) := do
+  let task ← IO.asTask (prio := .dedicated) (Editor.Ffi.nextEvent queue)
+  unless ← eventually (IO.hasFinished task) do
+    return none
+  return some (← IO.ofExcept task.get)
+
+/-- The message `postEvent` queues for the Lean source `sourceId`. -/
+def message (sourceId code : UInt64) (text : String) : Editor.Ffi.Event :=
+  { source := { kind := .lean, id := sourceId }, kind := .message, code, text }
+
 /-- Posts a message to the editor queue and pulls it back; `true` when what
-comes back is that message, from the Lean source `sourceId`. A refused post
-fails the check at once, so the pull cannot park. -/
+comes back is that message, from the Lean source `sourceId`. -/
 def roundTrips (sourceId code : UInt64) (text : String) : IO Bool := do
   unless ← Editor.Ffi.postEvent .editor sourceId code text do
     return false
-  let event ← Editor.Ffi.nextEvent .editor
-  return event == { source := { kind := .lean, id := sourceId }, kind := .message, code, text }
+  return (← pull .editor) == some (message sourceId code text)
 
 /-- The checks of plain data: an option and a byte range (`Editor.Ffi.find`),
 and a string, enums and a small structure (an event), in both directions. -/
@@ -112,14 +138,54 @@ def dataChecks (_ : Unit) : List Check :=
       run :=
         pure ((Editor.Ffi.EventKind.ofTag? 2).isNone && (Editor.Ffi.SourceKind.ofTag? 3).isNone) }]
 
+/-- The checks of the two event queues: Rust threads push, Lean pulls. -/
+def queueChecks (_ : Unit) : List Check :=
+  [{ name := "events posted to a queue are pulled from that queue, in order",
+     run := do
+       let first ← Editor.Ffi.postEvent .editor 5 1 ""
+       let other ← Editor.Ffi.postEvent .completion 5 2 ""
+       let second ← Editor.Ffi.postEvent .editor 5 3 ""
+       -- The completion queue first: were the two one queue, this would be
+       -- the first event posted.
+       let fromCompletion ← pull .completion
+       let fromEditor := [← pull .editor, ← pull .editor]
+       return first && other && second && fromCompletion == some (message 5 2 "") &&
+           fromEditor == [some (message 5 1 ""), some (message 5 3 "")] },
+    { name := "a pull parks until an event is posted to its queue"
+      run := do
+        let task ← IO.asTask (prio := .dedicated) (Editor.Ffi.nextEvent .completion)
+        let parked ← eventually (return (← Editor.Ffi.waiting .completion) == 1)
+        let othersParked ← Editor.Ffi.waiting .editor
+        let finishedEarly ← IO.hasFinished task
+        let posted ← Editor.Ffi.postEvent .completion 6 1 "wake"
+        let woken ← eventually (IO.hasFinished task)
+        unless parked && othersParked == 0 && !finishedEarly && posted && woken do
+          return false
+        return (← IO.ofExcept task.get) == message 6 1 "wake" },
+    { name := "a script fed from a Rust thread arrives in order, tagged with its source"
+      run := do
+        unless ← Editor.Ffi.feedScript .completion 9 3 do
+          return false
+        for code in ([0, 1, 2] : List UInt64) do
+          let some event ← pull .completion | return false
+          unless
+            event.source == { kind := .script, id := 9 } && event.kind == .message &&
+              event.code == code do
+            return false
+        return true }]
+
 /-- Every check, in the order they run. -/
 def checks (_ : Unit) : List Check :=
-  entryChecks () ++ handleChecks () ++ dataChecks ()
+  entryChecks () ++ handleChecks () ++ dataChecks () ++ queueChecks ()
 
-/-- Runs `checks` and returns the names of those that failed. -/
+/-- Runs `checks` and returns the names of those that failed. A check that
+throws has failed, and its error is reported with its name. -/
 def failures (checks : List Check) : IO (List String) :=
   checks.filterMapM fun check => do
-    return if ← check.run then none else some check.name
+    try
+      return if ← check.run then none else some check.name
+    catch error =>
+      return some s!"{check.name} ({error})"
 
 /-- Reports a command line `main` does not understand; the exit status is 2. -/
 def usage : IO UInt32 := do
@@ -145,7 +211,9 @@ def main (args : List String) : IO UInt32 := do
       IO.println s!"ffi-test: {checks.length} checks passed"
       return 0
     else
-      return 1
+      -- A failed check may have left a task parked in the library, and
+      -- returning from `main` would wait for it for ever.
+      IO.Process.exit 1
   | ["exit", code] =>
     match code.toNat? with
     | some status =>

@@ -188,4 +188,15 @@ def nextEvent (queue : Queue) : IO Event := do
   return { source := { kind := sourceKind, id := raw.sourceId }, kind, code := raw.code,
            text := raw.text }
 
+/-- How many pulls are parked on `queue`. A readout for tests, which use it to
+know a pull is parked before they post. -/
+@[extern "editor_glue_events_waiting"]
+opaque waiting (queue : Queue) : IO UInt64
+
+/-- Has the library's scripted source, a fake for tests, feed `queue` from a
+new Rust thread: `count` messages from the script source `sourceId`, with the
+codes 0, 1, 2 and so on. `false` when the thread could not be started. -/
+@[extern "editor_glue_events_script_feed"]
+opaque feedScript (queue : Queue) (sourceId count : UInt64) : IO Bool
+
 end Editor.Ffi
