@@ -27,12 +27,12 @@ on it, and a thread's default stack is 512 KiB. -/
 def entryStackSize : USize :=
   64 * 1024 * 1024
 
-/-- Every check, in the order they run.
+/-- The checks of the entry point and of a plain call.
 
-This is a function, not a constant, because Lean evaluates a module's
-constants in its initialiser, and an initialiser must not call the Rust
-library (`docs/design/lean-runtime.md`). -/
-def checks (_ : Unit) : List Check :=
+This and the lists after it are functions, not constants, because Lean
+evaluates a module's constants in its initialiser, and an initialiser must not
+call the Rust library (`docs/design/lean-runtime.md`). -/
+def entryChecks (_ : Unit) : List Check :=
   [{ name := "a Rust function's result crosses into Lean", run := pure (Editor.Ffi.add 2 3 == 5) },
     { name := "Lean code does not run on the process's main thread",
       run := return !(← Editor.Ffi.isMainThread) },
@@ -40,6 +40,44 @@ def checks (_ : Unit) : List Check :=
       run := Editor.Ffi.mainThreadProbe },
     { name := "Lean's generated main runs on a thread with a large stack",
       run := return (← Editor.Ffi.entryStackSize) >= entryStackSize }]
+
+/-- Makes a counter starting at `start`, increments it twice and drops it. Only
+plain data leaves: the second count. -/
+def useCounter (start : UInt64) : IO UInt64 := do
+  let counter ← Editor.Ffi.Counter.new start
+  discard counter.increment
+  counter.increment
+
+/-- The checks of a handle: a Rust object held by Lean as an external object
+(`Editor.Ffi.Counter`). -/
+def handleChecks (_ : Unit) : List Check :=
+  [{ name := "a counter keeps its count in Rust", run := return (← useCounter 40) == 42 },
+    { name := "a counter is freed when Lean drops the last reference"
+      run := do
+        let before ← Editor.Ffi.Counter.live
+        discard <| useCounter 0
+        return (← Editor.Ffi.Counter.live) == before },
+    { name := "a counter stays alive while any reference is held, on any thread"
+      run := do
+        let before ← Editor.Ffi.Counter.live
+        let counter ← Editor.Ffi.Counter.new 0
+        let task ← IO.asTask (prio := .dedicated) counter.increment
+        let fromTask ← IO.ofExcept (← IO.wait task)
+        let live ← Editor.Ffi.Counter.live
+        let fromMain ← counter.increment
+        return fromTask == 1 && live == before + 1 && fromMain == 2 },
+    { name := "a counter whose last reference is dropped on another thread is freed"
+      run := do
+        let before ← Editor.Ffi.Counter.live
+        let counter ← Editor.Ffi.Counter.new 5
+        -- The task's closure is the only holder from here on.
+        let task ← IO.asTask (prio := .dedicated) counter.increment
+        let fromTask ← IO.ofExcept (← IO.wait task)
+        return fromTask == 6 && (← Editor.Ffi.Counter.live) == before }]
+
+/-- Every check, in the order they run. -/
+def checks (_ : Unit) : List Check :=
+  entryChecks () ++ handleChecks ()
 
 /-- Runs `checks` and returns the names of those that failed. -/
 def failures (checks : List Check) : IO (List String) :=

@@ -12,6 +12,7 @@
 #include <lean/lean.h>
 #include <pthread.h>
 #include <stdbool.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 
@@ -29,6 +30,59 @@ lean_obj_res editor_glue_is_main_thread(void) {
 // `Editor.Ffi.mainThreadProbe : IO Bool`
 lean_obj_res editor_glue_main_thread_probe(void) {
   return lean_io_result_mk_ok(lean_box(editor_ffi_main_thread_probe()));
+}
+
+// ---- Handles ----
+//
+// A Rust object crosses to Lean as an external object: a Lean object that
+// carries the Rust pointer and belongs to a class whose finaliser Lean runs
+// when the last reference is dropped. The finaliser is the only caller of the
+// Rust `free` function. There is one class per Rust type, registered on first
+// use.
+
+// The Rust library's counter.
+typedef struct editor_ffi_counter editor_ffi_counter;
+editor_ffi_counter *editor_ffi_counter_new(uint64_t start);
+uint64_t editor_ffi_counter_increment(const editor_ffi_counter *counter);
+void editor_ffi_counter_free(editor_ffi_counter *counter);
+uint64_t editor_ffi_counter_live(void);
+
+static lean_external_class *counter_class;
+static pthread_once_t counter_class_once = PTHREAD_ONCE_INIT;
+
+// Runs when Lean drops the last reference to a counter, on whichever thread
+// dropped it.
+static void counter_finalize(void *counter) {
+  editor_ffi_counter_free(counter);
+}
+
+// A counter holds no Lean objects, so there is nothing to visit.
+static void counter_foreach(void *counter, b_lean_obj_arg visitor) {
+  (void)counter;
+  (void)visitor;
+}
+
+static void counter_class_register(void) {
+  counter_class =
+      lean_register_external_class(counter_finalize, counter_foreach);
+}
+
+// `Editor.Ffi.Counter.new : UInt64 → IO Counter`
+lean_obj_res editor_glue_counter_new(uint64_t start) {
+  pthread_once(&counter_class_once, counter_class_register);
+  return lean_io_result_mk_ok(
+      lean_alloc_external(counter_class, editor_ffi_counter_new(start)));
+}
+
+// `Editor.Ffi.Counter.increment : @& Counter → IO UInt64`
+lean_obj_res editor_glue_counter_increment(b_lean_obj_arg counter) {
+  return lean_io_result_mk_ok(lean_box_uint64(
+      editor_ffi_counter_increment(lean_get_external_data(counter))));
+}
+
+// `Editor.Ffi.Counter.live : IO UInt64`
+lean_obj_res editor_glue_counter_live(void) {
+  return lean_io_result_mk_ok(lean_box_uint64(editor_ffi_counter_live()));
 }
 
 // ---- The process entry point ----
