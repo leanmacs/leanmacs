@@ -1,15 +1,26 @@
 import Editor.Ffi
+import Lean.Environment
+import Lean.Util.Path
 
 /-!
 # Checks of the boundary with the Rust library
 
 The `ffi-test` executable is linked exactly like `editor`: the same glue
-object, Rust archive and entry point. It runs every check below, names the
-ones that failed, and exits non-zero if any did. `mise run ffi-test` runs it,
-and also runs `ffi-test exit 7` to see the exit status arrive.
+object, Rust archive and entry point. With no arguments it runs every check in
+`checks`, names the ones that failed, and exits non-zero if any did.
+
+Some behaviour needs a process of its own, so it is a scenario chosen by an
+argument (see `main`): `exit <code>` for the exit status, `shutdown` and
+`exit-while-blocked` because quitting the queues is for good, and `overflow`
+because it ends in an abort. `mise run ffi-test` runs the checks and every
+scenario, under a time limit.
 
 Each check pins what the C glue and the entry point do, as Lean sees it. What
 the Rust functions themselves compute is pinned by `editor-ffi`'s own tests.
+
+A check never waits without a bound: a pull runs on a dedicated task that the
+check polls (`pull`, `eventually`), so broken code fails a check within
+seconds instead of hanging the executable.
 -/
 
 namespace FfiTest
@@ -218,6 +229,38 @@ def blockForGood : IO Bool := do
   discard <| IO.asTask (prio := .dedicated) (Editor.Ffi.nextEvent .editor)
   eventually (return (← Editor.Ffi.waiting .editor) == 1)
 
+/-- Prints a line of the overflow scenario and flushes it: the process is
+about to abort, and an abort does not flush. -/
+def say (line : String) : IO Unit := do
+  IO.println s!"ffi-test overflow: {line}"
+  (← IO.getStdout).flush
+
+/-- The overflow scenario; see `overflow`. It is `unsafe` because evaluating a
+constant from an environment trusts the type it is given. -/
+unsafe def overflowUnsafe (sysroot oleanDir : String) : IO UInt8 := do
+  Lean.initSearchPath ⟨sysroot⟩ [⟨oleanDir⟩]
+  let env ← Lean.importModules #[{ module := `InterpretedFixture }] {}
+  let shallow ← IO.ofExcept (env.evalConst (IO Nat) {} `InterpretedFixture.shallow)
+  unless (← shallow) == 10 do
+    say "the interpreter did not run the fixture's shallow recursion"
+    return 1
+  say "the interpreter runs the fixture; now a recursion deeper than its stack"
+  let tooDeep ← IO.ofExcept (env.evalConst (IO Nat) {} `InterpretedFixture.tooDeep)
+  let depth ← tooDeep
+  say s!"the recursion returned {depth}, and the process is still running"
+  return 1
+
+/-- Has Lean's interpreter run a recursion that overflows its stack, on this
+thread, with nothing in the way. The interpreter's stack check throws a C++
+exception, nothing catches it, and the process dies of SIGABRT: that is the
+outcome the scenario exists to show, so this returns only when something is
+wrong, with the exit status 1.
+
+`sysroot` is the Lean toolchain's directory and `oleanDir` the directory
+holding `InterpretedFixture.olean`. -/
+@[implemented_by overflowUnsafe]
+opaque overflow (sysroot oleanDir : String) : IO UInt8
+
 /-- Runs `checks`, names on stderr the ones that failed, and returns the exit
 status: 0 when all hold, 1 otherwise. `scenario` names the run in the line
 printed on success. -/
@@ -232,7 +275,8 @@ def run (scenario : String) (checks : List Check) : IO UInt8 := do
 
 /-- Reports a command line `main` does not understand; the exit status is 2. -/
 def usage : IO UInt32 := do
-  IO.eprintln "usage: ffi-test [exit <code> | shutdown | exit-while-blocked]"
+  IO.eprintln
+      "usage: ffi-test [exit <code> | shutdown | exit-while-blocked | overflow <sysroot> <olean dir>]"
   return 2
 
 end FfiTest
@@ -251,7 +295,12 @@ quit event.
 `exit-while-blocked` parks a task in a pull, never quits, and exits
 explicitly with status 0. It shows that the process ends although a dedicated
 task is still blocked in the library, which returning from `main` would wait
-for. -/
+for.
+
+`overflow <sysroot> <olean dir>` has the interpreter run a recursion deeper
+than its stack. Nothing catches the C++ exception the interpreter throws, so
+the process dies of SIGABRT, and the `ffi-test` task requires exactly that.
+Any exit status of its own means the scenario went wrong. -/
 def main (args : List String) : IO UInt32 := do
   match args with
   | [] =>
@@ -265,6 +314,8 @@ def main (args : List String) : IO UInt32 := do
     IO.Process.exit (← FfiTest.run "ffi-test shutdown" (FfiTest.shutdownChecks ()))
   | ["exit-while-blocked"] =>
     IO.Process.exit (if ← FfiTest.blockForGood then 0 else 1)
+  | ["overflow", sysroot, oleanDir] =>
+    IO.Process.exit (← FfiTest.overflow sysroot oleanDir)
   | ["exit", code] =>
     match code.toNat? with
     | some status =>

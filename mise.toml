@@ -86,9 +86,10 @@ description = "Rewrite the C and C++ sources in the style .clang-format sets"
 run = "git ls-files -z '*.c' '*.h' '*.cc' '*.cpp' '*.hpp' | xargs -0 clang-format -i"
 
 # Runs the built executables only (no Lake), so it needs just `lean` before it.
-# The time limit turns a deadlock in the main-thread hand-off into a failure.
+# The time limit turns a hang into a failure: a deadlock in the main-thread
+# hand-off, or a process that waits for a task still blocked in the library.
 [tasks.ffi-test]
-description = "Run the checks of the Lean/Rust boundary (lean/FfiTest.lean) and the editor executable"
+description = "Run the checks and scenarios of the Lean/Rust boundary (lean/FfiTest.lean) and the editor executable"
 depends = ["lean"]
 dir = "lean"
 timeout = "60s"
@@ -99,6 +100,15 @@ run = [
   # Quit is for good and process-wide, so shutdown has processes of its own.
   ".lake/build/bin/ffi-test shutdown",
   ".lake/build/bin/ffi-test exit-while-blocked",
+  # A stack overflow in interpreted code is not caught: the process must die
+  # of SIGABRT, which the shell reports as status 134. Lean gives each thread
+  # it creates a 1 GiB stack, and the interpreter overflows only once that is
+  # full; LEAN_STACK_SIZE_KB makes it 16 MiB here, so the overflow takes
+  # milliseconds. The runtime's own message has one line per interpreter
+  # frame, over half a megabyte, so stderr is dropped. `ulimit -c 0`: no core
+  # file. The sysroot and the directory of `InterpretedFixture.olean` are
+  # passed in, so the scenario reads nothing from the environment.
+  "status=0; (ulimit -c 0; LEAN_STACK_SIZE_KB=16384 exec .lake/build/bin/ffi-test overflow \"$(lean --print-prefix)\" .lake/build/lib/lean 2>/dev/null) || status=$?; echo \"ffi-test overflow: exit status $status\"; test \"$status\" -eq 134",
   ".lake/build/bin/editor",
 ]
 

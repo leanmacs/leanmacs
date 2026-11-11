@@ -19,6 +19,11 @@ user config at runtime) and the embedding API (`EditorHost`, the config
 session). -/
 @[default_target] lean_lib Editor where roots := #[`Editor, `EditorHost]
 
+/-- Code that `ffi-test overflow` has Lean's interpreter run
+(`InterpretedFixture.lean`). It is a library of its own that no executable
+imports, so it is compiled to an `.olean` and never linked. -/
+@[default_target] lean_lib InterpretedFixture
+
 /-- Fails the build with a reason anywhere but macOS. The entry point, its
 link flag and the Rust library's main-thread check are written for macOS;
 Linux and Windows get theirs with the phase that ports the build. -/
