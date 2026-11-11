@@ -11,6 +11,7 @@ and the document updated.
 | [overview.md](overview.md) | Goals, principles, where the line between Lean and the Rust library falls, the component map, code layout |
 | [concurrency.md](concurrency.md) | Threads, the foreground/background split for Lean code, cancellation, what the Lean runtime requires, reload |
 | [lean-runtime.md](lean-runtime.md) | The build, start-up, config and reload, the editor API as interfaces with models, where state lives |
+| [keymaps-and-modes.md](keymaps-and-modes.md) | Key handling as a pure pipeline, input schemes, the Vim scheme, modes as records, roles and leader keys, testing keymaps. A proposal |
 | [text-and-display.md](text-and-display.md) | Text storage, the edit log, anchors, excerpt buffers, decorations, the scene, layout, rendering, view kinds |
 | [rendering-prior-art.md](rendering-prior-art.md) | A survey of how Zed, neomacs, Xi, Helix, Lapce and others stay responsive; what we adopt and reject |
 | [rust-library.md](rust-library.md) | What the Rust library provides beyond text and display: processes, files, watching, diff, terminal, syntax; and what is built in Lean on top |

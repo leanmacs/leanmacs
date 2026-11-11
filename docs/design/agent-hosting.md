@@ -58,12 +58,49 @@ for permission, for file reads and writes, and to run commands.
 | Features lag the agent's own UI | Use the terminal for what the adapter lacks; advertise only what the agent reports |
 | The agent's shell hooks do not run; MCP config is not auto-discovered | Status from session updates for ACP sessions; a local typed listener for hook callbacks from terminal sessions; pass MCP servers explicitly |
 | Work that outlives a turn is invisible | The activity axis below has an explicit "unknown"; a stall timeout |
-| Sessions are tied to the client process; no standard remote transport | Persist agent records and reattach with session resume; a detached supervisor process is a later option |
+| Sessions are tied to the client process; no standard remote transport | Persist agent records and reattach with session resume; a detached supervisor process is a later option. For remote agents see below |
 | No worktrees, checkpoints or provenance | Version control in Lean; per-edit origin in the edit log |
 
 Diffs arrive as whole old and new text, so the editor computes hunks itself
 and reconciles them with the buffer, since the agent may already have
 written the file.
+
+### Remote agents and sandboxes
+
+Checked on 2026-11-11 from the ACP documentation and web search. The
+status of the transport proposal and of the hosted products rests on weak
+or missing sources, as marked.
+
+ACP's only stable transport is stdio. An agent running somewhere else
+reaches the editor in one of three ways:
+
+| Route | Status | For the editor |
+|---|---|---|
+| A tunnelled stdio: the agent launched through `ssh`, `docker exec`, `kubectl exec` or a sandbox provider's command | Works now | A different launch command to the process service; nothing else changes |
+| ACP's remote transport (Streamable HTTP and WebSocket on one endpoint) | A proposal, not in the stable protocol; its stage could not be confirmed. Support in the SDKs is experimental | Not built on. The transport interface below keeps it possible |
+| A local command that speaks ACP over stdio and forwards to a vendor's hosted agent | Starting to appear (one report, unconfirmed) | Ordinary stdio ACP. The likeliest way hosted agents arrive |
+
+No hosted agent product was found to expose its cloud agents over ACP.
+Several were not checked at all, so this is an absence of evidence.
+
+Three rules follow:
+
+- **The ACP client takes its message stream through an interface**, with
+  the process service's stdio as the first implementation. A remote
+  transport is then another implementation, and the model for tests is a
+  scripted stream.
+- **A session records where its workspace is**: a local worktree, or a
+  remote one named by the git remote and branch its work comes back on.
+  File reads, file writes and commands are capabilities the client offers
+  only for a local workspace; a remote agent does that work itself.
+- **A remote session is reviewed from its fetched branch** together with
+  the session's record of tool calls and diffs. The edit log cannot
+  attribute edits it never saw, so provenance for a remote session is per
+  tool call from that record, not per edit.
+
+A tunnelled session dies with its connection unless something on the far
+side keeps the agent alive; session resume then reattaches to it. That is
+the detached supervisor question below, on another machine.
 
 ## The agent table
 
@@ -98,8 +135,8 @@ interpolation into an eval channel, which produced an injection bug and
 dropped updates when two sessions shared a directory.
 
 **Other fields:** the source (which front end), the workspace root (one
-canonical path, set once), the worktree, and the plan item being worked on
-if there is one.
+canonical path, set once), where the workspace is (a local worktree, or a
+remote and branch), and the plan item being worked on if there is one.
 
 ## Permissions
 
@@ -177,3 +214,8 @@ the agent table. See review-and-navigation.md for the rdm client.
 - **Usage and cost**: where it comes from (ACP usage updates, the agent's
   own logs) and where it is shown.
 - **Sandboxing** agents beyond worktrees.
+- **Remote sessions**: how the editor learns which branch a remote agent
+  pushed, whether the agent's files can be read before it pushes, and what
+  keeps a tunnelled agent alive across a dropped connection.
+- **Hosted agents** without ACP: whether any is worth a client of its own,
+  or the terminal front end and a fetched branch are enough.
