@@ -149,9 +149,12 @@ layout through messages spent months on scrolling and resize bugs.
   drawn from an approximation and corrected.
 - Shaping goes through a `Shaper` port (Parley and fontique as the planned
   adapter): font fallback, ligatures, complex scripts, bidirectional text,
-  mixed proportional and monospace fonts.
-- Drawing goes through a `Renderer` port (wgpu as the planned adapter):
-  glyphs rasterised once into an atlas and drawn as quads, plus rectangles.
+  mixed proportional and monospace fonts. Layout takes every metric from
+  this port and assumes nothing about pixels.
+- Drawing goes through a `Renderer` port, which takes a device-independent
+  frame (see below). The wgpu adapter rasterises glyphs once into an atlas
+  and draws them as quads, plus rectangles. Rasterising, the atlas and
+  glyph identities are inside that adapter, not in the frame.
 - Nothing is drawn when nothing changed. Frames are drawn on demand, at
   most one per display refresh, by a scheduler that is a pure function of
   its inputs and so is tested with a fake clock.
@@ -161,13 +164,38 @@ layout through messages spent months on scrolling and resize bugs.
 - Rows carry a content hash, and the renderer reuses the geometry of rows
   that did not change, so scrolling and cursor movement rebuild nothing.
 
+### The frame is device-independent
+
+The frame carries positioned text runs with resolved faces, rectangles,
+cursors and gutter marks, in layout units. It holds no atlas ids, textures
+or rasterised glyphs. Which device it is drawn on is decided by the pair of
+adapters behind the `Shaper` and `Renderer` ports:
+
+| Front end | Shaper | Renderer |
+|---|---|---|
+| GUI | Parley, real font metrics | wgpu |
+| Cell grid | Cell shaper: advance is the Unicode width, line height is 1 | Writes the frame into a grid of styled cells |
+| Headless | Parley, real font metrics | Records the frame; draws nothing |
+
+The cell grid adapter is built early, as a test renderer: a test asserts
+on a frame as a grid of text. That keeps the ports honest from the start,
+and a terminal front end is then that grid written to a terminal plus a
+platform adapter for terminal input. Grid views pass their cells through.
+
+The front end reports **capabilities** as plain data that Lean reads:
+proportional fonts, fractional line heights, images, smooth scrolling, and
+which key chords it can report. Lean and config read these instead of
+assuming pixels. On cells, block heights round up to whole rows, font
+sizes collapse to one, and inline images are replaced by their fallback
+text.
+
 ### Headless rendering
 
 `edmacs` shipped visible bugs past about 400 green tests because batch
 Emacs has no real layout. Here a headless renderer adapter runs the same
 layout code with real font metrics and produces frames with real pixel
 geometry, so tests can assert where things are, not only what state says.
-A fake shaper with fixed-width glyphs covers unit tests; the headless
+The cell shaper and cell grid renderer cover unit tests; the headless
 adapter covers the cases that depend on real metrics.
 
 ## Instrumentation
@@ -193,6 +221,8 @@ these hunks" is a fact the editor can state.
   reuse evil motions and search for free.
 - **Block layout language**: how much does Lean get to describe? Text runs
   and buttons are enough for review comments; a diagram needs more.
+- **Capabilities**: the exact set, and whether a face or block can name a
+  fallback for a front end that lacks one.
 - **Viewed-range tracking** granularity and whether it is on by default.
 - **Large files and long lines**: what is the plan when a single line is
   megabytes?

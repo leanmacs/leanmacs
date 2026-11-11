@@ -143,6 +143,33 @@ can query it without the renderer waiting on Lean.
 | Compositing text against an assumed background in the shader | neomacs | Only valid when every glyph sits on a known opaque background. |
 | Everything is an excerpt buffer | Zed | A complexity cost on the single-file path. Excerpt buffers stay a separate kind of buffer here. |
 
+## Whole-editor libraries considered
+
+Checked on 2026-11-11: is there a library that supplies the editor from
+text to pixels, so that we write less? None fits. Each is an editor widget
+inside a UI framework that owns the event loop and the editor state, which
+is Lean's role here.
+
+| Candidate | What it offers | Why not |
+|---|---|---|
+| Zed's `editor` and `multi_buffer` on GPUI | Display layers, excerpts, blocks, inlays: the closest to this design | Not published as libraries. State lives in GPUI entities and GPUI runs the application. |
+| gpui-component's code editor | A GPUI widget with tree-sitter and language-server support | The same ownership problem. Folds, excerpts and blocks were not found (weak source: a blog post and the README). |
+| Floem's editor view | Rope, per-line layout, wgpu through Vello | Tied to Floem's reactive runtime; clears its layout cache on every edit. |
+| cosmic-text's `Editor` with glyphon | Buffer, cursor, selection, shaping, a wgpu atlas | Line storage and caches rejected above; no display layers. |
+| Parley's `PlainEditor` | Small text inputs | Rejected above. |
+
+What this leaves us to write, and where a library serves:
+
+| Layer | Source |
+|---|---|
+| Rope | Library |
+| Change sets, anchors, selections, undo tree, the edit log | Ours, on Helix's model |
+| Display layers and excerpt buffers | Ours, on Zed's model. The largest piece; nobody ships it separately |
+| Shaping, font fallback, line breaking | Parley and fontique |
+| The per-line layout cache, hit testing, frame building | Ours, over the shaper |
+| Rasterising, the atlas, drawing | Vello, or our own atlas if it cannot meet a requirement |
+| Window, terminal, parsing, diff, search, fuzzy matching, watching | Libraries, each behind a port |
+
 ## Risks this raises for our planned stack
 
 These are accepted (decided 2026-11-10): wgpu stays, behind the `Renderer`

@@ -29,7 +29,7 @@ file says how.
 | Who owns the process | Lean. The editor is a Lean program; Rust is a library it calls and pulls events from. Rust never calls Lean | 2026-11-10 |
 | The split | Rust: text storage, layout, rendering, the window, processes and terminals, parsing. Lean: editor state, the command loop, every feature | 2026-11-10 |
 | Editing style | evil (Vim-style modal), written in Lean, from the first milestone | 2026-11-09 |
-| First front end | GUI (winit, wgpu); a terminal renderer can come later as another adapter | 2026-11-09 |
+| First front end | GUI (winit, wgpu). The frame is device-independent, and a cell grid shaper and renderer are built early as test adapters, so a terminal front end stays possible | 2026-11-09, revised 2026-11-11 |
 | Lean editor API | Interfaces with a real binding and a pure model, not direct library calls | 2026-11-09 |
 | Syntax | Tree-sitter, right after the first milestone | 2026-11-09 |
 | Agent protocol | Agent Client Protocol (ACP), with the client written in Lean | 2026-11-09, client placement 2026-11-10 |
@@ -38,6 +38,7 @@ file says how.
 | Version control | In Lean, over subprocesses; the Rust library supplies text diff only | 2026-11-09 |
 | Concurrency | Serialized foreground commands plus background jobs on Lean's task system; cancellation and process ownership built by us | 2026-11-09, revised 2026-11-10 |
 | Rendering stack | wgpu on every platform, behind the `Renderer` port. Existing libraries are preferred even when immature (Parley, Vello), each behind a port; we write our own only where none fits | 2026-11-10 |
+| How much we write | No library supplies the editor whole. Libraries cover the rope, shaping, drawing, the window, the terminal and parsing; the edit model, display layers, layout cache and frame building are ours | 2026-11-11 |
 | Runaway code | Not a design driver: an interrupt flag checked at API calls, no watchdog | 2026-11-10 |
 | Memory | A few hundred megabytes at start-up is acceptable; the target is "not gigabytes" | 2026-11-10 |
 
