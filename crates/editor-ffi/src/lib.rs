@@ -10,8 +10,10 @@
 //! object built or taken apart (an `IO` result, a string), the glue does that
 //! with `lean.h` and calls the function here with the plain values.
 
+pub mod counter;
 pub mod events;
 pub mod main_thread;
+pub mod text;
 
 /// The sum of `a` and `b`, wrapping on overflow.
 ///
