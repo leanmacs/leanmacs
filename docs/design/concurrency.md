@@ -435,14 +435,19 @@ handler never runs.
 - Real keyboard input reaching the window. The spike's window never took
   focus, so keys were only tested through the same queue synthetically.
 - Linux and Windows. The entry point and linker workarounds are for macOS.
-- The worst-case latency of the editor loop while jobs run. `mise run
-  job-bench` measures the loop as built, in the headless host: the time
-  from posting a request to the editor thread having run it, over 10,000
-  samples a row, with nothing running, with 64 jobs each sleeping a
-  millisecond in a loop, with one interpreted job computing on each pool
-  thread, with two for each, and with nothing running again. It is run by
-  hand and asserts nothing. One run, at commit `fe5f7fb` on an 18-core
-  machine, in µs (median / 99th percentile / maximum):
+- The rare millisecond-scale sample of the editor loop's latency while jobs
+  compute. `mise run job-bench` measures the loop as built, in the headless
+  host: the time from posting a request to the editor thread having run it,
+  over 10,000 samples a row, with nothing running, with 64 jobs each
+  sleeping a millisecond in a loop, with one interpreted job computing on
+  each pool thread, with two for each, and with nothing running again. It
+  is run by hand and asserts nothing.
+
+  The bound the job system was accepted against: in every loaded row the
+  median is within twice the larger of the two idle medians, and the 99th
+  percentile is under 100 µs. The maximum is reported and not judged. Two
+  runs on an 18-core machine met it. One, at commit `fe5f7fb`, in µs
+  (median / 99th percentile / maximum):
 
   | Row | Latency |
   |---|---|
@@ -452,21 +457,34 @@ handler never runs.
   | 36 interpreted jobs computing | 2.3 / 4.2 / 20.6 |
   | Idle again | 2.3 / 5.3 / 21.0 |
 
-  The median did not move in any row. Two things did. With 64 jobs
-  sleeping, the 99th percentile was 12.7 µs against 5.7 µs idle, more than
-  twice it. And with a job computing on every pool thread, one sample in
-  10,000 took 8.7 ms: the pool is as wide as the machine, so the editor
-  thread competes with it for a core. Which row shows which varies from run
-  to run. Neither is tuned away. If the tail matters, the remedies are a
+  The other, at `bcb92c4`, is the run recorded with the phase in rdm
+  (`workspace-and-ports`, phase 5): idle medians of 2.7 and 2.5 µs, and
+  3.4 / 16.5 / 70.8 with 64 jobs sleeping, 2.3 / 6.2 / 3,796.1 with 18
+  computing and 2.3 / 6.4 / 45.0 with 36. Across both, the largest median
+  in a loaded row was 3.4 µs, against a limit of 5.4 µs, and the largest
+  99th percentile 16.5 µs, against 100 µs.
+
+  Two things are noted beside the bound. With 64 jobs sleeping, the 99th
+  percentile was more than twice the idle one in both runs (12.7 µs against
+  5.7, and 16.5 against 5.7): every wait goes through the timer service and
+  the pump, tens of thousands of times a second, and the tail of the loop
+  shows it, at a scale far below the bound. The benchmark's own
+  `unaffected:` line still judges the 99th percentile by that stricter
+  rule, twice idle, and so prints `no` for this row.
+
+  What stays open is the maximum. With a job computing on every pool thread,
+  one sample in 10,000 took 8.7 ms in one run and 3.8 ms in the other: the
+  pool is as wide as the machine, so the editor thread competes with it for
+  a core. It is not tuned away. If that tail matters, the remedies are a
   pool smaller than the machine (only `LEAN_NUM_THREADS` at process start
   does that, and children inherit it) or a higher scheduling class for the
-  editor thread, set in the glue. The run recorded with the phase is in
-  rdm (`workspace-and-ports`, phase 5).
+  editor thread, set in the glue.
 - Key latency itself, with a window: the benchmark's sample is a command
   run through the headless loop, not a key.
 - A reload while every pool thread computes (see "Reload"): whether the
   reload job's elaboration can be kept off the pool, or the pool kept from
-  filling with jobs that never wait.
+  filling with jobs that never wait. Tracked as the rdm task
+  `reload-starves-under-computing-pool`.
 
 ## Open questions
 
