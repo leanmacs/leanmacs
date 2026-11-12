@@ -283,28 +283,46 @@ def lines (session : Session) : IO (Array String) :=
 
 end Session
 
+/-- Runs `check` against a host started over `elaborator` and `source`, with
+its output in a buffer `check` is handed, and stops the host. `false` if the
+check did not hold or the host did not stop. -/
+def hosted {σ : Type} (context : Context) (elaborator : Config.Elaborator σ)
+    (source : Config.Source) (check : Headless.Host → IO.Ref (Array String) → IO Bool) : IO Bool :=
+  do
+  let output ← IO.mkRef #[]
+  -- Hosts follow one another on one queue: each gets source ids of its own,
+  -- so none takes a late event of an earlier one for its own.
+  let requests ← context.ids.modifyGet fun next => (next, next + 2)
+  let host ←
+    Headless.start
+        { elaborator, source, emit := fun line => output.modify (·.push line), requests,
+          wakeups := requests + 1 }
+  try
+    let held ← check host output
+    let stopped ← host.stop patience
+    return held && stopped
+  catch error =>
+    discard <| host.halt patience
+    throw error
+
+/-- Runs `check` against a host started on a fresh temporary directory
+holding `files`, and stops the host. The host's elaborator is `around` the
+real one and its source `through` the directory's: a check that controls
+elaboration or counts reads passes a decorator. The directory is removed. -/
+def withHostOver (context : Context) (files : List (String × String))
+    (around : Config.Elaborator Config.Elaborate.State → Config.Elaborator Config.Elaborate.State)
+    (through : Config.Source → Config.Source) (check : Session → IO Bool) : IO Bool :=
+  IO.FS.withTempDir fun directory => do
+    writeFiles directory files
+    hosted context (around context.elaborator) (through (Config.Directory.source directory))
+        fun host output => check { host, directory, output }
+
 /-- Runs `check` against a host started on a fresh temporary directory
 holding `files`, with the real elaborator, and stops the host. `false` if the
 check did not hold or the host did not stop. The directory is removed. -/
 def withHost (context : Context) (files : List (String × String)) (check : Session → IO Bool) :
     IO Bool :=
-  IO.FS.withTempDir fun directory => do
-    writeFiles directory files
-    let output ← IO.mkRef #[]
-    -- Hosts follow one another on one queue: each gets source ids of its
-    -- own, so none takes a late event of an earlier one for its own.
-    let requests ← context.ids.modifyGet fun next => (next, next + 2)
-    let host ←
-      Headless.start
-          { elaborator := context.elaborator, source := Config.Directory.source directory,
-            emit := fun line => output.modify (·.push line), requests, wakeups := requests + 1 }
-    try
-      let held ← check { host, directory, output }
-      let stopped ← host.stop patience
-      return held && stopped
-    catch error =>
-      discard <| host.halt patience
-      throw error
+  withHostOver context files id id check
 
 /-- A chunk that defines the command `greet`, which makes a text holding
 `text`. -/
@@ -455,9 +473,177 @@ def hostChecks (context : Context) : List Check :=
                 "diagnostic: 15-state.lean: error", "run greet: ok", "commands: greet",
                 "text 0: \"v1\""] }]
 
+/-- Polls `condition` until it holds; `false` if it still does not after
+`patience` milliseconds. -/
+def eventually (condition : IO Bool) : IO Bool :=
+  Headless.within patience condition
+
+/-- How a check controls elaboration: a decorator of the elaborator port that
+holds the chunk called `slow.lean` open until the check lets it go, and
+counts the chunks being elaborated. Nothing here sleeps to let something
+else happen. -/
+structure Gate where
+  /-- Resolved by the check to let `slow.lean` go, for good. -/
+  release : IO.Promise Unit
+  /-- Whether an elaboration of `slow.lean` has arrived and waited. -/
+  holding : IO.Ref Bool
+  /-- How many chunks are being elaborated now. -/
+  inProgress : IO.Ref Nat
+  /-- The most chunks that were being elaborated at once. -/
+  most : IO.Ref Nat
+
+namespace Gate
+
+/-- A gate that is shut. -/
+def new : IO Gate :=
+  return { release := ← IO.Promise.new, holding := ← IO.mkRef false, inProgress := ← IO.mkRef 0,
+           most := ← IO.mkRef 0 }
+
+/-- `elaborator` behind the gate. -/
+def around {σ : Type} (gate : Gate) (elaborator : Config.Elaborator σ) : Config.Elaborator σ :=
+  { elaborator with
+    chunk := fun before chunk => do
+      let now ← gate.inProgress.modifyGet fun count => (count + 1, count + 1)
+      gate.most.modify (max · now)
+      try
+        if chunk.name == "slow.lean" then
+          gate.holding.set true
+          discard <| IO.wait gate.release.result?
+        elaborator.chunk before chunk
+      finally
+        gate.inProgress.modify (· - 1) }
+
+/-- Lets `slow.lean` go, now and from now on. -/
+def «open» (gate : Gate) : IO Unit :=
+  gate.release.resolve ()
+
+end Gate
+
+/-- `source`, counting in `reads` how many times its chunks are read: once
+for each reload job. -/
+def counting (reads : IO.Ref Nat) (source : Config.Source) : Config.Source :=
+  {
+    chunks := do
+      reads.modify (· + 1)
+      source.chunks }
+
+/-- A chunk that takes as long to elaborate as the check's gate says. -/
+def slowChunk : String :=
+  "def slow : Nat := 1\n"
+
+/-- The lines `event <source> 0` up to `event <source> <count - 1>`: what the
+host prints for a script of `count` events fed from a Rust thread. -/
+def eventLines (source count : Nat) : Array String :=
+  (Array.range count).map fun code => s!"event {source} {code}"
+
+/-- A fake of the elaborator port whose every state holds a library handle, a
+counter of its own: how many states are alive is how many counters the
+library holds. -/
+def handleElaborator : Config.Elaborator Ffi.Counter :=
+  { base := Ffi.Counter.new 0,
+    chunk := fun _ _ => return { diagnostics := #[], state := some (← Ffi.Counter.new 0) },
+    setup := fun _ => return .ok (pure ()) }
+
+/-- The checks of the editor thread and the reload job: what happens while a
+chunk elaborates, that reloads are serialised, and that nothing of a
+replaced config is kept. -/
+def threadChecks (context : Context) : List Check :=
+  [{
+      name :=
+        "the editor answers events while a slow chunk elaborates: 100 events from a Rust thread and a command of the old config",
+      run := do
+        let gate ← Gate.new
+        withHostOver context greetConfig gate.around id fun session => do
+            session.ask [.reload]
+            session.write "slow.lean" slowChunk
+            session.host.send .reload
+            try
+              -- The reload job is now inside the elaboration of `slow.lean`,
+              -- and stays there until the gate opens.
+              unless ← eventually gate.holding.get do
+                return false
+              unless ← Ffi.feedScript .editor 77 100 do
+                return false
+              session.host.send (.run "greet")
+              -- With the job on the editor thread these lines never come while
+              -- the chunk is held: the wait runs out and the check fails.
+              let answered ←
+                eventually do
+                    let lines ← session.output.get
+                    return lines.size == 102 && lines.contains "run greet: ok"
+              let lines ← session.output.get
+              -- The chunk is still being elaborated: all of that was answered
+              -- while it was held.
+              let held := (← gate.inProgress.get) == 1
+              gate.open
+              session.ask []
+              let after ← session.output.get
+              return answered && held &&
+                  lines.extract 0 1 == #["reload 1: installed, 2 chunks, 1 commands"] &&
+                  (lines.filter (·.startsWith "event ")) == eventLines 77 100 &&
+                  !lines.any (·.startsWith "reload 2") &&
+                  after.extract 102 after.size == #["reload 2: installed, 3 chunks, 1 commands"]
+            finally
+              gate.open },
+    { name :=
+        "reloads are serialised: requests made while a job runs make one more job, never two at once, and it reads the source afresh"
+      run := do
+        -- Seen to bite once by hand: a host that starts a job for every
+        -- request, running or not, fails this.
+        let gate ← Gate.new
+        let reads ← IO.mkRef 0
+        withHostOver context (greetConfig ++ [("slow.lean", slowChunk)]) gate.around
+            (counting reads) fun session => do
+            session.host.send .reload
+            try
+              unless ← eventually gate.holding.get do
+                return false
+              session.write "10-greet.lean" (greetChunk "v2")
+              session.host.send .reload
+              session.host.send .reload
+              -- Both requests are on the queue before the gate opens, so the
+              -- editor thread meets them before the job's outcome.
+              gate.open
+              -- Settle first: a request sent now would be handled before the
+              -- reloads have finished.
+              session.ask []
+              session.ask [.run "greet", .show]
+              return (← reads.get) == 2 && (← gate.most.get) == 1 &&
+                  (← session.lines) ==
+                    #["reload 1: installed, 3 chunks, 1 commands",
+                      "reload 2: installed, 3 chunks, 1 commands", "run greet: ok",
+                      "commands: greet", "text 0: \"v2\""]
+            finally
+              gate.open },
+    { name :=
+        "a replaced config is not retained: after 50 reloads the library holds the states of one loaded config, and none once the host has stopped"
+      run := do
+        -- Seen to bite once by hand: a host that pushes each outcome onto a
+        -- list it keeps fails this.
+        let before ← Ffi.Counter.live
+        let chunks ← IO.mkRef (#[] : Array Config.SourceChunk)
+        let loaded ←
+          hosted context handleElaborator { chunks := chunks.get } fun host _ => do
+              for round in [0:50] do
+                -- The first chunk changes, so every chunk is elaborated again.
+                chunks.set
+                    #[{ name := "a", text := toString round }, { name := "b", text := "b" },
+                      { name := "c", text := "c" }]
+                host.send .reload
+                unless ← host.settle patience do
+                  return false
+              -- The base and the states after three chunks. A finished job's
+              -- task may still be going away, so this is polled.
+              eventually do
+                  return (← Ffi.Counter.live) == before + 4
+        let freed ←
+          eventually do
+              return (← Ffi.Counter.live) == before
+        return loaded && freed }]
+
 /-- Every check, in the order they run. -/
 def checks (context : Context) : List Check :=
-  elaboratorChecks context ++ directoryChecks () ++ hostChecks context
+  elaboratorChecks context ++ directoryChecks () ++ hostChecks context ++ threadChecks context
 
 /-- Runs `checks` and returns the names of those that failed. A check that
 throws has failed, and its error is reported with its name. -/

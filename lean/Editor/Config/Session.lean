@@ -124,6 +124,11 @@ structure Outcome (σ : Type) where
   `none` when the reload is rejected. -/
   built : Option (Built σ)
 
+/-- An outcome exists for any state type: a promise of one can be made before
+there is a state. -/
+instance {σ : Type} : Nonempty (Outcome σ) :=
+  ⟨{ base := none, diagnostics := #[], built := none }⟩
+
 /-- The diagnostic that `source` failed with `message`, about no place in
 particular. -/
 def failure (source message : String) : Diagnostic :=

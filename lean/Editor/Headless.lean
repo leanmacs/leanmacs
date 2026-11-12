@@ -17,6 +17,14 @@ config half of the editor's state (`Config.State`) and the table of texts
 (`RealTexts`), feeds the reload reducer (`Config.step`) and performs its
 effects, and runs commands with `EditorM.runReal`.
 
+A reload does not run on the editor thread. The reducer's `start` effect
+becomes a dedicated task, the reload job, which reads the source, elaborates
+and runs `setup` (`Config.build`), resolves a promise with the outcome and
+posts a wake-up to the editor queue. The editor thread meets the wake-up like
+any event, takes the outcome and feeds it to the reducer: a config is
+installed between two events, and the editor answers events while a chunk
+elaborates. It is a dedicated task, not one of the pool's: it reads files.
+
 It knows a request from its driver, an event of the library's scripted source
 and quit, and nothing else. It has no keys, keymaps, dispatch, scene or
 rollback: those are the command loop's, which will replace this loop and
@@ -160,6 +168,8 @@ structure Running (σ : Type) where
   config : Config.State σ := {}
   /-- The texts made so far. -/
   texts : RealTexts := #[]
+  /-- Where the reload job that is running will leave its outcome. -/
+  job : Option (IO.Promise (Config.Outcome σ)) := none
   /-- How many markers the loop has reached. -/
   markers : Nat := 0
   /-- Whether the driver has ended the loop. -/
@@ -169,9 +179,22 @@ namespace Running
 
 variable {σ : Type}
 
-/-- Feeds `event` to the reload reducer and performs its effects. -/
-partial def reduce (collaborators : Collaborators σ) (running : Running σ)
-    (event : Config.Event σ) : IO (Running σ) := do
+/-- The reload job, on a thread of its own: builds the config, hands the
+outcome over through `promise`, and wakes the editor thread with an event.
+The wake-up is posted whatever happens, so the editor thread never waits for
+a job that is gone. -/
+def reloadJob (collaborators : Collaborators σ) (base : Option σ) (chunks : Array (Config.Chunk σ))
+    (promise : IO.Promise (Config.Outcome σ)) : IO Unit := do
+  try
+    promise.resolve (← Config.build collaborators.elaborator collaborators.source base chunks)
+  finally
+    discard <| Ffi.postEvent .editor collaborators.wakeups 0 ""
+
+/-- Feeds `event` to the reload reducer and performs its effects. A reload
+job is started on a dedicated task, never run here: it reads files and
+elaborates, and the editor thread goes on to its next event. -/
+def reduce (collaborators : Collaborators σ) (running : Running σ) (event : Config.Event σ) :
+    IO (Running σ) := do
   let (config, effects) := Config.step running.config event
   let mut running := { running with config }
   for effect in effects do
@@ -180,9 +203,21 @@ partial def reduce (collaborators : Collaborators σ) (running : Running σ)
       for line in reportLines report do
         collaborators.emit line
     | .start base chunks =>
-      let outcome ← Config.build collaborators.elaborator collaborators.source base chunks
-      running ← running.reduce collaborators (.finished outcome)
+      let promise ← IO.Promise.new
+      discard <| IO.asTask (prio := .dedicated) (reloadJob collaborators base chunks promise)
+      running := { running with job := some promise }
   return running
+
+/-- Takes the finished reload job's outcome and feeds it to the reducer. This
+is where a reload is installed: on the editor thread, between two events. -/
+def finish (collaborators : Collaborators σ) (running : Running σ) : IO (Running σ) := do
+  let some promise := running.job | return running
+  let outcome :=
+    promise.result?.get.getD
+      { base := none,
+        diagnostics := #[Config.failure "reload" "the reload job ended without an outcome"],
+        built := none }
+  { running with job := none }.reduce collaborators (.finished outcome)
 
 /-- Runs the command called `name` against the Rust library, writes back what
 it wrote, and prints how it went. -/
@@ -221,6 +256,8 @@ def handle (collaborators : Collaborators σ) (running : Running σ) (event : Ff
   | .library =>
     return running
   | .lean =>
+    if event.source.id == collaborators.wakeups then
+      return ← running.finish collaborators
     unless event.source.id == collaborators.requests do
       return running
     match Signal.decode? event.code event.text with
