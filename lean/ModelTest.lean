@@ -1,5 +1,6 @@
 import Editor.Command.Append
 import Editor.Config.Reload
+import Editor.Job.Contract
 import Editor.Job.Model
 import Editor.Text.Contract
 
@@ -25,7 +26,11 @@ executable runs the same command source against the real binding.
 The job system is tested here with no Rust library:
 
 - `jobModelChecks`: the job port's pure model (`Editor/Job/Model.lean`), its
-  clock and its cancellation.
+  clock and its cancellation, and what only the model's exact clock can
+  show: that a timer does not drift.
+
+The job port's contract (`Editor/Job/Contract.lean`) is run against that
+model here, like the text port's.
 
 The config session's decisions are tested here too, with no elaborator:
 
@@ -215,7 +220,38 @@ def jobModelChecks : List Check :=
           return 1
         pure
           (modelled waits { now := 5, cancelAt := some 3 } == (.cancelled, 5) &&
-            modelled (pure 1 : JobM Nat) { now := 5, cancelAt := some 3 } == (.cancelled, 5)) }]
+            modelled (pure 1 : JobM Nat) { now := 5, cancelAt := some 3 } == (.cancelled, 5)) },
+    -- Not a property of the contract: it is an equality, which a real clock
+    -- would fail, and the contract's inequality cannot see drift, because a
+    -- timer that drifts ticks late, which is still "not before". Only a wait
+    -- moves the model's clock, so the work between two ticks is a sleep
+    -- shorter than the period.
+    { name :=
+        "in the job model, a timer does not drift: three ticks of a period of 10, with 3 ms of work after the first and the second, leave the clock at exactly 30"
+      run :=
+        let job : JobM Unit := do
+          let timer ← Timer.every 10
+          let timer ← timer.tick
+          sleep 3
+          let timer ← timer.tick
+          sleep 3
+          discard timer.tick
+        pure (modelled job == (.finished (), 30)) },
+    { name :=
+        "a contract property whose job returns false, throws or is cancelled has not held, and each is named with how it ended"
+      run := do
+        let properties : List JobContract.Property :=
+          [{ name := "holds", holds := pure true }, { name := "false", holds := pure false },
+            { name := "throws", holds := throw "no thanks" },
+            { name := "cancelled",
+              holds := do
+                sleep 10
+                return true }]
+        let failed ←
+          JobContract.failures (fun job => pure (job.runModel { cancelAt := some 5 }).1) properties
+        return failed ==
+            ["false", "throws (the job failed with `no thanks`)",
+              "cancelled (the job was cancelled)"] }]
 
 /-- A command that makes one text holding `text`. What a registered command
 does is observed by running it: commands are programs, and cannot be compared. -/
@@ -908,16 +944,25 @@ def textFailures : IO (List String) := do
   let failed ← TextContract.failures (fun command => pure (command.runModel {}).1) textProperties
   return failed.map (s!"the text model: {·}")
 
+/-- The names of the job port's contract properties that do not hold of the
+job model, each run from a clock at 0 that nothing cancels. -/
+def jobModelFailures : IO (List String) := do
+  let failed ← JobContract.failures (fun job => pure (job.runModel {}).1) JobContract.properties
+  return failed.map (s!"the job model: {·}")
+
 end ModelTest
 
-/-- Runs the checks, then the text port's contract against its model: exits 0
-when all hold, and 1 after naming on stderr the ones that do not. -/
+/-- Runs the checks, then the text port's contract and the job port's
+contract, each against its model: exits 0 when all hold, and 1 after naming
+on stderr the ones that do not. -/
 def main : IO UInt32 := do
-  let failed := (← ModelTest.failures ModelTest.checks) ++ (← ModelTest.textFailures)
+  let failed :=
+    (← ModelTest.failures ModelTest.checks) ++ (← ModelTest.textFailures) ++
+      (← ModelTest.jobModelFailures)
   for name in failed do
     IO.eprintln s!"FAILED: {name}"
   unless failed.isEmpty do
     return 1
   IO.println
-      s!"model-test: {ModelTest.checks.length} checks passed, and {ModelTest.textProperties.length} properties hold of the text model"
+      s!"model-test: {ModelTest.checks.length} checks passed, {ModelTest.textProperties.length} properties hold of the text model, and {Editor.JobContract.properties.length} of the job model"
   return 0

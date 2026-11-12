@@ -23,8 +23,9 @@ A job reaches time, and nothing else yet, through two requests:
 - `waitUntil deadline` returns once the clock reads `deadline` or later. A
   deadline that has passed returns at once.
 
-`sleep` is written with those two. A job may also fail: `JobM` has an error
-layer of messages, so a job has `throw`, `try` and `catch`.
+`sleep` is written with those two, and so is a `Timer`, which is plain data:
+the instant of its next tick and its period. A job may also fail: `JobM` has
+an error layer of messages, so a job has `throw`, `try` and `catch`.
 
 No request carries a promise or a handle: a request is plain data. How a wait
 is completed is the runner's business (`Editor/Job/Runner.lean`), not
@@ -47,7 +48,8 @@ makes the request. It then needs a clause in the model (`JobModel.handle`,
 contract, which is what pins it for both.
 
 The pieces: the pure model is `Editor/Job/Model.lean`, and `model-test` runs
-the checks of it (`ModelTest.jobModelChecks`).
+the checks of it (`ModelTest.jobModelChecks`). The contract is
+`Editor/Job/Contract.lean`.
 -/
 
 namespace Editor
@@ -88,6 +90,28 @@ def waitUntil (deadline : Nat) : JobM Unit :=
 /-- Waits for `duration` milliseconds on the job clock. -/
 def sleep (duration : Nat) : JobM Unit := do
   waitUntil ((← now) + duration)
+
+/-- A timer: plain data over the clock and the wait. It holds the instant of
+its next tick, so its ticks are a period apart whatever the job does between
+them: a tick waits until that instant, not for a period from now, and so a
+timer does not drift with the work between its ticks. -/
+structure Timer where
+  /-- The instant of the next tick, on the job clock. -/
+  next : Nat
+  /-- How far apart the ticks are, in milliseconds. -/
+  period : Nat
+  deriving DecidableEq, Repr
+
+/-- A timer that ticks every `period` milliseconds, the first time one period
+from now. -/
+def Timer.every (period : Nat) : JobM Timer :=
+  return { next := (← now) + period, period }
+
+/-- Waits for the timer's next tick, and returns the timer for the tick after
+it. A tick whose instant has passed returns at once. -/
+def Timer.tick (timer : Timer) : JobM Timer := do
+  waitUntil timer.next
+  return { timer with next := timer.next + timer.period }
 
 namespace Job
 
