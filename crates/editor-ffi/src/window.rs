@@ -132,6 +132,11 @@ impl InputClock for CountingClock {
 
 /// The event that stands for `input`, said to have happened at `stamp`: the
 /// table in the module docs.
+///
+/// The match on the port's inputs is exhaustive on purpose. This crate must
+/// act on every one of them: an input with no event would never reach Lean,
+/// so a new variant has to be given its kind and its code here before the
+/// crate builds.
 pub fn event(input: Input, stamp: u64) -> Event {
     let (kind, code, text) = match input {
         Input::Opened { platform } => (EventKind::WindowOpened, 0, platform),

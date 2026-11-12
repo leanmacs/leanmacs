@@ -515,8 +515,9 @@ handler never runs.
   thread, to the instant a Lean loop had pulled the event and read the same
   clock. That is the hand-off across the boundary and the thread wake-up,
   with a loop that does nothing else. Under Xvfb in a container, with
-  synthetic keys, its median was 24 to 34 µs over three runs of 40 to 42
-  samples; the figures of a person typing on macOS are with phase 6 in rdm.
+  synthetic keys, its median was 24 to 34 µs in five runs of 40 to 42
+  samples each; the figures of a person typing on macOS are with phase 6 in
+  rdm.
   What the command loop still has to show is the time from that arrival to
   the edit being applied and the frame asked for, with keymap lookup, a
   command and a real editor state between.
