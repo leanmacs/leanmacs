@@ -144,8 +144,9 @@
 //!   and stays open until [`window::editor_ffi_window_close`] is called,
 //!   which any thread may do.
 //! - **The platform is named by a tag** ([`window::PlatformId`]), checked
-//!   like a queue's. The scripted platform is reachable for the Lean test
-//!   executable, as the scripted event source is.
+//!   like a queue's. The two scripted platforms, the one that reports a
+//!   sample and the one that cannot open a window, are reachable for the
+//!   Lean test executable, as the scripted event source is.
 //!
 //! Tests: the unit tests of `window.rs` (the event each input becomes, the
 //! stamps, the options, a platform that cannot open), on the port's fake

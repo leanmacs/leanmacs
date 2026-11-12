@@ -20,8 +20,8 @@ use std::time::Duration;
 use editor_ffi::events::{Event, QueueId, RawEvent, editor_ffi_events_next};
 use editor_ffi::text::editor_ffi_text_free;
 use editor_ffi::window::{
-    self, PlatformId, RawRefusal, editor_ffi_input_clock_now, editor_ffi_window_close,
-    editor_ffi_window_run,
+    self, PlatformId, RawRefusal, SCRIPTED_FAILURE, editor_ffi_input_clock_now,
+    editor_ffi_window_close, editor_ffi_window_run,
 };
 use editor_platform::{Input, ScriptedPlatform};
 
@@ -37,6 +37,9 @@ const EDITOR: u8 = QueueId::Editor.tag();
 
 /// The tag of the scripted platform.
 const SCRIPTED: u8 = PlatformId::Scripted.tag();
+
+/// The tag of the scripted platform that cannot open a window.
+const SCRIPTED_FAILING: u8 = PlatformId::ScriptedFailing.tag();
 
 /// A tag that names no platform.
 const NO_PLATFORM: u8 = u8::MAX;
@@ -194,6 +197,23 @@ fn the_process_wide_window_reports_on_the_editor_queue_until_it_is_closed() {
     let without = sample(false);
     assert!(without.len() < sample(true).len());
     assert_arrives(without);
+    assert!(editor_ffi_window_close(SCRIPTED));
+    assert_eq!(done.recv_timeout(DEADLINE), Ok(Ok(())));
+
+    // The scripted platform that cannot open a window is refused with its
+    // reason, at once and on every run, and a close of it does nothing.
+    for _ in 0..2 {
+        let refused = run(SCRIPTED_FAILING, true)
+            .recv_timeout(DEADLINE)
+            .expect("a run that cannot open returns at once");
+        assert_eq!(refused, Err(SCRIPTED_FAILURE.to_owned()));
+        assert!(editor_ffi_window_close(SCRIPTED_FAILING));
+    }
+
+    // The failed runs queued nothing: a window that runs next reports its
+    // own sample first.
+    let done = run(SCRIPTED, true);
+    assert_arrives(sample(true));
     assert!(editor_ffi_window_close(SCRIPTED));
     assert_eq!(done.recv_timeout(DEADLINE), Ok(Ok(())));
 

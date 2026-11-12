@@ -356,27 +356,56 @@ def isWindowSample (composition : Bool) (events : List Editor.Ffi.Event) : Bool 
     events.map (fun event => (event.kind, event.code, event.text)) == windowSample composition
 
 /-- Runs the keyboard check (`Editor/WindowCheck.lean`) over the real
-bindings, on the scripted platform, and returns the lines of its report;
-`none` if it did not end in time, in which case the window is closed so that
-no run is left behind. The check blocks until the window has closed, so it
-runs on a dedicated task. -/
-def checkScripted (composition : Bool) : IO (Option (List String)) := do
+bindings, on `platform`, and returns the lines of its report and its exit
+status; `none` if it did not end in time, in which case the window is closed
+so that no run is left behind. The check blocks until the window has closed,
+so it runs on a dedicated task. -/
+def checkOn (platform : Editor.Ffi.Platform) (composition : Bool) :
+    IO (Option (List String × UInt32)) := do
   let lines ← IO.mkRef #[]
-  let window := Editor.WindowCheck.real .scripted fun line => lines.modify (·.push line)
+  let window := Editor.WindowCheck.real platform fun line => lines.modify (·.push line)
   let task ← IO.asTask (prio := .dedicated) (Editor.WindowCheck.check window { composition })
   unless ← eventually (IO.hasFinished task) do
-    Editor.Ffi.windowClose .scripted
+    Editor.Ffi.windowClose platform
     return none
-  discard <| IO.ofExcept task.get
-  return some (← lines.get).toList
+  let status ← IO.ofExcept task.get
+  return some ((← lines.get).toList, status)
 
-/-- The checks of the window's bindings, on the library's scripted platform:
+/-- The lines of the keyboard check's report on the scripted platform; `none`
+if the check did not end in time. -/
+def checkScripted (composition : Bool) : IO (Option (List String)) :=
+  return (← checkOn .scripted composition).map (·.1)
+
+/-- Why the library's scripted platform that cannot open a window says it
+cannot (`SCRIPTED_FAILURE` in `crates/editor-ffi/src/window.rs`). "é" is two
+bytes, so a reason whose length the glue took in characters would arrive
+cut. -/
+def scriptedFailure : String :=
+  "the scripted platform opens no window: pas d'écran"
+
+/-- What `windowRun` returns on `platform`; `none` if it does not return in
+time, in which case the window is closed so that no run is left behind. -/
+def runUntilReturn (platform : Editor.Ffi.Platform) : IO (Option (Except String Unit)) := do
+  let run ← IO.asTask (prio := .dedicated) (Editor.Ffi.windowRun platform true)
+  unless ← eventually (IO.hasFinished run) do
+    Editor.Ffi.windowClose platform
+    return none
+  return some (← IO.ofExcept run.get)
+
+/-- Whether `result` is a run that returned and failed for exactly `reason`. -/
+def failedFor (reason : String) : Option (Except String Unit) → Bool
+  | some (.error actual) => actual == reason
+  | _ => false
+
+/-- The checks of the window's bindings, on the library's scripted platforms:
 nothing opens and no display is needed. A run blocks until the window is
 closed, so each runs on a dedicated task, and the events are pulled on
 dedicated tasks too. None of them quits the queues.
 
-The last two run the keyboard check's own loop over the bindings: what
-`editor window-check` runs on the real window. -/
+Three run the keyboard check's own loop over the bindings: what
+`editor window-check` runs on the real window. The last three are on the
+scripted platform that cannot open a window: the glue's path for a failure,
+which the real platform takes only on a machine with no display. -/
 def windowChecks (_ : Unit) : List Check :=
   [{
       name :=
@@ -428,7 +457,31 @@ def windowChecks (_ : Unit) : List Check :=
                 "keys: 4 key events reached the Lean loop (3 presses, 0 of them repeats, 1 releases); text: \"aé\"" &&
             lines[6]? ==
               some "composition: not enabled; 0 preedit and 0 commit events; committed: \"\"" &&
-            lines[7]? == some "ended: the window was closed" }]
+            lines[7]? == some "ended: the window was closed" },
+    { name :=
+        "running a window that cannot be opened returns the platform's reason, whole, and does so again on a second run"
+      run := do
+        let first ← runUntilReturn .scriptedFailing
+        let second ← runUntilReturn .scriptedFailing
+        return failedFor scriptedFailure first && failedFor scriptedFailure second },
+    { name :=
+        "a window that cannot be opened puts nothing on the editor queue, and closing it does nothing"
+      run := do
+        let ran ← runUntilReturn .scriptedFailing
+        Editor.Ffi.windowClose .scriptedFailing
+        -- The message is the first event of the queue: the run queued nothing.
+        return failedFor scriptedFailure ran && (← roundTrips 11 1 "after the run that failed") },
+    { name :=
+        "the keyboard check over the bindings on a window that cannot be opened prints its eight lines, with the platform's reason in the second, and ends with status 1"
+      run := do
+        let some (lines, status) ← checkOn .scriptedFailing true | return false
+        return lines.length == 8 &&
+            lines[0]? ==
+              some
+                "window-check: composition on, limit 120 s; the main-thread service is on the process's main thread: yes" &&
+            lines[1]? == some s!"window: could not open: {scriptedFailure}" &&
+            lines[7]? == some "ended: the window never opened" &&
+            status == 1 }]
 
 /-- An event from the window number 1, of this kind, code and text. -/
 def fromWindow (kind : Editor.Ffi.EventKind) (code : UInt64) (text : String := "") :

@@ -121,9 +121,11 @@ arrives on the editor queue.
 - Lean closes the window. A window the user asks to close reports
   `closeRequested` and stays open until `windowClose`, which any thread may
   call.
-- The platform is an enumeration (`Platform`). The scripted one is the
-  library's fake: it opens nothing and needs no display, and it is what
-  every check runs. The real one opens a window.
+- The platform is an enumeration (`Platform`). The scripted ones are the
+  library's fake: they open nothing and need no display, and they are what
+  every check runs. One reports a fixed sample; the other cannot open a
+  window, so that a failure to open is seen to cross. The real one opens a
+  window.
 
 The editor does not call these bindings yet. The one caller is the keyboard
 check (`Editor/WindowCheck/Real.lean`, `editor window-check`). The editor's
@@ -131,8 +133,9 @@ own port for the window, with its model and its contract, arrives with the
 command loop.
 
 Tests: the window checks of `ffi-test` (`FfiTest.windowChecks`), on the
-scripted platform: five of the bindings, and two that run the keyboard
-check's loop over them; the unit tests of `window.rs` and `tests/window.rs`
+scripted platforms: the bindings, a run that fails to open among them, and
+the keyboard check's loop over them; the unit tests of `window.rs` and
+`tests/window.rs`
 in `editor-ffi`, which need no Lean. Nothing in the gate runs the real
 platform: `mise run window-check` and `mise run window-contract` do, on
 demand.
@@ -518,6 +521,9 @@ inductive Platform where
   | scripted
   /-- The real window, over winit. It needs a display. -/
   | winit
+  /-- The library's scripted platform that cannot open a window, a fake for
+  tests: every run fails at once, with one fixed reason. -/
+  | scriptedFailing
   deriving DecidableEq, Repr
 
 /-- `windowRun` as it crosses: the glue builds `none` when the window ran and

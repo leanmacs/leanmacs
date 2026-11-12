@@ -212,6 +212,12 @@ pub enum PlatformId {
     /// main-thread service of an executable that started at the entry point.
     /// Nothing the gate runs names it.
     Winit = 1,
+    /// [`ScriptedPlatform::failing`], the fake that cannot open a window:
+    /// every run fails at once with [`SCRIPTED_FAILURE`]. It is reachable
+    /// from Lean so that the Lean test executable sees a refusal cross the
+    /// boundary, which the real platform gives only on a machine with no
+    /// display.
+    ScriptedFailing = 2,
 }
 
 impl PlatformId {
@@ -225,6 +231,7 @@ impl PlatformId {
         match tag {
             0 => Some(Self::Scripted),
             1 => Some(Self::Winit),
+            2 => Some(Self::ScriptedFailing),
             _ => None,
         }
     }
@@ -234,15 +241,26 @@ impl PlatformId {
         match self {
             Self::Scripted => &*SCRIPTED,
             Self::Winit => &WINIT,
+            Self::ScriptedFailing => &*SCRIPTED_FAILING,
         }
     }
 }
+
+/// Why [`PlatformId::ScriptedFailing`] cannot open a window. "é" is two
+/// bytes, so a caller that took the reason's length in characters would get
+/// it cut.
+pub const SCRIPTED_FAILURE: &str = "the scripted platform opens no window: pas d'écran";
 
 /// The process's input clock.
 static CLOCK: Monotonic = Monotonic::new();
 
 /// The process's scripted platform, made the first time it is asked for.
 static SCRIPTED: LazyLock<ScriptedPlatform> = LazyLock::new(ScriptedPlatform::sample);
+
+/// The process's scripted platform that cannot open a window, made the first
+/// time it is asked for.
+static SCRIPTED_FAILING: LazyLock<ScriptedPlatform> =
+    LazyLock::new(|| ScriptedPlatform::failing(SCRIPTED_FAILURE));
 
 /// The process's real platform. It opens nothing until it is run.
 static WINIT: WinitPlatform = WinitPlatform::new(main_thread::is_main_thread);
@@ -526,9 +544,32 @@ mod tests {
     fn every_platform_converts_from_its_tag_and_an_unknown_tag_is_refused() {
         assert_eq!(PlatformId::from_tag(0), Some(PlatformId::Scripted));
         assert_eq!(PlatformId::from_tag(1), Some(PlatformId::Winit));
+        assert_eq!(PlatformId::from_tag(2), Some(PlatformId::ScriptedFailing));
         assert_eq!(PlatformId::Scripted.tag(), 0);
         assert_eq!(PlatformId::Winit.tag(), 1);
-        assert_eq!(PlatformId::from_tag(2), None);
+        assert_eq!(PlatformId::ScriptedFailing.tag(), 2);
+        assert_eq!(PlatformId::from_tag(3), None);
         assert_eq!(PlatformId::from_tag(u8::MAX), None);
+    }
+
+    #[test]
+    fn the_scripted_platform_that_fails_cannot_open_and_gives_its_reason_on_every_run() {
+        for _ in 0..2 {
+            let queue = Arc::new(Queue::new());
+
+            let result = run(
+                PlatformId::ScriptedFailing.platform(),
+                WindowOptions::default(),
+                CountingClock::new(),
+                queue,
+            );
+
+            assert_eq!(
+                result,
+                Err(CannotOpen {
+                    reason: SCRIPTED_FAILURE.into()
+                })
+            );
+        }
     }
 }

@@ -272,8 +272,10 @@ says why. Its config directories are temporary directories of its own.
 With no arguments `ffi-test` runs its checks of handles, plain data, the
 event queues, the timer service, the document and the window: the scripted
 platform's inputs arrive on the editor queue, each stamped with the instant
-it was reported, and the keyboard check's loop (below) reports them. Three
-scenarios need a process each:
+it was reported, and the keyboard check's loop (below) reports them; a
+scripted platform that cannot open a window gives its reason, which the
+keyboard check reports with status 1; and each event of a window is decoded
+to the input the keyboard check counts. Three scenarios need a process each:
 
 | Command | Shows |
 |---|---|
