@@ -240,6 +240,26 @@ depends = ["lean"]
 dir = "lean"
 run = "env -u LEAN_NUM_THREADS -u LEAN_STACK_SIZE_KB .lake/build/bin/config-test bench-jobs \"$(lean --print-prefix)\" .lake/build/lib/lean 10000"
 
+# Opt-in: run it by hand, and do not add it to `ci` or to hk.pkl. It needs
+# Docker and, the first time, the network.
+#
+# The script builds the image `tools/linux/Dockerfile` describes (Debian with
+# the system compiler, mise and elan), copies the checkout into a work
+# directory, and runs `mise run ci` there: the tracked files and the
+# untracked files git does not ignore, so uncommitted work is tested and this
+# machine's own build output is not touched. Its exit status is the gate's.
+#
+# The toolchains and the copy live in `.linux-ci/` at the root of the checkout
+# (set EDITOR_LINUX_CACHE to put them elsewhere); Cargo's home and `target/`
+# live on the Docker volume `editor-linux-ci-cargo`. The script's header says
+# why they differ.
+#
+# `mise run linux-ci -- --clean` empties the copy's build output first and
+# keeps the toolchains and Cargo's registry: a clean build with no download.
+[tasks.linux-ci]
+description = "Opt-in, never part of ci: run the gate on Linux, in a container (tools/linux/run.sh). Needs Docker"
+run = "tools/linux/run.sh ci"
+
 [tasks.ci]
 description = "The whole gate; `hk check` runs this, and it gates review and landing (rdm's dispatch.verify)"
 depends = ["fmt", "lint", "deny", "doc", "test", "lean-test", "lean", "lean-fmt", "ffi-test", "c-fmt"]

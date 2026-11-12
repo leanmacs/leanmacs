@@ -4,3 +4,4 @@
 /reports
 /.claude/worktrees
 /lean/.lean-fmt-cache
+/.linux-ci
