@@ -223,6 +223,15 @@ def chunksOf (directory : System.FilePath) : IO (Array (String × String)) := do
   let chunks ← (Config.Directory.source directory).chunks
   return chunks.map fun chunk => (chunk.name, chunk.text)
 
+/-- Whether `message` is one line and names `path`. A message that will be
+printed as one diagnostic line must hold the path on its first line. -/
+def namesOnOneLine (message : String) (path : System.FilePath) : Bool :=
+  (message.splitOn "\n").length == 1 && (message.splitOn path.toString).length > 1
+
+/-- Bytes that are not UTF-8. -/
+def notUtf8 : ByteArray :=
+  ⟨#[0xff, 0xfe, 0xfd]⟩
+
 /-- The checks of the directory source (`Editor/Config/Directory.lean`), each
 in a fresh temporary directory of its own, which is removed with the check. -/
 def directoryChecks (_ : Unit) : List Check :=
@@ -245,14 +254,27 @@ def directoryChecks (_ : Unit) : List Check :=
           IO.FS.createDirAll (directory / "sub")
           writeFiles (directory / "sub") [("deeper.lean", "x")]
           return (← chunksOf directory) == #[("chunk.lean", "kept")] },
-    { name := "a directory that does not exist cannot be read: the source throws"
+    { name :=
+        "a directory that does not exist cannot be read: the source throws one line that names the directory"
       run :=
         IO.FS.withTempDir fun directory => do
+          let absent := directory / "absent"
           try
-            discard <| chunksOf (directory / "absent")
+            discard <| chunksOf absent
             return false
-          catch _ =>
-            return true },
+          catch error =>
+            return namesOnOneLine (toString error) absent },
+    { name :=
+        "a chunk that is not UTF-8 cannot be read: the source throws one line that names the file"
+      run :=
+        IO.FS.withTempDir fun directory => do
+          writeFiles directory [("good.lean", "kept")]
+          IO.FS.writeBinFile (directory / "bad.lean") notUtf8
+          try
+            discard <| chunksOf directory
+            return false
+          catch error =>
+            return namesOnOneLine (toString error) (directory / "bad.lean") },
     { name := "an empty directory is a config with no chunks"
       run := IO.FS.withTempDir fun directory => return (← chunksOf directory).isEmpty }]
 
@@ -519,7 +541,37 @@ def hostChecks (context : Context) : List Check :=
           return (← session.lines) ==
               #["reload 1: installed, 1 chunks, 2 commands", "run bump: ok",
                 "run broken: refused: no such text", "commands: bump broken",
-                "text 0: \"made before the refusal\"", "store counter v1: 1"] }]
+                "text 0: \"made before the refusal\"", "store counter v1: 1"] },
+    { name :=
+        "a config directory that does not exist is a rejected reload whose one diagnostic line names the directory"
+      run :=
+        IO.FS.withTempDir fun directory => do
+          let absent := directory / "absent"
+          hosted context context.elaborator (Config.Directory.source absent) fun host output => do
+              host.send .reload
+              unless ← host.settle patience do
+                return false
+              let lines ← output.get
+              let diagnostic := lines.getD 1 ""
+              return lines.size == 2 && lines.getD 0 "" == "reload 1: rejected" &&
+                  diagnostic.startsWith "diagnostic: config:0:0: error: " &&
+                  namesOnOneLine diagnostic absent },
+    { name :=
+        "a chunk that is not UTF-8 is a rejected reload whose one diagnostic line names the file, and the old config stays"
+      run :=
+        withHost context greetConfig fun session => do
+          session.ask [.reload]
+          IO.FS.writeBinFile (session.directory / "15-bad.lean") notUtf8
+          session.ask [.reload]
+          session.ask [.run "greet"]
+          let lines ← session.output.get
+          let diagnostic := lines.getD 2 ""
+          return lines.size == 4 &&
+              lines.getD 0 "" == "reload 1: installed, 2 chunks, 1 commands" &&
+              lines.getD 1 "" == "reload 2: rejected" &&
+              diagnostic.startsWith "diagnostic: config:0:0: error: " &&
+              namesOnOneLine diagnostic (session.directory / "15-bad.lean") &&
+              lines.getD 3 "" == "run greet: ok" }]
 
 /-- Polls `condition` until it holds; `false` if it still does not after
 `patience` milliseconds. -/
