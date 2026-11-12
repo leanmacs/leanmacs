@@ -665,38 +665,42 @@ def threadChecks (context : Context) : List Check :=
 one run of the real executable on the fixture under `tests/headless`, in the
 `ffi-test` task. -/
 def scriptChecks (context : Context) : List Check :=
-  [{ name := "a script is one directive a line, and blank lines and comments are skipped",
-     run :=
-       pure
-         ((Headless.script
-               "# a comment\nreload\n\n  settle  \nrun greet\nrun  two words\nshow\n").toOption ==
-           some
-             #[.request .reload, .settle, .request (.run "greet"), .request (.run "two words"),
-               .request .show]) },
+  [{
+      name :=
+        "a script is one directive a line, each with its line number, and blank lines and comments are skipped",
+      run :=
+        pure
+          ((Headless.script
+                "# a comment\nreload\n\n  settle  \nrun greet\nrun  two words\nshow\n").toOption ==
+            some
+              #[⟨2, .request .reload⟩, ⟨4, .settle⟩, ⟨5, .request (.run "greet")⟩,
+                ⟨6, .request (.run "two words")⟩, ⟨7, .request .show⟩]) },
     { name := "a line that is no directive, and a run with no name, are refused"
       run :=
         pure
           (!(Headless.script "reload\nrelaod\n").isOk && !(Headless.script "run\n").isOk &&
             !(Headless.script "settle now\n").isOk) },
     { name :=
-        "a script that runs to its end gives status 0, and what it asked for was printed before the loop stopped"
+        "a script that runs to its end has no failure, and what it asked for was printed before the loop stopped"
       run :=
         IO.FS.withTempDir fun directory => do
           writeFiles directory greetConfig
           let output ← IO.mkRef #[]
           let requests ← context.ids.modifyGet fun next => (next, next + 2)
-          let status ←
+          let failure ←
             Headless.run
                 { elaborator := context.elaborator, source := Config.Directory.source directory,
                   emit := fun line => output.modify (·.push line), requests,
                   wakeups := requests + 1 }
-                #[.request .reload, .settle, .request (.run "greet"), .request .show] patience
-          return status == 0 &&
+                #[⟨1, .request .reload⟩, ⟨2, .settle⟩, ⟨3, .request (.run "greet")⟩,
+                  ⟨4, .request .show⟩]
+                patience
+          return failure == none &&
               (← output.get) ==
                 #["reload 1: installed, 2 chunks, 1 commands", "run greet: ok", "commands: greet",
                   "text 0: \"v1\""] },
     { name :=
-        "a script whose settle cannot be satisfied gives status 1: a stuck script fails, it does not hang"
+        "a script whose settle cannot be satisfied fails, it does not hang, and the failure names the settle's line and says a reload was still running"
       run := do
         let gate ← Gate.new
         IO.FS.withTempDir fun directory => do
@@ -707,22 +711,89 @@ def scriptChecks (context : Context) : List Check :=
               -- The reload is held open, so the settle runs out, after a
               -- fifth of a second. `run` then ends its loop at once, so the
               -- next host starts on a queue nobody else is pulling.
-              let status ←
+              let failure ←
                 Headless.run
                     { elaborator := gate.around context.elaborator,
                       source := Config.Directory.source directory,
                       emit := fun line => output.modify (·.push line), requests,
                       wakeups := requests + 1 }
-                    #[.request .reload, .settle, .request .show] 200
+                    #[⟨3, .request .reload⟩, ⟨7, .settle⟩, ⟨8, .request .show⟩] 200
               -- The reload was held at the gate, which is why nothing settled.
               -- The job outlives the loop, so on a slow machine it may only
               -- now be reaching the gate: this is polled.
               let held ← eventually gate.holding.get
-              return status == 1 && held && (← output.get).isEmpty
+              return failure == some (.reloading (some 7)) && held && (← output.get).isEmpty
             finally
               -- The job that was left behind ends; its wake-up is under this
               -- host's source id, which no later host is given.
-              gate.open }]
+              gate.open },
+    { name :=
+        "a script that ends while a reload cannot finish fails at its end, with a reload still running and no line"
+      run := do
+        let gate ← Gate.new
+        IO.FS.withTempDir fun directory => do
+            writeFiles directory (greetConfig ++ [("slow.lean", slowChunk)])
+            let requests ← context.ids.modifyGet fun next => (next, next + 2)
+            try
+              let failure ←
+                Headless.run
+                    { elaborator := gate.around context.elaborator,
+                      source := Config.Directory.source directory, emit := fun _ => pure (),
+                      requests, wakeups := requests + 1 }
+                    #[⟨1, .request .reload⟩] 200
+              return failure == some (.reloading none)
+            finally
+              gate.open },
+    { name :=
+        "a wait that runs out says why: a reload is still running, or the editor thread has not answered"
+      run := do
+        -- A reload held at the gate: the editor thread reaches the marker,
+        -- and the reload is what the wait is for.
+        let gate ← Gate.new
+        let reloading ←
+          withHostOver context (greetConfig ++ [("slow.lean", slowChunk)]) gate.around id
+              fun session => do
+              session.host.send .reload
+              try
+                unless ← eventually gate.holding.get do
+                  return false
+                return (← session.host.await 200) == .reloading
+              finally
+                gate.open
+        -- An editor thread held inside an event, by an output port that
+        -- does not return until the check lets it: it never reaches the
+        -- marker.
+        let block ← IO.Promise.new
+        let entered ← IO.mkRef false
+        let requests ← context.ids.modifyGet fun next => (next, next + 2)
+        let host ←
+          Headless.start
+              { elaborator := context.elaborator, source := { chunks := pure #[] },
+                emit := fun _ => do
+                  entered.set true
+                  discard <| IO.wait block.result?,
+                requests, wakeups := requests + 1 }
+        try
+          host.send .show
+          let inside ← eventually entered.get
+          let wait ← host.await 200
+          block.resolve ()
+          let stopped ← host.stop patience
+          return reloading && inside && wait == .unanswered && stopped
+        finally
+          block.resolve ()
+          discard <| host.halt patience },
+    { name := "each failure is described differently, and a settle's names its line"
+      run :=
+        let reloading := Headless.Failure.describe 30000 (.reloading (some 12))
+        let atEnd := Headless.Failure.describe 30000 (.reloading none)
+        let unanswered := Headless.Failure.describe 30000 (.unanswered (some 12))
+        let unstopped := Headless.Failure.describe 30000 (.unanswered none)
+        pure
+          ([reloading, atEnd, unanswered, unstopped].eraseDups.length == 4 &&
+            (reloading.splitOn "line 12").length == 2 &&
+            (unanswered.splitOn "line 12").length == 2 &&
+            (atEnd.splitOn "line").length == 1) }]
 
 /-- Every check, in the order they run. -/
 def checks (context : Context) : List Check :=

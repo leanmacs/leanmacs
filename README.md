@@ -123,9 +123,11 @@ store <name> v<version>: <value>
 
 A reload that is rejected (a chunk does not elaborate, or `setup` throws)
 prints its diagnostics and leaves the config that was loaded in place. The
-exit status is 0 when the script ran to its end, 1 when it could not (the
-script cannot be read, or a `settle` ran out) and 2 for a command line it
-does not understand.
+exit status is 0 when the script ran to its end, 1 when it could not, and 2
+for a command line it does not understand. With status 1 a line on stderr
+says why: the script cannot be read; a `settle`, named by its line, ran out
+with a reload still running (a chunk or `setup` is slow or does not end);
+or the editor thread did not answer.
 
 Lake relinks the executables only when the Rust archive's contents change,
 so a second `mise run lean` rebuilds nothing.

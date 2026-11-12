@@ -75,13 +75,21 @@ first to see its effect.
 `run <name>` and `show` are requests, and `settle` is the driver's own.
 Blank lines and lines that start with `#` are skipped.
 
+A script that cannot run to its end is data too. `Host.await` says what a
+wait came to (`Wait`): settled, or run out with a reload still running, or
+run out before the editor thread had handled everything sent to it. `run`
+returns a `Failure` for a wait that did not settle, with the line of the
+`settle`, or with no line for the wait at the end of the script and for a
+loop that did not stop.
+
 `main` is the executable's headless mode,
 `editor headless <sysroot> <olean dir> <config dir> <script file>`: `run`
 with the real elaborator, a directory as the source and stdout as the
 output, then the quit and the explicit exit. Its exit status is 0 when the
-script ran to its end and 1 when it could not: the script cannot be read, or
-a `settle` ran out (after 30 seconds). A rejected reload is something to
-print, not a failure.
+script ran to its end and 1 when it could not, and then it says why on
+stderr: the script cannot be read, a wait ran out (after 30 seconds) with a
+reload still running, or the editor thread did not answer. A rejected reload
+is something to print, not a failure.
 
 ## Tests
 
@@ -304,11 +312,19 @@ def handle (collaborators : Collaborators σ) (running : Running σ) (event : Ff
 
 end Running
 
+/-- How far the editor thread has got, as it tells its driver after each
+event. -/
+structure Progress where
+  /-- How many markers the loop has reached. -/
+  markers : Nat := 0
+  /-- Whether a reload job is running. -/
+  reloading : Bool := false
+
 /-- The editor thread: pulls the editor queue and handles each event to its
 end, until the driver ends the loop or the queues are quit. After each event
-it publishes in `settled` how many markers it has reached with no reload
-running. -/
-def loop {σ : Type} (collaborators : Collaborators σ) (settled : IO.Ref Nat) : IO Unit := do
+it publishes in `progress` how many markers it has reached and whether a
+reload is running. -/
+def loop {σ : Type} (collaborators : Collaborators σ) (progress : IO.Ref Progress) : IO Unit := do
   let mut running : Running σ := {}
   repeat
     let event ← Ffi.nextEvent .editor
@@ -317,8 +333,7 @@ def loop {σ : Type} (collaborators : Collaborators σ) (settled : IO.Ref Nat) :
     running ← running.handle collaborators event
     if running.stopped then
       break
-    unless running.config.running do
-      settled.set running.markers
+    progress.set { markers := running.markers, reloading := running.config.running }
 
 /-- A running host, as its driver holds it. -/
 structure Host where
@@ -326,16 +341,29 @@ structure Host where
   requests : UInt64
   /-- How many markers the driver has posted. -/
   posted : IO.Ref Nat
-  /-- How many markers the loop has reached with no reload running. -/
-  settled : IO.Ref Nat
+  /-- How far the loop has got. -/
+  progress : IO.Ref Progress
   /-- The loop. -/
   thread : Task (Except IO.Error Unit)
 
 /-- Starts a host: its loop runs on a dedicated task until `stop` or `halt`. -/
 def start {σ : Type} (collaborators : Collaborators σ) : IO Host := do
-  let settled ← IO.mkRef 0
-  let thread ← IO.asTask (prio := .dedicated) (loop collaborators settled)
-  return { requests := collaborators.requests, posted := ← IO.mkRef 0, settled, thread }
+  let progress ← IO.mkRef {}
+  let thread ← IO.asTask (prio := .dedicated) (loop collaborators progress)
+  return { requests := collaborators.requests, posted := ← IO.mkRef 0, progress, thread }
+
+/-- What a driver's wait for the editor thread came to. -/
+inductive Wait where
+  /-- The editor thread has handled everything sent so far, and no reload is
+  running. -/
+  | settled
+  /-- The wait ran out with the editor thread up to date and a reload still
+  running. -/
+  | reloading
+  /-- The wait ran out before the editor thread had handled everything sent
+  to it: it is still inside an event, or it has ended. -/
+  | unanswered
+  deriving DecidableEq, Repr
 
 /-- Polls `condition` until it holds; `false` if it still does not after
 `patience` milliseconds. -/
@@ -363,12 +391,28 @@ def send (host : Host) (request : Request) : IO Unit :=
   host.post (.request request)
 
 /-- Waits until the editor thread has handled everything sent so far and no
-reload is running; `false` if that takes longer than `patience`
-milliseconds. -/
-def settle (host : Host) (patience : Nat) : IO Bool := do
+reload is running, for at most `patience` milliseconds, and says what the
+wait came to. -/
+def await (host : Host) (patience : Nat) : IO Wait := do
   let marker ← host.posted.modifyGet fun posted => (posted + 1, posted + 1)
   host.post .marker
-  within patience (return (← host.settled.get) >= marker)
+  let settled ←
+    within patience do
+        let progress ← host.progress.get
+        return progress.markers >= marker && !progress.reloading
+  if settled then
+    return .settled
+  -- The marker was posted after everything sent so far: a loop that has
+  -- reached it is up to date, and what it is waiting for is the reload.
+  let progress ← host.progress.get
+  return if progress.markers < marker then .unanswered
+    else if progress.reloading then .reloading else .settled
+
+/-- Waits until the editor thread has handled everything sent so far and no
+reload is running; `false` if that takes longer than `patience`
+milliseconds. -/
+def settle (host : Host) (patience : Nat) : IO Bool :=
+  return (← host.await patience) == .settled
 
 /-- Ends the loop at once, whether a reload is running or not; `false` if it
 has not ended after `patience` milliseconds. Throws the error the loop ended
@@ -417,44 +461,90 @@ def directive? (line : String) : Except String (Option Directive) :=
             else .ok (some (.request (.run name)))
           else .error s!"`{line}` is not a directive: expected reload, run <name>, show or settle"
 
+/-- A directive of a script, and the line it is on. -/
+structure Line where
+  /-- The line's number in the script, from 1. -/
+  number : Nat
+  /-- What the line says. -/
+  directive : Directive
+  deriving DecidableEq, Repr
+
 /-- The directives of a script: one a line, with blank lines and lines that
 start with `#` skipped. Or the first line that is not a directive. -/
-def script (text : String) : Except String (Array Directive) :=
-  (text.splitOn "\n").foldlM
-    (fun directives line => do
-      match ← directive? line with
-      | some directive =>
-        return directives.push directive
-      | none =>
-        return directives)
-    #[]
+def script (text : String) : Except String (Array Line) := do
+  let mut lines := #[]
+  let mut number := 0
+  for line in text.splitOn "\n" do
+    number := number + 1
+    if let some directive← directive? line then
+      lines := lines.push { number, directive }
+  return lines
+
+/-- Why a script did not run to its end. Each carries the line of the
+`settle` that ran out, or `none` for the wait at the end of the script,
+before the loop is stopped. -/
+inductive Failure where
+  /-- A wait ran out with a reload still running. -/
+  | reloading (line : Option Nat)
+  /-- The editor thread did not answer: a wait ran out before it had handled
+  everything sent to it, or, with no line, it did not stop. -/
+  | unanswered (line : Option Nat)
+  deriving DecidableEq, Repr
+
+/-- What went wrong, for the user: `patience` is how long each wait was, in
+milliseconds. -/
+def Failure.describe (patience : Nat) : Failure → String
+  | .reloading (some line) =>
+    s!"the settle on line {line} of the script did not finish within {patience} ms: a reload was still running. A chunk or `setup` of the config is slow, or does not end"
+  | .reloading none =>
+    s!"the script ended, and the reload it had asked for did not finish within {patience} ms. A chunk or `setup` of the config is slow, or does not end"
+  | .unanswered (some line) =>
+    s!"the settle on line {line} of the script did not finish within {patience} ms: the editor thread had not handled everything sent to it. It is still inside a command or another event, or it has ended"
+  | .unanswered none =>
+    s!"the script ended, and the editor thread did not stop within {patience} ms"
+
+/-- The failure a wait that did not settle is, at `line` of the script. -/
+def Wait.failure (line : Option Nat) : Wait → Option Failure
+  | .settled => none
+  | .reloading => some (.reloading line)
+  | .unanswered => some (.unanswered line)
 
 /-- Runs `script` against a host of its own, as its driver, and stops the
-host: sends each request in order and waits at each `settle`. The exit
-status: 0 when the script ran to its end, 1 when it could not, because the
-editor thread did not settle, or did not stop, within `patience`
-milliseconds.
+host: sends each request in order and waits at each `settle`. `none` when
+the script ran to its end, and otherwise why it could not: the editor thread
+did not settle, or did not stop, within `patience` milliseconds.
 
 A `settle` that runs out ends the loop at once, whether a reload is running
 or not. A rejected reload is something to print, not a failure. -/
-def run {σ : Type} (collaborators : Collaborators σ) (script : Array Directive)
-    (patience : Nat := 30000) : IO UInt32 := do
+def run {σ : Type} (collaborators : Collaborators σ) (script : Array Line) (patience : Nat) :
+    IO (Option Failure) := do
   let host ← start collaborators
-  for directive in script do
-    match directive with
+  for line in script do
+    match line.directive with
     | .request request =>
       host.send request
     | .settle =>
-      unless ← host.settle patience do
+      if let some failure := (← host.await patience).failure (some line.number) then
         discard <| host.halt patience
-        return 1
-  return if ← host.stop patience then 0 else 1
+        return some failure
+  -- The end of the script: wait for a reload that is still running, then
+  -- stop the loop.
+  let unsettled := (← host.await patience).failure none
+  let stopped ← host.halt patience
+  return unsettled <|> (if stopped then none else some (.unanswered none))
+
+/-- How long the headless mode waits at each `settle`, and for the loop to
+stop, in milliseconds. -/
+def settlePatience : Nat :=
+  30000
 
 /-- The headless mode of the executable:
 `editor headless <sysroot> <olean dir> <config dir> <script file>`. Loads the
 config in `configDir` with the real elaborator, runs the script as `run`
-does, with the output on stdout, then quits the queues and exits explicitly
-with `run`'s status, or with 1 if the script cannot be read.
+does, with the output on stdout, then quits the queues and exits explicitly:
+with status 0 when the script ran to its end, and with 1 when it could not,
+after saying why on stderr (the script cannot be read, a wait ran out with a
+reload still running, or the editor thread did not answer).
 
 `sysroot` is the Lean toolchain's directory and `oleanDir` the directory
 holding the editor package's `.olean` files. Every path is an argument:
@@ -467,16 +557,18 @@ def main (sysroot oleanDir configDir scriptPath : String) : IO UInt32 := do
     catch error =>
       IO.eprintln s!"editor: cannot run the script {scriptPath}: {error}"
       return 1
-  let status ←
+  let failure ←
     run
         { elaborator := Config.Elaborate.elaborator { sysroot, oleanDir },
           source := Config.Directory.source configDir, emit := IO.println, requests := 1,
           wakeups := 2 }
-        directives
+        directives settlePatience
   (← IO.getStdout).flush
+  if let some failure := failure then
+    IO.eprintln s!"editor: {failure.describe settlePatience}"
   -- Shutdown: quit lets every task parked in a pull return, and the exit is
   -- explicit, because a task may still be blocked in the library.
   Ffi.quit
-  IO.Process.exit status.toUInt8
+  IO.Process.exit (if failure.isNone then 0 else 1)
 
 end Editor.Headless
