@@ -1,0 +1,8 @@
+# The script `mise run ffi-test` has the editor's headless mode run against
+# the config in `config/`. What it prints must be exactly `expected`.
+
+reload
+settle
+run greet
+run missing
+show

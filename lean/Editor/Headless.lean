@@ -1,3 +1,5 @@
+import Editor.Config.Directory
+import Editor.Config.Elaborate
 import Editor.Config.Reload
 import Editor.Text.Real
 
@@ -362,5 +364,94 @@ def stop (host : Host) (patience : Nat) : IO Bool := do
   return settled && ended
 
 end Host
+
+/-- One line of a script. -/
+inductive Directive where
+  /-- Ask the editor thread for this. -/
+  | request (request : Request)
+  /-- Wait until the editor thread has handled everything asked so far and no
+  reload is running. This one is the driver's own. -/
+  | settle
+  deriving DecidableEq, Repr
+
+/-- The directive `line` is, `none` for a blank line or a comment, or what is
+wrong with it. -/
+def directive? (line : String) : Except String (Option Directive) :=
+  let line := line.trimAscii.toString
+  if line.isEmpty || line.startsWith "#" then .ok none
+  else
+    if line == "reload" then .ok (some (.request .reload))
+    else
+      if line == "show" then .ok (some (.request .show))
+      else
+        if line == "settle" then .ok (some .settle)
+        else
+          if line.startsWith "run " then
+            let name := (line.drop 4).trimAscii.toString
+            if name.isEmpty then .error s!"`{line}` names no command"
+            else .ok (some (.request (.run name)))
+          else .error s!"`{line}` is not a directive: expected reload, run <name>, show or settle"
+
+/-- The directives of a script: one a line, with blank lines and lines that
+start with `#` skipped. Or the first line that is not a directive. -/
+def script (text : String) : Except String (Array Directive) :=
+  (text.splitOn "\n").foldlM
+    (fun directives line => do
+      match ← directive? line with
+      | some directive =>
+        return directives.push directive
+      | none =>
+        return directives)
+    #[]
+
+/-- Runs `script` against a host of its own, as its driver, and stops the
+host: sends each request in order and waits at each `settle`. The exit
+status: 0 when the script ran to its end, 1 when it could not, because the
+editor thread did not settle, or did not stop, within `patience`
+milliseconds.
+
+A `settle` that runs out ends the loop at once, whether a reload is running
+or not. A rejected reload is something to print, not a failure. -/
+def run {σ : Type} (collaborators : Collaborators σ) (script : Array Directive)
+    (patience : Nat := 30000) : IO UInt32 := do
+  let host ← start collaborators
+  for directive in script do
+    match directive with
+    | .request request =>
+      host.send request
+    | .settle =>
+      unless ← host.settle patience do
+        discard <| host.halt patience
+        return 1
+  return if ← host.stop patience then 0 else 1
+
+/-- The headless mode of the executable:
+`editor headless <sysroot> <olean dir> <config dir> <script file>`. Loads the
+config in `configDir` with the real elaborator, runs the script as `run`
+does, with the output on stdout, then quits the queues and exits explicitly
+with `run`'s status, or with 1 if the script cannot be read.
+
+`sysroot` is the Lean toolchain's directory and `oleanDir` the directory
+holding the editor package's `.olean` files. Every path is an argument:
+nothing is read from the environment or the working directory. -/
+def main (sysroot oleanDir configDir scriptPath : String) : IO UInt32 := do
+  let directives ←
+    try
+      let text ← IO.FS.readFile scriptPath
+      IO.ofExcept ((script text).mapError IO.userError)
+    catch error =>
+      IO.eprintln s!"editor: cannot run the script {scriptPath}: {error}"
+      return 1
+  let status ←
+    run
+        { elaborator := Config.Elaborate.elaborator { sysroot, oleanDir },
+          source := Config.Directory.source configDir, emit := IO.println, requests := 1,
+          wakeups := 2 }
+        directives
+  (← IO.getStdout).flush
+  -- Shutdown: quit lets every task parked in a pull return, and the exit is
+  -- explicit, because a task may still be blocked in the library.
+  Ffi.quit
+  IO.Process.exit status.toUInt8
 
 end Editor.Headless

@@ -9,7 +9,7 @@ local rust_sources = List("**/*.rs", "**/Cargo.toml", "Cargo.lock")
 // The full gate, defined once in mise.toml's `ci` task.
 local ci = new Mapping<String, Step> {
     ["mise_ci"] {
-        glob = rust_sources + c_sources + List("mise.toml", "deny.toml", ".clang-format", "lean/**")
+        glob = rust_sources + c_sources + List("mise.toml", "deny.toml", ".clang-format", "lean/**", "tests/**")
         check = "mise run ci"
         exclusive = true
     }
@@ -36,9 +36,10 @@ local changed = new Mapping<String, Step> {
         exclusive = true
     }
     // Lake links the Rust static library and the C glue into the executables
-    // `ffi-test` runs, so a change to either reruns this step.
+    // `ffi-test` runs, so a change to either reruns this step. `tests/` holds
+    // the fixture `ffi-test` runs the editor's headless mode on.
     ["lean"] {
-        glob = rust_sources + c_sources + List("lean/**", "mise.toml")
+        glob = rust_sources + c_sources + List("lean/**", "tests/**", "mise.toml")
         check = "mise run lean-fmt && mise run ffi-test"
         exclusive = true
     }

@@ -641,9 +641,70 @@ def threadChecks (context : Context) : List Check :=
               return (← Ffi.Counter.live) == before
         return loaded && freed }]
 
+/-- The checks of the headless mode's script and its driver
+(`Headless.script`, `Headless.run`). The command line itself is covered by
+one run of the real executable on the fixture under `tests/headless`, in the
+`ffi-test` task. -/
+def scriptChecks (context : Context) : List Check :=
+  [{ name := "a script is one directive a line, and blank lines and comments are skipped",
+     run :=
+       pure
+         ((Headless.script
+               "# a comment\nreload\n\n  settle  \nrun greet\nrun  two words\nshow\n").toOption ==
+           some
+             #[.request .reload, .settle, .request (.run "greet"), .request (.run "two words"),
+               .request .show]) },
+    { name := "a line that is no directive, and a run with no name, are refused"
+      run :=
+        pure
+          (!(Headless.script "reload\nrelaod\n").isOk && !(Headless.script "run\n").isOk &&
+            !(Headless.script "settle now\n").isOk) },
+    { name :=
+        "a script that runs to its end gives status 0, and what it asked for was printed before the loop stopped"
+      run :=
+        IO.FS.withTempDir fun directory => do
+          writeFiles directory greetConfig
+          let output ← IO.mkRef #[]
+          let requests ← context.ids.modifyGet fun next => (next, next + 2)
+          let status ←
+            Headless.run
+                { elaborator := context.elaborator, source := Config.Directory.source directory,
+                  emit := fun line => output.modify (·.push line), requests,
+                  wakeups := requests + 1 }
+                #[.request .reload, .settle, .request (.run "greet"), .request .show] patience
+          return status == 0 &&
+              (← output.get) ==
+                #["reload 1: installed, 2 chunks, 1 commands", "run greet: ok", "commands: greet",
+                  "text 0: \"v1\""] },
+    { name :=
+        "a script whose settle cannot be satisfied gives status 1: a stuck script fails, it does not hang"
+      run := do
+        let gate ← Gate.new
+        IO.FS.withTempDir fun directory => do
+            writeFiles directory (greetConfig ++ [("slow.lean", slowChunk)])
+            let output ← IO.mkRef #[]
+            let requests ← context.ids.modifyGet fun next => (next, next + 2)
+            try
+              -- The reload is held open, so the settle runs out, after a
+              -- fifth of a second. `run` then ends its loop at once, so the
+              -- next host starts on a queue nobody else is pulling.
+              let status ←
+                Headless.run
+                    { elaborator := gate.around context.elaborator,
+                      source := Config.Directory.source directory,
+                      emit := fun line => output.modify (·.push line), requests,
+                      wakeups := requests + 1 }
+                    #[.request .reload, .settle, .request .show] 200
+              return status == 1 && (← gate.holding.get) && (← output.get).isEmpty
+            finally
+              -- The job that was left behind ends; its wake-up is under this
+              -- host's source id, which no later host is given.
+              gate.open }]
+
 /-- Every check, in the order they run. -/
 def checks (context : Context) : List Check :=
-  elaboratorChecks context ++ directoryChecks () ++ hostChecks context ++ threadChecks context
+  elaboratorChecks context ++ directoryChecks () ++ hostChecks context ++ threadChecks context ++
+    scriptChecks context
 
 /-- Runs `checks` and returns the names of those that failed. A check that
 throws has failed, and its error is reported with its name. -/

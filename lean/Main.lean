@@ -1,12 +1,17 @@
 import Editor.Command.Append
-import Editor.Text.Real
+import Editor.Headless
 
 /-!
 # The editor executable
 
-Lean owns the process. For now `main` only shows the build works: it calls the
-Rust library and prints what comes back, and it runs one command against the
-library through the text port's real binding.
+Lean owns the process. With no arguments `main` only shows the build works:
+it calls the Rust library and prints what comes back, and it runs one command
+against the library through the text port's real binding.
+
+`editor headless <sysroot> <olean dir> <config dir> <script file>` is the
+headless mode (`Editor/Headless.lean`): it loads the config in a directory,
+runs a script against it and prints what happened, for integration tests.
+Any other command line is reported, with the exit status 2.
 -/
 
 /-- The command the executable runs: it makes a text, appends to it and reads
@@ -18,9 +23,9 @@ def greeting : Editor.EditorM String := do
   Editor.append text " wörld"
   text.read
 
-/-- Calls the Rust library, prints the results, and exits non-zero if one is
+/-- Calls the Rust library, prints the results, and returns non-zero if one is
 not what it should be. -/
-def main : IO UInt32 := do
+def demo : IO UInt32 := do
   let sum := Editor.Ffi.add 2 3
   IO.println s!"Rust says 2 + 3 = {sum}"
   let leanOnMain ← Editor.Ffi.isMainThread
@@ -36,3 +41,16 @@ def main : IO UInt32 := do
       IO.println s!"A command run against the Rust library was refused: {repr refusal}"
       pure false
   return if sum == 5 && !leanOnMain && serviceOnMain && appended then 0 else 1
+
+/-- With no arguments, the demonstration. With `headless` and four paths, the
+headless mode, which exits with its own status: 0 when the script ran to its
+end and 1 when it could not. Anything else is bad usage, with status 2. -/
+def main (args : List String) : IO UInt32 := do
+  match args with
+  | [] =>
+    demo
+  | ["headless", sysroot, oleanDir, configDir, script] =>
+    Editor.Headless.main sysroot oleanDir configDir script
+  | _ =>
+    IO.eprintln "usage: editor [headless <sysroot> <olean dir> <config dir> <script file>]"
+    return 2

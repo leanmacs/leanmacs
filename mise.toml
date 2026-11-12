@@ -133,6 +133,10 @@ run = [
   # from the environment.
   ".lake/build/bin/config-test \"$(lean --print-prefix)\" .lake/build/lib/lean",
   ".lake/build/bin/editor",
+  # The headless mode, on the fixture checked in under tests/headless: it
+  # loads the config directory, runs the script, and must print exactly
+  # `expected`. Every path is an argument.
+  "out=$(.lake/build/bin/editor headless \"$(lean --print-prefix)\" .lake/build/lib/lean ../tests/headless/config ../tests/headless/script) && printf '%s\\n' \"$out\" | diff ../tests/headless/expected -",
 ]
 
 # Opt-in: run it by hand, and do not add it to `ci` or to hk.pkl. It ends in

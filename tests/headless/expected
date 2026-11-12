@@ -1,0 +1,5 @@
+reload 1: installed, 2 chunks, 1 commands
+run greet: ok
+run missing: no such command
+commands: greet
+text 0: "hello, world"
