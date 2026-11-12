@@ -1,4 +1,5 @@
 import ConfigFixture
+import Editor.Config.Directory
 import Editor.Config.Elaborate
 import Editor.Text.Real
 
@@ -190,9 +191,53 @@ def elaboratorChecks (context : Context) : List Check :=
               "initialize discard (IO.mkRef 0)\ndef setup : SetupM Unit := pure ()"
         return rejected "init.lean" result }]
 
+/-- Writes each of `files`, a name and a text, into `directory`. -/
+def writeFiles (directory : System.FilePath) (files : List (String × String)) : IO Unit :=
+  for (name, text) in files do
+    IO.FS.writeFile (directory / name) text
+
+/-- The names and texts of the chunks the directory source reads from
+`directory`. -/
+def chunksOf (directory : System.FilePath) : IO (Array (String × String)) := do
+  let chunks ← (Config.Directory.source directory).chunks
+  return chunks.map fun chunk => (chunk.name, chunk.text)
+
+/-- The checks of the directory source (`Editor/Config/Directory.lean`), each
+in a fresh temporary directory of its own, which is removed with the check. -/
+def directoryChecks (_ : Unit) : List Check :=
+  [{ name := "the chunks of a directory are its .lean files, in the byte order of their names",
+     run :=
+       IO.FS.withTempDir fun directory => do
+         writeFiles directory
+             [("20-b.lean", "second"), ("a.lean", "fourth"), ("10-a.lean", "first"),
+               ("B.lean", "third")]
+         return (← chunksOf directory) ==
+             #[("10-a.lean", "first"), ("20-b.lean", "second"), ("B.lean", "third"),
+               ("a.lean", "fourth")] },
+    { name := "other files, and directories whatever their names, are not chunks"
+      run :=
+        IO.FS.withTempDir fun directory => do
+          writeFiles directory
+              [("chunk.lean", "kept"), ("notes.txt", "x"), ("old.lean.bak", "x"), ("lean", "x")]
+          IO.FS.createDirAll (directory / "nested.lean")
+          writeFiles (directory / "nested.lean") [("inner.lean", "x")]
+          IO.FS.createDirAll (directory / "sub")
+          writeFiles (directory / "sub") [("deeper.lean", "x")]
+          return (← chunksOf directory) == #[("chunk.lean", "kept")] },
+    { name := "a directory that does not exist cannot be read: the source throws"
+      run :=
+        IO.FS.withTempDir fun directory => do
+          try
+            discard <| chunksOf (directory / "absent")
+            return false
+          catch _ =>
+            return true },
+    { name := "an empty directory is a config with no chunks"
+      run := IO.FS.withTempDir fun directory => return (← chunksOf directory).isEmpty }]
+
 /-- Every check, in the order they run. -/
 def checks (context : Context) : List Check :=
-  elaboratorChecks context
+  elaboratorChecks context ++ directoryChecks ()
 
 /-- Runs `checks` and returns the names of those that failed. A check that
 throws has failed, and its error is reported with its name. -/
