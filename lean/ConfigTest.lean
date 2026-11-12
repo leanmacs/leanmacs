@@ -775,11 +775,17 @@ def scriptChecks (context : Context) : List Check :=
             some
               #[⟨2, .request .reload⟩, ⟨4, .settle⟩, ⟨5, .request (.run "greet")⟩,
                 ⟨6, .request (.run "two words")⟩, ⟨7, .request .show⟩]) },
-    { name := "a line that is no directive, and a run with no name, are refused"
+    { name :=
+        "a line that is no directive, and a run with no name, are refused, with the number of the line"
       run :=
+        let refusal (text : String) : String :=
+          match Headless.script text with
+          | .error message => message
+          | .ok _ => ""
         pure
-          (!(Headless.script "reload\nrelaod\n").isOk && !(Headless.script "run\n").isOk &&
-            !(Headless.script "settle now\n").isOk) },
+          ((refusal "reload\nrelaod\n").startsWith "line 2: " &&
+            (refusal "# a comment\n\nreload\nrun\n").startsWith "line 4: " &&
+            (refusal "settle now\n").startsWith "line 1: ") },
     { name :=
         "a script that runs to its end has no failure, and what it asked for was printed before the loop stopped"
       run :=

@@ -470,13 +470,19 @@ structure Line where
   deriving DecidableEq, Repr
 
 /-- The directives of a script: one a line, with blank lines and lines that
-start with `#` skipped. Or the first line that is not a directive. -/
+start with `#` skipped. Or what is wrong with the first line that is not a
+directive, after the number of that line: `line 3: …`. -/
 def script (text : String) : Except String (Array Line) := do
   let mut lines := #[]
   let mut number := 0
   for line in text.splitOn "\n" do
     number := number + 1
-    if let some directive← directive? line then
+    match directive? line with
+    | .error problem =>
+      throw s!"line {number}: {problem}"
+    | .ok none =>
+      pure ()
+    | .ok (some directive) =>
       lines := lines.push { number, directive }
   return lines
 
