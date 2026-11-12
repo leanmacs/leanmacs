@@ -1,9 +1,11 @@
+import Editor.Config.Owner
 import Editor.Setup
 
 /-!
 # The registry, and what a `setup` registers
 
-The registry is the editor's table of commands. Each entry has an *owner*,
+The registry is the editor's table of commands. Each entry has an *owner*
+(`Editor/Config/Owner.lean`),
 and an owner's entries are replaced as a set, never added to: installing a
 reloaded config is `replace` for the owner `config`, so a command the new
 config no longer registers is gone, and one it registers again is there
@@ -28,16 +30,6 @@ are for the command loop to build on this table.
 -/
 
 namespace Editor.Config
-
-/-- Who registered something. What an owner registered is replaced as a set. -/
-structure Owner where
-  /-- The owner's name. -/
-  name : String
-  deriving DecidableEq, Repr
-
-/-- The owner of everything the user's config registers. -/
-def Owner.config : Owner :=
-  { name := "config" }
 
 /-- What a registered command runs. -/
 inductive Action where
