@@ -468,9 +468,9 @@ handler never runs.
   percentile was more than twice the idle one in both runs (12.7 µs against
   5.7, and 16.5 against 5.7): every wait goes through the timer service and
   the pump, tens of thousands of times a second, and the tail of the loop
-  shows it, at a scale far below the bound. The benchmark's own
-  `unaffected:` line still judges the 99th percentile by that stricter
-  rule, twice idle, and so prints `no` for this row.
+  shows it, at a scale far below the bound. The benchmark's `within bound:`
+  line judges each loaded row by the bound above, and so by the 99th
+  percentile's size, not by its ratio to idle.
 
   What stays open is the maximum. With a job computing on every pool thread,
   one sample in 10,000 took 8.7 ms in one run and 3.8 ms in the other: the

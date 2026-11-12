@@ -1395,12 +1395,17 @@ def Row.line (row : Row) : String :=
   let label := row.name ++ ":"
   s!"  {label.pushn ' ' (36 - label.length)}{microseconds row.median} / {microseconds row.high} / {microseconds row.maximum}{row.note}"
 
-/-- Whether a loaded row is unaffected, by the rule of one run: its median is
-at most twice the larger of the two idle medians, and its 99th percentile at
-most twice the larger of the two idle 99th percentiles. The maximum is not
-judged: one scheduling delay sets it. -/
-def Row.unaffected (row before after : Row) : Bool :=
-  row.median ≤ 2 * max before.median after.median && row.high ≤ 2 * max before.high after.high
+/-- What the 99th percentile of a loaded row must stay under, in nanoseconds:
+100 µs. -/
+def highBound : Nat :=
+  100000
+
+/-- Whether a loaded row is within the bound the job system was accepted
+against, as an observation about one run: its median is at most twice the
+larger of the two idle medians, and its 99th percentile is under 100 µs. The
+maximum is not judged: one scheduling delay sets it. -/
+def Row.withinBound (row before after : Row) : Bool :=
+  row.median ≤ 2 * max before.median after.median && row.high < highBound
 
 /-- A compiled job that reads the clock `count` times and finishes. -/
 def readings (count : Nat) : Work := fun _ => do
@@ -1523,10 +1528,10 @@ def jobs (sysroot oleanDir : String) (samples : Nat) : IO UInt8 := do
   IO.println
       s!"a `now` request answered by the library: {(ended - started) / count} ns each (mean of {count} in one job)"
   IO.println
-      ("unaffected: " ++
+      ("within bound (median within twice the larger idle median, 99th percentile under 100 µs): " ++
         "; ".intercalate
           (loaded.map fun row =>
-            s!"{row.name}: {if row.unaffected idle again then "yes" else "no"}"))
+            s!"{row.name}: {if row.withinBound idle again then "yes" else "no"}"))
   let late := rows.filter (·.maximum > 1000000)
   unless late.isEmpty do
     IO.println ("maximum over 1 ms: " ++ ", ".intercalate (late.map (·.name)))

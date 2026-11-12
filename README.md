@@ -329,10 +329,10 @@ microseconds:
 | idle again | Nothing. |
 
 It then times a million `now` requests in one compiled job, and says which
-of the three loaded rows are unaffected: a row whose median and 99th
-percentile are each at most twice the larger of the two idle rows'. That is
-an observation about one run, and the maximum is not judged. Run it on a
-quiet machine.
+of the three loaded rows are within bound: a row whose median is at most
+twice the larger of the two idle medians and whose 99th percentile is under
+100 µs. That is an observation about one run, and the maximum is printed and
+not judged. Run it on a quiet machine.
 
 ### Formatting
 

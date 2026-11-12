@@ -225,9 +225,9 @@ run = [
 # with nothing running; with 64 jobs each sleeping a millisecond in a loop;
 # with one interpreted job computing on each pool thread; with two for each;
 # and with nothing running again. It then times a million `now` requests in
-# one compiled job. It says which loaded rows are unaffected: a row whose
-# median and 99th percentile are each at most twice the larger of the two
-# idle rows'. The maximum is printed and not judged.
+# one compiled job. It says which loaded rows are within bound: a row whose
+# median is at most twice the larger of the two idle medians and whose 99th
+# percentile is under 100 µs. The maximum is printed and not judged.
 #
 # Each row is a headless host on the real elaborator, the real queue and the
 # library's timer service, with a config held in memory, so nothing is read
