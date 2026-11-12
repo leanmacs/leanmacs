@@ -132,9 +132,9 @@ keyboard reaches Lean:
   replace `Input`. The one option is whether composition is allowed.
 - **What real keyboards have shown.** On macOS, with composition allowed,
   no key event is marked dead: a dead key reaches Lean only as a
-  composition's preedit and commit, and in one run composition never became
-  enabled, so a dead key did nothing (rdm task
-  `macos-composition-not-enabled`). Under Xvfb on Linux, with synthetic
+  composition's preedit and commit. Whether that holds in a window that was
+  never clicked is not settled (rdm task `macos-composition-not-enabled`).
+  Under Xvfb on Linux, with synthetic
   keys, a dead key arrived as a preedit and a commit with composition
   allowed and as a key marked dead without. Composition not allowed has not
   been run on macOS, and nothing beyond dead keys, such as a Japanese input

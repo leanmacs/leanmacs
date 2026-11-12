@@ -457,13 +457,13 @@ handler never runs.
 
   What it left open:
 
-  - In one run composition never became enabled, and Option-e did nothing:
-    the letters arrived as plain keys. That run differs from the one where
-    dead keys worked in two ways, and which is the cause is not known: the
-    window was never clicked, and macOS logged an input-method error
-    (`IMKCFRunLoopWakeUpReliable`) as it started. It is the rdm task
-    `macos-composition-not-enabled`, which the display pipeline's text
-    input depends on.
+  - Whether dead keys compose in a window that was never clicked. In the
+    run where they worked the window was clicked partway through, and it
+    is not known whether the dead keys came before the click. Another run,
+    never clicked, reported composition as not enabled, but no dead key
+    was pressed in it, so it shows nothing either way; macOS did log an
+    input-method error (`IMKCFRunLoopWakeUpReliable`) as that run started.
+    The one check left is the rdm task `macos-composition-not-enabled`.
   - The window with composition not allowed (`--no-ime`) was not run on
     macOS, so a dead key arriving as a key marked dead has been seen only
     on Linux, with synthetic keys.

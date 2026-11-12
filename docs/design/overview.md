@@ -208,9 +208,8 @@ Cargo for the static library:
   Lean loop, with a median of about 17 µs from a key's arrival in Rust to
   its handling in Lean, and the window takes the keyboard without a click
   when it is started from a terminal in front. Dead keys arrive there
-  through composition. But in one run composition never became enabled and
-  a dead key did nothing (rdm task `macos-composition-not-enabled`), and
-  neither an input method that composes a script nor the window with
+  through composition. Whether they do in a window that was never clicked
+  is not settled (rdm task `macos-composition-not-enabled`), and neither an input method that composes a script nor the window with
   composition not allowed has been tried there
   ([concurrency.md](concurrency.md), "Still to verify").
 - **The executable is about 180 MB on macOS and 265 MB on Linux**, because
