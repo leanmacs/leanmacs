@@ -1,5 +1,6 @@
 import Editor.Command.Append
 import Editor.Config.Reload
+import Editor.Job.Model
 import Editor.Text.Contract
 
 /-!
@@ -20,6 +21,11 @@ model here. `contract-test` runs the same list against the real binding.
 A command is tested the same way: as a property, a command that returns
 whether it held, run against the model (`commandProperties`). The `editor`
 executable runs the same command source against the real binding.
+
+The job system is tested here with no Rust library:
+
+- `jobModelChecks`: the job port's pure model (`Editor/Job/Model.lean`), its
+  clock and its cancellation.
 
 The config session's decisions are tested here too, with no elaborator:
 
@@ -149,6 +155,67 @@ def programChecks : List Check :=
         let fake ← IO.mkRef { number := 0 }
         let sum ← (sumOfNumbers million).runM (Fake.handleIO fake)
         return sum == millionSum && (← fake.get).seen.size == million }]
+
+/-- How `job` ends when it runs against the job port's model from `model`, and
+what the model's clock then reads. The clock is how a check sees which waits
+a job made: only a wait moves it. -/
+def modelled {α : Type} (job : JobM α) (model : JobModel := {}) : Job.Outcome α × Nat :=
+  let (outcome, after) := job.runModel model
+  (outcome, after.now)
+
+/-- Five sleeps of 10 ms, each inside a handler that catches every error: a
+job that would swallow a cancellation, were one ever delivered as an error. -/
+def stubborn : JobM Unit := do
+  for _ in [0:5] do
+    try
+      sleep 10
+    catch _ =>
+      pure ()
+
+/-- The checks of the job port's pure model (`Editor/Job/Model.lean`). -/
+def jobModelChecks : List Check :=
+  [{
+      name :=
+        "in the job model, now reads the clock, sleep moves it by its duration, waitUntil a later instant sets it, and waitUntil a past instant leaves it",
+      run :=
+        let job : JobM (Nat × Nat × Nat × Nat) := do
+          let start ← now
+          sleep 5
+          let slept ← now
+          waitUntil 20
+          let waited ← now
+          waitUntil 3
+          return (start, slept, waited, ← now)
+        pure (modelled job { now := 2 } == (.finished (2, 7, 20, 20), 20)) },
+    { name :=
+        "in the job model, a job that throws ends failed with its message, at the instant it threw"
+      run :=
+        let job : JobM Nat := do
+          sleep 4
+          throw "no thanks"
+        pure (modelled job == (.failed "no thanks", 4)) },
+    { name :=
+        "in the job model, with cancelAt inside a wait the job ends cancelled at that instant and makes no later request"
+      run :=
+        let job : JobM Nat := do
+          sleep 10
+          sleep 10
+          sleep 10
+          return 1
+        -- A third sleep would leave the clock at 25 or later.
+        pure (modelled job { cancelAt := some 15 } == (.cancelled, 15)) },
+    { name :=
+        "in the job model, a job that catches every error around each wait is still cancelled, in its first wait"
+      run := pure (modelled stubborn { cancelAt := some 5 } == (.cancelled, 5)) },
+    { name :=
+        "in the job model, a job whose cancelAt has passed makes no request, and is cancelled whatever it would have returned"
+      run :=
+        let waits : JobM Nat := do
+          sleep 10
+          return 1
+        pure
+          (modelled waits { now := 5, cancelAt := some 3 } == (.cancelled, 5) &&
+            modelled (pure 1 : JobM Nat) { now := 5, cancelAt := some 3 } == (.cancelled, 5)) }]
 
 /-- A command that makes one text holding `text`. What a registered command
 does is observed by running it: commands are programs, and cannot be compared. -/
@@ -809,7 +876,9 @@ def reloadChecks : List Check :=
 
 /-- Every check, in the order they run. -/
 def checks : List Check :=
-  programChecks ++ setupChecks ++ registryChecks ++ storeChecks ++ sessionChecks ++ reloadChecks
+  programChecks ++ jobModelChecks ++ setupChecks ++ registryChecks ++ storeChecks ++
+    sessionChecks ++
+    reloadChecks
 
 /-- Runs `checks` and returns the names of those that failed. A check that
 throws has failed, and its error is reported with its name. -/
