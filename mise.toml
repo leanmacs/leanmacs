@@ -96,6 +96,7 @@ run = [
 
 [tasks.lean-format]
 description = "Rewrite the Lean sources in lean-fmt's style and apply its safe lint fixes"
+depends = ["lean"]
 dir = "lean"
 run = [
   "lake exe lean-fmt format",
