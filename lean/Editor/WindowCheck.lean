@@ -14,7 +14,9 @@ This module is the check's core, and it does not import the bindings:
   `Tally.step`), the percentiles of the latencies (`spread`), and the report
   (`Run`, `report`), which are pure;
 - the check itself (`check`), written against a record of the things it
-  needs (`Window`), so the model tests drive it with a hand-written fake.
+  needs (`Window`), so the model tests drive it with a hand-written fake;
+- what the command line's arguments ask for (`parse`), and the check as the
+  command line runs it (`withArguments`).
 
 `Editor/WindowCheck/Real.lean` is that record over the bindings.
 
@@ -49,8 +51,9 @@ sorted samples: the median is sample ⌈n / 2⌉ and the 99th percentile sample
 
 ## Tests
 
-`ModelTest.windowCheckChecks`, in `lake test`: the tally, the percentiles,
-each line of the report, and the check on a fake window. `ffi-test` runs the
+`ModelTest.windowTallyChecks`, `windowLoopChecks` and `windowArgumentChecks`,
+in `lake test`: the tally, the percentiles, each line of the report, the
+check on a fake window, and the command line's arguments. `ffi-test` runs the
 check over the real bindings on the library's scripted platform
 (`FfiTest.windowChecks`). Neither opens a window.
 -/
@@ -370,5 +373,40 @@ def check (window : Window) (options : Options) : IO UInt32 := do
   for line in report run do
     window.emit line
   return status run
+
+/-- The usage of `editor window-check`. -/
+def usage : String :=
+  "usage: editor window-check [--seconds <n>] [--no-ime]"
+
+/-- What `editor window-check` tells the person at the terminal before it
+opens the window. -/
+def instructions : String :=
+  "window-check: type in the window (click it first if it is not in front), then close it to finish"
+
+/-- The options `arguments` ask for; `none` when they are not understood.
+`--seconds <n>` sets the time limit and `--no-ime` runs the window with
+composition not allowed. -/
+def parse (arguments : List String) (options : Options := {}) : Option Options :=
+  match arguments with
+  | [] => some options
+  | "--no-ime" :: rest => parse rest { options with composition := false }
+  | "--seconds" :: seconds :: rest => do
+    parse rest { options with seconds := ← seconds.toNat? }
+  | _ => none
+
+/-- The check as `editor window-check` runs it: on `window`, with the options
+the command line's `arguments` ask for. It says on `say` what to do with the
+window, runs the check, which prints the report, and returns its exit status.
+When the arguments are not understood it says the usage, asks nothing of the
+window and returns 2. -/
+def withArguments (window : Window) (arguments : List String) (say : String → IO Unit) :
+    IO UInt32 := do
+  let some options := parse arguments
+    |
+    do
+      say usage
+      return 2
+  say instructions
+  check window options
 
 end Editor.WindowCheck

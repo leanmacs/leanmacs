@@ -1779,6 +1779,8 @@ structure FakeWindowState where
   calls : Array String := #[]
   /-- The lines printed. -/
   lines : Array String := #[]
+  /-- The lines said to the person at the terminal, apart from the report. -/
+  said : Array String := #[]
 
 /-- The fake as the record the check runs on. `closed` is resolved by a
 close, and ends the run. -/
@@ -1835,15 +1837,20 @@ structure Checked where
   calls : List String
   /-- Its exit status; `none` if it did not end in time. -/
   status : Option UInt32
+  /-- What it said to the person at the terminal, apart from the report. -/
+  said : List String
 
-/-- Runs the keyboard check on `fake`. The check runs on a dedicated task
-that this polls, so a check that never ends fails here instead of hanging the
-executable, and the fake's window is closed whatever happened, so its run is
-not left behind. -/
-def FakeWindow.check (fake : FakeWindow) (options : WindowCheck.Options := {}) : IO Checked := do
+/-- Runs `act` on `fake`'s window and on somewhere to say a line, and returns
+what it did. It runs on a dedicated task that this polls, so one that never
+ends fails here instead of hanging the executable, and the fake's window is
+closed whatever happened, so its run is not left behind. -/
+def FakeWindow.drive (fake : FakeWindow)
+    (act : WindowCheck.Window → (String → IO Unit) → IO UInt32) : IO Checked := do
   let state ← IO.mkRef { now := fake.askedAt }
   let closed ← IO.Promise.new
-  let task ← IO.asTask (prio := .dedicated) (WindowCheck.check (fake.window state closed) options)
+  let say (line : String) : IO Unit :=
+    state.modify fun state => { state with said := state.said.push line }
+  let task ← IO.asTask (prio := .dedicated) (act (fake.window state closed) say)
   let status ←
     if ← eventually (IO.hasFinished task) then
       some <$> IO.ofExcept task.get
@@ -1851,7 +1858,18 @@ def FakeWindow.check (fake : FakeWindow) (options : WindowCheck.Options := {}) :
       pure none
   closed.resolve ()
   let state ← state.get
-  return { lines := state.lines.toList, calls := state.calls.toList, status }
+  return {
+      lines := state.lines.toList, calls := state.calls.toList, status
+      said := state.said.toList }
+
+/-- Runs the keyboard check on `fake`, with `options`. -/
+def FakeWindow.check (fake : FakeWindow) (options : WindowCheck.Options := {}) : IO Checked :=
+  fake.drive fun window _ => WindowCheck.check window options
+
+/-- Runs the keyboard check on `fake` as `editor window-check` runs it, with
+the command line's `arguments`. -/
+def FakeWindow.withArguments (fake : FakeWindow) (arguments : List String) : IO Checked :=
+  fake.drive fun window say => WindowCheck.withArguments window arguments say
 
 /-- A window that opens 2.5 ms after it is asked for, at the instant
 1 000 000 on the clock, and then reports each thing the check tells apart:
@@ -2126,6 +2144,60 @@ def windowLoopChecks : List Check :=
         let checked ← ({ typed with idleAt := some 1000000 } : FakeWindow).check { seconds := 2 }
         return checked.lines.getLast? == some "ended: the window was closed" }]
 
+/-- The checks of the keyboard check's command line: what its arguments ask
+for (`WindowCheck.parse`), and what the check does with them
+(`WindowCheck.withArguments`), on the fake window. -/
+def windowArgumentChecks : List Check :=
+  [{ name := "no arguments ask for composition allowed and a limit of 120 seconds",
+     run := pure (WindowCheck.parse [] == some { composition := true, seconds := 120 }) },
+    { name := "`--no-ime` asks for composition not allowed, and leaves the limit"
+      run :=
+        pure (WindowCheck.parse ["--no-ime"] == some { composition := false, seconds := 120 }) },
+    { name := "`--seconds <n>` sets the limit, and leaves composition allowed"
+      run :=
+        pure (WindowCheck.parse ["--seconds", "3"] == some { composition := true, seconds := 3 }) },
+    { name := "both options are understood together, in either order"
+      run := do
+        let both : Option WindowCheck.Options := some { composition := false, seconds := 3 }
+        return WindowCheck.parse ["--no-ime", "--seconds", "3"] == both &&
+            WindowCheck.parse ["--seconds", "3", "--no-ime"] == both },
+    { name :=
+        "`--seconds` with nothing after it, or with something that is not a number, is not understood"
+      run :=
+        pure
+          (WindowCheck.parse ["--seconds"] == none &&
+            WindowCheck.parse ["--seconds", "x"] == none &&
+            WindowCheck.parse ["--no-ime", "--seconds"] == none &&
+            WindowCheck.parse ["--seconds", "--no-ime"] == none) },
+    { name := "an argument that is not an option is not understood, wherever it is"
+      run :=
+        pure
+          (WindowCheck.parse ["--bogus"] == none && WindowCheck.parse ["3"] == none &&
+            WindowCheck.parse ["--no-ime", "--bogus"] == none &&
+            WindowCheck.parse ["--seconds", "3", "--bogus"] == none) },
+    { name :=
+        "with arguments that are not understood, the check says the usage, ends with status 2, and asks nothing of the window"
+      run := do
+        let checked ← typed.withArguments ["--bogus"]
+        return checked.said == [WindowCheck.usage] && checked.status == some 2 &&
+            checked.calls.isEmpty &&
+            checked.lines.isEmpty },
+    { name :=
+        "with arguments that are understood, the check says what to do with the window and runs it as they ask: `--no-ime` runs the window with composition not allowed, and `--seconds` is the limit the report gives"
+      run := do
+        let checked ← typed.withArguments ["--no-ime", "--seconds", "3"]
+        return checked.said == [WindowCheck.instructions] &&
+            checked.calls == ["probe", "run false", "close", "stop"] &&
+            checked.lines.head? ==
+              some
+                "window-check: composition off, limit 3 s; the main-thread service is on the process's main thread: yes" &&
+            checked.status == some 0 },
+    { name := "with no arguments, the check runs the window with composition allowed"
+      run := do
+        let checked ← typed.withArguments []
+        return checked.lines == typedReport && checked.calls[1]? == some "run true" &&
+            checked.status == some 0 }]
+
 /-- Every check, in the order they run.
 
 The order matters where the process's one pool is measured. `poolChecks` run
@@ -2142,7 +2214,8 @@ def checks : List Check :=
     sessionChecks ++
     reloadChecks ++
     windowTallyChecks ++
-    windowLoopChecks
+    windowLoopChecks ++
+    windowArgumentChecks
 
 /-- Runs `checks` and returns the names of those that failed. A check that
 throws has failed, and its error is reported with its name. -/

@@ -13,7 +13,13 @@ with the library imports it: the editor, for `editor window-check`, and
 
 It is a thin adapter: each member is one call of a binding. The one thing it
 decides is which event of the editor queue is which input (`decode`), and
-`main` is where the check's loop is wired to the real window.
+`main` is where the check is wired to the real window. What the command
+line's arguments ask for is decided in the core (`WindowCheck.parse`,
+`WindowCheck.withArguments`).
+
+Tests: `decode` is checked on events built by hand, and the record on the
+library's scripted platforms, by `ffi-test` (`FfiTest.decodeChecks`,
+`FfiTest.windowChecks`). Neither opens a window.
 
 The loop pulls the editor queue with `Ffi.nextEvent`, on the dedicated task
 `WindowCheck.check` starts for it: the shape of the headless loop, and of the
@@ -61,37 +67,16 @@ def real (platform : Ffi.Platform) (emit : String → IO Unit) : Window :=
     stop := discard <| Ffi.postEvent .editor stopSource 0 ""
     emit }
 
-/-- The usage of `editor window-check`. -/
-def usage : String :=
-  "usage: editor window-check [--seconds <n>] [--no-ime]"
-
-/-- The options `arguments` ask for; `none` when they are not understood.
-`--seconds <n>` sets the time limit and `--no-ime` runs the window with
-composition not allowed. -/
-def parse (arguments : List String) (options : Options := {}) : Option Options :=
-  match arguments with
-  | [] => some options
-  | "--no-ime" :: rest => parse rest { options with composition := false }
-  | "--seconds" :: seconds :: rest => do
-    parse rest { options with seconds := ← seconds.toNat? }
-  | _ => none
-
-/-- `editor window-check`: opens the real window, says on stderr what to do
-with it, and prints the report on stdout once the window has closed. The exit
+/-- `editor window-check`: the check on the real window, with the command
+line's `arguments` (`withArguments`). It says on stderr what to do with the
+window, and prints the report on stdout once the window has closed. The exit
 status is 0 when the window ran, 1 when it could not be opened and 2 when the
 arguments are not understood.
 
 It quits the queues and exits explicitly: the task that enforces the time
 limit may still be running. -/
 def main (arguments : List String) : IO UInt32 := do
-  let some options := parse arguments
-    |
-    do
-      IO.eprintln usage
-      return 2
-  IO.eprintln
-      "window-check: type in the window (click it first if it is not in front), then close it to finish"
-  let status ← check (real .winit IO.println) options
+  let status ← withArguments (real .winit IO.println) arguments IO.eprintln
   (← IO.getStdout).flush
   Ffi.quit
   IO.Process.exit status.toUInt8
