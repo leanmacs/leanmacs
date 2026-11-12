@@ -8,7 +8,7 @@ and the document updated.
 
 | Document | Covers |
 |---|---|
-| [overview.md](overview.md) | Goals, principles, where the line between Lean and the Rust library falls, the component map, code layout |
+| [overview.md](overview.md) | Goals, principles, where the line between Lean and the Rust library falls, the rules of that boundary, the component map, code layout |
 | [concurrency.md](concurrency.md) | Threads, the foreground/background split for Lean code, cancellation, what the Lean runtime requires, reload |
 | [lean-runtime.md](lean-runtime.md) | The build, start-up, config and reload, the editor API as interfaces with models, where state lives |
 | [keymaps-and-modes.md](keymaps-and-modes.md) | Key handling as a pure pipeline, input schemes, the Vim scheme, modes as records, roles and leader keys, testing keymaps. A proposal |

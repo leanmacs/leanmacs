@@ -1,10 +1,10 @@
 # AGENTS.md
 
-An Emacs-style editor written in Lean 4. Lean owns the process and is the
-editor: its state, the command loop, commands, modes, keymaps and config.
-A Rust library, linked into the Lean executable, provides text storage,
-layout, rendering, the window, and process and terminal management. The
-design is in `docs/design/`.
+How to work in this repository: the development practices every change
+follows. What is being built, how it is structured and why is in
+`docs/design/` (start at `docs/design/README.md`); read the documents for
+the area you are changing before you change it, and record a new fact
+about the system there, not here.
 
 ## Test-driven development
 
@@ -24,12 +24,11 @@ Write all code test-first:
 
 Structure the code as ports and adapters (hexagonal architecture):
 
-The pattern applies in both languages. In Rust the core logic is the
-library's (text storage, edits, undo, layout, process management) and ports
-are traits. In Lean the core logic is the editor's (state, keymaps, the
-command loop, commands) and ports are interfaces; see "Lean is the editor,
-Rust is its library" below. The rules in this section are written for Rust
-and hold for Lean with "trait" read as "interface".
+The pattern applies in both languages. In Rust, ports are traits. In Lean,
+ports are interfaces, each with its real implementation and a pure model.
+The rules in this section are written for Rust and hold for Lean with
+"trait" read as "interface". Which components exist, where each boundary
+falls and what may cross it are in `docs/design/overview.md`.
 
 - **Core logic** is plain code that talks to the outside world only through
   ports.
@@ -63,44 +62,12 @@ small enough to fake by hand:
 - The port's module docs say where each kind of addition goes and where it is
   pinned.
 
-### Lean is the editor, Rust is its library
-
-- **Calls go one way.** Lean calls the Rust library. Rust never calls Lean:
-  it queues events and Lean pulls them. Don't add a callback from Rust into
-  Lean.
-- **One crate knows about Lean.** `editor-ffi` exposes the C functions Lean
-  binds to. Every other crate is ordinary Rust, built and tested with
-  `cargo` alone.
-- **What crosses the boundary** is a handle to a Rust object (a rope, a
-  process, a terminal), wrapped on the Lean side as an external object with
-  a finaliser, or plain data (strings, numbers, structures of them). Never
-  a Lean closure or a pointer into Lean's heap.
-- **The Lean editor reaches the library through interfaces it defines**, not
-  through the bindings directly. Each interface has the real binding and a
-  pure Lean model. Editor logic is tested in Lean, run by Lake, against the
-  models, with no Rust build.
-- **A contract check per interface** runs the same properties against the
-  model and the real binding, so the model cannot drift from the library.
-- **Commands and jobs are different types.** A command (`EditorM`) may
-  change editor state and may not block. A job (`JobM`) may block or await
-  and may not change editor state. Don't add an operation that crosses that
-  line; see `docs/design/concurrency.md`.
-- **Child processes belong to the Rust process service.** Don't spawn them
-  with Lean's `IO.Process`: it never kills or reaps them.
-- **An exception from the interpreter ends the process.** A C++ exception
-  that Lean's interpreter throws inside a call from compiled Lean into
-  interpreted config (a stack overflow, a missing native symbol) is not
-  caught, and the process aborts: state cannot be restored cleanly once
-  compiled frames are skipped. Don't add a guard, a terminate or signal
-  handler, or a C++ source to the glue to catch it.
-
 ### Prefer an existing library, behind a port
 
-Where a library exists for a job (shaping, rendering, glyph caching, the
-rope, the terminal), use it, even if it is young or still changing, and
-keep it behind a port so no type of it appears outside its adapter crate.
-Pin its exact version. Write our own implementation only when no library
-fits or a measured problem requires it, and record why.
+Where a library exists for a job, use it, even if it is young or still
+changing, and keep it behind a port so no type of it appears outside its
+adapter crate. Pin its exact version. Write our own implementation only
+when no library fits or a measured problem requires it, and record why.
 
 ## Testing with hand-written mocks
 
@@ -113,6 +80,9 @@ fits or a measured problem requires it, and record why.
   assume. The crate that owns a port publishes its fake and a contract check,
   and every real adapter runs that check; don't write another crate's fake.
 - Cover wiring with a small number of integration tests under `tests/`.
+- A port with a pure model gets one contract check: the same properties run
+  against the model and against the real implementation, so the model cannot
+  drift. Test the logic above the port against the model alone.
 
 ## Crate coupling
 

@@ -86,6 +86,48 @@ can be interpreted and live-reloaded.
 | Version control, the rdm client | Lean | Request and response at human speed |
 | Jobs, cancellation, owner-scoped lifetimes | Lean | Built on Lean's tasks; see [concurrency.md](concurrency.md) |
 
+## Rules of the boundary
+
+These follow from the principles and hold for every change. Each names
+what not to add.
+
+- **Calls go one way.** Lean calls the Rust library. Rust never calls Lean:
+  it queues events and Lean pulls them. Don't add a callback from Rust into
+  Lean.
+- **One crate knows about Lean.** `editor-ffi` exposes the C functions Lean
+  binds to. Every other crate is ordinary Rust, built and tested with
+  `cargo` alone.
+- **What crosses the boundary** is a handle to a Rust object (a rope, a
+  process, a terminal), wrapped on the Lean side as an external object with
+  a finaliser, or plain data (strings, numbers, structures of them). Never
+  a Lean closure or a pointer into Lean's heap.
+- **The Lean editor reaches the library through interfaces it defines**, not
+  through the bindings directly. Each interface has the real binding and a
+  pure Lean model. Editor logic is tested in Lean, run by Lake, against the
+  models, with no Rust build.
+- **A contract check per interface** runs the same properties against the
+  model and the real binding, so the model cannot drift from the library.
+- **Commands and jobs are different types.** A command (`EditorM`) may
+  change editor state and may not block. A job (`JobM`) may block or await
+  and may not change editor state. Don't add an operation that crosses that
+  line; see [concurrency.md](concurrency.md).
+- **Child processes belong to the Rust process service.** Don't spawn them
+  with Lean's `IO.Process`: it never kills or reaps them.
+- **An exception from the interpreter ends the process.** A C++ exception
+  that Lean's interpreter throws inside a call from compiled Lean into
+  interpreted config (a stack overflow, a missing native symbol) is not
+  caught, and the process aborts: state cannot be restored cleanly once
+  compiled frames are skipped. Don't add a guard, a terminate or signal
+  handler, or a C++ source to the glue to catch it; see
+  [lean-runtime.md](lean-runtime.md).
+- **Config is elaborated behind a port.** `Editor/Config/Elaborate.lean` is
+  the only module that imports Lean's elaborator. The config session's
+  decisions are plain Lean, tested by `lake test` on fakes, with no
+  elaborator.
+- **Only modules of the package go under `lean/`.** lean-fmt compiles every
+  `.lean` file there. Config fixtures live under `tests/`, and tests write
+  their chunks from strings.
+
 ## Component map
 
 ```
