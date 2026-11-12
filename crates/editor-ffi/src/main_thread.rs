@@ -10,17 +10,25 @@
 //!
 //! The service grows by data. A new kind of main-thread work is a
 //! [`Request`] variant and its [`Reply`], answered in `answer`; "run the
-//! window" arrives that way. The C functions at the bottom only forward to
-//! the one process-wide `MAIN_THREAD` instance.
+//! window" arrived that way ([`Request::RunWindow`]). The C functions at the
+//! bottom only forward to the one process-wide `MAIN_THREAD` instance.
 //!
-//! This module lives in `editor-ffi` only until the window crate
-//! (`editor-platform-winit`) exists. The check and the service are plain
-//! Rust that knows nothing about Lean, and move there with the window loop;
-//! the `extern "C"` wrappers stay here.
+//! While the window runs, the serving thread is inside the window's loop and
+//! the service answers nothing else: a request made then waits until the
+//! window has closed.
+//!
+//! The check and the service are plain Rust that knows nothing about Lean.
+//! Whether they stay in `editor-ffi` or move to a window crate is for the
+//! display pipeline to decide, with the window loop it builds; the
+//! `extern "C"` wrappers stay here either way.
 
 use std::collections::VecDeque;
 use std::sync::mpsc::{self, SyncSender};
 use std::sync::{Condvar, Mutex, MutexGuard, PoisonError};
+
+use editor_platform::{CannotOpen, WindowOptions};
+
+use crate::window::{self, PlatformId};
 
 #[cfg(not(any(target_os = "macos", target_os = "linux")))]
 compile_error!(
@@ -65,19 +73,35 @@ pub fn is_main_thread() -> bool {
 pub enum Request {
     /// Report whether the thread answering this is the process's main thread.
     Probe,
+    /// Run the process's window until it is closed ([`crate::window`]). The
+    /// serving thread runs the window's loop to its end, so the caller is
+    /// blocked until the window has closed, and the service answers nothing
+    /// else meanwhile.
+    RunWindow {
+        /// Which platform runs the window.
+        platform: PlatformId,
+        /// How the window is opened.
+        options: WindowOptions,
+    },
 }
 
 /// The result of a [`Request`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Reply {
     /// The answer to [`Request::Probe`].
     OnMainThread(bool),
+    /// The outcome of [`Request::RunWindow`]: the window ran and has closed,
+    /// or it could not be opened.
+    WindowClosed(Result<(), CannotOpen>),
 }
 
 /// Does the work a [`Request`] names, on the calling thread.
 fn answer(request: Request) -> Reply {
     match request {
         Request::Probe => Reply::OnMainThread(is_main_thread()),
+        Request::RunWindow { platform, options } => {
+            Reply::WindowClosed(window::run_on_this_thread(platform, options))
+        }
     }
 }
 
@@ -197,6 +221,12 @@ impl<A: Fn(Request) -> Reply> Service<A> {
 /// The process's one main-thread service, served by the entry point's thread.
 static MAIN_THREAD: Service<fn(Request) -> Reply> = Service::new(answer);
 
+/// Has the process's main-thread service run `request`, and blocks until it
+/// replies; see [`Service::request`].
+pub(crate) fn request(request: Request) -> Reply {
+    MAIN_THREAD.request(request)
+}
+
 /// Whether the calling thread is the process's main thread.
 #[unsafe(no_mangle)]
 pub extern "C" fn editor_ffi_is_main_thread() -> bool {
@@ -226,9 +256,7 @@ pub extern "C" fn editor_ffi_main_thread_serve() -> ! {
 /// the main thread.
 #[unsafe(no_mangle)]
 pub extern "C" fn editor_ffi_main_thread_probe() -> bool {
-    match MAIN_THREAD.request(Request::Probe) {
-        Reply::OnMainThread(on_main_thread) => on_main_thread,
-    }
+    matches!(request(Request::Probe), Reply::OnMainThread(true))
 }
 
 #[cfg(test)]
@@ -244,8 +272,43 @@ mod tests {
             answered_on.lock().unwrap().push(thread::current().id());
             match request {
                 Request::Probe => Reply::OnMainThread(true),
+                Request::RunWindow { .. } => Reply::WindowClosed(Ok(())),
             }
         })
+    }
+
+    #[test]
+    fn a_request_to_run_the_window_reaches_the_serving_thread_whole_and_its_reply_carries_the_outcome()
+     {
+        let asked = Request::RunWindow {
+            platform: PlatformId::Scripted,
+            options: WindowOptions { composition: false },
+        };
+        let outcome = Reply::WindowClosed(Err(CannotOpen {
+            reason: "no display".into(),
+        }));
+        let answered = Mutex::new(Vec::new());
+        let service = Service::new(|request| {
+            answered
+                .lock()
+                .unwrap()
+                .push((thread::current().id(), request));
+            outcome.clone()
+        });
+        service.open();
+
+        thread::scope(|scope| {
+            let server = scope.spawn(|| {
+                service.serve_next();
+                thread::current().id()
+            });
+            let reply = service.request(asked);
+            let server = server.join().unwrap();
+
+            assert_eq!(reply, outcome);
+            assert_eq!(*answered.lock().unwrap(), [(server, asked)]);
+            assert_ne!(server, thread::current().id());
+        });
     }
 
     #[test]

@@ -119,6 +119,42 @@
 //! `contract-test`, which runs the job interface's contract over this
 //! service through the job runner and its completion pump.
 //!
+//! ## The window
+//!
+//! A window is not a service behind the completion queue: it is run by the
+//! main-thread service, and what it reports arrives on the editor queue.
+//! [`window`] has the detail. Its rules:
+//!
+//! - **Running the window is one blocking call.**
+//!   [`window::editor_ffi_window_run`] asks the main-thread service to run
+//!   the window's loop ([`main_thread::Request::RunWindow`]) and returns
+//!   when the window has closed. Call it from Lean's main thread or a
+//!   dedicated task, never from the pool. While it runs, the main-thread
+//!   service answers nothing else.
+//! - **How the window is opened goes in as scalars**, one for each field of
+//!   the window port's options. A failure to open comes back as a `bool` and
+//!   a reason in a record ([`window::RawRefusal`]).
+//! - **What the window reports is events** on the editor queue, from the
+//!   window source, of the kinds from
+//!   [`events::EventKind::WindowOpened`] on.
+//! - **A window's event carries a stamp**: the reading of the process's
+//!   input clock when the window reported it. Lean reads the same clock
+//!   with [`window::editor_ffi_input_clock_now`].
+//! - **Lean closes the window.** A window that is asked to close reports it
+//!   and stays open until [`window::editor_ffi_window_close`] is called,
+//!   which any thread may do.
+//! - **The platform is named by a tag** ([`window::PlatformId`]), checked
+//!   like a queue's. The scripted platform is reachable for the Lean test
+//!   executable, as the scripted event source is.
+//!
+//! Tests: the unit tests of `window.rs` (the event each input becomes, the
+//! stamps, the options, a platform that cannot open), on the port's fake
+//! with a clock and a queue of their own; the request's test in
+//! `main_thread.rs`;
+//! `the_process_wide_window_reports_on_the_editor_queue_until_it_is_closed`
+//! in `tests/window.rs`, an integration test of its own because the queue
+//! is process-wide and `tests/c_api.rs` quits it.
+//!
 //! ## Calls go one way
 //!
 //! Lean calls this library. The library never calls a Lean function and
@@ -200,6 +236,7 @@ pub mod events;
 pub mod main_thread;
 pub mod text;
 pub mod timers;
+pub mod window;
 
 /// The sum of `a` and `b`, wrapping on overflow.
 ///

@@ -5,6 +5,9 @@ version = 4
 [[package]]
 name = "editor-ffi"
 version = "0.1.0"
+dependencies = [
+ "editor-platform",
+]
 
 [[package]]
 name = "editor-platform"

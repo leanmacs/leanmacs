@@ -11,6 +11,10 @@ publish = false
 # the integration tests under `tests/` can link the crate.
 crate-type = ["staticlib", "rlib"]
 
+[dependencies]
+# The window port, its fake and its contract.
+editor-platform = { path = "../editor-platform" }
+
 # No harness: its `main` must be the process's main thread.
 [[test]]
 name = "main_thread"

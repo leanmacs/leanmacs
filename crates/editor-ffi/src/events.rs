@@ -56,7 +56,8 @@ pub enum EventKind {
     /// made with, and its source is the service that completed it.
     Completion = 2,
     /// A window is open: its `text` is the name the platform gives itself.
-    /// This and the kinds after it come from a window.
+    /// This and the kinds after it come from a window ([`crate::window`]),
+    /// whose module docs say what each `code` means.
     WindowOpened = 3,
     /// The window gained the keyboard focus (`code` 1) or lost it (0).
     WindowFocus = 4,
@@ -147,8 +148,8 @@ pub struct Event {
     /// Text whose meaning the kind sets.
     pub text: String,
     /// The instant the source says the event happened, in nanoseconds on
-    /// the library's input clock, or 0 when the source does not say. Only a
-    /// window says.
+    /// the library's input clock ([`crate::window::InputClock`]), or 0 when
+    /// the source does not say. Only a window says.
     pub stamp: u64,
 }
 
