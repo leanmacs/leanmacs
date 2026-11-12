@@ -28,9 +28,10 @@ executable runs the same command source against the real binding.
 
 The job system is tested here with no Rust library:
 
-- `poolChecks`: warming Lean's task pool (`Editor/Job/Pool.lean`). The
-  `lean-test` task removes `LEAN_NUM_THREADS` from the environment, since the
-  pool's size is what these measure;
+- `poolChecks`: warming Lean's task pool (`Editor/Job/Pool.lean`). They pin
+  no size: how many threads the pool has is Lean's to say, and
+  `LEAN_NUM_THREADS` in the environment changes it. Each check learns the
+  pool's threads by warming it, and says what must hold relative to them;
 - `jobModelChecks`: the job port's pure model (`Editor/Job/Model.lean`), its
   clock and its cancellation, and what only the model's exact clock can
   show: that a timer does not drift;
@@ -484,28 +485,44 @@ def distinct (threads : Array UInt64) : Nat :=
   (threads.foldl (fun seen thread => if seen.contains thread then seen else seen.push thread)
       #[]).size
 
-/-- How many threads the machine runs at once, which is the size Lean gives
-its pool unless `LEAN_NUM_THREADS` says otherwise. -/
-def cores : Nat :=
-  (System.Platform.Internal.getHardwareConcurrency ()).toNat
+/-- How long a warming waits, in milliseconds, for a task to start before it
+takes the pool to be full. A task starts on a free thread in microseconds. -/
+def warmPatience : Nat :=
+  200
+
+/-- Whether `threads` are all different, and are exactly the threads of
+`others`. -/
+def sameThreads (threads others : Array UInt64) : Bool :=
+  distinct threads == threads.size && threads.size == others.size && threads.all others.contains
 
 /-- The checks of warming the pool (`Editor/Job/Pool.lean`). They are about
-the process's one pool, so they run first, while nothing else has used it. -/
+the process's one pool, so they run first, while nothing else has used it.
+
+None of them knows how many threads the pool has: that number is Lean's, and
+`LEAN_NUM_THREADS` changes it. Each learns the pool's threads from a warming
+that stopped short of its limit (`Pool.whole`), and states what must hold
+relative to that. -/
 def poolChecks : List Check :=
   [{
       name :=
-        "warming the pool holds one task on every thread of it: as many different threads as the machine runs at once",
+        "warming the pool holds one task on every thread it has, at once: the threads are all different, and a task more than the pool has threads does not start",
       run := do
-        let threads ← Job.Pool.warm cores 2000
-        return threads.size == cores && distinct threads == cores },
+        let threads ← Job.Pool.whole warmPatience
+        return !threads.isEmpty && distinct threads == threads.size },
+    { name :=
+        "warming stops at the pool's size, and a second warming adds no thread: asked for two threads more than the pool was seen to have, it holds the same threads"
+      run := do
+        let first ← Job.Pool.whole warmPatience
+        let second ← Job.Pool.warm (first.size + 2) warmPatience
+        return !first.isEmpty && sameThreads second first },
     { name :=
         "a burst after warming starts no thread: a task for each thread of the pool, all running at once, are on the threads the warming held"
       run := do
-        let warmed ← Job.Pool.warm cores 2000
+        let warmed ← Job.Pool.whole warmPatience
         let release : IO.Promise Unit ← IO.Promise.new
         let running ← IO.mkRef #[]
         try
-          for _ in [0:cores] do
+          for _ in [0:warmed.size] do
             discard <|
                 IO.asTask do
                   running.modify (·.push (← IO.getTID))
@@ -513,16 +530,10 @@ def poolChecks : List Check :=
                   -- count as blocked, so no thread is added for it.
                   while !(← release.isResolved) do
                     IO.sleep 1
-          let together ← eventually (return (← running.get).size == cores)
-          let threads ← running.get
-          return together && distinct threads == cores && threads.all warmed.contains
+          let together ← eventually (return (← running.get).size == warmed.size)
+          return !warmed.isEmpty && together && sameThreads (← running.get) warmed
         finally
-          release.resolve () },
-    { name :=
-        "warming stops at the pool's size: asked for two threads more than the pool has, it holds the pool's"
-      run := do
-        let threads ← Job.Pool.warm (cores + 2) 200
-        return threads.size == cores && distinct threads == cores }]
+          release.resolve () }]
 
 /-- The checks of the job runner (`Editor/Job/Runner.lean`), each on a fake
 clock of its own. A check holds what it controls (the clock, a promise) and
@@ -568,7 +579,8 @@ def runnerChecks : List Check :=
         "jobs blocked in waits do not delay a new pool task, and their waits hold no thread: more jobs than the pool has threads all reach their wait from fewer threads than there are jobs"
       run := do
         let rig ← Rig.new
-        let count := max 64 (cores + 1)
+        -- More jobs than the pool has threads, whatever its size is here.
+        let count := max 64 ((← Job.Pool.whole warmPatience).size + 1)
         let mut jobs := #[]
         for _ in [0:count] do
           jobs :=

@@ -52,14 +52,14 @@ run = "cargo test --workspace --locked"
 # No LEAN_CC: the test driver links no C glue, so Lean's bundled compiler
 # builds it.
 #
-# LEAN_NUM_THREADS sets the size of Lean's task pool, and the size of the
-# pool is what some of these checks measure (warming it, and how many
-# threads jobs wait from), so a variable in the developer's shell must not
-# reach them.
+# Nothing is removed from the environment. LEAN_NUM_THREADS sets the size of
+# Lean's task pool, and the checks that warm the pool and count the threads
+# jobs wait from pin no size: they pass under a bare `lake test` whatever the
+# variable says.
 [tasks.lean-test]
 description = "Run the Lean model tests with `lake test`, with a `cargo` that fails first on the PATH: they need no Rust library (lean/ModelTest.lean)"
 dir = "lean"
-run = 'PATH="$PWD/no-cargo:$PATH" env -u LEAN_NUM_THREADS lake test --wfail'
+run = 'PATH="$PWD/no-cargo:$PATH" lake test --wfail'
 
 # Runs in lean/, so mise picks the toolchain `lean/lean-toolchain` pins.
 #
@@ -132,10 +132,9 @@ run = [
   ".lake/build/bin/ffi-test exit-while-blocked",
   # The same properties `lean-test` runs against the pure models, here against
   # the Rust library: the text port's, and the job port's over the timer
-  # service. One of its checks measures Lean's task pool, whose size
-  # LEAN_NUM_THREADS sets, so a variable in the developer's shell must not
-  # reach it.
-  "env -u LEAN_NUM_THREADS .lake/build/bin/contract-test",
+  # service. Its check of Lean's task pool pins no size, so LEAN_NUM_THREADS
+  # in the developer's shell does it no harm.
+  ".lake/build/bin/contract-test",
   # The config session against the real elaborator. The toolchain's directory
   # and the package's `.olean` directory are passed in, so it reads nothing
   # from the environment.

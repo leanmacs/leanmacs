@@ -37,9 +37,13 @@ fails a check within seconds. Deadlines are an hour away where a wait must
 not complete, and 0 to 3 ms where it must: no check sleeps to let something
 happen.
 
-`mise run ffi-test` runs it, in the gate, with `LEAN_NUM_THREADS` removed
-from its environment: one check measures the pool. It names what did not
-hold and exits non-zero if anything did not.
+No check knows how many threads Lean's pool has. That number is Lean's, and
+`LEAN_NUM_THREADS` in the environment changes it, so `main` learns the
+pool's threads by warming it before the pump starts, and the check of the
+pump is stated relative to them.
+
+`mise run ffi-test` runs it, in the gate. It names what did not hold and
+exits non-zero if anything did not.
 -/
 
 namespace ContractTest
@@ -146,14 +150,21 @@ def sleepers (services : Job.Services) (count : Nat) : IO (Array Job.Handle) := 
               (pure ()))
   return jobs
 
-/-- More jobs than the pool has threads, and at least 64. -/
-def many : Nat :=
-  max 64 (Job.Pool.size + 1)
+/-- How long a warming waits, in milliseconds, for a task to start before it
+takes the pool to be full. A task starts on a free thread in microseconds. -/
+def warmPatience : Nat :=
+  200
 
 /-- The checks of the runner over the library's timer service
 (`Editor/Job/Real.lean`): what only the real service can show. It is a
-function, not a constant, because it calls bindings. -/
-def jobChecks (services : Job.Services) : List Check :=
+function, not a constant, because it calls bindings.
+
+`pool` is the threads the pool was seen to have before the pump was started
+(`Pool.whole`). No check knows the pool's size otherwise: that number is
+Lean's, and `LEAN_NUM_THREADS` changes it. -/
+def jobChecks (services : Job.Services) (pool : Array UInt64) : List Check :=
+  -- More jobs than the pool has threads, and at least 64.
+  let many := max 64 (pool.size + 1)
   [{
       name :=
         "jobs in real waits do not delay a new pool task: more jobs than the pool has threads all have a timer in the library while a new pool task runs",
@@ -236,12 +247,14 @@ def jobChecks (services : Job.Services) : List Check :=
           discard <| Ffi.timersCancel taken
           services.completions.finish reserved .cancelled },
     { name :=
-        "the pump is not one of the pool's tasks: with the pump parked in its pull, every thread of the pool is free to be held"
+        "the pump is not one of the pool's tasks: with the pump parked in its pull, every thread the pool had before the pump was started is still free to be held, and no other"
       run := do
         unless ← eventually (return (← Ffi.waiting .completion) == 1) do
           return false
-        let threads ← Job.Pool.warm Job.Pool.size 2000
-        return threads.size == Job.Pool.size }]
+        -- A pump that was a pool task would be parked on one of these
+        -- threads, and the warming would stop one short.
+        let threads ← Job.Pool.warm (pool.size + 2) warmPatience
+        return !pool.isEmpty && threads.size == pool.size && threads.all pool.contains }]
 
 /-- Runs `checks` and returns the names of those that failed. A check that
 throws has failed, and its error is reported with its name. -/
@@ -259,17 +272,20 @@ port's contract and the job checks against the runner over the library's
 timer service, then shuts down: exits 0 when everything holds, and 1 after
 naming on stderr what does not.
 
-The completion pump runs on a dedicated task from the start. Shutdown is
-quit, which must end the pump, then an explicit exit: a task that failed a
-check may still be blocked in the library. -/
+The pool's threads are learnt first, by warming it, before anything else
+runs: the check that the pump is not one of the pool's tasks compares
+against them. Then the completion pump runs on a dedicated task for the rest
+of the run. Shutdown is quit, which must end the pump, then an explicit
+exit: a task that failed a check may still be blocked in the library. -/
 def main : IO UInt32 := do
+  let pool ← Editor.Job.Pool.whole ContractTest.warmPatience
   let completions ← Editor.Job.Completions.new
   let services : Editor.Job.Services := { completions, timers := Editor.Job.realTimers completions }
   let pump ← IO.asTask (prio := .dedicated) (Editor.Job.pump completions)
   let properties := Editor.TextContract.properties
   let textFailed ← ContractTest.failures properties
   let jobFailed ← ContractTest.jobFailures services
-  let checks := ContractTest.jobChecks services
+  let checks := ContractTest.jobChecks services pool
   let checkFailed ← ContractTest.checkFailures checks
   Editor.Ffi.quit
   let pumpEnded ← ContractTest.eventually (IO.hasFinished pump)

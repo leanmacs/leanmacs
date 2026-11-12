@@ -213,8 +213,8 @@ warming Lean's task pool makes all its threads. The task shows by behaviour
 that they build without the library. It puts a `cargo` that always fails
 (`lean/no-cargo/cargo`) first on the `PATH`, and Lake runs `cargo` on every
 build that reaches the Rust archive, so the task passes only if the test
-driver does not need it. It removes `LEAN_NUM_THREADS` from the environment,
-because the size of the pool is what some of these tests measure.
+driver does not need it. The tests of the pool pin no size, so they pass
+whatever `LEAN_NUM_THREADS` says: a bare `lake test` is enough.
 
 `mise run ffi-test` runs `lean/.lake/build/bin/ffi-test`, the test executable
 linked against the real library, then `contract-test`, `config-test`, and

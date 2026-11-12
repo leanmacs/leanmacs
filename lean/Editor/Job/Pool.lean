@@ -11,6 +11,10 @@ because every child process would inherit it. A user can.
 The pool makes its threads lazily: one for each task that is enqueued while
 no thread is idle. A burst of tasks on a cold pool therefore runs on a few
 threads until more have been made. `warm` makes them all at start-up.
+
+How many threads the pool has is Lean's to say. `whole` holds every one of
+them without being told the number, which is how a test of the pool stays
+independent of `LEAN_NUM_THREADS`.
 -/
 
 namespace Editor.Job.Pool
@@ -66,5 +70,31 @@ def warm (limit patience : Nat) : BaseIO (Array UInt64) := do
   let held ← started.get
   release.resolve ()
   return held
+
+/-- More threads than `whole` will look for in a pool. -/
+def ceiling : Nat :=
+  4096
+
+/-- Every thread of the pool, held at once, whatever the pool's size: the ids
+of the threads, or none if the pool never ran out of them.
+
+It is how something learns the pool's threads without knowing how many
+there are, which is Lean's to say and which `LEAN_NUM_THREADS` changes: a
+test, above all. It warms with a limit, and doubles the limit until a
+warming stops short of it, which a warming does only when a task did not
+start within `patience` milliseconds: the pool had no thread left to give.
+So it always waits that long once, and is not for start-up; `size` is only
+its first guess, and nothing here relies on the guess being right.
+
+It gives up, with no threads, once the limit has passed `ceiling`: a warming
+that never stops short is broken, and must be found quickly. -/
+def whole (patience : Nat) : BaseIO (Array UInt64) := do
+  let mut limit := 2 * size + 2
+  while limit ≤ ceiling do
+    let threads ← warm limit patience
+    if threads.size < limit then
+      return threads
+    limit := 2 * limit
+  return #[]
 
 end Editor.Job.Pool
