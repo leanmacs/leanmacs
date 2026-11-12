@@ -125,13 +125,17 @@ arrives on the editor queue.
   library's fake: it opens nothing and needs no display, and it is what
   every check runs. The real one opens a window.
 
-The editor does not call these bindings yet. Its own port for the window,
-with its model and its contract, arrives with the command loop.
+The editor does not call these bindings yet. The one caller is the keyboard
+check (`Editor/WindowCheck/Real.lean`, `editor window-check`). The editor's
+own port for the window, with its model and its contract, arrives with the
+command loop.
 
-Tests: the five window checks of `ffi-test` (`FfiTest.windowChecks`), on the
-scripted platform; the unit tests of `window.rs` and `tests/window.rs` in
-`editor-ffi`, which need no Lean. Nothing in the gate runs the real platform:
-`mise run window-contract` does, on demand.
+Tests: the window checks of `ffi-test` (`FfiTest.windowChecks`), on the
+scripted platform: five of the bindings, and two that run the keyboard
+check's loop over them; the unit tests of `window.rs` and `tests/window.rs`
+in `editor-ffi`, which need no Lean. Nothing in the gate runs the real
+platform: `mise run window-check` and `mise run window-contract` do, on
+demand.
 
 ### Calls go one way
 

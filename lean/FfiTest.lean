@@ -1,4 +1,5 @@
 import Editor.Ffi
+import Editor.WindowCheck.Real
 import Lean.Environment
 import Lean.Util.Path
 
@@ -354,10 +355,28 @@ def isWindowSample (composition : Bool) (events : List Editor.Ffi.Event) : Bool 
   events.all (·.source == { kind := .window, id := 1 }) &&
     events.map (fun event => (event.kind, event.code, event.text)) == windowSample composition
 
+/-- Runs the keyboard check (`Editor/WindowCheck.lean`) over the real
+bindings, on the scripted platform, and returns the lines of its report;
+`none` if it did not end in time, in which case the window is closed so that
+no run is left behind. The check blocks until the window has closed, so it
+runs on a dedicated task. -/
+def checkScripted (composition : Bool) : IO (Option (List String)) := do
+  let lines ← IO.mkRef #[]
+  let window := Editor.WindowCheck.real .scripted fun line => lines.modify (·.push line)
+  let task ← IO.asTask (prio := .dedicated) (Editor.WindowCheck.check window { composition })
+  unless ← eventually (IO.hasFinished task) do
+    Editor.Ffi.windowClose .scripted
+    return none
+  discard <| IO.ofExcept task.get
+  return some (← lines.get).toList
+
 /-- The checks of the window's bindings, on the library's scripted platform:
 nothing opens and no display is needed. A run blocks until the window is
 closed, so each runs on a dedicated task, and the events are pulled on
-dedicated tasks too. None of them quits the queues. -/
+dedicated tasks too. None of them quits the queues.
+
+The last two run the keyboard check's own loop over the bindings: what
+`editor window-check` runs on the real window. -/
 def windowChecks (_ : Unit) : List Check :=
   [{
       name :=
@@ -377,7 +396,39 @@ def windowChecks (_ : Unit) : List Check :=
     { name := "the input clock is never 0 and does not go back"
       run := do
         let first ← Editor.Ffi.inputClock
-        return first > 0 && first <= (← Editor.Ffi.inputClock) }]
+        return first > 0 && first <= (← Editor.Ffi.inputClock) },
+    { name :=
+        "the keyboard check over the bindings reports what the scripted window sent: that it opened, the focus, four key events of which three are presses and one is dead, the text they typed, a composition with one preedit and one commit, and that the window was closed"
+      run := do
+        let some lines ← checkScripted true | return false
+        return lines.length == 8 &&
+            lines[0]? ==
+              some
+                "window-check: composition on, limit 120 s; the main-thread service is on the process's main thread: yes" &&
+            lines[1]?.any (·.startsWith "window: opened by scripted ") &&
+            lines[2]?.any (·.startsWith "focus: gained ") &&
+            lines[3]? ==
+              some
+                "keys: 4 key events reached the Lean loop (3 presses, 0 of them repeats, 1 releases); text: \"aé\"" &&
+            lines[4]?.any (·.endsWith "(4 samples)") &&
+            lines[5]? == some "dead keys: 1 key events marked dead" &&
+            lines[6]? ==
+              some "composition: enabled; 1 preedit and 1 commit events; committed: \"é\"" &&
+            lines[7]? == some "ended: the window was closed" },
+    { name :=
+        "run with composition not allowed, the keyboard check reports the same keys and no composition"
+      run := do
+        let some lines ← checkScripted false | return false
+        return lines.length == 8 &&
+            lines[0]? ==
+              some
+                "window-check: composition off, limit 120 s; the main-thread service is on the process's main thread: yes" &&
+            lines[3]? ==
+              some
+                "keys: 4 key events reached the Lean loop (3 presses, 0 of them repeats, 1 releases); text: \"aé\"" &&
+            lines[6]? ==
+              some "composition: not enabled; 0 preedit and 0 commit events; committed: \"\"" &&
+            lines[7]? == some "ended: the window was closed" }]
 
 /-- Every check, in the order they run. -/
 def checks (_ : Unit) : List Check :=

@@ -240,6 +240,29 @@ depends = ["lean"]
 dir = "lean"
 run = "env -u LEAN_NUM_THREADS -u LEAN_STACK_SIZE_KB .lake/build/bin/config-test bench-jobs \"$(lean --print-prefix)\" .lake/build/lib/lean 10000"
 
+# Opt-in: run it by hand, at the keyboard, and do not add it to `ci` or to
+# hk.pkl. It opens a window on this desktop and waits for a person.
+#
+# `editor window-check` opens the real window and counts what of the keyboard
+# reaches a Lean loop that pulls the editor queue: keys, the text they
+# typed, the latency of each from its arrival in Rust to its handling in
+# Lean, dead keys and an input method's composition. Type in the window, then
+# close it: the report is eight lines on stdout (lean/Editor/WindowCheck.lean
+# gives their form). Start it from a terminal that is in front, or the system
+# may not give the window the keyboard until it is clicked.
+#
+# `mise run window-check -- --no-ime` runs the window with composition not
+# allowed, so a dead key arrives as a key; `-- --seconds <n>` sets how long
+# the window stays open if nobody closes it (120 by default).
+#
+# The gate runs the same loop on the library's scripted platform, which opens
+# nothing (`ffi-test`), and on a fake (`lean-test`).
+[tasks.window-check]
+description = "Opt-in, never part of ci: open a window and report what of the keyboard reaches the Lean loop, with the latency of each key (lean/Editor/WindowCheck.lean). Needs a display and a person"
+depends = ["lean"]
+dir = "lean"
+run = ".lake/build/bin/editor window-check"
+
 # Opt-in: run it by hand, and do not add it to `ci` or to hk.pkl. It opens a
 # window on this desktop, for about a second, so it needs a display.
 #

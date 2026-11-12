@@ -1,5 +1,6 @@
 import Editor.Command.Append
 import Editor.Headless
+import Editor.WindowCheck.Real
 
 /-!
 # The editor executable
@@ -11,6 +12,11 @@ against the library through the text port's real binding.
 `editor headless <sysroot> <olean dir> <config dir> <script file>` is the
 headless mode (`Editor/Headless.lean`): it loads the config in a directory,
 runs a script against it and prints what happened, for integration tests.
+
+`editor window-check [--seconds <n>] [--no-ime]` is the keyboard check
+(`Editor/WindowCheck.lean`): it opens a window and reports what of the
+keyboard reached a Lean loop. A person runs it; nothing in the gate does.
+
 Any other command line is reported, with the exit status 2.
 -/
 
@@ -44,13 +50,18 @@ def demo : IO UInt32 := do
 
 /-- With no arguments, the demonstration. With `headless` and four paths, the
 headless mode, which exits with its own status: 0 when the script ran to its
-end and 1 when it could not. Anything else is bad usage, with status 2. -/
+end and 1 when it could not. With `window-check`, the keyboard check, which
+opens a window and exits with its own status: 0 when the window ran and 1
+when it could not be opened. Anything else is bad usage, with status 2. -/
 def main (args : List String) : IO UInt32 := do
   match args with
   | [] =>
     demo
   | ["headless", sysroot, oleanDir, configDir, script] =>
     Editor.Headless.main sysroot oleanDir configDir script
+  | "window-check" :: options =>
+    Editor.WindowCheck.main options
   | _ =>
-    IO.eprintln "usage: editor [headless <sysroot> <olean dir> <config dir> <script file>]"
+    IO.eprintln
+        "usage: editor [headless <sysroot> <olean dir> <config dir> <script file> | window-check [--seconds <n>] [--no-ime]]"
     return 2
