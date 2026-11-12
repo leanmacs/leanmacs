@@ -2,6 +2,7 @@ import Editor.Command.Append
 import Editor.Config.Reload
 import Editor.Job.Contract
 import Editor.Job.Fake
+import Editor.Job.Jobs
 import Editor.Job.Model
 import Editor.Text.Contract
 
@@ -33,7 +34,10 @@ The job system is tested here with no Rust library:
 - `runnerChecks`: the runner (`Editor/Job/Runner.lean`) over the fake clock
   (`Editor/Job/Fake.lean`). A check controls time by moving its own fake
   clock and holds a job on a promise it resolves; it sleeps for nothing, and
-  polls only as the bound after which it fails.
+  polls only as the bound after which it fails;
+- `tableChecks`: the job table (`Editor/Job/Table.lean`), which is pure;
+- `ownerChecks`: the shell over the table and the runner
+  (`Editor/Job/Jobs.lean`): removing an owner cancels its jobs.
 
 The job port's contract (`Editor/Job/Contract.lean`) is run here against the
 model and against the runner over the fake clock. `contract-test` runs the
@@ -750,6 +754,114 @@ def runnerChecks : List Check :=
           short.handle.cancel
           sleeper.handle.cancel }]
 
+/-- An owner of jobs. -/
+def anna : Config.Owner :=
+  { name := "anna" }
+
+/-- Another owner of jobs. -/
+def ben : Config.Owner :=
+  { name := "ben" }
+
+/-- An entry of a job table as a check compares it: its id, its owner's name,
+its name and its handle. -/
+def row (entry : Job.Entry String) : Nat × String × String × String :=
+  (entry.id, entry.owner.name, entry.name, entry.handle)
+
+/-- The checks of the job table (`Editor/Job/Table.lean`), which is pure:
+here a job's handle is a string. -/
+def tableChecks : List Check :=
+  [{ name := "a job table gives each job an id of its own, and never uses an id again",
+     run :=
+       let (first, table) := ({} : Job.Table String).add anna "one" "h1"
+       let (second, table) := table.add ben "two" "h2"
+       let (_, table) := table.take second
+       let (third, table) := table.add anna "three" "h3"
+       pure
+         ([first, second, third].eraseDups.length == 3 &&
+           table.entries.map row ==
+             #[(first, "anna", "one", "h1"), (third, "anna", "three", "h3")]) },
+    { name := "take returns a job once, and nothing for an id that is not in the table"
+      run :=
+        let (id, table) := ({} : Job.Table String).add anna "one" "h1"
+        let (kept, table) := table.add ben "two" "h2"
+        let (taken, table) := table.take id
+        let (again, table) := table.take id
+        let (never, table) := table.take 99
+        pure
+          (taken.map row == some (id, "anna", "one", "h1") && again.isNone && never.isNone &&
+            table.entries.map row == #[(kept, "ben", "two", "h2")]) },
+    { name := "removeOwner returns exactly that owner's jobs and leaves the others"
+      run :=
+        let (first, table) := ({} : Job.Table String).add anna "one" "h1"
+        let (second, table) := table.add ben "two" "h2"
+        let (third, table) := table.add anna "three" "h3"
+        let (removed, table) := table.removeOwner anna
+        let (nothing, same) := table.removeOwner anna
+        pure
+          (removed.map row == #[(first, "anna", "one", "h1"), (third, "anna", "three", "h3")] &&
+            table.entries.map row == #[(second, "ben", "two", "h2")] &&
+            nothing.isEmpty &&
+            same.entries.size == 1) },
+    { name := "take after removeOwner finds nothing: a job whose owner is gone has no entry left"
+      run :=
+        let (id, table) := ({} : Job.Table String).add anna "one" "h1"
+        let (_, table) := table.removeOwner anna
+        pure (table.take id).1.isNone }]
+
+/-- What `finish` gave, as a check compares it: the job's id and name, and
+how it ended. -/
+def taken (result : Option (Job.Entry Job.Handle × Job.Outcome (EditorM Unit))) :
+    Option (Nat × String × Job.Outcome (Array String)) :=
+  result.map fun (entry, outcome) => (entry.id, entry.name, texts outcome)
+
+/-- The checks of the shell over the job table and the runner
+(`Editor/Job/Jobs.lean`), on a fake clock. -/
+def ownerChecks : List Check :=
+  [{
+      name :=
+        "a job whose owner is removed is cancelled, and its result can no longer be taken; another owner's job runs on, and its result is taken once",
+      run := do
+        let rig ← Rig.new
+        let woken ← IO.mkRef #[]
+        let finished (id : Nat) : BaseIO Unit := woken.modify (·.push id)
+        let sleeps : Work :=
+          reporting fun _ => do
+            sleep 1000
+            return true
+        let jobs : Job.Jobs := { services := rig.services }
+        let (annas, jobs) ← jobs.start anna "sleeps" sleeps finished
+        let (bens, jobs) ← jobs.start ben "sleeps" sleeps finished
+        try
+          unless ← eventually (return (← rig.clock.waiting) == 2) do
+            return false
+          -- A job that is still running has no result to take, and stays.
+          let (early, jobs) ← jobs.finish bens
+          let (removed, jobs) ← jobs.removeOwner anna
+          -- The clock stays at 0, so only removing the owner can have ended
+          -- Anna's job.
+          let ended ← eventually (return (← woken.get) == #[annas])
+          let outcomes ← removed.mapM fun entry => return (← entry.handle.outcome?).map texts
+          let withdrawn := (← rig.clock.withdrawn).size == 1 && (← rig.clock.waiting) == 1
+          let unmoved := (← rig.clock.now) == 0
+          -- The handler cannot run: there is no result to take.
+          let (gone, jobs) ← jobs.finish annas
+          rig.clock.advance 1000
+          let bensEnded ← eventually (return (← woken.get) == #[annas, bens])
+          let (result, jobs) ← jobs.finish bens
+          let (again, jobs) ← jobs.finish bens
+          return early.isNone && ended && removed.map (·.id) == #[annas] &&
+              outcomes == #[some .cancelled] &&
+              withdrawn &&
+              unmoved &&
+              gone.isNone &&
+              bensEnded &&
+              taken result == some (bens, "sleeps", .finished #["true"]) &&
+              again.isNone &&
+              jobs.running == 0
+        finally
+          for entry in jobs.table.entries do
+            entry.handle.cancel }]
+
 /-- The texts a registered command leaves when it is a plain command, run
 against a text model with none; `none` for a command over a store. -/
 def plainTexts : Config.Action → Option (Array String)
@@ -1400,7 +1512,9 @@ def reloadChecks : List Check :=
 
 /-- Every check, in the order they run. -/
 def checks : List Check :=
-  programChecks ++ jobModelChecks ++ waitChecks ++ runnerChecks ++ setupChecks ++ registryChecks ++
+  programChecks ++ jobModelChecks ++ waitChecks ++ runnerChecks ++ tableChecks ++ ownerChecks ++
+    setupChecks ++
+    registryChecks ++
     storeChecks ++
     sessionChecks ++
     reloadChecks
