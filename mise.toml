@@ -296,6 +296,20 @@ run = "cargo run --locked --package editor-platform-winit --example contract"
 description = "Opt-in, never part of ci: run the gate on Linux, in a container (tools/linux/run.sh). Needs Docker"
 run = "tools/linux/run.sh ci"
 
+# Opt-in: run it by hand, and do not add it to `ci` or to hk.pkl. It needs
+# Docker, like `linux-ci`, whose image, cache and volume it shares.
+#
+# This is where the winit adapter is held to the window port's contract
+# without a desktop: run it after a change to `crates/editor-platform-winit`
+# or to the contract in `crates/editor-platform`. In the container, under
+# Xvfb, it runs the adapter's example, then `editor window-check` with
+# xdotool giving the window the focus and typing into it, then the same with
+# `--no-ime`. It fails if any of the three fails. The keys are synthetic:
+# this is not the check a person makes at the keyboard (`window-check`).
+[tasks.linux-window]
+description = "Opt-in, never part of ci: in the Linux container, under Xvfb, hold the winit window to the window port's contract and run the keyboard check on keys typed by xdotool (tools/linux/run.sh). Needs Docker"
+run = "tools/linux/run.sh window"
+
 [tasks.ci]
 description = "The whole gate; `hk check` runs this, and it gates review and landing (rdm's dispatch.verify)"
 depends = ["fmt", "lint", "deny", "doc", "test", "lean-test", "lean", "lean-fmt", "ffi-test", "c-fmt"]

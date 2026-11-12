@@ -1,13 +1,20 @@
 #!/usr/bin/env bash
 # Runs the gate on Linux, in a container (`mise run linux-ci`; README.md,
-# "The gate on Linux"). Opt-in, never part of `ci`: it needs Docker and, the
-# first time, the network.
+# "The gate on Linux"), and the real window there under Xvfb
+# (`mise run linux-window`). Opt-in, never part of `ci`: it needs Docker and,
+# the first time, the network.
 #
 #   tools/linux/run.sh ci [--clean]
+#   tools/linux/run.sh window
 #
-# It builds the image from the Dockerfile beside it, copies the checkout into
-# a work directory and runs `mise run ci` there. Its exit status is the
-# gate's.
+# It builds the image from the Dockerfile beside it and copies the checkout
+# into a work directory. `ci` runs `mise run ci` there, and its exit status is
+# the gate's. `window` builds the editor there and runs three things under
+# Xvfb, a display that needs no screen and no person, failing if any fails:
+# the winit adapter's example, which holds the real window to the window
+# port's contract; `editor window-check`, with xdotool giving the window the
+# focus and typing into it; and the same with composition not allowed. Its
+# keys are synthetic, and its output says so.
 #
 # The source is copied, never mounted in place: the tracked files and the
 # untracked files git does not ignore, so uncommitted work is tested and the
@@ -48,7 +55,7 @@ die() {
 }
 
 usage() {
-  die "usage: tools/linux/run.sh ci [--clean]"
+  die "usage: tools/linux/run.sh ci [--clean] | window"
 }
 
 # ---- Inside the container ----
@@ -101,6 +108,67 @@ inside_ci() {
     ldd /work/lean/.lake/build/bin/editor
   fi
   return "$status"
+}
+
+# Runs `editor window-check` under the display, with xdotool giving the
+# window the focus and typing into it: synthetic keys, sent through the X
+# server, so they take the real window library's path. Fails if the window
+# did not run or no key reached the Lean loop. `$1` is a label and the rest
+# are the tool's own arguments.
+inside_typed_check() {
+  local label=$1
+  shift
+  echo "linux-window: $label, on keys typed by xdotool under Xvfb: synthetic, nobody at a keyboard"
+  (
+    # The window, once it is there; then the focus; then the keys: a
+    # sentence, and a dead key followed by a letter.
+    window=$(timeout 10 xdotool search --sync --name 'editor: window check' | head -n 1)
+    timeout 5 xdotool windowfocus --sync "$window"
+    sleep 0.3
+    xdotool type --delay 20 'the quick brown fox'
+    xdotool key dead_acute e
+  ) &
+  local typist=$! report status=0
+  report=$(/work/lean/.lake/build/bin/editor window-check --seconds 5 "$@") || status=$?
+  wait "$typist" || true
+  printf '%s\n' "$report"
+  [ "$status" -eq 0 ] || die "the keyboard check exited $status"
+  if printf '%s\n' "$report" | grep -q '^keys: 0 key events'; then
+    die "no key reached the Lean loop"
+  fi
+}
+
+# The real window on a display that needs no screen and no person (Xvfb):
+# the winit adapter held to the window port's contract, then the keyboard
+# check with composition allowed and with it not.
+inside_window() {
+  [ $# -eq 0 ] || usage
+  inside_prepare
+  inside_versions
+
+  # What it runs: the editor, built as the gate builds it, and the adapter's
+  # example.
+  mise run lean
+  mise exec -- cargo build --locked --package editor-platform-winit --example contract
+
+  Xvfb :99 -screen 0 1024x768x24 >/tmp/xvfb.log 2>&1 &
+  local display=$!
+  export DISPLAY=:99
+  local waited=0
+  until xdotool getdisplaygeometry >/dev/null 2>&1; do
+    waited=$((waited + 1))
+    [ "$waited" -lt 50 ] || die "Xvfb did not start: $(cat /tmp/xvfb.log)"
+    sleep 0.1
+  done
+
+  echo "linux-window: 1 of 3: the winit platform against the window port's contract, under Xvfb"
+  /work/target/debug/examples/contract
+
+  inside_typed_check "2 of 3: the keyboard check"
+  inside_typed_check "3 of 3: the keyboard check with composition not allowed" --no-ime
+
+  kill "$display"
+  echo "linux-window: all three passed"
 }
 
 # ---- On the host ----
@@ -157,7 +225,7 @@ on_host() {
 
 [ $# -ge 1 ] || usage
 case "$1" in
-ci)
+ci | window)
   on_host "$@"
   ;;
 inside)
@@ -167,6 +235,7 @@ inside)
   shift
   case "$mode" in
   ci) inside_ci "$@" ;;
+  window) inside_window "$@" ;;
   *) usage ;;
   esac
   ;;
