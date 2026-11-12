@@ -169,6 +169,38 @@ dir = "lean"
 timeout = "60s"
 run = '''status=0; out=$( (ulimit -c 0; exec env -u LEAN_STACK_SIZE_KB .lake/build/bin/ffi-test overflow "$(lean --print-prefix)" .lake/build/lib/lean 2>/dev/null) ) || status=$?; printf '%s\n' "$out" "ffi-test overflow: exit status $status"; test "$status" -eq 134 && test "$(printf '%s\n' "$out" | tail -n 1)" = "ffi-test overflow: entering the recursion"'''
 
+# Opt-in: run it by hand on a quiet machine, and do not add it to `ci` or to
+# hk.pkl. It measures and asserts nothing: its numbers depend on the machine,
+# so none of them is a pass or a fail. The gate still builds the subcommands,
+# under every linter (`lean`).
+#
+# Each line is a fresh process under `/usr/bin/time -l`, which prints the
+# process's real time and its maximum resident set size (in bytes) on stderr
+# after the subcommand's own line on stdout:
+#
+# - `bench-start` with each import set: how long the base takes to import and
+#   the first config to load, and what the process then weighs;
+# - `bench-reload`: the median and the maximum of 20 reloads of a one-line
+#   chunk, of a 20-line config, and of 50 definitions with a `simp` proof;
+# - `bench-soak` with 100 and with 500 reloads: the mean time of a reload,
+#   and, from the two resident set sizes, whether replaced configs are freed.
+#
+# The config is held in memory, so nothing is read but the `.olean` files,
+# whose directories are passed in. LEAN_STACK_SIZE_KB is removed from the
+# environment, so the threads have the stack the editor gives them.
+[tasks.config-bench]
+description = "Opt-in, never part of ci: measure start-up, reload time and memory across reloads of the config session (lean/ConfigTest.lean). It asserts nothing"
+depends = ["lean"]
+dir = "lean"
+run = [
+  "/usr/bin/time -l env -u LEAN_STACK_SIZE_KB .lake/build/bin/config-test bench-start \"$(lean --print-prefix)\" .lake/build/lib/lean Editor",
+  "/usr/bin/time -l env -u LEAN_STACK_SIZE_KB .lake/build/bin/config-test bench-start \"$(lean --print-prefix)\" .lake/build/lib/lean Editor Std",
+  "/usr/bin/time -l env -u LEAN_STACK_SIZE_KB .lake/build/bin/config-test bench-start \"$(lean --print-prefix)\" .lake/build/lib/lean Editor Lean",
+  "/usr/bin/time -l env -u LEAN_STACK_SIZE_KB .lake/build/bin/config-test bench-reload \"$(lean --print-prefix)\" .lake/build/lib/lean",
+  "/usr/bin/time -l env -u LEAN_STACK_SIZE_KB .lake/build/bin/config-test bench-soak \"$(lean --print-prefix)\" .lake/build/lib/lean 100",
+  "/usr/bin/time -l env -u LEAN_STACK_SIZE_KB .lake/build/bin/config-test bench-soak \"$(lean --print-prefix)\" .lake/build/lib/lean 500",
+]
+
 [tasks.ci]
 description = "The whole gate; `hk check` runs this, and it gates review and landing (rdm's dispatch.verify)"
 depends = ["fmt", "lint", "deny", "doc", "test", "lean-test", "lean", "lean-fmt", "ffi-test", "c-fmt"]

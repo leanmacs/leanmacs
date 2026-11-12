@@ -737,18 +737,202 @@ def run (sysroot oleanDir : String) : IO UInt8 := do
   IO.println s!"config-test: {checks.length} checks passed"
   return 0
 
+/-! ## The benchmark
+
+Three subcommands measure the config session (`mise run config-bench`, which
+runs each in a fresh process under `/usr/bin/time -l`). They are a measuring
+tool: they assert nothing but that every reload installed, the gate builds
+them and never runs them, and no number they print is an expected value.
+
+Each loads config through the headless host, as the editor does, from a
+source held in memory, so they touch no files. A time is from the request
+for a reload to its report, on Lean's monotonic clock. -/
+
+namespace Bench
+
+/-- How long a measurement waits, in milliseconds, for one reload. -/
+def patience : Nat :=
+  120000
+
+/-- A host to measure: its source is `chunks`, and it notes when each
+reload's report is printed. -/
+structure Rig where
+  /-- The host. -/
+  host : Headless.Host
+  /-- The config the host's source holds. -/
+  chunks : IO.Ref (Array Config.SourceChunk)
+  /-- The last reload's report line, and the monotonic time, in nanoseconds,
+  at which it was printed. -/
+  reported : IO.Ref (Option (String × Nat))
+  /-- Every other line the host printed since the last request: the
+  diagnostics of a reload that went wrong. -/
+  others : IO.Ref (Array String)
+
+namespace Rig
+
+/-- Starts a host over `elaborator` and a source in memory. -/
+def start (elaborator : Config.Elaborator Config.Elaborate.State) : IO Rig := do
+  let chunks ← IO.mkRef #[]
+  let reported ← IO.mkRef none
+  let others ← IO.mkRef #[]
+  let emit (line : String) : IO Unit := do
+    if line.startsWith "reload " then
+      reported.set (some (line, ← IO.monoNanosNow))
+    else
+      others.modify (·.push line)
+  let host ←
+    Headless.start
+        { elaborator, source := { chunks := chunks.get }, emit, requests := 1, wakeups := 2 }
+  return { host, chunks, reported, others }
+
+/-- Makes `config` the source's chunks, asks for a reload, and returns the
+nanoseconds from the request to the report. Throws unless the reload was
+installed. -/
+def reload (rig : Rig) (config : Array Config.SourceChunk) : IO Nat := do
+  rig.chunks.set config
+  rig.reported.set none
+  rig.others.set #[]
+  let asked ← IO.monoNanosNow
+  rig.host.send .reload
+  unless ← rig.host.settle patience do
+    throw (IO.userError "a reload did not finish")
+  let some (line, printed) ← rig.reported.get | throw (IO.userError "a reload was not reported")
+  unless (line.splitOn "installed").length > 1 do
+    throw (IO.userError s!"{line}: {"; ".intercalate (← rig.others.get).toList}")
+  return printed - asked
+
+end Rig
+
+/-- A config of one chunk of one line, which differs with `round`. -/
+def oneLine (round : Nat) : Array Config.SourceChunk :=
+  #[{ name := "one.lean",
+      text := "def setup : SetupM Unit := command \"round" ++ toString round ++ "\" (pure ())\n" }]
+
+/-- A config of one chunk of twenty lines, which differs with `round`. -/
+def twentyLines (round : Nat) : Array Config.SourceChunk :=
+  #[{ name := "twenty.lean",
+      text :=
+        "def greet : EditorM Unit := do
+  let text ← createText \"hello\"
+  append text \", world\"
+
+def shout : EditorM Unit := do
+  let text ← createText \"HELLO\"
+  append text \"!\"
+
+def twice (command : EditorM Unit) : EditorM Unit := do
+  command
+  command
+
+def note (round : Nat) : EditorM Unit := do
+  discard <| createText (toString round)
+
+def setup : SetupM Unit := do
+  command \"greet\" greet
+  command \"shout\" shout
+  command \"twice\" (twice greet)
+  command \"note\" (note " ++
+          toString round ++
+          ")\n" }]
+
+/-- A config of one chunk of fifty definitions, a theorem proved by `simp`
+and a `setup`, which differs with `round`. -/
+def fiftyDefinitions (round : Nat) : Array Config.SourceChunk :=
+  let definitions :=
+    (List.range 50).map fun index => s!"def f{index} (n : Nat) : Nat := n * {index} + {index}\n"
+  #[{ name := "fifty.lean",
+      text :=
+        String.join definitions ++ "theorem f1_spec (n : Nat) : f1 n = n + 1 := by simp [f1]\n" ++
+          s!"def round : Nat := {round}\n" ++
+          "def setup : SetupM Unit := command \"round\" (pure ())\n" }]
+
+/-- Nanoseconds as milliseconds with one decimal. -/
+def milliseconds (nanoseconds : Nat) : String :=
+  let tenths := (nanoseconds + 50000) / 100000
+  s!"{tenths / 10}.{tenths % 10}"
+
+/-- The median and the maximum of `times`, as milliseconds. -/
+def medianAndMaximum (times : Array Nat) : String :=
+  let sorted := times.qsort (· < ·)
+  let median := (sorted.getD ((sorted.size - 1) / 2) 0 + sorted.getD (sorted.size / 2) 0) / 2
+  s!"median {milliseconds median} ms, maximum {milliseconds (sorted.back?.getD 0)} ms"
+
+/-- `bench-start`: imports the base with `modules`, then loads the twenty-line
+config through a host, and prints how long each took. -/
+def start (sysroot oleanDir : String) (modules : List String) : IO UInt8 := do
+  let real :=
+    Config.Elaborate.elaborator
+      { sysroot, oleanDir, imports := (modules.map String.toName).toArray }
+  let before ← IO.monoNanosNow
+  let base ← real.base
+  let imported := (← IO.monoNanosNow) - before
+  let rig ← Rig.start { real with base := pure base }
+  let first ← rig.reload (twentyLines 0)
+  IO.println
+      s!"bench-start {modules}: import {milliseconds imported} ms, first load {milliseconds first} ms"
+  return 0
+
+/-- `bench-reload`: twenty reloads of each of the three configs, each reload
+with the text changed, and prints the median and the maximum of each. -/
+def reload (sysroot oleanDir : String) : IO UInt8 := do
+  let rig ← Rig.start (Config.Elaborate.elaborator { sysroot, oleanDir })
+  -- The first load imports the base; it is not one of the twenty.
+  discard <| rig.reload (oneLine 0)
+  let configs :=
+    [("one-line chunk", oneLine), ("20-line config", twentyLines),
+      ("50 definitions and a simp proof", fiftyDefinitions)]
+  for (name, config) in configs do
+    let mut times := #[]
+    for round in [1:21] do
+      times := times.push (← rig.reload (config round))
+    IO.println s!"bench-reload: {name}: {medianAndMaximum times}"
+  return 0
+
+/-- `bench-soak`: `count` reloads of the fifty-definition config, each with
+the text changed, and prints the mean time of one. -/
+def soak (sysroot oleanDir : String) (count : Nat) : IO UInt8 := do
+  let rig ← Rig.start (Config.Elaborate.elaborator { sysroot, oleanDir })
+  discard <| rig.reload (fiftyDefinitions 0)
+  let mut total := 0
+  for round in [1:count + 1] do
+    total := total + (← rig.reload (fiftyDefinitions round))
+  IO.println s!"bench-soak: {count} reloads, mean {milliseconds (total / count)} ms per reload"
+  return 0
+
+end Bench
+
+/-- Reports a command line `main` does not understand; the exit status is 2. -/
+def usage : IO UInt32 := do
+  IO.eprintln
+      "usage: config-test <sysroot> <olean dir> | config-test bench-start <sysroot> <olean dir> <module>... | config-test bench-reload <sysroot> <olean dir> | config-test bench-soak <sysroot> <olean dir> <count>"
+  return 2
+
 end ConfigTest
 
 /-- `config-test <sysroot> <olean dir>` runs the checks: exits 0 when all
-hold, and 1 after naming the ones that do not. Any other command line is
-reported, with the exit status 2.
+hold, and 1 after naming the ones that do not.
+
+`bench-start`, `bench-reload` and `bench-soak` are the benchmark
+(`ConfigTest.Bench`; `mise run config-bench`), which the gate never runs.
+
+Any other command line is reported, with the exit status 2.
 
 It exits explicitly: a failed check may have left a task parked in the
-library, and returning from `main` would wait for it for ever. -/
+library, and a benchmark leaves its host's loop running; returning from
+`main` would wait for either for ever. -/
 def main (args : List String) : IO UInt32 := do
   match args with
   | [sysroot, oleanDir] =>
     IO.Process.exit (← ConfigTest.run sysroot oleanDir)
+  | "bench-start" :: sysroot :: oleanDir :: module :: modules =>
+    IO.Process.exit (← ConfigTest.Bench.start sysroot oleanDir (module :: modules))
+  | ["bench-reload", sysroot, oleanDir] =>
+    IO.Process.exit (← ConfigTest.Bench.reload sysroot oleanDir)
+  | ["bench-soak", sysroot, oleanDir, count] =>
+    match count.toNat? with
+    | some count =>
+      IO.Process.exit (← ConfigTest.Bench.soak sysroot oleanDir count)
+    | none =>
+      ConfigTest.usage
   | _ =>
-    IO.eprintln "usage: config-test <sysroot> <olean dir>"
-    return 2
+    ConfigTest.usage
