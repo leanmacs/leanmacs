@@ -3,3 +3,8 @@ run greet: ok
 run missing: no such command
 commands: greet
 text 0: "hello, world"
+spawn count: job 1
+job 1 count: ok
+commands: greet
+text 0: "hello, world"
+text 1: "counted 42"

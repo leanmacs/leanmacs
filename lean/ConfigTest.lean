@@ -2,6 +2,7 @@ import ConfigFixture
 import Editor.Config.Directory
 import Editor.Config.Elaborate
 import Editor.Headless
+import Editor.Job.Fake
 
 /-!
 # Checks of the config session against the real elaborator
@@ -25,12 +26,19 @@ fakes. The checks here pin what only real collaborators can show:
   the lines the host prints;
 - `threadChecks`: the editor answers events while a chunk elaborates, reloads
   are serialised, and a replaced config is not retained;
+- `jobChecks`: jobs from config through the host: a handler receives a job's
+  result on the editor thread, a reload that installs cancels the old
+  config's jobs and a rejected one does not, and how each ending of a job is
+  reported;
 - `scriptChecks`: the headless mode's script and its driver.
 
 A check controls time through a port, never by sleeping and hoping: a
 decorator of the elaborator port (`Gate`) holds one chunk's elaboration open
-until the check lets it go. Every wait is a poll with a bound, so broken code
-fails a check within seconds instead of hanging the executable.
+until the check lets it go, and a host's jobs wait on a fake clock
+(`Editor/Job/Fake.lean`) that only the check moves. Every wait is a poll with
+a bound, so broken code fails a check within seconds instead of hanging the
+executable. Each line a host emits is recorded with the thread that emitted
+it, which is how a check sees that a handler ran on the editor thread.
 
 All the checks share one import of the base, made once in `run`: a second
 import in one process about doubles its memory. Hosts follow one another on
@@ -284,6 +292,40 @@ of hanging. -/
 def patience : Nat :=
   5000
 
+/-- What a check hands a host of its own: the collaborators, and what the
+check keeps of them. The host's output goes to a buffer, with the thread
+that emitted each line; its jobs wait on a fake clock the check moves; and it
+posts under source ids no other host of this process has. -/
+structure Stage (σ : Type) where
+  /-- What the host is started with. -/
+  collaborators : Headless.Collaborators σ
+  /-- Every line the host has emitted, oldest first. -/
+  output : IO.Ref (Array String)
+  /-- The thread that emitted each line of `output`. -/
+  threads : IO.Ref (Array UInt64)
+  /-- The clock the host's jobs wait on. -/
+  clock : Job.FakeClock
+
+/-- A stage for a host over `elaborator` and `source`. Hosts follow one
+another on one queue: each gets source ids of its own, so none takes a late
+event of an earlier one for its own. -/
+def Stage.new {σ : Type} (context : Context) (elaborator : Config.Elaborator σ)
+    (source : Config.Source) : IO (Stage σ) := do
+  let output ← IO.mkRef #[]
+  let threads ← IO.mkRef #[]
+  let completions ← Job.Completions.new
+  let clock ← Job.FakeClock.new completions
+  let requests ← context.ids.modifyGet fun next => (next, next + 3)
+  return {
+      collaborators :=
+        { elaborator, source,
+          emit := fun line => do
+            threads.modify (·.push (← IO.getTID))
+            output.modify (·.push line),
+          services := { completions, timers := clock.timers }, requests, wakeups := requests + 1,
+          jobs := requests + 2 },
+      output, threads, clock }
+
 /-- A host running for one check: the headless loop on the real queue and the
 real text binding, over a config directory the check owns. -/
 structure Session where
@@ -293,6 +335,10 @@ structure Session where
   directory : System.FilePath
   /-- Every line the host has emitted, oldest first. -/
   output : IO.Ref (Array String)
+  /-- The thread that emitted each line of `output`. -/
+  threads : IO.Ref (Array UInt64)
+  /-- The clock the host's jobs wait on, which the check moves. -/
+  clock : Job.FakeClock
 
 namespace Session
 
@@ -324,27 +370,27 @@ def lines (session : Session) : IO (Array String) :=
 
 end Session
 
-/-- Runs `check` against a host started over `elaborator` and `source`, with
-its output in a buffer `check` is handed, and stops the host. `false` if the
-check did not hold or the host did not stop. -/
-def hosted {σ : Type} (context : Context) (elaborator : Config.Elaborator σ)
-    (source : Config.Source) (check : Headless.Host → IO.Ref (Array String) → IO Bool) : IO Bool :=
-  do
-  let output ← IO.mkRef #[]
-  -- Hosts follow one another on one queue: each gets source ids of its own,
-  -- so none takes a late event of an earlier one for its own.
-  let requests ← context.ids.modifyGet fun next => (next, next + 2)
-  let host ←
-    Headless.start
-        { elaborator, source, emit := fun line => output.modify (·.push line), requests,
-          wakeups := requests + 1 }
+/-- Runs `check` against a host started on a stage of its own over
+`elaborator` and `source`, and stops the host. `false` if the check did not
+hold or the host did not stop. -/
+def staged {σ : Type} (context : Context) (elaborator : Config.Elaborator σ)
+    (source : Config.Source) (check : Headless.Host → Stage σ → IO Bool) : IO Bool := do
+  let stage ← Stage.new context elaborator source
+  let host ← Headless.start stage.collaborators
   try
-    let held ← check host output
+    let held ← check host stage
     let stopped ← host.stop patience
     return held && stopped
   catch error =>
     discard <| host.halt patience
     throw error
+
+/-- Runs `check` against a host started over `elaborator` and `source`, with
+its output in a buffer `check` is handed, and stops the host. `false` if the
+check did not hold or the host did not stop. -/
+def hosted {σ : Type} (context : Context) (elaborator : Config.Elaborator σ)
+    (source : Config.Source) (check : Headless.Host → IO.Ref (Array String) → IO Bool) : IO Bool :=
+  staged context elaborator source fun host stage => check host stage.output
 
 /-- Runs `check` against a host started on a fresh temporary directory
 holding `files`, and stops the host. The host's elaborator is `around` the
@@ -355,8 +401,11 @@ def withHostOver (context : Context) (files : List (String × String))
     (through : Config.Source → Config.Source) (check : Session → IO Bool) : IO Bool :=
   IO.FS.withTempDir fun directory => do
     writeFiles directory files
-    hosted context (around context.elaborator) (through (Config.Directory.source directory))
-        fun host output => check { host, directory, output }
+    staged context (around context.elaborator) (through (Config.Directory.source directory))
+        fun host stage =>
+        check
+          { host, directory, output := stage.output, threads := stage.threads,
+            clock := stage.clock }
 
 /-- Runs `check` against a host started on a fresh temporary directory
 holding `files`, with the real elaborator, and stops the host. `false` if the
@@ -774,6 +823,165 @@ def threadChecks (context : Context) : List Check :=
               return (← Ffi.Counter.live) == before
         return loaded && freed }]
 
+/-- A chunk with three jobs, and the `setup` that registers them beside
+`greet`: `count` sleeps 10 ms and its result, 42, is made into a text;
+`boom` sleeps 10 ms and throws; and `bad` is `count` with a handler whose
+command the library refuses. -/
+def jobsChunk : String :=
+  "def count : Unit → JobM Nat := fun _ => do
+  sleep 10
+  return 42
+
+def boom : Unit → JobM Nat := fun _ => do
+  sleep 10
+  throw \"no thanks\"
+
+def setup : SetupM Unit := do
+  command \"greet\" greet
+  job \"count\" count fun n => discard <| createText s!\"counted {n}\"
+  job \"boom\" boom fun _ => pure ()
+  job \"bad\" count fun _ => (⟨7⟩ : TextId).insert 0 \"x\"
+"
+
+/-- A config of two chunks: `greet`, which makes a text holding "v1", and a
+`setup` that registers it and the jobs of `jobsChunk`. -/
+def jobsConfig : List (String × String) :=
+  [("10-greet.lean", greetChunk "v1"), ("20-setup.lean", jobsChunk)]
+
+/-- The thread that emitted the first line of the host's output that is
+`line`, if there is one. -/
+def Session.threadOf (session : Session) (line : String) : IO (Option UInt64) := do
+  let lines ← session.output.get
+  let threads ← session.threads.get
+  return (lines.idxOf? line).bind fun index => threads[index]?
+
+/-- The checks of jobs through the headless host (`Editor/Headless.lean`),
+with the real elaborator, the real queue and the real text binding. The
+host's jobs wait on a fake clock the check moves, so a job ends when the
+check says, and never because time passed. -/
+def jobChecks (context : Context) : List Check :=
+  [{
+      name :=
+        "a handler receives a job's result on the editor thread: the job's line is printed by the thread that prints a command's, after the clock lets the job go, and the handler's text is there",
+      run :=
+        -- Seen to bite once by hand: a host that prints a job's line where
+        -- the job ended, from the runner's `finished`, prints it from a pool
+        -- thread, and the thread ids differ.
+        withHost context jobsConfig fun session => do
+          session.ask [.reload]
+          session.ask [.run "greet", .spawn "count"]
+          unless ← eventually (return (← session.clock.waiting) == 1) do
+            return false
+          -- The job is in its sleep: nothing has been said of its result, and
+          -- the editor still answers.
+          session.ask [.run "greet"]
+          let waiting ← session.output.get
+          session.clock.advance 10
+          let joined ← session.host.join patience
+          session.ask [.show]
+          let command ← session.threadOf "run greet: ok"
+          let handler ← session.threadOf "job 1 count: ok"
+          return waiting ==
+                #["reload 1: installed, 2 chunks, 1 commands", "run greet: ok",
+                  "spawn count: job 1", "run greet: ok"] &&
+              joined == .settled &&
+              (← session.output.get) ==
+                waiting ++
+                  #["job 1 count: ok", "commands: greet", "text 0: \"v1\"", "text 1: \"v1\"",
+                    "text 2: \"counted 42\""] &&
+              command.isSome &&
+              handler == command &&
+              command != some (← IO.getTID) },
+    { name :=
+        "a reload cancels the old config's jobs when it installs: the job is cancelled before the reload is reported, its wait is withdrawn, and its handler never runs"
+      run :=
+        withHost context jobsConfig fun session => do
+          session.ask [.reload]
+          session.ask [.spawn "count"]
+          unless ← eventually (return (← session.clock.waiting) == 1) do
+            return false
+          session.write "10-greet.lean" (greetChunk "v2")
+          session.ask [.reload]
+          let withdrawn ← session.clock.withdrawn
+          -- Past the job's sleep: a job that was still there would end, and
+          -- its handler would make a text.
+          session.clock.advance 10
+          session.ask [.show]
+          return withdrawn.size == 1 && (← session.clock.waiting) == 0 &&
+              (← session.output.get) ==
+                #["reload 1: installed, 2 chunks, 1 commands", "spawn count: job 1",
+                  "job 1 count: cancelled", "reload 2: installed, 2 chunks, 1 commands",
+                  "commands: greet"] },
+    { name :=
+        "a rejected reload cancels nothing: the old config's job runs on, and its handler runs when it finishes"
+      run :=
+        withHost context jobsConfig fun session => do
+          session.ask [.reload]
+          session.ask [.spawn "count"]
+          unless ← eventually (return (← session.clock.waiting) == 1) do
+            return false
+          session.write "10-greet.lean" "def greet : EditorM Unit := \"not a command\"\n"
+          session.ask [.reload]
+          let stillWaiting := (← session.clock.waiting) == 1 && (← session.clock.withdrawn).isEmpty
+          session.clock.advance 10
+          let joined ← session.host.join patience
+          return stillWaiting && joined == .settled &&
+              (← session.lines) ==
+                #["reload 1: installed, 2 chunks, 1 commands", "spawn count: job 1",
+                  "reload 2: rejected", "diagnostic: 10-greet.lean: error", "job 1 count: ok"] },
+    { name :=
+        "a job that throws is reported as failed with its message, a handler whose command the library refuses as refused, and a name that is not registered as no such job"
+      run :=
+        withHost context jobsConfig fun session => do
+          session.ask [.reload]
+          session.ask [.spawn "boom", .spawn "bad", .spawn "nope"]
+          unless ← eventually (return (← session.clock.waiting) == 2) do
+            return false
+          let spawned ← session.output.get
+          session.clock.advance 10
+          let joined ← session.host.join patience
+          -- The two jobs end at one instant, in either order.
+          let ended := ((← session.output.get).extract spawned.size).qsort (· < ·)
+          return spawned ==
+                #["reload 1: installed, 2 chunks, 1 commands", "spawn boom: job 1",
+                  "spawn bad: job 2", "spawn nope: no such job"] &&
+              joined == .settled &&
+              ended == #["job 1 boom: failed: no thanks", "job 2 bad: refused: no such text"] },
+    { name :=
+        "a join that cannot finish fails, it does not hang: the failure names the join's line, and the loop cancels its jobs when it ends"
+      run :=
+        IO.FS.withTempDir fun directory => do
+          writeFiles directory jobsConfig
+          let stage ← Stage.new context context.elaborator (Config.Directory.source directory)
+          -- The clock is never moved, so the job never ends: the join runs
+          -- out, after a fifth of a second, and `run` ends its loop.
+          let failure ←
+            Headless.run stage.collaborators
+                #[⟨1, .request .reload⟩, ⟨2, .settle⟩, ⟨3, .request (.spawn "count")⟩, ⟨5, .join⟩,
+                  ⟨6, .request .show⟩]
+                200
+          -- The loop has ended: the job it left is cancelled, with its wait.
+          let cancelled ← eventually (return (← stage.clock.withdrawn).size == 1)
+          return failure == some (.working (some 5)) && cancelled && (← stage.clock.waiting) == 0 &&
+              (← stage.output.get) ==
+                #["reload 1: installed, 2 chunks, 1 commands", "spawn count: job 1"] },
+    { name :=
+        "spawn and join are directives of a script, a spawn with no name is refused, and a join that ran out is described with its line"
+      run :=
+        let refusal (text : String) : String :=
+          match Headless.script text with
+          | .error message => message
+          | .ok _ => ""
+        let working := Headless.Failure.describe 30000 (.working (some 12))
+        pure
+          ((Headless.script "spawn count\n  join  \nspawn  two words\n").toOption ==
+              some
+                #[⟨1, .request (.spawn "count")⟩, ⟨2, .join⟩, ⟨3, .request (.spawn "two words")⟩] &&
+            (refusal "reload\nspawn\n").startsWith "line 2: " &&
+            (working.splitOn "line 12").length == 2 &&
+            working != Headless.Failure.describe 30000 (.reloading (some 12)) &&
+            working != Headless.Failure.describe 30000 (.unanswered (some 12))) }]
+
 /-- The checks of the headless mode's script and its driver
 (`Headless.script`, `Headless.run`). The command line itself is covered by
 one run of the real executable on the fixture under `tests/headless`, in the
@@ -805,18 +1013,14 @@ def scriptChecks (context : Context) : List Check :=
       run :=
         IO.FS.withTempDir fun directory => do
           writeFiles directory greetConfig
-          let output ← IO.mkRef #[]
-          let requests ← context.ids.modifyGet fun next => (next, next + 2)
+          let stage ← Stage.new context context.elaborator (Config.Directory.source directory)
           let failure ←
-            Headless.run
-                { elaborator := context.elaborator, source := Config.Directory.source directory,
-                  emit := fun line => output.modify (·.push line), requests,
-                  wakeups := requests + 1 }
+            Headless.run stage.collaborators
                 #[⟨1, .request .reload⟩, ⟨2, .settle⟩, ⟨3, .request (.run "greet")⟩,
                   ⟨4, .request .show⟩]
                 patience
           return failure == none &&
-              (← output.get) ==
+              (← stage.output.get) ==
                 #["reload 1: installed, 2 chunks, 1 commands", "run greet: ok", "commands: greet",
                   "text 0: \"v1\""] },
     { name :=
@@ -825,18 +1029,15 @@ def scriptChecks (context : Context) : List Check :=
         let gate ← Gate.new
         IO.FS.withTempDir fun directory => do
             writeFiles directory (greetConfig ++ [("slow.lean", slowChunk)])
-            let output ← IO.mkRef #[]
-            let requests ← context.ids.modifyGet fun next => (next, next + 2)
+            let stage ←
+              Stage.new context (gate.around context.elaborator) (Config.Directory.source directory)
+            let output := stage.output
             try
               -- The reload is held open, so the settle runs out, after a
               -- fifth of a second. `run` then ends its loop at once, so the
               -- next host starts on a queue nobody else is pulling.
               let failure ←
-                Headless.run
-                    { elaborator := gate.around context.elaborator,
-                      source := Config.Directory.source directory,
-                      emit := fun line => output.modify (·.push line), requests,
-                      wakeups := requests + 1 }
+                Headless.run stage.collaborators
                     #[⟨3, .request .reload⟩, ⟨7, .settle⟩, ⟨8, .request .show⟩] 200
               -- The reload was held at the gate, which is why nothing settled.
               -- The job outlives the loop, so on a slow machine it may only
@@ -853,14 +1054,10 @@ def scriptChecks (context : Context) : List Check :=
         let gate ← Gate.new
         IO.FS.withTempDir fun directory => do
             writeFiles directory (greetConfig ++ [("slow.lean", slowChunk)])
-            let requests ← context.ids.modifyGet fun next => (next, next + 2)
+            let stage ←
+              Stage.new context (gate.around context.elaborator) (Config.Directory.source directory)
             try
-              let failure ←
-                Headless.run
-                    { elaborator := gate.around context.elaborator,
-                      source := Config.Directory.source directory, emit := fun _ => pure (),
-                      requests, wakeups := requests + 1 }
-                    #[⟨1, .request .reload⟩] 200
+              let failure ← Headless.run stage.collaborators #[⟨1, .request .reload⟩] 200
               return failure == some (.reloading none)
             finally
               gate.open },
@@ -885,14 +1082,13 @@ def scriptChecks (context : Context) : List Check :=
         -- marker.
         let block ← IO.Promise.new
         let entered ← IO.mkRef false
-        let requests ← context.ids.modifyGet fun next => (next, next + 2)
+        let stage ← Stage.new context context.elaborator { chunks := pure #[] }
         let host ←
           Headless.start
-              { elaborator := context.elaborator, source := { chunks := pure #[] },
+              { stage.collaborators with
                 emit := fun _ => do
                   entered.set true
-                  discard <| IO.wait block.result?,
-                requests, wakeups := requests + 1 }
+                  discard <| IO.wait block.result? }
         try
           host.send .show
           let inside ← eventually entered.get
@@ -918,6 +1114,7 @@ def scriptChecks (context : Context) : List Check :=
 /-- Every check, in the order they run. -/
 def checks (context : Context) : List Check :=
   elaboratorChecks context ++ directoryChecks () ++ hostChecks context ++ threadChecks context ++
+    jobChecks context ++
     scriptChecks context
 
 /-- Runs `checks` and returns the names of those that failed. A check that
@@ -994,9 +1191,14 @@ def start (elaborator : Config.Elaborator Config.Elaborate.State) : IO Rig := do
       reported.set (some (line, ← IO.monoNanosNow))
     else
       others.modify (·.push line)
+  -- The configs measured here start no job: the clock is never asked.
+  let completions ← Job.Completions.new
+  let clock ← Job.FakeClock.new completions
   let host ←
     Headless.start
-        { elaborator, source := { chunks := chunks.get }, emit, requests := 1, wakeups := 2 }
+        { elaborator, source := { chunks := chunks.get }, emit,
+          services := { completions, timers := clock.timers }, requests := 1, wakeups := 2,
+          jobs := 3 }
   return { host, chunks, reported, others }
 
 /-- Makes `config` the source's chunks, asks for a reload, and returns the

@@ -23,6 +23,7 @@ moment it is started until its result is taken or its owner is removed.
   one. A job of that owner that ends afterwards, or had already ended and
   was waiting for the editor thread, has no entry, so `finish` finds nothing
   and no handler runs for it.
+- **`cancelAll`** cancels every job, for a runtime that is ending.
 -/
 
 namespace Editor.Job
@@ -65,6 +66,12 @@ def removeOwner (jobs : Jobs) (owner : Config.Owner) : BaseIO (Array (Entry Hand
   for entry in removed do
     entry.handle.cancel
   return (removed, { jobs with table })
+
+/-- Cancels every job in the table: for a runtime that is ending, which will
+deal with no more results. -/
+def cancelAll (jobs : Jobs) : BaseIO Unit := do
+  for entry in jobs.table.entries do
+    entry.handle.cancel
 
 end Jobs
 

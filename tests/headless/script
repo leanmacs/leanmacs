@@ -6,3 +6,9 @@ settle
 run greet
 run missing
 show
+
+# A job: `count` sleeps for a millisecond on the real clock, and its handler
+# makes a text of its result on the editor thread. `join` waits for it.
+spawn count
+join
+show
