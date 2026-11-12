@@ -1763,6 +1763,10 @@ structure FakeWindow where
   /-- What the clock reads once the window runs and every input has been
   pulled: a time limit passes when this is far enough on. -/
   idleAt : Option Nat := none
+  /-- Whether the window, once it is run, takes until a close has been asked
+  of it to begin: a close that came too early, which it forgets as every
+  window does. -/
+  slowToBegin : Bool := false
 
 /-- What a fake window has been asked and has said. -/
 structure FakeWindowState where
@@ -1781,9 +1785,13 @@ structure FakeWindowState where
   lines : Array String := #[]
   /-- The lines said to the person at the terminal, apart from the report. -/
   said : Array String := #[]
+  /-- How many closes were asked for while the window was not running, and
+  so forgotten. -/
+  forgotten : Nat := 0
 
 /-- The fake as the record the check runs on. `closed` is resolved by a
-close, and ends the run. -/
+close asked for while the window is running, and ends the run. A close asked
+for at any other time is forgotten, as the window port's contract has it. -/
 def FakeWindow.window (fake : FakeWindow) (state : IO.Ref FakeWindowState)
     (closed : IO.Promise Unit) : WindowCheck.Window :=
   let called (call : String) : IO Unit :=
@@ -1814,6 +1822,9 @@ def FakeWindow.window (fake : FakeWindow) (state : IO.Ref FakeWindowState)
       called s!"run {composition}"
       if let some reason := fake.cannotOpen then
         return .error reason
+      if fake.slowToBegin then
+        while (← state.get).forgotten == 0 && !(← closed.isResolved) do
+          IO.sleep 1
       state.modify fun state =>
           { state with
             pending := fake.arrivals, running := true }
@@ -1823,7 +1834,12 @@ def FakeWindow.window (fake : FakeWindow) (state : IO.Ref FakeWindowState)
       return .ok ()
     close := do
       called "close"
-      closed.resolve ()
+      let running ←
+        state.modifyGet fun state =>
+            (state.running,
+              if state.running then state else { state with forgotten := state.forgotten + 1 })
+      if running then
+        closed.resolve ()
     stop := do
       called "stop"
       state.modify fun state => { state with stopped := true }
@@ -1839,6 +1855,8 @@ structure Checked where
   status : Option UInt32
   /-- What it said to the person at the terminal, apart from the report. -/
   said : List String
+  /-- How many closes it asked for while the window was not running. -/
+  forgotten : Nat
 
 /-- Runs `act` on `fake`'s window and on somewhere to say a line, and returns
 what it did. It runs on a dedicated task that this polls, so one that never
@@ -1860,7 +1878,7 @@ def FakeWindow.drive (fake : FakeWindow)
   let state ← state.get
   return {
       lines := state.lines.toList, calls := state.calls.toList, status
-      said := state.said.toList }
+      said := state.said.toList, forgotten := state.forgotten }
 
 /-- Runs the keyboard check on `fake`, with `options`. -/
 def FakeWindow.check (fake : FakeWindow) (options : WindowCheck.Options := {}) : IO Checked :=
@@ -2136,9 +2154,21 @@ def windowLoopChecks : List Check :=
             arrivals := [{ input := .opened "fake", arrived := 1000000001, handled := 1000000002 }]
             idleAt := some 3000000000 }
         let checked ← idle.check { seconds := 2 }
-        return checked.calls == ["probe", "run true", "close", "stop"] &&
+        -- The limit asks again at every look until the run has ended, so
+        -- there is one close or several in a row.
+        return checked.calls.eraseReps == ["probe", "run true", "close", "stop"] &&
             checked.lines.getLast? == some "ended: the time limit" &&
             checked.status == some 0 },
+    { name :=
+        "a time limit that has passed before the window's run has begun still ends the run: the close that came too early is forgotten, and the check asks again"
+      run := do
+        let slow : FakeWindow :=
+          { arrivals := [{ input := .opened "fake", arrived := 1, handled := 2 }]
+            slowToBegin := true }
+        let checked ← slow.check { seconds := 0 }
+        return checked.forgotten >= 1 && checked.status == some 0 &&
+            checked.lines[1]?.any (·.startsWith "window: opened by fake ") &&
+            checked.lines.getLast? == some "ended: the time limit" },
     { name := "a window that is closed before the time limit is not said to have reached it"
       run := do
         let checked ← ({ typed with idleAt := some 1000000 } : FakeWindow).check { seconds := 2 }

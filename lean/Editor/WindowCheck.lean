@@ -30,7 +30,9 @@ calling thread, which blocks until the window has closed.
 The loop pulls one input at a time and reads the clock as soon as it has one:
 that reading is when the input was handled. When the window says the user
 asked for it to be closed, the loop closes it, once. A second task closes the
-window when the time limit has passed.
+window when the time limit has passed, and asks again until the window's run
+has ended: a window forgets a close that comes before its run has begun, as
+one does when the limit is shorter than the window takes to start.
 
 When the window has closed, `check` posts a stop to the loop, which ends at
 it with every input before it counted, those that arrived after the close was
@@ -345,7 +347,10 @@ def check (window : Window) (options : Options) : IO UInt32 := do
         return tally
   -- The time limit: closes the window if the check is still running when it
   -- has passed. It looks at the clock now and then, so that it ends soon
-  -- after the check does and never sleeps the whole limit.
+  -- after the check does and never sleeps the whole limit. Once the limit
+  -- has passed it asks again at every look until the run has ended: a
+  -- window forgets a close that comes before its run has begun, and a limit
+  -- shorter than the window takes to start comes that early.
   let over ← IO.mkRef false
   let limited ← IO.mkRef false
   discard <|
@@ -354,7 +359,6 @@ def check (window : Window) (options : Options) : IO UInt32 := do
           if (← window.clock) - askedAt >= options.seconds * 1000000000 then
             limited.set true
             window.close
-            break
           IO.sleep limitPoll
   let outcome ← window.run options.composition
   over.set true
