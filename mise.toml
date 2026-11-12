@@ -216,6 +216,31 @@ run = [
   "/usr/bin/time -l env -u LEAN_STACK_SIZE_KB .lake/build/bin/config-test bench-soak \"$(lean --print-prefix)\" .lake/build/lib/lean 500",
 ]
 
+# Opt-in: run it by hand on a quiet machine, and do not add it to `ci` or to
+# hk.pkl. It measures and asserts nothing: its numbers depend on the machine
+# and on what else the machine is doing, so none of them is a pass or a fail.
+# The gate still builds the subcommand, under every linter (`lean`).
+#
+# `bench-jobs` measures the latency of the editor loop, from posting
+# `run noop` to the editor thread having run it, over 10,000 samples a row:
+# with nothing running; with 64 jobs each sleeping a millisecond in a loop;
+# with one interpreted job computing on each pool thread; with two for each;
+# and with nothing running again. It then times a million `now` requests in
+# one compiled job. It says which loaded rows are unaffected: a row whose
+# median and 99th percentile are each at most twice the larger of the two
+# idle rows'. The maximum is printed and not judged.
+#
+# Each row is a headless host on the real elaborator, the real queue and the
+# library's timer service, with a config held in memory, so nothing is read
+# but the `.olean` files, whose directories are passed in. LEAN_NUM_THREADS
+# and LEAN_STACK_SIZE_KB are removed from the environment, so the pool has
+# Lean's size and the threads the stack the editor gives them.
+[tasks.job-bench]
+description = "Opt-in, never part of ci: measure the latency of the editor loop while background jobs run (lean/ConfigTest.lean). It asserts nothing"
+depends = ["lean"]
+dir = "lean"
+run = "env -u LEAN_NUM_THREADS -u LEAN_STACK_SIZE_KB .lake/build/bin/config-test bench-jobs \"$(lean --print-prefix)\" .lake/build/lib/lean 10000"
+
 [tasks.ci]
 description = "The whole gate; `hk check` runs this, and it gates review and landing (rdm's dispatch.verify)"
 depends = ["fmt", "lint", "deny", "doc", "test", "lean-test", "lean", "lean-fmt", "ffi-test", "c-fmt"]

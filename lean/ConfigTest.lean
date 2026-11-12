@@ -1315,12 +1315,229 @@ def soak (sysroot oleanDir : String) (count : Nat) : IO UInt8 := do
   IO.println s!"bench-soak: {count} reloads, mean {milliseconds (total / count)} ms per reload"
   return 0
 
+/-! ### The job benchmark
+
+`bench-jobs` measures the latency of the editor loop while jobs run
+(`mise run job-bench`). Like the others it is a measuring tool: the gate
+builds it and never runs it, and no number it prints is an expected value.
+
+Each row runs a headless host on the real elaborator, the real queue and the
+library's timer service, with the pool warmed and the pump running, as the
+editor's headless mode does. A sample is one `run noop`: the driver reads
+the monotonic clock, posts the request, and the output port reads the clock
+again on the editor thread when `run noop: ok` is printed; the driver waits
+for that before the next sample.
+
+A row has a host of its own, and its jobs are ended by ending that host,
+whose loop cancels them. A reload cannot end them: Lean's frontend
+elaborates on pool tasks, so while a job computes on every pool thread a
+reload does not get to elaborate, and never installs. Seen with this
+benchmark: with one job fewer than the pool has threads the reload went
+through, and with one a thread it did not finish. -/
+
+/-- The config the job benchmark loads: a command that does nothing, a job
+that sleeps a millisecond in a loop, and a job that computes for ever, with a
+reading of the clock every 100,000 iterations. A cancelled job ends at its
+next request, so the reading is what lets the computing job be ended. -/
+def jobsConfig : Array Config.SourceChunk :=
+  #[{ name := "jobs.lean",
+      text :=
+        "partial def ticker (token : Unit) : JobM Unit := do
+  sleep 1
+  ticker token
+
+def churn (seed : Nat) : Nat := Id.run do
+  let mut value := seed
+  for index in [0:100000] do
+    value := (value * 1103515245 + index) % 2147483648
+  return value
+
+partial def spin (seed : Nat) : JobM Unit := do
+  let value := churn seed
+  let instant ← now
+  spin (value + instant % 2)
+
+def setup : SetupM Unit := do
+  command \"noop\" (pure ())
+  job \"ticker\" ticker fun _ => pure ()
+  job \"spin\" (fun _ => spin 1) fun _ => pure ()
+" }]
+
+/-- What the samples of one row came to, in nanoseconds. -/
+structure Row where
+  /-- What ran while the row was measured. -/
+  name : String
+  /-- The median latency. -/
+  median : Nat
+  /-- The 99th percentile. -/
+  high : Nat
+  /-- The largest sample. -/
+  maximum : Nat
+  /-- What to say after the numbers, if anything. -/
+  note : String := ""
+
+/-- The row of `times`, which need not be sorted. -/
+def Row.of (name : String) (times : Array Nat) (note : String := "") : Row :=
+  let sorted := times.qsort (· < ·)
+  { name, median := (sorted.getD ((sorted.size - 1) / 2) 0 + sorted.getD (sorted.size / 2) 0) / 2,
+    high := sorted.getD (min (sorted.size * 99 / 100) (sorted.size - 1)) 0,
+    maximum := sorted.back?.getD 0, note }
+
+/-- Nanoseconds as microseconds with one decimal. -/
+def microseconds (nanoseconds : Nat) : String :=
+  let tenths := (nanoseconds + 50) / 100
+  s!"{tenths / 10}.{tenths % 10}"
+
+/-- A row as a line of the report: its name, padded, then the median, the
+99th percentile and the maximum. -/
+def Row.line (row : Row) : String :=
+  let label := row.name ++ ":"
+  s!"  {label.pushn ' ' (36 - label.length)}{microseconds row.median} / {microseconds row.high} / {microseconds row.maximum}{row.note}"
+
+/-- Whether a loaded row is unaffected, by the rule of one run: its median is
+at most twice the larger of the two idle medians, and its 99th percentile at
+most twice the larger of the two idle 99th percentiles. The maximum is not
+judged: one scheduling delay sets it. -/
+def Row.unaffected (row before after : Row) : Bool :=
+  row.median ≤ 2 * max before.median after.median && row.high ≤ 2 * max before.high after.high
+
+/-- A compiled job that reads the clock `count` times and finishes. -/
+def readings (count : Nat) : Work := fun _ => do
+  for _ in [0:count] do
+    discard now
+  return pure ()
+
+/-- `bench-jobs`: the latency of the editor loop, over `samples` samples a
+row, while nothing runs, while 64 jobs each sleep a millisecond in a loop,
+while one interpreted job a pool thread computes, while two a pool thread
+do, and while nothing runs again; then the cost of a `now` request in a
+compiled job. Each row has a host of its own, and its jobs are ended by
+ending that host.
+
+Of two computing jobs a pool thread, half run and half wait in the pool's
+queue: a job that never waits keeps its thread. -/
+def jobs (sysroot oleanDir : String) (samples : Nat) : IO UInt8 := do
+  let pool := (← Job.Pool.warm Job.Pool.size 200).size
+  let completions ← Job.Completions.new
+  discard <| IO.asTask (prio := .dedicated) (Job.pump completions)
+  let real := Job.realTimers completions
+  -- The clock, counting its waits and its readings: how the driver knows
+  -- that jobs have got going, and how many completions went through the pump.
+  let waits ← IO.mkRef 0
+  let reads ← IO.mkRef 0
+  let counted : Job.Timers :=
+    { real with
+      now := do
+        reads.modify (· + 1)
+        real.now,
+      start := fun id deadline => do
+        waits.modify (· + 1)
+        real.start id deadline }
+  let slot ← IO.mkRef (none : Option (IO.Promise Nat))
+  let reloads ← IO.mkRef #[]
+  let emit (line : String) : IO Unit := do
+    if line == "run noop: ok" then
+      let ran ← IO.monoNanosNow
+      if let some sample← slot.get then
+        sample.resolve ran
+    else
+      if line.startsWith "reload " || line.startsWith "diagnostic: " then
+        reloads.modify (·.push line)
+  -- The base is imported once, here, and every host is handed it.
+  let adapter := Config.Elaborate.elaborator { sysroot, oleanDir }
+  let base ← adapter.base
+  let elaborator := { adapter with base := pure base }
+  let ids ← IO.mkRef (1 : UInt64)
+  -- One row: a host of its own that loads the config and starts `count` jobs
+  -- called `job`; `going` waits until they are under way; then the samples.
+  -- Returns the samples, how many waits were started while they were taken,
+  -- and how long taking them took. The host is ended whatever happens, which
+  -- cancels its jobs, and the row is over when every pool thread is free.
+  let row (job : String) (count : Nat) (going : IO Unit) : IO (Array Nat × Nat × Nat) := do
+    -- Hosts follow one another on one queue: each has source ids of its own.
+    let requests ← ids.modifyGet fun next => (next, next + 3)
+    reloads.set #[]
+    let host ←
+      Headless.start
+          { elaborator, source := { chunks := pure jobsConfig }, emit,
+            services := { completions, timers := counted }, requests, wakeups := requests + 1,
+            jobs := requests + 2 }
+    try
+      host.send .reload
+      unless ← host.settle patience do
+        throw (IO.userError "the config did not load")
+      let lines ← reloads.get
+      unless lines.any fun line => (line.splitOn "installed").length > 1 do
+        throw (IO.userError ("the config was not installed: " ++ "; ".intercalate lines.toList))
+      for _ in [0:count] do
+        host.send (.spawn job)
+      unless ← host.settle patience do
+        throw (IO.userError "the editor thread did not answer")
+      going
+      let waitsBefore ← waits.get
+      let began ← IO.monoNanosNow
+      let mut times := #[]
+      for _ in [0:samples] do
+        let sample ← IO.Promise.new
+        slot.set (some sample)
+        let asked ← IO.monoNanosNow
+        host.send (.run "noop")
+        let some ran ← IO.wait sample.result? | throw (IO.userError "a sample was lost")
+        times := times.push (ran - asked)
+      return (times, (← waits.get) - waitsBefore, (← IO.monoNanosNow) - began)
+    finally
+      discard <| host.halt patience
+      discard <| Job.Pool.warm pool 5000
+  -- Waits until the clock has been read `count` more times: so many jobs
+  -- have reached a request, so the pool is computing.
+  let computing (count : Nat) : IO Unit := do
+    let before ← reads.get
+    unless ← Headless.within patience (return (← reads.get) >= before + count) do
+      throw (IO.userError "the computing jobs did not get going")
+  let idle := Row.of "idle" (← row "ticker" 0 (pure ())).1
+  let (sleepingTimes, completed, elapsed) ← row "ticker" 64 (pure ())
+  let sleeping :=
+    Row.of "64 jobs each sleeping 1 ms" sleepingTimes
+      s!"   ({completed * 1000000000 / max elapsed 1} completions a second through the pump)"
+  let one := Row.of s!"{pool} interpreted jobs computing" (← row "spin" pool (computing pool)).1
+  let two :=
+    Row.of s!"{2 * pool} interpreted jobs computing" (← row "spin" (2 * pool) (computing pool)).1
+  let again := Row.of "idle again" (← row "ticker" 0 (pure ())).1
+  -- The cost of a request that needs no wait, in a compiled job on the
+  -- library's clock.
+  let count := 1000000
+  let finished ← IO.Promise.new
+  let started ← IO.monoNanosNow
+  discard <|
+      Job.spawn { completions, timers := real } (readings count) do
+        finished.resolve (← IO.monoNanosNow)
+  let some ended ← IO.wait finished.result? | throw (IO.userError "the reading job was lost")
+  let rows := [idle, sleeping, one, two, again]
+  let loaded := [sleeping, one, two]
+  IO.println s!"pool: {pool} threads; {samples} samples a row"
+  IO.println
+      "latency of the editor loop, from posting `run noop` to the editor thread having run it, in µs: median / 99th percentile / maximum"
+  for row in rows do
+    IO.println row.line
+  IO.println
+      s!"a `now` request answered by the library: {(ended - started) / count} ns each (mean of {count} in one job)"
+  IO.println
+      ("unaffected: " ++
+        "; ".intercalate
+          (loaded.map fun row =>
+            s!"{row.name}: {if row.unaffected idle again then "yes" else "no"}"))
+  let late := rows.filter (·.maximum > 1000000)
+  unless late.isEmpty do
+    IO.println ("maximum over 1 ms: " ++ ", ".intercalate (late.map (·.name)))
+  (← IO.getStdout).flush
+  return 0
+
 end Bench
 
 /-- Reports a command line `main` does not understand; the exit status is 2. -/
 def usage : IO UInt32 := do
   IO.eprintln
-      "usage: config-test <sysroot> <olean dir> | config-test bench-start <sysroot> <olean dir> <module>... | config-test bench-reload <sysroot> <olean dir> | config-test bench-soak <sysroot> <olean dir> <count>"
+      "usage: config-test <sysroot> <olean dir> | config-test bench-start <sysroot> <olean dir> <module>... | config-test bench-reload <sysroot> <olean dir> | config-test bench-soak <sysroot> <olean dir> <count> | config-test bench-jobs <sysroot> <olean dir> <samples>"
   return 2
 
 end ConfigTest
@@ -1330,6 +1547,8 @@ hold, and 1 after naming the ones that do not.
 
 `bench-start`, `bench-reload` and `bench-soak` are the benchmark
 (`ConfigTest.Bench`; `mise run config-bench`), which the gate never runs.
+`bench-jobs` is the job benchmark (`ConfigTest.Bench.jobs`;
+`mise run job-bench`), which the gate never runs either.
 
 Any other command line is reported, with the exit status 2.
 
@@ -1348,6 +1567,20 @@ def main (args : List String) : IO UInt32 := do
     match count.toNat? with
     | some count =>
       IO.Process.exit (← ConfigTest.Bench.soak sysroot oleanDir count)
+    | none =>
+      ConfigTest.usage
+  | ["bench-jobs", sysroot, oleanDir, samples] =>
+    match samples.toNat? with
+    | some samples =>
+      -- A benchmark that fails leaves tasks running, so it says why and
+      -- exits here: an error that left `main` would wait for them for ever.
+      let status ←
+        try
+          ConfigTest.Bench.jobs sysroot oleanDir samples
+        catch error =>
+          IO.eprintln s!"config-test: bench-jobs: {error}"
+          pure 1
+      IO.Process.exit status
     | none =>
       ConfigTest.usage
   | _ =>
