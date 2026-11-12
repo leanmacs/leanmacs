@@ -367,13 +367,17 @@ def told (name : String) (severity : Config.Severity) : Config.Diagnostic :=
 `calls`. A chunk whose text is "fails" fails with an error; one whose text is
 "warns" elaborates with a warning; one whose text is "throws" makes the port
 itself throw. `setup` is the program it says the config defines, or the
-diagnostics it has instead. -/
+diagnostics it has instead. With `baseThrows` the port throws when it is
+asked to import the base, and with `setupThrows` when it is asked for the
+`setup` program. -/
 def fakeElaborator (calls : IO.Ref (Array ElaboratorCall))
-    (setup : Except (Array Config.Diagnostic) (SetupM Unit) := .ok (pure ())) :
-    Config.Elaborator Elaborated :=
+    (setup : Except (Array Config.Diagnostic) (SetupM Unit) := .ok (pure ()))
+    (baseThrows setupThrows : Bool := false) : Config.Elaborator Elaborated :=
   {
     base := do
       calls.modify (·.push .base)
+      if baseThrows then
+        throw (IO.userError "the fake elaborator's base broke")
       return #[],
     chunk := fun before chunk => do
       calls.modify (·.push (.chunk before chunk.name))
@@ -389,6 +393,8 @@ def fakeElaborator (calls : IO.Ref (Array ElaboratorCall))
         return { diagnostics := #[], state := some (before.push chunk.name) },
     setup := fun state => do
       calls.modify (·.push (.setup state))
+      if setupThrows then
+        throw (IO.userError "the fake elaborator's setup broke")
       return setup }
 
 /-- A hand-written fake of the source port: the chunks called `names`, each
@@ -528,7 +534,27 @@ def sessionChecks : List Check :=
               #[]
         return (← calls.get) == #[.chunk #[] "a"] && outcome.built.isNone &&
             outcome.diagnostics.map (fun diagnostic => (diagnostic.source, diagnostic.severity)) ==
-              #[("a", .error)] }]
+              #[("a", .error)] },
+    { name :=
+        "a base that cannot be imported gives a rejected outcome with no base and one diagnostic from the base, and no chunk is elaborated"
+      run := do
+        let calls ← IO.mkRef #[]
+        let outcome ←
+          Config.build (fakeElaborator calls (baseThrows := true)) (fakeSource ["a"]) none #[]
+        return (← calls.get) == #[.base] && outcome.built.isNone && outcome.base == none &&
+            outcome.diagnostics.map (fun diagnostic => (diagnostic.source, diagnostic.severity)) ==
+              #[("base", .error)] },
+    { name :=
+        "an elaborator that throws when asked for setup gives a rejected outcome with a diagnostic from setup, and hands back the base"
+      run := do
+        let calls ← IO.mkRef #[]
+        let outcome ←
+          Config.build (fakeElaborator calls (setupThrows := true)) (fakeSource ["a"]) (some #[])
+              #[]
+        return (← calls.get) == #[.chunk #[] "a", .setup #["a"]] && outcome.built.isNone &&
+            outcome.base == some #[] &&
+            outcome.diagnostics.map (fun diagnostic => (diagnostic.source, diagnostic.severity)) ==
+              #[("setup", .error)] }]
 
 /-- An effect of the reload reducer, as a check compares it: a start with the
 base and the names of the chunks it carries, or a report with its number,
@@ -654,6 +680,19 @@ def reloadChecks : List Check :=
         pure
           ((reduce [.requested, .finished (rejected "a"), .requested]).2 ==
             #[.start none #[], .report 1 false #["a"] 0 0, .start (some #[]) #[]]) },
+    { name :=
+        "an outcome with no base leaves the base as it was: with none known the next job imports again, and a known one is not forgotten"
+      run :=
+        let baseless : Config.Outcome Elaborated :=
+          { base := none, diagnostics := #[told "base" .error], built := none }
+        pure
+          ((reduce [.requested, .finished baseless, .requested]).2 ==
+              #[.start none #[], .report 1 false #["base"] 0 0, .start none #[]] &&
+            (reduce
+                  [.requested, .finished (rejected "a"), .requested, .finished baseless,
+                    .requested]).2 ==
+              #[.start none #[], .report 1 false #["a"] 0 0, .start (some #[]) #[],
+                .report 2 false #["base"] 0 0, .start (some #[]) #[]]) },
     { name := "reload replaces a command"
       run :=
         let first : SetupM Unit := do
