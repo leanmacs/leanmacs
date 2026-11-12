@@ -1,4 +1,5 @@
 import Editor.Command.Append
+import Editor.Config.Session
 import Editor.Config.Stores
 import Editor.Text.Contract
 
@@ -329,9 +330,196 @@ def storeChecks : List Check :=
               (#[theirs, cell "counter" 1 (.nat 0)], #[]) &&
             installed #[theirs] #[] == (#[theirs], #[])) }]
 
+/-- The state of the fake elaborator: the names of the chunks elaborated so
+far, oldest first. Its base is the state with none. -/
+abbrev Elaborated :=
+  Array String
+
+/-- A call the fake elaborator received. -/
+inductive ElaboratorCall where
+  /-- The base was imported. -/
+  | base
+  /-- The chunk called `name` was elaborated on the state `before`. -/
+  | chunk (before : Elaborated) (name : String)
+  /-- The `setup` program was asked for, of a config that left `state`. -/
+  | setup (state : Elaborated)
+  deriving DecidableEq, Repr
+
+/-- The diagnostic the fake elaborator gives for the chunk called `name` when
+the chunk's text tells it to. -/
+def told (name : String) (severity : Config.Severity) : Config.Diagnostic :=
+  { source := name, line := 1, severity, message := "the fake was told to" }
+
+/-- A hand-written fake of the elaborator port. It records every call in
+`calls`. A chunk whose text is "fails" fails with an error; one whose text is
+"warns" elaborates with a warning; one whose text is "throws" makes the port
+itself throw. `setup` is the program it says the config defines, or the
+diagnostics it has instead. -/
+def fakeElaborator (calls : IO.Ref (Array ElaboratorCall))
+    (setup : Except (Array Config.Diagnostic) (SetupM Unit) := .ok (pure ())) :
+    Config.Elaborator Elaborated :=
+  {
+    base := do
+      calls.modify (·.push .base)
+      return #[],
+    chunk := fun before chunk => do
+      calls.modify (·.push (.chunk before chunk.name))
+      match chunk.text with
+      | "fails" =>
+        return { diagnostics := #[told chunk.name .error], state := none }
+      | "warns" =>
+        return { diagnostics := #[told chunk.name .warning],
+                 state := some (before.push chunk.name) }
+      | "throws" =>
+        throw (IO.userError "the fake elaborator broke")
+      | _ =>
+        return { diagnostics := #[], state := some (before.push chunk.name) },
+    setup := fun state => do
+      calls.modify (·.push (.setup state))
+      return setup }
+
+/-- A hand-written fake of the source port: the chunks called `names`, each
+with its own name as its text unless `texts` gives it another. -/
+def fakeSource (names : List String) (texts : List (String × String) := []) : Config.Source :=
+  {
+    chunks :=
+      pure
+        (names.toArray.map fun name =>
+          { name, text := ((texts.find? (·.1 == name)).map (·.2)).getD name }) }
+
+/-- The chunks a config of the fake elaborator has once the chunks called
+`names` are loaded, each with its name as its text. -/
+def loaded (names : List String) : Array (Config.Chunk Elaborated) :=
+  (List.range names.length).toArray.map fun index =>
+    { name := names.getD index "", text := names.getD index "",
+      after := (names.take (index + 1)).toArray }
+
+/-- The names and the states of an outcome's chunks, if it built any. -/
+def builtChunks (outcome : Config.Outcome Elaborated) : Option (Array (String × Elaborated)) :=
+  outcome.built.map (·.chunks.map fun chunk => (chunk.name, chunk.after))
+
+/-- Builds `source` over `chunks` with a fake elaborator whose base is already
+imported, and returns the calls the elaborator received. -/
+def rebuildCalls (chunks : List String) (source : Config.Source) : IO (Array ElaboratorCall) := do
+  let calls ← IO.mkRef #[]
+  discard <| Config.build (fakeElaborator calls) source (some #[]) (loaded chunks)
+  calls.get
+
+/-- The checks of the session core (`Editor/Config/Session.lean`): which
+chunks a reload elaborates, from which state, and what it gives back. -/
+def sessionChecks : List Check :=
+  [{
+      name :=
+        "a first load imports the base, then elaborates every chunk in the source's order, each on the state after the one before it, then asks for setup on the last state",
+      run := do
+        let calls ← IO.mkRef #[]
+        let outcome ← Config.build (fakeElaborator calls) (fakeSource ["a", "b", "c"]) none #[]
+        return (← calls.get) ==
+              #[.base, .chunk #[] "a", .chunk #["a"] "b", .chunk #["a", "b"] "c",
+                .setup #["a", "b", "c"]] &&
+            outcome.base == some #[] &&
+            builtChunks outcome ==
+              some #[("a", #["a"]), ("b", #["a", "b"]), ("c", #["a", "b", "c"])] &&
+            outcome.diagnostics.isEmpty },
+    { name := "with the base given, it is not imported again, and the outcome hands it back"
+      run := do
+        let calls ← IO.mkRef #[]
+        let outcome ← Config.build (fakeElaborator calls) (fakeSource ["a"]) (some #["given"]) #[]
+        return (← calls.get) == #[.chunk #["given"] "a", .setup #["given", "a"]] &&
+            outcome.base == some #["given"] },
+    { name :=
+        "changing a chunk elaborates it and the chunks after it, from the cached state before it"
+      run := do
+        let calls ← rebuildCalls ["a", "b", "c"] (fakeSource ["a", "b", "c"] [("b", "changed")])
+        return calls == #[.chunk #["a"] "b", .chunk #["a", "b"] "c", .setup #["a", "b", "c"]] },
+    { name := "removing a chunk elaborates the chunks after it, from the state before it"
+      run := do
+        let calls ← rebuildCalls ["a", "b", "c"] (fakeSource ["a", "c"])
+        return calls == #[.chunk #["a"] "c", .setup #["a", "c"]] },
+    { name := "adding a chunk at the end elaborates it alone"
+      run := do
+        let calls ← rebuildCalls ["a", "b"] (fakeSource ["a", "b", "c"])
+        return calls == #[.chunk #["a", "b"] "c", .setup #["a", "b", "c"]] },
+    { name := "renaming a chunk elaborates it and the chunks after it"
+      run := do
+        let calls ← rebuildCalls ["a", "b", "c"] (fakeSource ["a", "b2", "c"] [("b2", "b")])
+        return calls == #[.chunk #["a"] "b2", .chunk #["a", "b2"] "c", .setup #["a", "b2", "c"]] },
+    { name := "a reload with nothing changed elaborates no chunk, and still asks for setup"
+      run := do
+        let calls ← rebuildCalls ["a", "b"] (fakeSource ["a", "b"])
+        return calls == #[.setup #["a", "b"]] },
+    { name :=
+        "a chunk that fails gives a rejected outcome with its diagnostics, and no later chunk and no setup is elaborated"
+      run := do
+        let calls ← IO.mkRef #[]
+        let outcome ←
+          Config.build (fakeElaborator calls) (fakeSource ["a", "b", "c"] [("b", "fails")])
+              (some #[]) #[]
+        return (← calls.get) == #[.chunk #[] "a", .chunk #["a"] "b"] && outcome.built.isNone &&
+            outcome.diagnostics == #[told "b" .error] },
+    { name := "a chunk with only a warning is built, and the outcome carries the warning"
+      run := do
+        let calls ← IO.mkRef #[]
+        let outcome ←
+          Config.build (fakeElaborator calls) (fakeSource ["a", "b"] [("a", "warns")]) (some #[])
+              #[]
+        return builtChunks outcome == some #[("a", #["a"]), ("b", #["a", "b"])] &&
+            outcome.diagnostics == #[told "a" .warning] },
+    { name := "what setup registers is in the outcome"
+      run := do
+        let calls ← IO.mkRef #[]
+        let setup : SetupM Unit := command "greet" (makes "hello")
+        let outcome ←
+          Config.build (fakeElaborator calls (.ok setup)) (fakeSource ["a"]) (some #[]) #[]
+        return (outcome.built.map (·.registrations.commands.map (·.name))) == some #["greet"] },
+    { name :=
+        "a setup that throws gives a rejected outcome whose diagnostic's source is setup and whose message is the one thrown"
+      run := do
+        let calls ← IO.mkRef #[]
+        let setup : SetupM Unit := do
+          command "greet" (makes "hello")
+          throw "no thanks"
+        let outcome ←
+          Config.build (fakeElaborator calls (.ok setup)) (fakeSource ["a"]) (some #[]) #[]
+        return outcome.built.isNone &&
+            outcome.diagnostics ==
+              #[{ source := "setup", severity := .error, message := "no thanks" }] },
+    { name :=
+        "a config whose setup cannot be produced gives a rejected outcome with the diagnostics"
+      run := do
+        let calls ← IO.mkRef #[]
+        let outcome ←
+          Config.build (fakeElaborator calls (.error #[told "setup" .error])) (fakeSource ["a"])
+              (some #[]) #[]
+        return outcome.built.isNone && outcome.diagnostics == #[told "setup" .error] },
+    { name := "a config with no chunks is built with nothing registered, and no setup is asked for"
+      run := do
+        let calls ← IO.mkRef #[]
+        let outcome ← Config.build (fakeElaborator calls) (fakeSource []) (some #[]) (loaded ["a"])
+        return (← calls.get).isEmpty && builtChunks outcome == some #[] &&
+            (outcome.built.map (·.registrations.commands.size)) == some 0 },
+    { name :=
+        "a source that cannot be read gives a rejected outcome, which still hands back the base"
+      run := do
+        let calls ← IO.mkRef #[]
+        let source : Config.Source := { chunks := throw (IO.userError "no such directory") }
+        let outcome ← Config.build (fakeElaborator calls) source none #[]
+        return (← calls.get) == #[.base] && outcome.built.isNone && outcome.base == some #[] &&
+            outcome.diagnostics.map (fun diagnostic => (diagnostic.source, diagnostic.severity)) ==
+              #[("config", .error)] },
+    { name := "an elaborator that throws gives a rejected outcome that names the chunk"
+      run := do
+        let calls ← IO.mkRef #[]
+        let outcome ←
+          Config.build (fakeElaborator calls) (fakeSource ["a", "b"] [("a", "throws")]) (some #[])
+              #[]
+        return (← calls.get) == #[.chunk #[] "a"] && outcome.built.isNone &&
+            outcome.diagnostics.map (fun diagnostic => (diagnostic.source, diagnostic.severity)) ==
+              #[("a", .error)] }]
+
 /-- Every check, in the order they run. -/
 def checks : List Check :=
-  programChecks ++ setupChecks ++ registryChecks ++ storeChecks
+  programChecks ++ setupChecks ++ registryChecks ++ storeChecks ++ sessionChecks
 
 /-- Runs `checks` and returns the names of those that failed. A check that
 throws has failed, and its error is reported with its name. -/
