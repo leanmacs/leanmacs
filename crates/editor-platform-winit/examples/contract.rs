@@ -22,6 +22,10 @@ use editor_platform_winit::WinitPlatform;
 /// is asked to close.
 const BOUND: Duration = Duration::from_secs(10);
 
+/// How long the open window is left alone before it is asked to close. A
+/// loop that an earlier close would end has turned many times by then.
+const SETTLE: Duration = Duration::from_millis(500);
+
 /// `main` runs on the process's main thread, and the platform is run from
 /// `main`.
 fn on_main_thread() -> bool {
@@ -30,7 +34,7 @@ fn on_main_thread() -> bool {
 
 fn main() {
     let platform = WinitPlatform::new(on_main_thread);
-    let check = Check::new(WindowOptions::default(), BOUND);
+    let check = Check::new(WindowOptions::default(), BOUND).settling_for(SETTLE);
 
     // The verdict is taken on a second thread, which ends the process with
     // it: a window that ignored the close would keep this thread for good.

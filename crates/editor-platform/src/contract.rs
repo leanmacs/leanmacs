@@ -15,6 +15,14 @@
 //! A platform that cannot open a window does not pass: the contract is of a
 //! window that opens.
 //!
+//! Whether a run ends by itself can only be seen by leaving it alone for a
+//! while. The check asks a platform to close before its run, and then leaves
+//! the run alone for a settling time ([`SETTLE`], or what
+//! [`Check::settling_for`] says) after its first input. A run that returns
+//! in that time returned with no close asked of it, which is
+//! [`Violation::ReturnedBeforeClose`]. A check that holds therefore takes
+//! the settling time.
+//!
 //! There are two ways to run the check, and they judge the same things.
 //! [`check`] runs the platform on a new thread and is for a platform that
 //! may run on any thread, as the fake may. A real platform has to run on the
@@ -42,6 +50,9 @@ pub enum Violation {
     FirstInputNotOpened(Input),
     /// The platform's name in [`Input::Opened`] was empty.
     EmptyName,
+    /// The run returned `Ok` with no close asked of it while it ran: a
+    /// close made before the run ended it, or it ended by itself.
+    ReturnedBeforeClose,
     /// The run had not returned this long after it was asked to close.
     DidNotReturn(Duration),
     /// This was reported after the run had returned.
@@ -57,6 +68,9 @@ impl fmt::Display for Violation {
                 write!(f, "the first input was {input:?}, not `Opened`")
             }
             Self::EmptyName => f.write_str("the platform's name in `Opened` was empty"),
+            Self::ReturnedBeforeClose => {
+                f.write_str("the run returned before it was asked to close")
+            }
             Self::DidNotReturn(bound) => {
                 write!(f, "the run had not returned {bound:?} after the close")
             }
@@ -66,6 +80,11 @@ impl fmt::Display for Violation {
         }
     }
 }
+
+/// How long a run is left alone after its first input, before it is asked to
+/// close, unless [`Check::settling_for`] says otherwise. A run that a close
+/// made before it would end returns in this time.
+pub const SETTLE: Duration = Duration::from_millis(50);
 
 /// One run of a platform under the contract.
 ///
@@ -78,6 +97,9 @@ pub struct Check {
     /// How long the platform has to report [`Input::Opened`], and then to
     /// return once it is asked to close.
     bound: Duration,
+    /// How long the run is left alone after its first input, before it is
+    /// asked to close.
+    settle: Duration,
     /// What the run has done so far.
     progress: Arc<Shared>,
 }
@@ -98,7 +120,8 @@ struct Progress {
     started: Option<Instant>,
     /// The first input the run reported.
     first: Option<Input>,
-    /// When the run was asked to close, from the other thread.
+    /// When the run was asked to close, from the other thread. It is set
+    /// only while the run has not returned.
     close_asked: Option<Instant>,
     /// When the run returned, and what it returned.
     returned: Option<(Instant, Result<(), CannotOpen>)>,
@@ -156,26 +179,39 @@ impl Shared {
 impl Check {
     /// A check that opens the window as `options` say, and gives the
     /// platform `bound` to report [`Input::Opened`] and `bound` again to
-    /// return once it is asked to close.
+    /// return once it is asked to close. It leaves the run alone for
+    /// [`SETTLE`] after its first input.
     pub fn new(options: WindowOptions, bound: Duration) -> Self {
         Self {
             options,
             bound,
+            settle: SETTLE,
             progress: Arc::default(),
         }
     }
 
+    /// The same check, leaving the run alone for `settle` after its first
+    /// input, before it is asked to close. Give a platform that is slow to
+    /// act on a close longer than [`SETTLE`].
+    #[must_use]
+    pub fn settling_for(mut self, settle: Duration) -> Self {
+        self.settle = settle;
+        self
+    }
+
     /// Runs `platform` on the calling thread, under the check: asks it to
     /// close before the run, from another thread once it has reported its
-    /// first input, and again after the run. It returns when the platform's
-    /// run does, which for a platform that ignores the close is never: take
-    /// the [`verdict`](Self::verdict) on another thread.
+    /// first input and been left alone for the settling time, and again
+    /// after the run. It returns when the platform's run does, which for a
+    /// platform that ignores the close is never: take the
+    /// [`verdict`](Self::verdict) on another thread.
     ///
     /// A platform that has reported nothing by the bound is asked to close
     /// all the same, so that the run can end.
     pub fn run(&self, platform: &impl Platform) {
         // With no run in progress this must do nothing: were it remembered,
-        // the run below would end before the close that is meant for it.
+        // the run below would end before the close that is meant for it,
+        // which the settling time below is there to see.
         platform.close();
 
         self.progress
@@ -186,14 +222,9 @@ impl Check {
         };
         thread::scope(|scope| {
             scope.spawn(|| {
-                let opened =
-                    |progress: &Progress| progress.first.is_some() || progress.returned.is_some();
-                if self.progress.wait(self.bound, opened).returned.is_some() {
-                    return;
+                if self.ask_to_close() {
+                    platform.close();
                 }
-                self.progress
-                    .update(|progress| progress.close_asked = Some(Instant::now()));
-                platform.close();
             });
             let result = platform.run(self.options, report);
             self.progress
@@ -203,6 +234,38 @@ impl Check {
         // Anything this makes the platform report is reported after its run.
         platform.close();
         self.progress.update(|progress| progress.finished = true);
+    }
+
+    /// Waits until the run is due its close, and records that it is asked
+    /// for: once the run has reported its first input and been left alone
+    /// for the settling time, or at the bound if it has reported nothing.
+    /// Returns whether the close is to be made; it is not when the run has
+    /// returned already.
+    fn ask_to_close(&self) -> bool {
+        let returned = |progress: &Progress| progress.returned.is_some();
+        let reported = self
+            .progress
+            .wait(self.bound, |progress| {
+                progress.first.is_some() || returned(progress)
+            })
+            .first
+            .is_some();
+        let settle = if reported {
+            self.settle
+        } else {
+            Duration::ZERO
+        };
+        // The lock is held from seeing that the run has not returned to
+        // recording the close, so a close is recorded only of a run that
+        // was still going.
+        let mut progress = self.progress.wait(settle, returned);
+        if returned(&progress) {
+            return false;
+        }
+        progress.close_asked = Some(Instant::now());
+        drop(progress);
+        self.progress.changed.notify_all();
+        true
     }
 
     /// What the check found. It waits for [`run`](Self::run) to start and
@@ -218,10 +281,11 @@ impl Check {
                 return self.judge(&progress);
             }
             // The platform has the bound to report, and then the bound to
-            // return once it has been asked to close.
+            // return once it has been asked to close, which is the settling
+            // time after it reported.
             let allowed_until = match (progress.close_asked, progress.started) {
                 (Some(asked), _) => asked + self.bound,
-                (None, Some(started)) => started + self.bound + self.bound,
+                (None, Some(started)) => started + self.bound + self.settle + self.bound,
                 (None, None) => continue,
             };
             if Instant::now() >= allowed_until {
@@ -246,9 +310,10 @@ impl Check {
             Some(Input::Opened { .. }) => {}
             Some(other) => return Err(Violation::FirstInputNotOpened(other.clone())),
         }
-        if let Some(asked) = progress.close_asked
-            && returned_at.saturating_duration_since(asked) > self.bound
-        {
+        let Some(asked) = progress.close_asked else {
+            return Err(Violation::ReturnedBeforeClose);
+        };
+        if returned_at.saturating_duration_since(asked) > self.bound {
             return Err(Violation::DidNotReturn(self.bound));
         }
         if let Some(late) = &progress.late {
@@ -323,36 +388,90 @@ mod tests {
         }
     }
 
-    /// A platform that reports `inputs` and then waits for a close: the
-    /// shape of a platform that keeps the contract, for the broken ones
-    /// below to differ from in one thing each.
+    /// The close a run waits for, which only a close asked while the run is
+    /// in progress is: one asked before the run, or after it, is forgotten.
+    #[derive(Default)]
+    struct Closing {
+        /// Whether a run is in progress, and whether it has been asked to
+        /// close.
+        run: Mutex<InProgress>,
+        /// Signalled when the run in progress is asked to close.
+        asked: Condvar,
+    }
+
+    /// What [`Closing::run`] guards.
+    #[derive(Default)]
+    struct InProgress {
+        /// Whether a run is in progress.
+        running: bool,
+        /// Whether that run has been asked to close.
+        asked: bool,
+    }
+
+    impl Closing {
+        fn run(&self) -> MutexGuard<'_, InProgress> {
+            self.run.lock().unwrap_or_else(PoisonError::into_inner)
+        }
+
+        /// A run begins, with no close asked of it.
+        fn begin(&self) {
+            *self.run() = InProgress {
+                running: true,
+                asked: false,
+            };
+        }
+
+        /// Asks the run in progress to close, if there is one.
+        fn ask(&self) {
+            let mut run = self.run();
+            if run.running {
+                run.asked = true;
+                self.asked.notify_all();
+            }
+        }
+
+        /// Parks the calling thread until the run that began has been asked
+        /// to close, and ends that run.
+        fn wait(&self) {
+            let mut run = self.run();
+            while !run.asked {
+                run = self.asked.wait(run).unwrap_or_else(PoisonError::into_inner);
+            }
+            run.running = false;
+        }
+    }
+
+    /// A platform that reports `inputs` and then waits for a close asked
+    /// during its run: the shape of a platform that keeps the contract, for
+    /// the broken ones below to differ from in one thing each.
     struct Reports {
         /// What a run reports, in order.
         inputs: Vec<Input>,
-        /// Opened by a close.
-        closed: Gate,
+        /// The close the run waits for.
+        closing: Closing,
     }
 
     impl Reports {
         fn new(inputs: Vec<Input>) -> Arc<Self> {
             Arc::new(Self {
                 inputs,
-                closed: Gate::default(),
+                closing: Closing::default(),
             })
         }
     }
 
     impl Platform for Reports {
         fn run(&self, _options: WindowOptions, report: Report) -> Result<(), CannotOpen> {
+            self.closing.begin();
             for input in &self.inputs {
                 report(input.clone());
             }
-            self.closed.wait();
+            self.closing.wait();
             Ok(())
         }
 
         fn close(&self) {
-            self.closed.open();
+            self.closing.ask();
         }
     }
 
@@ -379,27 +498,79 @@ mod tests {
     /// through it when it is asked to close after its run has returned.
     #[derive(Default)]
     struct Lingering {
-        /// Opened by the first close.
-        closed: Gate,
+        /// The close the run waits for.
+        closing: Closing,
         /// What the last run was given to report with, once it has returned.
         kept: Mutex<Option<Report>>,
     }
 
     impl Platform for Lingering {
         fn run(&self, _options: WindowOptions, report: Report) -> Result<(), CannotOpen> {
+            self.closing.begin();
             report(opened("lingering"));
-            self.closed.wait();
+            self.closing.wait();
             *self.kept.lock().unwrap_or_else(PoisonError::into_inner) = Some(report);
             Ok(())
         }
 
         fn close(&self) {
-            self.closed.open();
+            self.closing.ask();
             let kept = self.kept.lock().unwrap_or_else(PoisonError::into_inner);
             if let Some(report) = kept.as_ref() {
                 report(Input::Focus(false));
             }
         }
+    }
+
+    /// A platform that remembers a close made before its run: the run
+    /// reports `Opened` and returns a moment later, with no close asked of
+    /// it, as an event loop does that finds a stale close in its queue.
+    #[derive(Default)]
+    struct Remembers {
+        /// Opened by any close, for good, whether a run is in progress or
+        /// not.
+        closed: Gate,
+    }
+
+    impl Platform for Remembers {
+        fn run(&self, _options: WindowOptions, report: Report) -> Result<(), CannotOpen> {
+            report(opened("remembers"));
+            self.closed.wait();
+            thread::sleep(Duration::from_millis(10));
+            Ok(())
+        }
+
+        fn close(&self) {
+            self.closed.open();
+        }
+    }
+
+    #[test]
+    fn a_platform_that_remembers_a_close_made_before_its_run_is_refused() {
+        let platform = Arc::new(Remembers::default());
+        // The settling time is one this run cannot outlast, however slowly
+        // its thread is scheduled; the check ends when the run returns.
+        let check = Check::new(WindowOptions::default(), GENEROUS).settling_for(GENEROUS);
+
+        let runner = check.clone();
+        thread::spawn(move || runner.run(&*platform));
+
+        assert_eq!(check.verdict(), Err(Violation::ReturnedBeforeClose));
+    }
+
+    #[test]
+    fn a_check_that_holds_leaves_the_run_alone_for_the_settling_time() {
+        let platform = Arc::new(ScriptedPlatform::sample());
+        let settle = Duration::from_millis(30);
+        let check = Check::new(WindowOptions::default(), GENEROUS).settling_for(settle);
+        let began = Instant::now();
+
+        let runner = check.clone();
+        thread::spawn(move || runner.run(&*platform));
+
+        assert_eq!(check.verdict(), Ok(()));
+        let took = began.elapsed();
+        assert!(took >= settle, "the run was left alone: {took:?}");
     }
 
     #[test]

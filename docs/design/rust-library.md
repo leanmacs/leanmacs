@@ -138,8 +138,10 @@ keyboard reaches Lean:
 - **The contract** (`editor_platform::contract`): `Opened` is the first
   input and names the platform; a close from another thread ends the run
   within a bound; nothing is reported once the run has returned; a close
-  with no window running is harmless. It is shown to refuse platforms that
-  break each rule.
+  with no window running is harmless. The check asks for a close before the
+  run and then leaves the open window alone for a settling time, so a run
+  that an earlier close ends returns with no close asked of it and is
+  refused. It is shown to refuse platforms that break each rule.
 - **The adapter** is `editor-platform-winit`, over winit, pinned exactly.
   The gate opens no window, so it covers the adapter's translation and its
   refusal to run off the main thread. The adapter is held to the contract by

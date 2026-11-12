@@ -409,7 +409,8 @@ mise run window-contract
 This holds the real window to the window port's contract
 (`crates/editor-platform`, `contract`): it opens, it reports that it opened
 before anything else, and it returns when it is asked to close from another
-thread. A window opens on this desktop for about a second, so it is not part
+thread and not before, even if it was asked to close before it opened. A
+window opens on this desktop for about a second, so it is not part
 of the gate, which only builds it. It is the example of
 `crates/editor-platform-winit`, and it prints one line; its exit status is
 the result.
