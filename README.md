@@ -183,9 +183,11 @@ driver does not need it.
 linked against the real library, then `contract-test`, `config-test`, and
 then the editor: once with no arguments, and once in its headless mode on
 the fixture under `tests/headless`, whose output must be exactly
-`tests/headless/expected`. `contract-test` runs the text interface's
-contract, the same list of properties the model tests run, against the real
-binding, so the model cannot drift from the library.
+`tests/headless/expected`. Two more runs pin its failure statuses: a command
+line it does not understand must give status 2, and a script that cannot be
+read status 1 with a line on stderr that says why. `contract-test` runs the
+text interface's contract, the same list of properties the model tests run,
+against the real binding, so the model cannot drift from the library.
 
 `config-test` (`lean/ConfigTest.lean`) is linked like the editor, with
 Lean's elaborator, and is given the toolchain's directory and the package's
@@ -195,11 +197,13 @@ headless host in-process on the real event queue and the real text binding:
 a reload replaces a command; a type error, a throwing `setup` and a chunk
 that declares `initialize` each keep the old config; a reload does not
 register a command twice; a store's value survives a reload and is migrated
-when its type changes; the editor answers events while a chunk elaborates;
-and reloads are serialised. Its config directories are temporary directories
-of its own. With no arguments `ffi-test` runs its checks
-of handles, plain data, the event queues and the document. Three scenarios
-need a process each:
+when its type changes; a command the library refuses is reported as refused
+and leaves its store as it was; the editor answers events while a chunk
+elaborates; reloads are serialised; and a script that cannot run to its end
+says why. Its config directories are temporary directories of its own.
+
+With no arguments `ffi-test` runs its checks of handles, plain data, the
+event queues and the document. Three scenarios need a process each:
 
 | Command | Shows |
 |---|---|

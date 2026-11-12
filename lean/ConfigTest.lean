@@ -376,6 +376,25 @@ def setup : SetupM Unit := do
     " }
 "
 
+/-- A chunk with a store of one number and two commands over it: `bump`, which
+adds one, and `broken`, which makes a text, then inserts into a text that
+does not exist, which the library refuses, and would add a hundred. -/
+def refusedChunk : String :=
+  "def counter : Store Nat :=
+  { name := \"counter\", version := 1, initial := 0, encode := .nat,
+    decode := fun
+      | .nat n => some n
+      | _ => none }
+
+def setup : SetupM Unit := do
+  counter.declare
+  counter.command \"bump\" fun n => pure (n + 1)
+  counter.command \"broken\" fun n => do
+    discard <| createText \"made before the refusal\"
+    (⟨7⟩ : TextId).insert 0 \"x\"
+    return n + 100
+"
+
 /-- The store of `counterChunk` with its type changed and its version raised
 to 2: the number gets a label, and a number written at version 1 is migrated
 with the label \"migrated\". -/
@@ -490,7 +509,17 @@ def hostChecks (context : Context) : List Check :=
           return (← session.lines) ==
               #["reload 1: installed, 2 chunks, 1 commands", "reload 2: rejected",
                 "diagnostic: 15-state.lean: error", "run greet: ok", "commands: greet",
-                "text 0: \"v1\""] }]
+                "text 0: \"v1\""] },
+    { name :=
+        "a store command the library refuses is reported as refused: the store keeps its value, and the text the command made before the refusal stays"
+      run :=
+        withHost context [("config.lean", refusedChunk)] fun session => do
+          session.ask [.reload]
+          session.ask [.run "bump", .run "broken", .show]
+          return (← session.lines) ==
+              #["reload 1: installed, 1 chunks, 2 commands", "run bump: ok",
+                "run broken: refused: no such text", "commands: bump broken",
+                "text 0: \"made before the refusal\"", "store counter v1: 1"] }]
 
 /-- Polls `condition` until it holds; `false` if it still does not after
 `patience` milliseconds. -/

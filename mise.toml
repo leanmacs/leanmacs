@@ -137,6 +137,13 @@ run = [
   # loads the config directory, runs the script, and must print exactly
   # `expected`. Every path is an argument.
   "out=$(.lake/build/bin/editor headless \"$(lean --print-prefix)\" .lake/build/lib/lean ../tests/headless/config ../tests/headless/script) && printf '%s\\n' \"$out\" | diff ../tests/headless/expected -",
+  # The editor's failure statuses. A command line it does not understand is
+  # status 2, with the usage on stderr.
+  "status=0; .lake/build/bin/editor bogus || status=$?; test \"$status\" -eq 2",
+  # A script that cannot be read is status 1, with nothing on stdout and a
+  # line on stderr that starts `editor: ` and says why. No file of that name
+  # is checked in.
+  "status=0; err=$(.lake/build/bin/editor headless \"$(lean --print-prefix)\" .lake/build/lib/lean ../tests/headless/config ../tests/headless/no-such-script 2>&1 >/dev/null) || status=$?; printf '%s\\n' \"$err\"; test \"$status\" -eq 1 && test \"${err#editor: }\" != \"$err\"",
 ]
 
 # Opt-in: run it by hand, and do not add it to `ci` or to hk.pkl. It ends in
