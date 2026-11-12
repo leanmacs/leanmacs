@@ -39,6 +39,7 @@ use std::time::Instant;
 use editor_platform::{
     CannotOpen, Composition, Input, Platform, Report, ScriptedPlatform, WindowOptions,
 };
+use editor_platform_winit::WinitPlatform;
 
 use crate::events::{Event, EventKind, Queue, QueueId, Source, SourceKind};
 use crate::main_thread::{self, Reply, Request};
@@ -201,6 +202,11 @@ pub enum PlatformId {
     /// display. It is reachable from Lean for the Lean test executable, as
     /// the scripted event source is.
     Scripted = 0,
+    /// The real window, over winit. It needs a display, and it refuses to
+    /// run anywhere but on the process's main thread: reach it through the
+    /// main-thread service of an executable that started at the entry point.
+    /// Nothing the gate runs names it.
+    Winit = 1,
 }
 
 impl PlatformId {
@@ -213,6 +219,7 @@ impl PlatformId {
     pub const fn from_tag(tag: u8) -> Option<Self> {
         match tag {
             0 => Some(Self::Scripted),
+            1 => Some(Self::Winit),
             _ => None,
         }
     }
@@ -221,6 +228,7 @@ impl PlatformId {
     fn platform(self) -> &'static dyn Platform {
         match self {
             Self::Scripted => &*SCRIPTED,
+            Self::Winit => &WINIT,
         }
     }
 }
@@ -230,6 +238,9 @@ static CLOCK: Monotonic = Monotonic::new();
 
 /// The process's scripted platform, made the first time it is asked for.
 static SCRIPTED: LazyLock<ScriptedPlatform> = LazyLock::new(ScriptedPlatform::sample);
+
+/// The process's real platform. It opens nothing until it is run.
+static WINIT: WinitPlatform = WinitPlatform::new(main_thread::is_main_thread);
 
 /// Runs the process's window on the calling thread, on the platform
 /// `platform`, onto the editor queue. This is what the main-thread service
@@ -509,8 +520,10 @@ mod tests {
     #[test]
     fn every_platform_converts_from_its_tag_and_an_unknown_tag_is_refused() {
         assert_eq!(PlatformId::from_tag(0), Some(PlatformId::Scripted));
+        assert_eq!(PlatformId::from_tag(1), Some(PlatformId::Winit));
         assert_eq!(PlatformId::Scripted.tag(), 0);
-        assert_eq!(PlatformId::from_tag(1), None);
+        assert_eq!(PlatformId::Winit.tag(), 1);
+        assert_eq!(PlatformId::from_tag(2), None);
         assert_eq!(PlatformId::from_tag(u8::MAX), None);
     }
 }

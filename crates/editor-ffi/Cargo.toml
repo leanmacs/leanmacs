@@ -14,6 +14,9 @@ crate-type = ["staticlib", "rlib"]
 [dependencies]
 # The window port, its fake and its contract.
 editor-platform = { path = "../editor-platform" }
+# The real window. This is the crate that wires the library together, so it
+# is the one that links the adapter.
+editor-platform-winit = { path = "../editor-platform-winit" }
 
 # No harness: its `main` must be the process's main thread.
 [[test]]

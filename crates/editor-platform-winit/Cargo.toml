@@ -1,0 +1,16 @@
+[package]
+name = "editor-platform-winit"
+version = "0.1.0"
+description = "The window port's real adapter, over winit"
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+editor-platform = { path = "../editor-platform" }
+# Kept behind the port: no winit type is public here, and `deny.toml` lets no
+# other crate depend on it. Pinned exactly; 0.30.13 was the newest stable
+# release on 2026-11-11, and 0.31 was a beta. Which of its features the
+# editor builds is for the display pipeline to decide; these are its
+# defaults.
+winit = "=0.30.13"

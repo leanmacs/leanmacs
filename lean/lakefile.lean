@@ -108,12 +108,19 @@ adds the toolchain's own library directory to the link.
 
 The system libraries the Rust archive needs come from
 `cargo rustc -p editor-ffi --release --lib --crate-type staticlib -- --print native-static-libs`.
-Today that is `-lSystem -lc -lm`, which the system compiler links anyway, so
-nothing is listed. The frameworks a window needs are added here with the crate
-that needs them. -/
+On macOS that is the frameworks and the two libraries listed here, which the
+window library (winit, in `editor-platform-winit`) brings, beside
+`-lSystem -lc -lm`, which the system compiler links anyway. On Linux it is
+`-lgcc_s -lutil -lrt -lpthread -lm -ldl -lc`, all of which the link has
+already, so nothing is listed: winit loads the display's libraries when it
+runs. Run that command again when a crate with system dependencies is added. -/
 def linkArgs : Array String :=
   #["-L", leanSystemLibDir.toString] ++
-    if Platform.isOSX then #["-Wl,-e,_editor_entry"] else #["-Wl,--wrap=main"]
+    if Platform.isOSX then
+      #["-Wl,-e,_editor_entry", "-framework", "ApplicationServices", "-framework", "CoreGraphics",
+        "-framework", "CoreVideo", "-framework", "Carbon", "-framework", "CoreFoundation",
+        "-framework", "AppKit", "-framework", "Foundation", "-liconv", "-lobjc"]
+    else #["-Wl,--wrap=main"]
 
 /-- The editor. `supportInterpreter` exports the executable's symbols, so
 interpreted config can find compiled definitions and `@[extern]` symbols. It

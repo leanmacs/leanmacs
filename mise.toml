@@ -240,6 +240,19 @@ depends = ["lean"]
 dir = "lean"
 run = "env -u LEAN_NUM_THREADS -u LEAN_STACK_SIZE_KB .lake/build/bin/config-test bench-jobs \"$(lean --print-prefix)\" .lake/build/lib/lean 10000"
 
+# Opt-in: run it by hand, and do not add it to `ci` or to hk.pkl. It opens a
+# window on this desktop, for about a second, so it needs a display.
+#
+# It runs the winit adapter's example (`crates/editor-platform-winit/
+# examples/contract.rs`): the real window held to the window port's contract
+# (`editor_platform::contract`). The window opens, is asked to close from
+# another thread, and the run must return. It prints one line, and its exit
+# status is the result. The gate builds the example and never runs it;
+# `linux-window` runs the same example under Xvfb, with no desktop.
+[tasks.window-contract]
+description = "Opt-in, never part of ci: hold the winit window to the window port's contract. Opens a window on this desktop for about a second"
+run = "cargo run --locked --package editor-platform-winit --example contract"
+
 # Opt-in: run it by hand, and do not add it to `ci` or to hk.pkl. It needs
 # Docker and, the first time, the network.
 #
