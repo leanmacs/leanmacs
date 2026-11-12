@@ -26,6 +26,12 @@
 //! through [`editor_ffi_events_script_feed`], can feed a queue a script of
 //! events.
 //!
+//! A service reports that a request has finished with an
+//! [`EventKind::Completion`] on the completion queue, whose code is the id
+//! the request was made with and whose source is the service (the crate
+//! docs, "Services and completions"). The timer service in this crate
+//! ([`crate::timers`]) is the first.
+//!
 //! The queue lives in `editor-ffi`, which no other crate depends on. A
 //! service crate therefore defines its own port for reporting, and
 //! `editor-ffi` adapts that port to a queue.
@@ -46,6 +52,9 @@ pub enum EventKind {
     /// A message with no meaning to the library: its `code` and `text` are
     /// whatever the source chose.
     Message = 1,
+    /// A service request has finished: its `code` is the id the request was
+    /// made with, and its source is the service that completed it.
+    Completion = 2,
 }
 
 impl EventKind {
@@ -59,6 +68,7 @@ impl EventKind {
         match tag {
             0 => Some(Self::Quit),
             1 => Some(Self::Message),
+            2 => Some(Self::Completion),
             _ => None,
         }
     }
@@ -135,6 +145,17 @@ impl Event {
             kind: EventKind::Message,
             code,
             text: text.into(),
+        }
+    }
+
+    /// The [`EventKind::Completion`] of the request `request`, from the
+    /// service `service`.
+    pub const fn completion(service: Source, request: u64) -> Self {
+        Self {
+            source: service,
+            kind: EventKind::Completion,
+            code: request,
+            text: String::new(),
         }
     }
 }
@@ -331,6 +352,19 @@ static COMPLETION: Queue = Queue::new();
 /// The process-wide queue the tag `queue` names, if it names one.
 fn queue(queue: u8) -> Option<&'static Queue> {
     QueueId::from_tag(queue).map(QueueId::queue)
+}
+
+/// Queues the completion of the request `request` on the process's
+/// completion queue, from the library's service `service`, and returns
+/// whether it was accepted: a queue that has been quit drops it.
+///
+/// This is how a service in this crate reports that a request has finished.
+pub(crate) fn complete(service: u64, request: u64) -> bool {
+    let source = Source {
+        kind: SourceKind::Library,
+        id: service,
+    };
+    COMPLETION.push(Event::completion(source, request))
 }
 
 /// An [`Event`] as it crosses the boundary: one record, filled in one call.
@@ -698,14 +732,36 @@ mod tests {
     fn every_event_kind_converts_from_its_tag() {
         assert_eq!(EventKind::from_tag(0), Some(EventKind::Quit));
         assert_eq!(EventKind::from_tag(1), Some(EventKind::Message));
+        assert_eq!(EventKind::from_tag(2), Some(EventKind::Completion));
         assert_eq!(EventKind::Quit.tag(), 0);
         assert_eq!(EventKind::Message.tag(), 1);
+        assert_eq!(EventKind::Completion.tag(), 2);
     }
 
     #[test]
     fn an_unknown_event_kind_tag_is_refused() {
-        assert_eq!(EventKind::from_tag(2), None);
+        assert_eq!(EventKind::from_tag(3), None);
         assert_eq!(EventKind::from_tag(u64::MAX), None);
+    }
+
+    #[test]
+    fn a_completion_is_from_its_service_and_carries_the_request_id_as_its_code() {
+        let service = Source {
+            kind: SourceKind::Library,
+            id: 4,
+        };
+
+        let event = Event::completion(service, 17);
+
+        assert_eq!(
+            event,
+            Event {
+                source: service,
+                kind: EventKind::Completion,
+                code: 17,
+                text: String::new(),
+            }
+        );
     }
 
     #[test]

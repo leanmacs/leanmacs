@@ -80,6 +80,42 @@
 //! `the_process_wide_queues_carry_events_until_they_are_quit` in
 //! `tests/c_api.rs`; the three queue checks of `ffi-test` (`queueChecks`).
 //!
+//! ## Services and completions
+//!
+//! A service is work the library does for a Lean job that takes time: a
+//! timer today ([`timers`]), a process or a file later. A job that waits
+//! must not hold a thread, so a request to a service is never a blocking
+//! call. Every service follows these rules:
+//!
+//! - **The caller names the request.** `start` takes an id the caller
+//!   chose. It returns at once and never blocks, and it returns false, having
+//!   started nothing, if it could not start the request.
+//! - **One completion for each request.** When the work is done the service
+//!   queues one event of the kind [`events::EventKind::Completion`] on the
+//!   completion queue, from the library source with the service's id, whose
+//!   code is the request's id. A request that was cancelled first gets none.
+//! - **`cancel` stops the work.** It takes the id, stops what the request
+//!   started, and is safe for an id that is unknown or already done. A
+//!   completion that was queued before the cancel still arrives after it,
+//!   and the caller ignores a completion for an id it no longer waits for.
+//! - **Plain data only, and no call into Lean.** A dedicated Lean task pulls
+//!   the completion queue.
+//! - **The logic is behind a port with a fake**, and is tested with no Lean.
+//!
+//! Example: the timer service. Its port is [`timers::Clock`], with
+//! [`timers::FakeClock`] published for tests; which wait is due when is the
+//! pure [`timers::Schedule`]; and its C functions are
+//! [`timers::editor_ffi_timers_now`], [`timers::editor_ffi_timers_start`],
+//! [`timers::editor_ffi_timers_cancel`] and, as a readout for tests,
+//! [`timers::editor_ffi_timers_pending`].
+//!
+//! Tests: the unit tests of `timers.rs` (the schedule; the service loop on
+//! the fake clock, where a marker wait shows what was not completed, and on
+//! the real one); the completion tests of `events.rs`;
+//! `the_process_wide_timers_complete_a_wait_on_the_completion_queue_unless_it_is_cancelled`
+//! in `tests/timers.rs`, an integration test of its own because the service
+//! and the queue are process-wide and `tests/c_api.rs` quits the queues.
+//!
 //! ## Calls go one way
 //!
 //! Lean calls this library. The library never calls a Lean function and
@@ -125,7 +161,9 @@
 //!
 //! [`events::editor_ffi_events_quit`] quits both queues, which makes every
 //! pull, parked or later, return a quit event. Lean then exits the process
-//! explicitly. Nothing in this crate joins a thread or waits at exit.
+//! explicitly. Nothing in this crate joins a thread or waits at exit: a
+//! service's thread runs until the process ends, and what it queues after
+//! the quit is dropped.
 //!
 //! Tests: the quit tests in `events.rs`; `ffi-test shutdown` and
 //! `ffi-test exit-while-blocked`.
@@ -135,7 +173,7 @@
 //! A Lean module initialiser must not call this library: library objects are
 //! created from Lean's `main` or later. The process-wide state here is
 //! `const`-initialised statics, so the library needs no start-up call
-//! either.
+//! either. A service's thread starts with the first request made of it.
 //!
 //! No test pins this rule, and the build enforces only part of it; the rest
 //! is kept by review.
@@ -158,6 +196,7 @@ pub mod document;
 pub mod events;
 pub mod main_thread;
 pub mod text;
+pub mod timers;
 
 /// The sum of `a` and `b`, wrapping on overflow.
 ///
