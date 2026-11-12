@@ -69,11 +69,38 @@ Lean pulls them with `nextEvent`, which blocks in Rust: call it from a
 dedicated task, never from the thread pool. An event is plain data tagged with
 its source. There are two queues (`Queue`): the editor queue, for input and
 events for the editor thread, and the completion queue, for the results of
-service requests, pulled by a dedicated task. `feedScript` drives the library's
-fake event source, for tests.
+service requests, pulled by a dedicated task (the completion pump,
+`Editor/Job/Real.lean`). `feedScript` drives the library's fake event source,
+for tests.
 
 Tests: the three queue checks of `ffi-test` (`FfiTest.queueChecks`); the unit
 tests of `events.rs` in `editor-ffi`, which need no Lean.
+
+### Services and completions
+
+A service does work for a job that takes time, and a job that waits must not
+hold a thread. So a request to a service is never a blocking binding. The
+request goes in with an id the caller chose and returns at once; when the
+work is done the library queues a `completion` event on the completion
+queue, whose code is that id; and a cancel binding takes the id and stops
+the work. Ids and deadlines are plain numbers: no handle crosses, and the
+library never calls Lean. A completion may still arrive for a request that
+was cancelled, and whoever pulls the queue ignores an id it no longer waits
+for.
+
+The timer service is the first: `timersNow`, `timersStart`, `timersCancel`,
+and `timersPending`, a readout for tests.
+
+The editor does not call these bindings. The job runner reaches the service
+through the clock port it defines (`Job.Timers`, `Editor/Job/Runner.lean`),
+whose real implementation (`Editor/Job/Real.lean`) is the one caller, with
+the completion pump that pulls the queue on a dedicated task.
+
+Tests: the three timer checks of `ffi-test` (`FfiTest.timerChecks`), and its
+check that the completion tag is known (`FfiTest.dataChecks`);
+`contract-test`, which runs the job port's contract and the checks of the
+real service through the runner (`ContractTest.jobChecks`); the unit tests
+of `timers.rs` and `tests/timers.rs` in `editor-ffi`, which need no Lean.
 
 ### Calls go one way
 
@@ -281,12 +308,16 @@ inductive EventKind where
   /-- A message with no meaning to the library: its code and text are whatever
   the source chose. -/
   | message
+  /-- A service request has finished: the event's code is the id the request
+  was made with. -/
+  | completion
   deriving DecidableEq, Repr
 
 /-- The kind the library's number `tag` stands for, if it is one. -/
 def EventKind.ofTag? : UInt64 → Option EventKind
   | 0 => some .quit
   | 1 => some .message
+  | 2 => some .completion
   | _ => none
 
 /-- What kind of thing an event came from. -/
@@ -384,5 +415,31 @@ new Rust thread: `count` messages from the script source `sourceId`, with the
 codes 0, 1, 2 and so on. `false` when the thread could not be started. -/
 @[extern "editor_glue_events_script_feed"]
 opaque feedScript (queue : Queue) (sourceId count : UInt64) : IO Bool
+
+/-- The time on the library's timer clock, in milliseconds since the clock
+began. It never goes back. -/
+@[extern "editor_glue_timers_now"]
+opaque timersNow : IO UInt64
+
+/-- Asks the library's timer service to complete the request `id` once its
+clock reads `deadline` or later, and returns whether it was accepted. It
+returns at once. The completion is a `completion` event on the completion
+queue whose code is `id`; there is none if the request is cancelled first.
+
+`false`, with nothing started, if `id` is already waiting or the service
+could not start its thread. -/
+@[extern "editor_glue_timers_start"]
+opaque timersStart (id deadline : UInt64) : IO Bool
+
+/-- Withdraws the timer request `id`, and returns whether it was waiting. It
+is safe for an id that is unknown or already completed. A completion that
+was already queued still arrives. -/
+@[extern "editor_glue_timers_cancel"]
+opaque timersCancel (id : UInt64) : IO Bool
+
+/-- How many timer requests are waiting. A readout for tests, which use it to
+see that a request reached the service and that a cancel removed it. -/
+@[extern "editor_glue_timers_pending"]
+opaque timersPending : IO UInt64
 
 end Editor.Ffi

@@ -114,7 +114,10 @@
 //! the real one); the completion tests of `events.rs`;
 //! `the_process_wide_timers_complete_a_wait_on_the_completion_queue_unless_it_is_cancelled`
 //! in `tests/timers.rs`, an integration test of its own because the service
-//! and the queue are process-wide and `tests/c_api.rs` quits the queues.
+//! and the queue are process-wide and `tests/c_api.rs` quits the queues. On
+//! the Lean side: the timer checks of `ffi-test` (`timerChecks`), and
+//! `contract-test`, which runs the job interface's contract over this
+//! service through the job runner and its completion pump.
 //!
 //! ## Calls go one way
 //!

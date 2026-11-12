@@ -136,10 +136,10 @@ so it links under either compiler. It starts at Lean's `main`. -/
   root := `ModelTest
   moreLinkArgs := #["-L", leanSystemLibDir.toString]
 
-/-- The contract check of the text port against its real binding
-(`ContractTest.lean`), linked like `editor` with the glue and the Rust
-archive. `mise run ffi-test` runs it. It interprets nothing, so it does not
-export its symbols. -/
+/-- The contract checks of the text port and of the job port against their
+real bindings (`ContractTest.lean`), linked like `editor` with the glue and
+the Rust archive. `mise run ffi-test` runs it. It interprets nothing, so it
+does not export its symbols. -/
 @[default_target] lean_exe «contract-test» where
   root := `ContractTest
   moreLinkObjs := #[glue.o, rustlib]

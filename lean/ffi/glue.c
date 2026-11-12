@@ -296,6 +296,38 @@ lean_obj_res editor_glue_events_script_feed(uint8_t queue, uint64_t source_id,
       lean_box(editor_ffi_events_script_feed(queue, source_id, count)));
 }
 
+// ---- The timer service ----
+//
+// The first service behind the completion queue. A request goes in as an id
+// and a deadline, both plain numbers, and its completion comes back as an
+// event on the completion queue, pulled like any other: nothing here calls
+// Lean, and no handle crosses.
+
+uint64_t editor_ffi_timers_now(void);
+bool editor_ffi_timers_start(uint64_t id, uint64_t deadline);
+bool editor_ffi_timers_cancel(uint64_t id);
+uint64_t editor_ffi_timers_pending(void);
+
+// `Editor.Ffi.timersNow : IO UInt64`
+lean_obj_res editor_glue_timers_now(void) {
+  return lean_io_result_mk_ok(lean_box_uint64(editor_ffi_timers_now()));
+}
+
+// `Editor.Ffi.timersStart : UInt64 → UInt64 → IO Bool`
+lean_obj_res editor_glue_timers_start(uint64_t id, uint64_t deadline) {
+  return lean_io_result_mk_ok(lean_box(editor_ffi_timers_start(id, deadline)));
+}
+
+// `Editor.Ffi.timersCancel : UInt64 → IO Bool`
+lean_obj_res editor_glue_timers_cancel(uint64_t id) {
+  return lean_io_result_mk_ok(lean_box(editor_ffi_timers_cancel(id)));
+}
+
+// `Editor.Ffi.timersPending : IO UInt64`
+lean_obj_res editor_glue_timers_pending(void) {
+  return lean_io_result_mk_ok(lean_box_uint64(editor_ffi_timers_pending()));
+}
+
 // ---- The process entry point ----
 //
 // Lean's generated `main` runs the Lean `main` on a thread Lean creates, so

@@ -162,9 +162,45 @@ def dataChecks (_ : Unit) : List Check :=
       run := roundTrips 8 43 "before\x00after" },
     { name := "an event with empty text and the largest code crosses"
       run := roundTrips 9 0xFFFFFFFFFFFFFFFF "" },
-    { name := "a tag the bindings do not know is refused"
+    { name := "the tag of a completion is known, and a tag the bindings do not know is refused"
       run :=
-        pure ((Editor.Ffi.EventKind.ofTag? 2).isNone && (Editor.Ffi.SourceKind.ofTag? 3).isNone) }]
+        pure
+          (Editor.Ffi.EventKind.ofTag? 2 == some .completion &&
+            (Editor.Ffi.EventKind.ofTag? 3).isNone &&
+            (Editor.Ffi.SourceKind.ofTag? 3).isNone) }]
+
+/-- An hour, in milliseconds: a deadline no check reaches. -/
+def hour : UInt64 :=
+  3600000
+
+/-- The checks of the timer service's bindings: a request with an id goes
+in, and its completion comes back as an event on the completion queue. -/
+def timerChecks (_ : Unit) : List Check :=
+  [{
+      name :=
+        "a timer request that is due comes back as a completion on the completion queue, from the library, with the request's id as its code",
+      run := do
+        let accepted ← Editor.Ffi.timersStart 7 (← Editor.Ffi.timersNow)
+        let some event ← pull .completion | return false
+        return accepted && event.source.kind == .library && event.kind == .completion &&
+            event.code == 7 &&
+            event.text == "" },
+    { name :=
+        "a timer request an hour away waits until it is cancelled: an id that is waiting is refused, and a cancel says whether the request was waiting"
+      run := do
+        let before ← Editor.Ffi.timersPending
+        let accepted ← Editor.Ffi.timersStart 8 ((← Editor.Ffi.timersNow) + hour)
+        let again ← Editor.Ffi.timersStart 8 0
+        let waiting ← Editor.Ffi.timersPending
+        let cancelled ← Editor.Ffi.timersCancel 8
+        let twice ← Editor.Ffi.timersCancel 8
+        let never ← Editor.Ffi.timersCancel 99
+        return accepted && !again && waiting == before + 1 && cancelled && !twice && !never &&
+            (← Editor.Ffi.timersPending) == before },
+    { name := "the timer clock does not go back"
+      run := do
+        let first ← Editor.Ffi.timersNow
+        return first <= (← Editor.Ffi.timersNow) }]
 
 /-- The checks of the two event queues: Rust threads push, Lean pulls. -/
 def queueChecks (_ : Unit) : List Check :=
@@ -250,7 +286,8 @@ def documentChecks (_ : Unit) : List Check :=
 
 /-- Every check, in the order they run. -/
 def checks (_ : Unit) : List Check :=
-  entryChecks () ++ handleChecks () ++ dataChecks () ++ queueChecks () ++ documentChecks ()
+  entryChecks () ++ handleChecks () ++ dataChecks () ++ queueChecks () ++ timerChecks () ++
+    documentChecks ()
 
 /-- Runs `checks` and returns the names of those that failed. A check that
 throws has failed, and its error is reported with its name. -/
