@@ -5,3 +5,7 @@ version = 4
 [[package]]
 name = "editor-ffi"
 version = "0.1.0"
+
+[[package]]
+name = "editor-platform"
+version = "0.1.0"

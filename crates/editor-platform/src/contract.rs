@@ -1,0 +1,506 @@
+//! The contract of the window port: the rules every [`Platform`] keeps, as a
+//! check that runs one.
+//!
+//! The rules:
+//!
+//! - **`Opened` comes first, with a name.** The first thing a run reports is
+//!   [`Input::Opened`], and the platform's name in it is not empty.
+//! - **A close ends the run.** Once [`Platform::close`] has been called, from
+//!   a thread other than the one in [`Platform::run`], the run returns `Ok`
+//!   within a bound.
+//! - **Nothing is reported once the run has returned.**
+//! - **A close with no run in progress is harmless**: before a run it does
+//!   not end the run that follows, and after one it reports nothing.
+//!
+//! A platform that cannot open a window does not pass: the contract is of a
+//! window that opens.
+//!
+//! There are two ways to run the check, and they judge the same things.
+//! [`check`] runs the platform on a new thread and is for a platform that
+//! may run on any thread, as the fake may. A real platform has to run on the
+//! process's main thread, so its caller runs [`Check::run`] there and takes
+//! the [`Check::verdict`] on another thread. Neither waits for a platform
+//! without a bound: a run that never returns is a verdict, not a hang.
+//!
+//! The crate docs say where the real adapter is held to this.
+
+use std::fmt;
+use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError};
+use std::thread;
+use std::time::{Duration, Instant};
+
+use crate::{CannotOpen, Input, Platform, Report, WindowOptions};
+
+/// A rule of the contract that a platform broke.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Violation {
+    /// No window could be opened, for the reason given.
+    CouldNotOpen(String),
+    /// Nothing was reported within the bound of the run starting.
+    NothingReported,
+    /// The first input was this, and not [`Input::Opened`].
+    FirstInputNotOpened(Input),
+    /// The platform's name in [`Input::Opened`] was empty.
+    EmptyName,
+    /// The run had not returned this long after it was asked to close.
+    DidNotReturn(Duration),
+    /// This was reported after the run had returned.
+    ReportedAfterReturn(Input),
+}
+
+impl fmt::Display for Violation {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::CouldNotOpen(reason) => write!(f, "no window could be opened: {reason}"),
+            Self::NothingReported => f.write_str("the window reported nothing"),
+            Self::FirstInputNotOpened(input) => {
+                write!(f, "the first input was {input:?}, not `Opened`")
+            }
+            Self::EmptyName => f.write_str("the platform's name in `Opened` was empty"),
+            Self::DidNotReturn(bound) => {
+                write!(f, "the run had not returned {bound:?} after the close")
+            }
+            Self::ReportedAfterReturn(input) => {
+                write!(f, "{input:?} was reported after the run had returned")
+            }
+        }
+    }
+}
+
+/// One run of a platform under the contract.
+///
+/// A clone is the same check: one thread runs it and another takes its
+/// verdict.
+#[derive(Clone)]
+pub struct Check {
+    /// How the window is opened.
+    options: WindowOptions,
+    /// How long the platform has to report [`Input::Opened`], and then to
+    /// return once it is asked to close.
+    bound: Duration,
+    /// What the run has done so far.
+    progress: Arc<Shared>,
+}
+
+/// A [`Progress`] that threads share and wait on.
+#[derive(Default)]
+struct Shared {
+    /// What the run has done so far.
+    progress: Mutex<Progress>,
+    /// Signalled whenever the progress changes.
+    changed: Condvar,
+}
+
+/// What a run under the check has done so far.
+#[derive(Default)]
+struct Progress {
+    /// When the run began.
+    started: Option<Instant>,
+    /// The first input the run reported.
+    first: Option<Input>,
+    /// When the run was asked to close, from the other thread.
+    close_asked: Option<Instant>,
+    /// When the run returned, and what it returned.
+    returned: Option<(Instant, Result<(), CannotOpen>)>,
+    /// The first input reported after the run had returned.
+    late: Option<Input>,
+    /// Whether everything the check does to the platform is done.
+    finished: bool,
+}
+
+impl Shared {
+    /// Locks the progress. The lock is never held while a platform runs, so
+    /// a poisoned lock still guards consistent progress.
+    fn progress(&self) -> MutexGuard<'_, Progress> {
+        self.progress.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// Changes the progress and wakes whoever waits on it.
+    fn update(&self, change: impl FnOnce(&mut Progress)) {
+        change(&mut self.progress());
+        self.changed.notify_all();
+    }
+
+    /// Takes one input from the platform: the first of the run, or one that
+    /// arrived after the run had returned. The inputs between are the
+    /// platform's own business.
+    fn record(&self, input: Input) {
+        self.update(|progress| {
+            if progress.returned.is_some() {
+                progress.late.get_or_insert(input);
+            } else {
+                progress.first.get_or_insert(input);
+            }
+        });
+    }
+
+    /// Parks the calling thread until `ready` holds of the progress or
+    /// `limit` has passed, and returns the progress, locked.
+    fn wait(&self, limit: Duration, ready: impl Fn(&Progress) -> bool) -> MutexGuard<'_, Progress> {
+        let deadline = Instant::now() + limit;
+        let mut progress = self.progress();
+        loop {
+            let left = deadline.saturating_duration_since(Instant::now());
+            if ready(&progress) || left.is_zero() {
+                return progress;
+            }
+            progress = self
+                .changed
+                .wait_timeout(progress, left)
+                .unwrap_or_else(PoisonError::into_inner)
+                .0;
+        }
+    }
+}
+
+impl Check {
+    /// A check that opens the window as `options` say, and gives the
+    /// platform `bound` to report [`Input::Opened`] and `bound` again to
+    /// return once it is asked to close.
+    pub fn new(options: WindowOptions, bound: Duration) -> Self {
+        Self {
+            options,
+            bound,
+            progress: Arc::default(),
+        }
+    }
+
+    /// Runs `platform` on the calling thread, under the check: asks it to
+    /// close before the run, from another thread once it has reported its
+    /// first input, and again after the run. It returns when the platform's
+    /// run does, which for a platform that ignores the close is never: take
+    /// the [`verdict`](Self::verdict) on another thread.
+    ///
+    /// A platform that has reported nothing by the bound is asked to close
+    /// all the same, so that the run can end.
+    pub fn run(&self, platform: &impl Platform) {
+        // With no run in progress this must do nothing: were it remembered,
+        // the run below would end before the close that is meant for it.
+        platform.close();
+
+        self.progress
+            .update(|progress| progress.started = Some(Instant::now()));
+        let report: Report = {
+            let progress = Arc::clone(&self.progress);
+            Arc::new(move |input| progress.record(input))
+        };
+        thread::scope(|scope| {
+            scope.spawn(|| {
+                let opened =
+                    |progress: &Progress| progress.first.is_some() || progress.returned.is_some();
+                if self.progress.wait(self.bound, opened).returned.is_some() {
+                    return;
+                }
+                self.progress
+                    .update(|progress| progress.close_asked = Some(Instant::now()));
+                platform.close();
+            });
+            let result = platform.run(self.options, report);
+            self.progress
+                .update(|progress| progress.returned = Some((Instant::now(), result)));
+        });
+
+        // Anything this makes the platform report is reported after its run.
+        platform.close();
+        self.progress.update(|progress| progress.finished = true);
+    }
+
+    /// What the check found. It waits for [`run`](Self::run) to start and
+    /// then to finish, but for a run that has started no longer than the
+    /// bound allows the platform: a run that has not returned by then is a
+    /// [`Violation::DidNotReturn`].
+    pub fn verdict(&self) -> Result<(), Violation> {
+        // Each wait below is cut to the bound, so the loop looks again at how
+        // long the platform still has.
+        loop {
+            let progress = self.progress.wait(self.bound, |progress| progress.finished);
+            if progress.finished || progress.returned.is_some() {
+                return self.judge(&progress);
+            }
+            // The platform has the bound to report, and then the bound to
+            // return once it has been asked to close.
+            let allowed_until = match (progress.close_asked, progress.started) {
+                (Some(asked), _) => asked + self.bound,
+                (None, Some(started)) => started + self.bound + self.bound,
+                (None, None) => continue,
+            };
+            if Instant::now() >= allowed_until {
+                return Err(Violation::DidNotReturn(self.bound));
+            }
+        }
+    }
+
+    /// The rules, held against a run that has returned.
+    fn judge(&self, progress: &Progress) -> Result<(), Violation> {
+        let Some((returned_at, result)) = &progress.returned else {
+            return Err(Violation::DidNotReturn(self.bound));
+        };
+        if let Err(cannot_open) = result {
+            return Err(Violation::CouldNotOpen(cannot_open.reason.clone()));
+        }
+        match &progress.first {
+            None => return Err(Violation::NothingReported),
+            Some(Input::Opened { platform }) if platform.is_empty() => {
+                return Err(Violation::EmptyName);
+            }
+            Some(Input::Opened { .. }) => {}
+            Some(other) => return Err(Violation::FirstInputNotOpened(other.clone())),
+        }
+        if let Some(asked) = progress.close_asked
+            && returned_at.saturating_duration_since(asked) > self.bound
+        {
+            return Err(Violation::DidNotReturn(self.bound));
+        }
+        if let Some(late) = &progress.late {
+            return Err(Violation::ReportedAfterReturn(late.clone()));
+        }
+        Ok(())
+    }
+}
+
+/// Runs `platform` under the contract on a new thread, opening the window as
+/// `options` say, and returns what the check found.
+///
+/// `bound` is how long the platform has to report [`Input::Opened`], and
+/// then to return once it is asked to close. A platform that never returns
+/// fails at the bound, and the thread it was run on is left behind.
+pub fn check<P>(platform: Arc<P>, options: WindowOptions, bound: Duration) -> Result<(), Violation>
+where
+    P: Platform + Send + 'static,
+{
+    let check = Check::new(options, bound);
+    let runner = check.clone();
+    thread::spawn(move || runner.run(&*platform));
+    check.verdict()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ScriptedPlatform;
+
+    /// A bound no platform that keeps the contract comes near: a check that
+    /// holds returns long before it, and one that fails for another reason
+    /// does not wait for it.
+    const GENEROUS: Duration = Duration::from_secs(5);
+
+    /// A bound short enough to wait out, for a platform that is expected to
+    /// miss it.
+    const SHORT: Duration = Duration::from_millis(50);
+
+    /// Something a thread waits for and another opens, once.
+    #[derive(Default)]
+    struct Gate {
+        /// Whether the gate is open.
+        open: Mutex<bool>,
+        /// Signalled when it opens.
+        opened: Condvar,
+    }
+
+    impl Gate {
+        /// Opens the gate, for good.
+        fn open(&self) {
+            *self.open.lock().unwrap_or_else(PoisonError::into_inner) = true;
+            self.opened.notify_all();
+        }
+
+        /// Parks the calling thread until the gate is open.
+        fn wait(&self) {
+            let mut open = self.open.lock().unwrap_or_else(PoisonError::into_inner);
+            while !*open {
+                open = self
+                    .opened
+                    .wait(open)
+                    .unwrap_or_else(PoisonError::into_inner);
+            }
+        }
+    }
+
+    /// [`Input::Opened`] from a platform called `name`.
+    fn opened(name: &str) -> Input {
+        Input::Opened {
+            platform: name.into(),
+        }
+    }
+
+    /// A platform that reports `inputs` and then waits for a close: the
+    /// shape of a platform that keeps the contract, for the broken ones
+    /// below to differ from in one thing each.
+    struct Reports {
+        /// What a run reports, in order.
+        inputs: Vec<Input>,
+        /// Opened by a close.
+        closed: Gate,
+    }
+
+    impl Reports {
+        fn new(inputs: Vec<Input>) -> Arc<Self> {
+            Arc::new(Self {
+                inputs,
+                closed: Gate::default(),
+            })
+        }
+    }
+
+    impl Platform for Reports {
+        fn run(&self, _options: WindowOptions, report: Report) -> Result<(), CannotOpen> {
+            for input in &self.inputs {
+                report(input.clone());
+            }
+            self.closed.wait();
+            Ok(())
+        }
+
+        fn close(&self) {
+            self.closed.open();
+        }
+    }
+
+    /// A platform that reports `Opened` and ignores every close. Its run
+    /// returns only when the test releases it, so no thread outlives the
+    /// test.
+    #[derive(Default)]
+    struct Deaf {
+        /// Opened by the test when it is done.
+        released: Gate,
+    }
+
+    impl Platform for Deaf {
+        fn run(&self, _options: WindowOptions, report: Report) -> Result<(), CannotOpen> {
+            report(opened("deaf"));
+            self.released.wait();
+            Ok(())
+        }
+
+        fn close(&self) {}
+    }
+
+    /// A platform that keeps what it was given to report with, and reports
+    /// through it when it is asked to close after its run has returned.
+    #[derive(Default)]
+    struct Lingering {
+        /// Opened by the first close.
+        closed: Gate,
+        /// What the last run was given to report with, once it has returned.
+        kept: Mutex<Option<Report>>,
+    }
+
+    impl Platform for Lingering {
+        fn run(&self, _options: WindowOptions, report: Report) -> Result<(), CannotOpen> {
+            report(opened("lingering"));
+            self.closed.wait();
+            *self.kept.lock().unwrap_or_else(PoisonError::into_inner) = Some(report);
+            Ok(())
+        }
+
+        fn close(&self) {
+            self.closed.open();
+            let kept = self.kept.lock().unwrap_or_else(PoisonError::into_inner);
+            if let Some(report) = kept.as_ref() {
+                report(Input::Focus(false));
+            }
+        }
+    }
+
+    #[test]
+    fn the_contract_holds_of_the_scripted_platform_with_composition_allowed_and_not() {
+        for composition in [true, false] {
+            let platform = Arc::new(ScriptedPlatform::sample());
+
+            let verdict = check(
+                Arc::clone(&platform),
+                WindowOptions { composition },
+                GENEROUS,
+            );
+
+            assert_eq!(verdict, Ok(()));
+            assert_eq!(platform.runs(), [WindowOptions { composition }]);
+        }
+    }
+
+    #[test]
+    fn the_contract_holds_of_a_platform_that_reports_only_that_it_opened() {
+        let platform = Arc::new(ScriptedPlatform::new(Vec::new()));
+
+        assert_eq!(check(platform, WindowOptions::default(), GENEROUS), Ok(()));
+    }
+
+    #[test]
+    fn a_platform_that_cannot_open_a_window_is_refused_with_its_reason() {
+        let platform = Arc::new(ScriptedPlatform::failing("no display"));
+
+        assert_eq!(
+            check(platform, WindowOptions::default(), GENEROUS),
+            Err(Violation::CouldNotOpen("no display".into()))
+        );
+    }
+
+    #[test]
+    fn a_platform_that_reports_an_input_before_opened_is_refused() {
+        let platform = Reports::new(vec![Input::Focus(true), opened("early")]);
+
+        assert_eq!(
+            check(platform, WindowOptions::default(), GENEROUS),
+            Err(Violation::FirstInputNotOpened(Input::Focus(true)))
+        );
+    }
+
+    #[test]
+    fn a_platform_whose_opened_has_an_empty_name_is_refused() {
+        let platform = Reports::new(vec![opened("")]);
+
+        assert_eq!(
+            check(platform, WindowOptions::default(), GENEROUS),
+            Err(Violation::EmptyName)
+        );
+    }
+
+    #[test]
+    fn a_platform_that_ignores_a_close_is_refused_at_the_bound_and_the_check_does_not_hang() {
+        let platform = Arc::new(Deaf::default());
+        let began = Instant::now();
+
+        let verdict = check(Arc::clone(&platform), WindowOptions::default(), SHORT);
+
+        let took = began.elapsed();
+        platform.released.open();
+        assert_eq!(verdict, Err(Violation::DidNotReturn(SHORT)));
+        assert!(took >= SHORT, "the platform had its whole bound: {took:?}");
+        assert!(took < GENEROUS, "the check ended at the bound: {took:?}");
+    }
+
+    #[test]
+    fn a_platform_that_reports_nothing_is_refused_at_the_bound() {
+        let platform = Reports::new(Vec::new());
+
+        assert_eq!(
+            check(platform, WindowOptions::default(), SHORT),
+            Err(Violation::NothingReported)
+        );
+    }
+
+    #[test]
+    fn a_platform_that_reports_after_its_run_has_returned_is_refused() {
+        let platform = Arc::new(Lingering::default());
+
+        assert_eq!(
+            check(platform, WindowOptions::default(), GENEROUS),
+            Err(Violation::ReportedAfterReturn(Input::Focus(false)))
+        );
+    }
+
+    #[test]
+    fn a_check_run_on_the_calling_thread_gives_its_verdict_to_another() {
+        let platform = ScriptedPlatform::sample();
+        let check = Check::new(WindowOptions::default(), GENEROUS);
+
+        let verdict = std::thread::scope(|scope| {
+            let judge = scope.spawn(|| check.verdict());
+            check.run(&platform);
+            judge.join().expect("the verdict is given")
+        });
+
+        assert_eq!(verdict, Ok(()));
+        assert_eq!(platform.runs(), [WindowOptions::default()]);
+    }
+}
