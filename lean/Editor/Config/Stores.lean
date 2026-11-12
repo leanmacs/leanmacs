@@ -36,6 +36,14 @@ namespace Cells
 def find? (cells : Cells) (owner : Owner) (name : String) : Option Cell :=
   cells.cells.find? fun cell => cell.owner == owner && cell.name == name
 
+/-- `cells` with `value` as the value of `owner`'s store called `name`.
+Nothing changes if there is no such cell. -/
+def set (cells : Cells) (owner : Owner) (name : String) (value : Value) : Cells :=
+  {
+    cells :=
+      cells.cells.map fun cell =>
+        if cell.owner == owner && cell.name == name then { cell with value } else cell }
+
 /-- The diagnostic that the value of the store called `name` was lost. A lost
 value does not reject a reload, so it is a warning. -/
 def lost (name reason : String) : Diagnostic :=

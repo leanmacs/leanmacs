@@ -1,6 +1,5 @@
 import Editor.Command.Append
-import Editor.Config.Session
-import Editor.Config.Stores
+import Editor.Config.Reload
 import Editor.Text.Contract
 
 /-!
@@ -517,9 +516,177 @@ def sessionChecks : List Check :=
             outcome.diagnostics.map (fun diagnostic => (diagnostic.source, diagnostic.severity)) ==
               #[("a", .error)] }]
 
+/-- An effect of the reload reducer, as a check compares it: a start with the
+base and the names of the chunks it carries, or a report with its number,
+whether it installed, the sources of its diagnostics, and its counts of
+chunks and commands. -/
+inductive Seen where
+  /-- A job was started. -/
+  | start (base : Option Elaborated) (chunks : Array String)
+  /-- A reload was reported. -/
+  | report (number : Nat) (installed : Bool) (sources : Array String) (chunks commands : Nat)
+  deriving DecidableEq, Repr
+
+/-- `effect` as a check compares it. -/
+def seen : Config.Effect Elaborated → Seen
+  | .start base chunks => .start base (chunks.map (·.name))
+  | .report report =>
+    .report report.number report.installed (report.diagnostics.map (·.source)) report.chunks
+      report.commands
+
+/-- The state the reducer reaches from `state` through `events`, and every
+effect on the way. -/
+def reduceFrom (state : Config.State Elaborated) (events : List (Config.Event Elaborated)) :
+    Config.State Elaborated × Array Seen :=
+  events.foldl
+    (fun (state, effects) event =>
+      let (state, more) := Config.step state event
+      (state, effects ++ more.map seen))
+    (state, #[])
+
+/-- The state the reducer reaches through `events` from nothing loaded, and
+every effect on the way. -/
+def reduce (events : List (Config.Event Elaborated)) : Config.State Elaborated × Array Seen :=
+  reduceFrom {} events
+
+/-- The outcome of a reload that built the chunks called `names`, whose
+`setup` is `setup`. Built by hand: no elaborator ran. -/
+def accepted (names : List String) (setup : SetupM Unit) : Config.Outcome Elaborated :=
+  { base := some #[], diagnostics := #[],
+    built :=
+      (Config.Registrations.ofSetup setup).toOption.map fun registrations =>
+        { chunks := loaded names, registrations } }
+
+/-- The outcome of a reload that was rejected with one error from `source`. -/
+def rejected (source : String) : Config.Outcome Elaborated :=
+  { base := some #[], diagnostics := #[told source .error], built := none }
+
+/-- A `setup` that registers `greet`, which makes the text `text`. -/
+def greets (text : String) : SetupM Unit :=
+  command "greet" (makes text)
+
+/-- A `setup` that declares `counter` and registers `bump` over it, which
+adds `step`. -/
+def bumps (step : Nat) : SetupM Unit := do
+  counter.declare
+  counter.command "bump" fun n => pure (n + step)
+
+/-- Runs the command called `name` the way the editor does, against the text
+model `model`: the state once what the command wrote is written back, and
+the model after it. `none` if there is no such command or it was refused. -/
+def runs (state : Config.State Elaborated) (name : String) (model : TextModel := {}) :
+    Option (Config.State Elaborated × TextModel) :=
+  (state.program? name).bind fun program =>
+    match program.runModel model with
+    | (.ok write, model) => some (state.written write, model)
+    | (.error _, _) => none
+
+/-- The texts the command called `name` leaves when the editor runs it. -/
+def runTexts (state : Config.State Elaborated) (name : String) : Option (Array String) :=
+  (runs state name).map (·.2.texts)
+
+/-- The value of the config's store called `name`. -/
+def stored (state : Config.State Elaborated) (name : String) : Option Value :=
+  (state.cells.find? .config name).map (·.value)
+
+/-- The checks of the reload reducer (`Editor/Config/Reload.lean`), with
+outcomes built by hand. -/
+def reloadChecks : List Check :=
+  [{ name := "a request with no job running starts one, carrying the base and the loaded chunks",
+     run :=
+       let first := reduce [.requested]
+       let later := reduce [.requested, .finished (accepted ["a", "b"] (greets "1")), .requested]
+       pure
+         (first.2 == #[.start none #[]] &&
+           later.2 == #[.start none #[], .report 1 true #[] 2 1, .start (some #[]) #["a", "b"]]) },
+    { name :=
+        "requests while a job runs start nothing, and the finish then starts exactly one more job"
+      run :=
+        let (running, effects) := reduce [.requested, .requested, .requested, .requested]
+        let (after, more) := reduceFrom running [.finished (accepted ["a"] (greets "1"))]
+        let (_, last) := reduceFrom after [.finished (accepted ["a"] (greets "1"))]
+        pure
+          (effects == #[.start none #[]] &&
+            more == #[.report 1 true #[] 1 1, .start (some #[]) #["a"]] &&
+            last == #[.report 2 true #[] 1 1]) },
+    { name :=
+        "an accepted outcome installs its chunks and exactly its commands, and the report says installed"
+      run :=
+        let (state, effects) := reduce [.requested, .finished (accepted ["a", "b"] (greets "1"))]
+        pure
+          (state.chunks.map (·.name) == #["a", "b"] && state.registry.names == #["greet"] &&
+            state.registry.entries.all (·.owner == .config) &&
+            effects == #[.start none #[], .report 1 true #[] 2 1]) },
+    { name :=
+        "a rejected outcome leaves the registry, the chunks and the cells as they were, and the report carries its diagnostics"
+      run :=
+        let setup : SetupM Unit := do
+          greets "1"
+          bumps 1
+        let (loaded, _) := reduce [.requested, .finished (accepted ["a"] setup)]
+        let bumped := ((runs loaded "bump").map (·.1)).getD loaded
+        let (state, effects) :=
+          reduceFrom bumped
+            [.requested, .finished (rejected "a"), .requested, .finished (rejected "setup")]
+        pure
+          (state.chunks.map (·.name) == #["a"] && state.registry.names == #["greet", "bump"] &&
+            runTexts state "greet" == some #["1"] &&
+            stored state "counter" == some (.nat 1) &&
+            effects ==
+              #[.start (some #[]) #["a"], .report 2 false #["a"] 1 2, .start (some #[]) #["a"],
+                .report 3 false #["setup"] 1 2]) },
+    { name := "a rejected first load keeps the base it imported for the next job"
+      run :=
+        pure
+          ((reduce [.requested, .finished (rejected "a"), .requested]).2 ==
+            #[.start none #[], .report 1 false #["a"] 0 0, .start (some #[]) #[]]) },
+    { name := "reload replaces a command"
+      run :=
+        let first : SetupM Unit := do
+          greets "v1"
+          command "old" (makes "old")
+        let (state, _) :=
+          reduce
+            [.requested, .finished (accepted ["a"] first), .requested,
+              .finished (accepted ["a"] (greets "v2"))]
+        pure
+          (runTexts state "greet" == some #["v2"] && state.registry.names == #["greet"] &&
+            (state.program? "old").isNone) },
+    { name := "a reload does not double-register"
+      run :=
+        let (state, _) :=
+          reduce
+            [.requested, .finished (accepted ["a"] (greets "v1")), .requested,
+              .finished (accepted ["a"] (greets "v1")), .requested,
+              .finished (accepted ["a"] (greets "v1"))]
+        pure (state.registry.entries.size == 1 && runTexts state "greet" == some #["v1"]) },
+    { name := "a store value survives a reload"
+      run :=
+        let (loaded, _) := reduce [.requested, .finished (accepted ["a"] (bumps 1))]
+        let once := ((runs loaded "bump").map (·.1)).getD loaded
+        let twice := ((runs once "bump").map (·.1)).getD once
+        let (reloaded, _) := reduceFrom twice [.requested, .finished (accepted ["a"] (bumps 10))]
+        let again := ((runs reloaded "bump").map (·.1)).getD reloaded
+        pure
+          (stored loaded "counter" == some (.nat 0) && stored twice "counter" == some (.nat 2) &&
+            stored reloaded "counter" == some (.nat 2) &&
+            stored again "counter" == some (.nat 12)) },
+    { name :=
+        "a command over a store that is refused writes nothing, and a name nobody registered runs nothing"
+      run :=
+        let setup : SetupM Unit := do
+          counter.declare
+          counter.command "broken" fun n => do
+              (⟨7⟩ : TextId).insert 0 "x"
+              return n + 1
+        let (state, _) := reduce [.requested, .finished (accepted ["a"] setup)]
+        pure
+          ((state.program? "broken").isSome && (runs state "broken").isNone &&
+            (state.program? "missing").isNone) }]
+
 /-- Every check, in the order they run. -/
 def checks : List Check :=
-  programChecks ++ setupChecks ++ registryChecks ++ storeChecks ++ sessionChecks
+  programChecks ++ setupChecks ++ registryChecks ++ storeChecks ++ sessionChecks ++ reloadChecks
 
 /-- Runs `checks` and returns the names of those that failed. A check that
 throws has failed, and its error is reported with its name. -/
