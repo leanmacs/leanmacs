@@ -132,9 +132,10 @@ def pull (queue : Editor.Ffi.Queue) : IO (Option Editor.Ffi.Event) := do
     return none
   return some (← IO.ofExcept task.get)
 
-/-- The message `postEvent` queues for the Lean source `sourceId`. -/
+/-- The message `postEvent` queues for the Lean source `sourceId`. It has no
+stamp: only a window says when its events happened. -/
 def message (sourceId code : UInt64) (text : String) : Editor.Ffi.Event :=
-  { source := { kind := .lean, id := sourceId }, kind := .message, code, text }
+  { source := { kind := .lean, id := sourceId }, kind := .message, code, text, stamp := 0 }
 
 /-- Posts a message to the editor queue and pulls it back; `true` when what
 comes back is that message, from the Lean source `sourceId`. -/
@@ -162,12 +163,23 @@ def dataChecks (_ : Unit) : List Check :=
       run := roundTrips 8 43 "before\x00after" },
     { name := "an event with empty text and the largest code crosses"
       run := roundTrips 9 0xFFFFFFFFFFFFFFFF "" },
-    { name := "the tag of a completion is known, and a tag the bindings do not know is refused"
+    { name := "a message posted from Lean has no stamp"
+      run := do
+        unless ← Editor.Ffi.postEvent .editor 10 1 "" do
+          return false
+        return ((← pull .editor).map (·.stamp)) == some 0 },
+    { name := "the tag of a completion is known"
+      run := pure (Editor.Ffi.EventKind.ofTag? 2 == some .completion) },
+    { name := "the tags of a window's events and of the window source are known"
       run :=
         pure
-          (Editor.Ffi.EventKind.ofTag? 2 == some .completion &&
-            (Editor.Ffi.EventKind.ofTag? 3).isNone &&
-            (Editor.Ffi.SourceKind.ofTag? 3).isNone) }]
+          ((([3, 4, 5, 6, 7, 8] : List UInt64).map Editor.Ffi.EventKind.ofTag?) ==
+              [some .windowOpened, some .windowFocus, some .key, some .composition,
+                some .pointerPressed, some .closeRequested] &&
+            Editor.Ffi.SourceKind.ofTag? 3 == some .window) },
+    { name := "a tag the bindings do not know is refused"
+      run :=
+        pure ((Editor.Ffi.EventKind.ofTag? 9).isNone && (Editor.Ffi.SourceKind.ofTag? 4).isNone) }]
 
 /-- An hour, in milliseconds: a deadline no check reaches. -/
 def hour : UInt64 :=

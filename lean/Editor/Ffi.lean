@@ -311,6 +311,25 @@ inductive EventKind where
   /-- A service request has finished: the event's code is the id the request
   was made with. -/
   | completion
+  /-- A window is open: the event's text is the name the platform gives
+  itself. This and the kinds after it come from a window. -/
+  | windowOpened
+  /-- The window gained the keyboard focus (code 1) or lost it (code 0). -/
+  | windowFocus
+  /-- A key was pressed or released. Bit 0 of the code is set for a press,
+  bit 1 for a press repeated because the key is held, and bit 2 for a dead
+  key; the text is what the key produced, or empty. -/
+  | key
+  /-- A step of an input method's composition. The code is 0 when the input
+  method became available, 1 for a change of the text being composed, 2 when
+  the composition ended with a text, and 3 when the input method is no longer
+  available; the text is the text composed or committed. -/
+  | composition
+  /-- A pointer button was pressed in the window. -/
+  | pointerPressed
+  /-- The user asked for the window to be closed. It stays open until Lean
+  closes it. -/
+  | closeRequested
   deriving DecidableEq, Repr
 
 /-- The kind the library's number `tag` stands for, if it is one. -/
@@ -318,6 +337,12 @@ def EventKind.ofTag? : UInt64 → Option EventKind
   | 0 => some .quit
   | 1 => some .message
   | 2 => some .completion
+  | 3 => some .windowOpened
+  | 4 => some .windowFocus
+  | 5 => some .key
+  | 6 => some .composition
+  | 7 => some .pointerPressed
+  | 8 => some .closeRequested
   | _ => none
 
 /-- What kind of thing an event came from. -/
@@ -328,6 +353,8 @@ inductive SourceKind where
   | lean
   /-- The library's scripted source, a fake for tests. -/
   | script
+  /-- A window; the source's id is the window's number. -/
+  | window
   deriving DecidableEq, Repr
 
 /-- The kind the library's number `tag` stands for, if it is one. -/
@@ -335,6 +362,7 @@ def SourceKind.ofTag? : UInt64 → Option SourceKind
   | 0 => some .library
   | 1 => some .lean
   | 2 => some .script
+  | 3 => some .window
   | _ => none
 
 /-- Where an event came from. -/
@@ -355,6 +383,10 @@ structure Event where
   code : UInt64
   /-- Text whose meaning the kind sets. -/
   text : String
+  /-- The instant the source says the event happened, in nanoseconds on the
+  library's input clock, or 0 when the source does not say. Only a window
+  says. -/
+  stamp : UInt64
   deriving DecidableEq, Repr
 
 /-- An event as the glue builds it, in one call: the object field first, then
@@ -371,6 +403,8 @@ private structure RawEvent where
   kind : UInt64
   /-- The event's code. -/
   code : UInt64
+  /-- The event's stamp. -/
+  stamp : UInt64
   deriving Nonempty
 
 /-- Posts a message from the Lean source `sourceId` to `queue`. `false` when
@@ -394,7 +428,7 @@ def nextEvent (queue : Queue) : IO Event := do
   let some kind := EventKind.ofTag? raw.kind
     | throw <| IO.userError s!"the library sent an event of the unknown kind {raw.kind}"
   return { source := { kind := sourceKind, id := raw.sourceId }, kind, code := raw.code,
-           text := raw.text }
+           text := raw.text, stamp := raw.stamp }
 
 /-- Quits both queues, for good. Events already queued are still delivered;
 after them every `nextEvent`, parked or later, returns a `quit` event at once,

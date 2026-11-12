@@ -55,6 +55,21 @@ pub enum EventKind {
     /// A service request has finished: its `code` is the id the request was
     /// made with, and its source is the service that completed it.
     Completion = 2,
+    /// A window is open: its `text` is the name the platform gives itself.
+    /// This and the kinds after it come from a window.
+    WindowOpened = 3,
+    /// The window gained the keyboard focus (`code` 1) or lost it (0).
+    WindowFocus = 4,
+    /// A key was pressed or released: the bits of its `code` say which, and
+    /// its `text` is what the key produced.
+    Key = 5,
+    /// A step of an input method's composition: its `code` says which, and
+    /// its `text` is the text being composed or committed.
+    Composition = 6,
+    /// A pointer button was pressed in the window.
+    PointerPressed = 7,
+    /// The user asked for the window to be closed.
+    CloseRequested = 8,
 }
 
 impl EventKind {
@@ -69,6 +84,12 @@ impl EventKind {
             0 => Some(Self::Quit),
             1 => Some(Self::Message),
             2 => Some(Self::Completion),
+            3 => Some(Self::WindowOpened),
+            4 => Some(Self::WindowFocus),
+            5 => Some(Self::Key),
+            6 => Some(Self::Composition),
+            7 => Some(Self::PointerPressed),
+            8 => Some(Self::CloseRequested),
             _ => None,
         }
     }
@@ -83,6 +104,8 @@ pub enum SourceKind {
     Lean = 1,
     /// A [`ScriptedSource`].
     Script = 2,
+    /// A window: its id is the window's number.
+    Window = 3,
 }
 
 impl SourceKind {
@@ -97,6 +120,7 @@ impl SourceKind {
             0 => Some(Self::Library),
             1 => Some(Self::Lean),
             2 => Some(Self::Script),
+            3 => Some(Self::Window),
             _ => None,
         }
     }
@@ -122,6 +146,10 @@ pub struct Event {
     pub code: u64,
     /// Text whose meaning the kind sets.
     pub text: String,
+    /// The instant the source says the event happened, in nanoseconds on
+    /// the library's input clock, or 0 when the source does not say. Only a
+    /// window says.
+    pub stamp: u64,
 }
 
 impl Event {
@@ -135,6 +163,7 @@ impl Event {
             kind: EventKind::Quit,
             code: 0,
             text: String::new(),
+            stamp: 0,
         }
     }
 
@@ -145,6 +174,7 @@ impl Event {
             kind: EventKind::Message,
             code,
             text: text.into(),
+            stamp: 0,
         }
     }
 
@@ -156,7 +186,13 @@ impl Event {
             kind: EventKind::Completion,
             code: request,
             text: String::new(),
+            stamp: 0,
         }
+    }
+
+    /// This event, said to have happened at `stamp`.
+    pub fn stamped(self, stamp: u64) -> Self {
+        Self { stamp, ..self }
     }
 }
 
@@ -335,7 +371,7 @@ impl QueueId {
     }
 
     /// The process-wide queue this names.
-    const fn queue(self) -> &'static Queue {
+    pub const fn queue(self) -> &'static Queue {
         match self {
             Self::Editor => &EDITOR,
             Self::Completion => &COMPLETION,
@@ -378,6 +414,8 @@ pub struct RawEvent {
     pub kind: u64,
     /// The event's code.
     pub code: u64,
+    /// The event's stamp.
+    pub stamp: u64,
     /// The event's text: a buffer of `text_len` bytes of UTF-8, owned by the
     /// caller until it is handed back.
     pub text: *mut u8,
@@ -437,6 +475,7 @@ pub unsafe extern "C" fn editor_ffi_events_next(queue: u8, out: *mut RawEvent) -
         source_id: event.source.id,
         kind: event.kind.tag(),
         code: event.code,
+        stamp: event.stamp,
         text,
         text_len,
     };
@@ -739,9 +778,47 @@ mod tests {
     }
 
     #[test]
+    fn every_kind_of_window_event_converts_from_its_tag() {
+        let kinds = [
+            (3, EventKind::WindowOpened),
+            (4, EventKind::WindowFocus),
+            (5, EventKind::Key),
+            (6, EventKind::Composition),
+            (7, EventKind::PointerPressed),
+            (8, EventKind::CloseRequested),
+        ];
+        for (tag, kind) in kinds {
+            assert_eq!(EventKind::from_tag(tag), Some(kind));
+            assert_eq!(kind.tag(), tag);
+        }
+    }
+
+    #[test]
     fn an_unknown_event_kind_tag_is_refused() {
-        assert_eq!(EventKind::from_tag(3), None);
+        assert_eq!(EventKind::from_tag(9), None);
         assert_eq!(EventKind::from_tag(u64::MAX), None);
+    }
+
+    #[test]
+    fn an_event_has_no_stamp_until_it_is_given_one() {
+        let source = Source {
+            kind: SourceKind::Window,
+            id: 1,
+        };
+
+        assert_eq!(Event::quit().stamp, 0);
+        assert_eq!(Event::message(source, 1, "").stamp, 0);
+        assert_eq!(Event::completion(source, 1).stamp, 0);
+        assert_eq!(
+            Event::message(source, 1, "a").stamped(77),
+            Event {
+                source,
+                kind: EventKind::Message,
+                code: 1,
+                text: "a".into(),
+                stamp: 77,
+            }
+        );
     }
 
     #[test]
@@ -760,6 +837,7 @@ mod tests {
                 kind: EventKind::Completion,
                 code: 17,
                 text: String::new(),
+                stamp: 0,
             }
         );
     }
@@ -769,14 +847,16 @@ mod tests {
         assert_eq!(SourceKind::from_tag(0), Some(SourceKind::Library));
         assert_eq!(SourceKind::from_tag(1), Some(SourceKind::Lean));
         assert_eq!(SourceKind::from_tag(2), Some(SourceKind::Script));
+        assert_eq!(SourceKind::from_tag(3), Some(SourceKind::Window));
         assert_eq!(SourceKind::Library.tag(), 0);
         assert_eq!(SourceKind::Lean.tag(), 1);
         assert_eq!(SourceKind::Script.tag(), 2);
+        assert_eq!(SourceKind::Window.tag(), 3);
     }
 
     #[test]
     fn an_unknown_source_kind_tag_is_refused() {
-        assert_eq!(SourceKind::from_tag(3), None);
+        assert_eq!(SourceKind::from_tag(4), None);
         assert_eq!(SourceKind::from_tag(u64::MAX), None);
     }
 }

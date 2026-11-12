@@ -83,6 +83,7 @@ fn next_blocking(queue: u8) -> Option<Event> {
         kind: EventKind::from_tag(raw.kind).expect("a known event kind"),
         code: raw.code,
         text: String::from_utf8(text).expect("an event's text is UTF-8"),
+        stamp: raw.stamp,
     })
 }
 
@@ -327,6 +328,13 @@ fn the_process_wide_queues_carry_events_until_they_are_quit() {
         next(EDITOR),
         Some(message(SourceKind::Lean, 7, 43, "a\u{FFFD}b"))
     );
+
+    // An event crosses with the stamp its source gave it. One whose source
+    // gave none reads 0, as every post above did: `message` makes an event
+    // with no stamp.
+    let stamped = message(SourceKind::Window, 1, 5, "stamped").stamped(u64::MAX - 1);
+    assert!(QueueId::Editor.queue().push(stamped.clone()));
+    assert_eq!(next(EDITOR), Some(stamped));
 
     // A pull parks on its own queue, and a post to that queue wakes it.
     let (done, parked) = mpsc::channel();

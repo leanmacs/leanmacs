@@ -392,7 +392,7 @@ def handle (collaborators : Collaborators σ) (running : Running σ) (event : Ff
   | .script =>
     collaborators.emit s!"event {event.source.id} {event.code}"
     return running
-  | .library =>
+  | .library | .window =>
     return running
   | .lean =>
     if event.source.id == collaborators.wakeups then

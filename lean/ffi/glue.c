@@ -242,6 +242,7 @@ typedef struct {
   uint64_t source_id;
   uint64_t kind;
   uint64_t code;
+  uint64_t stamp;
   uint8_t *text;
   size_t text_len;
 } editor_ffi_raw_event;
@@ -271,13 +272,15 @@ lean_obj_res editor_glue_events_next(uint8_t queue) {
   lean_object *text =
       lean_mk_string_from_bytes((const char *)raw.text, raw.text_len);
   editor_ffi_text_free(raw.text, raw.text_len);
-  // `RawEvent`: `text`, then `sourceKind`, `sourceId`, `kind` and `code`.
-  lean_object *event = lean_alloc_ctor(0, 1, 4 * sizeof(uint64_t));
+  // `RawEvent`: `text`, then `sourceKind`, `sourceId`, `kind`, `code` and
+  // `stamp`.
+  lean_object *event = lean_alloc_ctor(0, 1, 5 * sizeof(uint64_t));
   lean_ctor_set(event, 0, text);
   lean_ctor_set_uint64(event, uint64_field(1, 0), raw.source_kind);
   lean_ctor_set_uint64(event, uint64_field(1, 1), raw.source_id);
   lean_ctor_set_uint64(event, uint64_field(1, 2), raw.kind);
   lean_ctor_set_uint64(event, uint64_field(1, 3), raw.code);
+  lean_ctor_set_uint64(event, uint64_field(1, 4), raw.stamp);
   return lean_io_result_mk_ok(event);
 }
 
