@@ -50,12 +50,26 @@ Returning from `main` while a task is blocked in Rust hangs.
 What is built of this is the headless mode (`lean/Editor/Headless.lean`;
 `editor headless <sysroot> <olean dir> <config dir> <script file>`): an
 editor loop on a dedicated task with no window, keys or keymaps, which loads
-a config directory in the background, runs its commands against the library
-and prints what happened. It exists for integration tests, and the command
-loop will replace its loop. The first load is an ordinary reload: the loop
-answers events before and while it runs. Where an installed editor finds the
-toolchain's `.olean` files and its own is not decided: the headless mode
-takes both directories as arguments.
+a config directory in the background, runs its commands against the library,
+starts its jobs and prints what happened. It exists for integration tests,
+and the command loop will replace its loop. The first load is an ordinary
+reload: the loop answers events before and while it runs. Where an installed
+editor finds the toolchain's `.olean` files and its own is not decided: the
+headless mode takes both directories as arguments.
+
+Before its loop starts, the headless mode does what the command loop's
+start-up will:
+
+- **It warms the pool** (`Pool.warm`, `lean/Editor/Job/Pool.lean`), so the
+  first burst of jobs finds every pool thread made. The pool keeps Lean's
+  size ([concurrency.md](concurrency.md), "The pool").
+- **It starts the completion pump** on a dedicated task
+  (`lean/Editor/Job/Real.lean`), which pulls the completion queue for the
+  life of the process. Quit ends it, like every pull.
+
+Its script has a directive for each thing a driver can ask: `reload`,
+`run <name>`, `spawn <name>` and `show`, and two waits of the driver's own,
+`settle` (no reload is running) and `join` (no job is running).
 
 Rules found the hard way:
 
@@ -113,7 +127,8 @@ elaborator.
 | What config registers with: `setup`, a program over the setup port | `lean/Editor/Setup.lean` |
 | Stores: a value of config's type as a plain tree with a version | `lean/Editor/Store.lean` |
 | Diagnostics: failure as data | `lean/Editor/Config/Diagnostic.lean` |
-| The registry, replaced by owner, and the handler that collects a `setup` | `lean/Editor/Config/Registry.lean` |
+| Owners: who registered or started something | `lean/Editor/Config/Owner.lean` |
+| The registry of commands and of jobs, replaced by owner, and the handler that collects a `setup` | `lean/Editor/Config/Registry.lean` |
 | The cells of the stores, and the rule that installs a config's stores | `lean/Editor/Config/Stores.lean` |
 | One reload: the chunks, the plan, the build, over the two ports | `lean/Editor/Config/Session.lean` |
 | The reducer that serialises reloads and installs their outcomes | `lean/Editor/Config/Reload.lean` |
@@ -129,9 +144,9 @@ elaborator.
   and `config-test` checks it, the directory source and the whole host
   against the real collaborators (`mise run ffi-test`).
 - **`setup` is a program over a setup port**: `SetupM Unit`, whose requests
-  carry what is registered (a command, a store, a command over a store). A
-  request can carry an `EditorM` because the setup port is not the port
-  `EditorM` runs over. After the last chunk the editor runs `setup` against
+  carry what is registered (a command, a store, a command over a store, a
+  job). A request can carry an `EditorM` because the setup port is not the
+  port `EditorM` runs over. After the last chunk the editor runs `setup` against
   a handler that collects its requests into a value, on the job thread.
   Nothing is registered until the editor thread installs that value, so a
   reload is all-or-nothing by construction, and a `setup` that throws is a
@@ -154,6 +169,16 @@ elaborator.
   The first of the two could never run, so it is a mistake in the config,
   and it is treated like a store declared twice. The number of commands a
   reload reports is therefore the number of names the config can be run by.
+- **A job is the value `setup` registered, too**:
+  `job "count" count fun n => …` registers a `Work`, the job with the
+  handler that makes the command its result is taken to the editor with.
+  The registry holds job entries by owner, apart from its command entries,
+  and replaces them as a set. A job name is registered once in a config,
+  like a command name; a job may have the name of a command. A job is not a
+  command and is not counted as one: a config with one command and one job
+  reports one command. `setup` starts nothing, and installing a config
+  cancels the jobs of the one it replaces
+  ([concurrency.md](concurrency.md), "Reload").
 - **The session runs no `IO` action from config.** A chunk is elaborated,
   `setup` is a program, a command is a program: every call from compiled
   Lean into config is a plain call of pure code.
@@ -335,11 +360,13 @@ What it gives up:
   so a text is named by an id and the real binding keeps the table from ids
   to handles. A text lives until the table drops it, not until the last
   Lean reference goes.
-- **A request that carries a program over its own port** (a job's result
-  handler, a key binding made from inside a command): the port would refer
-  to itself. Registration from a later port type-checks, and so does a
-  program type written for the editor in place of the generic one. The
-  config session and the job system choose.
+- **A request that carries a program over its own port** (a key binding
+  made from inside a command): the port would refer to itself. Registration
+  from a later port type-checks, and that is what the config session does:
+  `setup` is a program over a port of its own. A job's result handler needs
+  neither that nor a program type written for the editor: a job finishes
+  with a command, the handler already applied to its result, so the type of
+  the result stays inside the job and no request carries a handler.
 - **A command's type no longer lists the capabilities it uses.** Every
   command has the whole port.
 
@@ -361,10 +388,32 @@ The pattern is built for one deliberately small interface, text:
 | A command, `append`, with a theorem about it | `lean/Editor/Command/Append.lean` |
 | `JobM`, and the compile-time checks of the split | `lean/Editor/Job.lean` |
 
-The job port has no request yet, so "a wait is not a command" is not
-checked: that check arrives with the job system and the port's first
-request. Until then "a command may not block" is checked only as far as
-`IO` goes.
+The job port is the second interface built this way, and the first whose
+real implementation is not one call a request:
+
+| Piece | Where |
+|---|---|
+| The job port: a clock and a wait; `sleep`; `Timer`; `Work` | `lean/Editor/Job.lean` |
+| Its pure model: a clock, and the instant the job is cancelled at | `lean/Editor/Job/Model.lean` |
+| Its contract, run against the model and against the runner over the fake clock by `lake test`, and against the runner over the timer service by `contract-test` | `lean/Editor/Job/Contract.lean` |
+| The runner, on plain tasks and promises: the table of waits, the clock port, `spawn`, cancellation | `lean/Editor/Job/Runner.lean` |
+| The clock port's fake, which a test moves by hand | `lean/Editor/Job/Fake.lean` |
+| The clock port over the Rust timer service, and the completion pump | `lean/Editor/Job/Real.lean` |
+| The job table, pure, and the shell the editor thread calls | `lean/Editor/Job/Table.lean`, `lean/Editor/Job/Jobs.lean` |
+| Warming the pool | `lean/Editor/Job/Pool.lean` |
+
+The runner is the job port's real handler. It is not a function from a
+request to an `IO` reply, as the text port's is, because a job must hold no
+thread while it waits: the runner answers a wait by registering a promise
+and chaining the rest of the program on it
+([concurrency.md](concurrency.md)). The model runs the same program to its
+end in one call, with the clock moved by each wait.
+
+That a wait is not a command is checked when `lean/Editor/Job.lean` is
+compiled: a wait offered at `EditorM Unit` is a type error, alone and after
+a text request in a `do` block. So "a command may not block" is pinned
+beyond `IO`. Each of the two checks was seen to bite once by hand: offered
+at `JobM Unit`, where a wait is legal, the module stops building.
 
 ## Where state lives
 
@@ -407,8 +456,8 @@ editor's port:
   cell the new config cannot decode, or does not migrate, is reset to the
   initial value, and the reload's report says so. A cell the new config no
   longer declares is removed. Declaring a store name twice, registering a
-  command name twice, or registering a command over an undeclared store
-  rejects the reload.
+  command name or a job name twice, or registering a command over an
+  undeclared store rejects the reload.
 - **Why not a request of the editor's port.** A `get` and a `set` would make
   the editor's port a sum of the text port and a store port, which is the
   shape the phase that grows the editor API exists to choose.

@@ -1,7 +1,7 @@
 # The Rust library
 
-What the Rust library provides to the Lean editor, and what the editor
-gets from Lean's own runtime instead. The test of this list is whether
+What the Rust library provides to the Lean editor, timers among it, and what
+the editor gets from Lean's own runtime instead. The test of this list is whether
 whole features (version control, the rdm client, the agent UI) can be
 written in Lean on top of it with nothing feature-specific in Rust.
 
@@ -26,6 +26,43 @@ Calls go from Lean to Rust only. Anything that happens later (output
 arrived, a process exited, a file changed) is an event Lean pulls, tagged
 with the request or handle it belongs to. See
 [concurrency.md](concurrency.md).
+
+What a service must provide for a job to wait on it, as the timer service
+does (the crate docs of `crates/editor-ffi/src/lib.rs`, "Services and
+completions"):
+
+- **`start`, with the caller's id.** It returns at once and never blocks: a
+  job that waits holds no thread.
+- **One completion event for each started request**, on the completion
+  queue, whose code is the request's id; none if the request was cancelled
+  first.
+- **`cancel(id)`**, which stops the underlying work and is safe for an id
+  that is unknown or done. A completion may still arrive after it, and Lean
+  ignores a completion for an id it is no longer waiting for.
+- **Plain data only.** The service never calls Lean: a dedicated Lean task,
+  the completion pump, pulls the queue.
+
+## Timers
+
+The first service behind the completion queue
+(`crates/editor-ffi/src/timers.rs`). A job's `sleep`, its `waitUntil` and
+its `Timer` are all waits on this service.
+
+- **The clock is a port**: milliseconds since the clock began, with the
+  real monotonic clock and a published fake a test moves by hand.
+- **The schedule is pure**: which wait is due when, earliest deadline first,
+  and what cancelling means, tested with no thread and no clock.
+- **The service loop** completes due waits and otherwise parks until the
+  next deadline, a new wait, or a wake for a fake clock that was moved. The
+  process has one instance, whose thread starts with the first request. A
+  completion is an event of the kind `Completion` from the library source,
+  whose code is the request's id.
+
+Timers were listed as Lean's (`Std.Async`). They are in the library because
+every wait of a job then completes one way, through the pump; because the
+clock is then one port with one fake, on each side of the boundary; and
+because the pump is proven by the simplest service before processes depend
+on it.
 
 ## Processes
 
@@ -62,8 +99,7 @@ process is a handle plus a stream of events.
 
 | Service | Notes |
 |---|---|
-| **Timers and clock** | Lean's async timers. The current time is read through an interface, so tests control it. |
-| **Sockets** | TCP, UDP and DNS from Lean's async library: a local listener for agent hook callbacks, and client connections. |
+| **Sockets** | TCP, UDP and DNS from Lean's async library: a local listener for agent hook callbacks, and client connections. Not used yet; the job runner does not use that library, so how a job waits on a socket is for the work that first needs one. |
 | **JSON** | Lean's own JSON library. Most external tools speak it. |
 
 HTTP with streamed responses (some agents expose it) has no Lean library

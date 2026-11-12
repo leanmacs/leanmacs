@@ -1331,9 +1331,10 @@ for that before the next sample.
 A row has a host of its own, and its jobs are ended by ending that host,
 whose loop cancels them. A reload cannot end them: Lean's frontend
 elaborates on pool tasks, so while a job computes on every pool thread a
-reload does not get to elaborate, and never installs. Seen with this
-benchmark: with one job fewer than the pool has threads the reload went
-through, and with one a thread it did not finish. -/
+reload does not get to elaborate, and never installs. Seen when this
+benchmark still ended a row with a reload: with one job fewer than the pool
+has threads the reload went through, and with one a thread it had not
+finished after 45 seconds (`docs/design/concurrency.md`, "Reload"). -/
 
 /-- The config the job benchmark loads: a command that does nothing, a job
 that sleeps a millisecond in a loop, and a job that computes for ever, with a

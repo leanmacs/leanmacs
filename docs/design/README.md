@@ -14,7 +14,7 @@ and the document updated.
 | [keymaps-and-modes.md](keymaps-and-modes.md) | Key handling as a pure pipeline, input schemes, the Vim scheme, modes as records, roles and leader keys, testing keymaps. A proposal |
 | [text-and-display.md](text-and-display.md) | Text storage, the edit log, anchors, excerpt buffers, decorations, the scene, layout, rendering, view kinds |
 | [rendering-prior-art.md](rendering-prior-art.md) | A survey of how Zed, neomacs, Xi, Helix, Lapce and others stay responsive; what we adopt and reject |
-| [rust-library.md](rust-library.md) | What the Rust library provides beyond text and display: processes, files, watching, diff, terminal, syntax; and what is built in Lean on top |
+| [rust-library.md](rust-library.md) | What the Rust library provides beyond text and display: timers, processes, files, watching, diff, terminal, syntax; and what is built in Lean on top |
 | [agent-hosting.md](agent-hosting.md) | Hosting coding agents: ACP, the terminal front end, the agent table, permissions, sessions |
 | [review-and-navigation.md](review-and-navigation.md) | Reviewing agents' plans and code, provenance, version control, the rdm client, codebase navigation |
 
@@ -33,6 +33,7 @@ file says how.
 | First front end | GUI (winit, wgpu). The frame is device-independent, and a cell grid shaper and renderer are built early as test adapters, so a terminal front end stays possible | 2026-11-09, revised 2026-11-11 |
 | Lean editor API | Interfaces with a real binding and a pure model, not direct library calls. An interface is a port (requests, and a reply type for each), and a command or a job is a program over it, run against either handler; not type classes | 2026-11-09, representation 2026-11-11 |
 | Config session | A pure core over an elaborator port and a source port, with Lean's elaborator behind one adapter. `setup` is a program over a setup port of its own, and a command is the value it registered. A store is a whole-value cell in the editor's state, not a request of the editor's port. Every thread Lean creates has a 64 MiB stack, so runaway recursion in config ends the process quickly | 2026-11-11 |
+| Job system | Built on plain tasks and promises, not on Lean's async library: a wait is a promise completed by a completion pump, so a job in a wait holds no thread. Cancellation is not a reply, so a `try`/`catch` cannot resume a cancelled job. A job finishes with a command, which the editor thread runs. Jobs share their owners with the registry, and a reload that installs cancels the old config's jobs. Timers are a Rust service behind the completion queue. The pool keeps Lean's size, one thread a core, and is warmed at start-up | 2026-11-11 |
 | Syntax | Tree-sitter, right after the first milestone | 2026-11-09 |
 | Agent protocol | Agent Client Protocol (ACP), with the client written in Lean | 2026-11-09, client placement 2026-11-10 |
 | Terminal | libghostty (state of the library to be verified first) | 2026-11-09 |

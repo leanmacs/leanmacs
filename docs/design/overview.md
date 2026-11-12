@@ -78,13 +78,14 @@ can be interpreted and live-reloaded.
 | Terminal emulation, pseudo-terminal, grid drawing | Rust | Tests 1, 2 and 3 |
 | Terminal lifecycle, key routing | Lean | Policy |
 | Processes, pseudo-terminals, file watching | Rust | Test 2: Lean's own process handling leaves orphans and zombies |
-| Timers, sockets, small file reads and writes | Lean | Lean's runtime already provides them |
+| Timers | Rust, a service behind the completion queue | Every wait of a job then completes one way, the clock is one port with one fake a test can move, and the completion pump is proven before processes depend on it. Lean's own timers (`Std.Async`) run on a loop thread of their own, with no clock a test controls |
+| Sockets, small file reads and writes | Lean | Lean's runtime already provides them |
 | Text diff, search, fuzzy matching | Rust | Test 1 |
 | Tree-sitter parsing and queries | Rust | Tests 1 and 3 |
 | ACP and language-server clients | Lean, compiled, over the process service | Lean has real concurrency and JSON; the protocol rules are types |
 | Agent table, permission policy, transcript views | Lean | Policy |
 | Version control, the rdm client | Lean | Request and response at human speed |
-| Jobs, cancellation, owner-scoped lifetimes | Lean | Built on Lean's tasks; see [concurrency.md](concurrency.md) |
+| Jobs, cancellation, owner-scoped lifetimes | Lean | Built on Lean's tasks and promises, not on its async library; see [concurrency.md](concurrency.md) |
 
 ## Rules of the boundary
 
@@ -162,7 +163,7 @@ Rust crates:
 | `editor-layout` | Display lists and line caches over a `Shaper` port. |
 | `editor-shape-parley`, `editor-render-wgpu`, `editor-platform-winit` | Adapters for shaping, drawing and the window. |
 | `editor-proc` | The process and pseudo-terminal service. |
-| `editor-ffi` | The static library Lean links: the C functions Lean calls, handles, and the event queue. The only crate that knows Lean exists. |
+| `editor-ffi` | The static library Lean links: the C functions Lean calls, handles, the event queues, and the timer service, the first service behind the completion queue. The only crate that knows Lean exists. |
 | `editor-term-ghostty`, `editor-syntax-treesitter` | Added after the first milestone. |
 
 The Lean package in `lean/` builds the executable with Lake, which runs

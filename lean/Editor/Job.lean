@@ -47,9 +47,25 @@ makes the request. It then needs a clause in the model (`JobModel.handle`,
 `Editor/Job/Model.lean`), an answer in the runner, and a property in the
 contract, which is what pins it for both.
 
-The pieces: the pure model is `Editor/Job/Model.lean`, and `model-test` runs
-the checks of it (`ModelTest.jobModelChecks`). The contract is
-`Editor/Job/Contract.lean`.
+## The pieces
+
+- the port, here: the requests, the reply to each, the operations a job is
+  written with, `Timer`, and `Work`, a job as it is spawned;
+- its pure model, `Editor/Job/Model.lean`, which tests run against;
+- its contract, `Editor/Job/Contract.lean`: one list of properties, run
+  against the model and against the runner over a fake clock by
+  `model-test`, and against the runner over the Rust library's timer
+  service by `contract-test`;
+- the runner, `Editor/Job/Runner.lean`, which runs a job on the pool, with
+  the clock port's fake (`Editor/Job/Fake.lean`) and its real
+  implementation (`Editor/Job/Real.lean`, the only job module that imports
+  `Editor.Ffi`);
+- the job table and the shell the editor thread calls,
+  `Editor/Job/Table.lean` and `Editor/Job/Jobs.lean`;
+- `Editor/Job/Pool.lean`, which warms the pool at start-up.
+
+Config registers a job in `setup` (`Editor/Setup.lean`), which is why this
+module, and not the runner, is what config sees.
 -/
 
 namespace Editor

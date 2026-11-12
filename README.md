@@ -12,8 +12,8 @@ rendering, the window, and process and terminal management.
 The editor does nothing useful yet. The executable shows that the build
 works: Lean calls the Rust library and prints what comes back, and it runs
 one editor command against the library. It also has a headless mode, for
-integration tests, that loads a config directory, reloads it live and runs
-the commands the config registers.
+integration tests, that loads a config directory, reloads it live, runs the
+commands the config registers and starts its background jobs.
 
 ## Building
 
@@ -75,19 +75,30 @@ working directory.
 A config is the `.lean` files directly in the config directory, elaborated in
 the byte order of their names, each on top of the one before. They have no
 `import` line: `Editor` is imported and opened for them. Config defines
-commands, and a `setup` that registers them:
+commands and jobs, and a `setup` that registers them:
 
 ```lean
 def greet : EditorM Unit := do
   let text ← createText "hello"
   append text ", world"
 
+def count : Unit → JobM Nat := fun _ => do
+  sleep 1
+  return 42
+
 def setup : SetupM Unit := do
   command "greet" greet
+  job "count" count fun n => discard <| createText s!"counted {n}"
 ```
 
-A `setup` registers each command name once. One that registers a name twice
-is rejected, like a chunk that does not elaborate.
+A command (`EditorM`) may change editor state and cannot wait. A job
+(`JobM`) may wait, here for a millisecond, and cannot change editor state:
+it runs in the background, and its result goes to the handler it was
+registered with, which makes a command the editor runs. A job is not a
+command, and a reload's report does not count it as one.
+
+A `setup` registers each command name and each job name once. One that
+registers a name twice is rejected, like a chunk that does not elaborate.
 
 A script is one directive a line. Blank lines and lines that start with `#`
 are skipped.
@@ -97,6 +108,8 @@ are skipped.
 | `reload` | Asks for the config to be reloaded. Elaboration runs in the background, and the editor goes on answering. |
 | `settle` | Waits, for up to 30 seconds, until everything asked so far has been handled and no reload is running. |
 | `run <name>` | Runs the command registered under that name. |
+| `spawn <name>` | Starts the job registered under that name. It runs in the background, and the editor goes on answering. |
+| `join` | Waits, for up to 30 seconds, until everything asked so far has been handled and no job is running. |
 | `show` | Prints the commands, the texts and the stores. |
 
 With the fixture the gate uses (`tests/headless`):
@@ -109,6 +122,11 @@ run greet: ok
 run missing: no such command
 commands: greet
 text 0: "hello, world"
+spawn count: job 1
+job 1 count: ok
+commands: greet
+text 0: "hello, world"
+text 1: "counted 42"
 ```
 
 The lines it can print:
@@ -118,19 +136,28 @@ reload <n>: installed, <c> chunks, <k> commands
 reload <n>: rejected
 diagnostic: <source>:<line>:<column>: <severity>: <first line of the message>
 run <name>: ok            (or "refused: <error>", or "no such command")
+spawn <name>: job <id>    (or "no such job")
+job <id> <name>: ok       (or "refused: <error>", "failed: <message>", "cancelled")
 event <source id> <code>
 commands: <names>
 text <index>: <quoted text>
 store <name> v<version>: <value>
 ```
 
+A job's line is printed when the editor has dealt with its result: `ok` when
+the handler's command ran, `refused` when the library refused that command,
+`failed` when the job threw, and `cancelled` when a reload that installed
+replaced the config that registered it. A job the script leaves running is
+cancelled when the script ends.
+
 A reload that is rejected (a chunk does not elaborate, or `setup` throws)
-prints its diagnostics and leaves the config that was loaded in place. The
-exit status is 0 when the script ran to its end, 1 when it could not, and 2
-for a command line it does not understand. With status 1 a line on stderr
-says why: the script cannot be read; a `settle`, named by its line, ran out
-with a reload still running (a chunk or `setup` is slow or does not end);
-or the editor thread did not answer.
+prints its diagnostics and leaves the config that was loaded in place, with
+its jobs still running. The exit status is 0 when the script ran to its end,
+1 when it could not, and 2 for a command line it does not understand. With
+status 1 a line on stderr says why: the script cannot be read; a `settle`,
+named by its line, ran out with a reload still running (a chunk or `setup`
+is slow or does not end); a `join`, named by its line, ran out with a job
+still running; or the editor thread did not answer.
 
 Lake relinks the executables only when the Rust archive's contents change,
 so a second `mise run lean` rebuilds nothing.
@@ -162,8 +189,8 @@ mise run ci
 This is everything that must pass before review and before landing: Rust
 formatting, clippy, cargo-deny, rustdoc and the Rust tests; the Lean model
 tests (`mise run lean-test`); the Lean build, lean-fmt's format and lint
-checks; the checks of the Lean/Rust boundary, the contract check against
-the real binding and the checks of the config session against the real
+checks; the checks of the Lean/Rust boundary, the contract checks against
+the real bindings and the checks of the config session against the real
 elaborator (`mise run ffi-test`); and the C format check. `hk check` runs the
 same task.
 
@@ -176,11 +203,18 @@ through interfaces it defines, each with a pure Lean model, and
 (`lean/ModelTest.lean`), which run editor commands and the text interface's
 contract against the model, and the config session's decisions (what a
 reload elaborates, what it installs, how reloads are serialised) on
-hand-written fakes, with no elaborator. The task shows by behaviour that they
-build without the library. It puts a `cargo` that always fails
+hand-written fakes, with no elaborator. They test the job system the same
+way: the job interface's contract against its model and against the job
+runner over a fake clock; that jobs in a wait hold no thread, that
+cancelling a sleeping job ends it at once, that a job whose owner is removed
+is cancelled, and that none of a job runs on the thread that spawned it,
+each with the clock or a promise the test holds and no sleeping; and that
+warming Lean's task pool makes all its threads. The task shows by behaviour
+that they build without the library. It puts a `cargo` that always fails
 (`lean/no-cargo/cargo`) first on the `PATH`, and Lake runs `cargo` on every
 build that reaches the Rust archive, so the task passes only if the test
-driver does not need it.
+driver does not need it. It removes `LEAN_NUM_THREADS` from the environment,
+because the size of the pool is what some of these tests measure.
 
 `mise run ffi-test` runs `lean/.lake/build/bin/ffi-test`, the test executable
 linked against the real library, then `contract-test`, `config-test`, and
@@ -190,7 +224,16 @@ the fixture under `tests/headless`, whose output must be exactly
 line it does not understand must give status 2, and a script that cannot be
 read status 1 with a line on stderr that says why. `contract-test` runs the
 text interface's contract, the same list of properties the model tests run,
-against the real binding, so the model cannot drift from the library.
+against the real binding, so the model cannot drift from the library. It
+runs the job interface's contract the same way, against the job runner over
+the library's timer service, and checks what only the real service shows:
+jobs in real waits hold no thread, cancelling a job takes its timer out of
+the library's schedule, and quitting the queues ends the completion pump.
+
+`config-test` also runs jobs through the headless host, on a fake clock it
+moves: a job's handler runs on the editor thread, a reload that installs
+cancels the old config's jobs and a rejected one does not, and a `join` that
+cannot finish says so.
 
 `config-test` (`lean/ConfigTest.lean`) is linked like the editor, with
 Lean's elaborator, and is given the toolchain's directory and the package's
@@ -206,7 +249,8 @@ elaborates; reloads are serialised; and a script that cannot run to its end
 says why. Its config directories are temporary directories of its own.
 
 With no arguments `ffi-test` runs its checks of handles, plain data, the
-event queues and the document. Three scenarios need a process each:
+event queues, the timer service and the document. Three scenarios need a
+process each:
 
 | Command | Shows |
 |---|---|
@@ -261,6 +305,34 @@ which adds the process's real time and its maximum resident set size:
 
 A time is from the request for a reload to its report. The config is held in
 memory, so the benchmark touches no files. Run it on a quiet machine.
+
+### The job benchmark, on demand
+
+```sh
+mise run job-bench
+```
+
+This measures the latency of the editor loop while background jobs run, in
+the executable as built, and asserts nothing, so it is not part of the gate
+either. It runs `config-test bench-jobs <sysroot> <olean dir> 10000`. A
+sample is the time from posting a request to run a command that does nothing
+to the editor thread having run it. It takes 10,000 samples in each of five
+rows and prints the median, the 99th percentile and the maximum of each, in
+microseconds:
+
+| Row | What runs meanwhile |
+|---|---|
+| idle | Nothing. |
+| 64 jobs each sleeping 1 ms | 64 jobs from config, each sleeping a millisecond in a loop: every wait goes through the timer service and the completion pump. |
+| one job a pool thread computing | Interpreted jobs that compute for ever, one for each thread of Lean's task pool. |
+| two jobs a pool thread computing | Twice as many: half run and half wait in the pool's queue. |
+| idle again | Nothing. |
+
+It then times a million `now` requests in one compiled job, and says which
+of the three loaded rows are unaffected: a row whose median and 99th
+percentile are each at most twice the larger of the two idle rows'. That is
+an observation about one run, and the maximum is not judged. Run it on a
+quiet machine.
 
 ### Formatting
 
