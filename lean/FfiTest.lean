@@ -296,10 +296,94 @@ def documentChecks (_ : Unit) : List Check :=
         -- `held` is used here, so it is alive until now.
         return whileHeld == before + 1 && afterDrop == before + 1 && (← held.read) == "held" }]
 
+/-- What the library's scripted platform reports of its window, as the kind,
+the code and the text of each event: that it opened, with the platform's
+name; the focus gained; `a` pressed and released; a dead key pressed; `é`
+pressed; then, when composition is allowed, a composition enabled, its
+preedit and its commit; a pointer press; and a request to close. -/
+def windowSample (composition : Bool) : List (Editor.Ffi.EventKind × UInt64 × String) :=
+  [(.windowOpened, 0, "scripted"), (.windowFocus, 1, ""), (.key, 1, "a"), (.key, 0, ""),
+      (.key, 5, ""), (.key, 1, "é")] ++
+    (if composition then [(.composition, 0, ""), (.composition, 1, "´"), (.composition, 2, "é")]
+    else []) ++
+    [(.pointerPressed, 0, ""), (.closeRequested, 0, "")]
+
+/-- What one run of the scripted platform's window showed. -/
+structure WindowRun where
+  /-- The events pulled from the editor queue while the window ran, in order. -/
+  events : List Editor.Ffi.Event
+  /-- Whether every event had a stamp that was set, was not before the stamp
+  of the event before it, and was not after the input clock's reading once
+  the event was pulled. -/
+  stamped : Bool
+  /-- Whether `windowRun` was still running once every event had been pulled
+  and before the window was closed. -/
+  waited : Bool
+  /-- What `windowRun` returned after the close; `none` if it did not return
+  in time. -/
+  result : Option (Except String Unit)
+
+/-- Runs the scripted platform's window on a dedicated task, pulls as many
+events from the editor queue as its sample has, closes the window and waits
+for the run. It always closes the window, so a check that fails leaves no run
+behind to hold the main-thread service. -/
+def runScripted (composition : Bool) : IO WindowRun := do
+  let run ← IO.asTask (prio := .dedicated) (Editor.Ffi.windowRun .scripted composition)
+  let mut events := #[]
+  let mut stamped := true
+  let mut last : UInt64 := 0
+  for _ in [0:(windowSample composition).length] do
+    let some event ← pull .editor | break
+    let pulledAt ← Editor.Ffi.inputClock
+    stamped := stamped && event.stamp > 0 && last <= event.stamp && event.stamp <= pulledAt
+    last := event.stamp
+    events := events.push event
+  IO.sleep 20
+  let waited := !(← IO.hasFinished run)
+  Editor.Ffi.windowClose .scripted
+  let result ←
+    if ← eventually (IO.hasFinished run) then
+      some <$> IO.ofExcept run.get
+    else
+      pure none
+  return { events := events.toList, stamped, waited, result }
+
+/-- Whether `events` are those of `windowSample composition`, in order, each
+from the window source of the window number 1. -/
+def isWindowSample (composition : Bool) (events : List Editor.Ffi.Event) : Bool :=
+  events.all (·.source == { kind := .window, id := 1 }) &&
+    events.map (fun event => (event.kind, event.code, event.text)) == windowSample composition
+
+/-- The checks of the window's bindings, on the library's scripted platform:
+nothing opens and no display is needed. A run blocks until the window is
+closed, so each runs on a dedicated task, and the events are pulled on
+dedicated tasks too. None of them quits the queues. -/
+def windowChecks (_ : Unit) : List Check :=
+  [{
+      name :=
+        "a window's inputs arrive on the editor queue in order, from the window source, with the kind, the code and the text of each, the first of them that the window opened, with the platform's name",
+      run := return isWindowSample true (← runScripted true).events },
+    { name := "run with composition not allowed, the same window reports no composition event"
+      run := return isWindowSample false (← runScripted false).events },
+    { name :=
+        "each of a window's events is stamped on the input clock: with a stamp that is set, is not before the stamp of the event before it, and is not after the clock's reading once the event is pulled"
+      run := do
+        let ran ← runScripted true
+        return ran.stamped && ran.events.length == (windowSample true).length },
+    { name := "running a window returns only after the window is closed, and says that it ran"
+      run := do
+        let ran ← runScripted true
+        return ran.waited && ran.result matches some (.ok ()) },
+    { name := "the input clock is never 0 and does not go back"
+      run := do
+        let first ← Editor.Ffi.inputClock
+        return first > 0 && first <= (← Editor.Ffi.inputClock) }]
+
 /-- Every check, in the order they run. -/
 def checks (_ : Unit) : List Check :=
   entryChecks () ++ handleChecks () ++ dataChecks () ++ queueChecks () ++ timerChecks () ++
-    documentChecks ()
+    documentChecks () ++
+    windowChecks ()
 
 /-- Runs `checks` and returns the names of those that failed. A check that
 throws has failed, and its error is reported with its name. -/

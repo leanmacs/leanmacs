@@ -102,6 +102,37 @@ check that the completion tag is known (`FfiTest.dataChecks`);
 real service through the runner (`ContractTest.jobChecks`); the unit tests
 of `timers.rs` and `tests/timers.rs` in `editor-ffi`, which need no Lean.
 
+### The window
+
+A window is run by the library's main-thread service, and what it reports
+arrives on the editor queue.
+
+- `windowRun` is one blocking binding: it returns when the window has
+  closed. Call it from Lean's main thread or a dedicated task, never from the
+  thread pool. While it runs, the main-thread service answers nothing else,
+  so ask `mainThreadProbe` before, not during.
+- How the window is opened goes in as scalars, one for each option: today,
+  whether an input method may compose. A failure to open comes back as a
+  reason, in an `Except`.
+- What the window reports is events from the window source, of the kinds
+  from `windowOpened` on, pulled with `nextEvent` like any other. Each is
+  stamped with the reading of the library's input clock when the window
+  reported it, and `inputClock` reads the same clock.
+- Lean closes the window. A window the user asks to close reports
+  `closeRequested` and stays open until `windowClose`, which any thread may
+  call.
+- The platform is an enumeration (`Platform`). The scripted one is the
+  library's fake: it opens nothing and needs no display, and it is what
+  every check runs. The real one opens a window.
+
+The editor does not call these bindings yet. Its own port for the window,
+with its model and its contract, arrives with the command loop.
+
+Tests: the five window checks of `ffi-test` (`FfiTest.windowChecks`), on the
+scripted platform; the unit tests of `window.rs` and `tests/window.rs` in
+`editor-ffi`, which need no Lean. Nothing in the gate runs the real platform:
+`mise run window-contract` does, on demand.
+
 ### Calls go one way
 
 Lean calls the library, and the library never calls Lean: no binding hands
@@ -475,5 +506,53 @@ opaque timersCancel (id : UInt64) : IO Bool
 see that a request reached the service and that a cancel removed it. -/
 @[extern "editor_glue_timers_pending"]
 opaque timersPending : IO UInt64
+
+/-- Which of the library's platforms runs the window. -/
+inductive Platform where
+  /-- The library's scripted platform, a fake for tests: it opens nothing,
+  needs no display, and reports one fixed script. -/
+  | scripted
+  /-- The real window, over winit. It needs a display. -/
+  | winit
+  deriving DecidableEq, Repr
+
+/-- `windowRun` as it crosses: the glue builds `none` when the window ran and
+`some` of the reason when it did not. -/
+@[extern "editor_glue_window_run"]
+private opaque windowRunRaw (platform : Platform) (composition : Bool) : IO (Option String)
+
+/-- Runs the window on `platform`, with an input method allowed to compose
+or not, and returns once the window has closed: `.ok ()` when it ran, and
+`.error` with the reason when no window could be opened.
+
+The library's main-thread service runs the window's loop, and this blocks
+until the loop has ended, so call it from Lean's main thread or a dedicated
+task, never from the thread pool. While it runs, the main-thread service
+answers nothing else: `mainThreadProbe` would wait for the window to close.
+
+What the window reports arrives on the editor queue, from the window source,
+each event stamped with the reading of `inputClock` when the window reported
+it. The window does not close by itself: when the user asks, a
+`closeRequested` event arrives, and the window stays open until
+`windowClose`. -/
+def windowRun (platform : Platform) (composition : Bool) : IO (Except String Unit) := do
+  match ← windowRunRaw platform composition with
+  | none =>
+    return .ok ()
+  | some reason =>
+    return .error reason
+
+/-- Asks the window `platform` is running to close, so that `windowRun`
+returns. Any thread may call it, and it does nothing when that platform runs
+no window. -/
+@[extern "editor_glue_window_close"]
+opaque windowClose (platform : Platform) : IO Unit
+
+/-- The time on the library's input clock, in nanoseconds since the clock
+began: the clock a window's events are stamped on. It never goes back, and
+it is never 0. The time from an event's stamp to this reading is how long the
+event took to reach whoever reads it. -/
+@[extern "editor_glue_input_clock"]
+opaque inputClock : IO UInt64
 
 end Editor.Ffi

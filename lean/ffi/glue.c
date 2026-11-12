@@ -335,6 +335,52 @@ lean_obj_res editor_glue_timers_pending(void) {
   return lean_io_result_mk_ok(lean_box_uint64(editor_ffi_timers_pending()));
 }
 
+// ---- The window ----
+//
+// Running the window is one blocking call: the library's main-thread service
+// runs the window's loop, and the call returns when Lean has closed the
+// window from another thread. What the window reports arrives as events on
+// the editor queue. A platform is named by the tag of Lean's
+// `Editor.Ffi.Platform`, which the library checks.
+
+// The library's `RawRefusal`.
+typedef struct {
+  uint8_t *reason;
+  size_t reason_len;
+} editor_ffi_raw_refusal;
+bool editor_ffi_window_run(uint8_t platform, bool composition,
+                           editor_ffi_raw_refusal *out);
+bool editor_ffi_window_close(uint8_t platform);
+uint64_t editor_ffi_input_clock_now(void);
+
+// `Editor.Ffi.windowRunRaw : Platform → Bool → IO (Option String)`. Blocks in
+// Rust until the window has closed. `none` when the window ran, and `some` of
+// the reason when it did not.
+lean_obj_res editor_glue_window_run(uint8_t platform, uint8_t composition) {
+  editor_ffi_raw_refusal refusal;
+  if (editor_ffi_window_run(platform, composition, &refusal)) {
+    return lean_io_result_mk_ok(lean_box(0)); // `none`
+  }
+  lean_object *reason = lean_mk_string_from_bytes((const char *)refusal.reason,
+                                                  refusal.reason_len);
+  editor_ffi_text_free(refusal.reason, refusal.reason_len);
+  lean_object *some = lean_alloc_ctor(1, 1, 0);
+  lean_ctor_set(some, 0, reason);
+  return lean_io_result_mk_ok(some);
+}
+
+// `Editor.Ffi.windowClose : Platform → IO Unit`. The library returns whether
+// the tag names a platform, which a tag from Lean's `Platform` always does.
+lean_obj_res editor_glue_window_close(uint8_t platform) {
+  editor_ffi_window_close(platform);
+  return lean_io_result_mk_ok(lean_box(0));
+}
+
+// `Editor.Ffi.inputClock : IO UInt64`
+lean_obj_res editor_glue_input_clock(void) {
+  return lean_io_result_mk_ok(lean_box_uint64(editor_ffi_input_clock_now()));
+}
+
 // ---- The process entry point ----
 //
 // Lean's generated `main` runs the Lean `main` on a thread Lean creates, so
