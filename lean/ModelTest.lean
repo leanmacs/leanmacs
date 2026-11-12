@@ -1,6 +1,7 @@
 import Editor.Command.Append
 import Editor.Config.Reload
 import Editor.Job.Contract
+import Editor.Job.Fake
 import Editor.Job.Model
 import Editor.Text.Contract
 
@@ -27,10 +28,16 @@ The job system is tested here with no Rust library:
 
 - `jobModelChecks`: the job port's pure model (`Editor/Job/Model.lean`), its
   clock and its cancellation, and what only the model's exact clock can
-  show: that a timer does not drift.
+  show: that a timer does not drift;
+- `waitChecks`: the table of waits and the fake clock, with no job;
+- `runnerChecks`: the runner (`Editor/Job/Runner.lean`) over the fake clock
+  (`Editor/Job/Fake.lean`). A check controls time by moving its own fake
+  clock and holds a job on a promise it resolves; it sleeps for nothing, and
+  polls only as the bound after which it fails.
 
-The job port's contract (`Editor/Job/Contract.lean`) is run against that
-model here, like the text port's.
+The job port's contract (`Editor/Job/Contract.lean`) is run here against the
+model and against the runner over the fake clock. `contract-test` runs the
+same list against the runner over the Rust library's timer service.
 
 The config session's decisions are tested here too, with no elaborator:
 
@@ -261,6 +268,275 @@ def makes (text : String) : EditorM Unit :=
 /-- The texts `command` leaves when it runs against a text model with none. -/
 def textsOf (command : EditorM Unit) : Array String :=
   (command.runModel {}).2.texts
+
+/-- How long a check waits, in milliseconds, for something that should happen
+at once. Only broken code takes this long, and the check then fails instead
+of hanging. -/
+def patience : Nat :=
+  5000
+
+/-- Polls `condition` until it holds; `false` if it still does not after
+`patience` milliseconds. The bound is only how long a check takes to fail:
+what a check waits for is something it controls. -/
+def eventually (condition : IO Bool) : IO Bool := do
+  let deadline := (← IO.monoMsNow) + patience
+  repeat
+    if ← condition then
+      return true
+    if (← IO.monoMsNow) >= deadline then
+      break
+    IO.sleep 1
+  return false
+
+/-- How `wait` ended; `none` while it is in flight. -/
+def ended (wait : IO.Promise Job.Completion) : BaseIO (Option Job.Completion) := do
+  if ← wait.isResolved then
+    return wait.result?.get
+  else
+    return none
+
+/-- A table of waits and a fake clock over it: what a check of the job runner
+works with. Each check has its own, so no check moves another's clock. -/
+structure Rig where
+  /-- The fake clock. -/
+  clock : Job.FakeClock
+  /-- The table of waits and the clock, as the runner is given them. -/
+  services : Job.Services
+
+/-- A rig whose clock reads 0 and has no waits. -/
+def Rig.new : BaseIO Rig := do
+  let completions ← Job.Completions.new
+  let clock ← Job.FakeClock.new completions
+  return { clock, services := { completions, timers := clock.timers } }
+
+/-- Registers a wait in `rig`'s table and starts it at the clock for
+`deadline`, as the runner does. `log` gets the wait's id when it ends,
+on the thread that ended it, so the order of a log is the order the waits
+ended in. -/
+def Rig.wait (rig : Rig) (deadline : Nat) (log : IO.Ref (Array UInt64)) :
+    BaseIO (UInt64 × IO.Promise Job.Completion) := do
+  let (id, wait) ← rig.services.completions.register
+  BaseIO.chainTask wait.result? (fun _ => log.modify (·.push id)) (sync := true)
+  rig.services.timers.start id deadline
+  return (id, wait)
+
+/-- The checks of the table of waits and of the fake clock
+(`Editor/Job/Runner.lean`, `Editor/Job/Fake.lean`), with no job. -/
+def waitChecks : List Check :=
+  [{
+      name :=
+        "the table of waits gives each wait an id of its own, from 1, and finish ends exactly that wait and forgets it",
+      run := do
+        let table ← Job.Completions.new
+        let (first, firstWait) ← table.register
+        let (second, secondWait) ← table.register
+        table.finish first .completed
+        return first == 1 && second == 2 && (← ended firstWait) == some .completed &&
+            (← ended secondWait) == none &&
+            (← table.waiting) == 1 },
+    { name :=
+        "a wait ends once: a second finish, and a finish for an id that is not waiting, change nothing, and no id is used again"
+      run := do
+        let table ← Job.Completions.new
+        let (id, wait) ← table.register
+        table.finish id .cancelled
+        table.finish id .completed
+        table.finish 99 .completed
+        let (next, _) ← table.register
+        return (← ended wait) == some .cancelled && next == id + 1 && (← table.waiting) == 1 },
+    { name :=
+        "the fake clock completes the waits that are due when it is advanced, earliest deadline first, and leaves the others waiting"
+      run := do
+        let rig ← Rig.new
+        let log ← IO.mkRef #[]
+        let (late, _) ← rig.wait 30 log
+        let (early, _) ← rig.wait 10 log
+        let (middle, _) ← rig.wait 20 log
+        let (last, lastWait) ← rig.wait 40 log
+        let before ← log.get
+        rig.clock.advance 30
+        let due ← log.get
+        let waiting ← rig.clock.waiting
+        let lastEnded ← ended lastWait
+        rig.clock.advance 10
+        return before.isEmpty && due == #[early, middle, late] && waiting == 1 &&
+            lastEnded == none &&
+            (← log.get) == #[early, middle, late, last] &&
+            (← rig.clock.now) == 40 },
+    { name := "the fake clock completes a wait started at or after its deadline at once"
+      run := do
+        let rig ← Rig.new
+        let log ← IO.mkRef #[]
+        rig.clock.advance 30
+        let (now, nowWait) ← rig.wait 30 log
+        let (past, pastWait) ← rig.wait 7 log
+        return (← log.get) == #[now, past] && (← ended nowWait) == some .completed &&
+            (← ended pastWait) == some .completed &&
+            (← rig.clock.waiting) == 0 &&
+            (← rig.clock.started) == #[(now, 30), (past, 7)] },
+    { name :=
+        "the fake clock records each wait started with the thread that started it, and each wait withdrawn, and never completes a withdrawn wait"
+      run := do
+        let rig ← Rig.new
+        let log ← IO.mkRef #[]
+        let (kept, _) ← rig.wait 10 log
+        let (dropped, droppedWait) ← rig.wait 10 log
+        rig.services.timers.cancel dropped
+        -- Withdrawing a wait that is not waiting is not recorded.
+        rig.services.timers.cancel 99
+        rig.clock.advance 10
+        return (← log.get) == #[kept] && (← ended droppedWait) == none &&
+            (← rig.clock.started) == #[(kept, 10), (dropped, 10)] &&
+            (← rig.clock.withdrawn) == #[dropped] &&
+            (← rig.clock.startThreads) == #[← IO.getTID, ← IO.getTID] }]
+
+/-- A job's outcome as a check compares it: the command it finished with is
+replaced by the texts that command leaves, since commands cannot be compared. -/
+def texts : Job.Outcome (EditorM Unit) → Job.Outcome (Array String)
+  | .finished command => .finished (textsOf command)
+  | .failed message => .failed message
+  | .cancelled => .cancelled
+
+/-- `job` as it is spawned by a check: it finishes with a command that makes
+one text, the job's value as a string. -/
+def reporting {α : Type} [ToString α] (job : Unit → JobM α) : Work :=
+  Work.of job fun value => makes (toString value)
+
+/-- A job a check spawned. -/
+structure Spawned where
+  /-- The job. -/
+  handle : Job.Handle
+  /-- How many times the runner has called the job's `finished`. -/
+  finishes : IO.Ref Nat
+
+namespace Spawned
+
+/-- How the job ended, as a check compares it; `none` while it runs. -/
+def outcome (spawned : Spawned) : BaseIO (Option (Job.Outcome (Array String))) :=
+  return (← spawned.handle.outcome?).map texts
+
+/-- Whether the job ended as `expected`, and the runner then said so once.
+Waits for both, with a bound. -/
+def endedAs (spawned : Spawned) (expected : Job.Outcome (Array String)) : IO Bool := do
+  let ended ← eventually spawned.handle.ended
+  -- The runner says a job has ended after it has left the outcome.
+  let said ← eventually (return (← spawned.finishes.get) == 1)
+  return ended && said && (← spawned.outcome) == some expected
+
+end Spawned
+
+/-- Spawns `work` on `rig`, counting the calls of its `finished`. -/
+def Rig.spawn (rig : Rig) (work : Work) : BaseIO Spawned := do
+  let finishes ← IO.mkRef 0
+  return { handle := ← Job.spawn rig.services work (finishes.modify (· + 1)), finishes }
+
+/-- Runs `job` on the runner over a fake clock of its own, and returns how it
+ended. The driver stands in for time: while a wait is waiting it advances the
+clock to the earliest deadline. A job that does not end in time has failed. -/
+def runOnFake (job : JobM Bool) : IO (Job.Outcome Bool) := do
+  let rig ← Rig.new
+  let spawned ← rig.spawn (reporting fun _ => job)
+  let ended ←
+    eventually do
+        if ← spawned.handle.ended then
+          return true
+        if let some deadline← rig.clock.nextDeadline then
+          rig.clock.advance (deadline - (← rig.clock.now))
+        return false
+  unless ended do
+    return .failed "the job did not end"
+  match ← spawned.outcome with
+  | some (.finished texts) =>
+    return .finished (texts == #["true"])
+  | some (.failed message) =>
+    return .failed message
+  | _ =>
+    return .cancelled
+
+/-- The names of the job port's contract properties that do not hold of the
+runner over the fake clock. -/
+def jobRunnerFailures : IO (List String) := do
+  let failed ← JobContract.failures runOnFake JobContract.properties
+  return failed.map (s!"the job runner over the fake clock: {·}")
+
+/-- How many different thread ids `threads` holds. -/
+def distinct (threads : Array UInt64) : Nat :=
+  (threads.foldl (fun seen thread => if seen.contains thread then seen else seen.push thread)
+      #[]).size
+
+/-- The checks of the job runner (`Editor/Job/Runner.lean`), each on a fake
+clock of its own. A check holds what it controls (the clock, a promise) and
+polls only as the bound after which it fails. -/
+def runnerChecks : List Check :=
+  [{
+      name :=
+        "a job that runs to its end is finished with its command, a job that throws is failed with its message, and the runner says so once for each",
+      run := do
+        let rig ← Rig.new
+        let ends ←
+          rig.spawn
+              (reporting fun _ => do
+                sleep 2
+                return 42)
+        let throws ←
+          rig.spawn fun _ => do
+              sleep 2
+              throw "no thanks"
+        unless ← eventually (return (← rig.clock.waiting) == 2) do
+          return false
+        rig.clock.advance 2
+        return (← ends.endedAs (.finished #["42"])) && (← throws.endedAs (.failed "no thanks")) },
+    { name :=
+        "100,000 now requests in one job are answered on one thread, and none of them registers a wait"
+      run := do
+        let rig ← Rig.new
+        let reads ←
+          rig.spawn
+              (reporting fun _ => do
+                let mut last := 0
+                for _ in [0:100000] do
+                  last ← now
+                return last)
+        let ended ← reads.endedAs (.finished #["0"])
+        -- A request that needs no wait is a direct call on the job's thread:
+        -- a runner that hopped to a task for each would read the clock from
+        -- many threads.
+        return ended && (← rig.clock.reads) == 100000 && (← rig.clock.readThreads).size == 1 &&
+            (← rig.clock.started).isEmpty &&
+            (← rig.services.completions.register).1 == 1 },
+    { name :=
+        "jobs blocked in waits do not delay a new pool task, and their waits hold no thread: more jobs than the pool has threads all reach their wait from fewer threads than there are jobs"
+      run := do
+        let rig ← Rig.new
+        let count := max 64 ((System.Platform.Internal.getHardwareConcurrency ()).toNat + 1)
+        let mut jobs := #[]
+        for _ in [0:count] do
+          jobs :=
+            jobs.push
+              (←
+                rig.spawn
+                    (reporting fun _ => do
+                      sleep 1000
+                      return true))
+        try
+          -- A runner that parked a thread in a system call for each wait
+          -- would let only a pool's worth of jobs get this far.
+          unless ← eventually (return (← rig.clock.waiting) == count) do
+            return false
+          let ran ← IO.Promise.new
+          discard <| BaseIO.asTask (ran.resolve ())
+          let notDelayed ← eventually ran.isResolved
+          -- The clock has not moved, so every job is still in its wait.
+          let allWaiting := (← rig.clock.waiting) == count && (← rig.clock.now) == 0
+          let noneEnded ← jobs.allM fun job => return !(← job.handle.ended)
+          -- A runner that parked each job in `IO.wait` would have had Lean add
+          -- a thread for every one of them: as many threads as jobs.
+          let threads := distinct (← rig.clock.startThreads)
+          rig.clock.advance 1000
+          let allFinished ← jobs.allM (·.endedAs (.finished #["true"]))
+          return notDelayed && allWaiting && noneEnded && threads < count && allFinished
+        finally
+          rig.clock.advance 1000 }]
 
 /-- The texts a registered command leaves when it is a plain command, run
 against a text model with none; `none` for a command over a store. -/
@@ -912,7 +1188,8 @@ def reloadChecks : List Check :=
 
 /-- Every check, in the order they run. -/
 def checks : List Check :=
-  programChecks ++ jobModelChecks ++ setupChecks ++ registryChecks ++ storeChecks ++
+  programChecks ++ jobModelChecks ++ waitChecks ++ runnerChecks ++ setupChecks ++ registryChecks ++
+    storeChecks ++
     sessionChecks ++
     reloadChecks
 
@@ -958,11 +1235,12 @@ on stderr the ones that do not. -/
 def main : IO UInt32 := do
   let failed :=
     (← ModelTest.failures ModelTest.checks) ++ (← ModelTest.textFailures) ++
-      (← ModelTest.jobModelFailures)
+      (← ModelTest.jobModelFailures) ++
+      (← ModelTest.jobRunnerFailures)
   for name in failed do
     IO.eprintln s!"FAILED: {name}"
   unless failed.isEmpty do
     return 1
   IO.println
-      s!"model-test: {ModelTest.checks.length} checks passed, {ModelTest.textProperties.length} properties hold of the text model, and {Editor.JobContract.properties.length} of the job model"
+      s!"model-test: {ModelTest.checks.length} checks passed, {ModelTest.textProperties.length} properties hold of the text model, and {Editor.JobContract.properties.length} of the job model and of the job runner over the fake clock"
   return 0

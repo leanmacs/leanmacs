@@ -128,6 +128,23 @@ inductive Outcome (α : Type) where
 
 end Job
 
+/-- A job as it is spawned. It finishes with a command: the one that takes
+its result to the editor, which the editor thread runs like any command. So
+the type of a job's result never leaves the job, and the job port never
+refers to the editor's.
+
+It is a function, so that none of the job runs before the task that runs it
+exists: the runner applies it on that task (`Job.spawn`,
+`Editor/Job/Runner.lean`). -/
+abbrev Work :=
+  Unit → JobM (EditorM Unit)
+
+/-- `job` as it is spawned, with `handler` making the command that receives
+its result. The handler is applied where the job ends, on the job's thread,
+which only builds the command: the command runs on the editor thread. -/
+def Work.of {α : Type} (job : Unit → JobM α) (handler : α → EditorM Unit) : Work := fun token =>
+  handler <$> job token
+
 /-! ## The split, checked when this module is compiled
 
 Each check below is an `example` that builds only while a violation of the
