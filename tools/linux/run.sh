@@ -26,6 +26,13 @@
 #   to create encoded metadata from file`); `ci` runs `lint`, `doc` and `test`
 #   at once, and file locks do not seem to hold on that mount.
 #
+# Docker's disk is the scarce one, so in the container Cargo's development
+# profile is built without debug information (`CARGO_PROFILE_DEV_DEBUG=0`).
+# Nothing the gate does reads it: the same lints, documentation and tests run
+# and a failing test still names itself, only without line numbers in a
+# backtrace. With it, `target/` on the volume was 2.1 GB once the window
+# library was in the dependency graph.
+#
 # `--clean` empties the copy's `lean/.lake/build/` and Cargo's `target/` before
 # the gate runs, and keeps the toolchains and Cargo's registry: everything is
 # compiled again and nothing is downloaded again.
@@ -139,10 +146,12 @@ on_host() {
   cache=$(cd "$cache" && pwd)
   copy_source "$root" "$cache/work"
 
+  # No debug information in Cargo's development builds: see the header.
   docker run --rm --init \
     --volume "$cache/work:/work" \
     --volume "$cache/home:/cache" \
     --volume "$volume:/cargo" \
+    --env CARGO_PROFILE_DEV_DEBUG=0 \
     "$image" /work/tools/linux/run.sh inside "$mode" "$@"
 }
 
