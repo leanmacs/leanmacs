@@ -1,7 +1,7 @@
 import ConfigFixture
 import Editor.Config.Directory
 import Editor.Config.Elaborate
-import Editor.Text.Real
+import Editor.Headless
 
 /-!
 # Checks of the config session against the real elaborator
@@ -47,6 +47,8 @@ structure Context where
   /-- What `ConfigFixture.bump` returned to compiled code before the base was
   imported. -/
   bumped : Nat
+  /-- The next source id no host of this process has posted under. -/
+  ids : IO.Ref UInt64
 
 /-- Evaluates the constant `name` of `environment` as an `IO Nat`. It is
 `unsafe` because evaluating a constant trusts the type it is given. -/
@@ -235,9 +237,227 @@ def directoryChecks (_ : Unit) : List Check :=
     { name := "an empty directory is a config with no chunks"
       run := IO.FS.withTempDir fun directory => return (← chunksOf directory).isEmpty }]
 
+/-- How long a check waits, in milliseconds, for something that should happen
+at once. Only broken code takes this long, and the check then fails instead
+of hanging. -/
+def patience : Nat :=
+  5000
+
+/-- A host running for one check: the headless loop on the real queue and the
+real text binding, over a config directory the check owns. -/
+structure Session where
+  /-- The host. -/
+  host : Headless.Host
+  /-- The config directory: a temporary directory of this check's. -/
+  directory : System.FilePath
+  /-- Every line the host has emitted, oldest first. -/
+  output : IO.Ref (Array String)
+
+namespace Session
+
+/-- Sends `requests` to the editor thread in order, and waits until it has
+handled them and no reload is running. Throws if that takes longer than
+`patience`. -/
+def ask (session : Session) (requests : List Headless.Request) : IO Unit := do
+  for request in requests do
+    session.host.send request
+  unless ← session.host.settle patience do
+    throw (IO.userError "the editor thread did not settle")
+
+/-- Replaces the text of the chunk called `name`, or adds it. -/
+def write (session : Session) (name text : String) : IO Unit :=
+  IO.FS.writeFile (session.directory / name) text
+
+/-- A line as a check compares it. A diagnostic's position and message are
+Lean's, so a diagnostic line is cut down to its source and its severity;
+every other line is kept whole. -/
+def comparable (line : String) : String :=
+  match line.splitOn ": " with
+  | "diagnostic" :: place :: severity :: _ =>
+    s!"diagnostic: {(place.splitOn ":").headD ""}: {severity}"
+  | _ => line
+
+/-- Every line the host has emitted, as a check compares them. -/
+def lines (session : Session) : IO (Array String) :=
+  return (← session.output.get).map comparable
+
+end Session
+
+/-- Runs `check` against a host started on a fresh temporary directory
+holding `files`, with the real elaborator, and stops the host. `false` if the
+check did not hold or the host did not stop. The directory is removed. -/
+def withHost (context : Context) (files : List (String × String)) (check : Session → IO Bool) :
+    IO Bool :=
+  IO.FS.withTempDir fun directory => do
+    writeFiles directory files
+    let output ← IO.mkRef #[]
+    -- Hosts follow one another on one queue: each gets source ids of its
+    -- own, so none takes a late event of an earlier one for its own.
+    let requests ← context.ids.modifyGet fun next => (next, next + 2)
+    let host ←
+      Headless.start
+          { elaborator := context.elaborator, source := Config.Directory.source directory,
+            emit := fun line => output.modify (·.push line), requests, wakeups := requests + 1 }
+    try
+      let held ← check { host, directory, output }
+      let stopped ← host.stop patience
+      return held && stopped
+    catch error =>
+      discard <| host.halt patience
+      throw error
+
+/-- A chunk that defines the command `greet`, which makes a text holding
+`text`. -/
+def greetChunk (text : String) : String :=
+  "def greet : EditorM Unit := do\n  discard <| createText \"" ++ text ++ "\"\n"
+
+/-- A chunk whose `setup` registers `greet`. -/
+def setupChunk : String :=
+  "def setup : SetupM Unit := do\n  command \"greet\" greet\n"
+
+/-- A config of two chunks: `greet`, which makes a text holding "v1", and the
+`setup` that registers it. -/
+def greetConfig : List (String × String) :=
+  [("10-greet.lean", greetChunk "v1"), ("20-setup.lean", setupChunk)]
+
+/-- A chunk with a store of one number at version 1, and a `setup` that
+declares it and registers `bump`, which adds `step` to it. -/
+def counterChunk (step : Nat) : String :=
+  "structure Counter where
+  n : Nat
+
+def counter : Store Counter :=
+  { name := \"counter\", version := 1, initial := ⟨0⟩, encode := fun c => .nat c.n,
+    decode := fun
+      | .nat n => some ⟨n⟩
+      | _ => none }
+
+def setup : SetupM Unit := do
+  counter.declare
+  counter.command \"bump\" fun c => pure { c with n := c.n + " ++
+    toString step ++
+    " }
+"
+
+/-- The store of `counterChunk` with its type changed and its version raised
+to 2: the number gets a label, and a number written at version 1 is migrated
+with the label \"migrated\". -/
+def labelledCounterChunk : String :=
+  "structure Counter where
+  n : Nat
+  label : String
+
+def counter : Store Counter :=
+  { name := \"counter\", version := 2, initial := ⟨0, \"new\"⟩,
+    encode := fun c => .record [(\"n\", .nat c.n), (\"label\", .str c.label)],
+    decode := fun
+      | .record [(\"n\", .nat n), (\"label\", .str label)] => some ⟨n, label⟩
+      | _ => none,
+    migrate := fun
+      | 1, .nat n => some (.record [(\"n\", .nat n), (\"label\", .str \"migrated\")])
+      | _, _ => none }
+
+def setup : SetupM Unit := do
+  counter.declare
+  counter.command \"bump\" fun c => pure { c with n := c.n + 1 }
+"
+
+/-- The checks of the headless host (`Editor/Headless.lean`) with the real
+elaborator, the real queue and the real text binding: the phase's acceptance
+tests, asserted on the lines the host emits. -/
+def hostChecks (context : Context) : List Check :=
+  [{ name := "reload replaces a command",
+     run :=
+       withHost context greetConfig fun session => do
+         session.ask [.reload]
+         session.ask [.run "greet", .show]
+         session.write "10-greet.lean" (greetChunk "v2")
+         session.ask [.reload]
+         session.ask [.run "greet", .show]
+         return (← session.lines) ==
+             #["reload 1: installed, 2 chunks, 1 commands", "run greet: ok", "commands: greet",
+               "text 0: \"v1\"", "reload 2: installed, 2 chunks, 1 commands", "run greet: ok",
+               "commands: greet", "text 0: \"v1\"", "text 1: \"v2\""] },
+    { name := "a type error keeps the old config"
+      run :=
+        withHost context greetConfig fun session => do
+          session.ask [.reload]
+          session.write "10-greet.lean" "def greet : EditorM Unit := \"not a command\"\n"
+          session.ask [.reload]
+          session.ask [.run "greet", .show]
+          return (← session.lines) ==
+              #["reload 1: installed, 2 chunks, 1 commands", "reload 2: rejected",
+                "diagnostic: 10-greet.lean: error", "run greet: ok", "commands: greet",
+                "text 0: \"v1\""] },
+    { name := "a throwing setup keeps the old config"
+      run :=
+        withHost context greetConfig fun session => do
+          session.ask [.reload]
+          session.write "20-setup.lean"
+              "def setup : SetupM Unit := do\n  command \"other\" greet\n  throw \"no thanks\"\n"
+          session.ask [.reload]
+          session.ask [.run "other", .show]
+          -- The message is the one config threw, so the whole line is ours.
+          return (← session.output.get) ==
+              #["reload 1: installed, 2 chunks, 1 commands", "reload 2: rejected",
+                "diagnostic: setup:0:0: error: no thanks", "run other: no such command",
+                "commands: greet"] },
+    { name := "a reload does not double-register"
+      run :=
+        withHost context greetConfig fun session => do
+          session.ask [.reload]
+          session.ask [.reload]
+          session.write "10-greet.lean" (greetChunk "v1" ++ "\n-- changed\n")
+          session.ask [.reload]
+          session.ask [.run "greet", .show]
+          return (← session.lines) ==
+              #["reload 1: installed, 2 chunks, 1 commands",
+                "reload 2: installed, 2 chunks, 1 commands",
+                "reload 3: installed, 2 chunks, 1 commands", "run greet: ok", "commands: greet",
+                "text 0: \"v1\""] },
+    { name := "a store value survives a reload"
+      run :=
+        withHost context [("config.lean", counterChunk 1)] fun session => do
+          session.ask [.reload]
+          session.ask [.run "bump", .run "bump", .show]
+          session.write "config.lean" (counterChunk 10)
+          session.ask [.reload]
+          session.ask [.show, .run "bump", .show]
+          return (← session.lines) ==
+              #["reload 1: installed, 1 chunks, 1 commands", "run bump: ok", "run bump: ok",
+                "commands: bump", "store counter v1: 2",
+                "reload 2: installed, 1 chunks, 1 commands", "commands: bump",
+                "store counter v1: 2", "run bump: ok", "commands: bump", "store counter v1: 12"] },
+    { name := "a store migrates when a reload changes its type and raises its version"
+      run :=
+        withHost context [("config.lean", counterChunk 1)] fun session => do
+          session.ask [.reload]
+          session.ask [.run "bump", .run "bump"]
+          session.write "config.lean" labelledCounterChunk
+          session.ask [.reload]
+          session.ask [.show, .run "bump", .show]
+          return (← session.lines) ==
+              #["reload 1: installed, 1 chunks, 1 commands", "run bump: ok", "run bump: ok",
+                "reload 2: installed, 1 chunks, 1 commands", "commands: bump",
+                "store counter v2: {n: 2, label: \"migrated\"}", "run bump: ok", "commands: bump",
+                "store counter v2: {n: 3, label: \"migrated\"}"] },
+    { name := "a chunk that declares initialize keeps the old config"
+      run :=
+        withHost context greetConfig fun session => do
+          session.ask [.reload]
+          -- No command of this config reads the constant, so a host that
+          -- wrongly installed it would fail this check, not abort.
+          session.write "15-state.lean" "initialize table : IO.Ref Nat ← IO.mkRef 0\n"
+          session.ask [.reload]
+          session.ask [.run "greet", .show]
+          return (← session.lines) ==
+              #["reload 1: installed, 2 chunks, 1 commands", "reload 2: rejected",
+                "diagnostic: 15-state.lean: error", "run greet: ok", "commands: greet",
+                "text 0: \"v1\""] }]
+
 /-- Every check, in the order they run. -/
 def checks (context : Context) : List Check :=
-  elaboratorChecks context ++ directoryChecks ()
+  elaboratorChecks context ++ directoryChecks () ++ hostChecks context
 
 /-- Runs `checks` and returns the names of those that failed. A check that
 throws has failed, and its error is reported with its name. -/
@@ -259,7 +479,8 @@ def run (sysroot oleanDir : String) : IO UInt8 := do
   -- Compiled code writes to the fixture's cell before the base is imported.
   let bumped ← ConfigFixture.bump
   let base ← real.base
-  let context : Context := { elaborator := { real with base := pure base }, base, bumped }
+  let context : Context :=
+    { elaborator := { real with base := pure base }, base, bumped, ids := ← IO.mkRef 100 }
   let checks := checks context
   let failed ← failures checks
   for name in failed do
