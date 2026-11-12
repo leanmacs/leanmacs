@@ -161,9 +161,10 @@ Rust crates:
 |---|---|
 | `editor-text` | Rope, transactions, anchors, undo, edit log, diff. Pure. |
 | `editor-layout` | Display lists and line caches over a `Shaper` port. |
-| `editor-shape-parley`, `editor-render-wgpu`, `editor-platform-winit` | Adapters for shaping, drawing and the window. |
+| `editor-shape-parley`, `editor-render-wgpu`, `editor-platform-winit` | Adapters for shaping, drawing and the window. Of these `editor-platform-winit` is built: it opens one window with winit, on the process's main thread, and translates what winit reports about it into the window port's inputs. No winit type is public. |
+| `editor-platform` | The window port, with no dependencies: what a window reports (`Input`), how it is opened (`WindowOptions`), the `Platform` trait, its published fake (`ScriptedPlatform`) and its contract. It is a crate of its own because the fake and the contract belong to the port's owner, and nothing may depend on `editor-ffi`. Its inputs are a first cut with no key identity; the display pipeline defines that. |
 | `editor-proc` | The process and pseudo-terminal service. |
-| `editor-ffi` | The static library Lean links: the C functions Lean calls, handles, the event queues, and the timer service, the first service behind the completion queue. The only crate that knows Lean exists. |
+| `editor-ffi` | The static library Lean links: the C functions Lean calls, handles, the event queues, the timer service, the first service behind the completion queue, and the main-thread service, which runs a platform's window onto the editor queue. The only crate that knows Lean exists. |
 | `editor-term-ghostty`, `editor-syntax-treesitter` | Added after the first milestone. |
 
 The Lean package in `lean/` builds the executable with Lake, which runs
@@ -190,12 +191,23 @@ Cargo for the static library:
 
 - **More of the editor is Lean**, which coding agents write less fluently
   than Rust.
-- **The macOS build needs workarounds**: the system linker in place of
-  Lean's bundled one, and a small C entry point so Rust keeps the real main
-  thread. Both are tied to the pinned Lean release.
-- **Unconfirmed**: real keyboard input reaching the window (the spike's
-  window never took focus), and Linux and Windows builds.
-- **The executable is about 180 MB**, because Lean's compiler is linked in.
+- **The build needs workarounds on each platform**, tied to the pinned Lean
+  release. On macOS and on Linux: the system compiler in place of Lean's
+  bundled one, and a small C entry point so Rust keeps the real main thread.
+  How the entry point takes the place of `main` differs: a linker entry
+  symbol on macOS, a renamed `main` (`--wrap`) on Linux. Each has a case for
+  those two platforms and a compile error with a reason anywhere else
+  ([lean-runtime.md](lean-runtime.md), "Build").
+- **Unconfirmed**: Windows, which has not been attempted; Linux on x86_64
+  and with real keys on a desktop (the gate passes on aarch64 in a
+  container, and synthetic keys reach the Lean loop there under Xvfb); and,
+  until it is recorded, real keys on macOS, which a person checks with
+  `mise run window-check` (checked by hand: see phase 6 of
+  `workspace-and-ports` in rdm).
+- **The executable is about 180 MB on macOS and 265 MB on Linux**, because
+  Lean's compiler is linked in. Linked against Lean's shared libraries it is
+  4 MB, which saves disk and nothing else ([lean-runtime.md](lean-runtime.md),
+  "Memory and size").
 
 ## Open questions
 

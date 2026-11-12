@@ -113,6 +113,44 @@ that has been checked; see open questions.
 | **Clipboard** | Read and write. |
 | **Notifications** | Post a desktop notification; request attention on the window; keep the machine awake while agents work. |
 
+What is built of the window is a first slice, enough to check that the
+keyboard reaches Lean:
+
+- **The port** is `editor-platform`'s `Platform`: `run` opens a window as
+  its options say and runs it on the calling thread until it is closed,
+  handing each thing the window reports to its caller; `close` asks a
+  running window to close, from any thread. It grows by data: a new thing a
+  window reports is a variant of `Input`, and a new way to open it a field
+  of `WindowOptions`.
+- **What a window reports today** (`Input`): that it opened, with the
+  platform's name; the focus gained or lost; a key pressed or released,
+  whether it is a repeat, whether it is a dead key, and the text it
+  produced; a step of an input method's composition (enabled, a preedit, a
+  commit, disabled); a pointer press; and a request to close. There is no
+  key identity yet, no physical or logical key and no modifiers, and no
+  resize, scale or redraw: the display pipeline defines those and may
+  replace `Input`. The one option is whether composition is allowed.
+- **The fake** is `ScriptedPlatform`: it reports that it opened, then a
+  script, and waits for a close. It records the options it was run with, and
+  leaves the composition steps out when composition is not allowed.
+  Everything above the port is tested on it, on both sides of the Lean
+  boundary.
+- **The contract** (`editor_platform::contract`): `Opened` is the first
+  input and names the platform; a close from another thread ends the run
+  within a bound; nothing is reported once the run has returned; a close
+  with no window running is harmless. It is shown to refuse platforms that
+  break each rule.
+- **The adapter** is `editor-platform-winit`, over winit, pinned exactly.
+  The gate opens no window, so it covers the adapter's translation and its
+  refusal to run off the main thread. The adapter is held to the contract by
+  an example binary that `mise run linux-window` runs under Xvfb in a
+  container and `mise run window-contract` on a desktop.
+- **Onto the queue**: `editor-ffi` runs a platform and pushes each input as
+  an event from the window source, stamped with the reading of an input
+  clock when the window reported it (`crates/editor-ffi/src/window.rs` has
+  the table). The window is run by the main-thread service
+  ([lean-runtime.md](lean-runtime.md), "Start-up and shutdown").
+
 ## Text utilities
 
 | Service | Notes |

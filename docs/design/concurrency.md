@@ -32,7 +32,11 @@ being applied, most of it the thread wake-up.
 
 On macOS the process's real main thread must run the window. Lean runs its
 `main` on a thread it creates, so a small C entry point keeps the real main
-thread for Rust and starts Lean on a second one.
+thread for Rust and starts Lean on a second one. Linux has the same entry
+point, reached another way: there the linker gives it `main`'s place
+(`--wrap=main`), because an ELF entry symbol would skip the C library's
+start-up ([lean-runtime.md](lean-runtime.md), "Build"). The window's loop
+runs on that main thread on both.
 
 ### Sharing state
 
@@ -432,9 +436,34 @@ handler never runs.
 
 ## Still to verify
 
-- Real keyboard input reaching the window. The spike's window never took
-  focus, so keys were only tested through the same queue synthetically.
-- Linux and Windows. The entry point and linker workarounds are for macOS.
+- Real keyboard input reaching the Lean loop on macOS is checked by hand:
+  see phase 6 of `workspace-and-ports` in rdm, where the report of
+  `mise run window-check` is recorded. The tool opens the real window
+  through the entry point and counts what reaches a Lean loop that pulls
+  the editor queue: keys, the text they typed, dead keys, and an input
+  method's composition. This document claims no result of it.
+
+  What the gate covers of that path, with no window: the translation from
+  winit's values to the window port's inputs; each input becoming its event
+  on a queue, stamped when it was reported (Rust, on the port's fake); the
+  bindings and the tool's loop over them, on the same fake (`ffi-test`); and
+  the tool's counting and its report (`lean-test`). What it cannot cover is
+  winit's own loop, which needs a display. `mise run linux-window` runs that
+  loop under Xvfb in a container: there the real window keeps the port's
+  contract, and keys typed by xdotool reached the Lean loop, with a dead key
+  arriving as a preedit and a commit when composition is allowed and as a
+  key marked dead when it is not. Those keys are synthetic.
+
+  The spike's window never took focus. No missing call was found: winit
+  already gives an unbundled program the regular activation policy and asks
+  to be activated when the application finishes launching. Since macOS 14
+  activation is a request the system may decline, and it declines for a
+  program started from a session nobody has brought forward, an agent's or
+  one behind a locked screen. The tool asks for the focus once and reports
+  when it arrived, and whether a click came first.
+- Linux on x86_64, and real keys on a Linux desktop under X11 and Wayland.
+  The gate passes on aarch64 in a container. Windows has not been attempted
+  ([lean-runtime.md](lean-runtime.md), "Build").
 - The rare millisecond-scale sample of the editor loop's latency while jobs
   compute. `mise run job-bench` measures the loop as built, in the headless
   host: the time from posting a request to the editor thread having run it,
@@ -479,8 +508,18 @@ handler never runs.
   pool smaller than the machine (only `LEAN_NUM_THREADS` at process start
   does that, and children inherit it) or a higher scheduling class for the
   editor thread, set in the glue.
-- Key latency itself, with a window: the benchmark's sample is a command
-  run through the headless loop, not a key.
+- Key latency in the real command loop. Two things are measured so far, and
+  neither is that. The job benchmark's sample is a command run through the
+  headless loop, not a key. The keyboard check's sample is a key: the time
+  from the instant the window's loop was handed it, read in Rust on the main
+  thread, to the instant a Lean loop had pulled the event and read the same
+  clock. That is the hand-off across the boundary and the thread wake-up,
+  with a loop that does nothing else. Under Xvfb in a container, with
+  synthetic keys, its median was 24 to 34 µs over three runs of 40 to 42
+  samples; the figures of a person typing on macOS are with phase 6 in rdm.
+  What the command loop still has to show is the time from that arrival to
+  the edit being applied and the frame asked for, with keymap lookup, a
+  command and a real editor state between.
 - A reload while every pool thread computes (see "Reload"): whether the
   reload job's elaboration can be kept off the pool, or the pool kept from
   filling with jobs that never wait. Tracked as the rdm task

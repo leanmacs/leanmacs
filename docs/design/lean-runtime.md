@@ -21,14 +21,57 @@ Lake builds the executable. The Rust library is a Lake target that runs
   one-line wrappers where a Lean `@[extern]` signature needs `lean.h`
   (which is mostly inline functions Rust cannot call), and the entry point.
   The spike's was 133 lines.
-- **macOS** needs the system linker (`LEAN_CC=/usr/bin/cc`), because Lean's
-  bundled linker cannot link Apple frameworks, plus the toolchain's library
-  directory and the framework list winit needs.
+- **The system compiler compiles the glue and links the executables**, on
+  macOS and on Linux (`LEAN_CC=/usr/bin/cc`, set by the `lean` task). The
+  clang bundled with Lean has no `pthread.h` on either, and on macOS its
+  linker cannot link Apple frameworks. With `LEAN_CC` set Lake no longer adds
+  the toolchain's library directory to the link, so the lakefile does.
+  lean-fmt and the model tests are still built by the bundled compiler.
+
+The build runs on macOS and on Linux, and the gate passes on both
+(`mise run linux-ci` runs it in a container; `README.md`). Four things differ
+by platform, and each has a case for those two and fails the build with a
+reason anywhere else:
+
+| | macOS | Linux |
+|---|---|---|
+| The entry point in place of `main` | `-Wl,-e,_editor_entry`: the loader calls `editor_entry` | `-Wl,--wrap=main`: `-e` would replace `_start` and skip the C library's start-up, so the linker renames instead. The start-up code's `main` is the glue's `__wrap_main`, which calls `editor_entry`, and Lean's `main` is `__real_main`. GNU ld and lld both have `--wrap` |
+| Is this the main thread? | `pthread_main_np` | The thread whose id is the process's: `getpid() == gettid()` (glibc 2.30 and later) |
+| A thread's stack size, for the check that Lean's threads have the editor's stack | `pthread_get_stacksize_np` | `pthread_getattr_np` and `pthread_attr_getstacksize`, which need `_GNU_SOURCE` |
+| What the link names beyond the objects | The frameworks winit needs: ApplicationServices, CoreGraphics, CoreVideo, Carbon, CoreFoundation, AppKit, Foundation, with `-liconv -lobjc` | Nothing: winit loads the display's libraries when it runs |
+
+On Linux the system compiler is gcc (run with gcc 14.2.0, GNU ld 2.44 and
+glibc 2.41, on Debian 13, aarch64). Lake's own link line there takes
+`libc++` and `libc++abi` statically from the toolchain, so the executable
+needs only `libc`, `libm` and `libgcc_s` at run time, and `libstdc++` is not
+involved. Not run: x86_64, and a desktop session.
+
+**Windows has not been attempted**, and nothing here was run there. The
+entry point, the main-thread check and the stack readout each need a third
+case. Lean's Windows toolchain is MinGW-based, so the Rust archive would have
+to be built for a `-windows-gnu` target.
+
+**The C++ library on macOS is the system's, whichever compiler links.** It
+was an open question whether linking with the system compiler, and so
+against the system `libc++` in place of one bundled with Lean, could go
+wrong. There is no bundled one to differ from. What Lean's toolchain ships
+is a link-time stand-in whose install name is `/usr/lib/libc++.dylib`, and
+`libleanshared.dylib`, which `lean` itself runs on, names that path too. An
+executable linked by Lean's own clang and lld (`model-test`) and one linked
+by `/usr/bin/cc` (`contract-test`) load the same `/usr/lib/libc++.1.dylib`,
+one file with one UUID. So `LEAN_CC=/usr/bin/cc` changes the linker, not the
+library. Checked on the tree as built: `model-test` linked both ways passes
+with the same count; the gate passes; the soak benchmark's resident memory
+is flat from 100 reloads to 500; and `leaks --atExit` on `contract-test` and
+on the headless mode finds only what Lean's runtime allocated as its modules
+initialise (big-number constants, three mutexes, regions read from `.olean`
+files), nothing allocated by the glue or the Rust library, and the same
+count for a script a hundred times as long.
 
 There is no hand-written Lean start-up sequence and no scraping of
 generated symbol names, which the first prototype needed. What can break on
 a Lean upgrade is the `@[extern]` calling convention, the Lake build API,
-and the macOS linker workaround.
+and the compiler and entry-point workarounds above.
 
 ## Start-up and shutdown
 
@@ -46,6 +89,27 @@ and the macOS linker workaround.
 
 Shutdown posts a quit event, unblocks every dedicated task, and calls exit.
 Returning from `main` while a task is blocked in Rust hangs.
+
+**The window, as built.** The main thread is parked in a small service
+(`crates/editor-ffi/src/main_thread.rs`), and "run the window" is one
+request of it, with which platform and how the window is opened. The main
+thread then runs the window's loop to its end, so the Lean thread that asked
+is blocked until the window has closed: Lean asks from its main thread or a
+dedicated task, never from the pool. What the window reports arrives on the
+editor queue, each event stamped with the instant the window's loop was
+handed it, and a Lean loop on a dedicated task pulls it.
+
+- **Lean closes the window.** When the user asks for it to be closed, the
+  window reports that and stays open; Lean calls the close binding, the
+  loop ends, and the request returns. Rust never ends the window by itself.
+- **While the window runs, the main-thread service answers nothing else.**
+  The real editor will need requests that reach the main thread through the
+  window's loop; that is the display pipeline's.
+- **The window runs once in a process**, which is all winit allows.
+
+The one thing that runs a window today is the keyboard check
+(`lean/Editor/WindowCheck.lean`; `editor window-check`), which a person runs
+to see that keys reach a Lean loop, and how fast.
 
 What is built of this is the headless mode (`lean/Editor/Headless.lean`;
 `editor headless <sysroot> <olean dir> <config dir> <script file>`): an
@@ -521,13 +585,43 @@ the standard hash map gave about 485 MB; importing all of the `Lean`
 package gave about 1.2 GB. So the editor API's imports are kept deliberate,
 and config that imports the `Lean` package pays for it.
 
-The executable is about 180 MB because Lean's elaborator is linked in:
-`editor` is 179 MB as built, where it was 13 MB before it could elaborate
-config. `ffi-test` and `config-test` are the same size for the same reason.
+The executable is large because Lean's elaborator is linked in: `editor` was
+13 MB before it could elaborate config. `ffi-test` and `config-test` are the
+same size for the same reason. As built, in MB (10⁶ bytes):
+
+| Executable | macOS (arm64) | Linux (aarch64) |
+|---|---|---|
+| `editor` | 181.6 | 266.1 |
+| `ffi-test` | 181.3 | 265.7 |
+| `config-test` | 181.9 | 266.5 |
+| `contract-test` | 4.3 | 14.7 |
+| `model-test` | 3.7 | 6.8 |
+
+The window library added 2.3 MB to `editor` on macOS.
 
 `mise run config-bench` measures start-up time and resident memory for the
 import sets `Editor`, `Editor` with `Std`, and `Editor` with `Lean`, in the
 executable as built.
+
+**A dynamically linked build saves disk and nothing else**, so there is none.
+Lake has no option for one outside Windows; it would be link arguments of
+our own. Measured once on macOS, by linking `editor` by hand both ways from
+the same objects, against Lean's static libraries as the build does and
+against its shared ones (`libInit_shared`, `libleanshared` and the two
+beside it, found through an `-rpath` to the toolchain):
+
+| | Static | Shared |
+|---|---|---|
+| Size | 181.6 MB | 4.5 MB |
+| Link time | 0.25 s | 0.11 s |
+| The demonstration, each of 20 runs | 19 ms | 32 ms |
+| The headless fixture, each of 5 runs | 168 ms | 182 ms |
+| Resident memory, the demonstration | 55.4 MB | 56.0 MB |
+| Resident memory, the headless fixture | 419 MB | 416 MB |
+
+Both print the same. The link is a quarter of a second either way, so a
+shared build would not make the edit-and-run loop faster; it starts 13 ms
+slower, and it would tie the executable to a toolchain directory.
 
 ## Open questions
 
@@ -551,6 +645,3 @@ executable as built.
 - **Overriding compiled features** beyond re-registration.
 - **Memory growth** with many packages loaded and with background jobs
   holding old environments.
-- **The system C++ library.** With the system linker, Lean's runtime links
-  against the system `libc++` and not its bundled one. Everything ran; it
-  has not been tested further.
