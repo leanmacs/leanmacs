@@ -34,12 +34,20 @@ imports its `.olean` again at runtime as part of the base config is
 elaborated on. -/
 lean_lib ConfigFixture
 
-/-- Fails the build with a reason anywhere but macOS. The entry point, its
-link flag and the Rust library's main-thread check are written for macOS;
-Linux and Windows get theirs with the phase that ports the build. -/
-def requireMacOS : JobM Unit := do
-  unless Platform.isOSX do
-    error "the editor executables build only on macOS for now; see `requireMacOS` in lakefile.lean"
+/-- Whether the build is for Linux, read from the target triple of the Lean
+toolchain Lake runs on (`aarch64-unknown-linux-gnu`): `System.Platform` has a
+flag for macOS and for Windows and none for Linux. -/
+def isLinux : Bool :=
+  (Platform.target.splitOn "linux").length > 1
+
+/-- Fails the build with a reason anywhere but macOS and Linux. The entry
+point, its link flag, the glue's stack-size readout and the Rust library's
+main-thread check each have a case for those two. Windows needs a third of
+each (`docs/design/lean-runtime.md`, "Build"). -/
+def requireSupportedPlatform : JobM Unit := do
+  unless Platform.isOSX || isLinux do
+    error
+        "the editor executables build only on macOS and Linux; see `requireSupportedPlatform` in lakefile.lean"
 
 /-- The Rust static library (`crates/editor-ffi`). Cargo does its own
 up-to-date check, so it runs on every `lake build`. The archive's content hash
@@ -54,7 +62,7 @@ show that the model tests build without this target. Keep it a bare command
 name, or that task shows nothing. -/
 target rustlib pkg : FilePath :=
   Job.async do
-    requireMacOS
+    requireSupportedPlatform
     let root := pkg.dir / ".."
     let targetDir := root / "target"
     proc (quiet := true)
@@ -70,7 +78,7 @@ target rustlib pkg : FilePath :=
 (`ffi/glue.c`), compiled against the toolchain's own `lean.h`. Nothing lints C
 for us, so every warning is an error. -/
 target glue.o pkg : FilePath := do
-  requireMacOS
+  requireSupportedPlatform
   let oFile := pkg.buildDir / "ffi" / "glue.o"
   let srcJob ← inputTextFile <| pkg.dir / "ffi" / "glue.c"
   buildLeanO oFile srcJob #[] #["-O2", "-Wall", "-Wextra", "-Werror"]
@@ -87,9 +95,13 @@ def leanSystemLibDir : FilePath :=
 /-- The link arguments every executable linked with the Rust library needs
 beyond its objects.
 
-`-Wl,-e`: `editor_entry` (`ffi/glue.c`) is the entry point instead of `main`.
-It keeps the process's main thread for the Rust library and runs Lean's
-generated `main` on a second thread.
+The entry point: `editor_entry` (`ffi/glue.c`) runs in place of `main`. It
+keeps the process's main thread for the Rust library and runs Lean's
+generated `main` on a second thread. On macOS `-Wl,-e` makes it the entry
+point. On Linux `-e` would replace `_start` and skip the C library's
+start-up, so `-Wl,--wrap=main` renames instead: the start-up code's `main`
+becomes the glue's `__wrap_main`, which calls `editor_entry`, and Lean's
+`main` becomes `__real_main`. GNU ld and lld both have `--wrap`.
 
 `-L`: with `LEAN_CC` set (see the `lean` task in `mise.toml`), Lake no longer
 adds the toolchain's own library directory to the link.
@@ -100,7 +112,8 @@ Today that is `-lSystem -lc -lm`, which the system compiler links anyway, so
 nothing is listed. The frameworks a window needs are added here with the crate
 that needs them. -/
 def linkArgs : Array String :=
-  #["-L", leanSystemLibDir.toString, "-Wl,-e,_editor_entry"]
+  #["-L", leanSystemLibDir.toString] ++
+    if Platform.isOSX then #["-Wl,-e,_editor_entry"] else #["-Wl,--wrap=main"]
 
 /-- The editor. `supportInterpreter` exports the executable's symbols, so
 interpreted config can find compiled definitions and `@[extern]` symbols. It

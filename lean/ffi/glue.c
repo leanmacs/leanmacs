@@ -17,6 +17,10 @@
 // `Editor/Ffi.lean`. `FfiTest.lean` pins what this file does, as Lean sees
 // it.
 
+// For `pthread_getattr_np` on Linux, which glibc declares only when this is
+// defined before the first include. It changes nothing on macOS.
+#define _GNU_SOURCE
+
 #include <lean/lean.h>
 #include <pthread.h>
 #include <stdbool.h>
@@ -332,14 +336,33 @@ lean_obj_res editor_glue_timers_pending(void) {
 //
 // Lean's generated `main` runs the Lean `main` on a thread Lean creates, so
 // Lean code is never on the process's main thread, and macOS only lets a
-// window event loop run there. The executables are therefore linked with
-// `-Wl,-e,_editor_entry` (`lakefile.lean`), which makes `editor_entry` the
-// entry point instead of `main`. It keeps the real main thread for the Rust
-// library and runs Lean's unmodified `main` on a second thread. It knows
-// nothing about how Lean initialises itself.
+// window event loop run there. So `editor_entry` runs in place of `main`. It
+// keeps the real main thread for the Rust library and runs Lean's unmodified
+// `main` on a second thread. It knows nothing about how Lean initialises
+// itself.
+//
+// How it comes to run in place of `main` is the linker's doing, and differs
+// by platform (`linkArgs` in `lakefile.lean`):
+//
+// - macOS: `-Wl,-e,_editor_entry` makes `editor_entry` the entry point the
+//   loader calls, and Lean's `main` keeps its name.
+// - Linux: an ELF entry point is `_start`, which sets the C library up
+//   before it calls `main`, so it must stay. `-Wl,--wrap=main` instead makes
+//   every reference to `main` from another object, the C library's start-up
+//   code among them, a reference to `__wrap_main`, and gives Lean's `main`
+//   the name `__real_main`.
 
+#if defined(__APPLE__)
 // Lean's generated `main`.
 int main(int argc, char **argv);
+#define LEAN_MAIN main
+#elif defined(__linux__)
+// Lean's generated `main`, under the name `--wrap=main` gives it.
+int __real_main(int argc, char **argv);
+#define LEAN_MAIN __real_main
+#else
+#error "the entry point is written for macOS and Linux"
+#endif
 
 // Lean's runtime: sets the stack size of every thread Lean creates from now
 // on (Lean's own main thread, dedicated tasks, the pool), to which the
@@ -377,19 +400,40 @@ lean_obj_res editor_glue_entry_stack_size(void) {
   return lean_io_result_mk_ok(lean_box_usize(entry_stack_size));
 }
 
+// The stack size of the calling thread, as the operating system reports it;
+// 0 if it does not say. macOS has one call for it. On Linux the size is read
+// from the attributes glibc reports for a running thread.
+static size_t thread_stack_size(void) {
+#if defined(__APPLE__)
+  return pthread_get_stacksize_np(pthread_self());
+#elif defined(__linux__)
+  pthread_attr_t attr;
+  size_t size = 0;
+  if (pthread_getattr_np(pthread_self(), &attr) != 0) {
+    return 0;
+  }
+  if (pthread_attr_getstacksize(&attr, &size) != 0) {
+    size = 0;
+  }
+  pthread_attr_destroy(&attr);
+  return size;
+#else
+#error "the stack-size readout is written for macOS and Linux"
+#endif
+}
+
 // `Editor.Ffi.threadStackSize : IO USize`. The stack size of the calling
 // thread, as the operating system reports it.
 lean_obj_res editor_glue_thread_stack_size(void) {
-  return lean_io_result_mk_ok(
-      lean_box_usize(pthread_get_stacksize_np(pthread_self())));
+  return lean_io_result_mk_ok(lean_box_usize(thread_stack_size()));
 }
 
 // The second thread: runs Lean, and ends the process with Lean's exit status
 // while the main thread is still parked.
 static void *run_lean_main(void *arg) {
   struct entry_args *args = arg;
-  entry_stack_size = pthread_get_stacksize_np(pthread_self());
-  exit(main(args->argc, args->argv));
+  entry_stack_size = thread_stack_size();
+  exit(LEAN_MAIN(args->argc, args->argv));
 }
 
 int editor_entry(int argc, char **argv) {
@@ -413,3 +457,9 @@ int editor_entry(int argc, char **argv) {
   }
   editor_ffi_main_thread_serve();
 }
+
+#if defined(__linux__)
+// What the C library's start-up code calls as `main` (see the top of this
+// section).
+int __wrap_main(int argc, char **argv) { return editor_entry(argc, argv); }
+#endif

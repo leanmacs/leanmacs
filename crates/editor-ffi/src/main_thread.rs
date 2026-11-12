@@ -22,12 +22,13 @@ use std::collections::VecDeque;
 use std::sync::mpsc::{self, SyncSender};
 use std::sync::{Condvar, Mutex, MutexGuard, PoisonError};
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(not(any(target_os = "macos", target_os = "linux")))]
 compile_error!(
-    "editor-ffi's main-thread check is written for macOS only (`pthread_main_np`). \
-     Linux and Windows get theirs with the phase that ports the build to them."
+    "editor-ffi's main-thread check is written for macOS (`pthread_main_np`) and for Linux \
+     (`getpid` and `gettid`). Windows needs a case of its own, with the port of the build to it."
 );
 
+#[cfg(target_os = "macos")]
 unsafe extern "C" {
     /// Non-zero when the calling thread is the process's initial thread
     /// (`pthread_main_np(3)`). Declared by hand so the crate needs no
@@ -37,8 +38,26 @@ unsafe extern "C" {
 
 /// Whether the calling thread is the process's main thread, as the operating
 /// system reports it.
+#[cfg(target_os = "macos")]
 pub fn is_main_thread() -> bool {
     pthread_main_np() != 0
+}
+
+#[cfg(target_os = "linux")]
+unsafe extern "C" {
+    /// The process's id (`getpid(2)`), which on Linux is also the thread id
+    /// of its initial thread. Declared by hand, like `pthread_main_np`.
+    safe fn getpid() -> std::ffi::c_int;
+    /// The calling thread's id (`gettid(2)`). glibc exports it from 2.30.
+    safe fn gettid() -> std::ffi::c_int;
+}
+
+/// Whether the calling thread is the process's main thread, as the operating
+/// system reports it: on Linux the initial thread is the one whose thread id
+/// is the process's id.
+#[cfg(target_os = "linux")]
+pub fn is_main_thread() -> bool {
+    getpid() == gettid()
 }
 
 /// Work the main thread does on behalf of another thread.
