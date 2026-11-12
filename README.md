@@ -395,7 +395,7 @@ and an input method's composition arrive.
 
 | Option | Does |
 |---|---|
-| `mise run window-check -- --no-ime` | Runs the window with composition not allowed, so a dead key arrives as a key marked dead. |
+| `mise run window-check -- --no-ime` | Runs the window with composition not allowed, so a dead key arrives as a key marked dead. Seen on Linux under Xvfb; not yet run on macOS. |
 | `mise run window-check -- --seconds <n>` | Closes the window after that many seconds if nobody has (120 by default). |
 
 The exit status is 0 when the window ran, 1 when it could not be opened and

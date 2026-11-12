@@ -200,10 +200,19 @@ Cargo for the static library:
   ([lean-runtime.md](lean-runtime.md), "Build").
 - **Unconfirmed**: Windows, which has not been attempted; Linux on x86_64
   and with real keys on a desktop (the gate passes on aarch64 in a
-  container, and synthetic keys reach the Lean loop there under Xvfb); and,
-  until it is recorded, real keys on macOS, which a person checks with
-  `mise run window-check` (checked by hand: see phase 6 of
-  `workspace-and-ports` in rdm).
+  container, and synthetic keys reach the Lean loop there under Xvfb); and
+  an input method's composition on macOS.
+
+  Real keys on macOS are confirmed, by hand on 2026-11-12 with
+  `mise run window-check`: key presses, key repeat and releases reach the
+  Lean loop, with a median of about 17 µs from a key's arrival in Rust to
+  its handling in Lean, and the window takes the keyboard without a click
+  when it is started from a terminal in front. Dead keys arrive there
+  through composition. But in one run composition never became enabled and
+  a dead key did nothing (rdm task `macos-composition-not-enabled`), and
+  neither an input method that composes a script nor the window with
+  composition not allowed has been tried there
+  ([concurrency.md](concurrency.md), "Still to verify").
 - **The executable is about 180 MB on macOS and 265 MB on Linux**, because
   Lean's compiler is linked in. Linked against Lean's shared libraries it is
   4 MB, which saves disk and nothing else ([lean-runtime.md](lean-runtime.md),

@@ -436,12 +436,39 @@ handler never runs.
 
 ## Still to verify
 
-- Real keyboard input reaching the Lean loop on macOS is checked by hand:
-  see phase 6 of `workspace-and-ports` in rdm, where the report of
-  `mise run window-check` is recorded. The tool opens the real window
-  through the entry point and counts what reaches a Lean loop that pulls
-  the editor queue: keys, the text they typed, dead keys, and an input
-  method's composition. This document claims no result of it.
+- An input method's composition on macOS. Real keyboard input reaching the
+  Lean loop there is no longer open: the owner checked it by hand on
+  2026-11-12, with `mise run window-check` started from Ghostty, and the
+  reports are with phase 6 of `workspace-and-ports` in rdm. The tool opens
+  the real window through the entry point and counts what reaches a Lean
+  loop that pulls the editor queue: keys, the text they typed, dead keys,
+  and an input method's composition.
+
+  What the check showed:
+
+  - Key presses, key repeat and releases reach the Lean loop: 438 key
+    events in the longest run, 72 of them repeats.
+  - The window took the keyboard within 30 ms of opening, in every run,
+    with no click.
+  - Dead keys arrive at all, through composition: in the run where
+    composition became enabled they came as 21 preedit and 12 commit
+    events. No key event was marked dead: with composition allowed, a dead
+    key on macOS reaches Lean only through composition.
+
+  What it left open:
+
+  - In one run composition never became enabled, and Option-e did nothing:
+    the letters arrived as plain keys. That run differs from the one where
+    dead keys worked in two ways, and which is the cause is not known: the
+    window was never clicked, and macOS logged an input-method error
+    (`IMKCFRunLoopWakeUpReliable`) as it started. It is the rdm task
+    `macos-composition-not-enabled`, which the display pipeline's text
+    input depends on.
+  - The window with composition not allowed (`--no-ime`) was not run on
+    macOS, so a dead key arriving as a key marked dead has been seen only
+    on Linux, with synthetic keys.
+  - Nothing beyond dead keys was tried: no input method that composes a
+    script, Japanese for one.
 
   What the gate covers of that path, with no window: the translation from
   winit's values to the window port's inputs; each input becoming its event
@@ -460,7 +487,9 @@ handler never runs.
   activation is a request the system may decline, and it declines for a
   program started from a session nobody has brought forward, an agent's or
   one behind a locked screen. The tool asks for the focus once and reports
-  when it arrived, and whether a click came first.
+  when it arrived, and whether a click came first. The manual check agrees:
+  started from a terminal in front, the window had the keyboard within
+  30 ms.
 - Linux on x86_64, and real keys on a Linux desktop under X11 and Wayland.
   The gate passes on aarch64 in a container. Windows has not been attempted
   ([lean-runtime.md](lean-runtime.md), "Build").
@@ -514,10 +543,11 @@ handler never runs.
   from the instant the window's loop was handed it, read in Rust on the main
   thread, to the instant a Lean loop had pulled the event and read the same
   clock. That is the hand-off across the boundary and the thread wake-up,
-  with a loop that does nothing else. Under Xvfb in a container, with
-  synthetic keys, its median was 24 to 34 µs in the runs made, of 40 to 42
-  samples each; the figures of a person typing on macOS are with phase 6 in
-  rdm.
+  with a loop that does nothing else. With a person typing on macOS its
+  median was about 17 µs: 17.4 µs over 438 key events in one run and
+  17.5 µs over 100 in another, with 99th percentiles of 30.5 and 50.8 µs
+  and maxima under 90 µs. Under Xvfb in a container, with synthetic keys,
+  its median was 24 to 34 µs in the runs made, of 40 to 42 samples each.
   What the command loop still has to show is the time from that arrival to
   the edit being applied and the frame asked for, with keymap lookup, a
   command and a real editor state between.

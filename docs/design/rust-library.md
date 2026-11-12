@@ -130,6 +130,16 @@ keyboard reaches Lean:
   key identity yet, no physical or logical key and no modifiers, and no
   resize, scale or redraw: the display pipeline defines those and may
   replace `Input`. The one option is whether composition is allowed.
+- **What real keyboards have shown.** On macOS, with composition allowed,
+  no key event is marked dead: a dead key reaches Lean only as a
+  composition's preedit and commit, and in one run composition never became
+  enabled, so a dead key did nothing (rdm task
+  `macos-composition-not-enabled`). Under Xvfb on Linux, with synthetic
+  keys, a dead key arrived as a preedit and a commit with composition
+  allowed and as a key marked dead without. Composition not allowed has not
+  been run on macOS, and nothing beyond dead keys, such as a Japanese input
+  method, has been tried on either ([concurrency.md](concurrency.md),
+  "Still to verify").
 - **The fake** is `ScriptedPlatform`: it reports that it opened, then a
   script, and waits for a close. It records the options it was run with, and
   leaves the composition steps out when composition is not allowed.
