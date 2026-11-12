@@ -14,16 +14,35 @@ environment or the working directory. It runs every check in `checks`, names
 the ones that failed, and exits non-zero if any did.
 
 The model tests (`ModelTest.lean`) pin the decisions of the config session on
-fakes. The checks here pin what only real collaborators can show: that the
-real elaborator behaves as the fake of its port assumes
-(`elaboratorChecks`).
+fakes. The checks here pin what only real collaborators can show:
 
-All the checks share one import of the base, made once in `main`: a second
-import in one process about doubles its memory.
+- `elaboratorChecks`: the real elaborator behaves as the fake of its port
+  assumes, and compiled code and config share state;
+- `directoryChecks`: the directory source, each check in a temporary
+  directory of its own;
+- `hostChecks`: the phase's acceptance tests through the headless host, with
+  the real elaborator, the real queue and the real text binding, asserted on
+  the lines the host prints;
+- `threadChecks`: the editor answers events while a chunk elaborates, reloads
+  are serialised, and a replaced config is not retained;
+- `scriptChecks`: the headless mode's script and its driver.
+
+A check controls time through a port, never by sleeping and hoping: a
+decorator of the elaborator port (`Gate`) holds one chunk's elaboration open
+until the check lets it go. Every wait is a poll with a bound, so broken code
+fails a check within seconds instead of hanging the executable.
+
+All the checks share one import of the base, made once in `run`: a second
+import in one process about doubles its memory. Hosts follow one another on
+the process's one editor queue and never overlap: every check stops its host
+before it returns.
 
 No check makes the process abort. In particular none evaluates a declaration
 that reads an `initialize`d constant of config's, and none runs config that
 recurses without bound.
+
+The executable also holds the benchmark (`Bench`, below), which the gate
+builds and never runs.
 -/
 
 namespace ConfigTest
@@ -695,7 +714,11 @@ def scriptChecks (context : Context) : List Check :=
                       emit := fun line => output.modify (·.push line), requests,
                       wakeups := requests + 1 }
                     #[.request .reload, .settle, .request .show] 200
-              return status == 1 && (← gate.holding.get) && (← output.get).isEmpty
+              -- The reload was held at the gate, which is why nothing settled.
+              -- The job outlives the loop, so on a slow machine it may only
+              -- now be reaching the gate: this is polled.
+              let held ← eventually gate.holding.get
+              return status == 1 && held && (← output.get).isEmpty
             finally
               -- The job that was left behind ends; its wake-up is under this
               -- host's source id, which no later host is given.
