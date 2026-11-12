@@ -486,6 +486,20 @@ def hostChecks (context : Context) : List Check :=
               #["reload 1: installed, 2 chunks, 1 commands", "reload 2: rejected",
                 "diagnostic: setup:0:0: error: no thanks", "run other: no such command",
                 "commands: greet"] },
+    { name :=
+        "a setup that registers a command name twice keeps the old config, and the diagnostic names the command"
+      run :=
+        withHost context greetConfig fun session => do
+          session.ask [.reload]
+          session.write "20-setup.lean"
+              "def setup : SetupM Unit := do\n  command \"greet\" greet\n  command \"greet\" greet\n"
+          session.ask [.reload]
+          session.ask [.run "greet", .show]
+          -- The message is the editor's own, so the whole line is pinned.
+          return (← session.output.get) ==
+              #["reload 1: installed, 2 chunks, 1 commands", "reload 2: rejected",
+                "diagnostic: setup:0:0: error: the command `greet` is registered twice",
+                "run greet: ok", "commands: greet", "text 0: \"v1\""] },
     { name := "a reload does not double-register"
       run :=
         withHost context greetConfig fun session => do

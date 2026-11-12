@@ -148,7 +148,12 @@ elaborator.
   environment. The registry holds the `EditorM` program, tagged with its
   owner, and running a command is running that program against the editor's
   port. Installing a reloaded config replaces the entries of the owner
-  `config`; it never adds to them.
+  `config`; it never adds to them. Within one config a command name is
+  registered once: a `setup` that registers a name twice is refused, with a
+  diagnostic from `setup` that names the command, and the old config stays.
+  The first of the two could never run, so it is a mistake in the config,
+  and it is treated like a store declared twice. The number of commands a
+  reload reports is therefore the number of names the config can be run by.
 - **The session runs no `IO` action from config.** A chunk is elaborated,
   `setup` is a program, a command is a program: every call from compiled
   Lean into config is a plain call of pure code.
@@ -401,8 +406,9 @@ editor's port:
   config can decode it; a cell at another version becomes `migrate` of it. A
   cell the new config cannot decode, or does not migrate, is reset to the
   initial value, and the reload's report says so. A cell the new config no
-  longer declares is removed. Declaring a name twice, or registering a
-  command over an undeclared store, rejects the reload.
+  longer declares is removed. Declaring a store name twice, registering a
+  command name twice, or registering a command over an undeclared store
+  rejects the reload.
 - **Why not a request of the editor's port.** A `get` and a `set` would make
   the editor's port a sum of the text port and a store port, which is the
   shape the phase that grows the editor API exists to choose.

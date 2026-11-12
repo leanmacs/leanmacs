@@ -215,6 +215,20 @@ def setupChecks : List Check :=
       run :=
         let setup : SetupM Unit := counter.command "bump" fun n => pure (n + 1)
         pure (refusal setup).isSome },
+    { name :=
+        "a setup that registers a command name twice is refused with a message that names the command, whether the two are plain commands or one is over a store"
+      run :=
+        let plain : SetupM Unit := do
+          command "first" (makes "1")
+          command "greet" (makes "2")
+          command "greet" (makes "3")
+        let mixed : SetupM Unit := do
+          counter.declare
+          command "bump" (makes "1")
+          counter.command "bump" fun n => pure (n + 1)
+        pure
+          (refusal plain == some "the command `greet` is registered twice" &&
+            refusal mixed == some "the command `bump` is registered twice") },
     { name := "a store step decodes the tree, runs the command and encodes the result"
       run :=
         let step :=
@@ -504,6 +518,19 @@ def sessionChecks : List Check :=
             outcome.diagnostics ==
               #[{ source := "setup", severity := .error, message := "no thanks" }] },
     { name :=
+        "a setup that registers a command name twice gives a rejected outcome whose diagnostic's source is setup and names the command"
+      run := do
+        let calls ← IO.mkRef #[]
+        let setup : SetupM Unit := do
+          command "greet" (makes "hello")
+          command "greet" (makes "again")
+        let outcome ←
+          Config.build (fakeElaborator calls (.ok setup)) (fakeSource ["a"]) (some #[]) #[]
+        return outcome.built.isNone &&
+            outcome.diagnostics ==
+              #[{ source := "setup", severity := .error,
+                  message := "the command `greet` is registered twice" }] },
+    { name :=
         "a config whose setup cannot be produced gives a rejected outcome with the diagnostics"
       run := do
         let calls ← IO.mkRef #[]
@@ -713,6 +740,26 @@ def reloadChecks : List Check :=
               .finished (accepted ["a"] (greets "v1")), .requested,
               .finished (accepted ["a"] (greets "v1"))]
         pure (state.registry.entries.size == 1 && runTexts state "greet" == some #["v1"]) },
+    { name :=
+        "a config that registers a command name twice is not installed, so the commands a report counts are the names that can be run"
+      run := do
+        let setup : SetupM Unit := do
+          greets "v1"
+          bumps 1
+        let twice : SetupM Unit := do
+          greets "v2"
+          greets "v3"
+        let (loaded, first) := reduce [.requested, .finished (accepted ["a"] setup)]
+        let calls ← IO.mkRef #[]
+        let outcome ←
+          Config.build (fakeElaborator calls (.ok twice)) (fakeSource ["a"]) loaded.base
+              loaded.chunks
+        let (state, effects) := reduceFrom loaded [.requested, .finished outcome]
+        return first == #[.start none #[], .report 1 true #[] 1 2] &&
+            effects == #[.start (some #[]) #["a"], .report 2 false #["setup"] 1 2] &&
+            state.registry.names == #["greet", "bump"] &&
+            state.registry.entries.size == 2 &&
+            runTexts state "greet" == some #["v1"] },
     { name := "a store value survives a reload"
       run :=
         let (loaded, _) := reduce [.requested, .finished (accepted ["a"] (bumps 1))]

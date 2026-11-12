@@ -86,6 +86,9 @@ def setup : SetupM Unit := do
   command "greet" greet
 ```
 
+A `setup` registers each command name once. One that registers a name twice
+is rejected, like a chunk that does not elaborate.
+
 A script is one directive a line. Blank lines and lines that start with `#`
 are skipped.
 

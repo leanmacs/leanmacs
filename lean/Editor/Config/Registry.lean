@@ -16,6 +16,12 @@ editor's port. Nothing looks a command up in an environment.
 `Registrations` is what one run of a `setup` asks for, collected by a pure
 handler of the setup port and then checked. `Registrations.ofSetup` is the
 whole of it: the registrations, or the message the `setup` is refused with.
+A `setup` is refused when it declares a store name twice, registers a
+command name twice, or registers a command over a store it does not declare
+(`Registrations.problem?`). So one owner's entries have different names, and
+the number of commands a config registers is the number of names it can be
+run by. Two owners may still register one name: a lookup then finds the
+later entry.
 
 Dispatch by key, command names in keymaps and overriding a compiled command
 are for the command loop to build on this table.
@@ -104,17 +110,30 @@ def collect : (request : SetupRequest) → Registrations → request.Reply × Re
     ((),
       { collected with commands := collected.commands.push { name, action := .store store step } })
 
-/-- What is wrong with what was collected, if anything: a store declared
-twice, or a command over a store that is not declared. -/
-def problem? (collected : Registrations) : Option String := do
-  let names := collected.stores.map (·.name)
+/-- The first of `names` that an earlier one already is, if any. -/
+def repeated? (names : Array String) : Option String := do
   for index in [0:names.size] do
     if let some name := names[index]? then
       if (names.extract 0 index).contains name then
-        return s!"the store `{name}` is declared twice"
+        return name
+  none
+
+/-- What is wrong with what was collected, if anything: a store declared
+twice, a command name registered twice, or a command over a store that is
+not declared.
+
+One config's names are each registered once. A second command under a name
+would make the first unreachable, which is a mistake in the config and never
+what it meant, so it is refused like a second store of a name. -/
+def problem? (collected : Registrations) : Option String := do
+  let stores := collected.stores.map (·.name)
+  if let some name := repeated? stores then
+    return s!"the store `{name}` is declared twice"
+  if let some name := repeated? (collected.commands.map (·.name)) then
+    return s!"the command `{name}` is registered twice"
   for registration in collected.commands do
     if let .store store _ := registration.action then
-      unless names.contains store do
+      unless stores.contains store do
         return s!"the command `{registration.name}` is over the store `{store}`, which is not declared"
   none
 

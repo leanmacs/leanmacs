@@ -27,6 +27,11 @@ the whole of `setup` has run and what it collected has been checked.
 `setup` may refuse: a `throw` with a message ends it, the reload is rejected
 with that message, and the config that was loaded before stays.
 
+The editor refuses a `setup` too, the same way, when what it registered
+cannot be meant: a command name registered twice (the first could never
+run), a store name declared twice, or a command over a store the `setup`
+does not declare. The diagnostic names the command or the store.
+
 A request of this port can carry an `EditorM`, which a request of the
 editor's own port could not: the setup port is not the port `EditorM` runs
 over, so the type does not refer to itself.
