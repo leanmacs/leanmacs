@@ -32,9 +32,11 @@ and the macOS linker workaround.
 
 ## Start-up and shutdown
 
-1. The C entry point starts a thread with a large stack that runs Lean's
-   generated `main`. The real main thread stays in Rust and runs the window
-   loop when Lean asks for a window.
+1. The C entry point sets the stack size of the threads Lean creates (see
+   "An exception from the interpreter ends the process") and starts a thread
+   with a large stack that runs Lean's generated `main`. The real main
+   thread stays in Rust and runs the window loop when Lean asks for a
+   window.
 2. Lean `main` creates the editor state, starts the editor loop on a
    dedicated task, and starts loading config on a background task.
 3. The editor is usable before config has loaded: the compiled standard
@@ -45,11 +47,26 @@ and the macOS linker workaround.
 Shutdown posts a quit event, unblocks every dedicated task, and calls exit.
 Returning from `main` while a task is blocked in Rust hangs.
 
+What is built of this is the headless mode (`lean/Editor/Headless.lean`;
+`editor headless <sysroot> <olean dir> <config dir> <script file>`): an
+editor loop on a dedicated task with no window, keys or keymaps, which loads
+a config directory in the background, runs its commands against the library
+and prints what happened. It exists for integration tests, and the command
+loop will replace its loop. The first load is an ordinary reload: the loop
+answers events before and while it runs. Where an installed editor finds the
+toolchain's `.olean` files and its own is not decided: the headless mode
+takes both directories as arguments.
+
 Rules found the hard way:
 
 - **Module initialisers must not call the Rust library.** The `lean`
-  compiler runs them when it compiles an importing module, where the Rust
-  symbols do not exist. Create library objects from `main`.
+  compiler runs a module's `initialize` declarations when it compiles a
+  module that imports it, where the Rust symbols do not exist, so one that
+  calls a binding fails the build. A plain constant whose value calls a
+  binding is not run by the compiler: it builds, and runs in the module's
+  initialiser when the executable starts, so only review keeps those out
+  (`lean/Editor/Ffi.lean`, "Nothing runs at initialisation"). Create library
+  objects from `main`.
 - **Rust objects are Lean external objects with finalisers**, never bare
   integers, so a handle cannot be used after it is freed.
 
@@ -66,7 +83,8 @@ builds a new environment and swaps it in.
 - A reload is all-or-nothing: if any chunk fails to elaborate (including a
   theorem that no longer holds), or config's `setup` throws, the old
   environment stays.
-- Scratch evaluation (a REPL) sits on top and is discarded by a reload.
+- Scratch evaluation (a REPL) sits on top and is discarded by a reload. It
+  is not built: the prototype's was not carried into the executable.
 
 Config defines commands and a `setup` action that registers them: key
 bindings, subscriptions, options. The editor runs `setup` after a successful
@@ -74,13 +92,70 @@ elaboration. Closures that config registers are stored in compiled state
 (the keymap holds them) and keep working; calling a stored closure was no
 slower than a compiled command in the spike.
 
-Measured: reloading a one-line chunk takes about 2 ms, a 20-line config
-about 11 ms, and 50 definitions with a `simp` proof about 52 ms. Memory
-stayed flat over 500 reloads.
+Measured in the spike: reloading a one-line chunk takes about 2 ms, a
+20-line config about 11 ms, and 50 definitions with a `simp` proof about
+52 ms. Memory stayed flat over 500 reloads. `mise run config-bench` measures
+the same things in the executable as built (start-up by import set, reload
+time, and a soak of 500 reloads); it is run by hand and asserts nothing.
 
 Known limits: every later chunk is re-elaborated whether or not it depends
 on the change (real modules and Lean's import graph would fix this), and
-compiled code cannot be swapped.
+compiled code cannot be swapped. A chunk has no `import` line, so Lean's own
+tooling cannot check a config file by itself.
+
+### The config session as built
+
+The session is a pure core with two ports, and one adapter that knows Lean's
+elaborator.
+
+| Piece | Where |
+|---|---|
+| What config registers with: `setup`, a program over the setup port | `lean/Editor/Setup.lean` |
+| Stores: a value of config's type as a plain tree with a version | `lean/Editor/Store.lean` |
+| Diagnostics: failure as data | `lean/Editor/Config/Diagnostic.lean` |
+| The registry, replaced by owner, and the handler that collects a `setup` | `lean/Editor/Config/Registry.lean` |
+| The cells of the stores, and the rule that installs a config's stores | `lean/Editor/Config/Stores.lean` |
+| One reload: the chunks, the plan, the build, over the two ports | `lean/Editor/Config/Session.lean` |
+| The reducer that serialises reloads and installs their outcomes | `lean/Editor/Config/Reload.lean` |
+| The elaborator port answered by Lean's elaborator | `lean/Editor/Config/Elaborate.lean` |
+| The source port answered by a directory of `.lean` files | `lean/Editor/Config/Directory.lean` |
+| The headless loop: the editor thread, the reload job, the output | `lean/Editor/Headless.lean` |
+
+- **The core has no elaborator in it.** Which chunks are elaborated and from
+  which cached state, all-or-nothing, when `setup` runs, replacement by
+  owner, the store rule and the serialising of reloads are plain Lean with
+  no `import Lean`, tested by `lake test` on hand-written fakes of the two
+  ports. `Elaborate.lean` is the only module that imports Lean's elaborator,
+  and `config-test` checks it, the directory source and the whole host
+  against the real collaborators (`mise run ffi-test`).
+- **`setup` is a program over a setup port**: `SetupM Unit`, whose requests
+  carry what is registered (a command, a store, a command over a store). A
+  request can carry an `EditorM` because the setup port is not the port
+  `EditorM` runs over. After the last chunk the editor runs `setup` against
+  a handler that collects its requests into a value, on the job thread.
+  Nothing is registered until the editor thread installs that value, so a
+  reload is all-or-nothing by construction, and a `setup` that throws is a
+  program that ends in an error: the reload is rejected with its message.
+  A new kind of registration is a new request.
+- **One unchecked evaluation per reload.** After the last chunk the adapter
+  elaborates a trailer, `def «editor.setup» : Editor.SetupM Unit := setup`,
+  so the elaborator checks that config defines `setup` at the right type,
+  and evaluates that one constant. A missing `setup` and one of another type
+  are ordinary diagnostics; one that depends on `sorry` is an error value
+  from the evaluation, and nothing runs. A config with no chunks has no
+  trailer and registers nothing.
+- **A command is the value `setup` registered**, not a name looked up in an
+  environment. The registry holds the `EditorM` program, tagged with its
+  owner, and running a command is running that program against the editor's
+  port. Installing a reloaded config replaces the entries of the owner
+  `config`; it never adds to them.
+- **The session runs no `IO` action from config.** A chunk is elaborated,
+  `setup` is a program, a command is a program: every call from compiled
+  Lean into config is a plain call of pure code.
+- **A rejected reload reports diagnostics as data**: a source (the chunk's
+  name, or `setup`), a line and a column, a severity and a message. A chunk
+  fails when it has an error; warnings are reported and do not reject. The
+  config that was loaded stays, with its commands and its stores.
 
 ### One shared state
 
@@ -90,6 +165,40 @@ binding appeared in the compiled keymap, and a module's initialiser ran
 once. This needs `supportInterpreter`, `enableInitializersExecution` before
 the import, and `importModules (loadExts := true)`. Every other combination
 failed loudly instead of producing a second copy.
+
+As built (`lean/Editor/Config/Elaborate.lean`):
+
+- **The base is imported once per process**, by the first reload job, from
+  two directories it is given: the package's `.olean` directory and
+  `lib/lean` under the toolchain's. Not Lean's `initSearchPath`, which also
+  reads `LEAN_PATH` from the environment. A second import in one process
+  about doubled its resident memory in a prototype.
+- **The import runs no initialiser of a linked module.** Lean looks for a
+  module's native initialiser first, and interprets a module's `initialize`
+  declarations only when there is none. The adapter imports `Editor` at
+  compile time, so every module of the base is linked into any executable
+  that can elaborate config, and its initialiser ran once, when the process
+  started. This matters twice: Lean documents initialiser execution as
+  unsafe beside other threads, and the editor thread is running during the
+  import. A third-party package loaded as interpreted modules would run its
+  `initialize` code at import, on a job thread; that is part of the open
+  question on packages.
+- **Config's own code is pure**, so the state it shares with compiled code
+  is what it registers and what its commands are handed: the registry, the
+  store cells and the texts all live in compiled Lean. The mechanism itself
+  is checked on its own: `config-test` links a fixture module with an
+  initialised reference, has compiled code write to it, imports the base,
+  has config write to it, and reads it back from compiled code. Each side
+  sees the other's write, and the import did not reset the reference.
+- **Config cannot name a binding.** `Editor` never imports `Editor.Ffi`, so
+  a chunk that mentions a binding is rejected as an unknown identifier
+  (checked by `config-test`).
+- **Config may not declare `initialize`.** Such a chunk elaborates, but the
+  interpreter throws a C++ exception the first time a declaration that
+  reads the constant is evaluated, and the process aborts. This one can be
+  refused before any code runs, so the adapter rejects a chunk that adds an
+  `initialize` declaration, with a diagnostic that points at the store,
+  which is where config keeps state.
 
 ### An exception from the interpreter ends the process
 
@@ -272,6 +381,38 @@ owned cell whose type has an encoding to a plain value tree and a version.
 On reload the value is decoded by the new config; a version change runs a
 `migrate` function or drops the value, as the owner chose.
 
+As built (`lean/Editor/Store.lean`, `lean/Editor/Config/Stores.lean`), a
+store is a whole-value cell, and it is editor state, not a request of the
+editor's port:
+
+- **What config writes** is a `Store α`: a name, a version, an initial value,
+  `encode : α → Value`, `decode : Value → Option α` and `migrate`, from an
+  older version's tree to this version's. `Value` is a plain tree: null,
+  bool, nat, int, string, list, record. `setup` declares the store and
+  registers commands over it, each a function `α → EditorM α`.
+- **Where the value lives.** A cell is an owner, a name, a version and a
+  `Value`, in a table in the editor's state on the editor thread. It holds
+  no type of config's, so a reload leaves it where it is. To run a store
+  command the editor hands the cell's tree to the registered step (decode,
+  run, encode: all config's code) and writes the result back only if the
+  command succeeded.
+- **On install**, for each store the new config declares: no cell makes one
+  from the initial value; a cell at the declared version is kept if the new
+  config can decode it; a cell at another version becomes `migrate` of it. A
+  cell the new config cannot decode, or does not migrate, is reset to the
+  initial value, and the reload's report says so. A cell the new config no
+  longer declares is removed. Declaring a name twice, or registering a
+  command over an undeclared store, rejects the reload.
+- **Why not a request of the editor's port.** A `get` and a `set` would make
+  the editor's port a sum of the text port and a store port, which is the
+  shape the phase that grows the editor API exists to choose.
+  State-passing commands need no change to `EditorM`. They limit a command
+  to one store; `get` and `set` can be added with the composite port
+  without changing the cell, the encoding, the version or the install rule.
+- **No model and no contract check.** The store never reaches the Rust
+  library. Its one implementation is the pure core, which the model tests
+  and the real editor both run.
+
 **Persistence** is a library feature in Lean: a store or a compiled table
 can be marked persistent, and is then written to disk and read back at
 start-up through the same encoding. Agent records are the first user.
@@ -325,17 +466,33 @@ the standard hash map gave about 485 MB; importing all of the `Lean`
 package gave about 1.2 GB. So the editor API's imports are kept deliberate,
 and config that imports the `Lean` package pays for it.
 
-The executable is about 180 MB because Lean's elaborator is linked in.
+The executable is about 180 MB because Lean's elaborator is linked in:
+`editor` is 179 MB as built, where it was 13 MB before it could elaborate
+config. `ffi-test` and `config-test` are the same size for the same reason.
+
+`mise run config-bench` measures start-up time and resident memory for the
+import sets `Editor`, `Editor` with `Std`, and `Editor` with `Lean`, in the
+executable as built.
 
 ## Open questions
 
-- **Store design.** Whole-value cells, or keyed rows with per-row change
-  events? Decide from the first real users (evil's registers if config
+- **Store design.** Whole-value cells are built. Keyed rows with per-row
+  change events stay open, and so does how a command reaches more than one
+  store. Decide from the first real users (evil's registers if config
   extends them, and third-party packages).
 - **Third-party packages.** Loaded as interpreted modules at runtime, or
   compiled into a rebuilt executable (as xmonad does)? How they are fetched
   (Lake), and whether they are trusted like user config. Lean code runs
-  with the user's full authority, as Emacs Lisp does.
+  with the user's full authority, as Emacs Lisp does. A constraint found
+  with the config session: the base is safe to import beside a running
+  editor thread only because every module in it is linked, so its
+  initialisers are not run at import. An interpreted package's would be.
+- **A header for config chunks.** A chunk has no `import` line, so Lean's
+  tooling cannot check or format a config file by itself. Whether a chunk
+  should carry a header the session checks and skips is not decided.
+- **Where an installed editor finds `.olean` files**: the toolchain's and
+  its own. The headless mode takes both directories as arguments, and
+  nothing else loads config yet.
 - **Overriding compiled features** beyond re-registration.
 - **Memory growth** with many packages loaded and with background jobs
   holding old environments.

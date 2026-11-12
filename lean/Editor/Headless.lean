@@ -59,13 +59,38 @@ store <name> v<version>: <value>
 ```
 
 The last three answer `show`. A text is never closed: the loop keeps one
-table of texts for its life, and `show` lists them all.
+table of texts for its life, and `show` lists them all. A diagnostic that is
+about no place in particular has the position 0:0.
+
+## The driver, and the command line
+
+A host is driven from another thread: `Host.send` posts a request,
+`Host.settle` waits, with a bound, until the editor thread has handled
+everything sent so far and no reload is running, and `Host.stop` ends the
+loop. Requests are handled in the order they were sent, and a request sent
+while a reload runs is handled before that reload is installed: settle
+first to see its effect.
+
+`run` drives a host through a script, one directive a line: `reload`,
+`run <name>` and `show` are requests, and `settle` is the driver's own.
+Blank lines and lines that start with `#` are skipped.
+
+`main` is the executable's headless mode,
+`editor headless <sysroot> <olean dir> <config dir> <script file>`: `run`
+with the real elaborator, a directory as the source and stdout as the
+output, then the quit and the explicit exit. Its exit status is 0 when the
+script ran to its end and 1 when it could not: the script cannot be read, or
+a `settle` ran out (after 30 seconds). A rejected reload is something to
+print, not a failure.
 
 ## Tests
 
 `config-test` drives a host in-process on the real queue, the real text
 binding and the real elaborator, and compares the lines it emits
-(`ConfigTest.hostChecks`).
+(`ConfigTest.hostChecks`, `ConfigTest.threadChecks`), and checks the script
+reader and the driver (`ConfigTest.scriptChecks`). The `ffi-test` task runs
+the real executable once, on the fixture under `tests/headless`, which
+covers the command line.
 -/
 
 namespace Editor.Headless

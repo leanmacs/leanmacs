@@ -103,7 +103,8 @@ def linkArgs : Array String :=
   #["-L", leanSystemLibDir.toString, "-Wl,-e,_editor_entry"]
 
 /-- The editor. `supportInterpreter` exports the executable's symbols, so
-interpreted config can find compiled definitions and `@[extern]` symbols. -/
+interpreted config can find compiled definitions and `@[extern]` symbols. It
+imports the config session, so Lean's elaborator is linked in. -/
 @[default_target] lean_exe editor where
   root := `Main
   supportInterpreter := true
@@ -120,7 +121,7 @@ exactly like `editor`. `mise run ffi-test` runs it. -/
 
 /-- The checks of the config session against the real elaborator
 (`ConfigTest.lean`), linked exactly like `editor`. `mise run ffi-test` runs
-it. -/
+it. It also holds the benchmark `mise run config-bench` runs. -/
 @[default_target] lean_exe «config-test» where
   root := `ConfigTest
   supportInterpreter := true

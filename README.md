@@ -11,7 +11,9 @@ rendering, the window, and process and terminal management.
 
 The editor does nothing useful yet. The executable shows that the build
 works: Lean calls the Rust library and prints what comes back, and it runs
-one editor command against the library.
+one editor command against the library. It also has a headless mode, for
+integration tests, that loads a config directory, reloads it live and runs
+the commands the config registers.
 
 ## Building
 
@@ -54,6 +56,77 @@ A command appended to a text held by Rust: héllo wörld
 The last line is a command, `Editor.append`, run against the Rust library.
 The model tests run the same source against a pure Lean model.
 
+The executable is about 180 MB: it can elaborate config, so Lean's
+elaborator is linked into it.
+
+### The headless mode
+
+```sh
+editor headless <sysroot> <olean dir> <config dir> <script file>
+```
+
+This is the editor with no window. It loads the config in a directory, runs
+a script against it and prints what happened. Every path is an argument:
+`<sysroot>` is the Lean toolchain's directory (`lean --print-prefix`) and
+`<olean dir>` the directory of the editor package's `.olean` files
+(`lean/.lake/build/lib/lean`). Nothing is read from the environment or the
+working directory.
+
+A config is the `.lean` files directly in the config directory, elaborated in
+the byte order of their names, each on top of the one before. They have no
+`import` line: `Editor` is imported and opened for them. Config defines
+commands, and a `setup` that registers them:
+
+```lean
+def greet : EditorM Unit := do
+  let text ← createText "hello"
+  append text ", world"
+
+def setup : SetupM Unit := do
+  command "greet" greet
+```
+
+A script is one directive a line. Blank lines and lines that start with `#`
+are skipped.
+
+| Directive | Does |
+|---|---|
+| `reload` | Asks for the config to be reloaded. Elaboration runs in the background, and the editor goes on answering. |
+| `settle` | Waits, for up to 30 seconds, until everything asked so far has been handled and no reload is running. |
+| `run <name>` | Runs the command registered under that name. |
+| `show` | Prints the commands, the texts and the stores. |
+
+With the fixture the gate uses (`tests/headless`):
+
+```console
+$ cd lean
+$ .lake/build/bin/editor headless "$(lean --print-prefix)" .lake/build/lib/lean ../tests/headless/config ../tests/headless/script
+reload 1: installed, 2 chunks, 1 commands
+run greet: ok
+run missing: no such command
+commands: greet
+text 0: "hello, world"
+```
+
+The lines it can print:
+
+```
+reload <n>: installed, <c> chunks, <k> commands
+reload <n>: rejected
+diagnostic: <source>:<line>:<column>: <severity>: <first line of the message>
+run <name>: ok            (or "refused: <error>", or "no such command")
+event <source id> <code>
+commands: <names>
+text <index>: <quoted text>
+store <name> v<version>: <value>
+```
+
+A reload that is rejected (a chunk does not elaborate, or `setup` throws)
+prints its diagnostics and leaves the config that was loaded in place. The
+exit status is 0 when the script ran to its end, 1 when it could not (the
+script cannot be read, or a `settle` ran out) and 2 for a command line it
+does not understand.
+
 Lake relinks the executables only when the Rust archive's contents change,
 so a second `mise run lean` rebuilds nothing.
 
@@ -84,9 +157,10 @@ mise run ci
 This is everything that must pass before review and before landing: Rust
 formatting, clippy, cargo-deny, rustdoc and the Rust tests; the Lean model
 tests (`mise run lean-test`); the Lean build, lean-fmt's format and lint
-checks; the checks of the Lean/Rust boundary and the contract check against
-the real binding (`mise run ffi-test`); and the C format check. `hk check`
-runs the same task.
+checks; the checks of the Lean/Rust boundary, the contract check against
+the real binding and the checks of the config session against the real
+elaborator (`mise run ffi-test`); and the C format check. `hk check` runs the
+same task.
 
 The Rust half needs no Lean toolchain: `mise run test` (`cargo test
 --workspace`) builds and tests every crate with Cargo alone.
@@ -95,17 +169,33 @@ The Lean half's logic needs no Rust library. The editor reaches the library
 through interfaces it defines, each with a pure Lean model, and
 `mise run lean-test` runs `lake test`: the model tests
 (`lean/ModelTest.lean`), which run editor commands and the text interface's
-contract against the model. The task shows by behaviour that they build
-without the library. It puts a `cargo` that always fails
+contract against the model, and the config session's decisions (what a
+reload elaborates, what it installs, how reloads are serialised) on
+hand-written fakes, with no elaborator. The task shows by behaviour that they
+build without the library. It puts a `cargo` that always fails
 (`lean/no-cargo/cargo`) first on the `PATH`, and Lake runs `cargo` on every
 build that reaches the Rust archive, so the task passes only if the test
 driver does not need it.
 
 `mise run ffi-test` runs `lean/.lake/build/bin/ffi-test`, the test executable
-linked against the real library, then `contract-test`, and then the editor.
-`contract-test` runs the text interface's contract, the same list of
-properties the model tests run, against the real binding, so the model
-cannot drift from the library. With no arguments `ffi-test` runs its checks
+linked against the real library, then `contract-test`, `config-test`, and
+then the editor: once with no arguments, and once in its headless mode on
+the fixture under `tests/headless`, whose output must be exactly
+`tests/headless/expected`. `contract-test` runs the text interface's
+contract, the same list of properties the model tests run, against the real
+binding, so the model cannot drift from the library.
+
+`config-test` (`lean/ConfigTest.lean`) is linked like the editor, with
+Lean's elaborator, and is given the toolchain's directory and the package's
+`.olean` directory as arguments. It checks the real elaborator and the
+directory source against what the model tests' fakes assume, and runs the
+headless host in-process on the real event queue and the real text binding:
+a reload replaces a command; a type error, a throwing `setup` and a chunk
+that declares `initialize` each keep the old config; a reload does not
+register a command twice; a store's value survives a reload and is migrated
+when its type changes; the editor answers events while a chunk elaborates;
+and reloads are serialised. Its config directories are temporary directories
+of its own. With no arguments `ffi-test` runs its checks
 of handles, plain data, the event queues and the document. Three scenarios
 need a process each:
 
@@ -137,6 +227,31 @@ makes the system write a crash report for `ffi-test` under
 found it. Run it by hand when the Lean toolchain changes, or the way the
 executables are linked and started. The gate still builds the scenario and
 its fixture.
+
+The entry point gives every thread Lean creates a 64 MiB stack in place of
+Lean's gigabyte, so the overflow takes milliseconds; `ffi-test` checks that
+size in the gate, without aborting anything. `LEAN_STACK_SIZE_KB` in the
+environment overrides it, and both tasks remove the variable.
+
+### The config benchmark, on demand
+
+```sh
+mise run config-bench
+```
+
+This measures the config session in the executable as built, and asserts
+nothing, so it is not part of the gate either. It runs `config-test`'s three
+benchmark subcommands, each in a fresh process under `/usr/bin/time -l`,
+which adds the process's real time and its maximum resident set size:
+
+| Subcommand | Measures |
+|---|---|
+| `bench-start <sysroot> <olean dir> <module>…` | How long importing the base with those modules takes, and the first load of a 20-line config. Run for `Editor`, for `Editor Std` and for `Editor Lean`. |
+| `bench-reload <sysroot> <olean dir>` | The median and the maximum of 20 reloads each of a one-line chunk, a 20-line config, and 50 definitions with a `simp` proof. |
+| `bench-soak <sysroot> <olean dir> <count>` | The mean time of a reload over that many reloads of the 50-definition config. Run with 100 and with 500: about equal resident set sizes mean replaced configs are freed. |
+
+A time is from the request for a reload to its report. The config is held in
+memory, so the benchmark touches no files. Run it on a quiet machine.
 
 ### Formatting
 

@@ -20,6 +20,20 @@ model here. `contract-test` runs the same list against the real binding.
 A command is tested the same way: as a property, a command that returns
 whether it held, run against the model (`commandProperties`). The `editor`
 executable runs the same command source against the real binding.
+
+The config session's decisions are tested here too, with no elaborator:
+
+- `setupChecks`: what a `setup` registers, and when it is refused;
+- `registryChecks`: the registry, replaced by owner;
+- `storeChecks`: the rule that meets a new config's stores with the cells
+  there are, one check for each case;
+- `sessionChecks`: one reload (`Config.build`), on a fake elaborator that
+  records every call and a fake source;
+- `reloadChecks`: the reducer that serialises reloads, with outcomes built
+  by hand. The phase's acceptance tests are here on fakes (reload replaces a
+  command, a rejected reload keeps the old config, a reload does not
+  double-register, a store value survives a reload), and `config-test` runs
+  them again with the real elaborator, queue and text binding.
 -/
 
 namespace ModelTest

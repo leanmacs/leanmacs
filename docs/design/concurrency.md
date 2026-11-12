@@ -179,6 +179,43 @@ elaborate, or whose setup throws, is rejected and the old one stays.
   accumulated. (`edmacs` repeatedly hit reloads that double-added hooks.)
 - Reloads are serialised, so two in flight cannot install out of order.
 
+As built (`lean/Editor/Config/Reload.lean`, `lean/Editor/Headless.lean`):
+
+- **The reload job** is one dedicated task per reload. It reads the source,
+  imports the base if no earlier job has, elaborates the chunks that
+  changed, evaluates `setup` and runs it against a collecting handler, then
+  resolves a promise with the outcome and posts a wake-up to the editor
+  queue. It is a dedicated task, not one of the pool's: it reads files, and
+  the pool is not warmed or sized yet. Lean's frontend elaborates on threads
+  of its own as well; if those are pool threads, the rule that the pool must
+  never be starved bears on reload time. That is not investigated.
+- **The wake-up** is an event from a Lean source, like any other. The editor
+  thread handles it in its turn: it takes the outcome from the promise and
+  installs it. That is "between commands".
+- **A reducer serialises reloads.** `Config.step` is a pure function from the
+  config half of the editor's state and an event (a reload was asked for; a
+  job finished) to the new state and the effects to perform (start a job;
+  report). At most one job runs. A request that arrives while one runs sets
+  a flag, and any number of them make exactly one follow-up job, started
+  when the running one's outcome has been handled, so it reads the source
+  afresh and starts from what was just installed.
+- **An accepted outcome** replaces the chunks and the config's entries in
+  the registry, and meets the config's stores with the cells there are. A
+  rejected one changes nothing.
+- **Nothing of a replaced config is kept** by the editor: the state holds
+  the chunks of the config that is installed, and a finished job's outcome
+  is dropped once it is installed. `config-test` checks this with states
+  that each hold a library handle. Whether Lean frees an old environment is
+  observed by the benchmark's soak (`mise run config-bench`), not gated.
+
+`config-test` shows the editor answering while a chunk elaborates: with a
+chunk's elaboration held open through the elaborator port, 100 events fed
+from a Rust thread and a command of the old config are answered before the
+chunk is let go.
+
+Cancelling the old config's jobs and pending handlers arrives with the job
+system: config registers neither yet.
+
 ## What this buys over Emacs
 
 | Emacs | Here |
@@ -214,8 +251,12 @@ elaborate, or whose setup throws, is rejected and the old one stays.
   ([lean-runtime.md](lean-runtime.md), "The editor API is an interface"),
   a program is plain data that holds no `IO`, and an `IO` action offered
   as a command or as a job is a type error, checked when
-  `lean/Editor/Job.lean` is compiled. What remains open is Lean code outside
-  them: compiled runtime code (the command loop, the runners, the config
-  session) is in `IO`, and config can still define an `IO` action, which
-  the config session runs today. Should that be impossible too, or merely
-  discouraged?
+  `lean/Editor/Job.lean` is compiled. The config session runs no `IO` action
+  from config either: `setup` is a program over the setup port, a command is
+  a program, and nothing else of config's is evaluated
+  ([lean-runtime.md](lean-runtime.md), "The config session as built"). What
+  remains open is Lean code outside them: compiled runtime code (the command
+  loop, the runners, the config session) is in `IO`, and config can still
+  define an `IO` action. The session never runs one, but Lean's elaborator
+  does when a chunk says `#eval`, on the job thread, while the chunk
+  elaborates. Should that be impossible too, or merely discouraged?
