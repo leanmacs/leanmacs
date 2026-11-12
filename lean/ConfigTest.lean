@@ -398,6 +398,12 @@ def setup : SetupM Unit := do
     " }
 "
 
+/-- `counterChunk 1` with its store's version raised to 2 and no migration, so
+the value written at version 1 is lost, and with a theorem left unproved,
+which Lean warns about. -/
+def unmigratedCounterChunk : String :=
+  (counterChunk 1).replace "version := 1" "version := 2" ++ "\ntheorem unproved : 1 = 1 := sorry\n"
+
 /-- A chunk with a store of one number and two commands over it: `bump`, which
 adds one, and `broken`, which makes a text, then inserts into a text that
 does not exist, which the library refuses, and would add a hundred. -/
@@ -519,6 +525,19 @@ def hostChecks (context : Context) : List Check :=
                 "reload 2: installed, 1 chunks, 1 commands", "commands: bump",
                 "store counter v2: {n: 2, label: \"migrated\"}", "run bump: ok", "commands: bump",
                 "store counter v2: {n: 3, label: \"migrated\"}"] },
+    { name :=
+        "a reload that installs prints the config's warnings, then a warning for the store value it lost"
+      run :=
+        withHost context [("config.lean", counterChunk 1)] fun session => do
+          session.ask [.reload]
+          session.ask [.run "bump"]
+          session.write "config.lean" unmigratedCounterChunk
+          session.ask [.reload]
+          session.ask [.show]
+          return (← session.lines) ==
+              #["reload 1: installed, 1 chunks, 1 commands", "run bump: ok",
+                "reload 2: installed, 1 chunks, 1 commands", "diagnostic: config.lean: warning",
+                "diagnostic: store counter: warning", "commands: bump", "store counter v2: 0"] },
     { name := "a chunk that declares initialize keeps the old config"
       run :=
         withHost context greetConfig fun session => do

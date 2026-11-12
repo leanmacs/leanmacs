@@ -725,6 +725,29 @@ def reloadChecks : List Check :=
             stored reloaded "counter" == some (.nat 2) &&
             stored again "counter" == some (.nat 12)) },
     { name :=
+        "an installed reload's report carries the config's warnings, then a diagnostic for each store value that was lost"
+      run :=
+        let (loaded, _) := reduce [.requested, .finished (accepted ["a"] (bumps 1))]
+        let bumped := ((runs loaded "bump").map (·.1)).getD loaded
+        -- An accepted outcome whose one chunk elaborated with a warning.
+        let warned (setup : SetupM Unit) : Config.Outcome Elaborated :=
+          { accepted ["a"] setup with diagnostics := #[told "a" .warning] }
+        -- The counter at a version its store does not migrate to: the value
+        -- is reset. And a config that no longer declares it: the cell goes.
+        let unmigrated : SetupM Unit := ({ counter with version := 2 } : Store Nat).declare
+        let (reset, resetEffects) := reduceFrom bumped [.requested, .finished (warned unmigrated)]
+        let (removed, removedEffects) :=
+          reduceFrom bumped [.requested, .finished (warned (greets "v1"))]
+        pure
+          (stored bumped "counter" == some (.nat 1) &&
+            resetEffects ==
+              #[.start (some #[]) #["a"], .report 2 true #["a", "store counter"] 1 0] &&
+            ((reset.cells.find? .config "counter").map fun cell => (cell.version, cell.value)) ==
+              some (2, .nat 0) &&
+            removedEffects ==
+              #[.start (some #[]) #["a"], .report 2 true #["a", "store counter"] 1 1] &&
+            stored removed "counter" == none) },
+    { name :=
         "a command over a store that is refused writes nothing, and a name nobody registered runs nothing"
       run :=
         let setup : SetupM Unit := do
