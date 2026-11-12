@@ -41,8 +41,11 @@ asked for among them. Then it prints the report.
 ## The report
 
 Eight lines, always, in one fixed form (`report`). A window that could not
-be opened gives the same eight lines, with the reason in the second, and the
-exit status 1.
+be opened gives the same eight lines, with the reason in the second and
+`ended: the window never opened` in the last, and the exit status 1. So does
+a window that ran and never said that it opened, which a platform that keeps
+the window port's contract does not do: the report and the status go by one
+reading of the run (`Run.opened`), so they cannot disagree.
 
 The latency of a key is the time from the instant the window's loop was
 handed the key, read in Rust on the main thread, to the instant the Lean loop
@@ -212,14 +215,12 @@ structure Options where
   seconds : Nat := 120
   deriving DecidableEq, Repr
 
-/-- How a check ended. -/
+/-- How the run of a window was ended. -/
 inductive Ending where
   /-- The user closed the window. -/
   | closed
   /-- The time limit passed, and the check closed the window. -/
   | limit
-  /-- No window could be opened. -/
-  | neverOpened
   deriving DecidableEq, Repr
 
 /-- Everything the report is made of. -/
@@ -230,13 +231,24 @@ structure Run where
   serviceOnMain : Bool
   /-- The clock's reading just before the window was asked for. -/
   askedAt : Nat
-  /-- Why no window could be opened, when none could. -/
+  /-- Why the platform could not open a window, when it said it could not. -/
   failure : Option String
   /-- What reached the loop. -/
   tally : Tally
-  /-- How the check ended. -/
+  /-- How the window's run was ended. It says nothing of a window that never
+  opened (`Run.opened`). -/
   ending : Ending
   deriving Repr
+
+/-- The platform that opened the run's window and the instant it opened, or
+why the window never opened: the reason the platform gave, or that the window
+ran and never said that it opened. The report and the exit status both go by
+this, so a window is one that could not open in both or in neither. -/
+def Run.opened (run : Run) : Except String (String × Nat) :=
+  match run.failure, run.tally.platform, run.tally.openedAt with
+  | some reason, _, _ => .error reason
+  | none, some platform, some openedAt => .ok (platform, openedAt)
+  | none, _, _ => .error "the window ran and did not say that it opened"
 
 /-- The report: eight lines, in this order and this form, whatever happened.
 
@@ -262,11 +274,10 @@ def report (run : Run) : List String :=
   let asked :=
     s!"window-check: composition {if run.options.composition then "on" else "off"}, limit {run.options.seconds} s; the main-thread service is on the process's main thread: {if run.serviceOnMain then "yes" else "no"}"
   let window :=
-    match run.failure, tally.platform, tally.openedAt with
-    | some reason, _, _ => s!"could not open: {reason}"
-    | none, some platform, some openedAt =>
+    match run.opened with
+    | .ok (platform, openedAt) =>
       s!"opened by {platform} {since run.askedAt openedAt} ms after it was asked for"
-    | none, _, _ => "could not open: the window ran and did not say that it opened"
+    | .error reason => s!"could not open: {reason}"
   let openedAt := tally.openedAt.getD run.askedAt
   let focus :=
     match tally.focusedAt with
@@ -282,10 +293,10 @@ def report (run : Run) : List String :=
       s!"median {micros median} / 99th percentile {micros high} / maximum {micros maximum} ({tally.latencies.size} samples)"
     | none => "no samples"
   let ended :=
-    match run.ending with
-    | .closed => "the window was closed"
-    | .limit => "the time limit"
-    | .neverOpened => "the window never opened"
+    match run.opened, run.ending with
+    | .error _, _ => "the window never opened"
+    | .ok _, .closed => "the window was closed"
+    | .ok _, .limit => "the time limit"
   [asked, s!"window: {window}", s!"focus: {focus}; first pointer press in the window: {pointer}",
     s!"keys: {tally.keys} key events reached the Lean loop ({tally.presses} presses, {tally.repeats} of them repeats, {tally.releases} releases); text: {tally.text.quote}",
     s!"latency from a key's arrival in Rust to its handling in Lean, in µs: {latency}",
@@ -320,10 +331,13 @@ at the clock. -/
 def limitPoll : UInt32 :=
   50
 
-/-- The exit status of a check: 0 when the window ran and closed, 1 when it
-could not be opened. Whether keys arrived is for the reader of the report. -/
+/-- The exit status of a check: 0 when the window opened, ran and closed, 1
+when it could not be opened or ran and never said that it opened
+(`Run.opened`). Whether keys arrived is for the reader of the report. -/
 def status (run : Run) : UInt32 :=
-  if run.failure.isSome then 1 else 0
+  match run.opened with
+  | .ok _ => 0
+  | .error _ => 1
 
 /-- Runs the check on `window` and prints the report; see the module docs.
 Returns the exit status. It blocks until the window has closed, so call it
@@ -370,9 +384,7 @@ def check (window : Window) (options : Options) : IO UInt32 := do
     | .ok () => none
     | .error reason => some reason
   let timedOut ← limited.get
-  let ending :=
-    if failure.isSome then Ending.neverOpened
-    else if timedOut && !tally.closeRequested then .limit else .closed
+  let ending := if timedOut && !tally.closeRequested then Ending.limit else .closed
   let run : Run := { options, serviceOnMain, askedAt, failure, tally, ending }
   for line in report run do
     window.emit line

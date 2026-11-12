@@ -1733,10 +1733,11 @@ def opened (inputs : List WindowCheck.Input) (options : WindowCheck.Options := {
         ((.opened "fake" :: inputs).map fun input =>
           { input, arrived := 3500000, handled := 3500000 }) }
 
-/-- A run whose window could not be opened, for the reason `reason`. -/
+/-- A run whose window could not be opened, for the reason `reason`. Its
+ending is what the check gives a run nothing ended. -/
 def unopened (reason : String) : WindowCheck.Run :=
   { options := {}, serviceOnMain := true, askedAt := 1000000, failure := some reason, tally := {}
-    ending := .neverOpened }
+    ending := .closed }
 
 /-- The report of a run with no window, after its second line: the forms
 every line takes when nothing arrived. -/
@@ -2013,6 +2014,29 @@ def windowTallyChecks : List Check :=
                 "window: could not open: no display"] ++
               nothingArrived) },
     { name :=
+        "a window that ran and never said that it opened is reported as one that could not open, however its run was ended: that reason in the second line, the last line that the window never opened, and status 1"
+      run := do
+        let silent (ending : WindowCheck.Ending) (inputs : List WindowCheck.Input := []) :
+          WindowCheck.Run :=
+          { options := {}, serviceOnMain := true, askedAt := 1000000, failure := none
+            tally := tallied inputs, ending }
+        let expected :=
+          ["window-check: composition on, limit 120 s; the main-thread service is on the process's main thread: yes",
+              "window: could not open: the window ran and did not say that it opened"] ++
+            nothingArrived
+        -- What did arrive is still counted.
+        let typedInto := WindowCheck.report (silent .closed [pressed "a"])
+        return WindowCheck.report (silent .closed) == expected &&
+            WindowCheck.report (silent .limit) == expected &&
+            WindowCheck.status (silent .closed) == 1 &&
+            WindowCheck.status (silent .limit) == 1 &&
+            typedInto[1]? == expected[1]? &&
+            typedInto[3]? ==
+              some
+                "keys: 1 key events reached the Lean loop (1 presses, 0 of them repeats, 0 releases); text: \"a\"" &&
+            typedInto.getLast? == some "ended: the window never opened" &&
+            WindowCheck.status (silent .closed [pressed "a"]) == 1 },
+    { name :=
         "the focus line gives the gain and the first pointer press, each or neither, and judges nothing"
       run := do
         let line (inputs : List WindowCheck.Arrival) : Option String :=
@@ -2140,6 +2164,17 @@ def windowLoopChecks : List Check :=
                 nothingArrived &&
             checked.status == some 1 &&
             checked.calls == ["probe", "run true", "stop"] },
+    { name :=
+        "a window that runs and never says that it opened is closed by the time limit, and gives the eight lines of a window that could not open, with that reason in the second, and status 1"
+      run := do
+        let silent : FakeWindow := { arrivals := [], idleAt := some 3000000000 }
+        let checked ← silent.check { seconds := 2 }
+        return checked.lines ==
+              ["window-check: composition on, limit 2 s; the main-thread service is on the process's main thread: yes",
+                  "window: could not open: the window ran and did not say that it opened"] ++
+                nothingArrived &&
+            checked.status == some 1 &&
+            checked.calls.eraseReps == ["probe", "run true", "close", "stop"] },
     { name := "what the fake says of the main-thread service is what the first line says"
       run := do
         let checked ← ({ typed with serviceOnMain := false } : FakeWindow).check

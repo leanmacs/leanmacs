@@ -399,7 +399,9 @@ and an input method's composition arrive.
 | `mise run window-check -- --seconds <n>` | Closes the window after that many seconds if nobody has (120 by default). |
 
 The exit status is 0 when the window ran, 1 when it could not be opened and
-2 when the options are not understood. The gate runs the same loop on the
+2 when the options are not understood. A window that ran and never reported
+that it opened counts as one that could not be opened, in the report and in
+the status. The gate runs the same loop on the
 scripted platform (`ffi-test`) and on a fake (`lean-test`), with no window,
 and checks there what each option asks for.
 
