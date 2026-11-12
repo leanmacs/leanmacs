@@ -4,6 +4,7 @@ import Editor.Job.Contract
 import Editor.Job.Fake
 import Editor.Job.Jobs
 import Editor.Job.Model
+import Editor.Job.Pool
 import Editor.Text.Contract
 
 /-!
@@ -27,6 +28,9 @@ executable runs the same command source against the real binding.
 
 The job system is tested here with no Rust library:
 
+- `poolChecks`: warming Lean's task pool (`Editor/Job/Pool.lean`). The
+  `lean-test` task removes `LEAN_NUM_THREADS` from the environment, since the
+  pool's size is what these measure;
 - `jobModelChecks`: the job port's pure model (`Editor/Job/Model.lean`), its
   clock and its cancellation, and what only the model's exact clock can
   show: that a timer does not drift;
@@ -476,6 +480,46 @@ def distinct (threads : Array UInt64) : Nat :=
   (threads.foldl (fun seen thread => if seen.contains thread then seen else seen.push thread)
       #[]).size
 
+/-- How many threads the machine runs at once, which is the size Lean gives
+its pool unless `LEAN_NUM_THREADS` says otherwise. -/
+def cores : Nat :=
+  (System.Platform.Internal.getHardwareConcurrency ()).toNat
+
+/-- The checks of warming the pool (`Editor/Job/Pool.lean`). They are about
+the process's one pool, so they run first, while nothing else has used it. -/
+def poolChecks : List Check :=
+  [{
+      name :=
+        "warming the pool holds one task on every thread of it: as many different threads as the machine runs at once",
+      run := do
+        let threads ← Job.Pool.warm cores 2000
+        return threads.size == cores && distinct threads == cores },
+    { name :=
+        "a burst after warming starts no thread: a task for each thread of the pool, all running at once, are on the threads the warming held"
+      run := do
+        let warmed ← Job.Pool.warm cores 2000
+        let release : IO.Promise Unit ← IO.Promise.new
+        let running ← IO.mkRef #[]
+        try
+          for _ in [0:cores] do
+            discard <|
+                IO.asTask do
+                  running.modify (·.push (← IO.getTID))
+                  -- Holds its thread in a system call, which Lean does not
+                  -- count as blocked, so no thread is added for it.
+                  while !(← release.isResolved) do
+                    IO.sleep 1
+          let together ← eventually (return (← running.get).size == cores)
+          let threads ← running.get
+          return together && distinct threads == cores && threads.all warmed.contains
+        finally
+          release.resolve () },
+    { name :=
+        "warming stops at the pool's size: asked for two threads more than the pool has, it holds the pool's"
+      run := do
+        let threads ← Job.Pool.warm (cores + 2) 200
+        return threads.size == cores && distinct threads == cores }]
+
 /-- The checks of the job runner (`Editor/Job/Runner.lean`), each on a fake
 clock of its own. A check holds what it controls (the clock, a promise) and
 polls only as the bound after which it fails. -/
@@ -520,7 +564,7 @@ def runnerChecks : List Check :=
         "jobs blocked in waits do not delay a new pool task, and their waits hold no thread: more jobs than the pool has threads all reach their wait from fewer threads than there are jobs"
       run := do
         let rig ← Rig.new
-        let count := max 64 ((System.Platform.Internal.getHardwareConcurrency ()).toNat + 1)
+        let count := max 64 (cores + 1)
         let mut jobs := #[]
         for _ in [0:count] do
           jobs :=
@@ -1510,9 +1554,16 @@ def reloadChecks : List Check :=
           ((state.program? "broken").isSome && (runs state "broken").isNone &&
             (state.program? "missing").isNone) }]
 
-/-- Every check, in the order they run. -/
+/-- Every check, in the order they run.
+
+The order matters where the process's one pool is measured. `poolChecks` run
+first, on a pool nothing has used. Within `runnerChecks`, the check that
+counts the threads jobs wait from comes before any check that holds a job in
+pure code on a promise: pure code blocked in `Task.get` on a pool thread
+makes Lean add a thread to the pool, which a later burst can land on. -/
 def checks : List Check :=
-  programChecks ++ jobModelChecks ++ waitChecks ++ runnerChecks ++ tableChecks ++ ownerChecks ++
+  poolChecks ++ programChecks ++ jobModelChecks ++ waitChecks ++ runnerChecks ++ tableChecks ++
+    ownerChecks ++
     setupChecks ++
     registryChecks ++
     storeChecks ++

@@ -51,10 +51,15 @@ run = "cargo test --workspace --locked"
 #
 # No LEAN_CC: the test driver links no C glue, so Lean's bundled compiler
 # builds it.
+#
+# LEAN_NUM_THREADS sets the size of Lean's task pool, and the size of the
+# pool is what some of these checks measure (warming it, and how many
+# threads jobs wait from), so a variable in the developer's shell must not
+# reach them.
 [tasks.lean-test]
 description = "Run the Lean model tests with `lake test`, with a `cargo` that fails first on the PATH: they need no Rust library (lean/ModelTest.lean)"
 dir = "lean"
-run = 'PATH="$PWD/no-cargo:$PATH" lake test --wfail'
+run = 'PATH="$PWD/no-cargo:$PATH" env -u LEAN_NUM_THREADS lake test --wfail'
 
 # Runs in lean/, so mise picks the toolchain `lean/lean-toolchain` pins.
 #
