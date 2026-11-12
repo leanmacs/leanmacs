@@ -7,8 +7,9 @@ import Editor.Config.Stores
 The config half of the editor's state, and the pure function that moves it.
 `step` takes the state and an event (a reload was asked for; a reload job
 finished) to the new state and the effects for the runtime to perform (start
-a job; report a reload). It holds no `IO`, so the model tests run it with
-outcomes built by hand (`ModelTest.reloadChecks`).
+a reload job; cancel an owner's jobs; report a reload). It holds no `IO`, so
+the model tests run it with outcomes built by hand
+(`ModelTest.reloadChecks`).
 
 - **One job at a time.** A request with no job running starts one. A request
   that arrives while one runs only sets a flag, so any number of them make
@@ -16,10 +17,19 @@ outcomes built by hand (`ModelTest.reloadChecks`).
   handled. The follow-up therefore reads the source afresh and starts from
   what was just installed, and two reloads cannot install out of order.
 - **Installing is the only place config changes anything.** An accepted
-  outcome replaces the chunks, replaces the config's entries in the registry
-  (`Registry.replace`, never an append) and meets the config's stores with
-  the cells there are (`Cells.install`). A rejected outcome changes none of
-  them: the config that was loaded stays.
+  outcome replaces the chunks, replaces the config's entries in the registry,
+  commands and jobs (`Registry.replace`, `Registry.replaceJobs`, never an
+  append) and meets the config's stores with the cells there are
+  (`Cells.install`). A rejected outcome changes none of them: the config that
+  was loaded stays.
+- **A reload cancels the old config's jobs when, and only when, it
+  installs.** An accepted outcome's effects begin with `cancelJobs config`,
+  before its report and before a follow-up job starts; a rejected outcome has
+  no such effect, so the old config's jobs run on, with their handlers. Every
+  accepted reload cancels, one whose source did not change included. The
+  runtime performs the effects of one event in order on the editor thread, so
+  no command or handler of the old config runs after the install. The reload
+  starts no job of the new config.
 - **The base is kept** from the first outcome that has it, accepted or not,
   and handed to every later job, so it is imported once.
 - **Every outcome is reported**, with its diagnostics.
@@ -79,6 +89,10 @@ inductive Effect (σ : Type) where
   /-- Start a reload job: `Config.build` with this base and these loaded
   chunks, whose outcome comes back as a `finished` event. -/
   | start (base : Option σ) (chunks : Array (Chunk σ))
+  /-- Cancel every job that runs for `owner`, and drop the handlers of its
+  jobs that have ended and not yet been dealt with: the config that started
+  them has just been replaced. -/
+  | cancelJobs (owner : Owner)
   /-- Show what a reload came to. -/
   | report (report : Report)
 
@@ -112,7 +126,10 @@ def install (state : State σ) (outcome : Outcome σ) : State σ × Report :=
     let state :=
       { state with
         chunks := built.chunks,
-        registry := state.registry.replace .config built.registrations.commands, cells }
+        registry :=
+          (state.registry.replace .config built.registrations.commands).replaceJobs .config
+            built.registrations.jobs,
+        cells }
     (state,
       { number := state.finished, installed := true, diagnostics := outcome.diagnostics ++ lost,
         chunks := state.chunks.size, commands := state.commands })
@@ -124,10 +141,13 @@ def step {σ : Type} (state : State σ) : Event σ → State σ × Array (Effect
   | .requested => if state.running then ({ state with pending := true }, #[]) else state.start
   | .finished outcome =>
     let (state, report) := state.install outcome
+    -- The old config's jobs go when, and only when, the new one is in.
+    let installed :=
+      if report.installed then #[.cancelJobs .config, .report report] else #[.report report]
     if state.pending then
       let (state, effects) := state.start
-      (state, #[.report report] ++ effects)
-    else (state, #[.report report])
+      (state, installed ++ effects)
+    else (state, installed)
 
 /-- What a command asks the editor to write when it has run: the new tree of
 a store's cell. -/
@@ -168,6 +188,11 @@ def program? (state : State σ) (name : String) : Option (EditorM (Option Write)
 def written (state : State σ) : Option Write → State σ
   | none => state
   | some write => { state with cells := state.cells.set write.owner write.store write.value }
+
+/-- The job registered under `name`, and the owner the runtime is to start it
+for; `none` if there is no such job. -/
+def work? (state : State σ) (name : String) : Option (Owner × Work) :=
+  (state.registry.findJob? name).map fun entry => (entry.owner, entry.registration.work)
 
 end State
 

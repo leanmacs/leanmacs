@@ -49,8 +49,10 @@ same list against the runner over the Rust library's timer service.
 
 The config session's decisions are tested here too, with no elaborator:
 
-- `setupChecks`: what a `setup` registers, and when it is refused;
-- `registryChecks`: the registry, replaced by owner;
+- `setupChecks`: what a `setup` registers, commands, stores and jobs, and
+  when it is refused;
+- `registryChecks`: the registry, its commands and its jobs, replaced by
+  owner;
 - `storeChecks`: the rule that meets a new config's stores with the cells
   there are, one check for each case;
 - `sessionChecks`: one reload (`Config.build`), on a fake elaborator that
@@ -59,7 +61,9 @@ The config session's decisions are tested here too, with no elaborator:
   by hand. The phase's acceptance tests are here on fakes (reload replaces a
   command, a rejected reload keeps the old config, a reload does not
   double-register, a store value survives a reload), and `config-test` runs
-  them again with the real elaborator, queue and text binding.
+  them again with the real elaborator, queue and text binding. The reducer
+  also says when the old config's jobs are cancelled: when a reload
+  installs, and only then.
 -/
 
 namespace ModelTest
@@ -912,6 +916,11 @@ def plainTexts : Config.Action → Option (Array String)
   | .plain run => some (textsOf run)
   | .store .. => none
 
+/-- How `work` ends when it runs against the job model from a clock at 0 that
+nothing cancels, as a check compares it. -/
+def worked (work : Work) : Job.Outcome (Array String) :=
+  texts ((work ()).runModel {}).1
+
 /-- A store of one number, at version 1. -/
 def counter : Store Nat :=
   { name := "counter", version := 1, initial := 0, encode := .nat,
@@ -984,11 +993,54 @@ def setupChecks : List Check :=
             return n + 5
         match (step (.nat 2)).runModel {} with
         | (.ok tree, model) => pure (tree == .nat 7 && model.texts == #["was 2"])
-        | (.error _, _) => pure false }]
+        | (.error _, _) => pure false },
+    { name :=
+        "a setup that registers jobs collects each with its name, in order, beside its commands, and a job is not a command"
+      run :=
+        let setup : SetupM Unit := do
+          command "first" (makes "1")
+          job "count"
+              (fun _ => do
+                sleep 5
+                return 42)
+              fun n => makes s!"counted {n}"
+          job "name" (fun _ => pure "x") makes
+          command "second" (makes "2")
+        match Config.Registrations.ofSetup setup with
+        | .error _ => pure false
+        | .ok collected =>
+          pure
+            (collected.commands.map (·.name) == #["first", "second"] &&
+              collected.jobs.map (·.name) == #["count", "name"] &&
+              collected.jobs.map (worked ·.work) ==
+                #[.finished #["counted 42"], .finished #["x"]]) },
+    { name :=
+        "a setup that registers a job name twice is refused with a message that names the job, and a job may have the name of a command"
+      run :=
+        let twice : SetupM Unit := do
+          job "count" (fun _ => pure 1) fun n => makes (toString n)
+          job "other" (fun _ => pure 2) fun n => makes (toString n)
+          job "count" (fun _ => pure 3) fun n => makes (toString n)
+        let shared : SetupM Unit := do
+          command "count" (makes "1")
+          job "count" (fun _ => pure 1) fun n => makes (toString n)
+        pure
+          (refusal twice == some "the job `count` is registered twice" && refusal shared == none) }]
 
 /-- A registration of the plain command `name`, which makes the text `text`. -/
 def registration (name text : String) : Config.Registration :=
   { name, action := .plain (makes text) }
+
+/-- A registration of the job `name`, which finishes with a command that
+makes the text `text`. -/
+def jobRegistration (name text : String) : Config.JobRegistration :=
+  { name, work := fun _ => pure (makes text) }
+
+/-- How the job `registry` holds under `name` ends, run against the job
+model; `none` if there is no such job. -/
+def registeredWork (registry : Config.Registry) (name : String) :
+    Option (Job.Outcome (Array String)) :=
+  (registry.findJob? name).map (worked ·.registration.work)
 
 /-- An owner that is not the config. -/
 def other : Config.Owner :=
@@ -1029,7 +1081,23 @@ def registryChecks : List Check :=
             #[registration "greet" "ours"]
         pure
           (registeredTexts registry "greet" == some #["ours"] && registry.names == #["greet"] &&
-            (registry.find? "missing").isNone) }]
+            (registry.find? "missing").isNone) },
+    { name :=
+        "an owner's jobs are replaced as a set, and another owner's are left: a lookup finds the latest job of a name, and the commands are untouched"
+      run :=
+        let registry : Config.Registry :=
+          ((({} : Config.Registry).replace .config #[registration "greet" "1"]).replaceJobs other
+                #[jobRegistration "theirs" "t"]).replaceJobs
+            .config #[jobRegistration "count" "1", jobRegistration "old" "1"]
+        let replaced := registry.replaceJobs .config #[jobRegistration "count" "2"]
+        pure
+          (registry.jobs.map (·.registration.name) == #["theirs", "count", "old"] &&
+            replaced.jobs.map (·.registration.name) == #["theirs", "count"] &&
+            registeredWork replaced "count" == some (.finished #["2"]) &&
+            registeredWork replaced "theirs" == some (.finished #["t"]) &&
+            registeredWork replaced "old" == none &&
+            replaced.names == #["greet"] &&
+            (replaced.find? "count").isNone) }]
 
 /-- A declaration of the store `name` at `version`, which starts at the
 number 0 and accepts any number. It migrates a number written at version 1 by
@@ -1331,12 +1399,15 @@ def sessionChecks : List Check :=
               #[("setup", .error)] }]
 
 /-- An effect of the reload reducer, as a check compares it: a start with the
-base and the names of the chunks it carries, or a report with its number,
-whether it installed, the sources of its diagnostics, and its counts of
-chunks and commands. -/
+base and the names of the chunks it carries, the cancelling of an owner's
+jobs with the owner's name, or a report with its number, whether it
+installed, the sources of its diagnostics, and its counts of chunks and
+commands. -/
 inductive Seen where
   /-- A job was started. -/
   | start (base : Option Elaborated) (chunks : Array String)
+  /-- The jobs of the owner called `owner` were cancelled. -/
+  | cancelJobs (owner : String)
   /-- A reload was reported. -/
   | report (number : Nat) (installed : Bool) (sources : Array String) (chunks commands : Nat)
   deriving DecidableEq, Repr
@@ -1344,6 +1415,7 @@ inductive Seen where
 /-- `effect` as a check compares it. -/
 def seen : Config.Effect Elaborated → Seen
   | .start base chunks => .start base (chunks.map (·.name))
+  | .cancelJobs owner => .cancelJobs owner.name
   | .report report =>
     .report report.number report.installed (report.diagnostics.map (·.source)) report.chunks
       report.commands
@@ -1379,6 +1451,18 @@ def rejected (source : String) : Config.Outcome Elaborated :=
 def greets (text : String) : SetupM Unit :=
   command "greet" (makes text)
 
+/-- A `setup` that registers the command `greet` and the job `count`, each of
+which makes the text `text`. -/
+def counts (text : String) : SetupM Unit := do
+  command "greet" (makes text)
+  job "count" (fun _ => pure text) makes
+
+/-- The job the editor would start for `name`: its owner's name, and how the
+job ends when it runs against the job model; `none` if there is no such job. -/
+def startable (state : Config.State Elaborated) (name : String) :
+    Option (String × Job.Outcome (Array String)) :=
+  (state.work? name).map fun (owner, work) => (owner.name, worked work)
+
 /-- A `setup` that declares `counter` and registers `bump` over it, which
 adds `step`. -/
 def bumps (step : Nat) : SetupM Unit := do
@@ -1412,7 +1496,9 @@ def reloadChecks : List Check :=
        let later := reduce [.requested, .finished (accepted ["a", "b"] (greets "1")), .requested]
        pure
          (first.2 == #[.start none #[]] &&
-           later.2 == #[.start none #[], .report 1 true #[] 2 1, .start (some #[]) #["a", "b"]]) },
+           later.2 ==
+             #[.start none #[], .cancelJobs "config", .report 1 true #[] 2 1,
+               .start (some #[]) #["a", "b"]]) },
     { name :=
         "requests while a job runs start nothing, and the finish then starts exactly one more job"
       run :=
@@ -1421,8 +1507,8 @@ def reloadChecks : List Check :=
         let (_, last) := reduceFrom after [.finished (accepted ["a"] (greets "1"))]
         pure
           (effects == #[.start none #[]] &&
-            more == #[.report 1 true #[] 1 1, .start (some #[]) #["a"]] &&
-            last == #[.report 2 true #[] 1 1]) },
+            more == #[.cancelJobs "config", .report 1 true #[] 1 1, .start (some #[]) #["a"]] &&
+            last == #[.cancelJobs "config", .report 2 true #[] 1 1]) },
     { name :=
         "an accepted outcome installs its chunks and exactly its commands, and the report says installed"
       run :=
@@ -1430,7 +1516,7 @@ def reloadChecks : List Check :=
         pure
           (state.chunks.map (·.name) == #["a", "b"] && state.registry.names == #["greet"] &&
             state.registry.entries.all (·.owner == .config) &&
-            effects == #[.start none #[], .report 1 true #[] 2 1]) },
+            effects == #[.start none #[], .cancelJobs "config", .report 1 true #[] 2 1]) },
     { name :=
         "a rejected outcome leaves the registry, the chunks and the cells as they were, and the report carries its diagnostics"
       run :=
@@ -1502,7 +1588,7 @@ def reloadChecks : List Check :=
           Config.build (fakeElaborator calls (.ok twice)) (fakeSource ["a"]) loaded.base
               loaded.chunks
         let (state, effects) := reduceFrom loaded [.requested, .finished outcome]
-        return first == #[.start none #[], .report 1 true #[] 1 2] &&
+        return first == #[.start none #[], .cancelJobs "config", .report 1 true #[] 1 2] &&
             effects == #[.start (some #[]) #["a"], .report 2 false #["setup"] 1 2] &&
             state.registry.names == #["greet", "bump"] &&
             state.registry.entries.size == 2 &&
@@ -1535,11 +1621,13 @@ def reloadChecks : List Check :=
         pure
           (stored bumped "counter" == some (.nat 1) &&
             resetEffects ==
-              #[.start (some #[]) #["a"], .report 2 true #["a", "store counter"] 1 0] &&
+              #[.start (some #[]) #["a"], .cancelJobs "config",
+                .report 2 true #["a", "store counter"] 1 0] &&
             ((reset.cells.find? .config "counter").map fun cell => (cell.version, cell.value)) ==
               some (2, .nat 0) &&
             removedEffects ==
-              #[.start (some #[]) #["a"], .report 2 true #["a", "store counter"] 1 1] &&
+              #[.start (some #[]) #["a"], .cancelJobs "config",
+                .report 2 true #["a", "store counter"] 1 1] &&
             stored removed "counter" == none) },
     { name :=
         "a command over a store that is refused writes nothing, and a name nobody registered runs nothing"
@@ -1552,7 +1640,54 @@ def reloadChecks : List Check :=
         let (state, _) := reduce [.requested, .finished (accepted ["a"] setup)]
         pure
           ((state.program? "broken").isSome && (runs state "broken").isNone &&
-            (state.program? "missing").isNone) }]
+            (state.program? "missing").isNone) },
+    { name :=
+        "a job is not counted as a command: the report of a config that registers one command and one job says one command"
+      run :=
+        let (state, effects) := reduce [.requested, .finished (accepted ["a"] (counts "v1"))]
+        pure
+          (effects == #[.start none #[], .cancelJobs "config", .report 1 true #[] 1 1] &&
+            state.commands == 1 &&
+            state.registry.names == #["greet"]) },
+    { name :=
+        "an accepted outcome cancels the config's jobs before it is reported, and before the follow-up job starts; a rejected outcome cancels nothing"
+      run :=
+        let (loaded, _) := reduce [.requested, .finished (accepted ["a"] (counts "v1"))]
+        -- A reload asked for while one runs: the follow-up starts last.
+        let (_, acceptedEffects) :=
+          reduceFrom loaded [.requested, .requested, .finished (accepted ["a"] (counts "v2"))]
+        -- The same source again: every accepted reload cancels.
+        let (_, unchanged) :=
+          reduceFrom loaded [.requested, .finished (accepted ["a"] (counts "v1"))]
+        let (_, rejectedEffects) :=
+          reduceFrom loaded [.requested, .requested, .finished (rejected "a")]
+        pure
+          (acceptedEffects ==
+              #[.start (some #[]) #["a"], .cancelJobs "config", .report 2 true #[] 1 1,
+                .start (some #[]) #["a"]] &&
+            unchanged ==
+              #[.start (some #[]) #["a"], .cancelJobs "config", .report 2 true #[] 1 1] &&
+            rejectedEffects ==
+              #[.start (some #[]) #["a"], .report 2 false #["a"] 1 1, .start (some #[]) #["a"]]) },
+    { name :=
+        "a reload replaces the config's jobs: the registry finds the new config's job and not the old one's, and a rejected reload keeps the old one's"
+      run :=
+        let first : SetupM Unit := do
+          counts "v1"
+          job "old" (fun _ => pure "old") makes
+        let (loaded, _) := reduce [.requested, .finished (accepted ["a"] first)]
+        let (reloaded, _) :=
+          reduceFrom loaded [.requested, .finished (accepted ["a"] (counts "v2"))]
+        let (kept, _) := reduceFrom loaded [.requested, .finished (rejected "a")]
+        pure
+          (startable loaded "count" == some ("config", .finished #["v1"]) &&
+            startable loaded "old" == some ("config", .finished #["old"]) &&
+            startable reloaded "count" == some ("config", .finished #["v2"]) &&
+            startable reloaded "old" == none &&
+            reloaded.registry.jobs.size == 1 &&
+            startable kept "count" == some ("config", .finished #["v1"]) &&
+            startable kept "old" == some ("config", .finished #["old"]) &&
+            startable loaded "missing" == none) }]
 
 /-- Every check, in the order they run.
 

@@ -237,6 +237,9 @@ def reduce (collaborators : Collaborators σ) (running : Running σ) (event : Co
     | .report report =>
       for line in reportLines report do
         collaborators.emit line
+    | .cancelJobs _ =>
+      -- The loop starts no job yet.
+      pure ()
     | .start base chunks =>
       let promise ← IO.Promise.new
       discard <| IO.asTask (prio := .dedicated) (reloadJob collaborators base chunks promise)

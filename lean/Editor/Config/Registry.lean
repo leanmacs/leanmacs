@@ -4,26 +4,32 @@ import Editor.Setup
 /-!
 # The registry, and what a `setup` registers
 
-The registry is the editor's table of commands. Each entry has an *owner*
-(`Editor/Config/Owner.lean`),
-and an owner's entries are replaced as a set, never added to: installing a
-reloaded config is `replace` for the owner `config`, so a command the new
-config no longer registers is gone, and one it registers again is there
-once.
+The registry is the editor's table of commands and of jobs. Each entry has an
+*owner* (`Editor/Config/Owner.lean`), and an owner's entries are replaced as
+a set, never added to: installing a reloaded config is `replace` for the
+owner `config`, so a command the new config no longer registers is gone, and
+one it registers again is there once.
 
 A registered command is a value: the `EditorM` program `setup` handed over
 (`Editor/Setup.lean`). Running it is running that program against the
 editor's port. Nothing looks a command up in an environment.
 
+A registered job is a value too, a `Work`: the job with the handler that
+makes the command its result is taken to the editor with. The job entries
+are held apart from the command entries, by owner, and replaced as a set the
+same way (`replaceJobs`). A job is not a command and is not counted as one.
+Registering a job starts nothing: the runtime that owns the job table starts
+it (`Editor/Job/Jobs.lean`).
+
 `Registrations` is what one run of a `setup` asks for, collected by a pure
 handler of the setup port and then checked. `Registrations.ofSetup` is the
 whole of it: the registrations, or the message the `setup` is refused with.
 A `setup` is refused when it declares a store name twice, registers a
-command name twice, or registers a command over a store it does not declare
-(`Registrations.problem?`). So one owner's entries have different names, and
-the number of commands a config registers is the number of names it can be
-run by. Two owners may still register one name: a lookup then finds the
-later entry.
+command name twice or a job name twice, or registers a command over a store
+it does not declare (`Registrations.problem?`). So one owner's entries have
+different names, and the number of commands a config registers is the number
+of names it can be run by. Two owners may still register one name: a lookup
+then finds the later entry.
 
 Dispatch by key, command names in keymaps and overriding a compiled command
 are for the command loop to build on this table.
@@ -53,20 +59,50 @@ structure Entry where
   /-- The command. -/
   registration : Registration
 
-/-- The editor's table of commands, oldest entry first. -/
+/-- A job as `setup` registers it. -/
+structure JobRegistration where
+  /-- The job's name. -/
+  name : String
+  /-- The job, with the handler that makes the command its result is taken
+  to the editor with. -/
+  work : Work
+
+/-- A job entry of the registry: a registered job and its owner. -/
+structure JobEntry where
+  /-- Who registered it. -/
+  owner : Owner
+  /-- The job. -/
+  registration : JobRegistration
+
+/-- The editor's table of commands and of jobs, oldest entry first. -/
 structure Registry where
-  /-- The entries. -/
+  /-- The command entries. -/
   entries : Array Entry := #[]
+  /-- The job entries. A job is not a command: these are apart. -/
+  jobs : Array JobEntry := #[]
 
 namespace Registry
 
 /-- `registry` with every entry of `owner` removed and `registrations` added
 as its entries. -/
 def replace (registry : Registry) (owner : Owner) (registrations : Array Registration) : Registry :=
-  {
+  { registry with
     entries :=
       registry.entries.filter (·.owner != owner) ++
         registrations.map fun registration => { owner, registration } }
+
+/-- `registry` with every job entry of `owner` removed and `registrations`
+added as its job entries. -/
+def replaceJobs (registry : Registry) (owner : Owner) (registrations : Array JobRegistration) :
+    Registry :=
+  { registry with
+    jobs :=
+      registry.jobs.filter (·.owner != owner) ++
+        registrations.map fun registration => { owner, registration } }
+
+/-- The job entry `name` starts: the latest one of that name. -/
+def findJob? (registry : Registry) (name : String) : Option JobEntry :=
+  registry.jobs.findRev? (·.registration.name == name)
 
 /-- The entry `name` runs: the latest one of that name. -/
 def find? (registry : Registry) (name : String) : Option Entry :=
@@ -88,6 +124,8 @@ structure Registrations where
   commands : Array Registration := #[]
   /-- The stores, in the order they were declared. -/
   stores : Array StoreDeclaration := #[]
+  /-- The jobs, in the order they were registered. -/
+  jobs : Array JobRegistration := #[]
 
 namespace Registrations
 
@@ -101,6 +139,7 @@ def collect : (request : SetupRequest) → Registrations → request.Reply × Re
   | .storeCommand name store step, collected =>
     ((),
       { collected with commands := collected.commands.push { name, action := .store store step } })
+  | .job name work, collected => ((), { collected with jobs := collected.jobs.push { name, work } })
 
 /-- The first of `names` that an earlier one already is, if any. -/
 def repeated? (names : Array String) : Option String := do
@@ -111,18 +150,22 @@ def repeated? (names : Array String) : Option String := do
   none
 
 /-- What is wrong with what was collected, if anything: a store declared
-twice, a command name registered twice, or a command over a store that is
-not declared.
+twice, a command name or a job name registered twice, or a command over a
+store that is not declared.
 
 One config's names are each registered once. A second command under a name
 would make the first unreachable, which is a mistake in the config and never
-what it meant, so it is refused like a second store of a name. -/
+what it meant, so it is refused like a second store of a name; and so is a
+second job. A job and a command may share a name: one is run and the other
+is spawned. -/
 def problem? (collected : Registrations) : Option String := do
   let stores := collected.stores.map (·.name)
   if let some name := repeated? stores then
     return s!"the store `{name}` is declared twice"
   if let some name := repeated? (collected.commands.map (·.name)) then
     return s!"the command `{name}` is registered twice"
+  if let some name := repeated? (collected.jobs.map (·.name)) then
+    return s!"the job `{name}` is registered twice"
   for registration in collected.commands do
     if let .store store _ := registration.action then
       unless stores.contains store do
