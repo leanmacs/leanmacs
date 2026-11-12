@@ -19,6 +19,22 @@ the completion carries it back, and a completion for an id that is no longer
 waiting is dropped. An id is a counter from 1 and is never used again in a
 process. A promise that is dropped unresolved reads as `cancelled`.
 
+## Where a job runs
+
+`spawn` starts a pool task and returns. What it is given is a `Work`, a
+function, and the task applies it: a job's leading pure work, the code before
+its first request, runs on the pool and never on the thread that spawned it
+(`start` says how that is forced). From there `drive` takes the job a
+request at a time. A request that is answered at once is a direct call on
+the job's thread. A request that waits ends the loop, and the rest of the
+job is chained on the wait's promise, so a job in a wait holds no thread and
+any number of waiting jobs leave the pool free.
+
+A known limit: in compiled code Lean lifts a closed term out to a constant
+that is computed when the module is initialised. Leading work that depends on
+nothing is such a term, so it is computed once at start-up, not at each
+spawn. Interpreted config is not affected.
+
 ## The clock port
 
 `Timers` is the port the runner's waits are made of: read the clock, start a
@@ -161,13 +177,24 @@ partial def drive (services : Services) (handle : Handle) (finished : BaseIO Uni
     | .later wait reply =>
       BaseIO.chainTask wait.result? fun _ => drive services handle finished (next reply)
 
-/-- Starts `work` on the pool and returns at once. `finished` is called once
+/-- The body of a job's task: applies `work`, then runs the program it gives.
+
+It is a function of its own, never inlined, so that `work ()` is evaluated
+when the task runs it and not where the task is made. Written in place, as
+`BaseIO.asTask do drive … (work ()).run`, the application is an argument of
+the action handed to `asTask`, and Lean evaluates it on the thread that
+calls `spawn`, before the task exists. -/
+@[noinline]
+def start (services : Services) (handle : Handle) (finished : BaseIO Unit) (work : Work) :
+    BaseIO Unit :=
+  drive services handle finished (work ()).run
+
+/-- Starts `work` on the pool and returns at once: none of the job runs on
+the calling thread, its leading pure work included. `finished` is called once
 the job has ended and its outcome is in the handle. -/
 def spawn (services : Services) (work : Work) (finished : BaseIO Unit) : BaseIO Handle := do
   let handle : Handle := { outcome := ← IO.Promise.new }
-  discard <|
-      BaseIO.asTask do
-        drive services handle finished (work ()).run
+  discard <| BaseIO.asTask (start services handle finished work)
   return handle
 
 end Editor.Job

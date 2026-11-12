@@ -536,7 +536,29 @@ def runnerChecks : List Check :=
           let allFinished ← jobs.allM (·.endedAs (.finished #["true"]))
           return notDelayed && allWaiting && noneEnded && threads < count && allFinished
         finally
-          rig.clock.advance 1000 }]
+          rig.clock.advance 1000 },
+    { name :=
+        "a job's leading pure work does not run on the spawning thread: spawn returns while that work is still held"
+      run := do
+        let rig ← Rig.new
+        let gate : IO.Promise Unit ← IO.Promise.new
+        try
+          -- The job's leading pure work reads the gate, so whichever thread
+          -- applies the job stays in it until the check resolves the gate.
+          let work : Work := fun _ =>
+            if gate.result?.get.isSome then pure (makes "ran") else pure (makes "dropped")
+          -- On a thread of its own: a spawn that applied the job on its
+          -- caller's thread would not return while the gate is held, and
+          -- the wait for it would run out.
+          let spawning ← BaseIO.asTask (prio := .dedicated) (rig.spawn work)
+          let returned ← eventually (IO.hasFinished spawning)
+          let held := !(← gate.isResolved)
+          gate.resolve ()
+          unless returned do
+            return false
+          return held && (← spawning.get.endedAs (.finished #["ran"]))
+        finally
+          gate.resolve () }]
 
 /-- The texts a registered command leaves when it is a plain command, run
 against a text model with none; `none` for a command over a store. -/
