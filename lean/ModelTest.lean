@@ -444,6 +444,7 @@ def runOnFake (job : JobM Bool) : IO (Job.Outcome Bool) := do
           rig.clock.advance (deadline - (← rig.clock.now))
         return false
   unless ended do
+    spawned.handle.cancel
     return .failed "the job did not end"
   match ← spawned.outcome with
   | some (.finished texts) =>
@@ -458,6 +459,13 @@ runner over the fake clock. -/
 def jobRunnerFailures : IO (List String) := do
   let failed ← JobContract.failures runOnFake JobContract.properties
   return failed.map (s!"the job runner over the fake clock: {·}")
+
+/-- `value`, once `gate` has been resolved: pure work a check can hold a
+thread in. It is never inlined, so the read of the gate stays where the call
+is. -/
+@[noinline]
+def onceOpen (gate : IO.Promise Unit) (value : Nat) : Nat :=
+  if gate.result?.get.isSome then value else value + 1
 
 /-- How many different thread ids `threads` holds. -/
 def distinct (threads : Array UInt64) : Nat :=
@@ -558,7 +566,189 @@ def runnerChecks : List Check :=
             return false
           return held && (← spawning.get.endedAs (.finished #["ran"]))
         finally
-          gate.resolve () }]
+          gate.resolve () },
+    { name :=
+        "cancelling a sleeping job ends it promptly: it is cancelled, its wait is withdrawn at the clock and gone from the table, and the runner says so once, with the clock never moved"
+      run := do
+        let rig ← Rig.new
+        let sleeper ←
+          rig.spawn
+              (reporting fun _ => do
+                sleep 1000
+                return true)
+        try
+          unless ← eventually (return (← rig.clock.waiting) == 1) do
+            return false
+          let started ← rig.clock.started
+          sleeper.handle.cancel
+          -- The clock stays at 0, so only the cancel can have ended the job.
+          let cancelled ← sleeper.endedAs .cancelled
+          return cancelled && started.size == 1 && (← rig.clock.withdrawn) == started.map (·.1) &&
+              (← rig.clock.waiting) == 0 &&
+              (← rig.services.completions.waiting) == 0 &&
+              (← rig.clock.now) == 0
+        finally
+          sleeper.handle.cancel },
+    { name :=
+        "a cancelled job cannot be resumed by a try/catch: a job that catches every error around each of five sleeps, cancelled in the first, makes no further request"
+      run := do
+        let rig ← Rig.new
+        let job ←
+          rig.spawn fun _ => do
+              stubborn
+              return makes "resumed"
+        try
+          unless ← eventually (return (← rig.clock.waiting) == 1) do
+            return false
+          job.handle.cancel
+          -- A job that went on would start its second sleep.
+          discard <|
+              eventually do
+                return (← job.handle.ended) || (← rig.clock.started).size > 1
+          -- Past all five sleeps: a job that had gone on runs to its end.
+          rig.clock.advance 100
+          return (← job.endedAs .cancelled) && (← rig.clock.started).size == 1 &&
+              (← rig.clock.reads) == 1
+        finally
+          job.handle.cancel },
+    { name :=
+        "a job cancelled before it starts makes no request: cancelled while its leading work is held, it reads no clock and starts no wait"
+      run := do
+        let rig ← Rig.new
+        let gate : IO.Promise Unit ← IO.Promise.new
+        let job ←
+          rig.spawn fun _ =>
+              if gate.result?.get.isSome then do
+                sleep 1000
+                return makes "ran"
+              else pure (makes "dropped")
+        -- A job with no request at all: cancelled, it does not finish.
+        let short ←
+          rig.spawn fun _ =>
+              if gate.result?.get.isSome then pure (makes "ran") else pure (makes "dropped")
+        try
+          job.handle.cancel
+          short.handle.cancel
+          gate.resolve ()
+          -- A job that went on would read the clock for its sleep.
+          discard <|
+              eventually do
+                return (← job.handle.ended) || (← rig.clock.reads) > 0
+          return (← job.endedAs .cancelled) && (← short.endedAs .cancelled) &&
+              (← rig.clock.reads) == 0 &&
+              (← rig.clock.started).isEmpty
+        finally
+          gate.resolve ()
+          job.handle.cancel },
+    { name :=
+        "cancellation is looked for again when a reply arrives: a job cancelled while a reading of the clock is in flight is not continued with the reading"
+      run := do
+        let rig ← Rig.new
+        let gate : IO.Promise Unit ← IO.Promise.new
+        let reading ← rig.clock.holdReads
+        let job ←
+          rig.spawn
+              (reporting fun _ => do
+                let instant ← now
+                -- What follows the reply starts with pure work the check
+                -- holds: a runner that applied it would be held in it.
+                waitUntil (onceOpen gate instant + 10)
+                return true)
+        try
+          unless ← eventually (return (← rig.clock.held) == 1) do
+            return false
+          job.handle.cancel
+          reading.resolve ()
+          -- The gate is still shut, so the job can only have ended if what
+          -- follows the reply was never applied.
+          let cancelled ← job.endedAs .cancelled
+          return cancelled && !(← gate.isResolved) && (← rig.clock.started).isEmpty
+        finally
+          reading.resolve ()
+          gate.resolve ()
+          job.handle.cancel },
+    { name :=
+        "a wait entered just as the job is cancelled is withdrawn at once: cancelled while the clock is being asked for the wait, the job ends with the clock never moved"
+      run := do
+        let rig ← Rig.new
+        let starting ← rig.clock.holdStarts
+        let job ←
+          rig.spawn
+              (reporting fun _ => do
+                sleep 1000
+                return true)
+        try
+          -- The job has registered its wait and is asking the clock for it:
+          -- the cancel finds no wait to withdraw yet.
+          unless ← eventually (return (← rig.clock.held) == 1) do
+            return false
+          job.handle.cancel
+          starting.resolve ()
+          let cancelled ← job.endedAs .cancelled
+          let started ← rig.clock.started
+          return cancelled && started.size == 1 && (← rig.clock.withdrawn) == started.map (·.1) &&
+              (← rig.services.completions.waiting) == 0 &&
+              (← rig.clock.now) == 0
+        finally
+          starting.resolve ()
+          job.handle.cancel },
+    { name :=
+        "cancellation is looked for again when a wait has ended: a job cancelled as its wait completes is not continued"
+      run := do
+        let rig ← Rig.new
+        let gate : IO.Promise Unit ← IO.Promise.new
+        let starting ← rig.clock.holdStarts
+        let job ←
+          rig.spawn
+              (reporting fun _ => do
+                let instant ← now
+                -- Due already: the clock completes it as soon as it is asked.
+                waitUntil instant
+                waitUntil (onceOpen gate instant + 10)
+                return true)
+        try
+          unless ← eventually (return (← rig.clock.held) == 1) do
+            return false
+          -- Cancelled before the clock knows the wait, which then completes
+          -- at once: the completion wins, and the job's token is set.
+          job.handle.cancel
+          starting.resolve ()
+          let cancelled ← job.endedAs .cancelled
+          return cancelled && !(← gate.isResolved) && (← rig.clock.started).size == 1 &&
+              (← rig.clock.withdrawn).isEmpty
+        finally
+          starting.resolve ()
+          gate.resolve ()
+          job.handle.cancel },
+    { name :=
+        "cancelling a job that has ended, and cancelling a job twice, change nothing: the outcome stays, the runner said so once, and the wait was withdrawn once"
+      run := do
+        let rig ← Rig.new
+        let short ←
+          rig.spawn
+              (reporting fun _ => do
+                sleep 5
+                return 7)
+        let sleeper ←
+          rig.spawn
+              (reporting fun _ => do
+                sleep 1000
+                return true)
+        try
+          unless ← eventually (return (← rig.clock.waiting) == 2) do
+            return false
+          rig.clock.advance 5
+          unless ← short.endedAs (.finished #["7"]) do
+            return false
+          short.handle.cancel
+          sleeper.handle.cancel
+          sleeper.handle.cancel
+          return (← sleeper.endedAs .cancelled) && (← short.endedAs (.finished #["7"])) &&
+              (← rig.clock.withdrawn).size == 1 &&
+              (← rig.services.completions.waiting) == 0
+        finally
+          short.handle.cancel
+          sleeper.handle.cancel }]
 
 /-- The texts a registered command leaves when it is a plain command, run
 against a text model with none; `none` for a command over a store. -/
@@ -1251,9 +1441,14 @@ def jobModelFailures : IO (List String) := do
 
 end ModelTest
 
-/-- Runs the checks, then the text port's contract and the job port's
-contract, each against its model: exits 0 when all hold, and 1 after naming
-on stderr the ones that do not. -/
+/-- Runs the checks, then the text port's contract against its model and the
+job port's contract against its model and against the runner over the fake
+clock: exits 0 when all hold, and 1 after naming on stderr the ones that do
+not.
+
+It exits explicitly. A check of the job runner that failed may have left a
+task that never ends, and returning from `main` would wait for it for ever:
+seen once by hand, with a dedicated task in an endless loop. -/
 def main : IO UInt32 := do
   let failed :=
     (← ModelTest.failures ModelTest.checks) ++ (← ModelTest.textFailures) ++
@@ -1262,7 +1457,10 @@ def main : IO UInt32 := do
   for name in failed do
     IO.eprintln s!"FAILED: {name}"
   unless failed.isEmpty do
-    return 1
+    -- A check that failed may have left a task that never ends, and
+    -- returning from `main` would wait for it for ever.
+    IO.Process.exit 1
   IO.println
       s!"model-test: {ModelTest.checks.length} checks passed, {ModelTest.textProperties.length} properties hold of the text model, and {Editor.JobContract.properties.length} of the job model and of the job runner over the fake clock"
-  return 0
+  (← IO.getStdout).flush
+  IO.Process.exit 0

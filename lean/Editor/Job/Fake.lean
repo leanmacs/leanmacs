@@ -18,6 +18,10 @@ something happen.
   read it, too.
 
 A wait that is withdrawn is forgotten: `advance` never completes it.
+
+A test can also hold the port itself: `holdReads` and `holdStarts` park every
+read, or every start, on a promise the test resolves, so the test can act
+while a request is in flight, which no amount of sleeping would arrange.
 -/
 
 namespace Editor.Job
@@ -39,6 +43,12 @@ structure FakeClock.State where
   reads : Nat := 0
   /-- The threads that read the clock, each once. -/
   readThreads : Array UInt64 := #[]
+  /-- What a read parks on before it reads, if reads are held. -/
+  readHold : Option (IO.Promise Unit) := none
+  /-- What a start parks on before it starts its wait, if starts are held. -/
+  startHold : Option (IO.Promise Unit) := none
+  /-- How many calls have arrived at a hold. -/
+  held : Nat := 0
 
 /-- A clock a test moves by hand. -/
 structure FakeClock where
@@ -53,8 +63,38 @@ namespace FakeClock
 def new (completions : Completions) : BaseIO FakeClock :=
   return { completions, state := ← IO.mkRef {} }
 
+/-- Parks the calling thread on the hold `hold` picks, if there is one, until
+the test that made it resolves it, and counts the arrival. -/
+def park (clock : FakeClock) (hold : State → Option (IO.Promise Unit)) : BaseIO Unit := do
+  let hold? ←
+    clock.state.modifyGet fun state =>
+        (hold state, if (hold state).isSome then { state with held := state.held + 1 } else state)
+  if let some hold := hold? then
+    discard <| IO.wait hold.result?
+
+/-- Holds every read of the clock from now on: a read parks, before it reads,
+until the promise this returns is resolved. So a test can act while a
+reading is in flight. -/
+def holdReads (clock : FakeClock) : BaseIO (IO.Promise Unit) := do
+  let hold ← IO.Promise.new
+  clock.state.modify fun state => { state with readHold := some hold }
+  return hold
+
+/-- Holds every start of a wait from now on: a start parks, before the clock
+knows the wait, until the promise this returns is resolved. So a test can act
+while a job is entering a wait. -/
+def holdStarts (clock : FakeClock) : BaseIO (IO.Promise Unit) := do
+  let hold ← IO.Promise.new
+  clock.state.modify fun state => { state with startHold := some hold }
+  return hold
+
+/-- How many calls have arrived at a hold, parked or since let go. -/
+def held (clock : FakeClock) : BaseIO Nat :=
+  return (← clock.state.get).held
+
 /-- Reads the clock, and records the thread that did. -/
 def read (clock : FakeClock) : BaseIO Nat := do
+  clock.park (·.readHold)
   let thread ← IO.getTID
   clock.state.modifyGet fun state =>
       (state.now,
@@ -67,6 +107,7 @@ def read (clock : FakeClock) : BaseIO Nat := do
 /-- Starts the wait `id`, due at `deadline`: it waits until the clock is
 advanced that far, or is completed at once if the clock is already there. -/
 def start (clock : FakeClock) (id : UInt64) (deadline : Nat) : BaseIO Unit := do
+  clock.park (·.startHold)
   let thread ← IO.getTID
   let due ←
     clock.state.modifyGet fun state =>

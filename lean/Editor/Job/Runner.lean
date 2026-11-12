@@ -35,6 +35,31 @@ that is computed when the module is initialised. Leading work that depends on
 nothing is such a term, so it is computed once at start-up, not at each
 spawn. Interpreted config is not affected.
 
+## Cancellation
+
+Lean's own `IO.cancel` only sets a flag: it interrupts no wait. So
+cancellation is built here.
+
+- **The token** is in the job's handle: whether the job is cancelled, and
+  the id of the wait it is in, if it is in one, changed together in one
+  atomic step.
+- **Every wait races it.** `Handle.cancel` sets the token, takes the id,
+  tells the clock to withdraw that wait and ends it in the table as
+  `cancelled`. A promise resolves once, so whichever of the service and the
+  cancel comes first wins and the other does nothing. A wait the job was
+  still making when it was cancelled is withdrawn by the job itself, as
+  soon as it sees the token.
+- **A cancelled job makes no further request.** The runner looks at the
+  token before each request, when each reply arrives, at once or after a
+  wait, and when the program ends.
+- **A `try`/`catch` cannot resume it.** Cancellation is not a reply and
+  nothing is thrown into the program: the runner stops applying the job's
+  continuation, and the `catch` handlers are part of that continuation.
+  The outcome is `cancelled` whatever the program would have returned.
+- **A cancelled job runs no cleanup of its own.** What it holds is the
+  runner's to release: the wait it is in is withdrawn, and a handle to a
+  library object is freed by its finaliser when the continuation is dropped.
+
 ## The clock port
 
 `Timers` is the port the runner's waits are made of: read the clock, start a
@@ -118,12 +143,42 @@ structure Services where
 instance {α : Type} : Nonempty (Outcome α) :=
   ⟨.cancelled⟩
 
+/-- A job's token: what the job and whoever cancels it share. -/
+structure Flags where
+  /-- Whether the job has been cancelled. -/
+  cancelled : Bool := false
+  /-- The wait the job is in, if it is in one. -/
+  waiting : Option UInt64 := none
+
 /-- A job that was spawned, as whoever spawned it holds it. -/
 structure Handle where
+  /-- What the job's waits are made of. -/
+  services : Services
+  /-- The job's token. Every change to it is one atomic step. -/
+  flags : IO.Ref Flags
   /-- How the job ended, once it has. -/
   outcome : IO.Promise (Outcome (EditorM Unit))
 
 namespace Handle
+
+/-- Whether the job has been cancelled. -/
+def cancelled (handle : Handle) : BaseIO Bool :=
+  return (← handle.flags.get).cancelled
+
+/-- Withdraws the wait `id`: tells the clock to drop it, and ends it as
+`cancelled` in the table. Whichever of this and the service's completion
+comes first wins, and the other does nothing. -/
+def withdraw (handle : Handle) (id : UInt64) : BaseIO Unit := do
+  handle.services.timers.cancel id
+  handle.services.completions.finish id .cancelled
+
+/-- Cancels the job: sets its token, and withdraws the wait it is in, if it
+is in one, which ends the job there. -/
+def cancel (handle : Handle) : BaseIO Unit := do
+  let waiting ←
+    handle.flags.modifyGet fun flags => (flags.waiting, { cancelled := true, waiting := none })
+  if let some id := waiting then
+    handle.withdraw id
 
 /-- Whether the job has ended. -/
 def ended (handle : Handle) : BaseIO Bool :=
@@ -149,8 +204,8 @@ ended. -/
 inductive Answer (α : Type) where
   /-- The reply. -/
   | now (reply : α)
-  /-- The reply, once `wait` has ended. -/
-  | later (wait : IO.Promise Completion) (reply : α)
+  /-- The reply, once the wait `id`, whose promise is `wait`, has ended. -/
+  | later (id : UInt64) (wait : IO.Promise Completion) (reply : α)
 
 /-- Answers a request. A request that waits is registered in the table of
 waits and handed to its service, and nothing here waits for it. -/
@@ -159,23 +214,53 @@ def answer (services : Services) : (request : JobRequest) → BaseIO (Answer req
   | .waitUntil deadline => do
     let (id, wait) ← services.completions.register
     services.timers.start id deadline
-    return .later wait ()
+    return .later id wait ()
 
 /-- Runs `program` to its end, a request at a time. A request that is
 answered at once is a direct call, and the loop goes on on the same thread.
 At a request that waits the loop ends, and the rest of the job is chained on
 the wait's promise: it runs on a pool task when the wait has ended, and until
-then the job holds no thread. -/
-partial def drive (services : Services) (handle : Handle) (finished : BaseIO Unit) :
+then the job holds no thread.
+
+The job's token is looked at before each request, when each reply arrives,
+and when the program ends. A cancelled job ends there as `cancelled`: `next`
+is not applied again, so nothing of the job runs after it, a `catch` handler
+included. -/
+partial def drive (handle : Handle) (finished : BaseIO Unit) :
     Program jobPort (Except String (EditorM Unit)) → BaseIO Unit
-  | .done (.ok command) => handle.conclude finished (.finished command)
-  | .done (.error message) => handle.conclude finished (.failed message)
+  | .done result => do
+    if ← handle.cancelled then
+      return ← handle.conclude finished .cancelled
+    match result with
+    | .ok command =>
+      handle.conclude finished (.finished command)
+    | .error message =>
+      handle.conclude finished (.failed message)
   | .step request next => do
-    match ← answer services request with
+    if ← handle.cancelled then
+      return ← handle.conclude finished .cancelled
+    match ← answer handle.services request with
     | .now reply =>
-      drive services handle finished (next reply)
-    | .later wait reply =>
-      BaseIO.chainTask wait.result? fun _ => drive services handle finished (next reply)
+      if ← handle.cancelled then
+        return ← handle.conclude finished .cancelled
+      drive handle finished (next reply)
+    | .later id wait reply =>
+      -- The job is in the wait from here, unless it was cancelled while the
+      -- wait was being made: then nobody else will withdraw it.
+      let entered ←
+        handle.flags.modifyGet fun flags =>
+            if flags.cancelled then (false, flags) else (true, { flags with waiting := some id })
+      unless entered do
+        handle.withdraw id
+      BaseIO.chainTask wait.result? fun completion => do
+          let cancelled ←
+            handle.flags.modifyGet fun flags => (flags.cancelled, { flags with waiting := none })
+          -- A wait the service completed just as the job was cancelled reads
+          -- as completed: the token still says the job is over.
+          if completion == some .completed && !cancelled then
+            drive handle finished (next reply)
+          else
+            handle.conclude finished .cancelled
 
 /-- The body of a job's task: applies `work`, then runs the program it gives.
 
@@ -185,16 +270,15 @@ when the task runs it and not where the task is made. Written in place, as
 the action handed to `asTask`, and Lean evaluates it on the thread that
 calls `spawn`, before the task exists. -/
 @[noinline]
-def start (services : Services) (handle : Handle) (finished : BaseIO Unit) (work : Work) :
-    BaseIO Unit :=
-  drive services handle finished (work ()).run
+def start (handle : Handle) (finished : BaseIO Unit) (work : Work) : BaseIO Unit :=
+  drive handle finished (work ()).run
 
 /-- Starts `work` on the pool and returns at once: none of the job runs on
 the calling thread, its leading pure work included. `finished` is called once
 the job has ended and its outcome is in the handle. -/
 def spawn (services : Services) (work : Work) (finished : BaseIO Unit) : BaseIO Handle := do
-  let handle : Handle := { outcome := ← IO.Promise.new }
-  discard <| BaseIO.asTask (start services handle finished work)
+  let handle : Handle := { services, flags := ← IO.mkRef {}, outcome := ← IO.Promise.new }
+  discard <| BaseIO.asTask (start handle finished work)
   return handle
 
 end Editor.Job
