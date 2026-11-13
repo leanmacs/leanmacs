@@ -12,6 +12,15 @@
 //! never moves backwards. A publish drops the state of every text its
 //! scene does not name.
 //!
+//! **Line storage is sparse.** A text's entries are a map of the rows laid
+//! out, not a summarised tree: a row not laid out is estimated as one
+//! visual line of the default height (`Layout::height_estimate`) and
+//! corrected when it is. Moving the entries through a patch costs the
+//! entries held, which a publish keeps near the rows shown: those farther
+//! than [`KEPT_VIEW_HEIGHTS`](crate::frame::KEPT_VIEW_HEIGHTS) view heights
+//! from every view of the text are dropped. A summarised tree waits for a
+//! layer that needs sums over the whole text (folds, a scroll bar).
+//!
 //! Each text a scene or a query names (by its [`TextKey`]) has a wrap
 //! layer: the segments laid out so far, at the last width asked. Frames and
 //! queries read and fill the same entries, so a query after a frame lays
@@ -169,4 +178,66 @@ pub(crate) fn state<'a, L: ShapedLine>(
     }
     state.wrap.set_width(width);
     Held::Kept(state)
+}
+
+#[cfg(test)]
+mod tests {
+    use editor_text::Text;
+
+    use crate::Layout;
+    use crate::scene::{Cursor, Rect, Scene, TextKey, TextRef, View, ViewId};
+    use crate::shaper::fake::CellShaper;
+
+    /// A scene of one view of `text`, 4 cells wide and `rows` rows tall,
+    /// from `scroll`.
+    fn scene(text: &TextRef, rows: u32, scroll: usize) -> Scene {
+        Scene {
+            views: vec![View {
+                id: ViewId(1),
+                rect: Rect {
+                    x: 0,
+                    y: 0,
+                    width: 40,
+                    height: rows * 16,
+                },
+                text: Some(text.clone()),
+                scroll,
+                cursor: Cursor::default(),
+                ..View::default()
+            }],
+            ..Scene::default()
+        }
+    }
+
+    #[test]
+    fn an_unlaid_row_counts_one_line_until_laid_out() {
+        // Ten rows; row 2 wraps into three lines at 4 cells.
+        let text = TextRef::fixed(
+            TextKey(1),
+            Text::from("a\nb\nabcdefghij\nc\nd\ne\nf\ng\nh\ni").snapshot(),
+        );
+        let mut layout = Layout::new(CellShaper::new(10.0, 16.0));
+        assert_eq!(layout.height_estimate(&text, 40.0), 10.0 * 16.0);
+        layout.frame(&scene(&text, 3, 0));
+        // Only rows 0 and 1 and the first line of row 2 are shown, but row
+        // 2 is laid out whole: it is three lines now.
+        assert_eq!(layout.height_estimate(&text, 40.0), 12.0 * 16.0);
+        // At another width the kept rows are estimates again.
+        assert_eq!(layout.height_estimate(&text, 400.0), 10.0 * 16.0);
+    }
+
+    #[test]
+    fn rows_farther_than_four_view_heights_from_every_view_are_dropped() {
+        let rows: Vec<String> = (0..1000).map(|row| format!("r{row}")).collect();
+        let text = TextRef::fixed(TextKey(1), Text::from(rows.join("\n").as_str()).snapshot());
+        let start = |row: usize| text.snapshot.row_range(row).unwrap().start;
+        let mut layout = Layout::new(CellShaper::new(10.0, 16.0));
+        layout.frame(&scene(&text, 10, 0));
+        assert_eq!(layout.entries_kept(TextKey(1)), 10);
+        // Rows 30 to 39: rows 0 to 9 are within four view heights.
+        layout.frame(&scene(&text, 10, start(30)));
+        assert_eq!(layout.entries_kept(TextKey(1)), 20);
+        layout.frame(&scene(&text, 10, start(500)));
+        assert_eq!(layout.entries_kept(TextKey(1)), 10);
+    }
 }

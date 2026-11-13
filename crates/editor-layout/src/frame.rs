@@ -165,6 +165,11 @@ impl Frame {
     }
 }
 
+/// How far from the rows a view shows its text's entries are kept at a
+/// publish, in view heights (counted in buffer rows): farther ones are
+/// dropped, and laid out again if they are reached.
+pub const KEPT_VIEW_HEIGHTS: usize = 4;
+
 /// The nearest position of `snapshot` at or before `offset`; its end for an
 /// offset past it.
 pub fn at_or_before(snapshot: &Snapshot, offset: usize) -> usize {
@@ -176,8 +181,10 @@ pub fn at_or_before(snapshot: &Snapshot, offset: usize) -> usize {
 }
 
 impl<S: Shaper> Layout<S> {
-    /// Lays `scene` out into a frame, and drops what is kept of every text
-    /// it does not name.
+    /// Lays `scene` out into a frame. What is kept of every text it does
+    /// not name is dropped, and of each text it names, every row farther
+    /// than [`KEPT_VIEW_HEIGHTS`] view heights from the rows every view of
+    /// it shows.
     pub fn frame(&mut self, scene: &Scene) -> Frame {
         let frame = Frame {
             views: scene
@@ -186,12 +193,29 @@ impl<S: Shaper> Layout<S> {
                 .map(|view| self.view_frame(view, &[]))
                 .collect(),
         };
-        let named: Vec<TextKey> = scene
-            .views
-            .iter()
-            .filter_map(|view| view.text.as_ref().map(|text| text.key))
-            .collect();
-        self.texts.retain(|key, _| named.contains(key));
+        // The buffer rows each view shows, by text.
+        let mut shown: HashMap<TextKey, Vec<Range<usize>>> = HashMap::new();
+        for (view, laid) in scene.views.iter().zip(&frame.views) {
+            let Some(text) = &view.text else { continue };
+            let rows = shown.entry(text.key).or_default();
+            let row_of = |offset| {
+                text.snapshot
+                    .offset_to_point(offset)
+                    .map_or(0, |point| point.row)
+            };
+            if let (Some(first), Some(last)) = (laid.rows.first(), laid.rows.last()) {
+                let (first, last) = (row_of(first.bytes.start), row_of(last.bytes.end));
+                let reach = KEPT_VIEW_HEIGHTS * (last - first + 1);
+                rows.push(first.saturating_sub(reach)..last + reach + 1);
+            }
+        }
+        self.texts.retain(|key, _| shown.contains_key(key));
+        for (key, state) in &mut self.texts {
+            let near = &shown[key];
+            state
+                .wrap
+                .retain_rows(|row| near.iter().any(|rows| rows.contains(&row)));
+        }
         frame
     }
 

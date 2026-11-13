@@ -52,9 +52,9 @@ use std::collections::HashMap;
 use crate::cache::{Counters, Texts, state};
 use crate::decoration::{DecorationSource, FaceTable, SELECTION_FACE, fonts_of};
 use crate::query::{Moved, QueryError, RowRange, Walker};
-use crate::scene::TextRef;
+use crate::scene::{TextKey, TextRef};
 use crate::shaper::Shaper;
-use crate::tabs::DEFAULT_TAB_WIDTH;
+use crate::tabs::{DEFAULT_TAB_WIDTH, row_content, segment_count};
 use crate::wrap::Outcome;
 
 /// Layout: a shaper and what is laid out with it.
@@ -111,6 +111,39 @@ impl<S: Shaper> Layout<S> {
     /// How many texts layout keeps entries of.
     pub fn texts_kept(&self) -> usize {
         self.texts.len()
+    }
+
+    /// How many segments layout keeps laid out of the text `key`.
+    pub fn entries_kept(&self, key: TextKey) -> usize {
+        self.texts.get(&key).map_or(0, |state| state.wrap.len())
+    }
+
+    /// The height of the whole of `text` laid out `width` pixels wide, in
+    /// pixels: each segment kept at that width counts its visual lines'
+    /// heights, and each other one line of the default height. It lays
+    /// nothing out, and is corrected as rows are laid out.
+    pub fn height_estimate(&self, text: &TextRef, width: f32) -> f32 {
+        let snapshot = &text.snapshot;
+        let kept = self
+            .texts
+            .get(&text.key)
+            .filter(|state| state.wrap.tabs().buffer().revision() == snapshot.revision());
+        let line_height = self.shaper.metrics().line_height;
+        let mut height = 0.0;
+        for row in 0..snapshot.row_count() {
+            let Some(content) = row_content(snapshot, row) else {
+                continue;
+            };
+            for segment in 0..segment_count(snapshot, &content) {
+                height += kept
+                    .and_then(|state| state.wrap.kept(row, segment))
+                    .filter(|entry| entry.width() == Some(width))
+                    .map_or(line_height, |entry| {
+                        entry.lines().iter().map(|line| line.height).sum()
+                    });
+            }
+        }
+        height
     }
 
     /// The rows of `text` a view `width` pixels wide and `height` tall
