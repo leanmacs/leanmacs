@@ -19,12 +19,26 @@
 # fails with "error: use of a disallowed method `std::fs::read`" and the
 # reason below. With the test taken out it passes.
 #
+# The last entry names the port's real adapter, a crate this one does not
+# depend on. Clippy takes a path into a crate that is not in the build
+# without a warning, and the entry is then idle. Seen to bite once by hand,
+# on 2026-11-13: with `editor-fs-std` added to this crate's
+# dev-dependencies (Cargo allows that cycle) and a test added to
+# `tests/snapshot_cost.rs` that calls `editor_fs_std::StdFs::system()`,
+# `cargo clippy --workspace --all-targets -- -D warnings` fails with "use of
+# a disallowed method `editor_fs_std::StdFs::system`". A unit test in `src/`
+# cannot hand the adapter to this crate's code at all: there the adapter
+# implements the `Fs` of the crate as its dependency built it, which is
+# another type than the `Fs` of the crate under test, and it does not
+# compile.
+#
 # What this does not hold: it is a list of names, so a function `std` gains
 # later is not in it, and neither are `std::net`, the free functions of
 # `std::os::unix::fs`, `include_bytes!`, or a call through `libc` (which
 # this crate does not depend on). Those are a reviewer's to look for.
 # `deny.toml` closes the other route: this crate may not depend on a
-# library that makes temporary files.
+# library that makes temporary files, nor, once `editor-ffi` links the
+# adapter and the entry that allows that edge exists, on the adapter.
 
 disallowed-methods = [
   # Every free function of `std::fs`.
@@ -66,6 +80,9 @@ disallowed-methods = [
   # The clocks.
   { path = "std::time::SystemTime::now", reason = "time reaches the core through `Fs::stat`; the fake's time is the one a test sets" },
   { path = "std::time::Instant::now", reason = "the crate reads no clock; a cost is counted in bytes, never timed" },
+  # The port's real adapter, which is another crate. This crate does not
+  # depend on it, and Cargo would allow a dev-dependency on it all the same.
+  { path = "editor_fs_std::StdFs::system", reason = "the crate's tests run on the fake, `fs::FakeFs`; the real file system is the adapter's own tests' and `editor-ffi`'s wiring test's" },
 ]
 
 disallowed-types = [

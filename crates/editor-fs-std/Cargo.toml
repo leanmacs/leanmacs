@@ -1,0 +1,36 @@
+[package]
+name = "editor-fs-std"
+version = "0.1.0"
+description = "The file port's real adapter, over std::fs"
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+# The file port, its fake and its contract. This crate implements the port
+# and runs the contract; it runs nothing of the crate's loading and saving.
+editor-text = { path = "../editor-text" }
+
+[dev-dependencies]
+# The temporary directory the contract is checked in: one the test makes
+# and owns, removed when the test ends. Pinned exactly; 3.27.0 was the
+# newest release on 2026-11-13. Without the default features it asks the
+# system for no randomness: a name that is taken is tried again. `deny.toml`
+# lets only crates whose tests touch real files depend on it.
+#
+# Nothing else was added, for the adapter or for saving. Looked at on
+# 2026-11-13 and set aside:
+#
+# - `atomic-write-file` 0.3.1, `atomicwrites` 0.4.4 and this library's
+#   `NamedTempFile::persist` each write a temporary file and rename it
+#   inside one call. That would put the decision of how a file is saved in
+#   an adapter, where the port's fake cannot reach it, and leave no place
+#   for the check made between the write and the rename
+#   (`editor_text::file`).
+# - `vfs` 0.13.0 is a file-system abstraction with a memory implementation,
+#   but its files have no modification time a test can set, no permissions
+#   and no failure a test can inject; and the port is the core's own.
+# - `filetime` 0.2.29: `File::set_modified` is in the standard library.
+# - `cap-std` 4.0.3 and `rustix` 1.1.6 offer nothing the port's six methods
+#   need beyond `std`.
+tempfile = { version = "=3.27.0", default-features = false }
