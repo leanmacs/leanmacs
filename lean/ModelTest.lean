@@ -5,6 +5,7 @@ import Editor.Display.Contract
 import Editor.Display.Model
 import Editor.File.Cases
 import Editor.File.Model
+import Editor.Invocation
 import Editor.Job.Contract
 import Editor.Job.Fake
 import Editor.Job.Jobs
@@ -140,7 +141,9 @@ need no model and no fake of a collaborator:
   in precedence order;
 - `keyNotationChecks`: key strings (`Editor/Key/Notation.lean`): the keys
   a string names, the strings that are refused, and that the notation of a
-  chord names it back.
+  chord names it back;
+- `invocationChecks`: an invocation (`Editor/Invocation.lean`): two are
+  compared by their command names and their arguments.
 -/
 
 namespace ModelTest
@@ -3987,6 +3990,33 @@ def keyNotationChecks : List Check :=
                 [charKey "é" { alt := true }], []].all
             fun keys => parses (Key.notations keys) keys }]
 
+/-- The checks of invocations (`Editor/Invocation.lean`): two can be
+compared, by their command names and their arguments. -/
+def invocationChecks : List Check :=
+  let save : Invocation := { command := "save" }
+  let insert (text : String) : Invocation := { command := "self-insert", arguments := [.str text] }
+  [{  name := "two invocations of one command with the same arguments are equal"
+      run :=
+        pure
+          (decide (save = { command := "save" }) && decide (insert "a" = insert "a") &&
+            decide
+              (({ command := "move", arguments := [.nat 2, .int (-1), .bool true] } : Invocation) =
+                { command := "move", arguments := [.nat 2, .int (-1), .bool true] })) },
+    { name := "invocations of commands with different names are unequal"
+      run := pure (decide (save ≠ { command := "quit" })) },
+    { name :=
+        "invocations of one command are unequal when an argument differs: in its value, in its kind, in how many there are, or in their order"
+      run :=
+        pure
+          (decide (insert "a" ≠ insert "b") &&
+            decide
+              (({ command := "move", arguments := [.nat 1] } : Invocation) ≠
+                { command := "move", arguments := [.int 1] }) &&
+            decide (save ≠ { command := "save", arguments := [.bool false] }) &&
+            decide
+              (({ command := "move", arguments := [.nat 1, .nat 2] } : Invocation) ≠
+                { command := "move", arguments := [.nat 2, .nat 1] })) }]
+
 /-- Every check, in the order they run.
 
 The order matters where the process's one pool is measured. `poolChecks` run
@@ -4016,7 +4046,8 @@ def checks : List Check :=
     loopChecks ++
     commitChecks ++
     keymapChecks ++
-    keyNotationChecks
+    keyNotationChecks ++
+    invocationChecks
 
 /-- Runs `checks` and returns the names of those that failed. A check that
 throws has failed, and its error is reported with its name. -/
