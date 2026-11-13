@@ -39,10 +39,8 @@ use crate::Layout;
 use std::collections::HashMap;
 
 use crate::cache::state;
-use crate::decoration::{
-    DecorationSource, FaceId, FaceSpanSource, SELECTION_FACE, SelectionSource, Span, fonts_of,
-    merge,
-};
+use crate::decoration::{DecorationSource, FaceSpanSource, SelectionSource, Span, fonts_of, merge};
+use crate::face::{FaceId, SELECTION_FACE};
 use crate::query::{Visual, Walker};
 use crate::scene::{CursorShape, Rect, Scene, TextKey, View, ViewId};
 use crate::shaper::{FontId, Shaper, VisualLine};
@@ -442,7 +440,8 @@ mod tests {
 
     use super::{Area, Frame, FrameRow, ViewFrame};
     use crate::Layout;
-    use crate::decoration::{DecorationSource, SELECTION_FACE, Span};
+    use crate::decoration::{DecorationSource, Span};
+    use crate::face::SELECTION_FACE;
     use crate::scene::{
         Cursor, CursorShape, Decoration, Rect, Scene, TextKey, TextRef, View, ViewId,
     };

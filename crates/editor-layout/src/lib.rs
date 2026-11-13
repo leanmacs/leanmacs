@@ -19,6 +19,10 @@
 //! - where a position is in a laid-out row: at a wrap, at a row's end,
 //!   inside a tab's spaces ([`line`](mod@line)), and how entries are kept, broken
 //!   again and moved through edits ([`wrap`]);
+//! - what a face sets, the precedence by which the faces over a run merge
+//!   attribute by attribute, the fall-through to the default face and to
+//!   the base values, and which attributes are the font and which are paint
+//!   ([`face`]);
 //! - which spans each decoration source gives, that a cursor covers
 //!   nothing, how spans merge into styled runs and which font a run is in
 //!   ([`decoration`]);
@@ -40,6 +44,7 @@
 
 pub mod cache;
 pub mod decoration;
+pub mod face;
 pub mod frame;
 pub mod layer;
 pub mod line;
@@ -52,7 +57,8 @@ pub mod wrap;
 use std::collections::HashMap;
 
 use crate::cache::{Counters, Texts, state};
-use crate::decoration::{DecorationSource, FaceTable, SELECTION_FACE, fonts_of};
+use crate::decoration::{DecorationSource, FaceTable, fonts_of};
+use crate::face::SELECTION_FACE;
 use crate::query::{Moved, QueryError, RowRange, Walker};
 use crate::scene::{TextKey, TextRef};
 use crate::shaper::{FontId, Shaper};

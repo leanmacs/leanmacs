@@ -25,14 +25,8 @@ use std::ops::Range;
 
 use editor_text::{Selection, Shape, Snapshot};
 
+use crate::face::FaceId;
 use crate::shaper::FontId;
-
-/// The name of the face the selections source draws in.
-pub const SELECTION_FACE: &str = "selection";
-
-/// Which face: a number a [`FaceTable`] gave a face's name.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct FaceId(pub u32);
 
 /// A span of a snapshot drawn in a face.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -288,9 +282,10 @@ mod tests {
     use editor_text::{Selection, SelectionRange, Shape, Text};
 
     use super::{
-        DecorationSource, FaceId, FaceSpanSource, FaceTable, SelectionSource, Span, StyledRun,
-        font_spans, merge,
+        DecorationSource, FaceSpanSource, FaceTable, SelectionSource, Span, StyledRun, font_spans,
+        merge,
     };
+    use crate::face::FaceId;
     use crate::shaper::FontId;
 
     /// The spans `source` gives for `bytes` of `text`.
