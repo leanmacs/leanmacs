@@ -17,6 +17,8 @@ editor-platform = { path = "../editor-platform" }
 # The real window. This is the crate that wires the library together, so it
 # is the one that links the adapter.
 editor-platform-winit = { path = "../editor-platform-winit" }
+# Text storage: the text behind a document handle, and its snapshots.
+editor-text = { path = "../editor-text" }
 
 # No harness: its `main` must be the process's main thread.
 [[test]]

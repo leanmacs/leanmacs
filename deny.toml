@@ -10,7 +10,8 @@
 # with the library added to `editor-ffi`'s dependencies, `cargo deny check
 # bans` fails. For the two workspace crates of the window, which no other
 # crate can yet depend on without a cycle: with a wrapper taken out of the
-# entry, it fails on the edge that wrapper allowed.
+# entry, it fails on the edge that wrapper allowed. For `editor-text`: with
+# it added to `editor-platform-winit`'s dependencies, it fails.
 #
 # One rule has no entry: "no crate depends on `editor-ffi`", the one crate
 # that knows about Lean. No entry for it passes the gate. With
@@ -30,4 +31,5 @@ deny = [
   { crate = "editor-platform-winit", wrappers = ["editor-ffi"], reason = "the window adapter is linked only by the crate that wires the library together; everything else reaches a window through the port" },
   { crate = "editor-platform", wrappers = ["editor-ffi", "editor-platform-winit"], reason = "the window port has two users today, its adapter and the crate that runs it onto the event queue; a third is a decision, so it is made here" },
   { crate = "ropey", wrappers = ["editor-text"], reason = "the rope stays behind editor-text's own types: only that crate may name the library's" },
+  { crate = "editor-text", wrappers = ["editor-ffi"], reason = "text storage has one user today, the crate that puts a text behind a handle for Lean; a second is a decision, so it is made here" },
 ]

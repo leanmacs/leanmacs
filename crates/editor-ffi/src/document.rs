@@ -1,13 +1,21 @@
-//! A document: text the library holds for the editor, and the second
-//! example of a handle.
+//! A document: the text of the text-storage crate behind a handle, and the
+//! second example of a handle.
 //!
-//! This is a placeholder. It is a string behind a lock, and it stands where
-//! the rope of the text-storage crate will stand, so that the Lean editor's
-//! text interface has a real binding to run against before that crate
-//! exists. Nothing else should grow on it.
+//! [`editor_text::Text`] has one writer and holds no lock. Lean shares a
+//! handle between threads, so a document is that text behind a lock: the
+//! one writer is whoever holds it. What an edit means, when it is refused
+//! and what a position is are the text's rules, pinned by `editor-text`'s
+//! own tests; this module forwards. A reader that must not wait for the
+//! lock, or that reads more than once and wants one state of the text,
+//! takes a snapshot ([`crate::snapshot`]).
+//!
+//! The editor reaches a document only through the text port's real binding
+//! (`lean/Editor/Text/Real.lean`).
 
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Mutex, MutexGuard, PoisonError};
+
+use editor_text::Text;
 
 use crate::text;
 
@@ -16,14 +24,14 @@ use crate::text;
 pub struct Document {
     /// The text. An edit holds the lock from its check to its change, so
     /// edits from several threads apply one after another.
-    text: Mutex<String>,
+    text: Mutex<Text>,
 }
 
 impl Document {
     /// A document holding `text`.
     pub fn new(text: &str) -> Self {
         Self {
-            text: Mutex::new(text.to_owned()),
+            text: Mutex::new(Text::from(text)),
         }
     }
 
@@ -31,27 +39,29 @@ impl Document {
     /// `text`, and returns whether it did. An empty range inserts, and an
     /// empty `text` deletes.
     ///
-    /// Returns false, changing nothing, unless both offsets are character
-    /// boundaries of the document's text, within it, and `start <= end`.
+    /// Returns false, changing nothing, when the text refuses the edit
+    /// ([`Text::replace`]): unless both offsets are character boundaries of
+    /// the document's text, within it, and `start <= end`.
     pub fn replace(&self, start: usize, end: usize, text: &str) -> bool {
-        let mut current = self.lock();
-        // `is_char_boundary` is false past the end, so this also keeps both
-        // offsets within the text, and `replace_range` cannot panic.
-        if start > end || !current.is_char_boundary(start) || !current.is_char_boundary(end) {
-            return false;
-        }
-        current.replace_range(start..end, text);
-        true
+        self.lock().replace(start..end, text).is_ok()
     }
 
     /// A copy of the whole text.
     pub fn read(&self) -> String {
-        self.lock().clone()
+        self.lock().current().to_string()
     }
 
-    /// The text, locked. A panic while the lock was held cannot leave the
-    /// string half-edited, so a poisoned lock is used as it is.
-    fn lock(&self) -> MutexGuard<'_, String> {
+    /// The text as it is now, to keep: later edits to the document do not
+    /// change it. It copies none of the text, so the lock is held only for
+    /// a moment.
+    pub fn snapshot(&self) -> editor_text::Snapshot {
+        self.lock().snapshot()
+    }
+
+    /// The text, locked. An edit is all or nothing, so a panic while the
+    /// lock was held cannot leave the text half-edited, and a poisoned lock
+    /// is used as it is.
+    fn lock(&self) -> MutexGuard<'_, Text> {
         self.text.lock().unwrap_or_else(PoisonError::into_inner)
     }
 }
@@ -168,29 +178,7 @@ mod tests {
     }
 
     #[test]
-    fn replace_inserts_at_a_byte_offset_when_the_range_is_empty() {
-        let document = Document::new(TEXT);
-
-        assert!(document.replace(3, 3, "XY"));
-        assert_eq!(document.read(), "héXYllo wörld");
-        assert!(document.replace(0, 0, "<"));
-        assert_eq!(document.read(), "<héXYllo wörld");
-        assert!(document.replace(16, 16, ">"));
-        assert_eq!(document.read(), "<héXYllo wörld>");
-    }
-
-    #[test]
-    fn replace_deletes_its_byte_range_when_the_text_is_empty() {
-        let document = Document::new(TEXT);
-
-        assert!(document.replace(1, 3, ""));
-        assert_eq!(document.read(), "hllo wörld");
-        assert!(document.replace(5, 11, ""));
-        assert_eq!(document.read(), "hllo ");
-    }
-
-    #[test]
-    fn replace_puts_the_text_in_place_of_its_byte_range() {
+    fn a_replace_the_text_accepts_changes_the_document_and_returns_true() {
         let document = Document::new(TEXT);
 
         assert!(document.replace(7, 13, "there"));
@@ -198,31 +186,25 @@ mod tests {
     }
 
     #[test]
-    fn replace_refuses_an_offset_inside_a_character_and_changes_nothing() {
+    fn a_replace_the_text_refuses_returns_false_and_changes_nothing() {
         let document = Document::new(TEXT);
 
+        // An offset inside "é": which ranges are refused is the text's
+        // rule, and its own tests pin it.
         assert!(!document.replace(2, 2, "x"));
-        assert!(!document.replace(0, 2, ""));
-        assert!(!document.replace(2, 3, ""));
         assert_eq!(document.read(), TEXT);
     }
 
     #[test]
-    fn replace_refuses_an_offset_past_the_end_and_changes_nothing() {
+    fn a_snapshot_of_a_document_is_its_text_as_it_is_now() {
         let document = Document::new(TEXT);
+        assert!(document.replace(0, 1, "J"));
 
-        assert!(!document.replace(TEXT.len() + 1, TEXT.len() + 1, "x"));
-        assert!(!document.replace(0, TEXT.len() + 1, ""));
-        assert!(!document.replace(usize::MAX, usize::MAX, "x"));
-        assert_eq!(document.read(), TEXT);
-    }
+        let snapshot = document.snapshot();
+        assert!(document.replace(0, 1, ""));
 
-    #[test]
-    fn replace_refuses_a_backwards_range_and_changes_nothing() {
-        let document = Document::new(TEXT);
-
-        assert!(!document.replace(3, 1, "x"));
-        assert_eq!(document.read(), TEXT);
+        assert_eq!(snapshot.to_string(), "Jéllo wörld");
+        assert_eq!(document.read(), "éllo wörld");
     }
 
     #[test]

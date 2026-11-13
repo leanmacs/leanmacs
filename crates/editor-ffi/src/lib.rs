@@ -36,20 +36,27 @@
 //! An object cannot be used after it is freed, because nothing can name it:
 //! it is freed only when no reference to it is left.
 //!
-//! Examples: [`counter`], and [`document`], the placeholder text the
-//! editor's text interface is bound to. Tests:
-//! `a_counter_is_live_from_new_until_free` and
+//! Examples: [`counter`]; [`document`], the text of the text-storage crate
+//! (`editor-text`) behind a lock, which the editor's text interface is
+//! bound to; and [`snapshot`], a document's text as it was at one moment,
+//! made by a call on a document and not by a `new` function, which needs
+//! no lock because it never changes and which outlives its document.
+//! Tests: `a_counter_is_live_from_new_until_free` and
 //! `a_document_is_edited_and_read_through_c_and_is_live_from_new_until_free`
-//! in `tests/c_api.rs`; the four counter checks of `ffi-test`
-//! (`handleChecks`) and its check that a document is freed
-//! (`documentChecks`).
+//! in `tests/c_api.rs`;
+//! `a_snapshot_is_taken_and_read_through_c_and_is_live_from_the_call_that_made_it_until_its_free`
+//! in `tests/snapshot.rs`, an integration test of its own because it makes
+//! documents and `tests/c_api.rs` counts its process's; the four counter
+//! checks of `ffi-test` (`handleChecks`), its check that a document is
+//! freed (`documentChecks`) and its checks that a snapshot is freed and
+//! outlives its document (`snapshotChecks`).
 //!
 //! ## Plain data
 //!
 //! | Kind | Lean to Rust | Rust to Lean |
 //! |---|---|---|
 //! | String | A pointer and a byte length, borrowed for the call; what is kept is copied (`text::borrow`) | An owned buffer, pointer and length, in the result record; the glue copies it and hands it back with one call to [`text::editor_ffi_text_free`]. Embedded NUL bytes survive |
-//! | Enum | A `u8` tag, converted with a checked function that refuses a tag it does not know ([`events::QueueId::from_tag`]) | A `u64` tag in the result record ([`events::EventKind::tag`]) |
+//! | Enum | A `u8` tag, converted with a checked function that refuses a tag it does not know ([`events::QueueId::from_tag`], [`snapshot::ColumnUnit::from_tag`]) | A `u64` tag in the result record ([`events::EventKind::tag`]) |
 //! | Small structure | Its fields, as scalar arguments | One `#[repr(C)]` record filled through an out-pointer in a single call ([`events::RawEvent`]) |
 //! | Option | A presence flag and a value | The function returns whether there is a value and fills the record only if so |
 //! | Byte range | Two scalars | A record of two `u64`: a start and an end, half-open, in bytes ([`text::ByteRange`]) |
@@ -60,12 +67,20 @@
 //!
 //! Examples: [`text::editor_ffi_text_find`] (an option in, an option of a
 //! byte range out), an event (a string, enums and a structure, in both
-//! directions) and a document (a string in, to `new` and `replace`; a string
-//! out, in [`document::RawText`]; a refusal as a `bool`). Tests: the unit
-//! tests in `text.rs` and `document.rs`; the tag tests in `events.rs`;
+//! directions), a document (a string in, to `new` and `replace`; a string
+//! out, in [`document::RawText`]; a refusal as a `bool`) and a snapshot (a
+//! record of three numbers out, in [`snapshot::RawSnapshotInfo`]; an enum
+//! in, as the tag of a [`snapshot::ColumnUnit`]; an option of a record out,
+//! in [`snapshot::RawPoint`], and an option of a number). Offsets into a
+//! text cross as `usize`, and rows and columns as `u64`; a row or a column
+//! no `usize` holds is refused, never cut down. Tests: the unit tests in
+//! `text.rs`, `document.rs` and `snapshot.rs`; the tag tests in
+//! `events.rs`;
 //! `find_fills_the_range_it_found_and_reports_whether_it_found_one` and the
-//! document test in `tests/c_api.rs`; the `find` and event checks of
-//! `ffi-test` (`dataChecks`) and its document checks (`documentChecks`).
+//! document test in `tests/c_api.rs`; the snapshot test in
+//! `tests/snapshot.rs`; the `find` and event checks of `ffi-test`
+//! (`dataChecks`), its document checks (`documentChecks`) and its snapshot
+//! checks (`snapshotChecks`).
 //!
 //! ## The event queues
 //!
@@ -235,6 +250,7 @@ pub mod counter;
 pub mod document;
 pub mod events;
 pub mod main_thread;
+pub mod snapshot;
 pub mod text;
 pub mod timers;
 pub mod window;
