@@ -172,3 +172,49 @@ fn edits_agree_with_a_string() {
         Ok(())
     });
 }
+
+#[test]
+fn a_snapshot_is_unaffected_by_later_edits() {
+    /// The most edits in a case.
+    const STEPS: usize = 16;
+    // Whether to take a snapshot before each step, and after the last.
+    let takes = vec(any::<bool>(), STEPS + 1);
+
+    check(
+        256,
+        (initial_text(), steps(STEPS), takes),
+        |(initial, steps, takes)| {
+            let mut reference = initial;
+            let mut text = Text::from(reference.as_str());
+            let mut accepted = 0;
+            // Each snapshot, with what the text held and its revision then.
+            let mut taken = Vec::new();
+
+            for (index, step) in steps.iter().enumerate() {
+                if takes[index] {
+                    taken.push((text.snapshot(), reference.clone(), accepted));
+                }
+                let (start, end) = step.range(&reference);
+                if text.replace(start..end, &step.insert).is_ok() {
+                    reference.replace_range(start..end, &step.insert);
+                    accepted += 1;
+                }
+            }
+            if takes[steps.len()] {
+                taken.push((text.snapshot(), reference.clone(), accepted));
+            }
+
+            for (snapshot, expected, revision) in &taken {
+                prop_assert_eq!(&snapshot.to_string(), expected);
+                prop_assert_eq!(snapshot.revision().get(), *revision);
+            }
+            drop(text);
+            for (snapshot, expected, revision) in &taken {
+                prop_assert_eq!(&snapshot.clone().to_string(), expected);
+                prop_assert_eq!(snapshot.len(), expected.len());
+                prop_assert_eq!(snapshot.revision().get(), *revision);
+            }
+            Ok(())
+        },
+    );
+}

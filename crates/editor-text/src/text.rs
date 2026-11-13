@@ -38,6 +38,13 @@ impl Text {
         &self.current
     }
 
+    /// The text as it is now, to keep: later edits do not change what the
+    /// snapshot holds. It shares the text with this one and copies none of
+    /// it, so it costs the same whatever the text's length.
+    pub fn snapshot(&self) -> Snapshot {
+        self.current.clone()
+    }
+
     /// Replaces the bytes of `range` with `text`. An empty range inserts,
     /// and an empty `text` deletes. An accepted edit adds one to the
     /// revision, one that changes nothing included.
