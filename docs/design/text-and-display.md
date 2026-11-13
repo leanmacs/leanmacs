@@ -27,10 +27,10 @@ model, so commands can be tested and reasoned about without the library
 
 ### As built
 
-The first three items are built, as the crate `editor-text`: the rope and
-the text model (decided 2026-11-12), and transactions with the edit log
-(decided 2026-11-13). Anchors, the selection type and the undo tree are
-not.
+All but the last item are built, as the crate `editor-text`: the rope and
+the text model (decided 2026-11-12), transactions with the edit log, and
+anchors, markers and selections (both decided 2026-11-13). The undo tree
+is not.
 
 **Positions.**
 
@@ -158,9 +158,11 @@ not.
 
 - Mapping through a composition is not always mapping through each change
   set in turn, so a position that must survive several edits is mapped at
-  each one. That is what an anchor will be.
-- Nothing calls the mapping yet. Anchors, selections and the display
-  pipeline's cache keys are what it is for.
+  each one. That is what an anchor is.
+- Many positions are mapped in one walk of the change set by a *mapper*,
+  which keeps its place in it and answers as the mapping of one position
+  does, in any order. A text's markers are mapped through it; the display
+  pipeline's cache keys are what else it is for.
 
 **Transactions.**
 
@@ -174,14 +176,152 @@ not.
   selection after is a position of the text after.
 - A *replace* (an insert or a delete at the Lean port) is the transaction
   with that one change and no selection.
-- A *selection*, until the selection type exists, is plain data: one or
-  more ranges of two byte offsets and the index of the primary one, kept
-  exactly as given. Nothing sorts, merges or maps them, and nothing reads a
-  transaction's selections yet; undo will.
+- A transaction's selections are of the selection type below, with its
+  shape. A transaction carries them and the text holds neither: nothing
+  reads a transaction's selections yet; undo will.
+- An accepted transaction moves every marker the text holds, and a refused
+  one moves none.
 - Because a transaction is applied to a clone, an edit copies the nodes
   from the root to a leaf whether or not a snapshot is held: 4,761 bytes
   allocated for one insert into a megabyte of text, where an edit in place
   with no snapshot held was 1,048.
+
+**Anchors and markers.**
+
+- An *anchor* is an offset and a bias. It is mapped at each transaction,
+  eagerly, as Emacs moves its markers.
+  - Not an id into the text's history, resolved when read (Zed's anchors):
+    that needs every inserted run to have an identity, the CRDT structure
+    [rendering-prior-art.md](rendering-prior-art.md) sets aside.
+  - Not a revision and an offset resolved through the log: the log keeps
+    coalesced ranges and no change sets, and forgetting would strand every
+    anchor older than the horizon.
+- A *marker* is an anchor or a selection that a text holds, under an id the
+  text gives out and never uses again. "Text, undo history, anchors: Rust,
+  behind handles" ([lean-runtime.md](lean-runtime.md)), so the text holds
+  them. A marker can be read back, put somewhere else or made the other
+  kind under the same id, and given up.
+- A marker is refused unless it is in the text as it is: an anchor at a
+  position, a selection with every end at one. So a marker read back is
+  always at positions of the text. That is what "in bounds" means.
+- Marking, placing and giving up are not edits: no revision, no log entry.
+  A snapshot carries no marker.
+- Order: two anchors of one bias never pass each other, and an anchor that
+  stays before inserted text never passes one that goes after it and was at
+  the same or a later offset. An anchor that goes after and a later one
+  that stays before swap when one replacement covers both, or text is
+  inserted where both are. No rule could avoid that: a deletion brings the
+  two to one point, and a later insertion there must part them by bias.
+  Emacs markers of the two insertion types do the same.
+- Cost: one transaction costs the ends held plus its changes. The ends are
+  sorted by offset and mapped in one walk. Measured: 32 bytes allocated for
+  each of ten thousand anchors, on a megabyte of text, beyond what the same
+  transaction allocates with none.
+- Who holds what, later: a view's selection, a scroll position, a comment's
+  place and a jump-list entry are each a marker Lean holds the id of. A Rust
+  consumer that holds positions of its own (layout's cache keys) maps values
+  with the mapper.
+
+**Selections.**
+
+- A *selection* is one or more ranges, each two byte offsets (an anchor,
+  the end that stays, and a head, the end that moves), the index of the
+  primary one, and one *shape* for them all: exclusive, inclusive, line or
+  block. A Vim state has one shape, so a selection has one.
+- It is kept in one form, made by its constructor, which has no text and
+  so judges offsets alone:
+  - sorted by start, then by end;
+  - ranges that overlap are one, from the lowest start to the highest end.
+    In the exclusive shape two ranges overlap when the later starts before
+    the earlier ends, or both start at one offset: two cursors at one place
+    are one, a cursor at the start of a range is in it, and ranges that only
+    touch stay two. In the other shapes both ends are on characters, so two
+    overlap when the later starts at or before the earlier's end;
+  - a merged range points the way the primary did if the primary is one of
+    those it is made of, and otherwise the way the first of them did. A
+    range with equal ends points forward;
+  - the primary is the range the one given as primary ended in.
+- A selection is checked against a text in that form. An end of a range
+  that merged into another is no end of the selection, so it is not looked
+  at: nothing clamps, and nothing is refused for an end that is gone.
+- A selection is mapped through a change set by mapping each end as an
+  anchor and making the form again, so ranges an edit brought together are
+  one. The ends are stored as offsets, and the bias of each follows from
+  the shape:
+
+  | End | Bias | So that |
+  |---|---|---|
+  | Both ends of an exclusive range with equal ends (a bar cursor) | After | Text another author inserts at the cursor is before it |
+  | The start of a non-empty exclusive range | After | Text inserted at either edge stays outside the range |
+  | The end of a non-empty exclusive range | Before | |
+  | Both ends in the other shapes | After | An end is on a character, and stays on it when text is inserted before it |
+
+  The two ends of a non-empty exclusive range are the one pair that can
+  pass each other, when everything of the range is replaced at once. The
+  range is then a cursor at its mapped start, after the replacement.
+
+**What a selection covers, and how evil maps onto it.**
+
+- The ends of a range say where two cursors are. What is selected is
+  computed against a snapshot, as *extents*: ranges of bytes, sorted, with
+  those that overlap made one.
+- A *cell* is the unit a cursor is on: one character, or a carriage return
+  and the line feed after it together. A character is a Unicode scalar
+  value, as everywhere at the port, and not an extended grapheme cluster.
+  One private module has the rule. A row's *content* is its bytes without
+  its line break.
+
+  | Shape | Covers, for a range from `start` to `end` |
+  |---|---|
+  | Exclusive | `start..end` |
+  | Inclusive | From `start` through the cell at `end` |
+  | Line | From the start of `start`'s row to the end of `end`'s row, and through its line feed if it has one |
+  | Block | For each row from `start`'s to `end`'s, one extent: with the anchor's and the head's columns counted in cells from their rows' starts, from the lower column through the cell at the higher, cut off at the row's content. A row too short for the lower column gives an empty extent at the end of its content |
+
+  | Evil | Representation |
+  |---|---|
+  | Insert state, Emacs state | Exclusive, a range with equal ends at the bar |
+  | Normal state | Inclusive, a range with equal ends at the start of the character the cursor is on |
+  | Visual, character-wise (`v`) | Inclusive: the anchor on the character where it began, the head on the character under the cursor, in either order |
+  | Visual, line-wise (`V`) | Line, with the same two ends, so the columns survive leaving the state |
+  | Visual, block-wise (`C-v`) | Block, the two ends its corners |
+  | What a motion gives an operator (`dw`) | Exclusive, or inclusive or line by the motion's type |
+  | Several cursors | Several ranges of the state's shape |
+
+- The cases:
+  - The last character of a line. In `"ab\ncd"` the cursor at 1 covers
+    `1..2`, and the line feed is outside. In `"ab\r\ncd"` the last character
+    is still `b`.
+  - On the line break, where `v$` puts the head: at 2 in `"ab\ncd"` it
+    covers `2..3`, and in `"ab\r\ncd"` it covers `2..4`, both bytes.
+  - An empty line. In `"a\n\nb"` the cursor at 2 covers `2..3`, the line
+    feed, which is what `v` on an empty line selects. Line-wise there:
+    `2..3` too.
+  - The end of the buffer. A cursor at the text's length (an empty text, or
+    the empty last row of a text that ends in a line feed) covers nothing.
+    Line-wise on a last row with no line feed stops at the text's end.
+  - A character of several bytes is one cell: in `"a😀b"` the cursor at 1
+    covers `1..5`.
+  - Block, on `"abcd\nx\nabcd"` from 1 to 9 (columns 1 and 2): `1..3`,
+    `6..6`, `8..10`.
+- No end is clamped. Evil's rules that are not the representation's stay in
+  Lean with the command loop: keeping the normal-state cursor off the line
+  break, what each operator does with an extent (whether `dd` on a last row
+  takes the line feed before it), `curswant`, and the motions, which must
+  move by the same cell.
+- Block-wise here is the shape, its two corners and its extent with columns
+  counted in cells. On text with no tab and no wide character that is Vim's
+  block. What is left is in the open questions.
+- No library: anchors and selections are ours, on Helix's model
+  ([rendering-prior-art.md](rendering-prior-art.md)). crates.io, 2026-11-13:
+  the crates that have selections (`texera-core`, a port of CodeMirror's
+  state; `kode-core`, an editor core on `ropey`) bring their own buffer and
+  change types. `unicode-segmentation` 1.13.3 and `unicode-width` 0.2.3 are
+  not added; the open questions say why.
+- Across the boundary a selection's words carry its shape, a marker is
+  words in both directions, and extents come back as words. The text port
+  has four requests for markers and one question for extents, with thirteen
+  and ten properties in its contract.
 
 | Piece | Where |
 |---|---|
@@ -191,14 +331,20 @@ not.
 | A snapshot and its reads | `crates/editor-text/src/snapshot.rs` |
 | Rows and points | `crates/editor-text/src/point.rs` |
 | Invalid bytes as escapes | `crates/editor-text/src/bytes.rs` |
-| Change sets: the normal form, compose, invert, map | `crates/editor-text/src/change.rs` |
-| A transaction, and the selection it carries | `crates/editor-text/src/transaction.rs`, `crates/editor-text/src/selection.rs` |
+| Change sets: the normal form, compose, invert, map, and the mapper | `crates/editor-text/src/change.rs` |
+| A transaction, and the selections it carries | `crates/editor-text/src/transaction.rs` |
+| An anchor | `crates/editor-text/src/anchor.rs` |
+| The markers a text holds and moves | `crates/editor-text/src/marker.rs`, and `Text::mark`, `marker`, `place` and `unmark` in `text.rs` |
+| A selection: its shape, its form, and mapping it | `crates/editor-text/src/selection.rs` |
+| The cell, and a row's content | `crates/editor-text/src/cell.rs` |
+| What a selection covers | `crates/editor-text/src/extent.rs` |
 | The edit log: entries, origins, tracing, forgetting | `crates/editor-text/src/log.rs` |
 | Edits and patches, and composing them | `crates/editor-text/src/patch.rs` |
-| The properties, against a `String` | `crates/editor-text/tests/properties/`: the text in `main.rs`, the laws of change sets in `changes.rs`, the log in `log.rs` |
-| What a snapshot, a transaction and a pull cost, counted in bytes allocated | `crates/editor-text/tests/snapshot_cost.rs` |
+| The properties, against a `String` | `crates/editor-text/tests/properties/`: the text in `main.rs`, the laws of change sets in `changes.rs`, the log in `log.rs`, anchors and markers in `anchors.rs`, the selection's form, its mapping and its extents in `selections.rs` |
+| What a snapshot, a transaction, a pull and moving markers cost, counted in bytes allocated | `crates/editor-text/tests/snapshot_cost.rs` |
 | The text and the snapshot as handles for Lean | `crates/editor-ffi/src/document.rs`, `crates/editor-ffi/src/snapshot.rs` |
 | A transaction and the log across the boundary, as words | `crates/editor-ffi/src/transaction.rs`, `crates/editor-ffi/src/log.rs`, `crates/editor-ffi/src/words.rs` |
+| Markers and extents across the boundary, as words | `crates/editor-ffi/src/marker.rs`, and `editor_ffi_snapshot_extents` in `snapshot.rs` |
 | The Lean text port, its model, real binding and contract | `lean/Editor/Text.lean`, `lean/Editor/Text/` ([lean-runtime.md](lean-runtime.md)) |
 
 ## The edit log
@@ -580,6 +726,29 @@ these hunks" is a fact the editor can state.
 - **Points in UTF-16 in an edit.** An edit's points count columns in bytes.
   A language server client converts with the snapshots of the two
   revisions, or the log grows a second pair of points.
+- **Extended grapheme clusters as the cell.** A cursor should rest on a
+  cluster, and a cell here is a character: a letter and a combining mark
+  after it are two. `unicode-segmentation` (1.13.3) was not added because
+  what a selection covers is a question of the text port, so the pure Lean
+  model must answer it without the Rust library, and UAX #29 in the model
+  is out of proportion to what it would buy now. The rule is in one private
+  module, and the motions must use the same cell, so it is decided once,
+  with the command loop's motions and the display pipeline's shaping, which
+  knows clusters, in view.
+- **A block's columns by display width, and a block to every line's end.**
+  A block's columns are counted in cells. Vim counts them in display
+  columns, which needs tab stops (a view's setting) and character widths
+  (`unicode-width`, 0.2.3, not added), neither of which exists before the
+  display pipeline; and `$` in block-wise visual runs every row to its end.
+  Both are additions: a unit for the block's columns, as a point's column
+  has one, and a flag.
+- **How many markers a text should hold.** Every transaction costs the ends
+  held. There is no bound and no policy, and no marker survives a restart.
+  The command loop, and whatever holds comments and jump lists, decide.
+- **A marker set by a transaction.** A transaction could name a marker to
+  set to its selection after. It does not: the author places its marker
+  with a second request, and the one writer path stays one argument
+  simpler. Undo, which restores a selection, may want it.
 - **Tabs**: Parley has no tab stops. Expand before shaping, use inline
   boxes, or split runs.
 - **The other choices the survey left open** are listed in

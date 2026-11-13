@@ -137,6 +137,16 @@ inductive Edit where
   scheme's `State`.
 - **Vim states** (normal, insert, visual) are records in a registry, like
   modes, so a state defined in config is not a special case.
+- **A state's selection is a shape and ends.** The text store keeps a
+  selection as ranges of two offsets with one shape, and says what a shape
+  covers: insert state is an exclusive range with equal ends, normal state
+  an inclusive one, and the three visual states inclusive, line and block.
+  The table, and the cases at a line's last character, an empty line and
+  the end of the buffer, are in
+  [text-and-display.md](text-and-display.md) ("What a selection covers, and
+  how evil maps onto it"). The scheme's own rules are not there: keeping
+  the normal-state cursor off the line break, what an operator does with an
+  extent, `curswant`, and the motions.
 
 Keymaps are not indexed by Vim state in their types. That would need a
 closed set of states, which conflicts with states being open.
@@ -300,7 +310,10 @@ resets pending state; `x` then `u` restores the buffer.
 - **Which scheme is active where.** One per editor or one per view; how a
   terminal view or the minibuffer takes keys.
 - **Counts, registers and visual selection** in the Vim scheme's `State`
-  and `Edit`.
+  and `Edit`. How a selection is represented is settled
+  ([text-and-display.md](text-and-display.md)); what is open is where the
+  scheme keeps which state it is in and the column it wants, and how
+  entering and leaving a visual state changes the selection's shape.
 - **The `kbd` macro.** Macros need the `Lean` package at elaboration time,
   and importing it at runtime is what the memory figures in
   [lean-runtime.md](lean-runtime.md) argue against. Not measured.

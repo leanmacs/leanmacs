@@ -222,10 +222,12 @@ The Rust half needs no Lean toolchain: `mise run test` (`cargo test
 tests that drive a text and a `String` with the same random edits and
 compare them, convert every offset to a point and back, and load and save
 arbitrary bytes; that hold the laws of change sets (composing, inverting,
-mapping a position); and that compare what the edit log records, the one
+mapping a position); that compare what the edit log records, the one
 patch a subscriber gets and the trace of a range with references computed
-from the strings. The property tests run from a fixed seed and write no
-file.
+from the strings; and that keep the anchors a text holds in bounds and in
+order through random transactions, merge selections that overlap, and
+compare what a selection covers with a reference read off the string. The
+property tests run from a fixed seed and write no file.
 
 The Lean half's logic needs no Rust library. The editor reaches the library
 through interfaces it defines, each with a pure Lean model, and
