@@ -2296,7 +2296,34 @@ def undoTreeChecks : List Check :=
             closed.node? made == some { parent := some UndoTree.root, cross := some ⟨4, 5⟩ } &&
             closed.node? UndoTree.root ==
               some { parent := none, children := #[made], next := some made } &&
-            closed.close == closed }]
+            closed.close == closed },
+    { name :=
+        "an undo tree nobody edited is saved where it is; told an edit it is modified; marked saved it is not, there or at a state named to it; and the state it is in is its node, or inside the open group the revision that put it there"
+      run := do
+        let tree := UndoTree.new ⟨0⟩ 3
+        let told := tree.record 5
+        let elsewhere : UndoTree.State := ⟨UndoTree.root, some 4⟩
+        return !tree.isModified && tree.state == ⟨UndoTree.root, none⟩ && told.isModified &&
+            told.state == ⟨UndoTree.root, some 5⟩ &&
+            !told.markSaved.isModified &&
+            !(told.markSaved told.state).isModified &&
+            (tree.markSaved told.state).isModified &&
+            (told.markSaved elsewhere).isModified &&
+            (told.markSaved.record 6).isModified &&
+            !(tree.markSaved.markSaved).isModified },
+    { name :=
+        "a boundary does not change whether an undo tree is modified: saved where the text is, the saved state becomes the new node; saved anywhere else, it stays"
+      run := do
+        let told := (UndoTree.new ⟨0⟩ 3).record 5
+        let made : UndoTree.State := ⟨⟨1⟩, none⟩
+        let behind := told.markSaved.record 6
+        return told.isModified && told.close.isModified && !told.markSaved.isModified &&
+            !told.markSaved.close.isModified &&
+            told.markSaved.close.saved == some made &&
+            told.markSaved.close.state == made &&
+            behind.isModified &&
+            behind.close.isModified &&
+            behind.close.saved == some ⟨UndoTree.root, some 5⟩ }]
 
 /-- Every check, in the order they run.
 

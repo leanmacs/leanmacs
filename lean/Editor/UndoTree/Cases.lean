@@ -143,7 +143,7 @@ def moveCases : List Property :=
             (← reads tree) == ("hello, rld😀", 5) &&
             redone.tree.current != UndoTree.root },
     { name :=
-        "the undo tree: nothing to do is none and changes nothing: undo at the root, redo at a leaf, redo with an edit pending, and a move to an id that names no node"
+        "the undo tree: nothing to do is none and changes nothing: undo at the root, redo at a leaf, redo with an edit pending, a move to an id that names no node, and a revert to a state of another node or to one that is not of the open group"
       holds := do
         let text ← createText "héllo"
         let tree ← UndoTree.over text
@@ -157,7 +157,13 @@ def moveCases : List Property :=
         let withPending := (← pending.redo).isNone
         let stranger : UndoTree.NodeId := ⟨9⟩
         let nowhere := (← pending.goTo stranger).isNone
-        return atRoot && atLeaf && unchanged && withPending && nowhere &&
+        -- The state of another node, which the text is not at, and states
+        -- that are not of the open group: it holds revision 3 alone.
+        let elsewhere := (← pending.revertTo ⟨tree.current, none⟩).isNone
+        let before := (← pending.revertTo ⟨pending.current, some 2⟩).isNone
+        let after := (← pending.revertTo ⟨pending.current, some 9⟩).isNone
+        return atRoot && atLeaf && unchanged && withPending && nowhere && elsewhere && before &&
+            after &&
             (← reads pending) == ("héllo😀", 3) },
     { name :=
         "the undo tree: redo goes to the child the text was last in: after an undo from the older of two branches to the older, and after a move to the parent from the newer to the newer"
@@ -286,9 +292,122 @@ def moveCases : List Property :=
         return thrown && partWay && back && (← reads made.tree) == ("héllo", 8) &&
             first.tree.current == UndoTree.root }]
 
+/-- The cases of reverting the open group, and of the saved state. -/
+def stateCases : List Property :=
+  [{
+      name :=
+        "the undo tree: reverting an open group restores the text and hands back the selections in force before it: the text is back at one more revision, the selection of two ranges its first transaction carried is handed back and can be placed, no node was made, there is nothing to redo, and a boundary then makes none",
+      holds := do
+        let text ← createText "héllo wörld"
+        let tree ← UndoTree.over text
+        -- "é" becomes "e", then "😀" is added at the end.
+        let tree ←
+          edit tree
+              { changes := #[.retain 1, .delete 2, .insert "e", .retain 10]
+                before := some (selection .exclusive #[(7, 13), (0, 3)])
+                after := some (selection .exclusive #[(2, 2)]) }
+        let tree ←
+          edit tree
+              { changes := #[.retain 12, .insert "😀"]
+                before := some (selection .exclusive #[(12, 12)]) }
+        let made := (← reads tree) == ("hello wörld😀", 2) && tree.pending
+        let some reverted ← tree.revert | return false
+        let back := (← reads tree) == ("héllo wörld", 3)
+        -- In the store's form: sorted, the primary followed.
+        let before := selection .exclusive #[(0, 3), (7, 13)] 1
+        let placed ← text.mark (.selection before)
+        let held := (← text.marker placed) == .selection before
+        let noNode :=
+          reverted.tree.nodes.size == 1 && reverted.tree.current == UndoTree.root &&
+            !reverted.tree.pending &&
+            reverted.tree.close == reverted.tree
+        let noRedo := (← reverted.tree.redo).isNone && (← reverted.tree.undo).isNone
+        -- What it took back is gone: the group's inverses and its own.
+        let ofGroup ← refusedWith .noInverse (discard <| text.applyInverse 1 2)
+        let ofRevert ← refusedWith .noInverse (discard <| text.applyInverse 3 3)
+        -- With nothing pending, a revert applies nothing.
+        let some again ← reverted.tree.revert | return false
+        return made && back && reverted.selection == some before && held && noNode && noRedo &&
+            ofGroup &&
+            ofRevert &&
+            again.tree == reverted.tree &&
+            again.selection == none &&
+            (← reads tree) == ("héllo wörld", 3) },
+    { name :=
+        "the undo tree: undoing back to the saved state marks the text unmodified, and redoing marks it modified again: a new tree is unmodified, an edit makes it modified, and after it is marked saved and a group is made, one undo makes it unmodified with the text reading what it read then, and one redo modified"
+      holds := do
+        let text ← createText "héllo"
+        let tree ← UndoTree.over text
+        let fresh := !tree.isModified
+        let tree ← addAtEnd tree " wörld"
+        let edited := tree.isModified && tree.close.isModified
+        let tree := tree.close.markSaved
+        let saved := !tree.isModified && (← reads tree) == ("héllo wörld", 1)
+        let tree ← group tree "😀"
+        let later := tree.isModified
+        let some undone ← tree.undo | return false
+        let back := !undone.tree.isModified && (← reads tree) == ("héllo wörld", 3)
+        let some redone ← undone.tree.redo | return false
+        return fresh && edited && saved && later && back && redone.tree.isModified &&
+            (← reads tree) == ("héllo wörld😀", 4) },
+    { name :=
+        "the undo tree: reverting the part of a group a command made: a revert to the state kept after a first edit reads the text of that state and hands back the selection before the first transaction it took back, the rest of the group is still pending, and a boundary then makes one node of the group, which one undo takes back"
+      holds := do
+        let text ← createText "héllo"
+        let tree ← UndoTree.over text
+        let tree ← addAtEnd tree " A"
+        let kept := tree.state
+        let before := selection .inclusive #[(8, 8)]
+        let tree ← edit tree { changes := #[.retain 8, .insert "😀"], before := some before }
+        let tree ← addAtEnd tree "!"
+        let made := (← reads tree) == ("héllo A😀!", 3) && tree.state != kept
+        let some reverted ← tree.revertTo kept | return false
+        let part :=
+          (← reads tree) == ("héllo A", 4) && reverted.selection == some before &&
+            reverted.tree.state == kept &&
+            reverted.tree.pending &&
+            reverted.tree.nodes.size == 1
+        -- To the state the text is in, nothing is applied.
+        let some stay ← reverted.tree.revertTo kept | return false
+        let still := stay.tree == reverted.tree && stay.selection == none
+        let closed := reverted.tree.close
+        let one :=
+          closed.nodes.size == 2 && (closed.node? closed.current).bind (·.cross) == some ⟨1, 4⟩
+        let some undone ← closed.undo | return false
+        return made && part && still && one && (← reads tree) == ("héllo", 5) &&
+            undone.tree.current == UndoTree.root },
+    { name :=
+        "the undo tree: a text saved inside an open group is unmodified there, modified after a further edit and unmodified again after a revert to that state, and once the group is closed further on no undo or redo makes it unmodified; saved and then closed with nothing more it stays unmodified, and an undo and a redo make it modified and unmodified"
+      holds := do
+        let text ← createText "héllo"
+        let tree ← UndoTree.over text
+        let tree := (← addAtEnd tree " A").markSaved
+        let saved := tree.state
+        let inside := !tree.isModified
+        let tree ← addAtEnd tree "😀"
+        let further := tree.isModified
+        let some reverted ← tree.revertTo saved | return false
+        let again := !reverted.tree.isModified && (← reads tree) == ("héllo A", 3)
+        -- Closed further on: the saved state is no node.
+        let closed := (← addAtEnd reverted.tree "!").close
+        let some undone ← closed.undo | return false
+        let some redone ← undone.tree.redo | return false
+        let never := closed.isModified && undone.tree.isModified && redone.tree.isModified
+        -- Saved, and then closed with nothing more: the saved state is the
+        -- new node.
+        let other ← createText "héllo"
+        let tree ← UndoTree.over other
+        let tree := (← addAtEnd tree " A").markSaved.close
+        let still := !tree.isModified
+        let some undone ← tree.undo | return false
+        let some redone ← undone.tree.redo | return false
+        return inside && further && again && never && still && undone.tree.isModified &&
+            !redone.tree.isModified &&
+            (← reads tree) == ("héllo A", 3) }]
+
 /-- The cases of the undo tree, which hold of it over every implementation
 of the text port. -/
 def cases : List Property :=
-  moveCases
+  moveCases ++ stateCases
 
 end Editor.UndoTreeCases
