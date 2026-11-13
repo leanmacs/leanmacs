@@ -1,5 +1,6 @@
 import Editor.Command.Append
-import Editor.Event
+import Editor.InputScheme
+import Editor.Key.Notation
 import Editor.Setup
 import Editor.UndoTree
 
@@ -19,6 +20,14 @@ with (`setup` and stores, `Editor/Setup.lean`). The job port
 (`Editor/Job.lean`) comes with `Editor/Setup.lean`, which registers jobs,
 and with the job port the file requests a job makes (`Editor/File.lean`):
 config loads and saves files with `File.load` and `File.save`.
+
+How a key becomes an invocation is here too, so config can come to write
+bindings: input schemes (`Editor/InputScheme.lean`), with the keymaps they
+walk (`Editor/Keymap.lean`) and the invocations they yield
+(`Editor/Invocation.lean`), and key strings (`Editor/Key/Notation.lean`),
+with which a binding's keys are written (`Key.parse "C-x C-s"`). The test
+scheme and the scheme contract (`Editor/InputScheme/Test.lean`,
+`Editor/InputScheme/Contract.lean`) are for tests, and are not imported.
 
 It never imports `Editor.Ffi` or a port's real binding (`Editor/Text/Real.lean`).
 Those reach the Rust library, and only an executable linked with it imports
