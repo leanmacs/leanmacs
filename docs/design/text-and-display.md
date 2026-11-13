@@ -821,6 +821,15 @@ view is sent as the same handles. Faces are names; what they look like is
 the display pipeline's. Which cursor and which status fields a view has are
 chosen by the command loop's later phases; the scene only carries them.
 
+Lean publishes the scene and asks layout's two questions through the
+display interface (`lean/Editor/Display.lean`): the rows a view shows from
+its scroll anchor, and the position some visual lines above or below a
+position, with the x it aimed for passed back for the next move. Its model
+(`lean/Editor/Display/Model.lean`) lays text out in fixed-size cells, for
+tests only. Its contract (`lean/Editor/Display/Contract.lean`) holds the
+model and the real binding to the same properties, the real binding over a
+fake shaper whose glyphs all have the cells' size.
+
 ## Layout and rendering
 
 - Only visible lines are laid out, one layout object per buffer line.

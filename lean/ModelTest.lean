@@ -1,5 +1,6 @@
 import Editor.Command.Append
 import Editor.Config.Reload
+import Editor.Display.Contract
 import Editor.Display.Model
 import Editor.File.Cases
 import Editor.File.Model
@@ -27,6 +28,12 @@ The checks of the program type run programs over a small port of their own
 
 The text port's contract (`Editor/Text/Contract.lean`) is run against its pure
 model here. `contract-test` runs the same list against the real binding.
+
+The display interface's contract (`Editor/Display/Contract.lean`) is run
+against its model here, in cells of two sizes (`displayFailures`). The real
+binding's run of it is the display pipeline's. `sceneChecks` and
+`displayChecks` are what only the model shows: the scenes published to it,
+and its exact layout rule.
 
 A command is tested the same way: as a property, a command that returns
 whether it held, run against the model (`commandProperties`). The `editor`
@@ -2701,13 +2708,12 @@ two rows and the third three: rows 0 to 6 start at 0, 4, 7, 10, 14, 18 and
 def wrapping : String :=
   "abcdef\nab\nabcdefghij\nxyz"
 
-/-- Where the display model over `texts` moves `position` of `snapshot`, in a
-view `width` pixels wide, by `lines` rows aiming for `goal`. -/
+/-- Where the display model over `texts` moves `position` of the first of
+them, in a view `width` pixels wide, by `lines` rows aiming for `goal`. -/
 def movedBy (texts : List String) (width position : Nat) (lines : Int) (goal : Option Nat)
-    (cells : Display.Cells := { advance := 1, lineHeight := 1 }) (snapshot : SnapshotId := ⟨0⟩) :
-    DisplayError ⊕ Display.Moved :=
+    (cells : Display.Cells := { advance := 1, lineHeight := 1 }) : DisplayError ⊕ Display.Moved :=
   answered
-    ((Display.linesFrom { snapshot, width, position, lines, goal }).runModel
+    ((Display.linesFrom { snapshot := ⟨0⟩, width, position, lines, goal }).runModel
         (displayOver texts cells)).1
 
 /-- The checks of the display model that only it shows: what it recorded of
@@ -2733,26 +2739,6 @@ def displayChecks : List Check :=
         return result matches .ok () && model.scenes == #[first, second, third] },
     { name := "a display model that nothing was published to has no scene"
       run := pure ((displayOver ["a"]).scenes == #[]) },
-    { name := "a view r rows tall over lines no longer than its width shows r lines from its anchor"
-      run :=
-        pure
-          (shownBy ["ab\ncd\nef\ngh"] { snapshot := ⟨0⟩, width := 4, height := 3, anchor := 3 } ==
-            .inr #[⟨3, 5⟩, ⟨6, 8⟩, ⟨9, 11⟩]) },
-    { name := "a line twice the view's width takes two rows, split at the width"
-      run :=
-        pure
-          (shownBy ["abcdefgh\nij"] { snapshot := ⟨0⟩, width := 4, height := 3, anchor := 0 } ==
-            .inr #[⟨0, 4⟩, ⟨4, 8⟩, ⟨9, 11⟩]) },
-    { name := "the rows stop at the end of the text"
-      run :=
-        pure
-          (shownBy ["ab\ncd"] { snapshot := ⟨0⟩, width := 4, height := 10, anchor := 0 } ==
-            .inr #[⟨0, 2⟩, ⟨3, 5⟩]) },
-    { name := "an anchor in the middle of a row starts at that row"
-      run :=
-        pure
-          (shownBy ["abcdefgh\nij"] { snapshot := ⟨0⟩, width := 4, height := 2, anchor := 6 } ==
-            .inr #[⟨4, 8⟩, ⟨9, 11⟩]) },
     { name :=
         "the layout rule in cells of 8 by 16: a width is cut down to whole cells, a height to whole rows, and a carriage return before a line feed is part of the break"
       run :=
@@ -2775,27 +2761,6 @@ def displayChecks : List Check :=
           (shownBy ["a\rb"] { snapshot := ⟨0⟩, width := 2, height := 2, anchor := 0 } ==
             .inr #[⟨0, 2⟩, ⟨2, 3⟩]) },
     { name :=
-        "the rows of a snapshot the model does not have, or from an anchor inside a character or past the end, are refused"
-      run :=
-        pure
-          (shownBy ["é"] { snapshot := ⟨1⟩, width := 4, height := 1, anchor := 0 } ==
-              .inl .noSuchSnapshot &&
-            shownBy ["é"] { snapshot := ⟨0⟩, width := 4, height := 1, anchor := 1 } ==
-              .inl .badPosition &&
-            shownBy ["é"] { snapshot := ⟨0⟩, width := 4, height := 1, anchor := 3 } ==
-              .inl .badPosition) },
-    { name :=
-        "n lines down and then n lines up, with the goal passed back, is the start: over plain lines"
-      run :=
-        pure
-          (movedBy ["abc\ndef\nghi"] 10 1 2 none == .inr ⟨9, 1⟩ &&
-            movedBy ["abc\ndef\nghi"] 10 9 (-2) (some 1) == .inr ⟨1, 1⟩) },
-    { name := "n visual lines down and up is the start across a wrapped line"
-      run :=
-        pure
-          (movedBy [wrapping] 4 8 3 none == .inr ⟨19, 1⟩ &&
-            movedBy [wrapping] 4 19 (-3) (some 1) == .inr ⟨8, 1⟩) },
-    { name :=
         "across a shorter line the position stops at its end, and the goal passed back brings it to the start's column again"
       run :=
         pure
@@ -2805,22 +2770,11 @@ def displayChecks : List Check :=
     { name :=
         "a row a line wraps after holds no end-of-line position: aiming past it lands on its last character"
       run := pure (movedBy [wrapping] 4 9 1 (some 6) == .inr ⟨13, 6⟩) },
-    { name := "a move past the first or the last row stops there, and a move of 0 stays"
-      run :=
-        pure
-          (movedBy [wrapping] 4 1 (-5) none == .inr ⟨1, 1⟩ &&
-            movedBy [wrapping] 4 22 5 none == .inr ⟨22, 1⟩ &&
-            movedBy [wrapping] 4 15 0 none == .inr ⟨15, 1⟩) },
     { name := "the goal is in pixels: a column times the cells' advance"
       run :=
         pure
           (movedBy [wrapping] 32 3 2 none (cells := { advance := 8, lineHeight := 16 }) ==
-            .inr ⟨9, 24⟩) },
-    { name := "a move in a snapshot the model does not have, or from inside a character, is refused"
-      run :=
-        pure
-          (movedBy ["é"] 4 0 1 none (snapshot := ⟨1⟩) == .inl .noSuchSnapshot &&
-            movedBy ["é"] 4 1 1 none == .inl .badPosition) }]
+            .inr ⟨9, 24⟩) }]
 
 /-- The checks of the undo tree's pure operations alone, which ask nothing of
 a text: being told a revision, and the boundary. What the tree does to a
@@ -3177,12 +3131,36 @@ def jobModelFailures : IO (List String) := do
   let failed ← JobContract.failures (fun job => pure (job.runModel {}).1) JobContract.properties
   return failed.map (s!"the job model: {·}")
 
+/-- The cell sizes the display interface's contract is run at against the
+model: one pixel each way, and 8 by 16. -/
+def displayCells : List Display.Cells :=
+  [{ advance := 1, lineHeight := 1 }, { advance := 8, lineHeight := 16 }]
+
+/-- Runs a property of the display interface's contract against a display
+model in `cells` that holds the property's texts, as the snapshots 0, 1, 2
+and so on. -/
+def runOnDisplayModel (cells : Display.Cells) (property : DisplayContract.Property) :
+    IO (Except DisplayError Bool) :=
+  let model := displayOver property.texts.toList cells
+  pure ((property.holds (model.texts.map (·.1))).runModel model).1
+
+/-- The names of the display interface's contract properties that do not
+hold of the display model, at each of `displayCells`. -/
+def displayFailures : IO (List String) := do
+  let failed ←
+    displayCells.flatMapM fun cells => do
+        let failed ←
+          DisplayContract.failures (runOnDisplayModel cells) (DisplayContract.properties cells)
+        return failed.map
+            (s!"the display model in cells of {cells.advance} by {cells.lineHeight}: {·}")
+  return failed
+
 end ModelTest
 
-/-- Runs the checks, then the text port's contract against its model and the
+/-- Runs the checks, then the text port's contract against its model, the
 job port's contract against its model and against the runner over the fake
-clock: exits 0 when all hold, and 1 after naming on stderr the ones that do
-not.
+clock, and the display interface's contract against its model: exits 0 when
+all hold, and 1 after naming on stderr the ones that do not.
 
 It exits explicitly. A check of the job runner that failed may have left a
 task that never ends, and returning from `main` would wait for it for ever:
@@ -3194,7 +3172,8 @@ def main : IO UInt32 := do
       (← ModelTest.jobModelFailures) ++
       (← ModelTest.jobRunnerFailures) ++
       (← ModelTest.fileFailures) ++
-      (← ModelTest.caseFailures)
+      (← ModelTest.caseFailures) ++
+      (← ModelTest.displayFailures)
   for name in failed do
     IO.eprintln s!"FAILED: {name}"
   unless failed.isEmpty do
@@ -3202,6 +3181,6 @@ def main : IO UInt32 := do
     -- returning from `main` would wait for it for ever.
     IO.Process.exit 1
   IO.println
-      s!"model-test: {ModelTest.checks.length} checks passed, {Editor.TextContract.properties.length + Editor.TextContract.adoptProperties.length + ModelTest.commandProperties.length} properties hold of the text model, {Editor.UndoTreeCases.cases.length} cases of the undo tree hold over it, and {Editor.JobContract.properties.length} properties of the job model and of the job runner over the fake clock, and {Editor.JobContract.fileProperties.length} file properties of the job model and of the job runner over the fake file service; {Editor.FileCases.cases.length} cases across the text port and the job port hold of the two models"
+      s!"model-test: {ModelTest.checks.length} checks passed, {Editor.TextContract.properties.length + Editor.TextContract.adoptProperties.length + ModelTest.commandProperties.length} properties hold of the text model, {Editor.UndoTreeCases.cases.length} cases of the undo tree hold over it, and {Editor.JobContract.properties.length} properties of the job model and of the job runner over the fake clock, and {Editor.JobContract.fileProperties.length} file properties of the job model and of the job runner over the fake file service; {Editor.FileCases.cases.length} cases across the text port and the job port hold of the two models; {(Editor.DisplayContract.properties { advance := 1, lineHeight := 1 }).length} properties of the display interface hold of its model in cells of {ModelTest.displayCells.length} sizes"
   (← IO.getStdout).flush
   IO.Process.exit 0
