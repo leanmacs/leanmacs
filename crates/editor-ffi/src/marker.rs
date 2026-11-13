@@ -32,7 +32,7 @@ use editor_text::{Anchor, Bias, MarkError, Marker, MarkerId, Selection};
 
 use crate::document::Document;
 use crate::log::RawWords;
-use crate::transaction::{SelectionWords, Undecoded, shape_word};
+use crate::transaction::{SelectionWords, Undecoded};
 use crate::words::{Reader, Writer};
 
 /// How a request about a marker, or about what a selection covers, ended,
@@ -146,16 +146,9 @@ pub fn marker_words(marker: &Marker) -> Vec<u8> {
             writer.finish()
         }
         Marker::Selection(selection) => {
-            let ranges = selection.ranges();
-            let mut writer = Writer::with_capacity(4 + 2 * ranges.len());
+            let mut writer = Writer::with_capacity(1 + SelectionWords::len(selection));
             writer.word(1);
-            writer.word(shape_word(selection.shape()));
-            writer.size(selection.primary());
-            writer.size(ranges.len());
-            for range in ranges {
-                writer.size(range.anchor);
-                writer.size(range.head);
-            }
+            SelectionWords::write(&mut writer, selection);
             writer.finish()
         }
     }

@@ -23,7 +23,7 @@ use editor_text::{
 };
 
 use crate::document::Document;
-use crate::words::Reader;
+use crate::words::{Reader, Writer};
 
 /// Why a transaction did not come out of its words.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -86,6 +86,26 @@ impl SelectionWords {
             ranges,
         })
     }
+
+    /// How many words [`write`](Self::write) adds for `selection`.
+    pub(crate) fn len(selection: &Selection) -> usize {
+        3 + 2 * selection.ranges().len()
+    }
+
+    /// Adds the words of `selection` to `writer`, as [`read`](Self::read)
+    /// reads them: its shape, the index of its primary range, the count of
+    /// its ranges, and an anchor and a head for each. This is the one
+    /// place a selection's words are written.
+    pub(crate) fn write(writer: &mut Writer, selection: &Selection) {
+        let ranges = selection.ranges();
+        writer.word(shape_word(selection.shape()));
+        writer.size(selection.primary());
+        writer.size(ranges.len());
+        for range in ranges {
+            writer.size(range.anchor);
+            writer.size(range.head);
+        }
+    }
 }
 
 /// The shape `word` stands for: 0 exclusive, 1 inclusive, 2 line-wise, 3
@@ -103,7 +123,7 @@ pub(crate) fn shape_of(word: u64) -> Option<Shape> {
 /// The word that stands for `shape`, as [`shape_of`] reads it. Every shape
 /// must cross, so this names every one: a new shape must be given a word
 /// here, and in [`shape_of`], before it can.
-pub(crate) fn shape_word(shape: Shape) -> u64 {
+fn shape_word(shape: Shape) -> u64 {
     match shape {
         Shape::Exclusive => 0,
         Shape::Inclusive => 1,
