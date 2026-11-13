@@ -4590,10 +4590,18 @@ none. -/
 def vimMove (motion : String) (count : Nat := 0) : Invocation :=
   { command := "move", arguments := [.str motion, .nat count] }
 
+/-- The invocation an edit with the operator `operator` compiles to, over a
+target of `kind` named `name`, with `count`, 0 for none, and `register`,
+empty for none. -/
+def vimOperate (operator kind name : String) (count : Nat := 0) (register : String := "") :
+    Invocation :=
+  { command := "operate"
+    arguments := [.str operator, .str kind, .str name, .nat count, .str register] }
+
 /-- The inputs the Vim checks give the scheme contract as complete, as key
 strings. -/
 def vimSequences : List String :=
-  ["g g", "w"]
+  ["g g", "w", "d w", "d d"]
 
 /-- The key the Vim checks give the scheme contract as unbound. -/
 def vimUnbound : Key :=
@@ -4681,7 +4689,71 @@ def vimGrammarChecks : List Check :=
         let (begun, _) := fromWindow [typed]
         pure
           (yields == [none, some (vimMove "first-line")] && decide (state = vimInit) &&
-            (Vim.scheme vimStates).pending begun == keys "g") }]
+            (Vim.scheme vimStates).pending begun == keys "g") },
+    { name :=
+        "an operator and then a motion yield one invocation on the motion's key: the operator over that motion, with no count"
+      run :=
+        pure
+          ((vimFed "d w").2 == [none, some (vimOperate "delete" "motion" "word")] &&
+            (vimFed "d g g").2 == [none, none, some (vimOperate "delete" "motion" "first-line")] &&
+            (vimParsed "d w").2 ==
+              [.nothing, .edit (.operate vimDelete (.motion "word") none none)]) },
+    { name :=
+        "an operator typed twice yields that operator over lines, with a count of 1: the doubled operator counts lines"
+      run :=
+        pure
+          ((vimFed "d d").2 == [none, some (vimOperate "delete" "lines" "" 1)] &&
+            (vimFed "y y").2 == [none, some (vimOperate "yank" "lines" "" 1)]) },
+    { name :=
+        "an unbound key after an operator yields no invocation and leaves no operator waiting, no prefix and no pending keys: the state is the initial state"
+      run :=
+        let (state, yields) := vimFed "d z"
+        let (deeper, deeperYields) := vimFed "d g z"
+        pure
+          (yields == [none, none] && state.operator == none && state.walked == [] &&
+            state.typed == [] &&
+            decide (state = vimInit) &&
+            deeperYields == [none, none, none] &&
+            decide (deeper = vimInit) &&
+            (vimFed "d z w").2 == [none, none, some (vimMove "word")]) },
+    { name :=
+        "a different operator after an operator, and a command after an operator, yield nothing and reset the edit"
+      run :=
+        let (other, otherYields) := vimFed "d c"
+        let (command, commandYields) := vimFed "d u"
+        pure
+          (otherYields == [none, none] && decide (other = vimInit) &&
+            commandYields == [none, none] &&
+            decide (command = vimInit) &&
+            (vimFed "d c w").2 == [none, none, some (vimMove "word")]) },
+    { name :=
+        "a text object after an operator is the operator's target, and a text object with no operator yields nothing and resets"
+      run :=
+        let (alone, aloneYields) := vimFed "t"
+        pure
+          ((vimFed "d t").2 == [none, some (vimOperate "delete" "text-object" "thing")] &&
+            aloneYields == [none] &&
+            decide (alone = vimInit)) },
+    { name :=
+        "a motion bound in an active keymap after the scheme was built is the target after each operator, and a move alone, with no further binding"
+      run :=
+        let scheme := Vim.scheme vimStates
+        let late (_ : ViewId) : List (Keymap scheme.Binding) := [vimKeymap [("m", .motion "late")]]
+        let typed (text : String) : List (Option Invocation) :=
+          (scheme.feed late ⟨0⟩ scheme.init (keys text)).2
+        pure
+          (typed "d m" == [none, some (vimOperate "delete" "motion" "late")] &&
+            typed "c m" == [none, some (vimOperate "change" "motion" "late")] &&
+            typed "y m" == [none, some (vimOperate "yank" "motion" "late")] &&
+            typed "m" == [some (vimMove "late")] &&
+            (scheme.feed vimNoMaps ⟨0⟩ scheme.init (keys "d m")).2 == [none, none]) },
+    { name :=
+        "the Vim scheme reports an operator waiting, and the prefix walked after it, as pending keys, and none after the edit"
+      run :=
+        pure
+          (vimPending "d" == keys "d" && vimPending "d g" == keys "d g" &&
+            vimPending "d g g" == [] &&
+            vimPending "d d" == []) }]
 
 /-- The checks that the Vim scheme keeps the scheme contract
 (`Editor/InputScheme/Contract.lean`). -/

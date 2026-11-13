@@ -42,8 +42,19 @@ is `parse` with the edit compiled, and `scheme` packages it as an
   bound in an active keymap is the same to the grammar as one bound in a
   state's keymap.
 - **A motion alone is a move**, and **a command is run**.
-- **An unbound key resets the edit begun**: nothing is yielded, and the
-  state is the initial state.
+- **An operator waits for its target** (`State.operator`). There is no
+  keymap for the wait: the motion that moves when typed alone is the
+  operator's target when typed after it, so a motion bound once, in any
+  keymap, works with every operator.
+- **A text object after an operator is its target.** With no operator
+  waiting it resets.
+- **The operator that is waiting, typed again, acts on lines**
+  (`Over.lines`), and that edit always has a count, 1 when none was typed:
+  the doubled operator counts lines. It is the same operator when it has
+  the same name.
+- **A different operator, or a command, while an operator waits resets.**
+- **An unbound key resets the edit begun**: nothing is yielded, no operator
+  waits, no prefix is walked, and the state is the initial state.
 - **`pending` is every key of the edit begun** (`State.typed`), as chords.
 
 ## Vim states
@@ -228,6 +239,8 @@ structure State where
   /-- The chords of every key of the edit begun, in order; none when no
   edit is begun. -/
   typed : List Key := []
+  /-- The operator waiting for its target, if one was typed. -/
+  operator : Option Operator := none
   /-- The keymap prefix walked so far, within the edit begun. -/
   walked : List Key := []
   deriving DecidableEq, Repr
@@ -246,13 +259,32 @@ rules in the module docs). The key is walked through the active keymaps of
 `view` and then the keymaps of the initial Vim state. -/
 def parse (states : States) (maps : ViewId → List (Keymap Bound)) (view : ViewId) (state : State)
     (key : Key) : State × Parsed :=
+  let typed := state.typed ++ [key.chord]
   match Keymap.walk (maps view ++ states.initial.keymaps) state.walked key with
   | (walked, none) =>
     if walked.isEmpty then ({}, .nothing)
-    else ({ typed := state.typed ++ [key.chord], walked }, .nothing)
-  | (_, some (.motion name)) => ({}, .edit (.move name none))
-  | (_, some (.command command)) => ({}, .edit (.run command none none))
-  | (_, some (.operator _)) | (_, some (.textObject _)) => ({}, .nothing)
+    else
+      ({ state with
+          typed, walked },
+        .nothing)
+  | (_, some (.motion name)) =>
+    match state.operator with
+    | some operator => ({}, .edit (.operate operator (.motion name) none none))
+    | none => ({}, .edit (.move name none))
+  | (_, some (.textObject name)) =>
+    match state.operator with
+    | some operator => ({}, .edit (.operate operator (.textObject name) none none))
+    | none => ({}, .nothing)
+  | (_, some (.operator operator)) =>
+    match state.operator with
+    | some waiting =>
+      if waiting.name == operator.name then ({}, .edit (.operate waiting .lines (some 1) none))
+      else ({}, .nothing)
+    | none => ({ typed, operator := some operator }, .nothing)
+  | (_, some (.command command)) =>
+    match state.operator with
+    | some _ => ({}, .nothing)
+    | none => ({}, .edit (.run command none none))
 
 /-- One key of the Vim scheme: `parse`, with the edit it completed compiled
 to its invocation. -/
