@@ -417,6 +417,8 @@ impl Mapper<'_> {
         // The change the offset is found in is not passed: a later offset
         // may be in it too.
         loop {
+            #[cfg(test)]
+            steps::step();
             match changes.get(self.next) {
                 None => return Some(self.new),
                 Some(Change::Retain(len)) => {
@@ -457,6 +459,37 @@ impl Mapper<'_> {
                 }
             }
         }
+    }
+}
+
+/// What the mappers of a test cost: how many times they looked at a place
+/// in their change set. It is counted in tests only, and for each thread on
+/// its own, so tests that run side by side do not count each other's.
+///
+/// A mapper looks once at the place each answer is found at, and once at
+/// each change it passes. So offsets asked in rising order cost no more
+/// than the offsets asked plus the changes, and a mapper that started
+/// again for each would cost the two multiplied.
+#[cfg(test)]
+pub(crate) mod steps {
+    use std::cell::Cell;
+
+    thread_local! {
+        /// The looks counted on this thread so far.
+        static TAKEN: Cell<usize> = const { Cell::new(0) };
+    }
+
+    /// Counts one look.
+    pub(super) fn step() {
+        TAKEN.with(|taken| taken.set(taken.get().saturating_add(1)));
+    }
+
+    /// What `work` gives, and how many looks the mappers it ran on this
+    /// thread took.
+    pub(crate) fn during<T>(work: impl FnOnce() -> T) -> (T, usize) {
+        let before = TAKEN.with(Cell::get);
+        let done = work();
+        (done, TAKEN.with(Cell::get).saturating_sub(before))
     }
 }
 
@@ -1157,6 +1190,41 @@ mod tests {
         ];
 
         assert_eq!(mapped_in_one_pass(&asked), [11, 4, 6, 9, 0, 10].map(Some));
+    }
+
+    #[test]
+    fn a_mapper_asked_in_rising_order_walks_the_change_set_once() {
+        // A hundred replacements, three bytes apart: three hundred changes.
+        let changes = built(|changes| {
+            for _ in 0..100 {
+                changes.retain(2);
+                changes.delete(1);
+                changes.insert("xy");
+            }
+        });
+        // Every offset, with each bias, in rising order.
+        let asked: Vec<_> = (0..=changes.len_before())
+            .flat_map(|offset| [(offset, Bias::Before), (offset, Bias::After)])
+            .collect();
+
+        let (answers, looks) = steps::during(|| {
+            let mut mapper = changes.mapper();
+            asked
+                .iter()
+                .map(|&(offset, bias)| mapper.map(offset, bias))
+                .collect::<Vec<_>>()
+        });
+
+        let one_by_one: Vec<_> = asked
+            .iter()
+            .map(|&(offset, bias)| changes.map(offset, bias))
+            .collect();
+        assert_eq!(answers, one_by_one);
+        // One look where each answer is found, and one at each change
+        // passed, which is passed once. A walk begun again for each offset
+        // would take tens of thousands.
+        let bound = asked.len() + changes.changes().len();
+        assert!(looks <= bound, "{looks} looks, and the bound is {bound}");
     }
 
     #[test]

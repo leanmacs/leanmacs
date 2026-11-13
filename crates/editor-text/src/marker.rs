@@ -178,6 +178,51 @@ impl Marker {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::change::{Bias, steps};
+
+    #[test]
+    fn moving_markers_walks_the_change_set_once_in_whatever_order_they_are_held() {
+        // A hundred replacements, three bytes apart: three hundred changes.
+        let mut changes = ChangeSet::new();
+        for _ in 0..100 {
+            changes.retain(2);
+            changes.delete(1);
+            changes.insert("xy");
+        }
+        // An anchor at every offset, held from the last offset to the
+        // first: the order they are held in is not the order of their
+        // offsets.
+        let mut markers = Markers::default();
+        let held: Vec<_> = (0..=changes.len_before())
+            .rev()
+            .map(|offset| {
+                let bias = if offset % 2 == 0 {
+                    Bias::Before
+                } else {
+                    Bias::After
+                };
+                Anchor::new(offset, bias)
+            })
+            .collect();
+        for anchor in &held {
+            markers.add(Marker::Anchor(*anchor));
+        }
+
+        let (mapped, looks) = steps::during(|| markers.mapped(&changes));
+
+        // Each end is where mapping it alone puts it, in the order held.
+        let one_by_one: Option<Vec<_>> = held
+            .iter()
+            .map(|anchor| changes.map(anchor.offset, anchor.bias))
+            .collect();
+        assert_eq!(mapped, one_by_one);
+        // The ends held plus the changes: one look where each end is
+        // found, and one at each change passed, which is passed once.
+        // Ends mapped in the order held, or a walk begun again for each,
+        // would take tens of thousands.
+        let bound = held.len() + changes.changes().len();
+        assert!(looks <= bound, "{looks} looks, and the bound is {bound}");
+    }
 
     #[test]
     fn a_marker_id_is_the_number_it_was_made_from() {
