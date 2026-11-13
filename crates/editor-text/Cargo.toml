@@ -1,0 +1,18 @@
+[package]
+name = "editor-text"
+version = "0.1.0"
+description = "Text storage: a text, its snapshots, and positions in it"
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+# The rope. Kept behind `src/rope.rs`: no ropey type is public here, and
+# `deny.toml` lets no other crate depend on it. Pinned exactly: 2.0.0-beta.1
+# was the newest release on 2026-11-12, and the 2.x API can still change
+# before 2.0.
+#
+# The features are the indexes the crate counts: rows split by line feed
+# alone, and UTF-16 code units. The default line metric, which also breaks a
+# line at a carriage return, is left out; `src/lib.rs` says why.
+ropey = { version = "=2.0.0-beta.1", default-features = false, features = ["metric_lines_lf", "metric_utf16", "simd"] }
