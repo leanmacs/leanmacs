@@ -16,7 +16,7 @@ use std::slice;
 use std::sync::{Mutex, MutexGuard, PoisonError};
 
 use editor_ffi::display::{
-    DisplayStatus, WireScene, WireView, editor_ffi_display_frame_rows,
+    DisplayStatus, WireFace, WireScene, WireView, editor_ffi_display_frame_rows,
     editor_ffi_display_frame_text, editor_ffi_display_free, editor_ffi_display_live,
     editor_ffi_display_move, editor_ffi_display_new_cells, editor_ffi_display_publish,
     editor_ffi_display_rows, editor_ffi_display_scene,
@@ -32,10 +32,12 @@ use editor_ffi::snapshot::{
 };
 use editor_ffi::text::editor_ffi_text_free;
 use editor_layout::Layout;
+use editor_layout::face::{Color, Face, FaceDef, Underline, UnderlineStyle};
 use editor_layout::scene::{
     Cursor, CursorShape, Decoration, Rect, Scene, Size, StatusField, TextKey, TextRef, View, ViewId,
 };
 use editor_layout::shaper::fake::CellShaper;
+use editor_layout::shaper::{Length, LineHeight, Slant, Weight};
 use editor_text::{Anchor, Bias, Marker, Selection, SelectionRange, Text};
 
 /// Held by each test for its whole run: the tests count the live displays
@@ -369,6 +371,7 @@ fn a_scene_published_through_c_is_laid_out_as_layout_lays_it_out() {
             decorations: vec![(0, 2, "keyword".to_owned())],
             status: vec![("NORMAL".to_owned(), "mode".to_owned())],
         }],
+        faces: None,
     };
     let (words, strings) = wire.encode();
     assert!(publish(display, &words, &strings, &[snapshot]));
@@ -529,4 +532,258 @@ fn the_latest_frame_is_taken_on_another_thread_as_it_was_published() {
         *there,
         layout.frame(&plain_scene_directly("one\ntwo", 80, 32))
     );
+}
+
+/// Definitions that change what the scene published below looks like: a
+/// default face, a keyword in another font, a selection, a mode line and
+/// a cursor. What each comes to is layout's rule; here they only cross.
+fn some_faces() -> Vec<WireFace> {
+    let named = |name: &str, face: Face| WireFace {
+        name: name.to_owned(),
+        face,
+    };
+    vec![
+        named(
+            "default",
+            Face {
+                foreground: Some(Color(0x1020_30ff)),
+                background: Some(Color(0xf0f0_f0ff)),
+                line_height: Some(LineHeight::Multiple(80)),
+                ..Face::default()
+            },
+        ),
+        named(
+            "keyword",
+            Face {
+                family: Some("serif".to_owned()),
+                size: Some(Length(1152)),
+                weight: Some(Weight(700)),
+                slant: Some(Slant::Italic),
+                underline: Some(Underline {
+                    style: UnderlineStyle::Dotted,
+                    color: None,
+                }),
+                strike_through: Some(true),
+                ..Face::default()
+            },
+        ),
+        named(
+            "selection",
+            Face {
+                background: Some(Color(0x0000_80ff)),
+                ..Face::default()
+            },
+        ),
+        named(
+            "mode-line",
+            Face {
+                background: Some(Color(0x4040_40ff)),
+                ..Face::default()
+            },
+        ),
+        named(
+            "cursor",
+            Face {
+                background: Some(Color(0xff00_00ff)),
+                ..Face::default()
+            },
+        ),
+    ]
+}
+
+/// The frame `layout` lays out of `scene_directly` with the definitions
+/// `faces`, as text.
+///
+/// A frame's text names fonts by the ids its shaper gave them, in the
+/// order it was first asked for each. So a display that has been
+/// published to is compared with one `Layout` handed the same scenes in
+/// the same order, not with a fresh one.
+fn described_by(layout: &mut Layout<CellShaper>, faces: Option<&[WireFace]>) -> String {
+    let mut scene = scene_directly();
+    scene.faces = faces.map(|faces| {
+        faces
+            .iter()
+            .map(|face| FaceDef {
+                name: face.name.clone(),
+                face: face.face.clone(),
+            })
+            .collect()
+    });
+    layout.frame(&scene).describe()
+}
+
+/// A display, a document holding [`TEXT`] with its markers, a snapshot of
+/// it, and the scene `scene_directly` lays out, as it crosses, with no
+/// faces.
+fn published_scene() -> (
+    *mut editor_ffi::display::Display,
+    *mut Document,
+    *mut Snapshot,
+    WireScene,
+) {
+    let display = editor_ffi_display_new_cells(8, 16);
+    let document = document_new(TEXT);
+    let scroll = mark(
+        document,
+        &Marker::Anchor(Anchor {
+            offset: 0,
+            bias: Bias::Before,
+        }),
+    );
+    let selection = mark(
+        document,
+        &Marker::Selection(Selection::new(vec![SelectionRange::new(3, 7)], 0).unwrap()),
+    );
+    // SAFETY: `document` is live.
+    let snapshot = unsafe { editor_ffi_document_snapshot(document) };
+    let wire = WireScene {
+        size: [96, 64],
+        focused: Some(3),
+        echo: "hello".to_owned(),
+        views: vec![WireView {
+            id: 3,
+            rect: [0, 0, 96, 64],
+            snapshot: Some(0),
+            scroll: Some(scroll),
+            selections: vec![selection],
+            cursor_shape: 1,
+            cursor_face: "cursor".to_owned(),
+            decorations: vec![(0, 2, "keyword".to_owned())],
+            status: vec![("NORMAL".to_owned(), "mode".to_owned())],
+        }],
+        ..WireScene::default()
+    };
+    (display, document, snapshot, wire)
+}
+
+/// Publishes `wire` to `display` through C with `snapshot` as its view's,
+/// and returns whether it was taken.
+fn publish_wire(
+    display: *const editor_ffi::display::Display,
+    snapshot: *const Snapshot,
+    wire: &WireScene,
+) -> bool {
+    let (words, strings) = wire.encode();
+    publish(display, &words, &strings, &[snapshot])
+}
+
+#[test]
+fn faces_published_through_c_reach_layout_and_absent_faces_keep_the_last() {
+    let _alone = alone();
+    let (display, document, snapshot, mut wire) = published_scene();
+    let faces = some_faces();
+    // The layout the display is compared with, handed the same scenes.
+    let mut direct = Layout::new(CellShaper::new(8.0, 16.0));
+    // With no face yet, the frame of the scene with none.
+    assert!(publish_wire(display, snapshot, &wire));
+    let bare = frame_text(display);
+    assert_eq!(bare, described_by(&mut direct, None));
+    // With the definitions, the frame layout makes of the same ones.
+    wire.faces = Some(faces.clone());
+    assert!(publish_wire(display, snapshot, &wire));
+    let styled = frame_text(display);
+    assert_eq!(styled, described_by(&mut direct, Some(&faces)));
+    assert_ne!(styled, bare);
+    // A publish with absent faces keeps them.
+    wire.faces = None;
+    assert!(publish_wire(display, snapshot, &wire));
+    assert_eq!(frame_text(display), styled);
+    assert_eq!(styled, described_by(&mut direct, None));
+    // The definitions cross in the order sent. With `keyword` defined a
+    // second time, the two orders are two frames to layout, and each
+    // published order is layout's frame of that order.
+    let mut twice = faces.clone();
+    twice.push(WireFace {
+        name: "keyword".to_owned(),
+        face: Face {
+            size: Some(Length(1600)),
+            foreground: Some(Color(0x0080_00ff)),
+            ..Face::default()
+        },
+    });
+    let reversed: Vec<WireFace> = twice.iter().rev().cloned().collect();
+    let mut frames = Vec::new();
+    for order in [twice, reversed] {
+        wire.faces = Some(order.clone());
+        assert!(publish_wire(display, snapshot, &wire));
+        let published = frame_text(display);
+        assert_eq!(published, described_by(&mut direct, Some(&order)));
+        frames.push(published);
+    }
+    assert_ne!(frames[0], frames[1]);
+    // A publish with no definitions takes them away.
+    wire.faces = Some(vec![]);
+    assert!(publish_wire(display, snapshot, &wire));
+    assert_eq!(frame_text(display), bare);
+    assert_eq!(bare, described_by(&mut direct, Some(&[])));
+    // SAFETY: each handle is live and freed once.
+    unsafe {
+        editor_ffi_snapshot_free(snapshot);
+        editor_ffi_document_free(document);
+        editor_ffi_display_free(display);
+    }
+}
+
+#[test]
+fn words_that_spell_no_face_are_refused_and_the_last_frame_and_faces_are_kept() {
+    let _alone = alone();
+    let (display, document, snapshot, mut wire) = published_scene();
+    wire.faces = Some(some_faces());
+    assert!(publish_wire(display, snapshot, &wire));
+    let styled = frame_text(display);
+    // The same scene with other faces, and its last word, a line height's
+    // value, made one no `u32` holds.
+    wire.faces = Some(vec![WireFace {
+        name: "default".to_owned(),
+        face: Face {
+            line_height: Some(LineHeight::Pixels(Length(1280))),
+            ..Face::default()
+        },
+    }]);
+    let (mut words, strings) = wire.encode();
+    let last = words.len() - 8;
+    words[last..].copy_from_slice(&(u64::from(u32::MAX) + 1).to_le_bytes());
+    assert!(!publish(display, &words, &strings, &[snapshot]));
+    assert_eq!(frame_text(display), styled);
+    // Neither the frame nor the faces changed: a publish with absent
+    // faces is still in the ones before the refusal.
+    wire.faces = None;
+    assert!(publish_wire(display, snapshot, &wire));
+    assert_eq!(frame_text(display), styled);
+    // SAFETY: each handle is live and freed once.
+    unsafe {
+        editor_ffi_snapshot_free(snapshot);
+        editor_ffi_document_free(document);
+        editor_ffi_display_free(display);
+    }
+}
+
+#[test]
+fn a_scene_published_with_faces_comes_back_with_them() {
+    let _alone = alone();
+    let (display, document, snapshot, mut wire) = published_scene();
+    wire.faces = Some(some_faces());
+    let (words, strings) = wire.encode();
+    assert!(publish(display, &words, &strings, &[snapshot]));
+    let (mut back, mut text) = (MaybeUninit::uninit(), MaybeUninit::uninit());
+    // SAFETY: `display` is live, and both records are writable and filled
+    // before they are read.
+    let (status, back, text) = unsafe {
+        editor_ffi_display_scene(display, back.as_mut_ptr(), text.as_mut_ptr());
+        let (status, back) = take(back.assume_init());
+        (status, back, take_text(text.assume_init()))
+    };
+    let sent: Vec<u64> = words
+        .as_chunks::<8>()
+        .0
+        .iter()
+        .map(|word| u64::from_le_bytes(*word))
+        .collect();
+    assert_eq!((status, back, text), (0, sent, strings));
+    // SAFETY: each handle is live and freed once.
+    unsafe {
+        editor_ffi_snapshot_free(snapshot);
+        editor_ffi_document_free(document);
+        editor_ffi_display_free(display);
+    }
 }

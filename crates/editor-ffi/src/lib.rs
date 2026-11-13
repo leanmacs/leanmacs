@@ -107,7 +107,11 @@
 //! of every text it holds, and the snapshot handles its views show, which
 //! the words name by index ([`display::editor_ffi_display_publish`], laid
 //! out in [`display::WireScene`]); it comes back as the same words and
-//! string ([`display::editor_ffi_display_scene`]). A document's
+//! string ([`display::editor_ffi_display_scene`]). The definitions of the
+//! faces the scene names are in the same words and the same string, after
+//! the views, behind a presence: absent is "as last published", so a
+//! scene and its faces cross in one call and a publish costs the faces
+//! only when they changed. A document's
 //! kept inverses are the example of scalars in and words out with an
 //! option inside them: a run of revisions and an origin in, as three
 //! numbers, and the revision the inverse produced with the selection it
@@ -132,8 +136,12 @@
 //! `tests/inverse.rs`, integration tests of their own for the reason
 //! `tests/snapshot.rs` is one; for a list of handles,
 //! `a_scene_published_through_c_is_laid_out_as_layout_lays_it_out`,
-//! `words_that_spell_no_scene_are_refused_and_the_last_frame_is_kept` and
-//! `a_display_nothing_was_published_to_has_no_scene` in `tests/display.rs`;
+//! `words_that_spell_no_scene_are_refused_and_the_last_frame_is_kept`,
+//! `a_display_nothing_was_published_to_has_no_scene` and, for the faces,
+//! `faces_published_through_c_reach_layout_and_absent_faces_keep_the_last`,
+//! `words_that_spell_no_face_are_refused_and_the_last_frame_and_faces_are_kept`
+//! and `a_scene_published_with_faces_comes_back_with_them` in
+//! `tests/display.rs`;
 //! the `find` and event checks of `ffi-test`
 //! (`dataChecks`), its document checks (`documentChecks`), its snapshot
 //! checks (`snapshotChecks`), its transaction checks (`transactionChecks`),

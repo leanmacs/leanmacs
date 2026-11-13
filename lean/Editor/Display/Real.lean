@@ -171,7 +171,9 @@ def encodeView (real : RealDisplay) (encoded : Encoded) (view : View) : IO Encod
   return encoded
 
 /-- `scene` as it crosses to the library. A view whose snapshot the table
-does not hold is sent with none, and shows nothing. -/
+does not hold is sent with none, and shows nothing. After the views comes
+the presence of the faces' definitions: 0, "as last published", since this
+binding sends none yet. -/
 def encode (real : RealDisplay) (scene : Scene) : IO Encoded := do
   let words :=
     pushOptional #[RealTexts.word scene.size.width, RealTexts.word scene.size.height]
@@ -181,7 +183,8 @@ def encode (real : RealDisplay) (scene : Scene) : IO Encoded := do
   let encoded := { encoded with words := encoded.words.push scene.preedit.isSome.toUInt64 }
   let encoded := pushText encoded (scene.preedit.getD "")
   let encoded := { encoded with words := encoded.words.push scene.views.size.toUInt64 }
-  scene.views.foldlM real.encodeView encoded
+  let encoded ← scene.views.foldlM real.encodeView encoded
+  return { encoded with words := encoded.words.push 0 }
 
 /-- Publishes `scene` to the library. Words this binding wrote that the
 library cannot read are an error: they are this binding's mistake. -/

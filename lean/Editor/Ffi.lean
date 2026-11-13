@@ -83,7 +83,10 @@ the library reports as a number, read here into an inductive
 words, one string of every text it holds, and the `Snapshot`s its views
 show, which the words name by index (`Display.publish`); it comes back as
 the same words and string, and as `none` before any is published
-(`Display.scene`). A document's kept inverses are scalars in and words out
+(`Display.scene`). The definitions of the faces the scene names are in the
+same words and the same string, after the views, behind a presence: absent
+is "as last published", so a scene and its faces cross in one call
+(`RealDisplay.encode`). A document's kept inverses are scalars in and words out
 with an option inside them: a run of revisions and an origin in, as three
 numbers, and an `Inverted` out, the revision the inverse produced with the
 selection it hands back if there is one (`Document.applyInverse`, with its

@@ -1704,7 +1704,9 @@ def sceneChecks (_ : Unit) : List Check :=
         -- The second handle; no scroll marker and no selection; an
         -- underline cursor.
         let third : Array UInt64 := #[3, 0, 96, 32, 48, 1, 1, 0, 0, 0, 2, 2, 0, 0]
-        return encoded.words == scene ++ first ++ second ++ third &&
+        -- No faces: as last published.
+        let faces : Array UInt64 := #[0]
+        return encoded.words == scene ++ first ++ second ++ third ++ faces &&
             encoded.strings == "fixturegéc1c2kwNORMALmodec3" &&
             encoded.snapshots.size == 2 },
     { name :=

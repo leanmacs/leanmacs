@@ -9,12 +9,35 @@
 //! |---|---|
 //! | The scene | its width and height; the focus's presence and view id; the echo's length; the pending prefix's length; the preedit's presence and length; the count of views; each view |
 //! | A view | its id; its rectangle's x, y, width and height; its snapshot's presence and index in the list of handles; its scroll marker's presence and number; the count of its selection markers and each one's number; its cursor's shape (0 block, 1 bar, 2 underline, 3 hollow) and its face's length; the count of its decorations and each one's start, stop and face's length; the count of its status fields and each one's text's length and face's length |
+//! | The faces, after the last view | their presence (0: as last published); when present, the count of definitions and each definition |
+//! | A definition | its name's length; then, for each attribute in this order, a presence and its value, an absent value written as 0: the family's length; the size in 64ths of a pixel; the weight (1 to 1000); the slant (0 upright, 1 italic, 2 oblique); the foreground as `0xRRGGBBAA`; the background; the underline's style (0 none, 1 single, 2 double, 3 curly, 4 dotted, 5 dashed) followed by its colour's presence and colour; strike-through (0 or 1); the line height's kind (0 a multiple of the font's own in 64ths, 1 pixels in 64ths) followed by its value |
+//!
+//! A definition is 22 words.
 //!
 //! The string is every text of the scene one after another, in the order
 //! the words give their lengths: the echo, the pending prefix, the preedit
 //! if present, then for each view its cursor's face, its decorations' faces
-//! and its status fields' texts and faces. A length that does not end on a
+//! and its status fields' texts and faces, then for each definition its
+//! name and its family when present. A length that does not end on a
 //! character boundary, and text left over, are refusals.
+//!
+//! **The faces cross with the scene, and only when they changed.** Lean's
+//! scene names faces and never says what one looks like, so the binding
+//! sends the definitions in the same words and string: a scene and its
+//! faces reach layout in one call, under one lock, and no frame is built
+//! between the two. Absent faces are "as last published" (layout keeps
+//! the ones it has, `editor_layout::scene::Scene::faces`), so a publish
+//! costs the definitions only when the binding has new ones; present with
+//! a count of 0 is "no definitions", which undefines every face.
+//!
+//! Refused, with what was published before kept: a presence that is
+//! neither 0 nor 1; a slant, an underline style or a line height's kind
+//! that is none of those listed; a weight outside 1 to 1000; a
+//! strike-through that is neither 0 nor 1; and a colour, a size or a line
+//! height no `u32` holds, which is refused, not cut down. The words of an
+//! absent attribute are not looked at. What the attributes mean and how
+//! definitions merge are layout's rules (`editor_layout::face`); this
+//! module only carries them.
 //!
 //! A marker's number is its document's number for it: the display resolves
 //! it against the document of the view's snapshot
@@ -22,9 +45,11 @@
 //! as it crossed, so it is written back as the same words and string
 //! ([`WireScene::encode`]), which is the round trip Lean checks.
 
+use editor_layout::face::{Color, Face, FaceDef, Underline, UnderlineStyle};
 use editor_layout::scene::{
     Cursor, CursorShape, Decoration, Rect, Scene, Size, StatusField, View, ViewId,
 };
+use editor_layout::shaper::{Length, LineHeight, Slant, Weight};
 use editor_text::Marker;
 
 use super::text_ref;
@@ -54,6 +79,17 @@ pub struct WireView {
     pub status: Vec<(String, String)>,
 }
 
+/// A definition of a face as it crossed: the name, and what it sets, in
+/// layout's terms. Every value was checked as it was read, so it is one
+/// layout takes as it is.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct WireFace {
+    /// The face's name.
+    pub name: String,
+    /// What it sets.
+    pub face: Face,
+}
+
 /// A scene as it crossed, before its handles and markers are resolved.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct WireScene {
@@ -69,6 +105,9 @@ pub struct WireScene {
     pub preedit: Option<String>,
     /// The views, in drawing order.
     pub views: Vec<WireView>,
+    /// The definitions of the faces, in the order they were made; `None`
+    /// when the scene carried none, which is "as last published".
+    pub faces: Option<Vec<WireFace>>,
 }
 
 /// The cursor shape `tag` stands for.
@@ -115,6 +154,159 @@ fn optional(words: &mut Reader<'_>) -> Option<Option<u64>> {
 fn write_optional(words: &mut Writer, value: Option<u64>) {
     words.word(u64::from(value.is_some()));
     words.word(value.unwrap_or(0));
+}
+
+/// How many words a definition of a face is.
+const FACE_WORDS: usize = 22;
+
+/// A presence word: whether what follows is there. `None` when the words
+/// run out or it is neither 0 nor 1.
+fn presence(words: &mut Reader<'_>) -> Option<bool> {
+    match words.word()? {
+        0 => Some(false),
+        1 => Some(true),
+        _ => None,
+    }
+}
+
+/// The `u32` of a colour, a size or a line height. `None` when no `u32`
+/// holds `word`: it is refused, never cut down to another value.
+fn narrow(word: u64) -> Option<u32> {
+    u32::try_from(word).ok()
+}
+
+/// An optional colour, a size or a line height's value: `optional`, with
+/// a present value narrowed.
+fn optional_u32(words: &mut Reader<'_>) -> Option<Option<u32>> {
+    match optional(words)? {
+        Some(word) => Some(Some(narrow(word)?)),
+        None => Some(None),
+    }
+}
+
+/// The tag of each slant. The wire must give every slant a tag, so this
+/// names each one: a slant layout adds needs a tag here, a row in the
+/// module's table and a constructor in Lean.
+const SLANTS: [(u64, Slant); 3] = [(0, Slant::Upright), (1, Slant::Italic), (2, Slant::Oblique)];
+
+/// The tag of each underline style; as [`SLANTS`].
+const UNDERLINES: [(u64, UnderlineStyle); 6] = [
+    (0, UnderlineStyle::None),
+    (1, UnderlineStyle::Single),
+    (2, UnderlineStyle::Double),
+    (3, UnderlineStyle::Curly),
+    (4, UnderlineStyle::Dotted),
+    (5, UnderlineStyle::Dashed),
+];
+
+/// The value `tag` stands for in `tags`, if it stands for one.
+fn tagged<T: Copy>(tags: &[(u64, T)], tag: u64) -> Option<T> {
+    tags.iter()
+        .find(|(known, _)| *known == tag)
+        .map(|(_, value)| *value)
+}
+
+/// The tag of `value` in `tags`: 0 for a value the table does not hold,
+/// which no value of today is.
+fn tag_of<T: Copy + PartialEq>(tags: &[(u64, T)], value: T) -> u64 {
+    tags.iter()
+        .find(|(_, known)| *known == value)
+        .map_or(0, |(tag, _)| *tag)
+}
+
+/// Reads one definition of a face: its 22 words, and its name and its
+/// family from `texts`. The words of an attribute that is absent are read
+/// and not looked at.
+fn face(words: &mut Reader<'_>, texts: &mut Texts<'_>) -> Option<WireFace> {
+    let name = texts.take(words.size()?)?;
+    let family = match optional(words)? {
+        Some(len) => Some(texts.take(crate::words::size(len))?),
+        None => None,
+    };
+    let size = optional_u32(words)?.map(Length);
+    let weight = match optional(words)? {
+        Some(weight @ 1..=1000) => Some(Weight(u16::try_from(weight).ok()?)),
+        Some(_) => return None,
+        None => None,
+    };
+    let slant = match optional(words)? {
+        Some(tag) => Some(tagged(&SLANTS, tag)?),
+        None => None,
+    };
+    let foreground = optional_u32(words)?.map(Color);
+    let background = optional_u32(words)?.map(Color);
+    let underline = if presence(words)? {
+        Some(Underline {
+            style: tagged(&UNDERLINES, words.word()?)?,
+            color: optional_u32(words)?.map(Color),
+        })
+    } else {
+        let _unread = (words.word()?, words.word()?, words.word()?);
+        None
+    };
+    let strike_through = match optional(words)? {
+        Some(0) => Some(false),
+        Some(1) => Some(true),
+        Some(_) => return None,
+        None => None,
+    };
+    let line_height = if presence(words)? {
+        let (kind, value) = (words.word()?, narrow(words.word()?)?);
+        Some(match kind {
+            0 => LineHeight::Multiple(value),
+            1 => LineHeight::Pixels(Length(value)),
+            _ => return None,
+        })
+    } else {
+        let _unread = (words.word()?, words.word()?);
+        None
+    };
+    Some(WireFace {
+        name,
+        face: Face {
+            family,
+            size,
+            weight,
+            slant,
+            foreground,
+            background,
+            underline,
+            strike_through,
+            line_height,
+        },
+    })
+}
+
+/// Writes one definition of a face: its 22 words, and its name and its
+/// family to `strings`.
+fn write_face(words: &mut Writer, strings: &mut String, definition: &WireFace) {
+    let face = &definition.face;
+    words.size(definition.name.len());
+    strings.push_str(&definition.name);
+    let family = face.family.as_deref();
+    words.word(u64::from(family.is_some()));
+    words.size(family.map_or(0, str::len));
+    strings.push_str(family.unwrap_or(""));
+    write_optional(words, face.size.map(|size| u64::from(size.0)));
+    write_optional(words, face.weight.map(|weight| u64::from(weight.0)));
+    write_optional(words, face.slant.map(|slant| tag_of(&SLANTS, slant)));
+    write_optional(words, face.foreground.map(|color| u64::from(color.0)));
+    write_optional(words, face.background.map(|color| u64::from(color.0)));
+    words.word(u64::from(face.underline.is_some()));
+    let underline = face.underline.unwrap_or_default();
+    words.word(tag_of(&UNDERLINES, underline.style));
+    write_optional(words, underline.color.map(|color| u64::from(color.0)));
+    write_optional(words, face.strike_through.map(u64::from));
+    // A line height's kind is its tag: the wire must tell every kind
+    // apart, so a kind layout adds needs a tag here and in `face`.
+    let (kind, value) = match face.line_height {
+        Some(LineHeight::Multiple(multiple)) => (0, multiple),
+        Some(LineHeight::Pixels(pixels)) => (1, pixels.0),
+        None => (0, 0),
+    };
+    words.word(u64::from(face.line_height.is_some()));
+    words.word(kind);
+    words.word(u64::from(value));
 }
 
 /// Reads one view.
@@ -172,6 +364,15 @@ impl WireScene {
         let views = (0..count)
             .map(|_| view(&mut words, &mut texts))
             .collect::<Option<_>>()?;
+        let faces = if presence(&mut words)? {
+            let count = words.count(FACE_WORDS)?;
+            let faces = (0..count)
+                .map(|_| face(&mut words, &mut texts))
+                .collect::<Option<_>>()?;
+            Some(faces)
+        } else {
+            None
+        };
         words.finish()?;
         texts.rest.is_empty().then_some(Self {
             size,
@@ -180,6 +381,7 @@ impl WireScene {
             pending,
             preedit,
             views,
+            faces,
         })
     }
 
@@ -229,6 +431,13 @@ impl WireScene {
                 words.size(face.len());
                 strings.push_str(field);
                 strings.push_str(face);
+            }
+        }
+        words.word(u64::from(self.faces.is_some()));
+        if let Some(faces) = &self.faces {
+            words.size(faces.len());
+            for definition in faces {
+                write_face(&mut words, &mut strings, definition);
             }
         }
         (words.finish(), strings)
@@ -306,9 +515,15 @@ impl WireScene {
             echo: self.echo.clone(),
             pending: self.pending.clone(),
             preedit: self.preedit.clone(),
-            // No face crosses yet: layout keeps the faces it has, which
-            // are none.
-            faces: None,
+            faces: self.faces.as_ref().map(|faces| {
+                faces
+                    .iter()
+                    .map(|definition| FaceDef {
+                        name: definition.name.clone(),
+                        face: definition.face.clone(),
+                    })
+                    .collect()
+            }),
         }
     }
 }
@@ -320,10 +535,12 @@ fn pixels(count: u64) -> u32 {
 
 #[cfg(test)]
 mod tests {
+    use editor_layout::face::{Color, Face, Underline, UnderlineStyle};
     use editor_layout::scene::CursorShape;
+    use editor_layout::shaper::{Length, LineHeight, Slant, Weight};
     use editor_text::{Anchor, Bias, Marker, Selection, SelectionRange};
 
-    use super::{WireScene, WireView, pixels};
+    use super::{WireFace, WireScene, WireView, pixels};
     use crate::document::Document;
     use crate::snapshot::Snapshot;
     use crate::words::tests::buffer;
@@ -347,6 +564,7 @@ mod tests {
                 decorations: vec![(0, 2, "keyword".to_owned())],
                 status: vec![("NORMAL".to_owned(), "mode".to_owned())],
             }],
+            faces: None,
         }
     }
 
@@ -359,6 +577,7 @@ mod tests {
                 96, 112, 1, 1, 7, 1, 1, 2, 1, // the scene
                 1, 0, 0, 96, 80, 1, 0, 1, 0, 2, 1, 2, 2, 13, // the view
                 1, 0, 2, 7, 1, 6, 4, // its decorations and status
+                0, // no faces
             ])
         );
         assert_eq!(strings, "fixturegécursor.normalkeywordNORMALmode");
@@ -369,16 +588,279 @@ mod tests {
     fn absent_parts_are_written_as_zero_and_read_back_absent() {
         let empty = WireScene::default();
         let (words, strings) = empty.encode();
-        assert_eq!(words, buffer(&[0, 0, 0, 0, 0, 0, 0, 0, 0]));
+        assert_eq!(words, buffer(&[0, 0, 0, 0, 0, 0, 0, 0, 0, 0]));
         assert_eq!(WireScene::decode(&words, &strings), Some(empty));
-        // A view with nothing in it is its fourteen words.
+        // A view with nothing in it is its fourteen words, between the
+        // scene's nine and the faces' presence.
         let bare = WireScene {
             views: vec![WireView::default()],
             ..WireScene::default()
         };
         let (words, strings) = bare.encode();
-        assert_eq!(words.len(), (9 + 14) * 8);
+        assert_eq!(words.len(), (9 + 14 + 1) * 8);
         assert_eq!(WireScene::decode(&words, &strings), Some(bare));
+    }
+
+    /// A definition that sets every attribute, and its 22 words.
+    fn every() -> (WireFace, [u64; 22]) {
+        let face = WireFace {
+            name: "kw".to_owned(),
+            face: Face {
+                family: Some("mono".to_owned()),
+                size: Some(Length(1312)),
+                weight: Some(Weight(700)),
+                slant: Some(Slant::Italic),
+                foreground: Some(Color(0x1122_3344)),
+                background: Some(Color(0xaabb_ccdd)),
+                underline: Some(Underline {
+                    style: UnderlineStyle::Curly,
+                    color: Some(Color(0xff00_00ff)),
+                }),
+                strike_through: Some(true),
+                line_height: Some(LineHeight::Pixels(Length(1536))),
+            },
+        };
+        let words = [
+            2, // the name's length
+            1,
+            4, // the family's length
+            1,
+            1312, // the size
+            1,
+            700, // the weight
+            1,
+            1, // the slant: italic
+            1,
+            0x1122_3344, // the foreground
+            1,
+            0xaabb_ccdd, // the background
+            1,
+            3,
+            1,
+            0xff00_00ff, // the underline: curly, with a colour
+            1,
+            1, // struck through
+            1,
+            1,
+            1536, // the line height: pixels
+        ];
+        (face, words)
+    }
+
+    /// A scene of no view with the definitions `faces`.
+    fn with_faces(faces: Vec<WireFace>) -> WireScene {
+        WireScene {
+            faces: Some(faces),
+            ..WireScene::default()
+        }
+    }
+
+    #[test]
+    fn a_scene_with_faces_crosses_as_the_words_and_the_string_of_the_module_docs() {
+        let (every, every_words) = every();
+        let unset = WireFace {
+            name: "x".to_owned(),
+            face: Face::default(),
+        };
+        let scene = with_faces(vec![every, unset]);
+        let (words, strings) = scene.encode();
+        let mut expected = vec![0; 9];
+        // Present, and two definitions.
+        expected.extend([1, 2]);
+        expected.extend(every_words);
+        // A definition that sets nothing: its name's length and 21 zeros.
+        expected.push(1);
+        expected.extend([0; 21]);
+        assert_eq!(words, buffer(&expected));
+        // Each definition's name, then its family when it has one.
+        assert_eq!(strings, "kwmonox");
+        assert_eq!(WireScene::decode(&words, &strings), Some(scene));
+        // After the views' texts.
+        let mut full = full();
+        full.faces = Some(vec![self::every().0]);
+        let (words, strings) = full.encode();
+        assert_eq!(strings, "fixturegécursor.normalkeywordNORMALmodekwmono");
+        assert_eq!(WireScene::decode(&words, &strings), Some(full));
+    }
+
+    #[test]
+    fn faces_that_are_absent_are_one_word_and_no_definitions_are_two() {
+        let absent = WireScene::default();
+        let none = with_faces(vec![]);
+        assert_eq!(absent.encode().0, buffer(&[0; 10]));
+        let (words, strings) = none.encode();
+        let mut expected = vec![0; 9];
+        expected.extend([1, 0]);
+        assert_eq!(words, buffer(&expected));
+        // They read back apart: absent is "as last published", and no
+        // definitions is every face undefined.
+        assert_eq!(WireScene::decode(&words, &strings), Some(none));
+        assert_ne!(
+            WireScene::decode(&words, &strings),
+            WireScene::decode(&buffer(&[0; 10]), "")
+        );
+    }
+
+    #[test]
+    fn every_tag_of_a_face_crosses() {
+        let face = |face: Face| WireFace {
+            name: String::new(),
+            face,
+        };
+        // The words of a definition from its slant's presence on.
+        let tail = |definition: WireFace| -> Vec<u64> {
+            let (words, strings) = with_faces(vec![definition.clone()]).encode();
+            assert_eq!(
+                WireScene::decode(&words, &strings),
+                Some(with_faces(vec![definition]))
+            );
+            crate::words::tests::words_of(&words)[18..].to_vec()
+        };
+        let slants = [Slant::Upright, Slant::Italic, Slant::Oblique];
+        for (tag, slant) in (0..).zip(slants) {
+            let words = tail(face(Face {
+                slant: Some(slant),
+                ..Face::default()
+            }));
+            assert_eq!(words[..2], [1, tag], "{slant:?}");
+        }
+        let styles = [
+            UnderlineStyle::None,
+            UnderlineStyle::Single,
+            UnderlineStyle::Double,
+            UnderlineStyle::Curly,
+            UnderlineStyle::Dotted,
+            UnderlineStyle::Dashed,
+        ];
+        for (tag, style) in (0..).zip(styles) {
+            // With no colour of its own.
+            let words = tail(face(Face {
+                underline: Some(Underline { style, color: None }),
+                ..Face::default()
+            }));
+            assert_eq!(words[6..10], [1, tag, 0, 0], "{style:?}");
+        }
+        let heights = [
+            (LineHeight::Multiple(96), [1, 0, 96]),
+            (LineHeight::Pixels(Length(1280)), [1, 1, 1280]),
+        ];
+        for (height, expected) in heights {
+            let words = tail(face(Face {
+                line_height: Some(height),
+                ..Face::default()
+            }));
+            assert_eq!(words[12..], expected, "{height:?}");
+        }
+        // Not struck through is set, and is not unset.
+        let words = tail(face(Face {
+            strike_through: Some(false),
+            ..Face::default()
+        }));
+        assert_eq!(words[10..12], [1, 0]);
+    }
+
+    #[test]
+    fn words_that_spell_no_face_are_refused() {
+        let (every, _) = every();
+        let (bytes, strings) = with_faces(vec![every]).encode();
+        let words = crate::words::tests::words_of(&bytes);
+        assert_eq!(words.len(), 9 + 2 + 22);
+        // The scene's words with the word at `index` made `value`.
+        let with = |index: usize, value: u64| {
+            let mut words = words.clone();
+            words[index] = value;
+            WireScene::decode(&buffer(&words), &strings)
+        };
+        // As they are, they spell it.
+        assert!(with(9, 1).is_some());
+        let too_big = u64::from(u32::MAX) + 1;
+        let refused = [
+            (9, 2, "a presence of the faces that is neither 0 nor 1"),
+            (10, 2, "more definitions than there are words for"),
+            (12, 2, "a presence of an attribute that is neither 0 nor 1"),
+            (14, 2, "the size's presence"),
+            (15, too_big, "a size no u32 holds"),
+            (16, 2, "the weight's presence"),
+            (17, 0, "a weight under 1"),
+            (17, 1001, "a weight over 1000"),
+            (18, 2, "the slant's presence"),
+            (19, 3, "a slant that is none"),
+            (20, 2, "the foreground's presence"),
+            (21, too_big, "a foreground no u32 holds"),
+            (22, 2, "the background's presence"),
+            (23, too_big, "a background no u32 holds"),
+            (24, 2, "the underline's presence"),
+            (25, 6, "an underline style that is none"),
+            (26, 2, "the underline's colour's presence"),
+            (27, too_big, "an underline colour no u32 holds"),
+            (28, 2, "strike-through's presence"),
+            (29, 2, "a strike-through that is neither 0 nor 1"),
+            (30, 2, "the line height's presence"),
+            (31, 2, "a line height's kind that is none"),
+            (32, too_big, "a line height no u32 holds"),
+            (11, 3, "a name that takes the family's text"),
+            (13, 5, "a family longer than the text left"),
+        ];
+        for (index, value, what) in refused {
+            assert_eq!(with(index, value), None, "{what}");
+        }
+        // The largest values are taken.
+        let largest = u64::from(u32::MAX);
+        for (index, value) in [
+            (15, largest),
+            (17, 1),
+            (17, 1000),
+            (21, largest),
+            (32, largest),
+        ] {
+            assert!(with(index, value).is_some(), "word {index} as {value}");
+        }
+        // A name's length ending inside a character, the string as long
+        // as ever: `k`, then `é` across where the name ends.
+        let inside = strings.replacen("wm", "é", 1);
+        assert_eq!(inside.len(), strings.len());
+        assert_eq!(WireScene::decode(&bytes, &inside), None);
+        // A word short, a word over, and text over.
+        assert_eq!(WireScene::decode(&bytes[..bytes.len() - 8], &strings), None);
+        let mut longer = bytes.clone();
+        longer.extend_from_slice(&[0; 8]);
+        assert_eq!(WireScene::decode(&longer, &strings), None);
+        assert_eq!(WireScene::decode(&bytes, &format!("{strings}x")), None);
+        // Words that stop where the faces' presence would be.
+        assert_eq!(WireScene::decode(&buffer(&[0; 9]), ""), None);
+    }
+
+    #[test]
+    fn the_definitions_reach_layout_in_the_order_they_crossed() {
+        let named = |name: &str, weight: u16| WireFace {
+            name: name.to_owned(),
+            face: Face {
+                weight: Some(Weight(weight)),
+                ..Face::default()
+            },
+        };
+        let wire = with_faces(vec![
+            named("default", 300),
+            named("keyword", 700),
+            named("default", 500),
+        ]);
+        let definitions = wire.resolve(&[]).faces.expect("the definitions");
+        let crossed: Vec<(&str, Option<Weight>)> = definitions
+            .iter()
+            .map(|definition| (definition.name.as_str(), definition.face.weight))
+            .collect();
+        assert_eq!(
+            crossed,
+            vec![
+                ("default", Some(Weight(300))),
+                ("keyword", Some(Weight(700))),
+                ("default", Some(Weight(500)))
+            ]
+        );
+        // A scene that carried none gives layout none, which keeps what
+        // it has; one that carried an empty list gives it that.
+        assert!(WireScene::default().resolve(&[]).faces.is_none());
+        assert_eq!(with_faces(vec![]).resolve(&[]).faces, Some(vec![]));
     }
 
     #[test]

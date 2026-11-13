@@ -27,12 +27,16 @@
 //!
 //! **A scene is published** as words, one string and the list of snapshot
 //! handles its views show ([`editor_ffi_display_publish`]; the layout is
-//! [`WireScene`]'s). The display resolves it (each view's snapshot by its
-//! index; its scroll and selection markers by their numbers, in the
-//! document of that snapshot as it is now, each on its own), lays it out
-//! with the same layout the queries use, and keeps its frame as the
-//! latest: an `Arc<Frame>` behind a lock of its own, which a reader on any
-//! thread clones without waiting for layout ([`Display::latest`]). The
+//! [`WireScene`]'s). The definitions of the faces it names are in the same
+//! words and string when the binding has new ones, and absent otherwise,
+//! which keeps the ones last published. The display resolves it (each
+//! view's snapshot by its index; its scroll and selection markers by their
+//! numbers, in the document of that snapshot as it is now, each on its
+//! own), lays it out in those faces with the same layout the queries use,
+//! and keeps its frame as the latest: an `Arc<Frame>` behind a lock of its
+//! own, which a reader on any thread clones without waiting for layout
+//! ([`Display::latest`]). Words that spell no scene, or no face, change
+//! nothing: the frame, the scene and the faces published before stay. The
 //! scene is kept as it crossed, and comes back as the same words and string
 //! ([`editor_ffi_display_scene`]); the latest frame comes back as text
 //! ([`editor_ffi_display_frame_text`]) and as each view's rows
@@ -64,7 +68,7 @@ use crate::words::Writer;
 
 mod wire;
 
-pub use wire::{WireScene, WireView};
+pub use wire::{WireFace, WireScene, WireView};
 
 /// How a display call ended, as it crosses the boundary.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

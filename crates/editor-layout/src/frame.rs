@@ -194,6 +194,12 @@ impl Frame {
     /// - A run is `start..end:paint`, and a paint is
     ///   `foreground/background`, then `+style:colour` when it has an
     ///   underline and `+strike` when it is struck through.
+    ///
+    /// A font's id is its shaper's, given in the order the shaper was first
+    /// asked for each font. So the text of a frame depends on which fonts
+    /// its layout resolved before: two layouts are compared by their
+    /// frames' texts only when they were handed the same scenes, with the
+    /// same faces, in the same order.
     pub fn describe(&self) -> String {
         let mut out = String::new();
         for view in &self.views {
