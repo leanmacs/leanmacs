@@ -112,8 +112,9 @@
 //! `tests/inverse.rs`, integration tests of their own for the reason
 //! `tests/snapshot.rs` is one; the `find` and event checks of `ffi-test`
 //! (`dataChecks`), its document checks (`documentChecks`), its snapshot
-//! checks (`snapshotChecks`), its transaction checks (`transactionChecks`)
-//! and its marker checks (`markerChecks`).
+//! checks (`snapshotChecks`), its transaction checks (`transactionChecks`),
+//! its marker checks (`markerChecks`) and its inverse checks
+//! (`inverseChecks`).
 //!
 //! ## The event queues
 //!
