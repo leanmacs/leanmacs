@@ -39,8 +39,9 @@ changed the state or not (`Loop.publish`):
 1. **The histories.** Each buffer's undo tree is told the revision its text
    is at, and its group is closed (`EditorState.recordHistories`): what an
    event edited is one step of the history.
-2. **The scene** (`Loop.scene`). Each window in the tree, in drawing order,
-   is a view in the rectangle `Split.rects` gives it in the frame. A view
+2. **The scene** (`Loop.views`, `Loop.scene`). Each window in the tree, in
+   drawing order, is a view in the rectangle `Split.rects` gives it in the
+   frame. A view
    whose buffer's text is at the revision it was last shown at keeps the
    same snapshot; otherwise a new snapshot is taken, and views of one
    buffer share it. A view's scroll anchor and selection are its window's
@@ -54,6 +55,48 @@ changed the state or not (`Loop.publish`):
    and a real binding resolves them when it is published.
 
 Every edit the loop makes for an input event carries `Origin.user`.
+
+## When publishing is refused
+
+Publishing asks the store too: each buffer's text for its revision, a text
+that changed for a snapshot, and the store to release the snapshots the
+last scene named. Each is refused once the text or the snapshot is gone,
+and a command can release either: their ids are plain indices. The cause
+that refuses a handler (the focused buffer's text was released) refuses
+these as well, so a publish that failed with them would lose the echo the
+handler's refusal had just written.
+
+`Loop.publish` is therefore not refused by any of them, and neither is
+`Loop.step`: a scene is published after the event all the same.
+
+- **A buffer whose text refuses keeps its history as it was.** The other
+  buffers' histories are recorded.
+- **A view whose buffer's text refuses is left out of the scene**, and
+  nothing is taken for it. The other views keep their rectangles, so the
+  views then do not tile the frame, and the scene names a focused view it
+  does not hold when that view is the one left out.
+- **The refusal is in the echo area**, as a refused handler's is (`refused: `
+  and `TextError.describe`), in the state the loop keeps and in the scene
+  it publishes. It is the first refusal of the publish, and it replaces the
+  echo a refused handler wrote in the same step.
+- **A release that is refused** comes after the scene is published, for a
+  snapshot that was released behind the loop. The loop keeps the new
+  scene's snapshots all the same, and the refusal is in the echo area of
+  the state it returns, so the next scene shows it.
+
+Nothing here touches the layout or the windows: the state the loop keeps is
+the one the handler left, with the echo set, and a well-formed state stays
+well formed. A host still has to deal with a program of the loop that is
+refused, because an `EditorM` can be; none is today, and a host prints one
+that is instead of dropping it (`Headless.Running.attempt`).
+
+One case is not seen: a snapshot of the last scene released behind the loop
+while its text did not change. The loop asks nothing of a snapshot it
+keeps, so nothing is refused, and the scenes go on naming a snapshot that
+is gone until the text changes.
+
+These are pinned by `ModelTest.loopChecks`, and through the headless host by
+`ConfigTest.scriptChecks`.
 
 ## Where a new event handler goes
 
@@ -98,13 +141,30 @@ inductive Loop.Next where
 
 namespace EditorState
 
+/-- `state` with `refusal` in the echo area: `refused: ` and what it was. -/
+def refused (state : EditorState) (refusal : TextError) : EditorState :=
+  { state with echo := s!"refused: {refusal.describe}" }
+
+/-- `state`, with `refusal` in the echo area if there is one. -/
+def refusedBy (state : EditorState) : Option TextError → EditorState
+  | some refusal => state.refused refusal
+  | none => state
+
 /-- Tells each buffer's undo tree the revision its text is at, and closes its
-group: what an event edited becomes one step of its history. -/
-def recordHistories (state : EditorState) : TextM EditorState := do
-  let buffers ←
-    state.buffers.mapM fun buffer => do
-        return { buffer with history := (← buffer.history.sync).close }
-  return { state with buffers }
+group: what an event edited becomes one step of its history. It is not
+refused: a buffer whose text refuses, because it was released, keeps its
+history as it was, and the first such refusal is handed back. -/
+def recordHistories (state : EditorState) : TextM (EditorState × Option TextError) := do
+  let mut buffers := #[]
+  let mut refusal := none
+  for buffer in state.buffers do
+    match ← observing buffer.history.sync with
+    | .ok history =>
+      buffers := buffers.push { buffer with history := history.close }
+    | .error error =>
+      buffers := buffers.push buffer
+      refusal := refusal <|> some error
+  return ({ state with buffers }, refusal)
 
 end EditorState
 
@@ -119,47 +179,66 @@ def start (size : Size) : TextM Loop :=
 def cursor : Cursor :=
   { shape := .bar, face := ⟨"cursor"⟩ }
 
-/-- The scene of the loop's state, and the snapshots it names. A text at the
-revision it was last shown at keeps its snapshot; any other is given a new
-one. -/
-def scene (loop : Loop) : TextM (Scene × Array Shown) := do
+/-- The views of the loop's state, in drawing order, and the snapshots they
+name. A text at the revision it was last shown at keeps its snapshot; any
+other is given a new one. It is not refused: a view whose buffer's text
+refuses, because it was released, is left out, with nothing taken for it,
+and the first such refusal is handed back. -/
+def views (loop : Loop) : TextM (Array View × Array Shown × Option TextError) := do
   let state := loop.state
   let frame := state.frame
   let mut shown : Array Shown := #[]
   let mut views : Array View := #[]
+  let mut refusal := none
   for (id, rect) in
     frame.tree.rects { x := 0, y := 0, width := frame.size.width, height := frame.size.height } do
     let some target := state.target? id | continue
     let text := target.buffer.text
-    let revision ← text.revision
-    let snapshot ←
-      match (shown ++ loop.shown).find? fun was => was.text == text && was.revision == revision with
-      | some was =>
-        pure was.snapshot
-      | none =>
-        text.snapshot
-    unless shown.any (·.text == text) do
-      shown := shown.push { text, revision, snapshot }
-    views :=
-      views.push
-        { id, rect, snapshot, scroll := target.window.scroll,
-          selections := #[target.window.selection]
-          cursor, decorations := #[], status := #[] }
-  let scene : Scene :=
-    { size := frame.size, views, focused := if frame.hasFocus then some frame.focused else none
-      echo := state.echo, pending := "", preedit := state.preedit }
-  return (scene, shown)
+    let taken ←
+      observing do
+          let revision ← text.revision
+          match
+            (shown ++ loop.shown).find? fun was => was.text == text && was.revision == revision with
+          | some was =>
+            pure (revision, was.snapshot)
+          | none =>
+            return (revision, ← text.snapshot)
+    match taken with
+    | .error error =>
+      refusal := refusal <|> some error
+    | .ok (revision, snapshot) =>
+      unless shown.any (·.text == text) do
+        shown := shown.push { text, revision, snapshot }
+      views :=
+        views.push
+          { id, rect, snapshot, scroll := target.window.scroll,
+            selections := #[target.window.selection]
+            cursor, decorations := #[], status := #[] }
+  return (views, shown, refusal)
+
+/-- The scene of `state` over `views`: what the state says of the frame, the
+echo area and the preedit, around the views made of its windows. -/
+def scene (state : EditorState) (views : Array View) : Scene :=
+  let frame := state.frame
+  { size := frame.size, views, focused := if frame.hasFocus then some frame.focused else none
+    echo := state.echo, pending := "", preedit := state.preedit }
 
 /-- Records the histories, publishes a scene of the state, and releases each
-snapshot the last scene named that this one does not. -/
+snapshot the last scene named that this one does not. It is not refused
+("When publishing is refused", in the module docs): a refusal of a buffer's
+text is in the echo area of the scene it publishes, and one of a release in
+the echo area of the state it returns. -/
 def publish (loop : Loop) : EditorM Loop := do
-  let state ← loop.state.recordHistories
-  let (scene, shown) ← ({ loop with state } : Loop).scene
-  Display.publish scene
+  let (state, unrecorded) ← loop.state.recordHistories
+  let (views, shown, unshown) ← ({ loop with state } : Loop).views
+  let state := state.refusedBy (unrecorded <|> unshown)
+  Display.publish (scene state views)
+  let mut unreleased := none
   for was in loop.shown do
     unless shown.any (·.snapshot == was.snapshot) do
-      was.snapshot.release
-  return { state, shown }
+      if let .error error← (observing was.snapshot.release : TextM (Except TextError Unit)) then
+        unreleased := unreleased <|> some error
+  return { state := state.refusedBy unreleased, shown }
 
 /-- The changes that replace each of `extents`, sorted and apart, of a text
 of `length` bytes, with `text`, and the cursor after each insertion. -/
@@ -212,7 +291,9 @@ def handle (state : EditorState) : Event → EditorM EditorState
 /-- Handles `event` and publishes a scene of the state after it, and says
 whether to go on. A close request and a quit stop the loop and publish
 nothing. A handler that is refused leaves the state as it was, with the
-refusal in the echo area. -/
+refusal in the echo area. The step itself is not refused: the publish puts
+a refusal of its own in the echo area too ("When publishing is refused", in
+the module docs). -/
 def step (loop : Loop) (event : Event) : EditorM (Loop × Next) := do
   match event with
   | .closeRequested | .quit =>
@@ -222,7 +303,7 @@ def step (loop : Loop) (event : Event) : EditorM (Loop × Next) := do
       try
         handle loop.state event
       catch refusal =>
-        pure { loop.state with echo := s!"refused: {refusal.describe}" }
+        pure (loop.state.refused refusal)
     return (← { loop with state }.publish, .continue)
 
 end Loop

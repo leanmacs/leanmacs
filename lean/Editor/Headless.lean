@@ -60,6 +60,13 @@ as before, so reload and job completion work as they did.
   (`Running.publish`): a driver's request, a reload's install, a job's
   command may each have edited a text a view shows. The driver's `stop`
   publishes nothing.
+- **A refusal is never dropped.** The loop puts a refusal in the echo area
+  of the scene, a handler's and one met while publishing alike
+  (`Editor/Loop.lean`, "When publishing is refused"), so `scene` prints it.
+  The loop's programs are not themselves refused; the host runs each
+  through `Running.attempt` all the same, which prints one that is,
+  `loop: refused: <error>`, and keeps the frame it had. With no frame made,
+  the event is dropped and the next window event tries again.
 - **The display is a recorder** (`Editor/Display/Recorder.lean`), in cells
   8 pixels across and 16 down (`cells`), over the table of snapshots the
   text binding publishes: it keeps the last scene and counts them, and the
@@ -130,6 +137,7 @@ store <name> v<version>: <value>
 scene <w>x<h>, focused <id or ->, echo <quoted>, preedit <quoted or ->, published <n>
 view <id> <x>,<y> <w>x<h>: <quoted text>, scroll <offset>, selections <anchor>..<head> …
 scene: none               (no scene has been published)
+loop: refused: <error>    (a program of the editor loop was refused)
 ```
 
 The last two answer `scene`: the last scene published, with how many scenes
@@ -191,7 +199,10 @@ binding and the real elaborator, and compares the lines it emits
 (`ConfigTest.hostChecks`, `ConfigTest.threadChecks`), checks jobs on a fake
 clock it moves, with the thread each line was emitted from
 (`ConfigTest.jobChecks`), and checks the script reader and the driver
-(`ConfigTest.scriptChecks`). The `ffi-test` task runs the real executable
+(`ConfigTest.scriptChecks`). Two of those are the loop's refusals: a scene
+whose echo is the refusal once a command has released the focused buffer's
+text, and `Running.attempt` on a program that is refused, which no script
+can make the loop run. The `ffi-test` task runs the real executable
 once, on the fixture under `tests/headless`, which covers the command line,
 the pump and the timer service: the fixture's job sleeps on the real clock.
 It runs it a second time on `tests/headless/keys-script`, which sends keys
@@ -454,44 +465,55 @@ def ended (collaborators : Collaborators σ) (running : Running σ) (id : Nat) :
     collaborators.emit s!"{label}: cancelled"
     return running
 
-/-- Publishes a scene of the frame's state, if there is a frame: what the
-loop does after every event that is not the window's. -/
-def publish (running : Running σ) : IO (Running σ) := do
-  let some frame := running.frame | return running
-  let (result, texts) ← frame.publish.runReal running.texts running.display.handle
+/-- Runs `program`, a program of the editor loop, against the library, with
+the recorder as the display, and hands back its result. The loop's own
+programs put a refusal in the echo area and are not refused
+(`Editor/Loop.lean`, "When publishing is refused"). One that is refused all
+the same is never dropped in silence: it is printed,
+`loop: refused: <error>`, and hands back nothing. What it made before the
+refusal stays in the table of texts. -/
+def attempt {α : Type} (collaborators : Collaborators σ) (running : Running σ)
+    (program : EditorM α) : IO (Option α × Running σ) := do
+  let (result, texts) ← program.runReal running.texts running.display.handle
   match result with
-  | .ok frame =>
-    return { running with
-        frame := some frame, texts }
-  | .error _ =>
-    return { running with texts }
+  | .ok value =>
+    return (some value, { running with texts })
+  | .error refusal =>
+    collaborators.emit s!"loop: refused: {refusal.describe}"
+    return (none, { running with texts })
+
+/-- Publishes a scene of the frame's state, if there is a frame: what the
+loop does after every event that is not the window's. A publish that is
+refused is printed (`attempt`), and the frame stays as it was. -/
+def publish (collaborators : Collaborators σ) (running : Running σ) : IO (Running σ) := do
+  let some frame := running.frame | return running
+  let (published, running) ← running.attempt collaborators frame.publish
+  return { running with frame := some (published.getD frame) }
 
 /-- Handles an event from the window input: prints a key press with its
 identity, makes the frame if there is none, and feeds the event to the
 editor loop, which publishes a scene after it. A close request ends the
-loop. -/
+loop. Making the frame and the step are each printed when refused
+(`attempt`): with no frame made the event is dropped, and after a refused
+step the frame stays as it was. -/
 def input (collaborators : Collaborators σ) (running : Running σ) (received : Received) :
     IO (Running σ) := do
   if let .key which true _ := received.event then
     collaborators.emit s!"key arrived: {which.describe}"
-  let (made, texts) ←
+  let (made, running) ←
     match running.frame with
     | some frame =>
-      pure (Except.ok frame, running.texts)
+      pure (some frame, running)
     | none =>
-      (Loop.start ⟨0, 0⟩).runReal running.texts
-  let .ok frame := made | return { running with texts }
-  let (result, texts) ← (frame.step received.event).runReal texts running.display.handle
-  match result with
-  | .ok (frame, .continue) =>
+      running.attempt collaborators (Loop.start ⟨0, 0⟩)
+  let some frame := made | return running
+  let (stepped, running) ← running.attempt collaborators (frame.step received.event)
+  match stepped with
+  | some (frame, next) =>
     return { running with
-        frame := some frame, texts }
-  | .ok (frame, .stop) =>
-    return { running with
-        frame := some frame, texts, stopped := true }
-  | .error _ =>
-    return { running with
-        frame := some frame, texts }
+        frame := some frame, stopped := running.stopped || next == .stop }
+  | none =>
+    return { running with frame := some frame }
 
 /-- A scene as `scene` prints it, read from the text store as it is now: its
 frame, then each view, its snapshot's text and its markers' offsets.
@@ -597,7 +619,7 @@ def handle (collaborators : Collaborators σ) (running : Running σ) (event : Ff
     if running.stopped then
       return running
     else
-      running.publish
+      running.publish collaborators
 
 end Running
 

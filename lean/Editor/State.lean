@@ -84,7 +84,7 @@ constructor.
 | One buffer (a file's path, a modified flag) | A field of `Buffer` |
 | One view (a goal column, a scroll offset) | A field of `Window` |
 | The whole editor (registers, the pending key prefix) | A field of `EditorState` |
-| What the user sees of it | A field of the scene (`Editor/Scene.lean`), filled in `Loop.scene` (`Editor/Loop.lean`) |
+| What the user sees of it | A field of the scene (`Editor/Scene.lean`), filled in `Loop.scene`, or in `Loop.views` for a field of a view (`Editor/Loop.lean`) |
 
 Each is pinned by `ModelTest.stateChecks`, and what the scene shows of it by
 `ModelTest.loopChecks`.

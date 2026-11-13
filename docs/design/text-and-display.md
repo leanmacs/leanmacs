@@ -891,6 +891,17 @@ decided 2026-11-13 by its phase 2):
   this one does not is released. So a scene's handles are alive while it is
   the last one published, and a real binding resolves them when it is
   published.
+- Publishing is not refused. It asks the store for each buffer's revision,
+  for a snapshot of a text that changed and to release snapshots, and a
+  command can release a text or a snapshot the state names, since their
+  ids are plain indices. A buffer whose text refuses keeps its history as
+  it was and its views are left out of the scene, and the refusal is in the
+  echo area of the state and of that scene, as a refused handler's is. A
+  refused release, which comes after the scene is published, is in the
+  echo area of the next. So what a handler's refusal wrote in the echo
+  area reaches a scene even when its cause refuses the publish too, and a
+  host is not left with a refusal to drop. The state's layout is not
+  touched: a well-formed state stays well formed.
 - Until later phases choose them, every view's cursor is a bar in the face
   `cursor`, with no decorations and an empty status line, and the pending
   prefix is empty. The focused view is named only while the frame has the

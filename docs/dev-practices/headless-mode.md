@@ -145,6 +145,7 @@ store <name> v<version>: <value>
 scene <w>x<h>, focused <id or ->, echo <quoted>, preedit <quoted or ->, published <n>
 view <id> <x>,<y> <w>x<h>: <quoted text>, scroll <offset>, selections <anchor>..<head> …
 scene: none
+loop: refused: <error>
 ```
 
 `scene` prints the frame's size, the focused view (`-` while the frame does
@@ -154,6 +155,14 @@ each view in drawing order, its rectangle, the text of its snapshot, read
 from the library, and the offsets of its scroll anchor and of each range of
 its selection. `scene: none` means no scene has been published: no window
 event has arrived.
+
+What the editor loop is refused is in the scene's echo area, as
+`refused: <error>`: a commit the library refused, and a text or a snapshot
+that was gone when the scene was made. A view whose buffer's text was
+released, by a command, is left out of the scene, so the scene line is then
+followed by fewer view lines, or none. `loop: refused: <error>` is for a
+program of the loop that was itself refused. None is today; the line is
+there so that one would not be dropped in silence.
 
 A job's line is printed when the editor has dealt with its result: `ok` when
 the handler's command ran, `refused` when the library refused that command,

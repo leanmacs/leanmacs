@@ -59,7 +59,9 @@ one of its clauses.
 
 The command loop (`Editor/Loop.lean`) is checked on the editor's models
 (`loopChecks`): events fed to `Loop.step` one by one, the state each leaves
-and the scenes the display model records.
+and the scenes the display model records. Among them is what the loop does
+when publishing is refused, with a text or a snapshot released behind it:
+the scene is published all the same, with the refusal in its echo.
 
 The undo tree (`Editor/UndoTree.lean`) is plain Lean over the text port, so
 its cases (`Editor/UndoTree/Cases.lean`) are properties of the same kind and
@@ -3248,6 +3250,22 @@ def threeWindows : TextM EditorState := do
             .split .rows (.split .columns (.window ⟨0⟩) (.window ⟨1⟩))
               (.split .rows (.window ⟨2⟩) .minibuffer) } }
 
+/-- The initial state at 640 by 480 with a second buffer, `other`, over a
+text of its own holding "other", and a second window, view 1, on it, beside
+view 0. View 0 is focused. -/
+def twoBuffers : TextM EditorState := do
+  let state ← EditorState.initial ⟨640, 480⟩
+  let text ← createText "other"
+  let scroll ← text.mark (.anchor { offset := 0, bias := .before })
+  let selection ← text.mark (.selection { ranges := #[⟨0, 0⟩] })
+  let history ← UndoTree.over text
+  return { state with
+      buffers := state.buffers.push { name := "other", text, history }
+      windows := state.windows.push { id := ⟨1⟩, buffer := ⟨1⟩, scroll, selection }
+      frame :=
+        { state.frame with
+          tree := .split .rows (.split .columns (.window ⟨0⟩) (.window ⟨1⟩)) .minibuffer } }
+
 /-- The value of a program over the text port run on a text model with no
 text; `none` if it was refused. -/
 def onTextModel {α : Type} (program : TextM α) : Option α :=
@@ -3514,7 +3532,114 @@ def loopChecks : List Check :=
               scene.views.all fun view =>
                 view.cursor == { shape := .bar, face := ⟨"cursor"⟩ } && view.decorations.isEmpty &&
                   view.status.isEmpty
-          | _ => false }]
+          | _ => false },
+    { name :=
+        "a commit once the focused buffer's text was released is not refused: it publishes a scene with the refusal in its echo and no view of that buffer, and the loop keeps the state as it was, well formed, with that echo"
+      run :=
+        pure <|
+          let program : EditorM (EditorState × Loop × Loop.Next) := do
+            let state ← EditorState.initial ⟨640, 480⟩
+            let some target := state.focusedTarget? | throw .noSuchMarker
+            target.buffer.text.release
+            let (loop, next) ← ({ state } : Loop).step (.commit "x")
+            return (state, loop, next)
+          match program.runModel editorModel with
+          | (.ok (state, loop, next), model) =>
+            next == .continue && loop.state == { state with echo := "refused: no such text" } &&
+              loop.state.wellFormed &&
+              loop.shown.isEmpty &&
+              match model.display.scenes with
+              | #[scene] =>
+                scene.echo == "refused: no such text" && scene.views.isEmpty &&
+                  scene.size == ⟨640, 480⟩ &&
+                  scene.focused == some ⟨0⟩
+              | _ => false
+          | (.error _, _) => false },
+    { name :=
+        "an event that changes nothing, once one buffer's text was released, publishes a scene with the refusal in its echo and the other buffer's view, and the other buffer's history is still recorded"
+      run :=
+        pure <|
+          let program : EditorM (EditorState × Loop × String) := do
+            let state ← twoBuffers
+            let some gone := state.buffers[0]? | throw .noSuchMarker
+            let some other := state.buffers[1]? | throw .noSuchMarker
+            gone.text.release
+            other.text.insert 5 "!"
+            let (loop, _) ← ({ state } : Loop).step pressA
+            -- The loop recorded the insertion in the other buffer's history:
+            -- one undo of it takes the insertion back.
+            let some kept := loop.state.buffers[1]? | throw .noSuchMarker
+            let some _ ← kept.history.undo | throw .noInverse
+            return (state, loop, ← other.text.read)
+          match program.runModel editorModel with
+          | (.ok (state, loop, undone), model) =>
+            undone == "other" && loop.state.wellFormed &&
+              loop.state.echo == "refused: no such text" &&
+              loop.state.buffers[0]? == state.buffers[0]? &&
+              loop.state.windows == state.windows &&
+              loop.state.frame == state.frame &&
+              match model.display.scenes with
+              | #[scene] =>
+                scene.echo == "refused: no such text" && scene.views.map (·.id) == #[⟨1⟩] &&
+                  scene.views.all fun view => shownText model view == some "other!"
+              | _ => false
+          | (.error _, _) => false },
+    { name :=
+        "a released text no window shows still puts its refusal in the scene's echo, with every view shown; so does a view's text that refuses when no history did, and that view is left out"
+      run :=
+        pure <|
+          let hidden : EditorM Loop := do
+            let state ← EditorState.initial ⟨640, 480⟩
+            let text ← createText "hidden"
+            let history ← UndoTree.over text
+            text.release
+            let state :=
+              { state with buffers := state.buffers.push { name := "hidden", text, history } }
+            return (← ({ state } : Loop).step pressA).1
+          -- A buffer whose history is over another text than its own: the
+          -- history is recorded, and only the view is refused.
+          let astray : EditorM Loop := do
+            let state ← EditorState.initial ⟨640, 480⟩
+            let some buffer := state.buffers[0]? | throw .noSuchMarker
+            let history ← UndoTree.over (← createText "elsewhere")
+            buffer.text.release
+            let state := { state with buffers := #[{ buffer with history }] }
+            return (← ({ state } : Loop).step pressA).1
+          (match hidden.runModel editorModel with
+            | (.ok loop, model) =>
+              loop.state.echo == "refused: no such text" &&
+                match model.display.scenes with
+                | #[scene] =>
+                  scene.echo == "refused: no such text" && scene.views.map (·.id) == #[⟨0⟩]
+                | _ => false
+            | (.error _, _) => false) &&
+            match astray.runModel editorModel with
+            | (.ok loop, model) =>
+              loop.state.echo == "refused: no such text" && loop.shown.isEmpty &&
+                match model.display.scenes with
+                | #[scene] => scene.echo == "refused: no such text" && scene.views.isEmpty
+                | _ => false
+            | (.error _, _) => false },
+    { name :=
+        "when a snapshot the last scene named was released behind the loop, the next scene is still published and the loop keeps the new snapshot; the refusal of its release is in the state's echo, and in the scene after"
+      run :=
+        pure <|
+          let program : EditorM (Loop × String × Bool) := do
+            let mut loop ← Loop.start ⟨640, 480⟩
+            loop := (← loop.step (.commit "a")).1
+            let some first := loop.shown[0]? | throw .noSuchMarker
+            first.snapshot.release
+            loop := (← loop.step (.commit "b")).1
+            let some second := loop.shown[0]? | throw .noSuchMarker
+            let shown ← second.snapshot.read
+            let echoed := loop.state.echo == "refused: no such snapshot"
+            loop := (← loop.step pressA).1
+            return (loop, shown, echoed && first.snapshot != second.snapshot)
+          match program.runModel editorModel with
+          | (.ok (loop, shown, echoed), model) =>
+            echoed && shown == "ab" && loop.state.wellFormed && loop.shown.size == 1 &&
+              model.display.scenes.map (·.echo) == #["", "", "refused: no such snapshot"]
+          | (.error _, _) => false }]
 
 /-- The focused window's buffer and window in `loop`'s state, or a refusal
 for a state with none. -/

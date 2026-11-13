@@ -33,7 +33,10 @@ fakes. The checks here pin what only real collaborators can show:
 - `scriptChecks`: the headless mode's script and its driver, and the editor
   loop through the host: a commit and the scene it prints, read from the
   library, a scene published after a reload's install and a job's command
-  once the frame exists, and a window's close request ending the loop;
+  once the frame exists, the scene whose echo is the refusal once a command
+  has released the focused buffer's text, the line the host prints for a
+  program of the loop that is refused, and a window's close request ending
+  the loop;
 - `fileChecks`: a job from config that loads a file through the host, over
   the library's file service, and whose handler makes a text of it. It is
   the one check whose host is over a real service, so it is the one that
@@ -1233,6 +1236,18 @@ def fileChecks (context : Context) : List Check :=
               discard <| host.halt patience
               throw error }]
 
+/-- A config of one chunk with one command, `forget`, which releases the
+text of index 0: in a host whose commands have made no text, the text of the
+editor loop's scratch buffer, made at the first window event. -/
+def forgetConfig : List (String × String) :=
+  [("10-forget.lean",
+      "def forget : EditorM Unit := do
+  (⟨0⟩ : TextId).release
+
+def setup : SetupM Unit := do
+  command \"forget\" forget
+")]
+
 /-- The checks of the headless mode's script and its driver
 (`Headless.script`, `Headless.run`). The command line itself is covered by
 one run of the real executable on the fixture under `tests/headless`, in the
@@ -1455,6 +1470,47 @@ def scriptChecks (context : Context) : List Check :=
                 "job 1 count: ok", "reload 2: installed, 2 chunks, 1 commands",
                 "scene 0x0, focused 0, echo \"\", preedit -, published 10",
                 "view 0 0,0 0x0: \"kept\", scroll 0, selections 4..4"] },
+    { name :=
+        "once a command has released the focused buffer's text, a commit is still followed by a scene: its echo is the refusal, and it has no view of that buffer"
+      run :=
+        withHost context forgetConfig fun session => do
+          session.ask [.reload]
+          unless ← Event.post (.commit "a") do
+            return false
+          session.ask [.scene, .run "forget"]
+          unless ← Event.post (.commit "b") do
+            return false
+          session.ask [.scene]
+          -- Between the two scene requests the editor thread handles four
+          -- events, each followed by a scene: the first scene request, the
+          -- run, the marker of the wait and the commit. Had the scenes
+          -- after the release been refused, the count would be short.
+          return (← session.lines) ==
+              #["reload 1: installed, 1 chunks, 1 commands",
+                "scene 0x0, focused 0, echo \"\", preedit -, published 1",
+                "view 0 0,0 0x0: \"a\", scroll 0, selections 1..1", "run forget: ok",
+                "scene 0x0, focused 0, echo \"refused: no such text\", preedit -, published 5"] },
+    { name :=
+        "a program of the editor loop that is refused is printed as refused and hands back nothing, and what it made before the refusal is kept; one that is not refused prints nothing and hands back its result"
+      run := do
+        let stage ← Stage.new context context.elaborator { chunks := pure #[] }
+        let collaborators := stage.collaborators
+        let running : Headless.Running Config.Elaborate.State :=
+          { texts := RealTexts.over collaborators.published
+            display := ← DisplayRecorder.new Headless.cells collaborators.published.reader
+            jobs := { services := collaborators.services } }
+        let (refused, running) ←
+          running.attempt collaborators do
+              let made ← createText "made before the refusal"
+              (⟨7⟩ : TextId).release
+              return made
+        let printed ← stage.output.get
+        let (kept, _) ←
+          running.attempt collaborators do
+              (⟨0⟩ : TextId).read
+        return refused == none && printed == #["loop: refused: no such text"] &&
+            kept == some "made before the refusal" &&
+            (← stage.output.get) == printed },
     { name := "a window's close request ends the host's loop"
       run := do
         let stage ← Stage.new context context.elaborator { chunks := pure #[] }
