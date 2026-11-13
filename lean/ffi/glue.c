@@ -459,6 +459,89 @@ lean_obj_res editor_glue_snapshot_live(void) {
   return lean_io_result_mk_ok(lean_box_uint64(editor_ffi_snapshot_live()));
 }
 
+// ---- A document's markers, and what a selection covers ----
+//
+// Words in both directions for one value: a marker goes to the library as
+// words and comes back as words, and a selection goes in as words and what it
+// covers comes back as words. As with a transaction, the glue knows only that
+// they are bytes.
+
+// The library's `RawMarked`.
+typedef struct {
+  uint64_t status;
+  uint64_t id;
+} editor_ffi_raw_marked;
+void editor_ffi_document_mark(const editor_ffi_document *document,
+                              const uint8_t *words, size_t len,
+                              editor_ffi_raw_marked *out);
+void editor_ffi_document_marker(const editor_ffi_document *document,
+                                uint64_t id, editor_ffi_raw_words *out);
+uint64_t editor_ffi_document_place(const editor_ffi_document *document,
+                                   uint64_t id, const uint8_t *words,
+                                   size_t len);
+bool editor_ffi_document_unmark(const editor_ffi_document *document,
+                                uint64_t id);
+void editor_ffi_snapshot_extents(const editor_ffi_snapshot *snapshot,
+                                 const uint8_t *words, size_t len,
+                                 editor_ffi_raw_words *out);
+
+// Lean's `RawWords` for a record the library filled: a copy of its words and
+// its status. The library's buffer is handed back.
+static lean_object *raw_words_take(editor_ffi_raw_words raw) {
+  // `RawWords`: the object field `words`, then `status`.
+  lean_object *words = lean_alloc_ctor(0, 1, sizeof(uint64_t));
+  lean_ctor_set(words, 0, byte_array_copy(raw.words, raw.len));
+  lean_ctor_set_uint64(words, uint64_field(1, 0), raw.status);
+  editor_ffi_text_free(raw.words, raw.len);
+  return words;
+}
+
+// `Editor.Ffi.Document.markRaw : @& Document → @& ByteArray → IO RawMarked`
+lean_obj_res editor_glue_document_mark(b_lean_obj_arg document,
+                                       b_lean_obj_arg words) {
+  editor_ffi_raw_marked raw;
+  editor_ffi_document_mark(lean_get_external_data(document),
+                           byte_array_bytes(words), byte_array_len(words),
+                           &raw);
+  // `RawMarked`: no object fields, then `status` and `id`.
+  lean_object *marked = lean_alloc_ctor(0, 0, 2 * sizeof(uint64_t));
+  lean_ctor_set_uint64(marked, uint64_field(0, 0), raw.status);
+  lean_ctor_set_uint64(marked, uint64_field(0, 1), raw.id);
+  return lean_io_result_mk_ok(marked);
+}
+
+// `Editor.Ffi.Document.markerRaw : @& Document → UInt64 → IO RawWords`
+lean_obj_res editor_glue_document_marker(b_lean_obj_arg document, uint64_t id) {
+  editor_ffi_raw_words raw;
+  editor_ffi_document_marker(lean_get_external_data(document), id, &raw);
+  return lean_io_result_mk_ok(raw_words_take(raw));
+}
+
+// `Editor.Ffi.Document.placeRaw : @& Document → UInt64 → @& ByteArray → IO
+// UInt64`
+lean_obj_res editor_glue_document_place(b_lean_obj_arg document, uint64_t id,
+                                        b_lean_obj_arg words) {
+  return lean_io_result_mk_ok(lean_box_uint64(editor_ffi_document_place(
+      lean_get_external_data(document), id, byte_array_bytes(words),
+      byte_array_len(words))));
+}
+
+// `Editor.Ffi.Document.unmark : @& Document → UInt64 → IO Bool`
+lean_obj_res editor_glue_document_unmark(b_lean_obj_arg document, uint64_t id) {
+  return lean_io_result_mk_ok(lean_box(
+      editor_ffi_document_unmark(lean_get_external_data(document), id)));
+}
+
+// `Editor.Ffi.Snapshot.extentsRaw : @& Snapshot → @& ByteArray → IO RawWords`
+lean_obj_res editor_glue_snapshot_extents(b_lean_obj_arg snapshot,
+                                          b_lean_obj_arg words) {
+  editor_ffi_raw_words raw;
+  editor_ffi_snapshot_extents(lean_get_external_data(snapshot),
+                              byte_array_bytes(words), byte_array_len(words),
+                              &raw);
+  return lean_io_result_mk_ok(raw_words_take(raw));
+}
+
 // ---- The event queues ----
 //
 // Rust threads push events and Lean pulls them: nothing here calls Lean. A
