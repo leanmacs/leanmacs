@@ -472,6 +472,30 @@ def setup : SetupM Unit := do
     return n + 100
 "
 
+/-- A chunk with three commands: `drop`, which makes three texts and releases
+the second; `inside`, which makes a text and asks for the point of an offset
+inside its two-byte character, which the library refuses; and `stale`, which
+reads a snapshot that does not exist, which the library refuses too. -/
+def releasingChunk : String :=
+  "def drop : EditorM Unit := do
+  discard <| createText \"before\"
+  let released ← createText \"released\"
+  discard <| createText \"after\"
+  released.release
+
+def inside : EditorM Unit := do
+  let text ← createText \"é\"
+  discard <| text.pointOf 1
+
+def stale : EditorM Unit := do
+  discard <| (⟨7⟩ : SnapshotId).read
+
+def setup : SetupM Unit := do
+  command \"drop\" drop
+  command \"inside\" inside
+  command \"stale\" stale
+"
+
 /-- The store of `counterChunk` with its type changed and its version raised
 to 2: the number gets a label, and a number written at version 1 is migrated
 with the label \"migrated\". -/
@@ -624,6 +648,24 @@ def hostChecks (context : Context) : List Check :=
               #["reload 1: installed, 1 chunks, 2 commands", "run bump: ok",
                 "run broken: refused: no such text", "commands: bump broken",
                 "text 0: \"made before the refusal\"", "store counter v1: 1"] },
+    { name :=
+        "show lists no text a command released, and the texts made before and after it keep the index they were made with"
+      run :=
+        withHost context [("config.lean", releasingChunk)] fun session => do
+          session.ask [.reload]
+          session.ask [.run "drop", .show]
+          return (← session.lines) ==
+              #["reload 1: installed, 1 chunks, 3 commands", "run drop: ok",
+                "commands: drop inside stale", "text 0: \"before\"", "text 2: \"after\""] },
+    { name :=
+        "a command refused for an offset that is no position, and one refused for a snapshot that does not exist, are each reported with that refusal's name"
+      run :=
+        withHost context [("config.lean", releasingChunk)] fun session => do
+          session.ask [.reload]
+          session.ask [.run "inside", .run "stale"]
+          return (← session.lines) ==
+              #["reload 1: installed, 1 chunks, 3 commands", "run inside: refused: bad position",
+                "run stale: refused: no such snapshot"] },
     { name :=
         "a config directory that does not exist is a rejected reload whose one diagnostic line names the directory"
       run :=
