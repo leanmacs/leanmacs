@@ -606,6 +606,13 @@ origin, and its edits.
   number costs eight bytes and no allocation for each keystroke.
 - A replace is recorded with 0. The Lean port names that
   `Origin.unattributed`; to the library it means nothing.
+- The user's own edits are recorded with 1, `Origin.user` (decided
+  2026-11-13, by the command loop's phase 2). Every edit the command loop
+  makes for an input event, a text commit among them, and every move it
+  makes in a buffer's undo tree, carries it. A command run by name chooses
+  its own origin: `insert` and `delete` are still `unattributed`. One
+  origin for the user is all the editor needs until something else edits a
+  text; the rest of the table is open ("The table of origins", below).
 
 **Pulled patches.**
 
@@ -955,8 +962,10 @@ these hunks" is a fact the editor can state.
   beside the text or a record written when a commit is made, is for review
   to decide.
 - **The table of origins.** An origin is a number whose meaning is Lean's.
-  The table from numbers to commands, agent sessions and tool calls arrives
-  with the command loop and agent hosting.
+  Two are fixed: 0, `unattributed`, and 1, `user`, the user's own edits
+  ("The edit log", as built). The rest of the table, from numbers to
+  commands, agent sessions and tool calls, formatters and a reload from
+  disk, arrives with the things that produce those edits.
 - **Rebasing a stale transaction.** A transaction built for an older
   revision is refused by its length. The log keeps no text, so it cannot
   supply the change sets to rebase through. The kept inverses do not settle

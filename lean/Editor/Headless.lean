@@ -261,20 +261,6 @@ def severityName : Config.Severity → String
   | .warning => "warning"
   | .error => "error"
 
-/-- A refusal as a `run` line names it. -/
-def refusalName : TextError → String
-  | .noSuchText => "no such text"
-  | .badRange => "bad range"
-  | .noSuchSnapshot => "no such snapshot"
-  | .badPosition => "bad position"
-  | .badChange => "bad change"
-  | .badSelection => "bad selection"
-  | .unknownRevision => "unknown revision"
-  | .forgotten => "forgotten revision"
-  | .noSuchMarker => "no such marker"
-  | .noInverse => "no inverse"
-  | .notInState => "not in state"
-
 /-- The lines a reload's report is printed as: what it came to, then its
 diagnostics. -/
 def reportLines (report : Config.Report) : Array String :=
@@ -374,7 +360,7 @@ def run (collaborators : Collaborators σ) (running : Running σ) (name : String
     return { running with
         config := running.config.written write, texts }
   | .error refusal =>
-    collaborators.emit s!"run {name}: refused: {refusalName refusal}"
+    collaborators.emit s!"run {name}: refused: {refusal.describe}"
     return { running with texts }
 
 /-- Starts the job registered under `name`, for the owner that registered it,
@@ -413,7 +399,7 @@ def ended (collaborators : Collaborators σ) (running : Running σ) (id : Nat) :
     | .ok () =>
       collaborators.emit s!"{label}: ok"
     | .error refusal =>
-      collaborators.emit s!"{label}: refused: {refusalName refusal}"
+      collaborators.emit s!"{label}: refused: {refusal.describe}"
     return { running with texts }
   | .failed message =>
     collaborators.emit s!"{label}: failed: {firstLine message}"

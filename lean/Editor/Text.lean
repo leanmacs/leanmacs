@@ -377,6 +377,21 @@ inductive TextError where
   | notInState
   deriving DecidableEq, Repr
 
+/-- A refusal in a few words, for the user: what the headless host prints
+after `refused:`, and what the echo area says of a refused event. -/
+def TextError.describe : TextError → String
+  | .noSuchText => "no such text"
+  | .badRange => "bad range"
+  | .noSuchSnapshot => "no such snapshot"
+  | .badPosition => "bad position"
+  | .badChange => "bad change"
+  | .badSelection => "bad selection"
+  | .unknownRevision => "unknown revision"
+  | .forgotten => "forgotten revision"
+  | .noSuchMarker => "no such marker"
+  | .noInverse => "no inverse"
+  | .notInState => "not in state"
+
 /-- The unit a point's column is counted in. -/
 inductive ColumnUnit where
   /-- Bytes of UTF-8. This is the unit tree-sitter counts in. -/
@@ -489,6 +504,14 @@ structure Origin where
 convention. -/
 def Origin.unattributed : Origin :=
   ⟨0⟩
+
+/-- The origin of the user's own edits: every edit the command loop makes
+for an input event, and every move it makes in a buffer's history, carries
+it. A command run by name chooses its own. That 1 means this is the
+editor's convention, as 0 does for `unattributed`; the rest of the table of
+origins is open (`docs/design/text-and-display.md`, "Origin"). -/
+def Origin.user : Origin :=
+  ⟨1⟩
 
 /-- One step of a transaction's walk over a text, with its length in bytes. -/
 inductive Change where
