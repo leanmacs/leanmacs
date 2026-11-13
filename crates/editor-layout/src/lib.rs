@@ -30,7 +30,9 @@
 //!   frame checked in at `tests/display/frame.expected`
 //!   (`tests/frame_fixture.rs`);
 //! - what is kept between calls and what it costs, by the counters
-//!   ([`cache`], `tests/counters.rs`);
+//!   ([`cache`], `tests/counters.rs`), moved through patches or rebuilt
+//!   when none can be had (`tests/patches.rs`), and the bound on a very
+//!   long row (`tests/long_line.rs`);
 //! - the round trip of a position through the layers (`tests/layers.rs`).
 //!
 //! The adapter-neutral rules of shaping are [`shaper::contract`]'s, which

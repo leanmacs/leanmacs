@@ -16,7 +16,9 @@
 //! own and starts a new visual line, and tab columns restart at its start.
 //! So laying out the rows around a position of a row of N bytes costs the
 //! segments those rows touch, not N; the forced break every
-//! [`SEGMENT_BYTES`] on such a row is the price.
+//! [`SEGMENT_BYTES`] on such a row is the price. What the shaper is handed
+//! is a segment with its tabs expanded, so a segment of tabs alone is up
+//! to the tab width times [`SEGMENT_BYTES`] long.
 //!
 //! **A row's content** is its bytes without its line feed and without the
 //! carriage return before that line feed. A carriage return alone is a
