@@ -369,6 +369,17 @@ mod tests {
     }
 
     #[test]
+    fn a_tab_wider_than_the_view_leaves_no_row_a_move_cannot_reach() {
+        // Tabs are 8 columns wide: "abc" and the tab's first space fill
+        // the first row, and its other four spaces are no row.
+        let text = "abc\tdef\nzz";
+        assert_eq!(rows(text, 4, 4, 0), vec![(0, 4), (4, 7), (8, 10)]);
+        assert_eq!(to(text, 4, 0, 1), 4);
+        assert_eq!(rows(text, 4, 1, 4), vec![(4, 7)]);
+        assert_eq!(to(text, 4, 4, -1), 0);
+    }
+
+    #[test]
     fn a_move_past_the_first_or_the_last_line_stops_there() {
         let text = "abcdef\nab\nabcdefghij\nxyz";
         assert_eq!(to(text, 4, 9, -5), 2);

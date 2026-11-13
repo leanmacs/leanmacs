@@ -12,7 +12,8 @@
 //! covers there. A tab whose spaces cross a soft wrap is drawn on both
 //! rows, so each row takes the tab's faces and its selection over the
 //! spaces it holds, though the tab's position is on the earlier row alone
-//! ([`line`](mod@crate::line)).
+//! ([`line`](mod@crate::line), which also says which of a tab's spaces are
+//! no row at all in a view narrower than the tab).
 //!
 //! A row's hash covers its glyphs, its runs and its height, all relative to
 //! the row's start: never its `y` or an absolute offset. So scrolling, and
@@ -569,6 +570,42 @@ mod tests {
             assert_eq!(first.line, expected.line);
             assert_eq!(first.hash, expected.hash);
             assert_eq!(first.y, 0.0);
+        }
+    }
+
+    #[test]
+    fn scrolling_by_n_lines_reaches_every_row_of_a_text_with_tabs() {
+        // Tabs that end a row, start one, cross a wrap and are wider than
+        // the view, at every width from one column to twelve.
+        let texts = [
+            "abc\tdef\nzz",
+            "abcdefghi\tx",
+            "\tgh",
+            "a\tb\tc",
+            "é\t😀\tz",
+            "ab\t",
+            "\t\t\n\t",
+        ];
+        for text in texts {
+            for columns in 1..=12_u32 {
+                let mut layout = layout();
+                let at_top = frame(&mut layout, view(text, columns, 1600, 0, &[]));
+                let snapshot = TextRef::fixed(key(text), Text::from(text).snapshot());
+                let width = columns as f32 * 10.0;
+                for (n, expected) in at_top.rows.iter().enumerate() {
+                    let lines = i64::try_from(n).unwrap();
+                    let moved = layout
+                        .lines_from(&snapshot, width, 0, lines, Some(0.0))
+                        .unwrap();
+                    let scrolled =
+                        frame(&mut layout, view(text, columns, 1600, moved.position, &[]));
+                    let first = &scrolled.rows[0];
+                    let case = format!("{text:?} at {columns} columns, {n} lines down");
+                    assert_eq!(first.bytes, expected.bytes, "{case}");
+                    assert_eq!(first.line, expected.line, "{case}");
+                    assert_eq!(first.hash, expected.hash, "{case}");
+                }
+            }
         }
     }
 

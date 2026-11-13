@@ -18,6 +18,13 @@
 //!   the tab's position is on the visual line its first space is on. The
 //!   later line still draws the rest of the tab's spaces
 //!   ([`LineEntry::drawn_bytes`]).
+//! - Every visual line holds a position, so each can be scrolled to and a
+//!   move of one line reaches the next. A line the shaper breaks off inside
+//!   a tab's spaces, which the tab's spaces end as well, would hold none,
+//!   since the position after the tab is the next line's start: it is not
+//!   kept, and those spaces of the tab are not drawn. It takes a view
+//!   narrower than a tab. The exception is such a line at the row's end,
+//!   which holds the row's end and is kept.
 
 use std::ops::Range;
 use std::sync::Arc;
@@ -114,6 +121,36 @@ pub fn font_runs(
     runs
 }
 
+/// The visual lines `shaped` breaks into at `width`, each one that holds a
+/// position: `expanded` is the text it was shaped from, and `last` whether
+/// the segment is its row's last.
+///
+/// A line the shaper breaks off inside a tab's spaces starts after the tab.
+/// When the tab's spaces reach its end too, no position is on it, unless it
+/// ends the row and so holds the row's end: such a line is left out, and
+/// those spaces of the tab are not drawn. The first line is always kept.
+fn visual_lines<L: ShapedLine>(
+    shaped: &L,
+    expanded: &Expanded,
+    width: Option<f32>,
+    last: bool,
+) -> Vec<Arc<VisualLine>> {
+    let lines = shaped.break_lines(width);
+    let count = lines.len();
+    lines
+        .into_iter()
+        .enumerate()
+        .filter(|(index, line)| {
+            // The column of the first position at or after the line's
+            // start: past the tab it starts inside.
+            let first = expanded.column(expanded.offset(line.bytes.start, Bias::After));
+            let holds_the_end = last && index + 1 == count;
+            *index == 0 || first < line.bytes.end || (first == line.bytes.end && holds_the_end)
+        })
+        .map(|(_, line)| Arc::new(line))
+        .collect()
+}
+
 /// Lays `source` out with `shaper` at `width`.
 pub fn lay_out<S: Shaper>(
     shaper: &S,
@@ -127,14 +164,10 @@ pub fn lay_out<S: Shaper>(
     }));
     LineEntry {
         bytes: source.bytes,
-        expanded: source.expanded,
         runs,
         generation: shaper.generation(),
-        lines: shaped
-            .break_lines(width)
-            .into_iter()
-            .map(Arc::new)
-            .collect(),
+        lines: visual_lines(&*shaped, &source.expanded, width, source.last),
+        expanded: source.expanded,
         shaped,
         width,
         last: source.last,
@@ -152,12 +185,7 @@ impl<L: ShapedLine> LineEntry<L> {
             generation: self.generation,
             shaped: Arc::clone(&self.shaped),
             width,
-            lines: self
-                .shaped
-                .break_lines(width)
-                .into_iter()
-                .map(Arc::new)
-                .collect(),
+            lines: visual_lines(&*self.shaped, &self.expanded, width, self.last),
             last: self.last,
         }
     }
@@ -324,7 +352,7 @@ mod tests {
     use super::{LineEntry, Source, lay_out};
     use crate::shaper::FontId;
     use crate::shaper::fake::{CellLine, CellShaper};
-    use crate::tabs::{TabSnapshot, row_content};
+    use crate::tabs::{TabSnapshot, expand, row_content};
 
     /// Row `row` of `text` laid out with tabs 4 wide on cells 10 by 16,
     /// with `fonts`, at `width`.
@@ -443,6 +471,49 @@ mod tests {
         assert_eq!(entry.line_bytes(1), Some(3..5));
         assert_eq!(entry.drawn_bytes(1), Some(3..5));
         assert_eq!(entry.drawn_bytes(2), None);
+    }
+
+    #[test]
+    fn a_line_of_a_tabs_spaces_that_holds_no_position_is_not_kept() {
+        // The tab is columns 1 to 4. At two columns the shaper breaks
+        // "a ", two of the tab's spaces, "b": the spaces alone hold no
+        // position, so they are no line.
+        let entry = row("a\tb", Some(20.0));
+        assert_eq!(lines(&entry), vec![0..2, 2..3]);
+        assert_eq!(entry.lines()[1].glyphs.len(), 1);
+        assert_eq!(
+            [0, 1, 2, 3].map(|offset| entry.line_of(offset)),
+            [0, 0, 1, 1]
+        );
+        // At one column the tab's first space is a line, the tab's own;
+        // its other two are none.
+        let entry = row("a\tb", Some(10.0));
+        assert_eq!(lines(&entry), vec![0..1, 1..2, 2..3]);
+        assert_eq!(
+            [0, 1, 2, 3].map(|offset| entry.line_of(offset)),
+            [0, 1, 2, 2]
+        );
+        // The tab's last spaces at a row's end hold the row's end.
+        let entry = row("a\t", Some(20.0));
+        assert_eq!(lines(&entry), vec![0..2, 2..2]);
+        assert_eq!(entry.line_of(2), 1);
+        assert_eq!(entry.x_of(1, 2), 20.0);
+        // At the end of a segment that is not its row's last they hold
+        // nothing: the end is the next segment's start.
+        let cut = lay_out(
+            &CellShaper::new(10.0, 16.0),
+            Source {
+                bytes: 0..2,
+                expanded: expand("a\t", 4),
+                last: false,
+                fonts: &[],
+            },
+            Some(20.0),
+        );
+        assert_eq!(lines(&cut), vec![0..2]);
+        // Broken again at another width, the same rule.
+        let entry = row("a\tb", None).rebreak(Some(20.0));
+        assert_eq!(lines(&entry), vec![0..2, 2..3]);
     }
 
     #[test]

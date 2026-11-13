@@ -791,7 +791,11 @@ The display pipeline's phase 1 built the contract and two layers, in
   row, a segment, a visual line of it and an x. A position at a wrap is the
   start of the later visual line, and only a row's last visual line holds
   the row's end. A visual line that starts inside a tab's spaces starts
-  after the tab, so the tab is on the line its first space is on.
+  after the tab, so the tab is on the line its first space is on. Every
+  visual line holds a position, so each can be scrolled to and moved to: in
+  a view narrower than a tab, a line that would be a tab's spaces alone
+  with no position on it is not kept and those spaces are not drawn (such
+  a line at a row's end holds the row's end and stays).
 
 The round trip of every position through both layers is a property test
 (`tests/layers.rs`).
