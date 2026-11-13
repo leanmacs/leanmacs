@@ -71,9 +71,18 @@ a store's command does, and one that edits the text is a command, a value of
   text's revision, it has whatever the move did as edits in its open group,
   and undoing that returns the text to where the move started.
 - A **state** is where the text is in its history (`State`,
-  `UndoTree.state`): a node, or, while a group is open, a point inside it,
-  named by the revision of the edit that first put the text there. Undo,
-  redo and `goTo` move between nodes only.
+  `UndoTree.state`): a node, or, while a group is open, a point inside it.
+  Undo, redo and `goTo` move between nodes only.
+- **One state has one name**: the revision that first put the text in it,
+  and nothing else. For a point of the open group that is the revision of
+  the edit the tree was told of; for the root, the revision the text was at
+  when the tree was made. A node keeps the name of its state. A boundary
+  names nothing anew: the node it makes has the state the text is in, under
+  the name it had while the group was open (`state_close`). A move to a
+  node puts the text in that node's state, and the revision the move
+  produced names no state. So a state a caller holds means the same point
+  of the history whatever boundaries and moves came after it was taken, and
+  two states are the same exactly when they are equal.
 - `revertTo` goes back to a state of the open group, by one `applyInverse`
   of the run from just after that state to the last revision the tree
   knows, and hands back the selection before the first edit it took back.
@@ -91,7 +100,11 @@ a store's command does, and one that edits the text is a command, a value of
   rolled back this way: the move closed the group.
 - A state is one `UndoTree.state` gave. `revertTo` answers `none`, with
   nothing done, for a state of another node and for one that is not of the
-  open group, and applies nothing for the state the text is in.
+  open group, and applies nothing for the state the text is in. The state
+  of the node the open group began at is of the open group whenever it was
+  taken: one taken at the end of a group that a boundary has since closed
+  is that node's, so right after the boundary a revert to it applies
+  nothing, and after a further edit it takes that edit back.
 - **Saved.** The tree keeps the state last marked as saved (`markSaved`),
   and `isModified` is whether the text is in another. It saves nothing and
   asks the text nothing: whoever writes the file marks the state it wrote.
@@ -100,12 +113,15 @@ a store's command does, and one that edits the text is a command, a value of
   moving back to the saved node, or reverting to the saved state, makes it
   unmodified; and typing the saved text again by hand does not, since that
   is another state.
-- **A boundary does not change whether a text is modified.** If the text is
-  in the saved state when its group is closed, the saved state is the new
-  node. A saved state the group moved on from before it was closed is a
-  point inside a closed group, which no move returns to, so the text stays
-  modified until it is saved again. `isModified_close` proves the rule for
-  every tree whose saved state names one of its nodes.
+- **A boundary does not change whether a text is modified**, whichever of
+  the mark and the boundary came first. If the text is in the saved state
+  when its group is closed, the saved state is the new node's. A save that
+  takes time may take the state at the end of an open group and mark it
+  after the boundary: it marks that node, and an undo and a redo back to
+  the node leave the text unmodified. A saved state the group moved on from
+  before it was closed is a point inside a closed group, which no move
+  returns to, so the text stays modified until it is saved again.
+  `isModified_close` proves the rule for every tree.
 - A tree that was not told of the newest revision answers for the one it
   knows. An inverse applied behind its back is an edit to it once it is
   told, so it may say "modified" of a text that is back in its saved state.
@@ -146,6 +162,18 @@ structure UndoTree.Run where
   last : Nat
   deriving DecidableEq, Repr
 
+/-- Where a text is in its history, as the tree names it: at a node, or,
+while a group is open, at a point inside it. A state is named by the
+revision that first put the text in it and by nothing else, so one state has
+one name, whether or not a boundary has been set since it was taken. -/
+structure UndoTree.State where
+  /-- The revision that first put the text in this state: the edit the tree
+  was told of, or, for the root, the revision the text was at when the tree
+  was made. A move back to the state produces a later revision, which names
+  no state. -/
+  revision : Nat
+  deriving DecidableEq, Repr
+
 /-- One state of a text's history, as the tree holds it. -/
 structure UndoTree.Node where
   /-- The node this one was made from. `none` for the root. -/
@@ -158,16 +186,9 @@ structure UndoTree.Node where
   /-- The run whose inverse crosses the edge between this node and its
   parent from the side the text is on. `none` for the root. -/
   cross : Option UndoTree.Run := none
-  deriving DecidableEq, Repr
-
-/-- Where a text is in its history, as the tree names it: at a node, or,
-while a group is open, at a point inside it. -/
-structure UndoTree.State where
-  /-- The node the text is at, or was at when the open group began. -/
-  node : UndoTree.NodeId
-  /-- `none` at the node. Inside the open group, the revision of the edit
-  that first put the text where it is. -/
-  within : Option Nat
+  /-- The state the text is in at this node: the one it was in when the
+  boundary made the node, which is where every move to the node puts it. -/
+  state : UndoTree.State
   deriving DecidableEq, Repr
 
 /-- The history of one text, as a tree of states. The rules are in the
@@ -184,9 +205,11 @@ structure UndoTree where
   /-- The last revision the tree was told. The open group is the revisions
   after `base` up to this one. -/
   head : Nat
-  /-- Where in the open group the text is: the revision of the edit that
-  first put it there. `none` when it is at `current`. -/
-  within : Option Nat := none
+  /-- Where the text is in its history: the state a caller keeps before a
+  command, to revert to if the command fails, or with a snapshot it saves,
+  to mark as saved when the save reports. With nothing pending it is the
+  state of `current`. -/
+  state : UndoTree.State
   /-- The state last marked as saved. `none` when none was. -/
   saved : Option UndoTree.State
   deriving DecidableEq, Repr
@@ -210,11 +233,12 @@ def root : NodeId :=
 saved at its root. -/
 def new (text : TextId) (revision : Nat) : UndoTree where
   text := text
-  nodes := #[{ parent := none }]
+  nodes := #[{ parent := none, state := ⟨revision⟩ }]
   current := root
   base := revision
   head := revision
-  saved := some ⟨root, none⟩
+  state := ⟨revision⟩
+  saved := some ⟨revision⟩
 
 /-- A tree for `text` as it is now: `new` with the revision the text is
 at. -/
@@ -235,7 +259,7 @@ that revision put it in. A revision not after that one changes nothing. -/
 def record (tree : UndoTree) (revision : Nat) : UndoTree :=
   if revision > tree.head then
     { tree with
-      head := revision, within := some revision }
+      head := revision, state := ⟨revision⟩ }
   else tree
 
 /-- Tells the tree the revision its text is at (`record`), for a caller that
@@ -243,24 +267,21 @@ does not thread one. -/
 def sync (tree : UndoTree) : EditorM UndoTree :=
   return tree.record (← tree.text.revision)
 
-/-- Where the text is in its history: the state a caller keeps before a
-command, to revert to if the command fails, or with a snapshot it saves, to
-mark as saved when the save reports. -/
-def state (tree : UndoTree) : State :=
-  ⟨tree.current, tree.within⟩
-
 /-- The boundary. With nothing pending, the tree as it is. Otherwise the
 open group becomes a node, a child of the node the text was at and the one
 its redo goes to, the text is at it, and nothing is pending.
 
-A boundary does not change whether the text is modified: if the text is in
-the saved state when its group is closed, the saved state is the new node.
-A saved state the group has moved on from stays what it was, a point inside
-a group that is now closed, which no move returns to. -/
+A boundary names nothing anew: the node it makes has the state the text is
+in, under the name that state had while the group was open (`state_close`).
+So a state taken before the boundary is the node's after it, and a boundary
+does not change whether the text is modified (`isModified_close`). A saved
+state the group has moved on from stays what it was, a point inside a group
+that is now closed, which no move returns to. -/
 def close (tree : UndoTree) : UndoTree :=
   if tree.pending then
     let id : NodeId := ⟨tree.nodes.size⟩
-    let made : Node := { parent := some tree.current, cross := some ⟨tree.base + 1, tree.head⟩ }
+    let made : Node :=
+      { parent := some tree.current, cross := some ⟨tree.base + 1, tree.head⟩, state := tree.state }
     let nodes :=
       tree.nodes.modify tree.current.index fun parent =>
         { parent with
@@ -268,9 +289,7 @@ def close (tree : UndoTree) : UndoTree :=
     { tree with
       nodes := nodes.push made
       current := id
-      base := tree.head
-      within := none
-      saved := if tree.saved == some tree.state then some ⟨id, none⟩ else tree.saved }
+      base := tree.head }
   else tree
 
 /-- The node `id` and those above it, up to the root, in that order. -/
@@ -289,12 +308,15 @@ where
 /-- Crosses the edge between `child` and its parent, down to the child when
 `down` and up to the parent otherwise, by one inverse applied with `origin`.
 Returns the tree after it, what the inverse handed back, and the run that
-was crossed, which the caller drops once its move is over. `none`, with
-nothing done, for the root and for an id that names no node. -/
+was crossed, which the caller drops once its move is over. The text is then
+in the state of the node it crossed to: the revision the inverse produced
+names no state. `none`, with nothing done, for the root and for an id that
+names no node. -/
 def crossEdge (tree : UndoTree) (child : NodeId) (down : Bool) (origin : Origin) :
     EditorM (Option (UndoTree × Option Selection × Run)) := do
   let some node := tree.node? child | return none
   let some parent := node.parent | return none
+  let some above := tree.node? parent | return none
   let some run := node.cross | return none
   let inverted ← tree.text.applyInverse run.first run.last origin
   let crossed : Run := ⟨inverted.revision, inverted.revision⟩
@@ -306,7 +328,7 @@ def crossEdge (tree : UndoTree) (child : NodeId) (down : Bool) (origin : Origin)
       current := if down then child else parent
       base := inverted.revision
       head := inverted.revision
-      within := none }
+      state := if down then node.state else above.state }
   return some (tree, inverted.selection, run)
 
 /-- Undoes one step: closes the open group, then crosses to the parent of
@@ -369,44 +391,47 @@ itself: they cancel when the group is later undone as a step. To the node
 itself, the whole group goes: nothing is pending, no node is made, there is
 nothing to redo, and the group's inverses and the revert's own are dropped.
 
+The node the open group began at is known by its state, whenever that state
+was taken: one taken at the end of a group that a boundary has since closed
+is that node's.
+
 `none`, with nothing done, for a state of another node and for one that is
 not of the open group. To the state the text is in, it applies nothing. -/
 def revertTo (tree : UndoTree) (state : State) (origin : Origin := .unattributed) :
     EditorM (Option Moved) := do
-  if state.node != tree.current then
-    return none
-  if state.within == tree.within then
+  if state == tree.state then
     return some ⟨tree, none⟩
-  match state.within with
-  | none =>
-    -- The whole open group. The text is not at the node, so the group
-    -- holds an edit.
+  if (tree.node? tree.current).map (·.state) == some state then
+    -- The whole open group. The text is not in the node's state, so the
+    -- group holds an edit.
     let inverted ← tree.text.applyInverse (tree.base + 1) tree.head origin
     tree.text.dropInverses (tree.base + 1) tree.head
     tree.text.dropInverses inverted.revision inverted.revision
     return some
         ⟨{ tree with
-            base := inverted.revision, head := inverted.revision, within := none },
+            base := inverted.revision, head := inverted.revision, state },
           inverted.selection⟩
-  | some revision =>
-    -- A state of the open group is after the group's start and before the
-    -- last revision the tree knows: that one is where the text is.
-    unless tree.base < revision ∧ revision < tree.head do
-      return none
-    let inverted ← tree.text.applyInverse (revision + 1) tree.head origin
-    return some
-        ⟨{ tree with
-            head := inverted.revision, within := some revision },
-          inverted.selection⟩
+  -- A state inside the open group is named by a revision after the group's
+  -- start and before the last revision the tree knows: that one is where
+  -- the text is, or is the revert that put it where it is.
+  unless tree.base < state.revision ∧ state.revision < tree.head do
+    return none
+  let inverted ← tree.text.applyInverse (state.revision + 1) tree.head origin
+  return some
+      ⟨{ tree with
+          head := inverted.revision, state },
+        inverted.selection⟩
 
 /-- Reverts the whole open group: `revertTo` the node the text was at when
 the group began. -/
-def revert (tree : UndoTree) (origin : Origin := .unattributed) : EditorM (Option Moved) :=
-  tree.revertTo ⟨tree.current, none⟩ origin
+def revert (tree : UndoTree) (origin : Origin := .unattributed) : EditorM (Option Moved) := do
+  let some node := tree.node? tree.current | return none
+  tree.revertTo node.state origin
 
 /-- Marks `state` as the state last saved: by default the state the text is
 in. A save that takes time keeps `tree.state` with the snapshot it writes
-and marks that state when it reports, however far the text has moved on. -/
+and marks that state when it reports, however far the text has moved on and
+whether or not a boundary has been set since: a state has one name. -/
 def markSaved (tree : UndoTree) (state : State := tree.state) : UndoTree :=
   { tree with saved := some state }
 
@@ -416,24 +441,18 @@ revision answers for the revision it knows. -/
 def isModified (tree : UndoTree) : Bool :=
   tree.saved != some tree.state
 
-/-- A boundary does not change whether the text is modified, for a tree
-whose saved state, if it has one, names one of its nodes. -/
-theorem isModified_close (tree : UndoTree)
-    (named : ∀ state, tree.saved = some state → state.node.index < tree.nodes.size) :
-    tree.close.isModified = tree.isModified := by
+/-- A boundary does not change the state the text is in, or its name: a
+state taken while a group was open is the state of the tree once the group
+is closed. -/
+theorem state_close (tree : UndoTree) : tree.close.state = tree.state := by
   unfold close
-  split
-  · by_cases same : tree.saved = some tree.state
-    · simp [isModified, state, same]
-    · -- The new node is none the tree had, so the saved state is not it.
-      have other : tree.saved ≠ some ⟨⟨tree.nodes.size⟩, none⟩ := fun equal =>
-        Nat.lt_irrefl _ (named _ equal)
-      have elsewhere : tree.saved ≠ some ⟨tree.current, tree.within⟩ := same
-      have after : (tree.saved != some ⟨⟨tree.nodes.size⟩, none⟩) = true := bne_iff_ne.mpr other
-      have before : (tree.saved != some ⟨tree.current, tree.within⟩) = true :=
-        bne_iff_ne.mpr elsewhere
-      simp [isModified, state, elsewhere, after, before]
-  · rfl
+  split <;> rfl
+
+/-- A boundary does not change whether the text is modified, whatever state
+was marked as saved and whenever it was taken. -/
+theorem isModified_close (tree : UndoTree) : tree.close.isModified = tree.isModified := by
+  unfold close
+  split <;> rfl
 
 end UndoTree
 

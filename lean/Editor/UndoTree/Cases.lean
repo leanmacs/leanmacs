@@ -159,9 +159,9 @@ def moveCases : List Property :=
         let nowhere := (← pending.goTo stranger).isNone
         -- The state of another node, which the text is not at, and states
         -- that are not of the open group: it holds revision 3 alone.
-        let elsewhere := (← pending.revertTo ⟨tree.current, none⟩).isNone
-        let before := (← pending.revertTo ⟨pending.current, some 2⟩).isNone
-        let after := (← pending.revertTo ⟨pending.current, some 9⟩).isNone
+        let elsewhere := (← pending.revertTo tree.state).isNone
+        let before := (← pending.revertTo ⟨2⟩).isNone
+        let after := (← pending.revertTo ⟨9⟩).isNone
         return atRoot && atLeaf && unchanged && withPending && nowhere && elsewhere && before &&
             after &&
             (← reads pending) == ("héllo😀", 3) },
@@ -377,7 +377,7 @@ def stateCases : List Property :=
         return made && part && still && one && (← reads tree) == ("héllo", 5) &&
             undone.tree.current == UndoTree.root },
     { name :=
-        "the undo tree: a text saved inside an open group is unmodified there, modified after a further edit and unmodified again after a revert to that state, and once the group is closed further on no undo or redo makes it unmodified; saved and then closed with nothing more it stays unmodified, and an undo and a redo make it modified and unmodified"
+        "the undo tree: a text saved inside an open group is unmodified there, modified after a further edit and unmodified again after a revert to that state, and once the group is closed further on no undo or redo makes it unmodified; saved and then closed with nothing more it stays unmodified, and an undo and a redo make it modified and unmodified; and marked saved, once a boundary has been set, at the state taken at the end of the group it is unmodified, a revert to that state applies nothing, an undo and a redo make it modified and unmodified, and after a further edit a revert to that state takes the edit back"
       holds := do
         let text ← createText "héllo"
         let tree ← UndoTree.over text
@@ -401,9 +401,33 @@ def stateCases : List Property :=
         let still := !tree.isModified
         let some undone ← tree.undo | return false
         let some redone ← undone.tree.redo | return false
-        return inside && further && again && never && still && undone.tree.isModified &&
-            !redone.tree.isModified &&
-            (← reads tree) == ("héllo A", 3) }]
+        let closedAfter :=
+          still && undone.tree.isModified && !redone.tree.isModified &&
+            (← reads tree) == ("héllo A", 3)
+        -- Marked late: the state is taken at the end of an open group, as a
+        -- save that takes time takes it, and marked once a boundary has made
+        -- a node of the group. It is that node's state.
+        let late ← createText "héllo"
+        let tree ← UndoTree.over late
+        let tree ← addAtEnd tree " A"
+        let taken := tree.state
+        let marked := tree.close.markSaved taken
+        let reported := marked.state == taken && !marked.isModified
+        -- The text is in that state, so a revert to it applies nothing.
+        let stay := (← marked.revertTo taken) == some ⟨marked, none⟩
+        let some away ← marked.undo | return false
+        let some home ← away.tree.redo | return false
+        let returned := away.tree.isModified && !home.tree.isModified
+        -- After a further edit it is the node the open group began at, and a
+        -- revert to it takes the edit back.
+        let on ← addAtEnd home.tree "😀"
+        let reverted ← on.revertTo taken
+        let whole :=
+          on.isModified && reverted.map (·.tree.isModified) == some false &&
+            reverted.map (·.tree.pending) == some false &&
+            (← reads on) == ("héllo A", 5)
+        return inside && further && again && never && closedAfter && reported && stay && returned &&
+            whole }]
 
 /-- The cases of the undo tree, which hold of it over every implementation
 of the text port. -/

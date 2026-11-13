@@ -445,13 +445,28 @@ the text port: the undo tree (`lean/Editor/UndoTree.lean`, decided
   inverse after its first crossing. Undo then a new edit makes a second
   child: the old branch stays. A move that is refused part-way has dropped
   nothing, so the caller's tree stays good.
+- *States.* A state is a node, or, while a group is open, a point inside
+  it. One state has one name: the revision that first put the text in it
+  (for the root, the revision the text was at when the tree was made), and
+  nothing else. A node keeps the name of its state, a boundary gives the
+  node it makes the name the state had while the group was open, and a
+  move to a node puts the text in that node's state: the revision the move
+  produced names none. So a state a caller holds means the same point of
+  the history whatever boundaries and moves came after it was taken. An
+  earlier form named a state by its node and a point inside the group,
+  which gave the end of a group one name before its boundary and another
+  after; it was replaced on 2026-11-13.
 - *Reverting.* A failed command is rolled back by keeping the tree's state
   before it and reverting to it, which may be a point inside an insert
   session's open group: groups need not nest. Reverting the whole open
   group makes no node and leaves nothing to redo.
 - *Saved.* The tree keeps the state last marked as saved and answers
   whether the text is in another. A new tree is saved at its root. A
-  boundary does not change the answer. Saving itself is the file port's.
+  boundary does not change the answer, whichever of the mark and the
+  boundary came first: a save that takes time keeps the state it wrote and
+  marks it when it reports, and if that state was the end of a group
+  closed in between, it is the group's node. Saving itself is the file
+  port's.
 - *Other styles* are written over the same two requests: a linear history
   is two lists of runs; Vim's is this tree with moves by the order nodes
   were made and a time on each; Emacs's records the revision an inverse
