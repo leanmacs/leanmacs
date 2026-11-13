@@ -135,8 +135,9 @@ How a key becomes an invocation is pure Lean with no port, so its checks
 need no model and no fake of a collaborator:
 
 - `keymapChecks`: a keymap (`Editor/Keymap.lean`), on keys built in code:
-  what a sequence is bound to, which sequences a binding begins with, and
-  the chord a binding names a key by.
+  what a sequence is bound to, which sequences a binding begins with, the
+  chord a binding names a key by, and the walk through a list of keymaps
+  in precedence order.
 -/
 
 namespace ModelTest
@@ -3785,6 +3786,10 @@ to, which sequences a binding begins with, and the form of a key a binding
 names. -/
 def keymapChecks : List Check :=
   let save : Keymap Nat := Keymap.empty.bind [controlKey "x", controlKey "s"] 1
+  let other : Keymap Nat := Keymap.empty.bind [controlKey "x", controlKey "s"] 2
+  let find : Keymap Nat := Keymap.empty.bind [charKey "f"] 3
+  let long : Keymap Nat := Keymap.empty.bind [controlKey "x", controlKey "r", charKey "t"] 4
+  let prefixBound : Keymap Nat := Keymap.empty.bind [controlKey "x", controlKey "r"] 5
   [{  name := "a key sequence bound in a keymap is found, bound to what it was given"
       run := pure (save.find? [controlKey "x", controlKey "s"] == some 1) },
     { name :=
@@ -3840,7 +3845,55 @@ def keymapChecks : List Check :=
           (shifted.chord == namedKey .tab { shift := true } &&
             keymap.find? [shifted.chord] == none &&
             keymap.find? [namedKey .tab] == some 1 &&
-            (keymap.bind [shifted] 2).find? [shifted.chord] == some 2) }]
+            (keymap.bind [shifted] 2).find? [shifted.chord] == some 2) },
+    { name := "of two keymaps that bind one sequence, the earlier in the list gives its binding"
+      run :=
+        pure
+          (Keymap.resolve [other, save] [controlKey "x", controlKey "s"] == .bound 2 &&
+            Keymap.resolve [save, other] [controlKey "x", controlKey "s"] == .bound 1) },
+    { name :=
+        "a sequence that begins a binding is pending, whichever keymap of the list the binding is in, and one that begins none is unbound"
+      run :=
+        pure
+          (Keymap.resolve [save, find] [controlKey "x"] == .pending &&
+            Keymap.resolve [save, long] [controlKey "x", controlKey "r"] == .pending &&
+            Keymap.resolve [save, long] [controlKey "x", controlKey "q"] == .unbound &&
+            Keymap.resolve ([] : List (Keymap Nat)) [controlKey "x"] == .unbound) },
+    { name :=
+        "a sequence a later keymap binds is bound although an earlier keymap has a longer binding that begins with it"
+      run :=
+        pure (Keymap.resolve [long, prefixBound] [controlKey "x", controlKey "r"] == .bound 5) },
+    { name := "the walk given a key that begins a binding keeps it pending and yields nothing"
+      run :=
+        let (first, firstBound) := Keymap.walk [long] [] (controlKey "x")
+        let (second, secondBound) := Keymap.walk [long] first (controlKey "r")
+        pure
+          (first == [controlKey "x"] && firstBound == none &&
+            second == [controlKey "x", controlKey "r"] &&
+            secondBound == none) },
+    { name :=
+        "the walk given the last key of a bound sequence yields its binding and leaves nothing pending"
+      run :=
+        pure
+          (Keymap.walk [save] [controlKey "x"] (controlKey "s") == ([], some 1) &&
+            Keymap.walk [find] [] (charKey "f") == ([], some 3)) },
+    { name :=
+        "the walk given an unbound key after a pending prefix yields nothing and leaves nothing pending"
+      run :=
+        pure
+          (Keymap.walk [save] [controlKey "x"] (charKey "z") == ([], none) &&
+            Keymap.walk [save] [] (charKey "z") == ([], none)) },
+    { name := "the walk takes a key by its chord"
+      run :=
+        let typed : Key :=
+          { logical := .character "s"
+            physical := .code "KeyS"
+            modifiers := { control := true }
+            repeated := true }
+        pure
+          (Keymap.walk [save] [controlKey "x"] typed == ([], some 1) &&
+            Keymap.walk [save] [] { controlKey "x" with physical := .code "KeyX" } ==
+              ([controlKey "x"], none)) }]
 
 /-- Every check, in the order they run.
 

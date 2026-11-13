@@ -21,6 +21,17 @@ list is its own specification: what is proved of a keymap is stated over
 `Keymap.find?` and `Keymap.continues`, so another map can replace it behind
 them.
 
+## The walk
+
+Keys are looked up through a list of keymaps in precedence order
+(`Keymap.resolve`): the first keymap that binds the sequence gives its
+binding; otherwise the sequence is pending if a binding in any of them
+begins with it, and unbound if none does. There is no timeout, so a bound
+sequence is never also a prefix. `Keymap.walk` is one key of that: it
+returns the keys still pending and the binding reached, if one was. An
+unbound key is dropped with the prefix before it; it does not start a new
+sequence.
+
 ## The chord
 
 A key from a window carries where it is on the keyboard and whether the
@@ -37,6 +48,7 @@ caller looks a key up by its chord, so a keymap never holds anything else.
 |---|---|
 | A new attribute of a key that a binding does not name | Dropped in `Key.chord` |
 | A new way to ask what a sequence is bound to | A function over `Keymap.find?` and `Keymap.continues`, not over `bindings` |
+| A new outcome of a lookup, such as a timeout | A variant of `Lookup`, and its case in `Keymap.walk` |
 | What a key is bound to | The input scheme's `Binding`; nothing here |
 
 Each is pinned by `ModelTest.keymapChecks`.
@@ -68,6 +80,17 @@ structure Keymap (β : Type) where private mk ::
   bindings : List (List Key × β)
   deriving Repr
 
+/-- What a list of keymaps makes of a key sequence. -/
+inductive Lookup (β : Type) where
+  /-- No keymap binds the sequence, and no binding begins with it. -/
+  | unbound
+  /-- No keymap binds the sequence, and a binding of one begins with it: more
+  keys are awaited. -/
+  | pending
+  /-- A keymap binds the sequence, to `binding`. -/
+  | bound (binding : β)
+  deriving DecidableEq, Repr
+
 namespace Keymap
 
 variable {β : Type}
@@ -96,6 +119,30 @@ def find? (keymap : Keymap β) (keys : List Key) : Option β :=
 /-- Whether a binding begins with `keys`: is `keys`, or is longer. -/
 def continues (keymap : Keymap β) (keys : List Key) : Bool :=
   keymap.bindings.any (keys.isPrefixOf ·.1)
+
+/-- What `maps`, in precedence order, make of `keys`: the binding of the
+first keymap that binds exactly `keys`; otherwise pending, if a binding of
+any of them begins with `keys`; otherwise unbound.
+
+So a sequence that is bound is never also a prefix: a longer binding under
+it, in the same keymap or another, is not reached, since nothing waits to
+see whether more keys come. Prefixes merge across the keymaps. -/
+def resolve (maps : List (Keymap β)) (keys : List Key) : Lookup β :=
+  match maps.findSome? (·.find? keys) with
+  | some binding => .bound binding
+  | none => if maps.any (·.continues keys) then .pending else .unbound
+
+/-- One step of the walk through `maps`, in precedence order: the keys
+`pending` so far, followed by the chord of `key`, are resolved. A bound
+sequence gives its binding and leaves nothing pending; a prefix becomes
+the pending keys and gives nothing; an unbound sequence is dropped whole,
+`key` with it, leaving nothing pending and giving nothing. -/
+def walk (maps : List (Keymap β)) (pending : List Key) (key : Key) : List Key × Option β :=
+  let keys := pending ++ [key.chord]
+  match resolve maps keys with
+  | .bound binding => ([], some binding)
+  | .pending => (keys, none)
+  | .unbound => ([], none)
 
 end Keymap
 
