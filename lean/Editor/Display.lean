@@ -25,9 +25,17 @@ binding:
   answers the queries by laying text out in fixed-size cells. It is for
   tests, not a layout kept at run time;
 - the real binding is the display pipeline's (its phase 1), over its layout;
+- where there is no window, as in the headless host, the recorder
+  (`Editor/Display/Recorder.lean`) keeps the last scene published and
+  answers the queries with the model's rule over the library's snapshots.
+  It is the one place the model's rule runs outside a test, because a
+  host with no window has no layout to ask; an editor with a window asks
+  the real binding;
 - the contract, `Editor/Display/Contract.lean`, is the one list of properties
-  of the queries that both are held to. It is run here against the model,
-  and the display pipeline runs it against the real binding over its fake
+  of the queries that all three are held to. It is run against the model
+  by `model-test` and against the recorder over the library's snapshots by
+  `contract-test`, and the display pipeline runs it against the real
+  binding over its fake
   shaper, whose every glyph has the advance and the line height of the
   `Display.Cells` the contract is run at.
 
@@ -134,6 +142,18 @@ abbrev displayPort : Port :=
 `DisplayError`. -/
 abbrev DisplayM :=
   ExceptT DisplayError (Program displayPort)
+
+/-- An answerer of the display port's requests in `IO`: the real binding,
+or, with no window, the headless host's recorder
+(`Editor/Display/Recorder.lean`). A runner of commands is handed one. -/
+abbrev DisplayHandler :=
+  (request : DisplayRequest) → IO request.Reply
+
+/-- Runs a display program against `handler`: its result, or the refusal it
+failed with. -/
+def DisplayM.runWith {α : Type} (program : DisplayM α) (handler : DisplayHandler) :
+    IO (Except DisplayError α) :=
+  Program.runM (port := displayPort) handler program.run
 
 namespace Display
 

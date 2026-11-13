@@ -1,3 +1,5 @@
+import Editor.Display.Contract
+import Editor.Display.Recorder
 import Editor.File.Cases
 import Editor.Job.Contract
 import Editor.Job.Fake
@@ -60,6 +62,14 @@ snapshots until the job's command adopts it, that what a job loaded is
 freed when the job is settled, that cancelling a job leaves the file
 service with nothing of it, and that a job saves a snapshot a command took
 through the published table and is refused one the command has released.
+
+The display interface's contract (`Editor/Display/Contract.lean`) is run
+against the recorder a host with no window answers it with
+(`Editor/Display/Recorder.lean`), over snapshots the library made, at the
+two cell sizes `model-test` runs it at against the model
+(`displayFailures`). `recorderChecks` pins what only the recorder shows:
+that it keeps and counts what is published, and that it reads the table of
+snapshots as it is when asked.
 
 `main` starts the pump once, on a dedicated task. When the checks are done
 it quits the queues, requires the pump to have ended, and exits explicitly:
@@ -695,6 +705,69 @@ def caseFailures (completions : Job.Completions) : IO (List String) := do
         return (← Ffi.Document.live, ← Ffi.Snapshot.live, ← Ffi.filesPending) == before
   return failed ++ if freed then [] else [caseLeakName]
 
+/-- The cell sizes the display interface's contract is run at against the
+recorder: the two `model-test` runs it at against the model. -/
+def displayCells : List Display.Cells :=
+  [{ advance := 1, lineHeight := 1 }, { advance := 8, lineHeight := 16 }]
+
+/-- A recorder in `cells` over a table of its own, which holds a snapshot of
+a document of each of `texts`: the recorder, the table, and the ids of the
+snapshots, in the order of `texts`. -/
+def recorderOver (cells : Display.Cells) (texts : Array String) :
+    IO (DisplayRecorder × Snapshots × Array SnapshotId) := do
+  let table ← Snapshots.new
+  let snapshots ←
+    texts.mapM fun text => do
+        table.add (← (← Ffi.Document.new text).snapshot)
+  return (← DisplayRecorder.new cells table.reader, table, snapshots)
+
+/-- Runs a property of the display interface's contract against a recorder
+in `cells` over real snapshots of the property's texts. -/
+def runOnRecorder (cells : Display.Cells) (property : DisplayContract.Property) :
+    IO (Except DisplayError Bool) := do
+  let (recorder, _, snapshots) ← recorderOver cells property.texts
+  (property.holds snapshots).runWith recorder.handle
+
+/-- The names of the display interface's contract properties that do not
+hold of the recorder over real snapshots, at each of `displayCells`. -/
+def displayFailures : IO (List String) :=
+  displayCells.flatMapM fun cells => do
+    let failed ← DisplayContract.failures (runOnRecorder cells) (DisplayContract.properties cells)
+    return failed.map
+        (s!"the display recorder in cells of {cells.advance} by {cells.lineHeight}: {·}")
+
+/-- A scene with no views, for the recorder's checks. -/
+def emptyScene : Scene :=
+  { size := ⟨640, 480⟩, views := #[], focused := none, echo := "published", pending := ""
+    preedit := some "ka" }
+
+/-- What only the recorder shows: what it keeps of a publish, and that it
+reads the table it was given as the table is when it is asked. -/
+def recorderChecks : List Check :=
+  [{  name :=
+        "the recorder has no scene before a publish, and the scene published after one, counted"
+      run := do
+        let (recorder, _, _) ← recorderOver { advance := 1, lineHeight := 1 } #[]
+        let before ← recorder.last?
+        let published ← (Display.publish emptyScene).runWith recorder.handle
+        return before.isNone && published matches .ok () && (← recorder.last?) == some emptyScene &&
+            (← recorder.published) == 1 },
+    { name :=
+        "a query of a snapshot released from the table the recorder reads is refused with noSuchSnapshot"
+      run := do
+        let (recorder, table, snapshots) ← recorderOver { advance := 1, lineHeight := 1 } #["ab"]
+        let snapshot := snapshots[0]?.getD ⟨0⟩
+        let query : Display.RowsQuery := { snapshot, width := 4, height := 1, anchor := 0 }
+        let before ← (Display.rowsShown query).runWith recorder.handle
+        discard <| table.release snapshot
+        let after ← (Display.rowsShown query).runWith recorder.handle
+        return (match before with
+            | .ok rows => rows == #[⟨0, 2⟩]
+            | .error _ => false) &&
+            match after with
+            | .error .noSuchSnapshot => true
+            | _ => false }]
+
 end ContractTest
 
 /-- Runs the text port's contract against its real binding, then the job
@@ -733,18 +806,23 @@ def main : IO UInt32 := do
   let fileChecks := ContractTest.fileChecks completions
   let fileCheckFailed ← ContractTest.checkFailures fileChecks
   let caseFailed ← ContractTest.caseFailures completions
+  let displayFailed ← ContractTest.displayFailures
+  let recorderChecks := ContractTest.recorderChecks
+  let recorderFailed ← ContractTest.checkFailures recorderChecks
   Editor.Ffi.quit
   let pumpEnded ← ContractTest.eventually (IO.hasFinished pump)
   let failed :=
     textFailed.map (s!"the real text binding: {·}") ++ jobFailed ++ fileFailed ++ checkFailed ++
       fileCheckFailed ++
       caseFailed ++
+      displayFailed ++
+      recorderFailed ++
       if pumpEnded then [] else ["quit ends the completion pump"]
   for name in failed do
     IO.eprintln s!"FAILED: {name}"
   unless failed.isEmpty do
     IO.Process.exit 1
   IO.println
-      s!"contract-test: {properties.length + adoptProperties.length} properties hold of the real text binding, {cases.length} cases of the undo tree hold over it, and its documents and snapshots are freed when released and with its table; {Editor.JobContract.properties.length} properties hold of the job runner over the timer service, and {Editor.JobContract.fileProperties.length} file properties over the file service, on real files; {checks.length} checks of the timer service passed, {fileChecks.length} of the file service, {Editor.FileCases.cases.length} cases across the text port and the job port hold of the binding and the file service, and quit ended the pump"
+      s!"contract-test: {properties.length + adoptProperties.length} properties hold of the real text binding, {cases.length} cases of the undo tree hold over it, and its documents and snapshots are freed when released and with its table; {Editor.JobContract.properties.length} properties hold of the job runner over the timer service, and {Editor.JobContract.fileProperties.length} file properties over the file service, on real files; {checks.length} checks of the timer service passed, {fileChecks.length} of the file service, {Editor.FileCases.cases.length} cases across the text port and the job port hold of the binding and the file service; {(Editor.DisplayContract.properties { advance := 1, lineHeight := 1 }).length} properties of the display interface hold of the recorder over real snapshots in cells of {ContractTest.displayCells.length} sizes, and {recorderChecks.length} checks of the recorder passed; and quit ended the pump"
   (← IO.getStdout).flush
   IO.Process.exit 0

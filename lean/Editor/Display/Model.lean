@@ -6,8 +6,12 @@ import Editor.Display
 The pure model of the display interface (`Editor/Display.lean`): it records
 every scene published to it, in order, and answers the queries by laying the
 text of a snapshot out in fixed-size cells (`Display.Cells`). It is a model
-for tests, not a copy of layout kept at run time: the editor asks the real
-display every time.
+for tests, not a copy of layout kept at run time: an editor with a window
+asks the real display every time. The one exception is a host with no
+window, which has no layout to ask: there the recorder
+(`Editor/Display/Recorder.lean`) answers each query with this module's rule
+(`DisplayModel.rows`, `DisplayModel.move`), over a model that holds the one
+snapshot the query names.
 
 It sees a snapshot's text through `texts`, which a test fills, and which the
 command loop fills from the text model when it runs both ports together.
