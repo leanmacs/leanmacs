@@ -63,7 +63,18 @@
 //!   inverse is the change set, as values.
 //! - **A position is mapped through a change set with a bias**
 //!   ([`ChangeSet::map`], [`Bias`]), which says whether it stays before or
-//!   goes after text inserted at it. The table is on the method.
+//!   goes after text inserted at it. The table is on the method. Many
+//!   positions are mapped in one walk of the change set by a [`Mapper`]
+//!   ([`ChangeSet::mapper`]), which answers as [`ChangeSet::map`] does.
+//! - **An anchor** ([`Anchor`]) is an offset and a bias: a position that is
+//!   kept where it was in the text by mapping it through each change set
+//!   ([`Anchor::map`]), as an Emacs marker is moved by each edit. Two
+//!   anchors of one bias never pass each other, and one that stays before
+//!   inserted text never passes one that goes after it.
+//! - **A selection is mapped through a change set** ([`Selection::map`])
+//!   by mapping each end as an anchor, with a bias that follows from the
+//!   shape (the table is on the method), and putting the result in the
+//!   selection's form again, so ranges an edit brought together are one.
 //! - **A transaction** ([`Transaction`]) is a change set and, optionally,
 //!   the selection before it and the selection after it. Applying one
 //!   ([`Text::apply`]) is the one way a text changes, and it is all or
@@ -155,9 +166,9 @@
 //! - A second row rule, in which a carriage return alone ends a line, which
 //!   is how a language server counts. The library can count it beside this
 //!   one without the stored text changing.
-//! - Composing transactions, and mapping many positions or a selection
-//!   through a change set in one pass.
-//! - Anchors, a selection type that is more than plain ranges, and undo.
+//! - Composing transactions.
+//! - Anchors a text holds and moves with each transaction, what a
+//!   selection covers, and undo.
 //! - Rebasing a transaction built for an older revision: the log keeps no
 //!   text, so it cannot supply the change sets to rebase through.
 //! - Points in UTF-16 in an edit. A client that speaks them converts with
@@ -179,6 +190,7 @@
 //! | A bound on what an operation costs, the log's growth included | `tests/snapshot_cost.rs`, as a count of bytes allocated | Itself |
 //! | Something more of the rope library | A method of the private `rope::Rope`, in this crate's terms | The tests of the read that needs it |
 
+mod anchor;
 mod bytes;
 mod change;
 mod log;
@@ -190,8 +202,9 @@ mod snapshot;
 mod text;
 mod transaction;
 
+pub use anchor::Anchor;
 pub use bytes::ByteChunks;
-pub use change::{Bias, Change, ChangeSet};
+pub use change::{Bias, Change, ChangeSet, Mapper};
 pub use log::{Attribution, LogEntry, LogError, Origin, Source, Subscription};
 pub use patch::{Edit, InputEdit, Patch, Span};
 pub use point::{Point, PointUtf16};

@@ -6,6 +6,7 @@
 //! are positions of a text is the crate's one check of a selection against
 //! a snapshot.
 
+use crate::change::{Bias, ChangeSet};
 use crate::snapshot::Snapshot;
 
 /// One range of a selection: two byte offsets. The anchor is the end that
@@ -52,17 +53,6 @@ impl SelectionRange {
     }
 }
 
-impl Shape {
-    /// Whether `later`, which starts at or after `earlier`, overlaps it by
-    /// this shape's rule ([`Selection`]).
-    fn overlap(self, earlier: &SelectionRange, later: &SelectionRange) -> bool {
-        match self {
-            Self::Exclusive => later.start() < earlier.end() || later.start() == earlier.start(),
-            Self::Inclusive | Self::Line | Self::Block => later.start() <= earlier.end(),
-        }
-    }
-}
-
 /// What the ranges of a selection cover, given their two ends. A selection
 /// has one shape for all its ranges.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
@@ -78,6 +68,28 @@ pub enum Shape {
     Line,
     /// A rectangle of characters whose corners are the two ends.
     Block,
+}
+
+impl Shape {
+    /// Whether `later`, which starts at or after `earlier`, overlaps it by
+    /// this shape's rule ([`Selection`]).
+    fn overlap(self, earlier: &SelectionRange, later: &SelectionRange) -> bool {
+        match self {
+            Self::Exclusive => later.start() < earlier.end() || later.start() == earlier.start(),
+            Self::Inclusive | Self::Line | Self::Block => later.start() <= earlier.end(),
+        }
+    }
+
+    /// The biases the start and the end of `range` are mapped with in a
+    /// selection of this shape ([`Selection::map`]).
+    fn biases(self, range: &SelectionRange) -> (Bias, Bias) {
+        match self {
+            Self::Exclusive if range.start() < range.end() => (Bias::After, Bias::Before),
+            Self::Exclusive | Self::Inclusive | Self::Line | Self::Block => {
+                (Bias::After, Bias::After)
+            }
+        }
+    }
 }
 
 /// One or more ranges of one shape, one of which is the primary.
@@ -177,6 +189,49 @@ impl Selection {
     /// The index in [`ranges`](Self::ranges) of the primary range.
     pub fn primary(&self) -> usize {
         self.primary
+    }
+
+    /// This selection in the text `changes` makes: every end mapped as an
+    /// anchor is ([`ChangeSet::map`]), and the result put in the form a
+    /// selection is kept in, so ranges an edit brought together are one.
+    /// `None` only when an end is past the length the change set is for.
+    ///
+    /// The bias of each end follows from the shape:
+    ///
+    /// | End | Bias | So that |
+    /// |---|---|---|
+    /// | Both ends of an exclusive range with equal ends (a bar cursor) | [`Bias::After`] | Text another author inserts at the cursor is before it |
+    /// | The start of a non-empty exclusive range | [`Bias::After`] | Text inserted at either edge stays outside the range |
+    /// | The end of a non-empty exclusive range | [`Bias::Before`] | |
+    /// | Both ends in the other shapes | [`Bias::After`] | An end is on a character, and stays on it when text is inserted before it |
+    ///
+    /// The two ends of a non-empty exclusive range are the one pair that
+    /// can pass each other, when everything of the range is replaced at
+    /// once. The range is then a cursor at its mapped start, which is
+    /// after the replacement: where a cursor inside the range goes.
+    pub fn map(&self, changes: &ChangeSet) -> Option<Self> {
+        // The ranges are sorted and apart, so their ends are asked in
+        // rising order: one walk of the change set.
+        let mut mapper = changes.mapper();
+        self.moved(|offset, bias| mapper.map(offset, bias))
+    }
+
+    /// This selection with each end where `map` puts it. `map` is asked
+    /// for the start and then the end of each range, in the order of the
+    /// ranges, each with its bias. `None` when `map` answers nothing for
+    /// an end.
+    fn moved(&self, mut map: impl FnMut(usize, Bias) -> Option<usize>) -> Option<Self> {
+        let mut ranges = Vec::with_capacity(self.ranges.len());
+        for range in &self.ranges {
+            let (start_bias, end_bias) = self.shape.biases(range);
+            let start = map(range.start(), start_bias)?;
+            let end = map(range.end(), end_bias)?;
+            // Ends of two biases can pass each other: the range is then a
+            // cursor at its start.
+            let end = end.max(start);
+            ranges.push(SelectionRange::pointing(start, end, range.is_backward()));
+        }
+        Self::shaped(self.shape, ranges, self.primary)
     }
 
     /// Whether every end of every range is a position of `snapshot`.
@@ -416,6 +471,143 @@ mod tests {
         assert_eq!(built(Shape::Exclusive, &merging, 3).1, 1);
         assert_eq!(built(Shape::Exclusive, &merging, 1).1, 2);
         assert_eq!(built(Shape::Exclusive, &merging, 2).1, 0);
+    }
+
+    /// The ranges, as anchor and head, and the primary of the selection of
+    /// shape `shape` built from `ranges`, after it is mapped through the
+    /// change set that replaces `replaced` with `text` in a text of ten
+    /// bytes.
+    fn moved(
+        shape: Shape,
+        ranges: &[(usize, usize)],
+        primary: usize,
+        replaced: std::ops::Range<usize>,
+        text: &str,
+    ) -> (Vec<(usize, usize)>, usize) {
+        let ranges = ranges
+            .iter()
+            .map(|&(anchor, head)| SelectionRange::new(anchor, head))
+            .collect();
+        let selection = Selection::shaped(shape, ranges, primary).expect("a primary among them");
+        let changes = ChangeSet::replacing(10, replaced, text).expect("a range within ten");
+
+        let mapped = selection.map(&changes).expect("ends within ten");
+
+        assert_eq!(mapped.shape(), shape);
+        let ranges = mapped
+            .ranges()
+            .iter()
+            .map(|range| (range.anchor, range.head))
+            .collect();
+        (ranges, mapped.primary())
+    }
+
+    #[test]
+    fn text_inserted_at_an_exclusive_cursor_is_before_it() {
+        assert_eq!(
+            moved(Shape::Exclusive, &[(4, 4)], 0, 4..4, "XY").0,
+            [(6, 6)]
+        );
+    }
+
+    #[test]
+    fn text_inserted_at_either_edge_of_an_exclusive_range_stays_outside_it() {
+        // At its start: the range moves on, whichever way it points.
+        assert_eq!(
+            moved(Shape::Exclusive, &[(2, 5)], 0, 2..2, "XY").0,
+            [(4, 7)]
+        );
+        assert_eq!(
+            moved(Shape::Exclusive, &[(5, 2)], 0, 2..2, "XY").0,
+            [(7, 4)]
+        );
+        // At its end: the range stays as it was.
+        assert_eq!(
+            moved(Shape::Exclusive, &[(2, 5)], 0, 5..5, "XY").0,
+            [(2, 5)]
+        );
+        assert_eq!(
+            moved(Shape::Exclusive, &[(5, 2)], 0, 5..5, "XY").0,
+            [(5, 2)]
+        );
+        // Inside it: the range grows.
+        assert_eq!(
+            moved(Shape::Exclusive, &[(2, 5)], 0, 3..3, "XY").0,
+            [(2, 7)]
+        );
+    }
+
+    #[test]
+    fn the_ends_of_a_range_on_characters_stay_on_them_when_text_is_inserted_before_them() {
+        for shape in ON_CHARACTERS {
+            // A cursor on the character at 4.
+            assert_eq!(moved(shape, &[(4, 4)], 0, 4..4, "XY").0, [(6, 6)]);
+            // Before the first character: both ends move on.
+            assert_eq!(moved(shape, &[(2, 5)], 0, 2..2, "XY").0, [(4, 7)]);
+            // Before the last character, which is still the last.
+            assert_eq!(moved(shape, &[(2, 5)], 0, 5..5, "XY").0, [(2, 7)]);
+            assert_eq!(moved(shape, &[(5, 2)], 0, 5..5, "XY").0, [(7, 2)]);
+        }
+    }
+
+    #[test]
+    fn an_exclusive_range_wholly_replaced_is_a_cursor_after_the_replacement() {
+        // The range itself, and a range round it, replaced by two bytes.
+        assert_eq!(
+            moved(Shape::Exclusive, &[(2, 5)], 0, 2..5, "XY").0,
+            [(4, 4)]
+        );
+        assert_eq!(
+            moved(Shape::Exclusive, &[(5, 2)], 0, 1..6, "XY").0,
+            [(3, 3)]
+        );
+        // Deleted with nothing in its place: a cursor where it was.
+        assert_eq!(moved(Shape::Exclusive, &[(2, 5)], 0, 1..6, "").0, [(1, 1)]);
+    }
+
+    #[test]
+    fn a_range_on_characters_wholly_replaced_is_a_cursor_after_the_replacement() {
+        for shape in ON_CHARACTERS {
+            assert_eq!(moved(shape, &[(2, 5)], 0, 1..7, "XY").0, [(3, 3)]);
+        }
+    }
+
+    #[test]
+    fn ranges_a_deletion_brings_together_are_one_and_the_primary_is_kept() {
+        // The cursors at 2 and 6 meet when what is between them goes; the
+        // one at 9 stays apart.
+        let given = [(2, 2), (6, 6), (9, 9)];
+        assert_eq!(
+            moved(Shape::Exclusive, &given, 1, 2..6, ""),
+            (vec![(2, 2), (5, 5)], 0)
+        );
+        assert_eq!(
+            moved(Shape::Exclusive, &given, 2, 2..6, ""),
+            (vec![(2, 2), (5, 5)], 1)
+        );
+        // Two ranges whose near ends meet inside the deletion, the primary
+        // pointing backward.
+        assert_eq!(
+            moved(Shape::Inclusive, &[(0, 3), (8, 5)], 1, 2..6, ""),
+            (vec![(4, 0)], 0)
+        );
+    }
+
+    #[test]
+    fn a_selection_with_an_end_past_the_length_the_change_set_is_for_maps_to_nothing() {
+        let changes = ChangeSet::replacing(10, 0..0, "x").expect("a range within ten");
+        let selection = |anchor, head| {
+            Selection::new(
+                vec![SelectionRange::new(0, 1), SelectionRange::new(anchor, head)],
+                0,
+            )
+            .expect("two ranges")
+        };
+
+        assert!(selection(10, 10).map(&changes).is_some());
+        assert_eq!(selection(10, 11).map(&changes), None);
+        assert_eq!(selection(11, 3).map(&changes), None);
+        assert_eq!(selection(usize::MAX, usize::MAX).map(&changes), None);
     }
 
     #[test]

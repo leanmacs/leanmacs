@@ -1,12 +1,12 @@
 //! Properties of selections: the form a selection is kept in, compared
 //! with a reference that merges ranges two at a time.
 
-use editor_text::{Selection, SelectionRange, Shape};
+use editor_text::{Bias, ChangeSet, Selection, SelectionRange, Shape};
 use proptest::collection::vec;
 use proptest::prelude::*;
 use proptest::sample::select;
 
-use crate::check;
+use crate::{check, short_text, walk};
 
 /// Every shape a selection can have.
 pub(crate) const SHAPES: [Shape; 4] = [
@@ -120,6 +120,70 @@ pub(crate) fn in_form(selection: &Selection) -> bool {
         (one + 1..spans.len()).all(|other| !overlap(selection.shape(), spans[one], spans[other]))
     });
     sorted && apart && selection.primary() < spans.len()
+}
+
+/// The reference for mapping: the ends of `selection`'s ranges mapped one
+/// at a time with [`ChangeSet::map`] and the bias its shape gives each, a
+/// non-empty exclusive range whose mapped start is past its mapped end
+/// made a cursor at the mapped start, and the selection built again from
+/// those. `None` when an end maps to nothing.
+pub(crate) fn mapped_one_by_one(selection: &Selection, changes: &ChangeSet) -> Option<Selection> {
+    let shape = selection.shape();
+    let mut ranges = Vec::new();
+    for range in selection.ranges() {
+        let (start, end) = span(range);
+        let end_bias = if shape == Shape::Exclusive && start < end {
+            Bias::Before
+        } else {
+            Bias::After
+        };
+        let start = changes.map(start, Bias::After)?;
+        let end = changes.map(end, end_bias)?;
+        // Only the two ends of a non-empty exclusive range can swap.
+        let end = end.max(start);
+        ranges.push(if backward(range) {
+            SelectionRange::new(end, start)
+        } else {
+            SelectionRange::new(start, end)
+        });
+    }
+    Selection::shaped(shape, ranges, selection.primary())
+}
+
+#[test]
+fn a_mapped_selection_is_its_ends_mapped_and_merged() {
+    check(
+        1024,
+        (short_text(24), walk(), parts(6, usize::MAX)),
+        |(initial, walk, mut parts)| {
+            let changes = walk.changes(&initial);
+            // Ends within the length the change set is for, and now and
+            // then one past it.
+            let reach = changes.len_before() + 1;
+            for (anchor, head) in &mut parts.ranges {
+                let past = usize::from(*anchor % 61 == 0);
+                (*anchor, *head) = (*anchor % reach + past, *head % reach);
+            }
+            let selection = parts.selection();
+            let fits = selection
+                .ranges()
+                .iter()
+                .all(|range| range.end() <= changes.len_before());
+
+            let mapped = selection.map(&changes);
+
+            prop_assert_eq!(mapped.is_some(), fits);
+            prop_assert_eq!(&mapped, &mapped_one_by_one(&selection, &changes));
+            if let Some(mapped) = mapped {
+                prop_assert!(in_form(&mapped), "{:?}", mapped);
+                prop_assert_eq!(mapped.shape(), selection.shape());
+                for range in mapped.ranges() {
+                    prop_assert!(range.end() <= changes.len_after());
+                }
+            }
+            Ok(())
+        },
+    );
 }
 
 #[test]

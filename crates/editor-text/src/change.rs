@@ -310,6 +310,18 @@ impl ChangeSet {
         Some(new)
     }
 
+    /// A mapper through this change set: [`map`](Self::map) for many
+    /// positions in one pass ([`Mapper`]).
+    pub fn mapper(&self) -> Mapper<'_> {
+        Mapper {
+            changes: self,
+            next: 0,
+            old: 0,
+            new: 0,
+            last: 0,
+        }
+    }
+
     /// Whether the change set fits the text of `rope`: it is for the text's
     /// length, and every boundary between two of its changes is a character
     /// boundary of the text.
@@ -360,6 +372,90 @@ impl ChangeSet {
             changes: self.changes.iter().peekable(),
             old: 0,
             new: 0,
+        }
+    }
+}
+
+/// Maps positions through one change set, keeping its place in it
+/// ([`ChangeSet::mapper`]).
+///
+/// [`Mapper::map`] gives what [`ChangeSet::map`] gives, for any offsets in
+/// any order. Asked in rising order, all of them together cost one walk of
+/// the change set, where [`ChangeSet::map`] walks it for each; an offset
+/// lower than the one before starts the walk again.
+#[derive(Debug, Clone)]
+pub struct Mapper<'a> {
+    /// The change set positions are mapped through.
+    changes: &'a ChangeSet,
+    /// The index of the change the walk is at: every earlier one is
+    /// wholly before the last offset asked.
+    next: usize,
+    /// Where that change starts in the text before.
+    old: usize,
+    /// Where that change starts in the text after.
+    new: usize,
+    /// The last offset asked that was within the length.
+    last: usize,
+}
+
+impl Mapper<'_> {
+    /// Where `offset` is in the text the change set makes:
+    /// [`ChangeSet::map`] of the same offset and bias.
+    pub fn map(&mut self, offset: usize, bias: Bias) -> Option<usize> {
+        if offset > self.changes.len_before {
+            return None;
+        }
+        // Every change the walk has passed ends at or before the last
+        // offset asked, and none of them inserts at it. So the walk is
+        // still right for that offset and any later one, and for no
+        // earlier one.
+        if offset < self.last {
+            (self.next, self.old, self.new) = (0, 0, 0);
+        }
+        self.last = offset;
+        let changes = &self.changes.changes;
+        // The change the offset is found in is not passed: a later offset
+        // may be in it too.
+        loop {
+            match changes.get(self.next) {
+                None => return Some(self.new),
+                Some(Change::Retain(len)) => {
+                    let end = self.old.saturating_add(*len);
+                    if offset < end {
+                        return Some(self.new.saturating_add(offset - self.old));
+                    }
+                    self.old = end;
+                    self.new = self.new.saturating_add(*len);
+                    self.next += 1;
+                }
+                Some(Change::Delete(len)) => {
+                    let end = self.old.saturating_add(*len);
+                    if offset < end {
+                        return Some(self.new);
+                    }
+                    self.old = end;
+                    self.next += 1;
+                }
+                Some(Change::Insert(text)) => {
+                    // In the normal form, a delete after an insert is the
+                    // range the insert replaces.
+                    let replaced = match changes.get(self.next + 1) {
+                        Some(Change::Delete(len)) => Some(*len),
+                        _ => None,
+                    };
+                    let end = self.old.saturating_add(replaced.unwrap_or(0));
+                    let after = self.new.saturating_add(text.len());
+                    if offset == self.old || offset < end {
+                        return Some(match bias {
+                            Bias::Before => self.new,
+                            Bias::After => after,
+                        });
+                    }
+                    self.old = end;
+                    self.new = after;
+                    self.next += if replaced.is_some() { 2 } else { 1 };
+                }
+            }
         }
     }
 }
@@ -1021,6 +1117,99 @@ mod tests {
 
         assert!(changes.map(usize::MAX, Bias::After).is_some());
         assert!(changes.map(usize::MAX - 1, Bias::Before).is_some());
+    }
+
+    /// Where a mapper through [`mapped`] maps each of `asked`, in that
+    /// order.
+    fn mapped_in_one_pass(asked: &[(usize, Bias)]) -> Vec<Option<usize>> {
+        let changes = mapped();
+        let mut mapper = changes.mapper();
+        asked
+            .iter()
+            .map(|&(offset, bias)| mapper.map(offset, bias))
+            .collect()
+    }
+
+    #[test]
+    fn a_mapper_asked_in_rising_order_maps_each_offset_as_the_change_set_does() {
+        let asked: Vec<_> = (0..=10).map(|offset| (offset, Bias::Before)).collect();
+        assert_eq!(
+            mapped_in_one_pass(&asked),
+            [0, 1, 2, 5, 6, 6, 9, 10, 10, 10, 11].map(Some)
+        );
+
+        let asked: Vec<_> = (0..=10).map(|offset| (offset, Bias::After)).collect();
+        assert_eq!(
+            mapped_in_one_pass(&asked),
+            [0, 1, 4, 5, 9, 9, 9, 10, 10, 10, 11].map(Some)
+        );
+    }
+
+    #[test]
+    fn a_mapper_asked_a_lower_offset_than_the_last_starts_again() {
+        let asked = [
+            (10, Bias::Before),
+            (2, Bias::After),
+            (5, Bias::Before),
+            (4, Bias::After),
+            (0, Bias::Before),
+            (9, Bias::After),
+        ];
+
+        assert_eq!(mapped_in_one_pass(&asked), [11, 4, 6, 9, 0, 10].map(Some));
+    }
+
+    #[test]
+    fn a_mapper_asked_twice_at_one_offset_answers_each_bias() {
+        let asked = [
+            (2, Bias::Before),
+            (2, Bias::After),
+            (2, Bias::Before),
+            // Past the insertion at 2, and back to it.
+            (3, Bias::Before),
+            (2, Bias::After),
+            (4, Bias::After),
+            (4, Bias::Before),
+            (5, Bias::After),
+            (5, Bias::Before),
+        ];
+
+        assert_eq!(
+            mapped_in_one_pass(&asked),
+            [2, 4, 2, 5, 4, 9, 6, 9, 6].map(Some)
+        );
+    }
+
+    #[test]
+    fn a_mapper_asked_past_the_length_answers_nothing_and_keeps_its_place() {
+        let asked = [
+            (3, Bias::Before),
+            (11, Bias::Before),
+            (usize::MAX, Bias::After),
+            (3, Bias::Before),
+            (10, Bias::After),
+        ];
+
+        assert_eq!(
+            mapped_in_one_pass(&asked),
+            [Some(5), None, None, Some(5), Some(11)]
+        );
+        assert_eq!(ChangeSet::new().mapper().map(0, Bias::After), Some(0));
+        assert_eq!(ChangeSet::new().mapper().map(1, Bias::After), None);
+    }
+
+    #[test]
+    fn a_mapper_through_a_change_set_whose_lengths_saturated_does_not_panic() {
+        let changes = set(&[
+            Change::Retain(usize::MAX),
+            insert("x"),
+            Change::Delete(usize::MAX),
+            Change::Retain(usize::MAX),
+        ]);
+        let mut mapper = changes.mapper();
+
+        assert!(mapper.map(usize::MAX - 1, Bias::Before).is_some());
+        assert!(mapper.map(usize::MAX, Bias::After).is_some());
     }
 
     #[test]

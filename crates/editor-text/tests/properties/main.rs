@@ -32,6 +32,7 @@ use proptest::prelude::*;
 use proptest::sample::select;
 use proptest::test_runner::{Config, RngAlgorithm, TestCaseError, TestRng, TestRunner};
 
+mod anchors;
 mod changes;
 mod log;
 mod selections;
