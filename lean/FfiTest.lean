@@ -1151,6 +1151,19 @@ def windowChecks (_ : Unit) : List Check :=
       run := do
         let ran ← runScripted true
         return ran.waited && ran.result matches some (.ok ()) },
+    { name :=
+        "an input posted as a window would report it arrives on the editor queue as the window's event, stamped, and words that do not read as an input are refused and queue nothing"
+      run := do
+        let words := #[1024, 768, (1.5 : Float).toBits]
+        let short ← Editor.Ffi.postInput .resize 0 "" #[1024, 768]
+        let notWindow ← Editor.Ffi.postInput .message 0 "" #[]
+        let posted ← Editor.Ffi.postInput .resize 0 "" words
+        let some event ← pull .editor | return false
+        return !short && !notWindow && posted && event.source == { kind := .window, id := 1 } &&
+            event.kind == .resize &&
+            event.code == 0 &&
+            event.words == words &&
+            event.stamp > 0 },
     { name := "the input clock is never 0 and does not go back"
       run := do
         let first ← Editor.Ffi.inputClock

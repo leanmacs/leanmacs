@@ -806,6 +806,9 @@ bool editor_ffi_window_run(uint8_t platform, bool composition,
                            editor_ffi_raw_refusal *out);
 bool editor_ffi_window_close(uint8_t platform);
 uint64_t editor_ffi_input_clock_now(void);
+bool editor_ffi_window_post_input(uint8_t kind, uint64_t code,
+                                  const uint8_t *text, size_t text_len,
+                                  const uint8_t *words, size_t words_len);
 
 // `Editor.Ffi.windowRunRaw : Platform → Bool → IO (Option String)`. Blocks in
 // Rust until the window has closed. `none` when the window ran, and `some` of
@@ -833,6 +836,17 @@ lean_obj_res editor_glue_window_close(uint8_t platform) {
 // `Editor.Ffi.inputClock : IO UInt64`
 lean_obj_res editor_glue_input_clock(void) {
   return lean_io_result_mk_ok(lean_box_uint64(editor_ffi_input_clock_now()));
+}
+
+// `Editor.Ffi.postInputRaw : EventKind → UInt64 → @& String → @& ByteArray →
+// IO Bool`. The kind is the tag of Lean's `EventKind`, which the library
+// checks.
+lean_obj_res editor_glue_window_post_input(uint8_t kind, uint64_t code,
+                                           b_lean_obj_arg text,
+                                           b_lean_obj_arg words) {
+  return lean_io_result_mk_ok(lean_box(editor_ffi_window_post_input(
+      kind, code, string_bytes(text), string_len(text), byte_array_bytes(words),
+      byte_array_len(words))));
 }
 
 // ---- The process entry point ----

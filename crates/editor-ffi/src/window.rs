@@ -19,7 +19,7 @@
 //! | `Resized` | `Resize` | 0 | Empty | The width, the height, the scale |
 //! | `CloseRequested` | `CloseRequested` | 0 | Empty | None |
 //!
-//! The words ([`crate::words`]) of each kind that has them:
+//! The words (`words.rs`) of each kind that has them:
 //!
 //! - **Key**: `[logical tag, n, n scalars, physical tag, m, m scalars,
 //!   modifiers]`. The logical tags are 0 unidentified (n is 0), 1 a
@@ -59,12 +59,13 @@ use std::time::Instant;
 
 use editor_platform::{
     Button, CannotOpen, Composition, Input, Key, LogicalKey, Modifiers, PhysicalKey, Platform,
-    Pointer, PointerAction, Report, ScriptedPlatform, WheelDelta, WindowOptions,
+    Pointer, PointerAction, Report, Resize, ScriptedPlatform, WheelDelta, WindowOptions,
 };
 use editor_platform_winit::WinitPlatform;
 
 use crate::events::{Event, EventKind, Queue, QueueId, Source, SourceKind};
 use crate::main_thread::{self, Reply, Request};
+use crate::words::Reader;
 use crate::{text, words};
 
 /// The number of the process's one window: the id of the window source its
@@ -329,6 +330,181 @@ fn pointer_words(pointer: &Pointer) -> (u64, Vec<u64>) {
     (code, words)
 }
 
+/// The input an event of `kind` with `code`, `text` and the words in
+/// `words` stands for: the inverse of [`event`], so that
+/// `input(event(i))` is `i` for every input `i`.
+///
+/// It trusts nothing it is given (`words.rs`): `None` for a kind no
+/// window reports, a code out of range, words that are not whole words, too
+/// few or left over, an unknown tag, a scalar that is not a `char`, a
+/// modifier bit past the system key's, words that disagree with the code (a
+/// dead bit without a dead key, a wheel without a delta), or text where the
+/// table has none.
+pub fn input(kind: EventKind, code: u64, text: &str, words: &[u8]) -> Option<Input> {
+    let mut reader = Reader::new(words)?;
+    let no_text = || text.is_empty().then_some(());
+    let input = match kind {
+        EventKind::Quit | EventKind::Message | EventKind::Completion => return None,
+        EventKind::WindowOpened => {
+            (code == 0).then_some(())?;
+            Input::Opened {
+                platform: text.to_owned(),
+            }
+        }
+        EventKind::WindowFocus => {
+            no_text()?;
+            Input::Focus(match code {
+                0 => false,
+                1 => true,
+                _ => return None,
+            })
+        }
+        EventKind::Key => Input::Key(read_key(&mut reader, code, text)?),
+        EventKind::Composition => Input::Composition(match code {
+            0 => no_text().map(|()| Composition::Enabled)?,
+            1 => Composition::Preedit(text.to_owned()),
+            2 => Composition::Commit(text.to_owned()),
+            3 => no_text().map(|()| Composition::Disabled)?,
+            _ => return None,
+        }),
+        EventKind::Pointer => {
+            no_text()?;
+            Input::Pointer(read_pointer(&mut reader, code)?)
+        }
+        EventKind::Resize => {
+            no_text()?;
+            (code == 0).then_some(())?;
+            Input::Resized(Resize {
+                width: reader.word()?,
+                height: reader.word()?,
+                scale: f64::from_bits(reader.word()?),
+            })
+        }
+        EventKind::CloseRequested => {
+            no_text()?;
+            (code == 0).then_some(())?;
+            Input::CloseRequested
+        }
+    };
+    reader.finish()?;
+    Some(input)
+}
+
+/// The modifiers the word `bits` holds; `None` with a bit past the system
+/// key's.
+fn read_modifiers(bits: u64) -> Option<Modifiers> {
+    let all = MODIFIER_SHIFT | MODIFIER_CONTROL | MODIFIER_ALT | MODIFIER_SUPER;
+    (bits & !all == 0).then_some(Modifiers {
+        shift: bits & MODIFIER_SHIFT != 0,
+        control: bits & MODIFIER_CONTROL != 0,
+        alt: bits & MODIFIER_ALT != 0,
+        super_key: bits & MODIFIER_SUPER != 0,
+    })
+}
+
+/// The character the word `word` numbers; `None` unless it is a Unicode
+/// scalar value.
+fn read_char(word: u64) -> Option<char> {
+    char::from_u32(u32::try_from(word).ok()?)
+}
+
+/// A count of scalars and the scalars, as a string.
+fn read_scalars(reader: &mut Reader<'_>) -> Option<String> {
+    let count = reader.count(1)?;
+    (0..count).map(|_| read_char(reader.word()?)).collect()
+}
+
+/// A key's words and its code, as the key that produced `text`.
+fn read_key(reader: &mut Reader<'_>, code: u64, text: &str) -> Option<Key> {
+    let all = KEY_PRESSED | KEY_REPEAT | KEY_DEAD;
+    (code & !all == 0).then_some(())?;
+    let logical = match reader.word()? {
+        LOGICAL_UNIDENTIFIED => (reader.word()? == 0).then_some(LogicalKey::Unidentified)?,
+        LOGICAL_CHARACTER => LogicalKey::Character(read_scalars(reader)?),
+        LOGICAL_NAMED => LogicalKey::Named(read_scalars(reader)?),
+        LOGICAL_DEAD => LogicalKey::Dead(match reader.word()? {
+            0 => None,
+            1 => Some(read_char(reader.word()?)?),
+            _ => return None,
+        }),
+        _ => return None,
+    };
+    let physical = match reader.word()? {
+        PHYSICAL_UNIDENTIFIED => (reader.word()? == 0).then_some(PhysicalKey::Unidentified)?,
+        PHYSICAL_CODE => PhysicalKey::Code(read_scalars(reader)?),
+        _ => return None,
+    };
+    let modifiers = read_modifiers(reader.word()?)?;
+    let dead = matches!(logical, LogicalKey::Dead(_));
+    (dead == (code & KEY_DEAD != 0)).then_some(())?;
+    Some(Key {
+        pressed: code & KEY_PRESSED != 0,
+        repeat: code & KEY_REPEAT != 0,
+        logical,
+        physical,
+        modifiers,
+        text: text.to_owned(),
+    })
+}
+
+/// A pointer's words and its code, as the pointer.
+fn read_pointer(reader: &mut Reader<'_>, code: u64) -> Option<Pointer> {
+    let x = f64::from_bits(reader.word()?);
+    let y = f64::from_bits(reader.word()?);
+    let tag = reader.word()?;
+    let other = reader.word()?;
+    let button = match tag {
+        0 => None,
+        1 => Some(Button::Primary),
+        2 => Some(Button::Secondary),
+        3 => Some(Button::Middle),
+        4 => Some(Button::Back),
+        5 => Some(Button::Forward),
+        BUTTON_OTHER => Some(Button::Other(u16::try_from(other).ok()?)),
+        _ => return None,
+    };
+    (tag == BUTTON_OTHER || other == 0).then_some(())?;
+    let modifiers = read_modifiers(reader.word()?)?;
+    let delta = [reader.word()?, reader.word()?, reader.word()?];
+    let (dx, dy) = (f64::from_bits(delta[1]), f64::from_bits(delta[2]));
+    let action = match (code, delta[0]) {
+        (POINTER_PRESS | POINTER_DRAG | POINTER_RELEASE, WHEEL_NONE) => {
+            (delta[1] == 0 && delta[2] == 0).then_some(())?;
+            match code {
+                POINTER_PRESS => PointerAction::Press,
+                POINTER_DRAG => PointerAction::Drag,
+                _ => PointerAction::Release,
+            }
+        }
+        (POINTER_WHEEL, WHEEL_LINES) => PointerAction::Wheel(WheelDelta::Lines { x: dx, y: dy }),
+        (POINTER_WHEEL, WHEEL_PIXELS) => PointerAction::Wheel(WheelDelta::Pixels { x: dx, y: dy }),
+        _ => return None,
+    };
+    Some(Pointer {
+        action,
+        x,
+        y,
+        button,
+        modifiers,
+    })
+}
+
+/// Reads an input of `kind` with `code`, `text` and `words` ([`input`]) and
+/// pushes the event it is onto `queue` from the window source, stamped with
+/// `clock`'s reading: what a window does when it reports that input. Returns
+/// whether the event was queued: false, queueing nothing, when the words do
+/// not read as an input or the queue has been quit.
+pub fn post_input(
+    queue: &Queue,
+    clock: &impl InputClock,
+    kind: EventKind,
+    code: u64,
+    text: &str,
+    words: &[u8],
+) -> bool {
+    input(kind, code, text, words).is_some_and(|input| queue.push(event(input, clock.now_ns())))
+}
+
 /// Runs `platform`'s window on the calling thread, opened as `options` say,
 /// until the platform is asked to close, and pushes each thing the window
 /// reports onto `queue`, stamped with `clock`'s reading when it was
@@ -502,6 +678,42 @@ pub extern "C" fn editor_ffi_window_close(platform: u8) -> bool {
     };
     platform.platform().close();
     true
+}
+
+/// Posts to the editor queue the event the process's window would push if
+/// it reported the input that an event of the kind tagged `kind`, with
+/// `code`, `text` and `words`, stands for ([`input`]): from the window
+/// source, stamped on the process's input clock. It takes the same encoding
+/// path a real window does, for tests and for the headless driver.
+///
+/// Returns false, queueing nothing, if `kind` names no kind, if the words
+/// do not read as an input of that kind, or if the queue has been quit.
+/// `text` is read as an event's posted text is (U+FFFD for each invalid
+/// sequence).
+///
+/// # Safety
+///
+/// `text` points to `text_len` readable bytes, and `words` to `words_len`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn editor_ffi_window_post_input(
+    kind: u8,
+    code: u64,
+    text: *const u8,
+    text_len: usize,
+    words: *const u8,
+    words_len: usize,
+) -> bool {
+    let Some(kind) = EventKind::from_tag(u64::from(kind)) else {
+        return false;
+    };
+    // SAFETY: the caller guarantees both pointers and their lengths.
+    let (text, words) = unsafe {
+        (
+            text::borrow(text, text_len),
+            words::borrow(words, words_len),
+        )
+    };
+    post_input(QueueId::Editor.queue(), &CLOCK, kind, code, &text, words)
 }
 
 /// The time on the process's input clock, in nanoseconds since the clock
@@ -911,6 +1123,255 @@ mod tests {
         ] {
             assert_eq!(encoded(input).3, Vec::<u64>::new());
         }
+    }
+
+    /// One of each row of the table in the module docs, and of each value
+    /// in a row's words: every input `input` must read back from its event.
+    fn every_kind_of_input() -> Vec<Input> {
+        let pointer = |action, button| {
+            Input::Pointer(Pointer {
+                action,
+                x: 12.5,
+                y: -3.25,
+                button,
+                modifiers: held(false, true, false, true),
+            })
+        };
+        vec![
+            Input::Opened {
+                platform: "scripted".into(),
+            },
+            Input::Focus(true),
+            Input::Focus(false),
+            Input::Key(Key {
+                pressed: true,
+                repeat: false,
+                logical: LogicalKey::Character("é😀".into()),
+                physical: PhysicalKey::Code("KeyA".into()),
+                modifiers: held(true, true, false, false),
+                text: "é😀".into(),
+            }),
+            Input::Key(Key {
+                pressed: true,
+                repeat: true,
+                logical: LogicalKey::Named("Escape".into()),
+                physical: PhysicalKey::Code("Escape".into()),
+                modifiers: held(true, true, true, true),
+                text: String::new(),
+            }),
+            Input::Key(Key {
+                pressed: true,
+                logical: LogicalKey::Dead(Some('´')),
+                ..Key::unidentified()
+            }),
+            Input::Key(Key {
+                logical: LogicalKey::Dead(None),
+                ..Key::unidentified()
+            }),
+            Input::Key(Key::unidentified()),
+            Input::Composition(Composition::Enabled),
+            Input::Composition(Composition::Preedit("´".into())),
+            Input::Composition(Composition::Commit("é".into())),
+            Input::Composition(Composition::Disabled),
+            pointer(PointerAction::Press, Some(Button::Primary)),
+            pointer(PointerAction::Drag, Some(Button::Secondary)),
+            pointer(PointerAction::Release, Some(Button::Middle)),
+            pointer(PointerAction::Press, Some(Button::Back)),
+            pointer(PointerAction::Press, Some(Button::Forward)),
+            pointer(PointerAction::Press, Some(Button::Other(u16::MAX))),
+            pointer(
+                PointerAction::Wheel(WheelDelta::Lines { x: 0.0, y: -1.5 }),
+                None,
+            ),
+            pointer(
+                PointerAction::Wheel(WheelDelta::Pixels { x: 7.0, y: 0.5 }),
+                None,
+            ),
+            Input::Resized(Resize {
+                width: 800,
+                height: 600,
+                scale: 2.0,
+            }),
+            Input::CloseRequested,
+        ]
+    }
+
+    /// The input `kind`, `code`, `text` and `words` read back as.
+    fn read(kind: EventKind, code: u64, text: &str, words: &[u64]) -> Option<Input> {
+        input(kind, code, text, &crate::words::tests::buffer(words))
+    }
+
+    /// The input `event` reads back as.
+    fn read_back(event: &Event) -> Option<Input> {
+        read(event.kind, event.code, &event.text, &event.words)
+    }
+
+    #[test]
+    fn every_input_reads_back_from_its_event() {
+        for expected in every_kind_of_input() {
+            let event = event(expected.clone(), 0);
+
+            assert_eq!(read_back(&event), Some(expected));
+        }
+    }
+
+    #[test]
+    fn words_that_are_not_whole_words_are_refused() {
+        let event = event(Input::Key(Key::unidentified()), 0);
+        let mut bytes = crate::words::tests::buffer(&event.words);
+        bytes.pop();
+
+        assert_eq!(input(EventKind::Key, 0, "", &bytes), None);
+    }
+
+    #[test]
+    fn too_few_words_and_words_left_over_are_refused() {
+        for original in every_kind_of_input() {
+            let event = event(original, 0);
+            let mut longer = event.words.clone();
+            longer.push(0);
+
+            assert_eq!(
+                read(event.kind, event.code, &event.text, &longer),
+                None,
+                "{event:?} with a word left over"
+            );
+            if let Some((_, shorter)) = event.words.split_last() {
+                assert_eq!(
+                    read(event.kind, event.code, &event.text, shorter),
+                    None,
+                    "{event:?} a word short"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn a_count_of_scalars_longer_than_the_words_is_refused() {
+        assert_eq!(read(EventKind::Key, 1, "", &[1, u64::MAX, 97]), None);
+    }
+
+    #[test]
+    fn an_unknown_tag_is_refused() {
+        // A logical tag, a physical tag, a button tag and a delta tag past
+        // the last.
+        assert_eq!(read(EventKind::Key, 1, "", &[4, 0, 0, 0, 0]), None);
+        assert_eq!(read(EventKind::Key, 1, "", &[0, 0, 2, 0, 0]), None);
+        let pointer = |button: u64, delta: u64| {
+            read(
+                EventKind::Pointer,
+                3,
+                "",
+                &[0, 0, button, 0, 0, delta, 0, 0],
+            )
+        };
+        assert!(pointer(0, 1).is_some());
+        assert_eq!(pointer(7, 1), None);
+        assert_eq!(pointer(0, 3), None);
+    }
+
+    #[test]
+    fn a_scalar_that_is_not_a_character_is_refused() {
+        // A surrogate, a number past the last scalar value, and one no `u32`
+        // holds.
+        for scalar in [0xD800, 0x11_0000, u64::MAX] {
+            assert_eq!(read(EventKind::Key, 1, "", &[1, 1, scalar, 0, 0, 0]), None);
+            assert_eq!(read(EventKind::Key, 1, "", &[0, 0, 1, 1, scalar, 0]), None);
+            assert_eq!(read(EventKind::Key, 5, "", &[3, 1, scalar, 0, 0, 0]), None);
+        }
+    }
+
+    #[test]
+    fn a_code_out_of_range_is_refused() {
+        assert_eq!(read(EventKind::WindowFocus, 2, "", &[]), None);
+        assert_eq!(read(EventKind::Composition, 4, "", &[]), None);
+        assert_eq!(read(EventKind::Key, 8, "", &[0, 0, 0, 0, 0]), None);
+        assert_eq!(
+            read(EventKind::Pointer, 4, "", &[0, 0, 0, 0, 0, 0, 0, 0]),
+            None
+        );
+        assert_eq!(read(EventKind::Resize, 1, "", &[1, 1, 0]), None);
+    }
+
+    #[test]
+    fn words_that_disagree_with_the_code_are_refused() {
+        // The dead bit without a dead key, and a dead key without the bit.
+        assert_eq!(read(EventKind::Key, 5, "", &[0, 0, 0, 0, 0]), None);
+        assert_eq!(read(EventKind::Key, 1, "", &[3, 0, 0, 0, 0]), None);
+        // A wheel with no delta, and a press with one.
+        assert_eq!(
+            read(EventKind::Pointer, 3, "", &[0, 0, 0, 0, 0, 0, 0, 0]),
+            None
+        );
+        assert_eq!(
+            read(EventKind::Pointer, 0, "", &[0, 0, 0, 0, 0, 1, 0, 0]),
+            None
+        );
+        // A press with no delta that still gives one.
+        assert_eq!(
+            read(EventKind::Pointer, 0, "", &[0, 0, 0, 0, 0, 0, 1, 0]),
+            None
+        );
+        // A number for a named button, and a number no button holds.
+        assert_eq!(
+            read(EventKind::Pointer, 0, "", &[0, 0, 1, 5, 0, 0, 0, 0]),
+            None
+        );
+        assert_eq!(
+            read(EventKind::Pointer, 0, "", &[0, 0, 6, 1 << 16, 0, 0, 0, 0]),
+            None
+        );
+        // Modifier bits past the system key's.
+        assert_eq!(read(EventKind::Key, 1, "", &[0, 0, 0, 0, 16]), None);
+    }
+
+    #[test]
+    fn a_kind_no_window_reports_is_refused() {
+        for kind in [EventKind::Quit, EventKind::Message, EventKind::Completion] {
+            assert_eq!(read(kind, 0, "", &[]), None);
+        }
+    }
+
+    #[test]
+    fn posting_an_input_queues_its_window_event_stamped_with_the_clock() {
+        let queue = Queue::new();
+        let clock = CountingClock::new();
+        clock.now_ns();
+        let input = Input::Resized(Resize {
+            width: 1,
+            height: 2,
+            scale: 1.5,
+        });
+        let posted = event(input, 0);
+        let bytes = crate::words::tests::buffer(&posted.words);
+
+        assert!(post_input(
+            &queue,
+            &clock,
+            posted.kind,
+            posted.code,
+            "",
+            &bytes
+        ));
+
+        assert_eq!(queue.next(), posted.stamped(2));
+    }
+
+    #[test]
+    fn posting_malformed_words_queues_nothing() {
+        let queue = Queue::new();
+
+        assert!(!post_input(
+            &queue,
+            &CountingClock::new(),
+            EventKind::Resize,
+            0,
+            "",
+            &crate::words::tests::buffer(&[1, 2])
+        ));
+        queue.quit();
+
+        assert_eq!(queue.next(), Event::quit());
     }
 
     #[test]

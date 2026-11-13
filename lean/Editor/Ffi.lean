@@ -1542,6 +1542,25 @@ no window. -/
 @[extern "editor_glue_window_close"]
 opaque windowClose (platform : Platform) : IO Unit
 
+/-- `postInput` as it crosses: the words as bytes. -/
+@[extern "editor_glue_window_post_input"]
+private opaque postInputRaw (kind : EventKind) (code : UInt64) (text : @& String)
+    (words : @& ByteArray) : IO Bool
+
+/-- Posts to the editor queue the event the process's window would push if it
+reported the input that an event of `kind` with `code`, `text` and `words`
+stands for (the layouts in "The window", in the module docs): the library
+reads the words into its window input and pushes the event it makes of it,
+from the window source, stamped on the input clock. It is the path a real
+window's input takes, for tests and for the headless driver.
+
+`false`, queueing nothing, when `kind` is not a window's, the code is out of
+range, the words do not read as an input of that kind, or the queues have
+been quit. -/
+def postInput (kind : EventKind) (code : UInt64) (text : @& String) (words : Array UInt64) :
+    IO Bool :=
+  postInputRaw kind code text (words.foldl pushWord ByteArray.empty)
+
 /-- The time on the library's input clock, in nanoseconds since the clock
 began: the clock a window's events are stamped on. It never goes back, and
 it is never 0. The time from an event's stamp to this reading is how long the

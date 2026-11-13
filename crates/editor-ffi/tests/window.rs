@@ -17,13 +17,13 @@ use std::sync::mpsc::{self, Receiver};
 use std::thread;
 use std::time::Duration;
 
-use editor_ffi::events::{Event, QueueId, RawEvent, editor_ffi_events_next};
+use editor_ffi::events::{Event, EventKind, QueueId, RawEvent, editor_ffi_events_next};
 use editor_ffi::text::editor_ffi_text_free;
 use editor_ffi::window::{
     self, PlatformId, RawRefusal, SCRIPTED_FAILURE, editor_ffi_input_clock_now,
-    editor_ffi_window_close, editor_ffi_window_run,
+    editor_ffi_window_close, editor_ffi_window_post_input, editor_ffi_window_run,
 };
-use editor_platform::{Input, ScriptedPlatform};
+use editor_platform::{Input, Key, LogicalKey, Modifiers, PhysicalKey, ScriptedPlatform};
 
 /// How long the test waits for something that should happen at once. Only
 /// broken code takes this long, and the test then fails instead of hanging.
@@ -227,7 +227,53 @@ fn the_process_wide_window_reports_on_the_editor_queue_until_it_is_closed() {
     assert!(editor_ffi_window_close(SCRIPTED));
     assert_eq!(done.recv_timeout(DEADLINE), Ok(Ok(())));
 
+    // An input posted as a window would report it arrives on the editor
+    // queue as the window's event, stamped on the input clock; malformed
+    // words are refused and queue nothing.
+    let key = Input::Key(Key {
+        pressed: true,
+        repeat: false,
+        logical: LogicalKey::Named("Escape".into()),
+        physical: PhysicalKey::Code("Escape".into()),
+        modifiers: Modifiers {
+            shift: true,
+            ..Modifiers::default()
+        },
+        text: String::new(),
+    });
+    let posted = window::event(key, 0);
+    let bytes: Vec<u8> = posted.words.iter().flat_map(|w| w.to_le_bytes()).collect();
+    assert!(!post_input(EventKind::Key, posted.code, "", &bytes[..8]));
+    assert!(!post_input(EventKind::Message, 0, "", &[]));
+    assert!(post_input(EventKind::Key, posted.code, "", &bytes));
+    assert_arrives(vec![Seen {
+        source_kind: posted.source.kind.tag(),
+        source_id: posted.source.id,
+        kind: posted.kind.tag(),
+        code: posted.code,
+        text: String::new(),
+        words: posted.words,
+        stamp: 0,
+    }]);
+
     // The input clock does not go back.
     let first = editor_ffi_input_clock_now();
     assert!(first <= editor_ffi_input_clock_now());
+}
+
+/// Posts an input to the editor queue through the C function, as the glue
+/// does.
+fn post_input(kind: EventKind, code: u64, text: &str, words: &[u8]) -> bool {
+    // SAFETY: the pointers and lengths are those of `text` and `words`,
+    // alive for the call.
+    unsafe {
+        editor_ffi_window_post_input(
+            kind.tag() as u8,
+            code,
+            text.as_ptr(),
+            text.len(),
+            words.as_ptr(),
+            words.len(),
+        )
+    }
 }

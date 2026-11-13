@@ -155,7 +155,7 @@ pub struct Event {
     /// Text whose meaning the kind sets.
     pub text: String,
     /// The event's detail, as words whose meaning the kind sets; empty for a
-    /// kind that has none. They cross as words do ([`crate::words`]).
+    /// kind that has none. They cross as words do (`words.rs`).
     pub words: Vec<u64>,
     /// The instant the source says the event happened, in nanoseconds on
     /// the library's input clock ([`crate::window::InputClock`]), or 0 when
@@ -442,7 +442,7 @@ pub struct RawEvent {
     pub text: *mut u8,
     /// The length of `text` in bytes.
     pub text_len: usize,
-    /// The event's words ([`crate::words`]): a buffer of `words_len` bytes,
+    /// The event's words (`words.rs`): a buffer of `words_len` bytes,
     /// owned by the caller until it is handed back, as the text is.
     pub words: *mut u8,
     /// The length of `words` in bytes: eight a word.
