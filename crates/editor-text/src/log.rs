@@ -3,6 +3,7 @@
 
 use std::collections::VecDeque;
 
+use crate::patch::Edit;
 use crate::snapshot::Revision;
 
 /// Who made an edit: an opaque number the caller supplies when it applies a
@@ -32,27 +33,40 @@ impl Origin {
 struct Entry {
     /// Who applied it.
     origin: Origin,
+    /// What it changed: one edit for each run of deletes and inserts
+    /// between two retains, in order.
+    edits: Box<[Edit]>,
 }
 
 /// The entries of one text, oldest first.
 #[derive(Debug, Default)]
 pub(crate) struct Log {
-    /// The entries. The one for the revision `r` is at index `r - 1`, so no
-    /// entry stores its revision.
+    /// The revision the log reaches back to: it holds the entry of every
+    /// later revision and of no other.
+    horizon: Revision,
+    /// The entries. The one for the revision `r` is at index
+    /// `r - horizon - 1`, so no entry stores its revision.
     entries: VecDeque<Entry>,
 }
 
 impl Log {
     /// Records the transaction that produced the next revision.
-    pub(crate) fn record(&mut self, origin: Origin) {
-        self.entries.push_back(Entry { origin });
+    pub(crate) fn record(&mut self, origin: Origin, edits: Box<[Edit]>) {
+        self.entries.push_back(Entry { origin, edits });
     }
 
-    /// The entry of the transaction that produced `revision`. `None` for
-    /// revision 0, which no transaction produced, and for a revision the
-    /// text has not reached.
+    /// The revision the log reaches back to.
+    pub(crate) fn horizon(&self) -> Revision {
+        self.horizon
+    }
+
+    /// The entry of the transaction that produced `revision`. `None` for a
+    /// revision at or before the horizon, which the log holds no entry for
+    /// (revision 0 is one: no transaction produced it), and for a revision
+    /// the text has not reached.
     pub(crate) fn entry(&self, revision: Revision) -> Option<LogEntry<'_>> {
-        let index = usize::try_from(revision.get().checked_sub(1)?).ok()?;
+        let after_horizon = revision.get().checked_sub(self.horizon.get())?;
+        let index = usize::try_from(after_horizon.checked_sub(1)?).ok()?;
         let entry = self.entries.get(index)?;
         Some(LogEntry { revision, entry })
     }
@@ -78,12 +92,176 @@ impl LogEntry<'_> {
     pub fn origin(&self) -> Origin {
         self.entry.origin
     }
+
+    /// What the transaction changed: one edit for each run of deletes and
+    /// inserts between two retains of its change set, in order. The old
+    /// span of an edit is a range of the text before the transaction and
+    /// the new span a range of the text after it. Empty for a transaction
+    /// that changed nothing.
+    pub fn edits(&self) -> &[Edit] {
+        &self.entry.edits
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{ChangeSet, Text, Transaction};
+    use crate::patch::tests::span;
+    use crate::{Change, ChangeSet, Text, Transaction};
+
+    /// Rows with characters of one, two and four bytes and both line
+    /// endings, in 20 bytes. Row 0 is "héllo\r", row 1 starts at 8 and row
+    /// 2 at 15; "é" is the bytes 1 and 2, "ö" 9 and 10, "😀" 15 to 18.
+    const MIXED: &str = "héllo\r\nwörld\n😀x";
+
+    /// An insert of `text`.
+    fn insert(text: &str) -> Change {
+        Change::Insert(text.to_owned())
+    }
+
+    /// The edits the log holds for `changes` applied to a text holding
+    /// [`MIXED`].
+    fn logged(changes: &[Change]) -> Vec<Edit> {
+        let mut text = Text::from(MIXED);
+        let transaction = Transaction::new(changes.iter().cloned().collect());
+        let revision = text.apply(&transaction, Origin::new(1)).expect("it fits");
+        let entry = text.entry(revision).expect("the transaction's entry");
+        entry.edits().to_vec()
+    }
+
+    #[test]
+    fn an_insertion_with_a_line_feed_in_it_is_an_empty_old_range_and_a_new_one_across_rows() {
+        let edits = logged(&[Change::Retain(3), insert("a\nb"), Change::Retain(17)]);
+
+        assert_eq!(
+            edits,
+            [Edit {
+                old: span(3, 3, (0, 3), (0, 3)),
+                new: span(3, 6, (0, 3), (1, 1)),
+            }]
+        );
+    }
+
+    #[test]
+    fn a_deletion_across_a_line_feed_is_an_old_range_across_rows_and_an_empty_new_one() {
+        let edits = logged(&[Change::Retain(5), Change::Delete(4), Change::Retain(11)]);
+
+        assert_eq!(
+            edits,
+            [Edit {
+                old: span(5, 9, (0, 5), (1, 1)),
+                new: span(5, 5, (0, 5), (0, 5)),
+            }]
+        );
+    }
+
+    #[test]
+    fn a_replacement_inside_a_row_is_one_edit_with_both_ranges() {
+        // Pushed as a delete and then an insert: it is still one edit.
+        let edits = logged(&[
+            Change::Retain(11),
+            Change::Delete(2),
+            insert("RLX"),
+            Change::Retain(7),
+        ]);
+
+        assert_eq!(
+            edits,
+            [Edit {
+                old: span(11, 13, (1, 3), (1, 5)),
+                new: span(11, 14, (1, 3), (1, 6)),
+            }]
+        );
+    }
+
+    #[test]
+    fn the_changes_of_one_transaction_are_one_edit_each_in_the_coordinates_of_both_texts() {
+        // The text becomes "héa\nbllöRLXd\n😀x": row 1 starts at 5.
+        let edits = logged(&[
+            Change::Retain(3),
+            insert("a\nb"),
+            Change::Retain(2),
+            Change::Delete(4),
+            Change::Retain(2),
+            insert("RLX"),
+            Change::Delete(2),
+            Change::Retain(7),
+        ]);
+
+        assert_eq!(
+            edits,
+            [
+                Edit {
+                    old: span(3, 3, (0, 3), (0, 3)),
+                    new: span(3, 6, (0, 3), (1, 1)),
+                },
+                // The second and the third start at different offsets and
+                // points in the two texts.
+                Edit {
+                    old: span(5, 9, (0, 5), (1, 1)),
+                    new: span(8, 8, (1, 3), (1, 3)),
+                },
+                Edit {
+                    old: span(11, 13, (1, 3), (1, 5)),
+                    new: span(10, 13, (1, 5), (1, 8)),
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn edits_at_the_start_and_at_the_end_of_the_text_are_recorded() {
+        let edits = logged(&[Change::Delete(1), Change::Retain(19), insert("\n")]);
+
+        assert_eq!(
+            edits,
+            [
+                Edit {
+                    old: span(0, 1, (0, 0), (0, 1)),
+                    new: span(0, 0, (0, 0), (0, 0)),
+                },
+                Edit {
+                    old: span(20, 20, (2, 5), (2, 5)),
+                    new: span(19, 20, (2, 5), (3, 0)),
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn a_transaction_that_changes_nothing_has_an_entry_with_no_edit() {
+        assert_eq!(logged(&[Change::Retain(20)]), []);
+    }
+
+    #[test]
+    fn replace_records_the_entry_its_transaction_records() {
+        let mut replaced = Text::from(MIXED);
+        replaced
+            .replace(11..13, "RLX")
+            .expect("a range of two positions");
+        let replaced = replaced.entry(Revision(1)).expect("the edit's entry");
+
+        assert_eq!(
+            replaced.edits(),
+            logged(&[
+                Change::Retain(11),
+                insert("RLX"),
+                Change::Delete(2),
+                Change::Retain(7),
+            ])
+        );
+        assert_eq!(replaced.revision(), Revision(1));
+    }
+
+    #[test]
+    fn the_horizon_of_a_text_whose_log_is_whole_is_revision_zero() {
+        let mut text = Text::from(MIXED);
+        assert_eq!(text.horizon(), Revision(0));
+
+        text.replace(0..0, "x").expect("an insert at the start");
+
+        assert_eq!(text.horizon(), Revision(0));
+    }
 
     #[test]
     fn an_origin_gives_back_the_value_it_was_made_with() {

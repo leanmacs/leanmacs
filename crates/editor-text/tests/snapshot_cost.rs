@@ -117,9 +117,10 @@ fn an_edit_after_a_snapshot_copies_a_small_fraction_of_the_text() {
     let (result, counted) = allocated_by(|| text.replace(middle..middle, "x"));
 
     assert_eq!(result, Ok(()));
-    // Measured: 4,601 bytes. 4,472 are the nodes from the root to one leaf,
+    // Measured: 4,761 bytes. 4,472 are the nodes from the root to one leaf,
     // which the edit copies because the snapshot still holds the old ones;
-    // the rest is the edit's change set and its log entry. With no snapshot
+    // the rest is the edit's change set and its log entry, here the first
+    // of the log, which also allocates the log's queue. With no snapshot
     // held the same edit allocates the same: a transaction is applied to a
     // clone of the tree, which holds the old nodes as a snapshot would.
     // (Before edits were transactions, that was 1,048.) The bound is a

@@ -3,7 +3,9 @@
 //! The crate docs give the rules: what a change is, the one form a change
 //! set is kept in, and when a change set fits a text.
 
+use std::iter::Peekable;
 use std::ops::Range;
+use std::slice;
 
 use crate::rope::Rope;
 use crate::snapshot::Snapshot;
@@ -347,6 +349,56 @@ impl ChangeSet {
                 inserted
             }
         })
+    }
+
+    /// The ranges the change set changes, in order: for each run of deletes
+    /// and inserts between two retains, the range of the text before that
+    /// is replaced and the range of the text after that replaces it. One
+    /// of the two may be empty, and not both.
+    pub(crate) fn runs(&self) -> Runs<'_> {
+        Runs {
+            changes: self.changes.iter().peekable(),
+            old: 0,
+            new: 0,
+        }
+    }
+}
+
+/// The changed ranges of a change set ([`ChangeSet::runs`]).
+pub(crate) struct Runs<'a> {
+    /// The changes not yet walked.
+    changes: Peekable<slice::Iter<'a, Change>>,
+    /// Where the walk is in the text before.
+    old: usize,
+    /// Where the walk is in the text after.
+    new: usize,
+}
+
+impl Iterator for Runs<'_> {
+    type Item = (Range<usize>, Range<usize>);
+
+    fn next(&mut self) -> Option<Self::Item> {
+        // The retains before the run.
+        while let Some(Change::Retain(len)) = self.changes.peek() {
+            self.old = self.old.saturating_add(*len);
+            self.new = self.new.saturating_add(*len);
+            self.changes.next();
+        }
+        let (old_start, new_start) = (self.old, self.new);
+        while let Some(change) = self
+            .changes
+            .next_if(|change| !matches!(change, Change::Retain(_)))
+        {
+            match change {
+                Change::Delete(len) => self.old = self.old.saturating_add(*len),
+                Change::Insert(text) => self.new = self.new.saturating_add(text.len()),
+                Change::Retain(_) => {}
+            }
+        }
+        // In the normal form every change has a length, so a run that has a
+        // change has a range that is not empty.
+        (self.old > old_start || self.new > new_start)
+            .then_some((old_start..self.old, new_start..self.new))
     }
 }
 

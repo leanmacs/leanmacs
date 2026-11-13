@@ -6,6 +6,7 @@ use std::ops::Range;
 
 use crate::change::ChangeSet;
 use crate::log::{Log, LogEntry, Origin};
+use crate::patch::{Edit, Span};
 use crate::rope::Rope;
 use crate::snapshot::{Revision, Snapshot};
 use crate::transaction::{ApplyError, Transaction};
@@ -127,7 +128,18 @@ impl Text {
         {
             return Err(ApplyError::BadSelection);
         }
-        self.log.record(origin);
+        // The old points are read from the text as it is and the new ones
+        // from the clone. Every end is a boundary between two changes, which
+        // the fit made a position, so no span is expected to be missing.
+        let mut edits = Vec::with_capacity(changes.runs().count());
+        for (old, new) in changes.runs() {
+            let (Some(old), Some(new)) = (Span::of(&self.current, old), Span::of(&next, new))
+            else {
+                return Err(ApplyError::BadChange);
+            };
+            edits.push(Edit { old, new });
+        }
+        self.log.record(origin, edits.into_boxed_slice());
         self.current = next;
         Ok(self.current.revision)
     }
@@ -137,6 +149,13 @@ impl Text {
     /// and for a revision the text has not reached.
     pub fn entry(&self, revision: Revision) -> Option<LogEntry<'_>> {
         self.log.entry(revision)
+    }
+
+    /// The revision the log reaches back to: the log holds the entry of
+    /// every later revision, and none for this one or an earlier one. 0
+    /// for a log that is whole.
+    pub fn horizon(&self) -> Revision {
+        self.log.horizon()
     }
 }
 

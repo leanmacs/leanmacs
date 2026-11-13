@@ -33,6 +33,7 @@ use proptest::sample::select;
 use proptest::test_runner::{Config, RngAlgorithm, TestCaseError, TestRng, TestRunner};
 
 mod changes;
+mod log;
 
 /// Runs `property` on `cases` values of `strategy`, from a fixed seed, and
 /// panics with the smallest failing value if one fails.
