@@ -1431,7 +1431,7 @@ def eventDecodeChecks (_ : Unit) : List Check :=
             (decodedWindow .pointer 4 (pointerWords 1 0 0)).isNone &&
             (decodedWindow .resize 1 #[1, 1, 0]).isNone) },
     { name :=
-        "malformed words are refused: too few, left over, an unknown tag, a scalar that is not a character, modifier bits past super, a dead bit with no dead key"
+        "malformed words are refused: too few, left over, an unknown tag, a scalar that is not a character, modifier bits past super, a dead bit with no dead key, a named button with a number, a pointer that is not a wheel with a delta"
       run :=
         pure
           ((decodedWindow .key 1 #[1, 1]).isNone &&
@@ -1444,6 +1444,12 @@ def eventDecodeChecks (_ : Unit) : List Check :=
             (decodedWindow .key 5 #[0, 0, 0, 0, 0]).isNone &&
             (decodedWindow .pointer 0 (pointerWords 7 0 0)).isNone &&
             (decodedWindow .pointer 3 (pointerWords 0 0 0)).isNone &&
+            (decodedWindow .pointer 0 (pointerWords 1 9 0)).isNone &&
+            (decodedWindow .pointer 0
+                #[(12.5 : Float).toBits, (40.0 : Float).toBits, 1, 0, 4, 0, 0,
+                  (1.0 : Float).toBits]).isNone &&
+            (decodedWindow .pointer 0
+                #[(12.5 : Float).toBits, (40.0 : Float).toBits, 1, 0, 16, 0, 0, 0]).isNone &&
             (decodedWindow .resize 0 #[800, 600]).isNone &&
             (decodedWindow .closeRequested 0 #[1]).isNone) }]
 
@@ -1484,18 +1490,20 @@ def eventChecks (_ : Unit) : List Check :=
             events.head? == some (.windowOpened "scripted") &&
             events.getLast? == some .closeRequested },
     { name :=
-        "a key, each pointer action and a resize posted as a window would come back from the library equal"
+        "a window opened, a focus gained and lost, a key, each composition, each pointer action, a resize and a request to close posted as a window would come back from the library equal"
       run := do
         let events : List Editor.Event :=
-          [.key {
-                logical := .named .escape, physical := .code "Escape"
+          [.windowOpened "x", .focus true, .focus false,
+            .key
+              { logical := .named .escape, physical := .code "Escape"
                 modifiers := { superKey := true } } true "",
-            .key { logical := .character "é", repeated := true } true "é",
+            .key { logical := .character "é", repeated := true } true "é", .compositionEnabled,
+            .preedit "´", .commit "é", .compositionDisabled,
             .pointer (pointerAt .press (some .primary)), .pointer (pointerAt .drag (some .middle)),
             .pointer (pointerAt .release (some (.other 12))),
             .pointer (pointerAt (.wheel (.lines 1 (-2))) none),
             .pointer (pointerAt (.wheel (.pixels 0.25 8)) none),
-            .resize { width := 1920, height := 1080, scale := 1.25 }]
+            .resize { width := 1920, height := 1080, scale := 1.25 }, .closeRequested]
         events.allM fun event => return (← roundTrip event) == some event },
     { name := "an event no window reports is not posted: a message, a completion and a quit"
       run := do
