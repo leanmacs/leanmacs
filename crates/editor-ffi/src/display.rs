@@ -24,6 +24,19 @@
 //! - where a move goes ([`editor_ffi_display_move`]): the position, and the
 //!   goal to pass to the next move, in whole pixels.
 //!
+//! **A scene is published** as words, one string and the list of snapshot
+//! handles its views show ([`editor_ffi_display_publish`]; the layout is
+//! [`WireScene`]'s). The display resolves it (each view's snapshot by its
+//! index; its scroll and selection markers by their numbers, in the
+//! document of that snapshot as it is now, each on its own), lays it out
+//! with the same layout the queries use, and keeps its frame as the
+//! latest: an `Arc<Frame>` behind a lock of its own, which a reader on any
+//! thread clones without waiting for layout ([`Display::latest`]). The
+//! scene is kept as it crossed, and comes back as the same words and string
+//! ([`editor_ffi_display_scene`]); the latest frame comes back as text
+//! ([`editor_ffi_display_frame_text`]) and as each view's rows
+//! ([`editor_ffi_display_frame_rows`]), for tests.
+//!
 //! Pixels cross as whole numbers, as Lean's are; a goal x is passed back
 //! rounded down. What the answers are is layout's rule, pinned by
 //! `editor-layout`'s tests; this module converts and forwards.
@@ -36,14 +49,21 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError, Weak};
 
 use editor_layout::Layout;
+use editor_layout::frame::Frame;
 use editor_layout::query::{Moved, QueryError, RowRange};
 use editor_layout::scene::{Changes, TextKey, TextRef};
 use editor_layout::shaper::fake::CellShaper;
 use editor_text::{Patch, Revision, Text};
 
+use crate::document::RawText;
 use crate::log::RawWords;
 use crate::snapshot::{Snapshot, read_text};
+use crate::text;
 use crate::words::Writer;
+
+mod wire;
+
+pub use wire::{WireScene, WireView};
 
 /// How a display call ended, as it crosses the boundary.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -73,10 +93,16 @@ pub fn text_ref(snapshot: &Snapshot) -> TextRef {
     }
 }
 
-/// Layout behind a handle.
+/// Layout behind a handle, with the last scene published and its frame.
 pub struct Display {
     /// The layout.
     layout: Mutex<Layout<CellShaper>>,
+    /// The last scene published, as it crossed.
+    scene: Mutex<Option<WireScene>>,
+    /// The frame of the last scene published: an empty frame before the
+    /// first. It is behind a lock of its own, held only to swap or clone
+    /// the `Arc`, so whoever takes it never waits for layout.
+    frame: Mutex<Arc<Frame>>,
 }
 
 impl Display {
@@ -88,7 +114,36 @@ impl Display {
                 advance as f32,
                 line_height as f32,
             ))),
+            scene: Mutex::new(None),
+            frame: Mutex::new(Arc::new(Frame::default())),
         }
+    }
+
+    /// Publishes the scene `words` and `strings` spell ([`WireScene`]),
+    /// whose views' snapshots are `snapshots`, by their index: lays it out
+    /// and keeps its frame as the latest. False, keeping what was
+    /// published before, when they spell no scene.
+    pub fn publish(&self, words: &[u8], strings: &str, snapshots: &[&Snapshot]) -> bool {
+        let Some(wire) = WireScene::decode(words, strings) else {
+            return false;
+        };
+        let frame = Arc::new(self.layout().frame(&wire.resolve(snapshots)));
+        *self.frame.lock().unwrap_or_else(PoisonError::into_inner) = frame;
+        *self.scene.lock().unwrap_or_else(PoisonError::into_inner) = Some(wire);
+        true
+    }
+
+    /// The frame of the last scene published.
+    pub fn latest(&self) -> Arc<Frame> {
+        Arc::clone(&self.frame.lock().unwrap_or_else(PoisonError::into_inner))
+    }
+
+    /// The last scene published, as it crossed.
+    pub fn scene(&self) -> Option<WireScene> {
+        self.scene
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone()
     }
 
     /// The layout, locked. A poisoned lock is used as it is: what layout
@@ -223,6 +278,122 @@ pub unsafe extern "C" fn editor_ffi_display_move(
     );
     // SAFETY: the caller guarantees `out` is writable.
     unsafe { out.write(raw) };
+}
+
+/// Publishes the scene the `words_len` bytes of words at `words` and the
+/// `strings_len` bytes of text at `strings` spell, in the layout of
+/// [`WireScene`], whose views' snapshots are the `count` handles at
+/// `snapshots`, by their index: lays it out and keeps its frame. False,
+/// with what was published before kept, when they spell no scene.
+///
+/// # Safety
+///
+/// `display` is a display handle this library handed out and has not taken
+/// back; `words` points to `words_len` readable bytes and `strings` to
+/// `strings_len`; and `snapshots` to `count` snapshot handles this library
+/// handed out and has not taken back (any pointer when `count` is 0).
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn editor_ffi_display_publish(
+    display: *const Display,
+    words: *const u8,
+    words_len: usize,
+    strings: *const u8,
+    strings_len: usize,
+    snapshots: *const *const Snapshot,
+    count: usize,
+) -> bool {
+    // SAFETY: the caller guarantees every pointer, length and handle.
+    unsafe {
+        let words = crate::words::borrow(words, words_len);
+        let strings = text::borrow(strings, strings_len);
+        let handles: Vec<&Snapshot> = if count == 0 {
+            Vec::new()
+        } else {
+            std::slice::from_raw_parts(snapshots, count)
+                .iter()
+                .map(|&handle| &*handle)
+                .collect()
+        };
+        (*display).publish(words, &strings, &handles)
+    }
+}
+
+/// Fills `out` with the latest frame as text ([`Frame::describe`]).
+///
+/// # Safety
+///
+/// `display` is a display handle this library handed out and has not taken
+/// back, and `out` points to a writable [`RawText`].
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn editor_ffi_display_frame_text(display: *const Display, out: *mut RawText) {
+    // SAFETY: the caller guarantees the handle.
+    let described = unsafe { &*display }.latest().describe();
+    let (text, text_len) = text::lend(described);
+    // SAFETY: the caller guarantees `out` is writable.
+    unsafe { out.write(RawText { text, text_len }) };
+}
+
+/// Fills `out` with the rows the view with the id `view` shows in the
+/// latest frame: their count, then a start and a stop for each; or with the
+/// status 1 when the frame has no such view.
+///
+/// # Safety
+///
+/// As [`editor_ffi_display_frame_text`], with `out` a writable
+/// [`RawWords`].
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn editor_ffi_display_frame_rows(
+    display: *const Display,
+    view: u64,
+    out: *mut RawWords,
+) {
+    // SAFETY: the caller guarantees the handle.
+    let frame = unsafe { &*display }.latest();
+    let raw = match frame.views.iter().find(|shown| shown.id.0 == view) {
+        Some(shown) => {
+            let mut writer = Writer::with_capacity(1 + 2 * shown.rows.len());
+            writer.size(shown.rows.len());
+            for row in &shown.rows {
+                writer.size(row.bytes.start);
+                writer.size(row.bytes.end);
+            }
+            RawWords::with_status(DisplayStatus::Done as u64, writer.finish())
+        }
+        None => RawWords::with_status(1, Vec::new()),
+    };
+    // SAFETY: the caller guarantees `out` is writable.
+    unsafe { out.write(raw) };
+}
+
+/// Fills `words` and `strings` with the last scene published as it crossed
+/// ([`WireScene::encode`]), with the status 0; or, before any, `words`
+/// with the status 1 and both empty.
+///
+/// # Safety
+///
+/// As [`editor_ffi_display_frame_text`], with `words` a writable
+/// [`RawWords`] and `strings` a writable [`RawText`].
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn editor_ffi_display_scene(
+    display: *const Display,
+    words: *mut RawWords,
+    strings: *mut RawText,
+) {
+    // SAFETY: the caller guarantees the handle.
+    let scene = unsafe { &*display }.scene();
+    let (status, encoded, text) = match scene {
+        Some(scene) => {
+            let (encoded, text) = scene.encode();
+            (0, encoded, text)
+        }
+        None => (1, Vec::new(), String::new()),
+    };
+    let (text, text_len) = text::lend(text);
+    // SAFETY: the caller guarantees both are writable.
+    unsafe {
+        words.write(RawWords::with_status(status, encoded));
+        strings.write(RawText { text, text_len });
+    }
 }
 
 /// Frees `display`.

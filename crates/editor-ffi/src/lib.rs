@@ -74,6 +74,7 @@
 //! | Option | A presence flag and a value | The function returns whether there is a value and fills the record only if so |
 //! | Byte range | Two scalars | A record of two `u64`: a start and an end, half-open, in bytes ([`text::ByteRange`]) |
 //! | List | *Words*: a buffer of 64-bit numbers, eight bytes each, least significant first, as a pointer and a byte length borrowed for the call. A checked reader takes it apart and refuses a length that is not whole words, a count that runs past the buffer and words left over (the private module `words`) | Words in an owned buffer, pointer and length, in the result record ([`log::RawWords`]); the glue copies it and hands it back with one call to [`text::editor_ffi_text_free`], which frees any buffer the library lent |
+//! | List of handles | A C array of handle pointers and its count, borrowed for the call, which the glue builds from a Lean `Array` of handles; words name a handle by its index in it ([`display::editor_ffi_display_publish`]) | None yet |
 //!
 //! Prefer a few scalar arguments or one record to many calls. No
 //! `extern "C"` function panics: failure is a return value. A function that
@@ -101,7 +102,12 @@
 //! marker out, from [`marker::editor_ffi_document_marker`]; and a selection
 //! in and what it covers out, both as words, in
 //! [`snapshot::editor_ffi_snapshot_extents`]. A refusal with more than one
-//! reason is a status, as a number ([`marker::MarkStatus`]). A document's
+//! reason is a status, as a number ([`marker::MarkStatus`]). A
+//! published scene is the example of a list of handles: words, one string
+//! of every text it holds, and the snapshot handles its views show, which
+//! the words name by index ([`display::editor_ffi_display_publish`], laid
+//! out in [`display::WireScene`]); it comes back as the same words and
+//! string ([`display::editor_ffi_display_scene`]). A document's
 //! kept inverses are the example of scalars in and words out with an
 //! option inside them: a run of revisions and an origin in, as three
 //! numbers, and the revision the inverse produced with the selection it

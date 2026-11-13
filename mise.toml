@@ -150,6 +150,12 @@ run = [
   # printed back with its logical key, physical key and modifiers
   # (`keys-expected`).
   "out=$(.lake/build/bin/editor headless \"$(lean --print-prefix)\" .lake/build/lib/lean ../tests/headless/config ../tests/headless/keys-script) && printf '%s\\n' \"$out\" | diff ../tests/headless/keys-expected -",
+  # The display fixture: the scene `editor-layout`'s own test lays out
+  # (crates/editor-layout/tests/frame_fixture.rs), published from Lean
+  # through the display's real binding, must give the frame checked in at
+  # tests/display/frame.expected; the scene must come back as sent; and a
+  # move asked through the binding must land on the frame's next row.
+  ".lake/build/bin/ffi-test display ../tests/display/frame.expected",
   # The editor's failure statuses. A command line it does not understand is
   # status 2, with the usage on stderr.
   "status=0; .lake/build/bin/editor bogus || status=$?; test \"$status\" -eq 2",

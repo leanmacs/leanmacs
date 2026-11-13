@@ -22,6 +22,17 @@ document behind it, for its edit log, through the snapshot itself.
   accept, so it is refused, or, for a width, a height or a goal, is wider
   than any view: never cut down to one the library would read as another.
 
+**Publishing** sends the scene as words, one string and the snapshot
+handles its views show (`encode`; the layout is
+`crates/editor-ffi/src/display/wire.rs`'s), and the library lays it out and
+keeps the frame. A view's scroll anchor and selections go as their markers'
+numbers, which the library reads in the document of the view's snapshot as
+it is when the scene arrives. The library cannot tell whose number it is
+given, so a view whose markers are not all of one text is sent with no
+scroll marker and no selection, and is shown from its start. A document
+gone by then (released) resolves nothing either; the text binding keeps
+every document a command can name alive.
+
 It is never imported by `Editor` or by anything `model-test` reaches: it
 links the Rust library. `contract-test` holds it to the display contract
 (`Editor/Display/Contract.lean`), and `ffi-test display` to the fixture
@@ -71,9 +82,111 @@ def move (real : RealDisplay) (query : Display.MoveQuery) :
   | none =>
     return .error .badPosition
 
+/-- The library's tag of a cursor shape. -/
+def shapeTag : CursorShape → UInt64
+  | .block => 0
+  | .bar => 1
+  | .underline => 2
+  | .hollow => 3
+
+/-- A scene as it crosses to the library (the layout is
+`crates/editor-ffi/src/display/wire.rs`'s): words, one string of every text
+in it, and the snapshot handles its views show, which the words name by
+index. -/
+structure Encoded where
+  /-- The words. -/
+  words : Array UInt64
+  /-- The string. -/
+  strings : String
+  /-- The snapshot handles. -/
+  snapshots : Array Ffi.Snapshot
+
+/-- The numbers of `view`'s scroll marker and selection markers, when they
+are all markers of one text. Otherwise `none`: the library resolves a
+number in the document of the view's snapshot and cannot tell whose it is,
+so the view is sent from its text's start with no selection. -/
+def markers (view : View) : Option (UInt64 × Array UInt64) :=
+  if view.selections.all (·.text == view.scroll.text) then
+    some (RealTexts.word view.scroll.index, view.selections.map (RealTexts.word ·.index))
+  else none
+
+/-- Adds a text's length to `words` and the text to `strings`. -/
+def pushText (encoded : Encoded) (text : String) : Encoded :=
+  { encoded with
+    words := encoded.words.push text.utf8ByteSize.toUInt64
+    strings := encoded.strings ++ text }
+
+/-- Adds an optional number: its presence, then it or 0. -/
+def pushOptional (words : Array UInt64) : Option UInt64 → Array UInt64
+  | some value => words.push 1 |>.push value
+  | none => words.push 0 |>.push 0
+
+/-- `view` added to `encoded`: its snapshot, found in the table, as the
+next handle when the table holds it. -/
+def encodeView (real : RealDisplay) (encoded : Encoded) (view : View) : IO Encoded := do
+  let snapshot ← real.snapshots.find? view.snapshot
+  let index := snapshot.map fun _ => encoded.snapshots.size.toUInt64
+  let snapshots :=
+    match snapshot with
+    | some found => encoded.snapshots.push found
+    | none => encoded.snapshots
+  let (scroll, selections) :=
+    match markers view with
+    | some (scroll, selections) => (some scroll, selections)
+    | none => (none, #[])
+  let rect := view.rect
+  let words :=
+    #[RealTexts.word view.id.index, RealTexts.word rect.x, RealTexts.word rect.y,
+      RealTexts.word rect.width, RealTexts.word rect.height]
+  let words := pushOptional (pushOptional words index) scroll
+  let words := (words.push selections.size.toUInt64 ++ selections).push (shapeTag view.cursor.shape)
+  let mut encoded :=
+    pushText
+      { encoded with
+        words := encoded.words ++ words, snapshots }
+      view.cursor.face.name
+  encoded := { encoded with words := encoded.words.push view.decorations.size.toUInt64 }
+  for decoration in view.decorations do
+    encoded :=
+      pushText
+        { encoded with
+          words :=
+            encoded.words.push (RealTexts.word decoration.start) |>.push
+              (RealTexts.word decoration.stop) }
+        decoration.face.name
+  encoded := { encoded with words := encoded.words.push view.status.size.toUInt64 }
+  for field in view.status do
+    encoded :=
+      { encoded with
+        words :=
+          encoded.words.push field.text.utf8ByteSize.toUInt64 |>.push
+            field.face.name.utf8ByteSize.toUInt64
+        strings := encoded.strings ++ field.text ++ field.face.name }
+  return encoded
+
+/-- `scene` as it crosses to the library. A view whose snapshot the table
+does not hold is sent with none, and shows nothing. -/
+def encode (real : RealDisplay) (scene : Scene) : IO Encoded := do
+  let words :=
+    pushOptional #[RealTexts.word scene.size.width, RealTexts.word scene.size.height]
+      (scene.focused.map (RealTexts.word ·.index))
+  let encoded :=
+    pushText (pushText { words, strings := "", snapshots := #[] } scene.echo) scene.pending
+  let encoded := { encoded with words := encoded.words.push scene.preedit.isSome.toUInt64 }
+  let encoded := pushText encoded (scene.preedit.getD "")
+  let encoded := { encoded with words := encoded.words.push scene.views.size.toUInt64 }
+  scene.views.foldlM real.encodeView encoded
+
+/-- Publishes `scene` to the library. Words this binding wrote that the
+library cannot read are an error: they are this binding's mistake. -/
+def publish (real : RealDisplay) (scene : Scene) : IO Unit := do
+  let encoded ← real.encode scene
+  unless ← real.display.publish encoded.words encoded.strings encoded.snapshots do
+    throw (IO.userError "the library could not read a scene's words")
+
 /-- Answers `request` from the library. -/
 def handle (real : RealDisplay) : (request : DisplayRequest) → IO request.Reply
-  | .publish _ => pure ()
+  | .publish scene => real.publish scene
   | .rows query => real.rows query
   | .move query => real.move query
 

@@ -868,6 +868,18 @@ void editor_ffi_display_move(const editor_ffi_display *display,
                              uint64_t width, size_t position, int64_t lines,
                              bool goal_present, uint64_t goal,
                              editor_ffi_raw_words *out);
+bool editor_ffi_display_publish(const editor_ffi_display *display,
+                                const uint8_t *words, size_t words_len,
+                                const uint8_t *strings, size_t strings_len,
+                                const editor_ffi_snapshot *const *snapshots,
+                                size_t count);
+void editor_ffi_display_frame_text(const editor_ffi_display *display,
+                                   editor_ffi_raw_text *out);
+void editor_ffi_display_frame_rows(const editor_ffi_display *display,
+                                   uint64_t view, editor_ffi_raw_words *out);
+void editor_ffi_display_scene(const editor_ffi_display *display,
+                              editor_ffi_raw_words *words,
+                              editor_ffi_raw_text *strings);
 void editor_ffi_display_free(editor_ffi_display *display);
 uint64_t editor_ffi_display_live(void);
 
@@ -928,6 +940,68 @@ lean_obj_res editor_glue_display_move(b_lean_obj_arg display,
                           lean_get_external_data(snapshot), width, position,
                           (int64_t)lines, goal_present, goal, &raw);
   return lean_io_result_mk_ok(raw_words_take(raw));
+}
+
+// `Editor.Ffi.Display.publishRaw : @& Display → @& ByteArray → @& String →
+// @& Array Snapshot → IO Bool`. The snapshots go to Rust as a C array of
+// their pointers, made here for the call: a list of handles.
+lean_obj_res editor_glue_display_publish(b_lean_obj_arg display,
+                                         b_lean_obj_arg words,
+                                         b_lean_obj_arg strings,
+                                         b_lean_obj_arg snapshots) {
+  size_t count = lean_array_size(snapshots);
+  const editor_ffi_snapshot **handles = NULL;
+  if (count != 0) {
+    handles = malloc(count * sizeof *handles);
+    if (handles == NULL) {
+      return lean_io_result_mk_ok(lean_box(false));
+    }
+    for (size_t index = 0; index < count; index++) {
+      handles[index] =
+          lean_get_external_data(lean_array_get_core(snapshots, index));
+    }
+  }
+  bool published = editor_ffi_display_publish(
+      lean_get_external_data(display), byte_array_bytes(words),
+      byte_array_len(words), string_bytes(strings), string_len(strings),
+      handles, count);
+  free(handles);
+  return lean_io_result_mk_ok(lean_box(published));
+}
+
+// `Editor.Ffi.Display.frameText : @& Display → IO String`
+lean_obj_res editor_glue_display_frame_text(b_lean_obj_arg display) {
+  editor_ffi_raw_text raw;
+  editor_ffi_display_frame_text(lean_get_external_data(display), &raw);
+  lean_object *text =
+      lean_mk_string_from_bytes((const char *)raw.text, raw.text_len);
+  editor_ffi_text_free(raw.text, raw.text_len);
+  return lean_io_result_mk_ok(text);
+}
+
+// `Editor.Ffi.Display.frameRowsRaw : @& Display → UInt64 → IO RawWords`
+lean_obj_res editor_glue_display_frame_rows(b_lean_obj_arg display,
+                                            uint64_t view) {
+  editor_ffi_raw_words raw;
+  editor_ffi_display_frame_rows(lean_get_external_data(display), view, &raw);
+  return lean_io_result_mk_ok(raw_words_take(raw));
+}
+
+// `Editor.Ffi.Display.sceneRaw : @& Display → IO RawScene`
+lean_obj_res editor_glue_display_scene(b_lean_obj_arg display) {
+  editor_ffi_raw_words words;
+  editor_ffi_raw_text strings;
+  editor_ffi_display_scene(lean_get_external_data(display), &words, &strings);
+  // `RawScene`: the object fields `words` and `strings`, then `status`.
+  lean_object *scene = lean_alloc_ctor(0, 2, sizeof(uint64_t));
+  lean_ctor_set(scene, 0, byte_array_copy(words.words, words.len));
+  lean_ctor_set(
+      scene, 1,
+      lean_mk_string_from_bytes((const char *)strings.text, strings.text_len));
+  lean_ctor_set_uint64(scene, uint64_field(2, 0), words.status);
+  editor_ffi_text_free(words.words, words.len);
+  editor_ffi_text_free(strings.text, strings.text_len);
+  return lean_io_result_mk_ok(scene);
 }
 
 // ---- The process entry point ----

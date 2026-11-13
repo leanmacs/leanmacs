@@ -1621,6 +1621,21 @@ structure DisplayMoved where
   goal : UInt64
   deriving DecidableEq, Repr
 
+/-- The rows a record of words holds: their count, then a start and a stop
+for each. `none` when its status is not 0. Words that do not spell rows are
+an error. -/
+private def rowsOf? (raw : RawWords) : IO (Option (Array DisplayRow)) := do
+  if raw.status != 0 then
+    return none
+  let some words := wordsOf? raw.words
+    | throw (IO.userError "the library's rows are not whole words")
+  let count := (words[0]?.getD 0).toNat
+  unless words.size == 1 + 2 * count do
+    throw (IO.userError "the library's rows do not spell their count")
+  return some <|
+      (Array.range count).map fun row =>
+        { start := words[1 + 2 * row]!, stop := words[2 + 2 * row]! }
+
 /-- `Display.rows` as it crosses: the answer as words, and its status. -/
 @[extern "editor_glue_display_rows"]
 private opaque Display.rowsRaw (display : @& Display) (snapshot : @& Snapshot)
@@ -1632,17 +1647,7 @@ fewer at the end of the text. `none` when `anchor` is not a position of the
 text. -/
 def Display.rows (display : Display) (snapshot : Snapshot) (width height : UInt64)
     (anchor : USize) : IO (Option (Array DisplayRow)) := do
-  let raw ← display.rowsRaw snapshot width height anchor
-  if raw.status != 0 then
-    return none
-  let some words := wordsOf? raw.words
-    | throw (IO.userError "the library's rows are not whole words")
-  let count := (words[0]?.getD 0).toNat
-  unless words.size == 1 + 2 * count do
-    throw (IO.userError "the library's rows do not spell their count")
-  return some <|
-      (Array.range count).map fun row =>
-        { start := words[1 + 2 * row]!, stop := words[2 + 2 * row]! }
+  rowsOf? (← display.rowsRaw snapshot width height anchor)
 
 /-- `Display.move` as it crosses: the lines as a 64-bit two's complement
 number, the goal as a presence flag and a value, and the answer as words. -/
@@ -1669,5 +1674,61 @@ def Display.move (display : Display) (snapshot : Snapshot) (width : UInt64) (pos
     return some { position, goal }
   | _ =>
     throw (IO.userError "the library's words do not spell a move")
+
+/-- `Display.publish` as it crosses: the words as bytes, the string, and the
+snapshot handles, which the glue passes as a C array. -/
+@[extern "editor_glue_display_publish"]
+private opaque Display.publishRaw (display : @& Display) (words : @& ByteArray)
+    (strings : @& String) (snapshots : @& Array Snapshot) : IO Bool
+
+/-- Publishes the scene `words` and `strings` spell, whose views show the
+`snapshots`, named in the words by their index (the layout is
+`crates/editor-ffi/src/display/wire.rs`'s): the library resolves the
+markers it names in the snapshots' documents, lays it out, and keeps its
+frame. `false`, keeping what was published before, when the words do not
+spell a scene. -/
+def Display.publish (display : Display) (words : Array UInt64) (strings : String)
+    (snapshots : Array Snapshot) : IO Bool :=
+  display.publishRaw (words.foldl pushWord ByteArray.empty) strings snapshots
+
+/-- The latest frame the display laid out, as the library's text of it
+(`Frame::describe` in `crates/editor-layout`): empty before any scene is
+published. -/
+@[extern "editor_glue_display_frame_text"]
+opaque Display.frameText (display : @& Display) : IO String
+
+/-- `Display.frameRows` as it crosses. -/
+@[extern "editor_glue_display_frame_rows"]
+private opaque Display.frameRowsRaw (display : @& Display) (view : UInt64) : IO RawWords
+
+/-- The rows the view numbered `view` shows in the latest frame; `none` when
+the frame has no such view. -/
+def Display.frameRows (display : Display) (view : UInt64) : IO (Option (Array DisplayRow)) := do
+  rowsOf? (← display.frameRowsRaw view)
+
+/-- The last scene published, as the glue builds it: its words, its string,
+and 0, or nothing and 1 before any. Object fields first, so the order here is
+the layout the glue writes. -/
+private structure RawScene where
+  /-- The words. -/
+  words : ByteArray
+  /-- The string. -/
+  strings : String
+  /-- 0 when a scene was published. -/
+  status : UInt64
+
+/-- `Display.scene` as it crosses. -/
+@[extern "editor_glue_display_scene"]
+private opaque Display.sceneRaw (display : @& Display) : IO RawScene
+
+/-- The last scene published, as the library writes it back: the words and
+the string it was sent. `none` before any. -/
+def Display.scene (display : Display) : IO (Option (Array UInt64 × String)) := do
+  let raw ← display.sceneRaw
+  if raw.status != 0 then
+    return none
+  let some words := wordsOf? raw.words
+    | throw (IO.userError "the library's scene is not whole words")
+  return some (words, raw.strings)
 
 end Editor.Ffi

@@ -1,3 +1,4 @@
+import Editor.Display.Real
 import Editor.Event.Queue
 import Editor.Ffi
 import Editor.WindowCheck.Real
@@ -1546,6 +1547,111 @@ def displayChecks (_ : Unit) : List Check :=
             up == some { position := 1, goal := 1 } &&
             inside.isNone }]
 
+/-- Marks `document` with `marker`, and returns its number. -/
+def markIn (document : Editor.Ffi.Document) (marker : Editor.Ffi.Marker) : IO Nat := do
+  match ← document.mark marker with
+  | .ok number =>
+    return number.toNat
+  | .error refusal =>
+    throw (IO.userError s!"the fixture's marker was refused: {repr refusal}")
+
+/-- A selection marker of the one range from `anchor` to `head`. -/
+def rangeMarker (anchor head : UInt64) : Editor.Ffi.Marker :=
+  .selection { ranges := #[{ anchor, head }] }
+
+/-- The display fixture: the scene `crates/editor-layout/tests/frame_fixture.rs`
+lays out, built here through the library's documents and markers and the
+text binding's table of snapshots, and the binding over a display in cells
+8 pixels across and 16 down. Text A is the text of view 1, text B of view
+2, and their snapshots are 0 and 1. The documents come back too: a
+snapshot holds its document weakly, and the library reads the markers in
+the document, so whoever publishes keeps it alive, as the text binding
+does. -/
+def displayFixture : IO (Editor.RealDisplay × Editor.Scene × Array Editor.Ffi.Document) := do
+  let a ← Editor.Ffi.Document.new "fn main() {\n\tlet x = 1;\n}\nabcdefghijklmnopqrstuvwxyz\n"
+  let b ← Editor.Ffi.Document.new "hello\nworld wide web"
+  let marker (text : Nat) (index : Nat) : Editor.MarkerId := { text := ⟨text⟩, index }
+  let scrollA ← markIn a (.anchor { offset := 0, bias := .before })
+  let selectedA ← markIn a (rangeMarker 3 7)
+  let cursorA ← markIn a (rangeMarker 18 18)
+  let scrollB ← markIn b (.anchor { offset := 6, bias := .before })
+  let cursorB ← markIn b (rangeMarker 12 12)
+  let table ← Editor.Snapshots.new
+  let snapshotA ← table.add (← a.snapshot)
+  let snapshotB ← table.add (← b.snapshot)
+  let display ← Editor.Ffi.Display.newCells 8 16
+  let scene : Editor.Scene :=
+    { size := { width := 96, height := 112 }
+      views :=
+        #[{ id := ⟨1⟩, rect := { x := 0, y := 0, width := 96, height := 80 }, snapshot := snapshotA
+            scroll := marker 0 scrollA, selections := #[marker 0 selectedA, marker 0 cursorA]
+            cursor := { shape := .block, face := ⟨"cursor.normal"⟩ }
+            decorations :=
+              #[{ start := 0, stop := 2, face := ⟨"keyword"⟩ },
+                { start := 17, stop := 18, face := ⟨"number"⟩ }]
+            status := #[{ text := "NORMAL", face := ⟨"mode"⟩ }] },
+          { id := ⟨2⟩, rect := { x := 0, y := 80, width := 64, height := 32 }, snapshot := snapshotB
+            scroll := marker 1 scrollB, selections := #[marker 1 cursorB]
+            cursor := { shape := .bar, face := ⟨"cursor.insert"⟩ }, decorations := #[]
+            status := #[] }]
+      focused := some ⟨1⟩, echo := "fixture", pending := "", preedit := none }
+  return ({ display, snapshots := table.reader }, scene, #[a, b])
+
+/-- Publishes the display fixture through the real binding and checks it
+against the frame checked in at `fixture` (`tests/display/frame.expected`),
+which `editor-layout`'s own test lays out from the same scene: the frame's
+text must be the file's; the scene the library writes back must be the
+words and the string it was sent; and for a position on each of three of
+the frame's rows, one of them inside a wrapped line, the position one
+visual line below it, asked through the binding, must be on the frame's
+next row. Returns the names of what did not hold. -/
+def displayChecks' (fixture : String) : IO (List String) := do
+  let expected ← IO.FS.readFile fixture
+  let (real, scene, documents) ← displayFixture
+  let published ← (Editor.Display.publish scene).runReal real
+  let mut failed : List String := []
+  if let .error refusal := published then
+    failed := failed ++ [s!"publishing was refused: {repr refusal}"]
+  if (← real.display.frameText) != expected then
+    failed := failed ++ ["the published frame differs from the fixture"]
+  let encoded ← real.encode scene
+  if (← real.display.scene) != some (encoded.words, encoded.strings) then
+    failed := failed ++ ["the scene the library writes back is not the one it was sent"]
+  let rows := (← real.display.frameRows 1).getD #[]
+  -- The documents are held until here, past the publish.
+  if documents.size != 2 then
+    failed := failed ++ ["the fixture made two documents"]
+  for position in [2, 14, 19] do
+    let some here := rows.findIdx? fun row => row.start.toNat ≤ position ∧ position < row.stop.toNat
+      | failed := failed ++ [s!"no row of the frame holds {position}"]
+    let some next := rows[here + 1]?
+      | failed := failed ++ [s!"the frame has no row below {position}'s"]
+    let moved ←
+      (Editor.Display.linesFrom
+              { snapshot := ⟨0⟩, width := 96, position, lines := 1, goal := none }).runReal
+          real
+    match moved with
+    | .ok moved =>
+      unless next.start.toNat ≤ moved.position ∧ moved.position ≤ next.stop.toNat do
+        failed :=
+          failed ++
+            [s!"one line below {position} is {moved.position}, not on the frame's next row {next.start}..{next.stop}"]
+    | .error refusal =>
+      failed := failed ++ [s!"the move from {position} was refused: {repr refusal}"]
+  return failed
+
+/-- Runs `displayChecks'` on the fixture at `fixture`: exits 0 when all hold,
+and 1 after naming on stderr those that do not. -/
+def displayScenario (fixture : String) : IO UInt8 := do
+  let failed ← displayChecks' fixture
+  for name in failed do
+    IO.eprintln s!"FAILED: {name}"
+  unless failed.isEmpty do
+    return 1
+  IO.println
+      "ffi-test display: the published frame is the fixture, the scene comes back as sent, and three moves land on the frame's next row"
+  return 0
+
 /-- Every check, in the order they run. -/
 def checks (_ : Unit) : List Check :=
   entryChecks () ++ handleChecks () ++ dataChecks () ++ queueChecks () ++ timerChecks () ++
@@ -1699,6 +1805,8 @@ def main (args : List String) : IO UInt32 := do
       IO.Process.exit 1
   | ["shutdown"] =>
     IO.Process.exit (← FfiTest.run "ffi-test shutdown" (FfiTest.shutdownChecks ()))
+  | ["display", fixture] =>
+    IO.Process.exit (← FfiTest.displayScenario fixture)
   | ["exit-while-blocked"] =>
     IO.Process.exit (if ← FfiTest.blockForGood then 0 else 1)
   | ["overflow", sysroot, oleanDir] =>
