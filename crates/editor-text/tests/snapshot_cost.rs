@@ -6,9 +6,13 @@
 //! it changes. A transaction is applied for every keystroke, so it must
 //! copy neither the text nor the log it is recorded in; and a consumer
 //! that pulls what changed across many entries must not pay for each entry
-//! again for every later one. All are counted here with an allocator that
-//! adds up what each thread asks for. A count is the same on every
-//! machine, where a duration is not.
+//! again for every later one. A file is loaded once for a buffer, and must
+//! not be copied a third time on the way to the rope. All are counted here
+//! with an allocator that adds up what each thread asks for. A count is
+//! the same on every machine, where a duration is not.
+//!
+//! The file costs are counted on the published fake of the file port, used
+//! as a caller would use it: no test here makes a real file.
 //!
 //! This is a test binary of its own because a global allocator is for a
 //! whole binary. The counts are per thread, so the harness running the
@@ -16,8 +20,10 @@
 
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::cell::Cell;
+use std::path::Path;
 
-use editor_text::{Anchor, Bias, ChangeSet, Marker, Origin, Revision, Text, Transaction};
+use editor_text::fs::FakeFs;
+use editor_text::{Anchor, Bias, ChangeSet, Marker, Origin, Revision, Text, Transaction, file};
 
 /// The system allocator, counting the bytes each thread asks it for.
 struct Counting;
@@ -380,4 +386,55 @@ fn a_pull_across_many_entries_allocates_a_bounded_amount_for_each() {
         counted / TRANSACTIONS < 4096,
         "{counted} bytes allocated across {TRANSACTIONS} entries"
     );
+}
+
+/// Where the file the costs are counted on is, in the fake.
+const FILE: &str = "/dir/a megabyte.txt";
+
+/// A megabyte of [`LINE`] with a byte that is not UTF-8 in place of every
+/// thousandth byte: about a thousand of them.
+fn megabyte_with_invalid_bytes() -> Vec<u8> {
+    let mut bytes = megabyte().into_bytes();
+    for byte in bytes.iter_mut().step_by(1000) {
+        *byte = 0xFF;
+    }
+    bytes
+}
+
+#[test]
+fn loading_a_megabyte_allocates_the_bytes_read_and_the_rope_and_no_third_copy() {
+    let string = megabyte();
+    let fs = FakeFs::new();
+    fs.file(FILE, string.as_bytes());
+
+    let (loaded, counted) = allocated_by(|| file::load(&fs, Path::new(FILE), u64::MAX));
+
+    let loaded = loaded.expect("the file loads");
+    assert_eq!(loaded.text.current().len(), string.len());
+    // Measured: 2,205,480 bytes: the bytes the file system hands over
+    // (1,048,580), the rope (1,155,584, which is what `Text::from` of the
+    // same string allocates), and 1,316 bytes of the fake's own record of
+    // the two calls. A copy of the bytes, or of the text, on the way would
+    // be a megabyte more: seen once by hand, with the bytes cloned in
+    // `load`, as 3,254,060. The bound is two and a half megabytes.
+    assert!(counted < LENGTH * 5 / 2, "{counted} bytes allocated");
+    assert!(counted > LENGTH * 2, "{counted} bytes allocated");
+}
+
+#[test]
+fn loading_a_megabyte_with_invalid_bytes_allocates_under_six_megabytes() {
+    let bytes = megabyte_with_invalid_bytes();
+    let fs = FakeFs::new();
+    fs.file(FILE, &bytes);
+
+    let (loaded, counted) = allocated_by(|| file::load(&fs, Path::new(FILE), u64::MAX));
+
+    let loaded = loaded.expect("the file loads");
+    assert_eq!(loaded.text.current().to_bytes(), bytes);
+    // Measured: 5,354,364 bytes: the bytes read, the decoded string, which
+    // grows once past its first size since each invalid byte is four bytes
+    // of text (a megabyte, then two), and the rope. One more copy passes
+    // six megabytes: seen once by hand, with the bytes cloned in `load`, as
+    // 6,402,944.
+    assert!(counted < LENGTH * 6, "{counted} bytes allocated");
 }

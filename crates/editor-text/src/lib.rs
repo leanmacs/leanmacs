@@ -281,8 +281,8 @@
 //!   first wrote it: it is the inverse's.
 //! - Handing back a selection that a later transaction of a run carried,
 //!   when the run's first carried none.
-//! - Reading and writing a file, detecting a file's line ending, and
-//!   refusing a binary file: this crate takes bytes and gives bytes.
+//! - Writing a file. Reading one is [`file::load`], which counts the
+//!   file's line endings and refuses a binary file.
 //!
 //! # Where an addition goes
 //!
@@ -307,6 +307,7 @@ mod bytes;
 mod cell;
 mod change;
 mod extent;
+pub mod file;
 pub mod fs;
 mod inverse;
 mod log;
