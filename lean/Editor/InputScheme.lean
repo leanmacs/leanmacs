@@ -28,6 +28,10 @@ A step returns the next state and the invocation the key completed, if it
 completed one. A scheme also reports the keys of a sequence begun and not
 yet completed (`pending`), for the scene's pending text.
 
+Which keys print text is the same for every scheme (`Key.printed?`): a
+scheme that yields a self-insert for an unbound key asks it what the key
+prints.
+
 ## What every scheme must do
 
 `Editor/InputScheme/Contract.lean` is the contract check every scheme runs:
@@ -47,6 +51,7 @@ test scheme, published for other modules' tests.
 | A new scheme | A value of `InputScheme` in a module of its own, which runs the contract check |
 | Something every scheme must report to the core | A field of `InputScheme`, and a property of the contract |
 | Something one scheme remembers between keys | That scheme's `State`; nothing here |
+| A fact about a key that more than one scheme reads | A function of `Key` here, as `Key.printed?` is |
 
 Pinned by `ModelTest.schemeChecks`, on the test scheme.
 -/
@@ -69,6 +74,15 @@ structure InputScheme where
   /-- The keys of the sequence begun and not yet completed, in order; none
   when no sequence is begun. -/
   pending : State → List Key
+
+/-- The text `key` prints, if it is printable: its logical key is a
+character, and none of control, alt and super is held. It is the key's own,
+so every scheme that yields a self-insert reads it here. -/
+def Key.printed? (key : Key) : Option String :=
+  match key.logical with
+  | .character text =>
+    if key.modifiers.control || key.modifiers.alt || key.modifiers.superKey then none else some text
+  | _ => none
 
 /-- Steps `scheme` from `state` through `keys`, each a key for `view`: the
 state it is left in, and what each key yielded, one entry a key, in order. -/

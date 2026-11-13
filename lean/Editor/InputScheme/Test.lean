@@ -21,9 +21,9 @@ Its rules:
   prefix is pending and yields nothing, and an unbound key drops the prefix
   and yields nothing.
 - **An unbound printable key with nothing pending yields a self-insert**
-  (`selfInsert`), an invocation whose argument is the key's character. A
-  key is printable when its logical key is a character and none of
-  control, alt and super is held.
+  (`selfInsert`), an invocation whose argument is the key's character.
+  Which keys are printable is the scheme interface's (`Key.printed?`): the
+  logical key is a character and none of control, alt and super is held.
 
 ## Where an addition goes
 
@@ -53,14 +53,6 @@ name is this scheme's own. -/
 def selfInsert (text : String) : Invocation :=
   { command := "self-insert", arguments := [.str text] }
 
-/-- The character `key` prints, if it is printable: its logical key is a
-character, and none of control, alt and super is held. -/
-def printed? (key : Key) : Option String :=
-  match key.logical with
-  | .character text =>
-    if key.modifiers.control || key.modifiers.alt || key.modifiers.superKey then none else some text
-  | _ => none
-
 /-- One key of the test scheme: the walk through the keymaps of `view`. A
 key that completes a bound sequence yields its invocation; one that
 continues a prefix is pending; an unbound key drops what was pending and
@@ -71,7 +63,7 @@ def step (maps : ViewId → List (Keymap Binding)) (view : ViewId) (state : Stat
   match Keymap.walk (maps view) state.pending key with
   | (pending, some invocation) => ({ pending }, some invocation)
   | (pending, none) =>
-    if state.pending.isEmpty && pending.isEmpty then ({}, (printed? key).map selfInsert)
+    if state.pending.isEmpty && pending.isEmpty then ({}, key.printed?.map selfInsert)
     else ({ pending }, none)
 
 /-- The test scheme. -/
