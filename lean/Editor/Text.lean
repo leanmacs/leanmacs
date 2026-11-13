@@ -7,7 +7,8 @@ The editor's interface to text storage, in the editor's own terms: make a
 text, insert into it, delete from it, apply a transaction to it, read it,
 take a snapshot of it, ask a text or a snapshot a question, ask a text's
 edit log what changed and who wrote a range, forget the start of that log,
-and release a text or a snapshot. It is deliberately small. The point is the
+mark a text with anchors and selections that every edit moves, and release a
+text or a snapshot. It is deliberately small. The point is the
 pattern every later interface follows:
 
 - the port, here: the requests, the reply to each, and the operations a
@@ -45,15 +46,69 @@ same value runs against the model and against the real binding.
   position. Changes that stop short are refused, not padded, so a
   transaction built for another state of the text is caught where the
   lengths differ.
-- A *selection* is one or more ranges of two offsets and the index of the
-  primary one (`Selection`), kept as given. One with no range, or whose
-  primary names none, is not a selection.
+- A *selection* is one or more ranges of two offsets, an anchor and a head,
+  the index of the primary one, and one shape for them all (`Selection`,
+  `Shape`). One with no range, or whose primary names none, is not a
+  selection.
+- The store keeps a selection in one *form*, whatever it was given: its
+  ranges sorted by where they start (the lower end) and then by
+  where they end, and ranges that overlap made one, from the lowest start
+  to the highest end. In the exclusive shape two ranges overlap when the
+  later starts before the earlier ends, or both start at one offset: two
+  cursors at one place are one, and ranges that only touch stay two. In the
+  other shapes both ends are on characters, so two overlap when the later
+  starts at or before the earlier's end. A merged range points the way the
+  primary did if the primary is one of those it is made of, and otherwise
+  the way the first of them did, in the sorted order (of two that start and
+  end alike, the one given first); a range with equal ends points forward.
+  The primary is the range the one given as primary ended in. A selection
+  is checked against a text in this form: an end of a range that merged
+  into another is no end of the selection.
 - A transaction is refused, in this order: with `noSuchText`; with
   `badSelection` when a selection it carries is not one; with `badChange`
   when its changes do not fit; with `badSelection` when an end of the
   selection before is not a position of the text before; and with
   `badSelection` when an end of the selection after is not a position of
   the text after.
+- A *marker* is an anchor or a selection that a text holds (`Marker`,
+  `TextId.mark`), named by a `MarkerId`. An *anchor* is an offset and a
+  bias (`Anchor`, `Bias`). A marker is refused unless it is in the text as
+  it is: with `badPosition` for an anchor whose offset is not a position,
+  and with `badSelection` for a selection that is none or has an end that
+  is not a position. A selection read back (`TextId.marker`) is in the form
+  above.
+- Every accepted edit moves every marker of its text: an insert, a delete
+  or a transaction. A refused edit moves none. Where the edit keeps the
+  text round a position, the position moves with it. Otherwise the bias
+  decides:
+
+  | Where the position is | `before` | `after` |
+  |---|---|---|
+  | Where text is inserted and nothing removed | Stays before the inserted text | Goes after it |
+  | At the start of, or inside, a range that is replaced | The start of the replacement | The end of the replacement |
+  | At the start of, or inside, a range that is removed | Where the range was | The same |
+  | At the end of a removed or replaced range | After the replacement | The same |
+
+  An anchor moves by its own bias. The ends of a selection's ranges move as
+  anchors, and the selection is put in its form again, so ranges an edit
+  brought together are one. Both ends of a range are moved with the bias
+  `after`, but for the higher end of an exclusive range whose ends differ,
+  which is moved with `before`: text inserted at either edge of such a
+  range stays outside it, and text inserted at a cursor is before it. Those
+  two ends are the one pair that can pass each other, when all of the range
+  is replaced at once; the range is then a cursor after the replacement.
+- Two anchors of one bias never pass each other, and one that stays before
+  inserted text never passes one that goes after it. An anchor that goes
+  after and a later one that stays before can swap.
+- A marker id belongs to its text: it is refused with `noSuchMarker` by any
+  other, and once it is given up (`TextId.unmark`), for good. An id is
+  never used again. `TextId.place` puts another marker under an id, of
+  either kind. It is refused, in this order: with `noSuchText`; with
+  `badSelection` for a selection that is none; with `noSuchMarker`; and
+  then as marking is.
+- Marking, placing and giving a marker up are not edits: the revision and
+  the edit log are as they were. A snapshot holds no marker. Releasing a
+  text gives up its markers.
 - An *origin* says who made an edit (`Origin`): a number the editor chooses
   and the store never reads. It is given when a transaction is applied, not
   carried in it. An insert and a delete are the transaction with that one
@@ -185,6 +240,9 @@ inductive TextError where
   /-- The revision is before where the text's edit log starts: the log was
   forgotten up to a later one. -/
   | forgotten
+  /-- The id names no marker of the text: no `TextId.mark` of that text
+  returned it, or the marker was given up. -/
+  | noSuchMarker
   deriving DecidableEq, Repr
 
 /-- The unit a point's column is counted in. -/
@@ -271,14 +329,62 @@ structure SelectionRange where
   head : Nat
   deriving DecidableEq, Repr
 
-/-- A selection, as a transaction carries one: ranges, kept as given, and
-which of them is the primary one. It is one only if it has a range and
-`primary` names one. -/
+/-- What the ranges of a selection cover, given their two ends. -/
+inductive Shape where
+  /-- From the lower end up to, not including, the higher: the ends are
+  between characters. A range with equal ends is a bar cursor. -/
+  | exclusive
+  /-- From the lower end through the character at the higher: both ends are
+  on characters. A range with equal ends is a cursor on one. -/
+  | inclusive
+  /-- The whole rows of both ends and those between them. -/
+  | line
+  /-- A rectangle of characters whose corners are the two ends. -/
+  | block
+  deriving DecidableEq, Repr
+
+/-- A selection: ranges, which of them is the primary one, and the shape
+they all have. It is one only if it has a range and `primary` names one. The
+ranges may be given in any order: the store keeps a selection in one form,
+which the rules of the port give. -/
 structure Selection where
   /-- The ranges. -/
   ranges : Array SelectionRange
   /-- The index in `ranges` of the primary range. -/
   primary : Nat := 0
+  /-- What the ranges cover. -/
+  shape : Shape := .exclusive
+  deriving DecidableEq, Repr
+
+/-- Which side of text inserted at an anchor the anchor stays on. -/
+inductive Bias where
+  /-- The anchor stays before the inserted text. -/
+  | before
+  /-- The anchor goes after the inserted text. -/
+  | after
+  deriving DecidableEq, Repr
+
+/-- A position in a text that moves with every edit: an offset and a bias. -/
+structure Anchor where
+  /-- Where the anchor is: a byte offset. -/
+  offset : Nat
+  /-- Which side of text inserted at the anchor it stays on. -/
+  bias : Bias
+  deriving DecidableEq, Repr
+
+/-- Something a text holds and moves with every edit it accepts. -/
+inductive Marker where
+  /-- One position, moved by its bias. -/
+  | anchor (anchor : Anchor)
+  /-- A selection. Read back, it is in the form the store keeps one in. -/
+  | selection (selection : Selection)
+  deriving DecidableEq, Repr
+
+/-- The name of a marker a text holds. It is plain data, and it belongs to
+the text that gave it out. -/
+structure MarkerId where
+  /-- Which marker: the text's number for it. -/
+  index : Nat
   deriving DecidableEq, Repr
 
 /-- A transaction: the changes to make to a text, and optionally the
@@ -395,6 +501,14 @@ inductive TextRequest where
   | log (text : TextId) (query : LogQuery)
   /-- Forget the edit log of `text` up to `revision`. -/
   | forget (text : TextId) (revision : Nat)
+  /-- Have `text` hold `marker`. -/
+  | mark (text : TextId) (marker : Marker)
+  /-- Read the marker `id` of `text`, where it is now. -/
+  | marker (text : TextId) (id : MarkerId)
+  /-- Put `marker` in place of the marker `id` of `text`. -/
+  | place (text : TextId) (id : MarkerId) (marker : Marker)
+  /-- Give up the marker `id` of `text`. -/
+  | unmark (text : TextId) (id : MarkerId)
 
 /-- The type of the reply to each request: the new text's id for `create`,
 and for the others a refusal or the result. -/
@@ -409,6 +523,10 @@ def TextRequest.Reply : TextRequest → Type
   | .apply .. => Except TextError Nat
   | .log _ query => Except TextError query.Answer
   | .forget .. => Except TextError Unit
+  | .mark .. => Except TextError MarkerId
+  | .marker .. => Except TextError Marker
+  | .place .. => Except TextError Unit
+  | .unmark .. => Except TextError Unit
 
 /-- The text port: `TextRequest` and the reply to each request. -/
 abbrev textPort : Port :=
@@ -495,6 +613,36 @@ before where the log starts already changes nothing. Refused with
 `unknownRevision` for a revision the text has not reached. -/
 def TextId.forget (text : TextId) (revision : Nat) : EditorM Unit :=
   ExceptT.mk (Program.request (port := textPort) (.forget text revision))
+
+/-- Has `text` hold `marker`, and returns the id it is read back by. From
+then on every edit the text accepts moves it, until it is given up.
+
+Refused, holding nothing, with `badSelection` for a selection that is none
+or has an end that is not a position of the text, and with `badPosition`
+for an anchor whose offset is not one. -/
+def TextId.mark (text : TextId) (marker : Marker) : EditorM MarkerId :=
+  ExceptT.mk (Program.request (port := textPort) (.mark text marker))
+
+/-- The marker `id` of `text`, where it is in the text as it is now. A
+selection comes back in the form the store keeps one in. Refused with
+`noSuchMarker` for an id the text holds no marker for. -/
+def TextId.marker (text : TextId) (id : MarkerId) : EditorM Marker :=
+  ExceptT.mk (Program.request (port := textPort) (.marker text id))
+
+/-- Puts `marker` in place of the marker `id` of `text`, which keeps its id:
+the marker is somewhere else, or of the other kind.
+
+Refused, changing nothing, with `badSelection` for a selection that is none,
+with `noSuchMarker` for an id the text holds no marker for, and then as
+`TextId.mark` refuses a marker. That is the order the refusals are looked
+for in. -/
+def TextId.place (text : TextId) (id : MarkerId) (marker : Marker) : EditorM Unit :=
+  ExceptT.mk (Program.request (port := textPort) (.place text id marker))
+
+/-- Gives up the marker `id` of `text`. The id is refused from then on.
+Refused with `noSuchMarker` for an id the text holds no marker for. -/
+def TextId.unmark (text : TextId) (id : MarkerId) : EditorM Unit :=
+  ExceptT.mk (Program.request (port := textPort) (.unmark text id))
 
 /-- The revision of `text`: how many edits it has accepted. -/
 def TextId.revision (text : TextId) : EditorM Nat :=

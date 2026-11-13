@@ -31,6 +31,14 @@ recorded, and walks its entries back. That two such different routes give
 the same patch and the same trace is what the contract checks. The model is
 quadratic and forgets nothing; it runs on texts of tens of bytes.
 
+A text's markers are modelled beside the texts too (`TextModel.markers`):
+one table a text, in which a marker's id is an index. Every accepted edit
+goes through `TextModel.changed`, which moves each marker through the
+ranges the edit changed (`TextModel.mapOffset`): the same runs the text is
+spliced by, and not the library's walk of its changes. The form a selection
+is kept in (`TextModel.normal`) is a sort and one pass over the ranges, on
+plain offsets.
+
 The contract (`Editor/Text/Contract.lean`) is what says the model and the real
 binding agree. A clause added to `TextModel.handle`, to `TextModel.answer` or
 to `TextModel.answerLog` needs its property there.
@@ -87,6 +95,11 @@ structure TextModel where
   beside the texts and not inside them, so that a snapshot, which is a copy
   of a text's content, carries none. -/
   logs : Array TextLog := #[]
+  /-- The markers of each text, in the order the texts were made: a table a
+  text, in which a marker's id is an index and a slot is `none` once its
+  marker has been given up. It is beside the texts for the reason the logs
+  are: a snapshot carries none. -/
+  markers : Array (Array (Option Marker)) := #[]
   deriving Repr
 
 namespace TextModel
@@ -239,14 +252,124 @@ def isSelection : Option Selection → Bool
   | none => true
   | some selection => selection.primary < selection.ranges.size
 
+/-- The lower of the two ends of `range`. -/
+def lower (range : SelectionRange) : Nat :=
+  min range.anchor range.head
+
+/-- The higher of the two ends of `range`. -/
+def higher (range : SelectionRange) : Nat :=
+  max range.anchor range.head
+
+/-- Whether the head of `range` is before its anchor. A range with equal
+ends points forward. -/
+def backward (range : SelectionRange) : Bool :=
+  range.head < range.anchor
+
+/-- The range from `start` to `stop`, with its head at `start` when
+`backward` and at `stop` otherwise. -/
+def pointing (start stop : Nat) (backward : Bool) : SelectionRange :=
+  if backward then ⟨stop, start⟩ else ⟨start, stop⟩
+
+/-- Whether `later`, which starts at or after `earlier`, overlaps it by the
+rule of `shape`. -/
+def overlap (shape : Shape) (earlier later : SelectionRange) : Bool :=
+  match shape with
+  | .exclusive => lower later < higher earlier || lower later == lower earlier
+  | _ => lower later ≤ higher earlier
+
+/-- `selection` in the form the store keeps one in, as the rules of the port
+give it: sorted, ranges that overlap made one, and the primary followed to
+the range it ended in. A selection that is none is returned as it is. -/
+def normal (selection : Selection) : Selection :=
+  if selection.primary < selection.ranges.size then
+    -- Each range with the place it was given at, so the primary can be
+    -- followed. The sort keeps ranges that start and end alike in the order
+    -- they were given in.
+    let given :=
+      selection.ranges.zipIdx.toList.mergeSort fun (one, _) (other, _) =>
+        lower one < lower other || (lower one == lower other && higher one ≤ higher other)
+    let (ranges, primary) :=
+      given.foldl
+        (fun (merged, primary) (range, index) =>
+          let isPrimary := index == selection.primary
+          let merged : Array SelectionRange :=
+            match merged.back? with
+            | some last =>
+              if overlap selection.shape last range then
+                let leader := if isPrimary then range else last
+                merged.pop.push
+                  (pointing (lower last) (max (higher last) (higher range)) (backward leader))
+              else merged.push range
+            | none => merged.push range
+          (merged, if isPrimary then merged.size - 1 else primary))
+        (#[], 0)
+    { selection with
+      ranges, primary }
+  else selection
+
 /-- Whether every end of every range of `selection`, if there is one, is a
-position of `text`. -/
+position of `text`, once the selection is in the form the store keeps one
+in: an end of a range that merged into another is no end of the
+selection. -/
 def selectionFits (text : String) : Option Selection → Bool
   | none => true
   | some selection =>
-    selection.ranges.all fun range =>
+    (normal selection).ranges.all fun range =>
       decide ((String.Pos.Raw.mk range.anchor).IsValid text) &&
         decide ((String.Pos.Raw.mk range.head).IsValid text)
+
+/-- Why `marker` cannot be held by a text that holds `text`; `none` when it
+can. A selection that is none is refused as one that does not fit is. -/
+def markerRefusal? (text : String) : Marker → Option TextError
+  | .anchor anchor =>
+    if (String.Pos.Raw.mk anchor.offset).IsValid text then none else some .badPosition
+  | .selection selection =>
+    if isSelection (some selection) && selectionFits text (some selection) then none
+    else some .badSelection
+
+/-- `marker` as the store holds it: a selection in its form. -/
+def held : Marker → Marker
+  | .anchor anchor => .anchor anchor
+  | .selection selection => .selection (normal selection)
+
+/-- Where the position `offset` of a text is once the ranges `runs` of it
+have been changed, by `bias`. A position before a run moves by what the runs
+before it added and removed. A position where a run only inserts stays
+before what it inserted or goes after it, and so does one at the start of or
+inside a range a run removes: to the start of what took its place, or to its
+end. A position at the end of a removed range is past the run. -/
+def mapOffset (runs : Array Run) (bias : Bias) (offset : Nat) : Nat :=
+  go runs.toList 0 0
+where
+  /-- Walks the runs that are left. `added` and `removed` are the bytes the
+  runs already passed put in and took out. -/
+  go : List Run → Nat → Nat → Nat
+    | [], added, removed => offset + added - removed
+    | run :: rest, added, removed =>
+      if offset < run.start then offset + added - removed
+      else
+        if offset == run.start ∨ offset < run.stop then
+          match bias with
+          | .before => run.start + added - removed
+          | .after => run.start + added - removed + run.inserted.utf8ByteSize
+        else go rest (added + run.inserted.utf8ByteSize) (removed + (run.stop - run.start))
+
+/-- `selection`, which is in its form, once the ranges `runs` of its text
+have been changed: each end moved as an anchor, with the bias the rules of
+the port give it, a range whose ends passed each other made a cursor at its
+start, and the form made again. -/
+def mapSelection (runs : Array Run) (selection : Selection) : Selection :=
+  let moved (range : SelectionRange) : SelectionRange :=
+    let stopBias : Bias :=
+      if selection.shape == .exclusive && lower range < higher range then .before else .after
+    let start := mapOffset runs .after (lower range)
+    pointing start (max start (mapOffset runs stopBias (higher range))) (backward range)
+  normal { selection with ranges := selection.ranges.map moved }
+
+/-- `marker` once the ranges `runs` of its text have been changed. -/
+def mapMarker (runs : Array Run) : Marker → Marker
+  | .anchor anchor => .anchor { anchor with offset := mapOffset runs anchor.bias anchor.offset }
+  | .selection selection => .selection (mapSelection runs selection)
 
 end TextModel
 
@@ -378,7 +501,8 @@ namespace TextModel
 
 /-- The model after an edit by `origin` to the text `id`, which held
 `content`: it holds `text`, made by changing the ranges `runs`, at the next
-revision, and its log has recorded the edit. -/
+revision, its log has recorded the edit, and every marker it holds has
+moved. Every accepted edit comes through here. -/
 def changed (model : TextModel) (id : TextId) (content : TextContent) (text : String)
     (runs : Array Run) (origin : Origin) : TextModel :=
   { model with
@@ -386,7 +510,8 @@ def changed (model : TextModel) (id : TextId) (content : TextContent) (text : St
       model.texts.setIfInBounds id.index
         (some { contents := text, revision := content.revision + 1 })
     logs :=
-      model.logs.modify id.index (·.record content.contents (content.revision + 1) runs origin) }
+      model.logs.modify id.index (·.record content.contents (content.revision + 1) runs origin)
+    markers := model.markers.modify id.index (·.map (·.map (mapMarker runs))) }
 
 /-- The model's answer to an edit of the text `id`, replacing its bytes from
 `start` up to `stop` by `s`, and the model after it. An accepted edit adds
@@ -447,10 +572,83 @@ def forget (model : TextModel) (id : TextId) (revision : Nat) : Except TextError
               { log with horizon := max log.horizon revision } })
 
 /-- The model after `source`, which it holds, is released: its slot is
-emptied and stays, so later ids are what they would have been. -/
+emptied and stays, so later ids are what they would have been. A text's
+markers go with it. -/
 def released (model : TextModel) : TextSource → TextModel
-  | .text id => { model with texts := model.texts.setIfInBounds id.index none }
+  | .text id =>
+    { model with
+      texts := model.texts.setIfInBounds id.index none
+      markers := model.markers.setIfInBounds id.index #[] }
   | .snapshot id => { model with snapshots := model.snapshots.setIfInBounds id.index none }
+
+/-- The markers of the text `id`: its table, in which a marker's id is an
+index. -/
+def markersOf (model : TextModel) (id : TextId) : Array (Option Marker) :=
+  model.markers[id.index]?.getD #[]
+
+/-- The model's answer to marking the text `id` with `marker`, and the model
+after it: the marker is held, in its form, under the next id of that text.
+A refused marker leaves the model as it was. -/
+def mark (model : TextModel) (id : TextId) (marker : Marker) :
+    Except TextError MarkerId × TextModel :=
+  match model.lookup (.text id) with
+  | .error refusal => (.error refusal, model)
+  | .ok content =>
+    match markerRefusal? content.contents marker with
+    | some refusal => (.error refusal, model)
+    | none =>
+      (.ok ⟨(model.markersOf id).size⟩,
+        { model with markers := model.markers.modify id.index (·.push (some (held marker))) })
+
+/-- The model's answer to reading the marker `marker` of the text `id`. -/
+def markerOf (model : TextModel) (id : TextId) (marker : MarkerId) : Except TextError Marker :=
+  match model.lookup (.text id) with
+  | .error refusal => .error refusal
+  | .ok _ =>
+    match (model.markersOf id)[marker.index]? with
+    | some (some found) => .ok found
+    | _ => .error .noSuchMarker
+
+/-- The model's answer to putting `marker` in place of the marker `at` of
+the text `id`, and the model after it. The refusals are looked for in the
+order the port gives: the text, a selection that is none, the id, and then
+whether the marker is in the text. A refused place leaves the model as it
+was. -/
+def place (model : TextModel) (id : TextId) («at» : MarkerId) (marker : Marker) :
+    Except TextError Unit × TextModel :=
+  match model.lookup (.text id) with
+  | .error refusal => (.error refusal, model)
+  | .ok content =>
+    let none? :=
+      match marker with
+      | .selection selection => !isSelection (some selection)
+      | .anchor _ => false
+    if none? then (.error .badSelection, model)
+    else
+      match (model.markersOf id)[«at».index]? with
+      | some (some _) =>
+        match markerRefusal? content.contents marker with
+        | some refusal => (.error refusal, model)
+        | none =>
+          (.ok (),
+            { model with
+              markers :=
+                model.markers.modify id.index (·.setIfInBounds «at».index (some (held marker))) })
+      | _ => (.error .noSuchMarker, model)
+
+/-- The model's answer to giving up the marker `marker` of the text `id`,
+and the model after it: its slot is emptied and stays, so its id is never
+used again. -/
+def unmark (model : TextModel) (id : TextId) (marker : MarkerId) :
+    Except TextError Unit × TextModel :=
+  match model.lookup (.text id) with
+  | .error refusal => (.error refusal, model)
+  | .ok _ =>
+    match (model.markersOf id)[marker.index]? with
+    | some (some _) =>
+      (.ok (),
+        { model with markers := model.markers.modify id.index (·.setIfInBounds marker.index none) })
+    | _ => (.error .noSuchMarker, model)
 
 /-- The model's answer to each request, and the model after it. -/
 def handle : (request : TextRequest) → TextModel → request.Reply × TextModel
@@ -458,7 +656,8 @@ def handle : (request : TextRequest) → TextModel → request.Reply × TextMode
     (⟨model.texts.size⟩,
       { model with
         texts := model.texts.push (some { contents := initial })
-        logs := model.logs.push (.new initial) })
+        logs := model.logs.push (.new initial)
+        markers := model.markers.push #[] })
   | .insert id offset s, model => model.edit id offset offset s
   | .delete id start stop, model => model.edit id start stop ""
   | .read id, model =>
@@ -484,6 +683,10 @@ def handle : (request : TextRequest) → TextModel → request.Reply × TextMode
     | .error refusal => (.error refusal, model)
     | .ok content => (answerLog (model.logs[id.index]?.getD {}) content query, model)
   | .forget id revision, model => model.forget id revision
+  | .mark id marker, model => model.mark id marker
+  | .marker id marker, model => (model.markerOf id marker, model)
+  | .place id «at» marker, model => model.place id «at» marker
+  | .unmark id marker, model => model.unmark id marker
 
 end TextModel
 
@@ -526,7 +729,8 @@ theorem runModel_createText (initial : String) (model : TextModel) :
       (.ok ⟨model.texts.size⟩,
         { model with
           texts := model.texts.push (some { contents := initial })
-          logs := model.logs.push (.new initial) }) :=
+          logs := model.logs.push (.new initial)
+          markers := model.markers.push #[] }) :=
   rfl
 
 @[simp]
@@ -573,6 +777,26 @@ theorem runModel_askLog (id : TextId) (query : LogQuery) (model : TextModel) :
 @[simp]
 theorem runModel_forget (id : TextId) (revision : Nat) (model : TextModel) :
     (id.forget revision).runModel model = model.forget id revision :=
+  rfl
+
+@[simp]
+theorem runModel_mark (id : TextId) (marker : Marker) (model : TextModel) :
+    (id.mark marker).runModel model = model.mark id marker :=
+  rfl
+
+@[simp]
+theorem runModel_marker (id : TextId) (marker : MarkerId) (model : TextModel) :
+    (id.marker marker).runModel model = (model.markerOf id marker, model) :=
+  rfl
+
+@[simp]
+theorem runModel_place (id : TextId) («at» : MarkerId) (marker : Marker) (model : TextModel) :
+    (id.place «at» marker).runModel model = model.place id «at» marker :=
+  rfl
+
+@[simp]
+theorem runModel_unmark (id : TextId) (marker : MarkerId) (model : TextModel) :
+    (id.unmark marker).runModel model = model.unmark id marker :=
   rfl
 
 end EditorM

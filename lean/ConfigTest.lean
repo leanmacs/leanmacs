@@ -534,6 +534,28 @@ def setup : SetupM Unit := do
   command \"behind\" behind
 "
 
+/-- A chunk with two commands that mark a text: `kept`, which marks its text
+with an anchor, edits before it and reads it back where it went, and `lost`,
+which gives its marker up and then asks for it. -/
+def markerChunk : String :=
+  "def kept : EditorM Unit := do
+  let text ← createText \"héllo\"
+  let marker ← text.mark (.anchor { offset := 3, bias := .after })
+  text.insert 0 \"x\"
+  unless (← text.marker marker) == .anchor { offset := 4, bias := .after } do
+    throw .badPosition
+
+def lost : EditorM Unit := do
+  let text ← createText \"héllo\"
+  let marker ← text.mark (.anchor { offset := 3, bias := .after })
+  text.unmark marker
+  discard <| text.marker marker
+
+def setup : SetupM Unit := do
+  command \"kept\" kept
+  command \"lost\" lost
+"
+
 /-- The store of `counterChunk` with its type changed and its version raised
 to 2: the number gets a label, and a number written at version 1 is migrated
 with the label \"migrated\". -/
@@ -722,6 +744,15 @@ def hostChecks (context : Context) : List Check :=
           return (← session.lines) ==
               #["reload 1: installed, 1 chunks, 2 commands", "run ahead: refused: unknown revision",
                 "run behind: refused: forgotten revision"] },
+    { name :=
+        "a command that marks a text reads its marker back where an edit moved it, and one that asks for a marker it gave up is reported with that refusal's name"
+      run :=
+        withHost context [("config.lean", markerChunk)] fun session => do
+          session.ask [.reload]
+          session.ask [.run "kept", .run "lost"]
+          return (← session.lines) ==
+              #["reload 1: installed, 1 chunks, 2 commands", "run kept: ok",
+                "run lost: refused: no such marker"] },
     { name :=
         "a config directory that does not exist is a rejected reload whose one diagnostic line names the directory"
       run :=

@@ -240,6 +240,7 @@ def refusalName : TextError → String
   | .badSelection => "bad selection"
   | .unknownRevision => "unknown revision"
   | .forgotten => "forgotten revision"
+  | .noSuchMarker => "no such marker"
 
 /-- The lines a reload's report is printed as: what it came to, then its
 diagnostics. -/

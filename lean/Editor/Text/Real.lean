@@ -30,6 +30,12 @@ so the library refuses it in its own order (`RealTexts.word`); everywhere
 else it is refused here, as what the library would have said of a number
 that large.
 
+A text's markers are the library's: the binding keeps no table of them,
+because a marker's id is the library's number for it within its document.
+Each marker request is one lookup of the document and one call. A marker's
+offsets go as a transaction's do, as the largest word when no word holds
+them. An id no word holds names no marker.
+
 A text or a snapshot lives until it is released or its table is dropped,
 whichever is first. Releasing empties its slot, which drops the last
 reference to the library's object, and the finaliser frees it at once.
@@ -91,10 +97,102 @@ def change : Change → Ffi.Change
   | .delete count => .delete (word count)
   | .insert text => .insert text
 
+/-- The library's name for a shape of the port. -/
+def shape : Shape → Ffi.Shape
+  | .exclusive => .exclusive
+  | .inclusive => .inclusive
+  | .line => .line
+  | .block => .block
+
 /-- The library's form of a selection of the port. -/
 def selection (selection : Selection) : Ffi.Selection where
   ranges := selection.ranges.map fun range => ⟨word range.anchor, word range.head⟩
   primary := word selection.primary
+  shape := shape selection.shape
+
+/-- The library's form of a marker of the port. -/
+def marker : Marker → Ffi.Marker
+  | .anchor position =>
+    .anchor
+      { offset := word position.offset
+        bias :=
+          match position.bias with
+          | .before => .before
+          | .after => .after }
+  | .selection ranges => .selection (selection ranges)
+
+/-- The port's form of a marker of the library. -/
+def markerOf : Ffi.Marker → Marker
+  | .anchor position =>
+    .anchor
+      { offset := position.offset.toNat
+        bias :=
+          match position.bias with
+          | .before => .before
+          | .after => .after }
+  | .selection ranges =>
+    .selection
+      { ranges := ranges.ranges.map fun range => ⟨range.anchor.toNat, range.head.toNat⟩
+        primary := ranges.primary.toNat
+        shape :=
+          match ranges.shape with
+          | .exclusive => .exclusive
+          | .inclusive => .inclusive
+          | .line => .line
+          | .block => .block }
+
+/-- The port's refusal for a refusal of a marker by the library. -/
+def markRefusal : Ffi.MarkRefusal → TextError
+  | .badPosition => .badPosition
+  | .badSelection => .badSelection
+  | .noSuchMarker => .noSuchMarker
+
+/-- The library's answer to marking the text `id` with `held`. Which markers
+are refused is the library's decision. -/
+def mark (id : TextId) (held : Marker) : StateT RealTexts IO (Except TextError MarkerId) := do
+  let some document ← document? id | return .error .noSuchText
+  match ← document.mark (marker held) with
+  | .ok number =>
+    return .ok ⟨number.toNat⟩
+  | .error refusal =>
+    return .error (markRefusal refusal)
+
+/-- The library's answer to reading the marker `held` of the text `id`. An
+id no word holds names no marker. -/
+def markerAt (id : TextId) (held : MarkerId) : StateT RealTexts IO (Except TextError Marker) := do
+  let some document ← document? id | return .error .noSuchText
+  unless held.index < UInt64.size do
+    return .error .noSuchMarker
+  let some found ← document.marker held.index.toUInt64 | return .error .noSuchMarker
+  return .ok (markerOf found)
+
+/-- The library's answer to putting `next` in place of the marker `held` of
+the text `id`. The order of the refusals is the library's. An id no word
+holds names no marker; the library refuses a selection that is none before
+it looks an id up, so that is said here first for such an id. -/
+def place (id : TextId) (held : MarkerId) (next : Marker) :
+    StateT RealTexts IO (Except TextError Unit) := do
+  let some document ← document? id | return .error .noSuchText
+  unless held.index < UInt64.size do
+    match next with
+    | .selection ranges =>
+      return .error (if ranges.primary < ranges.ranges.size then .noSuchMarker else .badSelection)
+    | .anchor _ =>
+      return .error .noSuchMarker
+  match ← document.place held.index.toUInt64 (marker next) with
+  | .ok () =>
+    return .ok ()
+  | .error refusal =>
+    return .error (markRefusal refusal)
+
+/-- The library's answer to giving up the marker `held` of the text `id`. -/
+def unmark (id : TextId) (held : MarkerId) : StateT RealTexts IO (Except TextError Unit) := do
+  let some document ← document? id | return .error .noSuchText
+  unless held.index < UInt64.size do
+    return .error .noSuchMarker
+  if ← document.unmark held.index.toUInt64 then
+    return .ok ()
+  return .error .noSuchMarker
 
 /-- The library's form of a transaction of the port. -/
 def transaction (transaction : Transaction) : Ffi.Transaction where
@@ -253,6 +351,10 @@ def handle : (request : TextRequest) → StateT RealTexts IO request.Reply
     let some document ← document? id | return .error .noSuchText
     answerLog document query
   | .forget id revision => forget id revision
+  | .mark id held => mark id held
+  | .marker id held => markerAt id held
+  | .place id held next => place id held next
+  | .unmark id held => unmark id held
 
 end RealTexts
 

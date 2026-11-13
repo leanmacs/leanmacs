@@ -791,13 +791,338 @@ def forgetProperties : List Property :=
             (← text.read) == "z\nhXYllo\nwörld!" &&
             (← text.revision) == 5 }]
 
+/-- An anchor marker at `offset` with the bias `bias`. -/
+def anchorAt (offset : Nat) (bias : Bias) : Marker :=
+  .anchor ⟨offset, bias⟩
+
+/-- A selection marker of shape `shape` with `ranges`, each an anchor and a
+head, whose primary is the one at `primary`. -/
+def selected (shape : Shape) (ranges : Array (Nat × Nat)) (primary : Nat := 0) : Marker :=
+  .selection { ranges := ranges.map fun (anchor, head) => ⟨anchor, head⟩, primary, shape }
+
+/-- Whether marking `text` with `marker` is refused with `error`. -/
+def markRefusedWith (error : TextError) (text : TextId) (marker : Marker) : EditorM Bool :=
+  refusedWith error (discard <| text.mark marker)
+
+/-- Where two anchors at `offset` of a new text holding `initial`, one of
+each bias, are after `edit`: the one that stays before, then the one that
+goes after. -/
+def movedBy (initial : String) (offset : Nat) (edit : TextId → EditorM Unit) :
+    EditorM (Marker × Marker) := do
+  let text ← createText initial
+  let before ← text.mark (anchorAt offset .before)
+  let after ← text.mark (anchorAt offset .after)
+  edit text
+  return (← text.marker before, ← text.marker after)
+
+/-- An anchor of each bias, the first at `before` and the second at
+`after`. -/
+def anchorsAt (before after : Nat) : Marker × Marker :=
+  (anchorAt before .before, anchorAt after .after)
+
+/-- What the selection of shape `shape` with `ranges` and `primary` reads
+back as, once a new text of twenty letters holds it. -/
+def keptAs (shape : Shape) (ranges : Array (Nat × Nat)) (primary : Nat := 0) : EditorM Marker := do
+  let text ← createText "abcdefghijklmnopqrst"
+  text.marker (← text.mark (selected shape ranges primary))
+
+/-- What the selection of shape `shape` with `ranges` and `primary`, held by
+a new text holding `initial`, reads back as after `changes` are applied. -/
+def selectionAfter (initial : String) (shape : Shape) (ranges : Array (Nat × Nat)) (primary : Nat)
+    (changes : Array Change) : EditorM Marker := do
+  let text ← createText initial
+  let marker ← text.mark (selected shape ranges primary)
+  discard <| text.apply { changes }
+  text.marker marker
+
+/-- The properties of a text's markers: anchors and selections that every
+edit moves. Offsets are of `"héllo wörld"` unless a property says otherwise:
+13 bytes, in which "é" is the bytes 1 and 2, the space is at 6 and "ö" is
+the bytes 8 and 9. -/
+def markerProperties : List Property :=
+  [{
+      name :=
+        "an anchor marked at a position reads back, and one inside a character, past the end, or at an offset no machine word holds is refused",
+      holds := do
+        let text ← createText "héllo"
+        let start ← text.mark (anchorAt 0 .before)
+        let stop ← text.mark (anchorAt 6 .after)
+        let inside ← markRefusedWith .badPosition text (anchorAt 2 .before)
+        let pastEnd ← markRefusedWith .badPosition text (anchorAt 7 .after)
+        -- Cut down to a 64-bit word, `2 ^ 64 + 1` is 1, a position.
+        let huge ← markRefusedWith .badPosition text (anchorAt (2 ^ 64 + 1) .after)
+        let later ← text.mark (anchorAt 3 .before)
+        return start != stop && later != start && later != stop && inside && pastEnd && huge &&
+            (← text.marker start) == anchorAt 0 .before &&
+            (← text.marker stop) == anchorAt 6 .after &&
+            (← text.marker later) == anchorAt 3 .before },
+    { name :=
+        "an anchor moves with an insert and a delete: with the text it is in, to one side of text inserted at it by its bias, and to where a range deleted round it was"
+      holds := do
+        let text := "héllo wörld"
+        -- Two bytes before it; six bytes at it, of characters of two and of
+        -- four bytes; and one byte at the end of the text.
+        let insertedBefore ← movedBy text 3 (·.insert 1 "XY")
+        let insertedAt ← movedBy text 3 (·.insert 3 "é😀")
+        let insertedAtEnd ← movedBy text 13 (·.insert 13 "!")
+        let insertedAfter ← movedBy text 3 (·.insert 4 "é😀")
+        -- "éllo" is deleted: at its start, inside it, at its end and after
+        -- it.
+        let deletedAtStart ← movedBy text 1 (·.delete 1 6)
+        let deletedRound ← movedBy text 4 (·.delete 1 6)
+        let deletedAtEnd ← movedBy text 6 (·.delete 1 6)
+        let deletedBefore ← movedBy text 10 (·.delete 1 6)
+        return insertedBefore == anchorsAt 5 5 && insertedAt == anchorsAt 3 9 &&
+            insertedAtEnd == anchorsAt 13 14 &&
+            insertedAfter == anchorsAt 3 3 &&
+            deletedAtStart == anchorsAt 1 1 &&
+            deletedRound == anchorsAt 1 1 &&
+            deletedAtEnd == anchorsAt 1 1 &&
+            deletedBefore == anchorsAt 5 5 },
+    { name :=
+        "an anchor moves with a transaction: to the start or the end of what replaced a range round it by its bias, and past it from the range's end; and one that goes after and a later one that stays before swap"
+      holds := do
+        let text := "héllo wörld"
+        -- "éllo" is replaced by "ÖK", three bytes, and "!" is added at the
+        -- end.
+        let replacing : TextId → EditorM Unit :=
+          (discard <|
+            ·.apply { changes := #[.retain 1, .insert "ÖK", .delete 5, .retain 7, .insert "!"] })
+        let atStart ← movedBy text 1 replacing
+        let inside ← movedBy text 3 replacing
+        let atEnd ← movedBy text 6 replacing
+        let after ← movedBy text 10 replacing
+        let atTextEnd ← movedBy text 13 replacing
+        let before ← movedBy text 0 replacing
+        -- On "abcd", "abc" is replaced by "XY".
+        let swapping ← createText "abcd"
+        let earlier ← swapping.mark (anchorAt 1 .after)
+        let later ← swapping.mark (anchorAt 2 .before)
+        discard <| swapping.apply { changes := #[.insert "XY", .delete 3, .retain 1] }
+        return atStart == anchorsAt 1 4 && inside == anchorsAt 1 4 && atEnd == anchorsAt 4 4 &&
+            after == anchorsAt 8 8 &&
+            atTextEnd == anchorsAt 11 12 &&
+            before == anchorsAt 0 0 &&
+            (← swapping.marker earlier) == anchorAt 2 .after &&
+            (← swapping.marker later) == anchorAt 0 .before },
+    { name :=
+        "a selection reads back sorted by start and then by end, with its shape and the primary followed to where it went"
+      holds := do
+        let sorted ← keptAs .exclusive #[(9, 7), (0, 1), (4, 3), (12, 20), (12, 15)]
+        let block ← keptAs .block #[(9, 7), (0, 1), (4, 3)] 1
+        return sorted == selected .exclusive #[(0, 1), (4, 3), (9, 7), (12, 20)] 2 &&
+            block == selected .block #[(0, 1), (4, 3), (9, 7)] 0 },
+    { name :=
+        "exclusive ranges that overlap or start together are one and those that only touch stay two; ranges of the other shapes that share an end are one"
+      holds := do
+        let touching ← keptAs .exclusive #[(0, 2), (2, 5)]
+        let overlapping ← keptAs .exclusive #[(2, 5), (0, 3)] 1
+        let cursors ← keptAs .exclusive #[(2, 2), (2, 2)]
+        let cursorAtStart ← keptAs .exclusive #[(2, 5), (2, 2)]
+        let cursorAtEnd ← keptAs .exclusive #[(2, 5), (5, 5), (5, 8)]
+        let chain ← keptAs .exclusive #[(4, 8), (0, 3), (2, 5), (8, 9)] 3
+        let shared ← [Shape.inclusive, .line, .block].mapM (keptAs · #[(0, 2), (2, 5)])
+        let cursorOnLast ← keptAs .inclusive #[(2, 5), (5, 5)]
+        let neighbours ← keptAs .line #[(0, 2), (3, 5)]
+        return touching == selected .exclusive #[(0, 2), (2, 5)] &&
+            overlapping == selected .exclusive #[(0, 5)] &&
+            cursors == selected .exclusive #[(2, 2)] &&
+            cursorAtStart == selected .exclusive #[(2, 5)] &&
+            cursorAtEnd == selected .exclusive #[(2, 5), (5, 8)] &&
+            chain == selected .exclusive #[(0, 8), (8, 9)] 1 &&
+            shared ==
+              [selected .inclusive #[(0, 5)], selected .line #[(0, 5)],
+                selected .block #[(0, 5)]] &&
+            cursorOnLast == selected .inclusive #[(2, 5)] &&
+            neighbours == selected .line #[(0, 2), (3, 5)] },
+    { name :=
+        "a merged range points the way the primary did when the primary is in it, and otherwise the way its first range did"
+      holds := do
+        let primaryBackward ← keptAs .exclusive #[(0, 3), (5, 2)] 1
+        let primaryForward ← keptAs .exclusive #[(0, 3), (5, 2)] 0
+        let primaryACursor ← keptAs .exclusive #[(5, 2), (2, 2)] 1
+        let firstForward ← keptAs .exclusive #[(5, 2), (0, 3), (9, 9)] 2
+        let firstBackward ← keptAs .inclusive #[(2, 5), (3, 0), (9, 9)] 2
+        let firstGiven ← keptAs .line #[(4, 1), (1, 4), (9, 9)] 2
+        return primaryBackward == selected .exclusive #[(5, 0)] &&
+            primaryForward == selected .exclusive #[(0, 5)] &&
+            primaryACursor == selected .exclusive #[(2, 5)] &&
+            firstForward == selected .exclusive #[(0, 5), (9, 9)] 1 &&
+            firstBackward == selected .inclusive #[(5, 0), (9, 9)] 1 &&
+            firstGiven == selected .line #[(4, 1), (9, 9)] 1 },
+    { name :=
+        "a selection that is none, or has an end that is not a position, is refused; an end of a range that merged into another is no end of the selection, for a marker and for a transaction"
+      holds := do
+        let text ← createText "héllo"
+        let noRange ← markRefusedWith .badSelection text (selected .line #[])
+        let noPrimary ← markRefusedWith .badSelection text (selected .exclusive #[(0, 0)] 1)
+        let inside ← markRefusedWith .badSelection text (selected .exclusive #[(0, 1), (3, 2)])
+        let pastEnd ← markRefusedWith .badSelection text (selected .block #[(0, 7)])
+        let huge ← markRefusedWith .badSelection text (selected .inclusive #[(2 ^ 64 + 1, 0)])
+        -- 2 is inside "é", and the range it ends is inside the other.
+        let merged ← text.mark (selected .exclusive #[(0, 6), (2, 1)])
+        let carried ←
+          text.apply
+              { changes := #[.retain 6]
+                before := some { ranges := #[⟨0, 6⟩, ⟨2, 1⟩] }
+                after := some { ranges := #[⟨2, 1⟩, ⟨6, 0⟩], primary := 1, shape := .line } }
+        return noRange && noPrimary && inside && pastEnd && huge && carried == 1 &&
+            (← text.marker merged) == selected .exclusive #[(0, 6)] },
+    { name :=
+        "text inserted at either edge of a marked exclusive range stays outside it, text inserted at a cursor is before it, and an end on a character stays on it"
+      holds := do
+        let text := "héllo wörld"
+        -- "XY" at 1 and "é😀" at 6, round "éllo".
+        let atEdges : Array Change := #[.retain 1, .insert "XY", .retain 5, .insert "é😀", .retain 7]
+        let forward ← selectionAfter text .exclusive #[(1, 6)] 0 atEdges
+        let backward ← selectionAfter text .exclusive #[(6, 1)] 0 atEdges
+        let cursor ← selectionAfter text .exclusive #[(6, 6)] 0 atEdges
+        let onCharacters ← selectionAfter text .inclusive #[(1, 6)] 0 atEdges
+        let lines ← selectionAfter text .line #[(6, 1)] 0 atEdges
+        -- Inside the range, it grows.
+        let grown ← selectionAfter text .exclusive #[(1, 6)] 0 #[.retain 3, .insert "😀", .retain 10]
+        return forward == selected .exclusive #[(3, 8)] &&
+            backward == selected .exclusive #[(8, 3)] &&
+            cursor == selected .exclusive #[(14, 14)] &&
+            onCharacters == selected .inclusive #[(3, 14)] &&
+            lines == selected .line #[(14, 3)] &&
+            grown == selected .exclusive #[(1, 10)] },
+    { name :=
+        "a marked range that is wholly replaced is a cursor after the replacement, and ranges a deletion brings together are one, with the primary still the primary"
+      holds := do
+        let text := "héllo wörld"
+        -- "éllo" is replaced by "😀", four bytes.
+        let replacing : Array Change := #[.retain 1, .insert "😀", .delete 5, .retain 7]
+        let replaced ← selectionAfter text .exclusive #[(3, 5)] 0 replacing
+        let replacedBackward ← selectionAfter text .exclusive #[(6, 1)] 0 replacing
+        let replacedOnCharacters ← selectionAfter text .block #[(3, 5)] 0 replacing
+        let deleted ← selectionAfter text .exclusive #[(3, 5)] 0 #[.retain 1, .delete 5, .retain 7]
+        -- " w" goes: the cursors at 6 and at 8 meet.
+        let meeting : Array Change := #[.retain 6, .delete 2, .retain 5]
+        let met ← selectionAfter text .exclusive #[(6, 6), (8, 8), (0, 0)] 0 meeting
+        let metOther ← selectionAfter text .exclusive #[(6, 6), (8, 8), (0, 0)] 2 meeting
+        -- "llo w" goes: two ranges on characters come to share one, and the
+        -- primary points backward.
+        let joined ←
+          selectionAfter text .inclusive #[(0, 3), (10, 7)] 1 #[.retain 3, .delete 5, .retain 5]
+        return replaced == selected .exclusive #[(5, 5)] &&
+            replacedBackward == selected .exclusive #[(5, 5)] &&
+            replacedOnCharacters == selected .block #[(5, 5)] &&
+            deleted == selected .exclusive #[(1, 1)] &&
+            met == selected .exclusive #[(0, 0), (6, 6)] 1 &&
+            metOther == selected .exclusive #[(0, 0), (6, 6)] 0 &&
+            joined == selected .inclusive #[(5, 0)] },
+    { name :=
+        "place puts a marker somewhere else and can make it the other kind, and a refused place leaves it where it was"
+      holds := do
+        let text ← createText "héllo wörld"
+        let marker ← text.mark (anchorAt 3 .after)
+        let other ← text.mark (anchorAt 0 .before)
+        text.place marker (anchorAt 6 .before)
+        let moved ← text.marker marker
+        text.place marker (selected .inclusive #[(13, 10), (4, 1)] 1)
+        let asSelection ← text.marker marker
+        let inside ← refusedWith .badPosition (text.place marker (anchorAt 2 .after))
+        let astray ← refusedWith .badSelection (text.place marker (selected .line #[(0, 14)]))
+        let kept ← text.marker marker
+        text.place marker (anchorAt 13 .after)
+        return moved == anchorAt 6 .before &&
+            asSelection == selected .inclusive #[(4, 1), (13, 10)] 0 &&
+            inside &&
+            astray &&
+            kept == asSelection &&
+            (← text.marker marker) == anchorAt 13 .after &&
+            (← text.marker other) == anchorAt 0 .before },
+    { name :=
+        "a marker that is given up is refused from then on, a later marker has another id, and an id the text never gave is refused, a selection that is none first"
+      holds := do
+        let text ← createText "héllo"
+        let first ← text.mark (anchorAt 3 .after)
+        let second ← text.mark (anchorAt 4 .after)
+        text.unmark first
+        let read ← refusedWith .noSuchMarker (discard <| text.marker first)
+        let placed ← refusedWith .noSuchMarker (text.place first (anchorAt 0 .after))
+        let again ← refusedWith .noSuchMarker (text.unmark first)
+        let later ← text.mark (anchorAt 0 .before)
+        let never : MarkerId := ⟨later.index + 5⟩
+        let neverRead ← refusedWith .noSuchMarker (discard <| text.marker never)
+        -- For an id that names nothing: a marker that is in the text, one
+        -- that is not, and a selection that is none.
+        let neverPlaced ← refusedWith .noSuchMarker (text.place never (anchorAt 0 .after))
+        let neverMisplaced ← refusedWith .noSuchMarker (text.place never (anchorAt 2 .after))
+        let neverNone ← refusedWith .badSelection (text.place never (selected .line #[]))
+        let neverUnmarked ← refusedWith .noSuchMarker (text.unmark never)
+        -- Cut down to a 64-bit word, `2 ^ 64 + second.index` is `second`.
+        let huge : MarkerId := ⟨2 ^ 64 + second.index⟩
+        let hugeRead ← refusedWith .noSuchMarker (discard <| text.marker huge)
+        let hugePlaced ← refusedWith .noSuchMarker (text.place huge (anchorAt 0 .after))
+        let hugeNone ← refusedWith .badSelection (text.place huge (selected .block #[(0, 0)] 1))
+        let hugeUnmarked ← refusedWith .noSuchMarker (text.unmark huge)
+        return read && placed && again && later != first && later != second && neverRead &&
+            neverPlaced &&
+            neverMisplaced &&
+            neverNone &&
+            neverUnmarked &&
+            hugeRead &&
+            hugePlaced &&
+            hugeNone &&
+            hugeUnmarked &&
+            (← text.marker second) == anchorAt 4 .after &&
+            (← text.marker later) == anchorAt 0 .before },
+    { name :=
+        "a refused edit moves no marker, and marking, placing and giving a marker up leave the revision and the log as they were"
+      holds := do
+        let text ← createText "héllo wörld"
+        text.insert 0 "x"
+        let since ← text.changesSince 0
+        let anchor ← text.mark (anchorAt 4 .after)
+        let range ← text.mark (selected .exclusive #[(2, 7)])
+        let spare ← text.mark (anchorAt 0 .before)
+        text.place spare (selected .line #[(0, 14)])
+        text.unmark spare
+        let unedited :=
+          (← text.revision) == 1 && (← text.changesSince 0) == since &&
+            (← text.changesSince 1) == ⟨1, 1, #[]⟩
+        let inside ← refusedWith .badRange (text.insert 3 "x")
+        let backwards ← refusedWith .badRange (text.delete 4 2)
+        let short ← applyRefusedWith .badChange text { changes := #[.insert "XY", .retain 3] }
+        let astray ←
+          applyRefusedWith .badSelection text
+              { changes := #[.insert "XY", .retain 14], after := some { ranges := #[⟨0, 99⟩] } }
+        return unedited && inside && backwards && short && astray &&
+            (← text.marker anchor) == anchorAt 4 .after &&
+            (← text.marker range) == selected .exclusive #[(2, 7)] &&
+            (← text.revision) == 1 },
+    { name :=
+        "a marker belongs to its text: another text refuses its id, and every marker request of a text no create returned, or one that was released, is refused"
+      holds := do
+        let text ← createText "héllo"
+        let other ← createText "wörld"
+        let marker ← text.mark (anchorAt 3 .after)
+        let ofOther ← refusedWith .noSuchMarker (discard <| other.marker marker)
+        let placedInOther ← refusedWith .noSuchMarker (other.place marker (anchorAt 0 .after))
+        let unmarkedInOther ← refusedWith .noSuchMarker (other.unmark marker)
+        -- Edits to the other text move nothing here.
+        other.insert 0 "XY"
+        let unmoved := (← text.marker marker) == anchorAt 3 .after
+        let requests (text : TextId) : List (EditorM Unit) :=
+          [discard <| text.mark (anchorAt 0 .after), discard <| text.marker marker,
+            text.place marker (anchorAt 0 .after), text.unmark marker,
+            -- The text is looked for before a selection that is none is.
+            text.place marker (selected .line #[])]
+        let absent ← (requests ⟨7⟩).allM (refusedWith .noSuchText)
+        text.release
+        let released ← (requests text).allM (refusedWith .noSuchText)
+        return ofOther && placedInOther && unmarkedInOther && unmoved && absent && released }]
+
 /-- The properties every implementation of the text port has. -/
 def properties : List Property :=
   editProperties ++ revisionProperties ++ snapshotProperties ++ positionProperties ++
     releaseProperties ++
     transactionProperties ++
     logProperties ++
-    forgetProperties
+    forgetProperties ++
+    markerProperties
 
 /-- Runs each of `properties` with `run`, which must start every command from
 an empty store, and returns the names of those that did not hold. A property
