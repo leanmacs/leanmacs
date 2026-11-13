@@ -207,7 +207,9 @@ def elaboratorChecks (context : Context) : List Check :=
         let .ok registrations := Config.Registrations.ofSetup program | return false
         let some registration := registrations.commands[0]? | return false
         let .plain run := registration.action | return false
-        let (result, texts) ← run.runReal (← RealTexts.new)
+        let table ← RealTexts.new
+        let display ← DisplayRecorder.new Headless.cells table.snapshots.reader
+        let (result, texts) ← run.runReal table display.handle
         let some (some text) := texts.documents[0]? | return false
         return registrations.commands.size == 1 && registration.name == "greet" && result.isOk &&
             texts.documents.size == 1 &&

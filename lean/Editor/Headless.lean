@@ -1,6 +1,7 @@
 import Editor.Config.Directory
 import Editor.Config.Elaborate
 import Editor.Config.Reload
+import Editor.Display.Recorder
 import Editor.Event.Queue
 import Editor.Job.Jobs
 import Editor.Job.Pool
@@ -21,7 +22,8 @@ the config session.
 editor queue and handles one event to its end before the next. It owns the
 config half of the editor's state (`Config.State`) and the table of texts
 (`RealTexts`), feeds the reload reducer (`Config.step`) and performs its
-effects, and runs commands with `EditorM.runReal`.
+effects, and runs commands with `EditorM.runReal`, with a display recorder
+(`Editor/Display/Recorder.lean`) as the display.
 
 A reload does not run on the editor thread. The reducer's `start` effect
 becomes a dedicated task, the reload job, which reads the source, elaborates
@@ -294,6 +296,9 @@ structure Running (σ : Type) where
   config : Config.State σ := {}
   /-- The texts and the snapshots made so far. -/
   texts : RealTexts
+  /-- The display: with no window, a recorder of what is published, over the
+  snapshots `texts` publishes. -/
+  display : DisplayRecorder
   /-- The jobs that are running, with their owners. -/
   jobs : Job.Jobs
   /-- Where the reload job that is running will leave its outcome. -/
@@ -362,7 +367,7 @@ def run (collaborators : Collaborators σ) (running : Running σ) (name : String
     |
     collaborators.emit s!"run {name}: no such command"
     return running
-  let (result, texts) ← program.runReal running.texts
+  let (result, texts) ← program.runReal running.texts running.display.handle
   match result with
   | .ok write =>
     collaborators.emit s!"run {name}: ok"
@@ -402,7 +407,8 @@ def ended (collaborators : Collaborators σ) (running : Running σ) (id : Nat) :
   | .finished command =>
     -- The command is handed what the job held, and the job is settled once
     -- it has run.
-    let (result, texts) ← Job.finishWith collaborators.held entry.handle command running.texts
+    let (result, texts) ←
+      Job.finishWith collaborators.held entry.handle command running.texts running.display.handle
     match result with
     | .ok () =>
       collaborators.emit s!"{label}: ok"
@@ -482,6 +488,11 @@ structure Progress where
   cancelled with their owner. -/
   jobs : Nat := 0
 
+/-- The cells the headless host's display lays text out in: 8 pixels across
+and 16 down, as the display contract's larger size. -/
+def cells : Display.Cells :=
+  { advance := 8, lineHeight := 16 }
+
 /-- The editor thread: pulls the editor queue and handles each event to its
 end, until the driver ends the loop or the queues are quit. After each event
 it publishes in `progress` how many markers it has reached, whether a reload
@@ -489,6 +500,7 @@ is running, and how many jobs are. -/
 def loop {σ : Type} (collaborators : Collaborators σ) (progress : IO.Ref Progress) : IO Unit := do
   let mut running : Running σ :=
     { texts := RealTexts.over collaborators.published
+      display := ← DisplayRecorder.new cells collaborators.published.reader
       jobs := { services := collaborators.services } }
   repeat
     let event ← Ffi.nextEvent .editor

@@ -1,5 +1,4 @@
 import Editor.Command.Append
-import Editor.Display
 import Editor.Event
 import Editor.Setup
 import Editor.UndoTree

@@ -1,10 +1,11 @@
+import Editor.Command
 import Editor.File
 
 /-!
 # Jobs
 
 A job is work that may take as long as it likes: it may block or wait, and it
-may not change editor state. A command (`EditorM`, `Editor/Text.lean`) is the
+may not change editor state. A command (`EditorM`, `Editor/Command.lean`) is the
 other half: it may change editor state and may not block. They are different
 types, so that the type checker keeps each on its side
 (`docs/design/concurrency.md`).
@@ -201,17 +202,34 @@ def Work.of {α : Type} (job : Unit → JobM α) (handler : α → EditorM Unit)
 Each check below is an `example` that builds only while a violation of the
 split is a type error. `fail_if_success` succeeds when the term in it fails to
 elaborate, for whatever reason, so each check says the type the violation is
-offered at, and the three examples that come first show that a legal term is
+offered at, and the examples that come first show that a legal term is
 accepted at each of those types, a wait among them. A check that still builds
 with a legal term in place of its violation is offered at the wrong type.
-Each of the two checks of a wait was seen to bite once by hand: offered at
-`JobM Unit`, where a wait is legal, the module stops building. -/
+Each of the checks of a wait was seen to bite once by hand: offered at
+`JobM Unit`, where a wait is legal, the module stops building.
+
+A text operation is a program over the text port (`TextM`), and a command
+(`EditorM`) uses it through the lift of the editor's composite port
+(`Editor/Command.lean`). So each check of a command is made at both: at
+`TextM`, the type the operation has, and at `EditorM`, where the lift
+exists. There is no lift from `JobM`. -/
 
 example : True :=
   (fun (_ : JobM Unit) => True.intro) (pure ())
 
 example : True :=
+  (fun (_ : TextM Unit) => True.intro) ((⟨0⟩ : TextId).insert 0 "x")
+
+example : True :=
   (fun (_ : EditorM Unit) => True.intro) ((⟨0⟩ : TextId).insert 0 "x")
+
+example : True :=
+  (fun (_ : EditorM Unit) => True.intro)
+    (do
+      (⟨0⟩ : TextId).insert 0 "x"
+      Display.publish
+          { size := ⟨0, 0⟩, views := #[], focused := none, echo := "", pending := ""
+            preedit := none })
 
 example : True :=
   (fun (_ : JobM Unit) => True.intro) (sleep 10)
@@ -222,6 +240,9 @@ from what a job made, so a job cannot write the store with it: only the
 job's command can, on the editor thread. Seen to bite once by hand: offered
 at `EditorM SnapshotId` inside the second check, the module stops
 building. -/
+
+example : True :=
+  (fun (_ : TextM SnapshotId) => True.intro) (⟨0⟩ : JobSnapshotId).adopt
 
 example : True :=
   (fun (_ : EditorM SnapshotId) => True.intro) (⟨0⟩ : JobSnapshotId).adopt
@@ -260,11 +281,35 @@ example : True := by
           pure ())
   trivial
 
-/-! An `IO` action is not a command: alone, and after a text request in a
-`do` block. -/
+/-! A display request is not a job either. -/
+
+example : True := by
+  fail_if_success
+    exact
+      (fun (_ : JobM Unit) => True.intro)
+        (Display.publish
+          { size := ⟨0, 0⟩, views := #[], focused := none, echo := "", pending := ""
+            preedit := none })
+  trivial
+
+/-! An `IO` action is not a command, nor a program over the text port: alone,
+and after a text request in a `do` block. -/
+
+example : True := by
+  fail_if_success exact (fun (_ : TextM Unit) => True.intro) (IO.sleep 10)
+  trivial
 
 example : True := by
   fail_if_success exact (fun (_ : EditorM Unit) => True.intro) (IO.sleep 10)
+  trivial
+
+example : True := by
+  fail_if_success
+    exact
+      (fun (_ : TextM Unit) => True.intro)
+        (do
+          (⟨0⟩ : TextId).insert 0 "x"
+          IO.sleep 10)
   trivial
 
 example : True := by
@@ -276,7 +321,11 @@ example : True := by
           IO.sleep 10)
   trivial
 
-/-! A job is not a command. -/
+/-! A job is not a command, nor a program over the text port. -/
+
+example : True := by
+  fail_if_success exact (fun (_ : TextM Unit) => True.intro) (pure () : JobM Unit)
+  trivial
 
 example : True := by
   fail_if_success exact (fun (_ : EditorM Unit) => True.intro) (pure () : JobM Unit)
@@ -292,7 +341,21 @@ example : True :=
 
 example : True := by
   fail_if_success
+    exact (fun (_ : TextM (Except FileError File.Loaded)) => True.intro) (File.load "/a" 1)
+  trivial
+
+example : True := by
+  fail_if_success
     exact (fun (_ : EditorM (Except FileError File.Loaded)) => True.intro) (File.load "/a" 1)
+  trivial
+
+example : True := by
+  fail_if_success
+    exact
+      (fun (_ : TextM Unit) => True.intro)
+        (do
+          (⟨0⟩ : TextId).insert 0 "x"
+          discard <| File.save (.snapshot ⟨0⟩) "/a" .whatever)
   trivial
 
 example : True := by
@@ -309,7 +372,20 @@ So "a command may not block" is pinned beyond `IO`: the one way a program can
 wait is a request of the job port, and a command cannot make it. -/
 
 example : True := by
+  fail_if_success exact (fun (_ : TextM Unit) => True.intro) (sleep 10)
+  trivial
+
+example : True := by
   fail_if_success exact (fun (_ : EditorM Unit) => True.intro) (sleep 10)
+  trivial
+
+example : True := by
+  fail_if_success
+    exact
+      (fun (_ : TextM Unit) => True.intro)
+        (do
+          (⟨0⟩ : TextId).insert 0 "x"
+          sleep 10)
   trivial
 
 example : True := by

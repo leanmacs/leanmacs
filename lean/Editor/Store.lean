@@ -1,4 +1,4 @@
-import Editor.Text
+import Editor.Command
 
 /-!
 # Stores

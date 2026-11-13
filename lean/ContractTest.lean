@@ -1,3 +1,5 @@
+import Editor.Command.Model
+import Editor.Command.Real
 import Editor.Display.Contract
 import Editor.Display.Recorder
 import Editor.File.Cases
@@ -112,7 +114,7 @@ than before. -/
 def releaseFrees : IO Bool := do
   let documents ← Ffi.Document.live
   let snapshots ← Ffi.Snapshot.live
-  let command : EditorM Unit := do
+  let command : TextM Unit := do
     let kept ← createText "kept"
     let dropped ← createText "dropped"
     discard kept.snapshot
@@ -142,7 +144,7 @@ was made before either ran. -/
 def readerFinds : IO Bool := do
   let snapshots ← Snapshots.new
   let reader := snapshots.reader
-  let first : EditorM (TextId × SnapshotId × SnapshotId × SnapshotId × String) := do
+  let first : TextM (TextId × SnapshotId × SnapshotId × SnapshotId × String) := do
     let text ← createText (TextContract.loaded)
     let early ← text.snapshot
     text.insert 0 "x"
@@ -170,10 +172,15 @@ def readerFinds : IO Bool := do
 a run that is handed `arrived` as what a job held: for each, a snapshot the
 library made of a document holding the string. The documents, the snapshots
 and the table are dropped with the run. -/
-def runHanded (arrived : Array (JobSnapshotId × String)) (command : EditorM Bool) :
+def runHanded (arrived : Array (JobSnapshotId × String)) (command : TextM Bool) :
     IO (Except TextError Bool) := do
   let handed ← arrived.mapM fun (id, text) => return (id, ← (← Ffi.Document.new text).snapshot)
   return (← command.runReal (← RealTexts.new) handed).1
+
+/-- A display recorder that reads `table`: the display a command run over
+that table is handed, as the headless host hands its loop one. -/
+def recorderOf (table : Snapshots) : BaseIO DisplayRecorder :=
+  DisplayRecorder.new { advance := 1, lineHeight := 1 } table.reader
 
 /-- Runs `properties` against the real binding, each from a table with no
 texts, and then `adoptProperties`, each in a run handed its snapshots
@@ -221,10 +228,11 @@ def hour : Nat :=
   3600000
 
 /-- A job's outcome as a check compares it: the command it finished with is
-replaced by the texts that command leaves when it runs against the text
-model, since commands cannot be compared. -/
+replaced by the texts that command leaves when it runs against the editor's
+models, since commands cannot be compared. -/
 def texts : Job.Outcome (EditorM Unit) → Job.Outcome (Array String)
-  | .finished command => .finished (command.runModel {}).2.contents
+  | .finished command =>
+    .finished (command.runModel (.over { advance := 1, lineHeight := 1 })).2.texts.contents
   | .failed message => .failed message
   | .cancelled => .cancelled
 
@@ -521,8 +529,9 @@ def fileChecks (completions : Job.Completions) : List Check :=
             let command : EditorM (SnapshotId × String) := do
               let adopted ← loaded.adopt
               return (adopted, ← adopted.read)
+            let display := (← recorderOf rig.published).handle
             let (.ok (adopted, read), texts) ←
-              Job.finishWith rig.held handle command (.over rig.published) | return false
+              Job.finishWith rig.held handle command (.over rig.published) display | return false
             let adoptedHeld :=
               (← rig.published.size) == size + 1 && (← Ffi.Snapshot.live) == live + 1 &&
                 (← rig.held.size) == 0 &&
@@ -545,8 +554,9 @@ def fileChecks (completions : Job.Completions) : List Check :=
                 (pure ())
           let ended ← endedAs handle (.finished #["12"])
           let kept := (← Ffi.Snapshot.live) == live + 1 && (← rig.held.size) == 1
+          let display := (← recorderOf rig.published).handle
           let (ran, _) ←
-            Job.finishWith rig.held handle (pure () : EditorM Unit) (.over rig.published)
+            Job.finishWith rig.held handle (pure () : EditorM Unit) (.over rig.published) display
           return ended && kept && ran.isOk &&
               (← eventually (return (← Ffi.Snapshot.live) == live)) &&
               (← rig.held.size) == 0 &&
@@ -607,7 +617,7 @@ def fileChecks (completions : Job.Completions) : List Check :=
       run :=
         withNote fun directory => do
           let rig ← FileRig.new completions
-          let take : EditorM SnapshotId := do
+          let take : TextM SnapshotId := do
             let text ← createText noteText
             let taken ← text.snapshot
             -- The text moves on: the snapshot does not.
@@ -655,8 +665,9 @@ def playOnLibrary (completions : Job.Completions) (case : FileCases.Case) : IO (
   try
     for (name, bytes) in case.files do
       IO.FS.writeBinFile (directory / name) bytes
+    let display := (← recorderOf rig.published).handle
     let (.ok start, texts) ←
-      case.first.runReal (.over rig.published) | return some "its first command was refused"
+      case.first.runReal (.over rig.published) display | return some "its first command was refused"
     let handle ←
       Job.spawn rig.services (Work.of (fun _ => case.job directory start) (case.handler start))
           (pure ())
@@ -665,10 +676,10 @@ def playOnLibrary (completions : Job.Completions) (case : FileCases.Case) : IO (
       return some "its job did not end"
     match ← handle.outcome? with
     | some (.finished command) =>
-      let (ran, texts) ← Job.finishWith rig.held handle command texts
+      let (ran, texts) ← Job.finishWith rig.held handle command texts display
       if let .error refusal := ran then
         return some s!"the job's command failed with {repr refusal}"
-      let (verdict, _) ← (case.last start).runReal texts
+      let (verdict, _) ← (case.last start).runReal texts display
       let after := JobContract.byName (← filesOf directory)
       match verdict with
       | .error refusal =>

@@ -1,4 +1,5 @@
 import Editor.Command.Append
+import Editor.Command.Model
 import Editor.Config.Reload
 import Editor.Display.Contract
 import Editor.Display.Model
@@ -38,6 +39,13 @@ and its exact layout rule.
 A command is tested the same way: as a property, a command that returns
 whether it held, run against the model (`commandProperties`). The `editor`
 executable runs the same command source against the real binding.
+
+A command is a program over the editor's composite port
+(`Editor/Command.lean`), run here against the text model and the display
+model side by side (`EditorModel`). `commandPortChecks` pin what that runner
+does with each sub-port's requests: a text program lifted into a command
+does what it does alone, the display answers from the text model's
+snapshots, and a display refusal is the text port's of the same name.
 
 The undo tree (`Editor/UndoTree.lean`) is plain Lean over the text port, so
 its cases (`Editor/UndoTree/Cases.lean`) are properties of the same kind and
@@ -313,14 +321,20 @@ def jobModelChecks : List Check :=
             ["false", "throws (the job failed with `no thanks`)",
               "cancelled (the job was cancelled)"] }]
 
+/-- The editor's models with no text, the display's in cells one pixel each
+way, with nothing published. -/
+def editorModel : EditorModel :=
+  .over { advance := 1, lineHeight := 1 }
+
 /-- A command that makes one text holding `text`. What a registered command
 does is observed by running it: commands are programs, and cannot be compared. -/
 def makes (text : String) : EditorM Unit :=
   discard <| createText text
 
-/-- The texts `command` leaves when it runs against a text model with none. -/
+/-- The texts `command` leaves when it runs against the editor's models with
+no text. -/
 def textsOf (command : EditorM Unit) : Array String :=
-  (command.runModel {}).2.contents
+  (command.runModel editorModel).2.texts.contents
 
 /-- How long a check waits, in milliseconds, for something that should happen
 at once. Only broken code takes this long, and the check then fails instead
@@ -582,24 +596,28 @@ def heldBy (model : FileModel) : Array (JobSnapshotId × TextContent) :=
 across as the runtime does, and says what went wrong; `none` when the case
 held.
 
-The values that cross are handed as values. The job's model starts with the
-text model's snapshots as the published ones. The job's command runs against
-the text model with what the job's model held as what arrived. The job is
-then settled, so the last command runs against a text model that was handed
-nothing. Neither side writes what the other owns. -/
+The values that cross are handed as values. The commands run against the
+editor's models. The job's model starts with the text model's snapshots as
+the published ones. The job's command runs with what the job's model held as
+what arrived in its text model. The job is then settled, so the last command
+runs against a text model that was handed nothing. Neither side writes what
+the other owns. -/
 def playOnModels (case : FileCases.Case) : Option String :=
-  match case.first.runModel {} with
+  match case.first.runModel editorModel with
   | (.error refusal, _) => some s!"its first command failed with {repr refusal}"
-  | (.ok start, texts) =>
-    let files := { fileModelOf case.files with snapshots := texts.snapshots }
+  | (.ok start, model) =>
+    let files := { fileModelOf case.files with snapshots := model.texts.snapshots }
     match (case.job fileRoot start).runModel { files } with
     | (.failed message, _) => some s!"its job failed with `{message}`"
     | (.cancelled, _) => some "its job was cancelled"
     | (.finished value, job) =>
-      match (case.handler start value).runModel { texts with arrived := heldBy job.files } with
+      let handed := { model with texts := { model.texts with arrived := heldBy job.files } }
+      match (case.handler start value).runModel handed with
       | (.error refusal, _) => some s!"the job's command failed with {repr refusal}"
-      | (.ok (), texts) =>
-        match (case.last start).runModel { texts with arrived := #[] } with
+      | (.ok (), model) =>
+        match
+          (case.last start).runModel
+            { model with texts := { model.texts with arrived := #[] } } with
         | (.error refusal, _) => some s!"its last command failed with {repr refusal}"
         | (.ok false, _) => some "its last command says it did not hold"
         | (.ok true, _) =>
@@ -1378,8 +1396,8 @@ def setupChecks : List Check :=
           counter.step fun n => do
             discard <| createText s!"was {n}"
             return n + 5
-        match (step (.nat 2)).runModel {} with
-        | (.ok tree, model) => pure (tree == .nat 7 && model.contents == #["was 2"])
+        match (step (.nat 2)).runModel editorModel with
+        | (.ok tree, model) => pure (tree == .nat 7 && model.texts.contents == #["was 2"])
         | (.error _, _) => pure false },
     { name :=
         "a setup that registers jobs collects each with its name, in order, beside its commands, and a job is not a command"
@@ -1856,11 +1874,12 @@ def bumps (step : Nat) : SetupM Unit := do
   counter.declare
   counter.command "bump" fun n => pure (n + step)
 
-/-- Runs the command called `name` the way the editor does, against the text
-model `model`: the state once what the command wrote is written back, and
-the model after it. `none` if there is no such command or it was refused. -/
-def runs (state : Config.State Elaborated) (name : String) (model : TextModel := {}) :
-    Option (Config.State Elaborated × TextModel) :=
+/-- Runs the command called `name` the way the editor does, against the
+editor's models `model`: the state once what the command wrote is written
+back, and the models after it. `none` if there is no such command or it was
+refused. -/
+def runs (state : Config.State Elaborated) (name : String) (model : EditorModel := editorModel) :
+    Option (Config.State Elaborated × EditorModel) :=
   (state.program? name).bind fun program =>
     match program.runModel model with
     | (.ok write, model) => some (state.written write, model)
@@ -1868,7 +1887,7 @@ def runs (state : Config.State Elaborated) (name : String) (model : TextModel :=
 
 /-- The texts the command called `name` leaves when the editor runs it. -/
 def runTexts (state : Config.State Elaborated) (name : String) : Option (Array String) :=
-  (runs state name).map (·.2.contents)
+  (runs state name).map (·.2.texts.contents)
 
 /-- The value of the config's store called `name`. -/
 def stored (state : Config.State Elaborated) (name : String) : Option Value :=
@@ -3059,6 +3078,62 @@ def fileModelChecks : List Check :=
             says .notAFile "not a file" &&
             says .noSuchSnapshot "snapshot" }]
 
+/-- A command's result, or the refusal it failed with on the left, as a
+value with equality. -/
+def resulted {α : Type} : Except TextError α → TextError ⊕ α
+  | .ok value => .inr value
+  | .error refusal => .inl refusal
+
+/-- The checks of the editor's composite port (`Editor/Command.lean`): what
+its model runner does with each sub-port's requests. -/
+def commandPortChecks : List Check :=
+  [{  name :=
+        "a program over the text port, lifted to a command, gives the same result and the same texts on the editor's models as on the text model"
+      run := do
+        let program : TextM String := do
+          let text ← createText "héllo"
+          text.insert 6 " wörld"
+          discard <| createText "other"
+          text.read
+        let (onText, texts) := program.runModel {}
+        let (onEditor, model) := (TextM.lift program).runModel editorModel
+        return resulted onText == resulted onEditor && texts.contents == model.texts.contents &&
+            model.display.scenes == #[] },
+    { name :=
+        "inside a command, the rows a view shows of a snapshot just taken are answered from the text model's text"
+      run := do
+        let command : EditorM (Array Display.Row) := do
+          let text ← createText "ab\ncdef"
+          let snapshot ← text.snapshot
+          text.insert 0 "xyz"
+          Display.rowsShown { snapshot, width := 3, height := 10, anchor := 0 }
+        return resulted (command.runModel editorModel).1 == .inr #[⟨0, 2⟩, ⟨3, 6⟩, ⟨6, 7⟩] },
+    { name :=
+        "a display refusal inside a command is the text port's refusal of the same name, and a text refusal is itself"
+      run := do
+        let unknown : EditorM (Array Display.Row) :=
+          Display.rowsShown { snapshot := ⟨9⟩, width := 3, height := 10, anchor := 0 }
+        let inside : EditorM (Array Display.Row) := do
+          let snapshot ← (← createText "é").snapshot
+          Display.rowsShown { snapshot, width := 3, height := 10, anchor := 1 }
+        let moved : EditorM Display.Moved := do
+          let snapshot ← (← createText "é").snapshot
+          Display.linesFrom { snapshot, width := 3, position := 1, lines := 1, goal := none }
+        let text : EditorM Unit := (⟨4⟩ : TextId).insert 0 "x"
+        return resulted (unknown.runModel editorModel).1 == .inl .noSuchSnapshot &&
+            resulted (inside.runModel editorModel).1 == .inl .badPosition &&
+            resulted (moved.runModel editorModel).1 == .inl .badPosition &&
+            resulted (text.runModel editorModel).1 == .inl .noSuchText },
+    { name := "a scene published inside a command is recorded by the display model, in order"
+      run := do
+        let command : EditorM Unit := do
+          Display.publish twoViews
+          discard <| createText "between"
+          Display.publish { twoViews with echo := "second" }
+        let (result, model) := command.runModel editorModel
+        return result matches .ok () &&
+            model.display.scenes == #[twoViews, { twoViews with echo := "second" }] }]
+
 /-- Every check, in the order they run.
 
 The order matters where the process's one pool is measured. `poolChecks` run
@@ -3081,7 +3156,8 @@ def checks : List Check :=
     undoTreeChecks ++
     fileModelChecks ++
     sceneChecks ++
-    displayChecks
+    displayChecks ++
+    commandPortChecks
 
 /-- Runs `checks` and returns the names of those that failed. A check that
 throws has failed, and its error is reported with its name. -/

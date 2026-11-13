@@ -25,8 +25,9 @@ pattern every later interface follows:
 
 A program over this port that may be refused is a value of `TextM`. Every
 operation here is one, and the same value runs against the model and against
-the real binding. A command is written at `EditorM`, the editor's port, and
-reaches these operations through it.
+the real binding. A command is written at `EditorM`, over the editor's port,
+of which this port is a part (`Editor/Command.lean`), and uses these
+operations as they are: they are lifted into it.
 
 ## The rules of the port
 
@@ -717,11 +718,6 @@ abbrev textPort : Port :=
 cannot block: it holds no `IO`, and the port has no request that waits. -/
 abbrev TextM :=
   ExceptT TextError (Program textPort)
-
-/-- A command: a program over the editor's port that may be refused with a
-`TextError`. For now the editor's port is the text port alone. -/
-abbrev EditorM :=
-  TextM
 
 /-- Makes a new text holding `initial` and returns its id. -/
 def createText (initial : String) : TextM TextId :=

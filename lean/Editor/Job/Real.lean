@@ -1,3 +1,4 @@
+import Editor.Command.Real
 import Editor.Ffi
 import Editor.Job.Runner
 import Editor.Text.Real
@@ -277,8 +278,9 @@ where
     completions.finish id .completed
 
 /-- Runs `command`, the command a finished job ended with, against the Rust
-library on the editor thread, and then settles the job: its result, or the
-refusal it failed with, and the table after its last request.
+library on the editor thread, with `display` answering its display requests,
+and then settles the job: its result, or the refusal it failed with, and the
+table after its last request.
 
 The run is handed what the job held: the ids its handle lists, each with the
 library's snapshot `held` has for it, so the command can take one into the
@@ -286,10 +288,10 @@ store (`JobSnapshotId.adopt`). The job has ended, so nothing else writes its
 list. The job is settled whatever the command did, and what the command
 adopted outlives that: the store holds the library's object too. -/
 def finishWith {α : Type} (held : HeldSnapshots) (handle : Handle) (command : EditorM α)
-    (texts : RealTexts) : IO (Except TextError α × RealTexts) := do
+    (texts : RealTexts) (display : DisplayHandler) : IO (Except TextError α × RealTexts) := do
   let arrived ← (← handle.holding).filterMapM fun id => return (← held.find? id).map (id, ·)
   try
-    command.runReal texts arrived
+    command.runReal texts display arrived
   finally
     handle.settle
 
