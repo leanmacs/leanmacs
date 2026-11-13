@@ -45,6 +45,20 @@ impl Rope {
         offset <= self.len() && self.0.is_char_boundary(offset)
     }
 
+    /// Replaces the bytes from `start` up to, not including, `end` with
+    /// `text`, and returns whether it did.
+    ///
+    /// The caller has checked that both offsets are character boundaries
+    /// within the text and that `start <= end`, which is all either step
+    /// below can fail on. So false is not expected; it is returned, and not
+    /// a panic, because the library reports its refusals as errors.
+    pub(crate) fn replace(&mut self, start: usize, end: usize, text: &str) -> bool {
+        // An empty step is skipped, so an edit that changes nothing does not
+        // touch the tree.
+        (start == end || self.0.try_remove(start..end).is_ok())
+            && (text.is_empty() || self.0.try_insert(start, text).is_ok())
+    }
+
     /// The pieces the text is held in, in order. Joined, they are the text.
     /// None is empty.
     pub(crate) fn chunks(&self) -> impl Iterator<Item = &str> {

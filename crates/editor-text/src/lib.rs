@@ -12,6 +12,12 @@
 //!   offset that is a character boundary within the text, its end included
 //!   ([`Snapshot::is_char_boundary`]). Offsets are the unit the Lean editor
 //!   speaks.
+//! - **An edit** replaces the bytes between two positions with a string
+//!   ([`Text::replace`]). It is refused, changing nothing, unless both ends
+//!   are positions and are in order.
+//! - **A revision** counts the edits a text has accepted ([`Revision`]). A
+//!   new text is at 0, every accepted edit adds one, one that changes
+//!   nothing included, and a refused edit adds none.
 //!
 //! # The rope
 //!
@@ -30,5 +36,5 @@ mod rope;
 mod snapshot;
 mod text;
 
-pub use snapshot::Snapshot;
-pub use text::Text;
+pub use snapshot::{Revision, Snapshot};
+pub use text::{BadRange, Text};
