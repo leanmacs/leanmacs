@@ -67,6 +67,9 @@ impl Transaction {
     /// `before`: the inverse of its change set
     /// ([`ChangeSet::invert`]), with the two selections swapped. `None`
     /// unless the change set fits `before`.
+    ///
+    /// A text keeps this for every transaction it accepts, and applies it
+    /// itself ([`Text::apply_inverse`](crate::Text::apply_inverse)).
     pub fn invert(&self, before: &Snapshot) -> Option<Self> {
         Some(Self {
             changes: self.changes.invert(before)?,

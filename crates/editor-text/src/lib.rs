@@ -93,7 +93,50 @@
 //!   nothing: a transaction is refused, changing nothing, unless its change
 //!   set fits the text and every end of each selection is a position of
 //!   its own text, the one before or the one after. [`Text::replace`] is
-//!   the transaction with one change and no selection.
+//!   the transaction with one change and no selection, and the inverse of
+//!   a run ([`Text::apply_inverse`]) is a transaction applied by the same
+//!   path: there is one writer path.
+//! - **The inverse of every accepted transaction is kept**, by the
+//!   revision the transaction produced: the transaction that undoes it
+//!   ([`Transaction::invert`]), which holds the bytes it removed, only the
+//!   lengths of what it inserted, and its two selections swapped. One
+//!   direction only: a transaction that inserts a megabyte keeps a few
+//!   bytes, and the other direction is made when it is needed, because
+//!   applying an inverse keeps *its* inverse, which reads what it is about
+//!   to remove back out of the text, once. Nothing hands a kept inverse
+//!   out: text that was deleted stays in the crate.
+//! - **A state** is where a text is in its history, not what it holds.
+//!   The text names the state it is in by the revision of the transaction
+//!   that first put it there, and 0 as it was made. A transaction puts the
+//!   text in a new state; the inverse of a run puts it back in the state
+//!   it was in before the run, under that state's name. A revision cannot
+//!   say this, since an inverse makes a new revision that holds old text.
+//!   A name is given once, to the text one transaction made, and an
+//!   inverse only copies one, so whenever the text has a name it holds
+//!   byte for byte what it held when the name was given. Comparing what
+//!   two states hold would cost the text, and a text typed back by hand
+//!   to what it held is a different state in every editor. Nothing
+//!   answers which state a text is in: the names are kept with the
+//!   inverses and only decide whether an inverse is allowed.
+//! - **The inverse of a run of consecutive revisions is applied as one
+//!   transaction** ([`Text::apply_inverse`]): one new revision and one log
+//!   entry, with the origin the caller passes, and every marker moved
+//!   through the one change set, which is the run's kept inverses
+//!   composed. It is allowed only when the text is in the state the run
+//!   ended in, and is otherwise refused with the text as it was
+//!   ([`InverseError`]). Its own inverse is kept like any other's, so a
+//!   redo is the inverse of an undo and there is one primitive. In the log
+//!   an inverse is an edit like any other: text it puts back traces to it
+//!   ([`Text::trace`]), not to whoever first wrote it. A marker moves
+//!   through it as through any transaction and not back to where it was:
+//!   an anchor inside text that was deleted collapsed to a point then, and
+//!   is before or after the text when it is put back.
+//! - **Applying an inverse hands back the selection in force before the
+//!   run** ([`Inverted`]): the selection before that the run's first
+//!   transaction carried, or none when it carried none. A text holds no
+//!   current selection, so placing it is the caller's. The inverse of an
+//!   inverse hands back the selection after that the run's last
+//!   transaction carried.
 //! - **A selection** ([`Selection`]) is one or more ranges of two offsets,
 //!   an anchor and a head ([`SelectionRange`]), one of them the primary,
 //!   with one [`Shape`] for them all. It is kept in one form whatever it
@@ -165,7 +208,9 @@
 //! - **A revision** counts the transactions a text has accepted
 //!   ([`Revision`]). A new text is at 0, every accepted transaction adds
 //!   one, however many changes it has and one that changes nothing
-//!   included, and a refused one adds none.
+//!   included, and a refused one adds none. It only grows: the inverse of
+//!   a run is an accepted transaction, so undoing adds one too, and two
+//!   revisions may hold the same text.
 //! - **A snapshot** is the text at one revision ([`Text::snapshot`]). It
 //!   never changes, whatever is done to the text afterwards, and it outlives
 //!   the text. Taking one copies none of the text, and so does cloning one.
@@ -195,8 +240,8 @@
 //! - A second row rule, in which a carriage return alone ends a line, which
 //!   is how a language server counts. The library can count it beside this
 //!   one without the stored text changing.
-//! - Composing transactions.
-//! - Undo.
+//! - Composing transactions, as something a caller can ask for: the
+//!   inverses of a run are composed inside the crate.
 //! - A bound on how many markers a text holds, and a marker that a
 //!   transaction sets to its selection after.
 //! - Extended grapheme clusters as the cell: a letter and a combining mark
@@ -232,6 +277,7 @@ mod bytes;
 mod cell;
 mod change;
 mod extent;
+mod inverse;
 mod log;
 mod marker;
 mod patch;
@@ -245,6 +291,7 @@ mod transaction;
 pub use anchor::Anchor;
 pub use bytes::ByteChunks;
 pub use change::{Bias, Change, ChangeSet, Mapper};
+pub use inverse::{InverseError, Inverted};
 pub use log::{Attribution, LogEntry, LogError, Origin, Source, Subscription};
 pub use marker::{MarkError, Marker, MarkerId};
 pub use patch::{Edit, InputEdit, Patch, Span};

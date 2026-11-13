@@ -8,6 +8,9 @@ use crate::rope::{self, Rope};
 /// Which state of a text a snapshot holds: how many edits the text had
 /// accepted. A new text is at 0. Two snapshots of one text at the same
 /// revision hold the same text; revisions of different texts do not compare.
+/// A revision only grows: taking edits back
+/// ([`Text::apply_inverse`](crate::Text::apply_inverse)) is an edit, so two
+/// revisions of one text may hold the same text.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
 pub struct Revision(pub(crate) u64);
 

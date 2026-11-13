@@ -5,6 +5,7 @@ use std::fmt;
 use std::ops::Range;
 
 use crate::change::ChangeSet;
+use crate::inverse::{InverseError, Inverses, Inverted};
 use crate::log::{Attribution, Log, LogEntry, LogError, Origin, Subscription};
 use crate::marker::{MarkError, Marker, MarkerId, Markers};
 use crate::patch::{Edit, Patch, Span};
@@ -22,6 +23,9 @@ pub struct Text {
     /// The anchors and selections the text holds, each where it is in the
     /// text as it is now.
     markers: Markers,
+    /// The inverse of each transaction the text accepted, until it is
+    /// dropped, and the name of the state the text is in.
+    inverses: Inverses,
 }
 
 /// Why an edit was refused: its range is not two positions of the text in
@@ -109,18 +113,52 @@ impl Text {
     /// selection as [`Selection::map`](crate::Selection::map) says. The
     /// selections of the transaction itself are carried, not held: the
     /// text marks neither.
+    ///
+    /// An accepted transaction's inverse is kept, by the revision it
+    /// produced, until it is dropped: [`apply_inverse`](Self::apply_inverse)
+    /// takes the transaction back. The transaction puts the text in a new
+    /// state.
     pub fn apply(
         &mut self,
         transaction: &Transaction,
         origin: Origin,
     ) -> Result<Revision, ApplyError> {
+        let inverse = Self::commit(
+            &mut self.current,
+            &mut self.log,
+            &mut self.markers,
+            transaction,
+            origin,
+        )?;
+        let revision = self.current.revision;
+        self.inverses.keep(revision, inverse, None);
+        Ok(revision)
+    }
+
+    /// The one writer path: makes `transaction` of the text `current`,
+    /// records it in `log` with `origin` and moves `markers`, as
+    /// [`apply`](Self::apply) says, with its checks in its order. Returns
+    /// the transaction's inverse, for the caller to keep with the name of
+    /// the state the transaction put the text in. A refusal has changed
+    /// nothing.
+    ///
+    /// It takes the parts of a text and not the text, so that the
+    /// transaction may be one the text keeps: a kept inverse is applied
+    /// where it is, with no copy.
+    fn commit(
+        current: &mut Snapshot,
+        log: &mut Log,
+        markers: &mut Markers,
+        transaction: &Transaction,
+        origin: Origin,
+    ) -> Result<Transaction, ApplyError> {
         let changes = transaction.changes();
-        if !changes.fits(&self.current.rope) {
+        if !changes.fits(&current.rope) {
             return Err(ApplyError::BadChange);
         }
         if transaction
             .before()
-            .is_some_and(|selection| !selection.fits(&self.current))
+            .is_some_and(|selection| !selection.fits(current))
         {
             return Err(ApplyError::BadSelection);
         }
@@ -128,8 +166,8 @@ impl Text {
         // copies only those it changes. It takes the text's place once
         // everything is accepted, so a refusal has nothing to undo.
         let mut next = Snapshot {
-            rope: self.current.rope.clone(),
-            revision: self.current.revision.next(),
+            rope: current.rope.clone(),
+            revision: current.revision.next(),
         };
         if !changes.apply_to(&mut next.rope) {
             return Err(ApplyError::BadChange);
@@ -145,22 +183,100 @@ impl Text {
         // the fit made a position, so no span is expected to be missing.
         let mut edits = Vec::with_capacity(changes.runs().count());
         for (old, new) in changes.runs() {
-            let (Some(old), Some(new)) = (Span::of(&self.current, old), Span::of(&next, new))
-            else {
+            let (Some(old), Some(new)) = (Span::of(current, old), Span::of(&next, new)) else {
                 return Err(ApplyError::BadChange);
             };
             edits.push(Edit { old, new });
         }
         // Every end a marker holds is a position of the text as it is, so
         // it is within the length the change set is for and none is
-        // expected to map to nothing. Nothing has been changed yet.
-        let Some(marked) = self.markers.mapped(changes) else {
+        // expected to map to nothing.
+        let Some(marked) = markers.mapped(changes) else {
             return Err(ApplyError::BadChange);
         };
-        self.log.record(origin, edits.into_boxed_slice());
-        self.markers.place_all(&marked);
-        self.current = next;
-        Ok(self.current.revision)
+        // What the transaction removes is read from the text as it is,
+        // last of all, so a refused transaction reads none of it. The
+        // change set fits, so an inverse is expected. Nothing has been
+        // changed yet.
+        let Some(inverse) = transaction.invert(current) else {
+            return Err(ApplyError::BadChange);
+        };
+        log.record(origin, edits.into_boxed_slice());
+        markers.place_all(&marked);
+        *current = next;
+        Ok(inverse)
+    }
+
+    /// Applies the inverse of the run of revisions from `first` to `last`,
+    /// both included, as one transaction, recording `origin` as who made
+    /// the edit: the text holds again what it held before the transaction
+    /// that produced `first`.
+    ///
+    /// The inverse is a transaction like any other and goes by the path
+    /// every transaction takes ([`apply`](Self::apply)): it adds one to
+    /// the revision, has one entry in the log, with `origin` and the
+    /// edits of the run's inverses composed, and moves every marker
+    /// through that one change set. Text it puts back is its own in a
+    /// [`trace`](Self::trace). Its inverse is kept like any other's, so
+    /// the inverse of the revision this returns takes it back: a redo is
+    /// the inverse of an undo.
+    ///
+    /// Refused, changing nothing, in this order:
+    ///
+    /// 1. the text has not reached `first` or `last`:
+    ///    [`InverseError::UnknownRevision`];
+    /// 2. the text does not keep an inverse for every revision of the run,
+    ///    because the run starts at revision 0, which no transaction
+    ///    produced, or its first revision is after its last:
+    ///    [`InverseError::NotKept`];
+    /// 3. the text is not in the state the run ended in:
+    ///    [`InverseError::NotInState`].
+    ///
+    /// **A state** is where the text is in its history, not what it
+    /// holds. A transaction puts the text in a new state, and the inverse
+    /// of a run puts it back in the state it was in before the run. So
+    /// the text is in the state a run ended in just after the run, and
+    /// again whenever inverses have brought it back there; a text edited
+    /// by hand until it reads what it read then is in another state. The
+    /// crate docs say why.
+    ///
+    /// What is handed back is the selection in force before the run: the
+    /// selection before that the run's first transaction carried, or none
+    /// when it carried none. The text holds no current selection, so
+    /// putting it somewhere ([`mark`](Self::mark), [`place`](Self::place))
+    /// is the caller's. The inverse of this inverse hands back the
+    /// selection after that the run's last transaction carried.
+    ///
+    /// The cost is that of composing the run's kept inverses and of one
+    /// transaction of their size, and of reading the bytes the inverse
+    /// removes back out of the text, once, for its own inverse. A run of
+    /// one revision is applied where it is kept, with no copy.
+    pub fn apply_inverse(
+        &mut self,
+        first: Revision,
+        last: Revision,
+        origin: Origin,
+    ) -> Result<Inverted, InverseError> {
+        let run = self.inverses.of_run(first, last, self.current.revision)?;
+        // The state's name says the text is what the run ended in, which
+        // the inverse fits, so the transaction is not expected to be
+        // refused. It is reported, and not a panic, as any refusal is.
+        let inverse = Self::commit(
+            &mut self.current,
+            &mut self.log,
+            &mut self.markers,
+            &run.transaction,
+            origin,
+        )
+        .map_err(|_| InverseError::NotInState)?;
+        let selection = run.transaction.after().cloned();
+        let state = run.state;
+        let revision = self.current.revision;
+        self.inverses.keep(revision, inverse, Some(state));
+        Ok(Inverted {
+            revision,
+            selection,
+        })
     }
 
     /// The log's entry for the transaction that produced `revision`: who
@@ -315,6 +431,7 @@ impl From<&str> for Text {
             },
             log: Log::default(),
             markers: Markers::default(),
+            inverses: Inverses::default(),
         }
     }
 }
