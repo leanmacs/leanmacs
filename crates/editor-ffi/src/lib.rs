@@ -60,6 +60,7 @@
 //! | Small structure | Its fields, as scalar arguments | One `#[repr(C)]` record filled through an out-pointer in a single call ([`events::RawEvent`]) |
 //! | Option | A presence flag and a value | The function returns whether there is a value and fills the record only if so |
 //! | Byte range | Two scalars | A record of two `u64`: a start and an end, half-open, in bytes ([`text::ByteRange`]) |
+//! | List | *Words*: a buffer of 64-bit numbers, eight bytes each, least significant first, as a pointer and a byte length borrowed for the call. A checked reader takes it apart and refuses a length that is not whole words, a count that runs past the buffer and words left over (the private module `words`) | Words in an owned buffer, pointer and length, in the result record ([`log::RawWords`]); the glue copies it and hands it back with one call to [`text::editor_ffi_text_free`], which frees any buffer the library lent |
 //!
 //! Prefer a few scalar arguments or one record to many calls. No
 //! `extern "C"` function panics: failure is a return value. A function that
@@ -73,12 +74,24 @@
 //! in, as the tag of a [`snapshot::ColumnUnit`]; an option of a record out,
 //! in [`snapshot::RawPoint`], and an option of a number). Offsets into a
 //! text cross as `usize`, and rows and columns as `u64`; a row or a column
-//! no `usize` holds is refused, never cut down. Tests: the unit tests in
-//! `text.rs`, `document.rs` and `snapshot.rs`; the tag tests in
-//! `events.rs`;
+//! no `usize` holds is refused, never cut down. A document's transactions
+//! and its edit log are the example of lists: a transaction in, as words
+//! and one string of everything it inserts
+//! ([`transaction::editor_ffi_document_apply`], with its result in
+//! [`transaction::RawApplied`]); a patch and a trace out, as words
+//! ([`log::editor_ffi_document_changes_since`],
+//! [`log::editor_ffi_document_trace`]); and a refusal as a `bool`
+//! ([`log::editor_ffi_document_forget`]). In words, a length or an offset
+//! the other side cannot hold is sent as the largest it can, which no text
+//! accepts, so it too is refused and never cut down. Tests: the unit tests
+//! in `text.rs`, `document.rs`, `snapshot.rs`, `words.rs`,
+//! `transaction.rs` and `log.rs`; the tag tests in `events.rs`;
 //! `find_fills_the_range_it_found_and_reports_whether_it_found_one` and the
 //! document test in `tests/c_api.rs`; the snapshot test in
-//! `tests/snapshot.rs`; the `find` and event checks of `ffi-test`
+//! `tests/snapshot.rs`;
+//! `a_transaction_is_applied_and_the_log_is_read_through_c` in
+//! `tests/log.rs`, an integration test of its own for the reason
+//! `tests/snapshot.rs` is one; the `find` and event checks of `ffi-test`
 //! (`dataChecks`), its document checks (`documentChecks`) and its snapshot
 //! checks (`snapshotChecks`).
 //!
@@ -249,11 +262,14 @@
 pub mod counter;
 pub mod document;
 pub mod events;
+pub mod log;
 pub mod main_thread;
 pub mod snapshot;
 pub mod text;
 pub mod timers;
+pub mod transaction;
 pub mod window;
+mod words;
 
 /// The sum of `a` and `b`, wrapping on overflow.
 ///

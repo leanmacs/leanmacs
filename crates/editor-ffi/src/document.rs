@@ -9,6 +9,12 @@
 //! lock, or that reads more than once and wants one state of the text,
 //! takes a snapshot ([`crate::snapshot`]).
 //!
+//! A document's other methods are beside what they carry across the
+//! boundary: applying a transaction in [`crate::transaction`], and the
+//! reads of the edit log and forgetting in [`crate::log`]. A replace made
+//! here is a transaction too, recorded in the log with the text's default
+//! origin.
+//!
 //! The editor reaches a document only through the text port's real binding
 //! (`lean/Editor/Text/Real.lean`).
 
@@ -61,7 +67,7 @@ impl Document {
     /// The text, locked. An edit is all or nothing, so a panic while the
     /// lock was held cannot leave the text half-edited, and a poisoned lock
     /// is used as it is.
-    fn lock(&self) -> MutexGuard<'_, Text> {
+    pub(crate) fn lock(&self) -> MutexGuard<'_, Text> {
         self.text.lock().unwrap_or_else(PoisonError::into_inner)
     }
 }

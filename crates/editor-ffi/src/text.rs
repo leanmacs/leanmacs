@@ -88,8 +88,10 @@ pub(crate) fn lend(text: String) -> (*mut u8, usize) {
     (Box::into_raw(bytes).cast(), len)
 }
 
-/// Takes back a text buffer the library handed out in a result record, and
-/// frees it.
+/// Takes back a buffer the library handed out in a result record, and
+/// frees it. It frees any such buffer, whatever it holds: every one is a
+/// boxed slice of bytes, a text and a buffer of words (the private module
+/// `words`) alike.
 ///
 /// # Safety
 ///
@@ -98,7 +100,7 @@ pub(crate) fn lend(text: String) -> (*mut u8, usize) {
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn editor_ffi_text_free(text: *mut u8, len: usize) {
     // SAFETY: the caller guarantees these are the parts of a boxed slice
-    // `lend` gave up, taken back this once.
+    // the library gave up, taken back this once.
     drop(unsafe { Box::from_raw(ptr::slice_from_raw_parts_mut(text, len)) });
 }
 
