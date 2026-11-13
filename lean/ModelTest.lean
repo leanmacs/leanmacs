@@ -7,6 +7,7 @@ import Editor.File.Cases
 import Editor.File.Model
 import Editor.InputScheme.Contract
 import Editor.InputScheme.Test
+import Editor.InputScheme.Vim
 import Editor.Job.Contract
 import Editor.Job.Fake
 import Editor.Job.Jobs
@@ -154,6 +155,12 @@ need no model and no fake of a collaborator:
   (`Editor/InputScheme/Contract.lean`) holds of the test scheme, and
   reports schemes written here that each break one property of it, `eager`
   among them, which emits on a strict prefix.
+
+The Vim scheme (`Editor/InputScheme/Vim.lean`) is checked the same way,
+with no model:
+
+- `vimEditChecks`: what an edit compiles to, the layout of each kind of
+  invocation, and what an edit says of itself.
 -/
 
 namespace ModelTest
@@ -4343,6 +4350,101 @@ def schemeContractChecks : List Check :=
           (failsOnly subject [SchemeContract.completeEmits] &&
             (subject.feed (keys "C-x C-s")).2.getLast? == some (some (invoke "save"))) }]
 
+/-- The delete operator of the Vim checks: it changes text and names no
+state. -/
+def vimDelete : Vim.Operator :=
+  { name := "delete" }
+
+/-- The change operator of the Vim checks: it changes text and enters the
+state `insert`. -/
+def vimChange : Vim.Operator :=
+  { name := "change", enters := some "insert" }
+
+/-- The yank operator of the Vim checks: it changes no text. -/
+def vimYank : Vim.Operator :=
+  { name := "yank", changes := false }
+
+/-- A command of the Vim checks that changes text and enters the state
+`insert`. -/
+def vimInsert : Vim.Command :=
+  { name := "insert", changes := true, enters := some "insert" }
+
+/-- The checks of the Vim scheme's edits (`Editor/InputScheme/Vim.lean`):
+the invocation each compiles to, and what an edit says of itself. -/
+def vimEditChecks : List Check :=
+  let undo : Vim.Command := { name := "undo" }
+  [{  name := "a move compiles to the move command, with the motion's name and then the count"
+      run :=
+        pure
+          ((Vim.Edit.move "word" (some 2)).compile ==
+              { command := "move", arguments := [.str "word", .nat 2] } &&
+            Vim.moveCommand == "move") },
+    { name :=
+        "an edit with an operator compiles to the operate command, with the operator's name, the kind of its target and the target's name, the count and the register: over a motion, a text object, lines and the selection"
+      run :=
+        let compiled (over : Vim.Over) : Invocation :=
+          (Vim.Edit.operate vimDelete over (some 3) (some "a")).compile
+        let expected (kind name : String) : Invocation :=
+          { command := "operate"
+            arguments := [.str "delete", .str kind, .str name, .nat 3, .str "a"] }
+        pure
+          (compiled (.motion "word") == expected "motion" "word" &&
+            compiled (.textObject "inner-word") == expected "text-object" "inner-word" &&
+            compiled .lines == expected "lines" "" &&
+            compiled .selection == expected "selection" "" &&
+            Vim.operateCommand == "operate") },
+    { name :=
+        "an edit that runs a command compiles to that command, with the count and then the register"
+      run :=
+        pure
+          ((Vim.Edit.run { name := "put-after" } (some 2) (some "+")).compile ==
+            { command := "put-after", arguments := [.nat 2, .str "+"] }) },
+    { name :=
+        "an edit with no count compiles to a count of 0, and one with no register to the empty register name"
+      run :=
+        pure
+          ((Vim.Edit.move "word" none).compile ==
+              { command := "move", arguments := [.str "word", .nat 0] } &&
+            (Vim.Edit.operate vimDelete .lines none none).compile ==
+              { command := "operate"
+                arguments := [.str "delete", .str "lines", .str "", .nat 0, .str ""] } &&
+            (Vim.Edit.run undo none none).compile ==
+              { command := "undo", arguments := [.nat 0, .str ""] }) },
+    { name :=
+        "edits that differ in one part compile to invocations that differ, each from every other"
+      run :=
+        let edits : List Vim.Edit :=
+          [.move "word" none, .move "word" (some 1), .move "word" (some 2), .move "line" none,
+            .operate vimDelete (.motion "word") none none,
+            .operate vimYank (.motion "word") none none,
+            .operate vimDelete (.motion "line") none none,
+            .operate vimDelete (.textObject "word") none none, .operate vimDelete .lines none none,
+            .operate vimDelete .selection none none,
+            .operate vimDelete (.motion "word") (some 2) none,
+            .operate vimDelete (.motion "word") none (some "a"),
+            .operate vimDelete (.motion "word") none (some "b"), .run undo none none,
+            .run { name := "redo" } none none, .run undo (some 2) none, .run undo none (some "a")]
+        let compiled := edits.map (·.compile)
+        pure (compiled.eraseDups.length == edits.length) },
+    { name :=
+        "whether an edit changes text is its operator's or its command's word for it, and a move changes none"
+      run :=
+        pure
+          ((Vim.Edit.operate vimDelete .lines none none).changes &&
+            !(Vim.Edit.operate vimYank .lines none none).changes &&
+            (Vim.Edit.run vimInsert none none).changes &&
+            !(Vim.Edit.run undo none none).changes &&
+            !(Vim.Edit.move "word" (some 2)).changes) },
+    { name :=
+        "the state an edit enters is the one its operator or its command names, and a move names none"
+      run :=
+        pure
+          ((Vim.Edit.operate vimChange .lines none none).enters == some "insert" &&
+            (Vim.Edit.operate vimDelete .lines none none).enters == none &&
+            (Vim.Edit.run vimInsert none none).enters == some "insert" &&
+            (Vim.Edit.run undo none none).enters == none &&
+            (Vim.Edit.move "word" none).enters == none) }]
+
 /-- Every check, in the order they run.
 
 The order matters where the process's one pool is measured. `poolChecks` run
@@ -4375,7 +4477,8 @@ def checks : List Check :=
     keyNotationChecks ++
     invocationChecks ++
     schemeChecks ++
-    schemeContractChecks
+    schemeContractChecks ++
+    vimEditChecks
 
 /-- Runs `checks` and returns the names of those that failed. A check that
 throws has failed, and its error is reported with its name. -/
