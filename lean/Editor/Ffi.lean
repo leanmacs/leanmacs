@@ -29,13 +29,17 @@ reference exists, on any thread, the object is alive.
 
 Pass a handle to a binding as `@&`, so the call does not take a reference.
 
-Examples: `Counter`; `Document`, the text the text port's real binding holds;
-and `Snapshot`, a document's text as it was at one moment, which is made by a
-binding on a document and outlives it. Tests: the four counter checks of
-`ffi-test` (`FfiTest.handleChecks`), its check that a document is freed
-(`FfiTest.documentChecks`) and its checks that a snapshot is freed and
-outlives its document (`FfiTest.snapshotChecks`); `tests/c_api.rs` and
-`tests/snapshot.rs` in `editor-ffi`.
+Examples: `Counter`; `Document`, the text the text port's real binding holds,
+made from a string or from a snapshot (`Document.ofSnapshot`); and
+`Snapshot`, a text as it was at one moment, which is made by a binding on a
+document and outlives it, or handed over by the file service as the text of
+a file it loaded (`filesTake`). Tests: the four counter checks of `ffi-test`
+(`FfiTest.handleChecks`), its check that a document is freed
+(`FfiTest.documentChecks`), its checks that a snapshot is freed and outlives
+its document (`FfiTest.snapshotChecks`) and its checks that a loaded
+snapshot is counted live and that a document made from a snapshot is freed
+(`FfiTest.fileChecks`); `tests/c_api.rs`, `tests/snapshot.rs`,
+`tests/document_from_snapshot.rs` and `tests/files.rs` in `editor-ffi`.
 
 ### Plain data
 
@@ -122,16 +126,32 @@ for.
 The timer service is the first: `timersNow`, `timersStart`, `timersCancel`,
 and `timersPending`, a readout for tests.
 
-The editor does not call these bindings. The job runner reaches the service
-through the clock port it defines (`Job.Timers`, `Editor/Job/Runner.lean`),
-whose real implementation (`Editor/Job/Real.lean`) is the one caller, with
-the completion pump that pulls the queue on a dedicated task.
+The file service is the second: `filesLoad` and `filesSave` start a request,
+`filesTake` hands its result over once its completion has arrived,
+`filesCancel` cancels, and `filesPending` is a readout for tests. A request
+has a result, which a timer's has not, so there is one more step: the
+completion says only that the request `id` is done, and the result is taken
+by that id, once, as one record (`FileResult`): a loaded file's text as a
+`Snapshot` handle with its stamp and its line endings, a saved file's stamp,
+or a refusal (`FileRefusal`). A file's content never crosses as a Lean
+string or a byte array: a load hands back a handle, and a save borrows one.
+A path crosses as the bytes of a Lean string, which the library does not
+decode. What a save expects on disk (`FileExpect`) crosses as a tag and a
+stamp's three numbers. A stamp's seconds are an `Int`, and cross as a 64-bit
+two's complement word in both directions.
 
-Tests: the three timer checks of `ffi-test` (`FfiTest.timerChecks`), and its
-check that the completion tag is known (`FfiTest.dataChecks`);
+The editor does not call these bindings. The job runner reaches the services
+through the ports it defines (`Job.Timers`, `Editor/Job/Runner.lean`), whose
+real implementations (`Editor/Job/Real.lean`) are the callers, with the
+completion pump that pulls the queue on a dedicated task.
+
+Tests: the three timer checks of `ffi-test` (`FfiTest.timerChecks`), its
+file checks (`FfiTest.fileChecks`), in directories they make and remove, and
+its check that the completion tag is known (`FfiTest.dataChecks`);
 `contract-test`, which runs the job port's contract and the checks of the
 real service through the runner (`ContractTest.jobChecks`); the unit tests
-of `timers.rs` and `tests/timers.rs` in `editor-ffi`, which need no Lean.
+of `timers.rs` and `files.rs`, and `tests/timers.rs` and `tests/files.rs`,
+in `editor-ffi`, which need no Lean.
 
 ### The window
 
@@ -298,8 +318,8 @@ This exists for `FfiTest`, which uses it to see a counter's finaliser run. -/
 @[extern "editor_glue_counter_live"]
 opaque Counter.live : IO UInt64
 
-/-- The type behind `Document`. It is opaque, so the only way to get a
-document is `Document.new`. -/
+/-- The type behind `Document`. It is opaque, so the only ways to get a
+document are `Document.new` and `Document.ofSnapshot`. -/
 opaque DocumentPointed : NonemptyType
 
 /-- Text held by the Rust library, edited in place: a second handle, and the
@@ -338,14 +358,14 @@ its documents. -/
 @[extern "editor_glue_document_live"]
 opaque Document.live : IO UInt64
 
-/-- The type behind `Snapshot`. It is opaque, so the only way to get a
-snapshot is `Document.snapshot`. -/
+/-- The type behind `Snapshot`. It is opaque, so the only ways to get a
+snapshot are `Document.snapshot` and a load's result (`filesTake`). -/
 opaque SnapshotPointed : NonemptyType
 
-/-- A document's text as it was at one moment, held by the Rust library: a
-third handle. It never changes, whatever is done to the document afterwards,
-and it stays alive after the document is freed. The editor reaches it only
-through the text port (`Editor/Text/Real.lean`). -/
+/-- A text as it was at one moment, held by the Rust library: a third
+handle. It is a document's text when the snapshot was taken, or the text of
+a file the file service loaded. It never changes, whatever is done to the
+document afterwards, and it stays alive after the document is freed. -/
 def Snapshot : Type :=
   SnapshotPointed.type
 
@@ -1254,6 +1274,199 @@ opaque timersCancel (id : UInt64) : IO Bool
 see that a request reached the service and that a cancel removed it. -/
 @[extern "editor_glue_timers_pending"]
 opaque timersPending : IO UInt64
+
+/-- A new document holding what `snapshot` holds: a text of its own, at
+revision 0, with an empty log, no markers and no kept inverses, whatever the
+snapshot's revision. It copies none of the text. An edit to it changes
+neither the snapshot nor the document the snapshot was taken from, and it
+outlives both. -/
+@[extern "editor_glue_document_from_snapshot"]
+opaque Document.ofSnapshot (snapshot : @& Snapshot) : IO Document
+
+/-- What the file service compares to tell whether a file changed: when it
+was last modified and how long it is. Two stamps are compared for equality
+and never ordered. -/
+structure FileStamp where
+  /-- Whole seconds since the Unix epoch; negative before 1970. -/
+  seconds : Int
+  /-- The nanoseconds beyond `seconds`. -/
+  nanoseconds : UInt64
+  /-- The file's length in bytes. -/
+  size : UInt64
+  deriving DecidableEq, Repr
+
+/-- What a save expects to find at its path. -/
+inductive FileExpect where
+  /-- Anything, or nothing: the save checks nothing. -/
+  | whatever
+  /-- No file. -/
+  | absent
+  /-- The file with this stamp: the one a load or the last save returned. -/
+  | unchanged (stamp : FileStamp)
+  deriving DecidableEq, Repr
+
+/-- Why the file service refused a load or a save. -/
+inductive FileRefusal where
+  /-- The path is not absolute. -/
+  | relativePath
+  /-- Nothing is at the path, or at a directory on the way to it. -/
+  | notFound
+  /-- What is at the path is not a file. -/
+  | notAFile
+  /-- The file system does not allow it; `detail` is the platform's words. -/
+  | denied (detail : String)
+  /-- The file is binary: its first NUL byte is at `offset`. -/
+  | binary (offset : UInt64)
+  /-- The file is `size` bytes long, over the `limit` the load was given. -/
+  | tooLarge (size limit : UInt64)
+  /-- The file on disk is not the one the save expected: `found` is its
+  stamp now, or `none` when there is no file. -/
+  | changed (found : Option FileStamp)
+  /-- No name was free for the save's temporary file. -/
+  | noTemporaryName
+  /-- Anything else; `detail` says what. -/
+  | failed (detail : String)
+  deriving DecidableEq, Repr
+
+/-- What a file request came to. -/
+inductive FileResult where
+  /-- A file was loaded: its text as a snapshot, the stamp a save is to
+  expect if the file has not changed, and how many line feeds stand alone
+  and how many follow a carriage return. -/
+  | loaded (snapshot : Snapshot) (stamp : FileStamp) (lineFeeds crlfs : UInt64)
+  /-- A file was saved, and has this stamp. -/
+  | saved (stamp : FileStamp)
+  /-- The request was refused. -/
+  | refused (refusal : FileRefusal)
+
+/-- The stamp three words spell, from the index `first`: its seconds, a two's
+complement word, then its nanoseconds and its size. -/
+private def stampAt (words : Array UInt64) (first : Nat) : FileStamp where
+  seconds := words[first]!.toInt64.toInt
+  nanoseconds := words[first + 1]!
+  size := words[first + 2]!
+
+/-- The result a status, a snapshot, words and a detail spell, by the table
+in the module docs of `crates/editor-ffi/src/files.rs`. An error, with what
+was wrong, for a status the table does not have and for words that are not
+the status's.
+
+It is public for `FfiTest`, which decodes literal words with it; the
+bindings call it from `filesTake` and nowhere else. -/
+def FileResult.decode (status : UInt64) (snapshot : Option Snapshot) (words : ByteArray)
+    (detail : String) : Except String FileResult := do
+  let some words := wordsOf? words | throw "its words are not whole words"
+  match status, words.size, snapshot with
+  | 0, 5, some snapshot =>
+    return .loaded snapshot (stampAt words 0) words[3]! words[4]!
+  | 0, 3, none =>
+    return .saved (stampAt words 0)
+  | 1, 0, none =>
+    return .refused .relativePath
+  | 2, 0, none =>
+    return .refused .notFound
+  | 3, 0, none =>
+    return .refused .notAFile
+  | 4, 0, none =>
+    return .refused (.denied detail)
+  | 5, 1, none =>
+    return .refused (.binary words[0]!)
+  | 6, 2, none =>
+    return .refused (.tooLarge words[0]! words[1]!)
+  | 7, 4, none =>
+    match words[0]! with
+    | 0 =>
+      return .refused (.changed none)
+    | 1 =>
+      return .refused (.changed (some (stampAt words 1)))
+    | present =>
+      throw s!"a changed file is present or not, and the word says {present}"
+  | 8, 0, none =>
+    return .refused .noTemporaryName
+  | 9, 0, none =>
+    return .refused (.failed detail)
+  | status, count, snapshot =>
+    let handle := if snapshot.isSome then "a snapshot" else "no snapshot"
+    throw s!"the status {status} with {count} words and {handle} is no file result"
+
+/-- Asks the library's file service to load the file at `path`, unless it is
+longer than `limit` bytes, as the request `id`, and returns whether it was
+accepted. It returns at once. The completion is a `completion` event on the
+completion queue, from the library source 2, whose code is `id`; there is
+none if the request is cancelled first. The result is then taken with
+`filesTake`.
+
+The path crosses as its bytes, with no decoding. `false`, with nothing
+started, if `id` is in use or the service could not start its thread. -/
+@[extern "editor_glue_files_load"]
+opaque filesLoad (id : UInt64) (path : @& String) (limit : UInt64) : IO Bool
+
+/-- `filesSave` as it crosses: what the save expects as a tag (0 whatever, 1
+absent, 2 unchanged) and a stamp's three numbers, its seconds as a two's
+complement word. -/
+@[extern "editor_glue_files_save"]
+private opaque filesSaveRaw (id : UInt64) (snapshot : @& Snapshot) (path : @& String)
+    (tag seconds nanoseconds size : UInt64) : IO Bool
+
+/-- Asks the library's file service to save what `snapshot` holds as the file
+at `path`, if what is on disk is what `expect` says, as the request `id`, and
+returns whether it was accepted. It returns at once, and the library keeps
+its own hold on the snapshot's text. The completion and the result are as
+`filesLoad`'s.
+
+`false`, with nothing started, if `id` is in use, if `expect` holds a stamp
+with nanoseconds no stamp has, or if the service could not start its thread.
+Seconds no 64-bit word holds are sent as the nearest it does. -/
+def filesSave (id : UInt64) (snapshot : Snapshot) (path : String) (expect : FileExpect) : IO Bool :=
+  match expect with
+  | .whatever => filesSaveRaw id snapshot path 0 0 0 0
+  | .absent => filesSaveRaw id snapshot path 1 0 0 0
+  | .unchanged stamp =>
+    let seconds := max (-(2 ^ 63 : Int)) (min stamp.seconds (2 ^ 63 - 1))
+    filesSaveRaw id snapshot path 2 seconds.toInt64.toUInt64 stamp.nanoseconds stamp.size
+
+/-- A file result as the glue builds it, in one call: the object fields
+first and the `UInt64` field after them, so the order here is the layout the
+glue writes. -/
+private structure RawFileResult where
+  /-- The loaded text, for a load that succeeded. -/
+  snapshot : Option Snapshot
+  /-- The words, copied from the library's buffer. -/
+  words : ByteArray
+  /-- The detail, copied from the library's buffer. -/
+  detail : String
+  /-- How the request ended: the library's status. -/
+  status : UInt64
+
+/-- `filesTake` before its result is decoded. -/
+@[extern "editor_glue_files_take"]
+private opaque filesTakeRaw (id : UInt64) : IO (Option RawFileResult)
+
+/-- Hands over the result of the file request `id`, once. `none` when the
+service keeps no result for `id`: it is not finished, it was cancelled, its
+result was taken already, or it was another service's id. It throws if the
+library sends a result these bindings cannot read. -/
+def filesTake (id : UInt64) : IO (Option FileResult) := do
+  let some raw ← filesTakeRaw id | return none
+  match FileResult.decode raw.status raw.snapshot raw.words raw.detail with
+  | .ok result =>
+    return some result
+  | .error reason =>
+    throw (IO.userError s!"the library's file result could not be read: {reason}")
+
+/-- Cancels the file request `id`, and returns whether there was anything to
+cancel: a request waiting or being worked, or a result not taken. It is safe
+for an id that is unknown. A request that was waiting is never worked; a save
+being worked does not replace its file; a completion that was already queued
+still arrives, and its result is gone. -/
+@[extern "editor_glue_files_cancel"]
+opaque filesCancel (id : UInt64) : IO Bool
+
+/-- How many file requests are waiting or being worked, and how many results
+have not been taken, together. A readout for tests, which use it to see that
+a cancel left nothing behind. -/
+@[extern "editor_glue_files_pending"]
+opaque filesPending : IO UInt64
 
 /-- Which of the library's platforms runs the window. -/
 inductive Platform where

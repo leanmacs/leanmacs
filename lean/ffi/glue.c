@@ -341,10 +341,11 @@ lean_obj_res editor_glue_document_forget(b_lean_obj_arg document,
 
 // ---- The snapshot ----
 //
-// A third handle: a document's text as it was at one moment. It is made by
-// a call on a document, not by a `new` function, and it outlives the
-// document. Its functions hand back a record of numbers and take the tag of
-// Lean's `Editor.Ffi.ColumnUnit`, which the library checks.
+// A third handle: a text as it was at one moment. It is made by a call on a
+// document, not by a `new` function, and it outlives the document; the file
+// service hands one over too, as the text of a file it loaded (below). Its
+// functions hand back a record of numbers and take the tag of Lean's
+// `Editor.Ffi.ColumnUnit`, which the library checks.
 
 // The Rust library's snapshot.
 typedef struct editor_ffi_snapshot editor_ffi_snapshot;
@@ -361,6 +362,8 @@ typedef struct {
 } editor_ffi_raw_point;
 editor_ffi_snapshot *
 editor_ffi_document_snapshot(const editor_ffi_document *document);
+editor_ffi_document *
+editor_ffi_document_from_snapshot(const editor_ffi_snapshot *snapshot);
 void editor_ffi_snapshot_info(const editor_ffi_snapshot *snapshot,
                               editor_ffi_raw_snapshot_info *out);
 void editor_ffi_snapshot_read(const editor_ffi_snapshot *snapshot,
@@ -400,6 +403,15 @@ lean_obj_res editor_glue_document_snapshot(b_lean_obj_arg document) {
   return lean_io_result_mk_ok(lean_alloc_external(
       snapshot_class,
       editor_ffi_document_snapshot(lean_get_external_data(document))));
+}
+
+// `Editor.Ffi.Document.ofSnapshot : @& Snapshot → IO Document`. The second
+// way a document is made: from a snapshot, which is only read.
+lean_obj_res editor_glue_document_from_snapshot(b_lean_obj_arg snapshot) {
+  pthread_once(&document_class_once, document_class_register);
+  return lean_io_result_mk_ok(lean_alloc_external(
+      document_class,
+      editor_ffi_document_from_snapshot(lean_get_external_data(snapshot))));
 }
 
 // `Editor.Ffi.Snapshot.info : @& Snapshot → IO SnapshotInfo`
@@ -677,6 +689,99 @@ lean_obj_res editor_glue_timers_cancel(uint64_t id) {
 // `Editor.Ffi.timersPending : IO UInt64`
 lean_obj_res editor_glue_timers_pending(void) {
   return lean_io_result_mk_ok(lean_box_uint64(editor_ffi_timers_pending()));
+}
+
+// ---- The file service ----
+//
+// The second service behind the completion queue. A request goes in as an
+// id, a path (the bytes of a Lean string, borrowed for the call) and plain
+// numbers; a save also borrows a snapshot handle, which the library clones.
+// Its completion comes back as an event on the completion queue, like a
+// timer's, and its result is then taken by the id, as one record: a status,
+// a snapshot handle the caller owns (for a load that succeeded), words and a
+// detail string.
+
+// The library's `RawExpect`.
+typedef struct {
+  uint64_t tag;
+  uint64_t seconds;
+  uint64_t nanoseconds;
+  uint64_t size;
+} editor_ffi_raw_expect;
+// The library's `RawFileResult`.
+typedef struct {
+  uint64_t status;
+  editor_ffi_snapshot *snapshot;
+  uint8_t *words;
+  size_t words_len;
+  uint8_t *detail;
+  size_t detail_len;
+} editor_ffi_raw_file_result;
+bool editor_ffi_files_load(uint64_t id, const uint8_t *path, size_t path_len,
+                           uint64_t limit);
+bool editor_ffi_files_save(uint64_t id, const editor_ffi_snapshot *snapshot,
+                           const uint8_t *path, size_t path_len,
+                           const editor_ffi_raw_expect *expect);
+bool editor_ffi_files_take(uint64_t id, editor_ffi_raw_file_result *out);
+bool editor_ffi_files_cancel(uint64_t id);
+uint64_t editor_ffi_files_pending(void);
+
+// `Editor.Ffi.filesLoad : UInt64 → @& String → UInt64 → IO Bool`
+lean_obj_res editor_glue_files_load(uint64_t id, b_lean_obj_arg path,
+                                    uint64_t limit) {
+  return lean_io_result_mk_ok(lean_box(
+      editor_ffi_files_load(id, string_bytes(path), string_len(path), limit)));
+}
+
+// `Editor.Ffi.filesSaveRaw : UInt64 → @& Snapshot → @& String → UInt64 →
+// UInt64 → UInt64 → UInt64 → IO Bool`. What the save expects arrives as four
+// scalars and goes to the library as one record, by pointer.
+lean_obj_res editor_glue_files_save(uint64_t id, b_lean_obj_arg snapshot,
+                                    b_lean_obj_arg path, uint64_t tag,
+                                    uint64_t seconds, uint64_t nanoseconds,
+                                    uint64_t size) {
+  editor_ffi_raw_expect expect = {
+      .tag = tag, .seconds = seconds, .nanoseconds = nanoseconds, .size = size};
+  return lean_io_result_mk_ok(lean_box(
+      editor_ffi_files_save(id, lean_get_external_data(snapshot),
+                            string_bytes(path), string_len(path), &expect)));
+}
+
+// `Editor.Ffi.filesTakeRaw : UInt64 → IO (Option RawFileResult)`. `none`
+// when the service keeps no result for the id. A snapshot in the record
+// becomes a Lean handle here, so its finaliser is what frees it.
+lean_obj_res editor_glue_files_take(uint64_t id) {
+  editor_ffi_raw_file_result raw;
+  if (!editor_ffi_files_take(id, &raw)) {
+    return lean_io_result_mk_ok(lean_box(0)); // `none`
+  }
+  lean_object *snapshot = lean_box(0); // `none`
+  if (raw.snapshot != NULL) {
+    pthread_once(&snapshot_class_once, snapshot_class_register);
+    snapshot = option_some(lean_alloc_external(snapshot_class, raw.snapshot));
+  }
+  lean_object *detail =
+      lean_mk_string_from_bytes((const char *)raw.detail, raw.detail_len);
+  // `RawFileResult`: the object fields `snapshot`, `words` and `detail`, then
+  // `status`.
+  lean_object *result = lean_alloc_ctor(0, 3, sizeof(uint64_t));
+  lean_ctor_set(result, 0, snapshot);
+  lean_ctor_set(result, 1, byte_array_copy(raw.words, raw.words_len));
+  lean_ctor_set(result, 2, detail);
+  lean_ctor_set_uint64(result, uint64_field(3, 0), raw.status);
+  editor_ffi_text_free(raw.words, raw.words_len);
+  editor_ffi_text_free(raw.detail, raw.detail_len);
+  return lean_io_result_mk_ok(option_some(result));
+}
+
+// `Editor.Ffi.filesCancel : UInt64 → IO Bool`
+lean_obj_res editor_glue_files_cancel(uint64_t id) {
+  return lean_io_result_mk_ok(lean_box(editor_ffi_files_cancel(id)));
+}
+
+// `Editor.Ffi.filesPending : IO UInt64`
+lean_obj_res editor_glue_files_pending(void) {
+  return lean_io_result_mk_ok(lean_box_uint64(editor_ffi_files_pending()));
 }
 
 // ---- The window ----

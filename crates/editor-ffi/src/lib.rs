@@ -200,7 +200,9 @@
 //! service, the logic and the real adapter, in a temporary directory it
 //! owns, asserting bytes in and bytes out. The crate's `clippy.toml`
 //! refuses a real file, and the adapter's constructor, everywhere in the
-//! crate but the process's instance and that test.
+//! crate but the process's instance and that test. On the Lean side: the
+//! file checks of `ffi-test` (`fileChecks`), which pin that the requests,
+//! their arguments and every kind of result cross.
 //!
 //! ## The window
 //!
