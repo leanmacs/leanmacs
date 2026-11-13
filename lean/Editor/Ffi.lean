@@ -69,17 +69,23 @@ in, as words (`Document.mark`, `Document.place`), and out, as words
 (`Document.marker`); and a `Selection` in and what it covers out, both as
 words (`Snapshot.extents`). A refusal with more than one reason is a status
 the library reports as a number, read here into an inductive
-(`MarkRefusal`). A length or an offset in words is a `UInt64`, and the
+(`MarkRefusal`). A document's kept inverses are scalars in and words out
+with an option inside them: a run of revisions and an origin in, as three
+numbers, and an `Inverted` out, the revision the inverse produced with the
+selection it hands back if there is one (`Document.applyInverse`, with its
+refusals in `InverseRefusal`); and a run in and a refusal as a `Bool`
+(`Document.dropInverses`). A length or an offset in words is a `UInt64`, and the
 largest one is a number no text accepts: a caller with a number no word
 holds sends that, so the library refuses it and nothing is cut down. Tests:
 the `find` and event checks of `ffi-test` (`FfiTest.dataChecks`), its
 document checks (`FfiTest.documentChecks`), its snapshot checks
 (`FfiTest.snapshotChecks`), its transaction checks
-(`FfiTest.transactionChecks`) and its marker checks
-(`FfiTest.markerChecks`); the unit tests of `text.rs`, `document.rs`,
-`snapshot.rs`, `words.rs`, `transaction.rs`, `log.rs` and `marker.rs`, the
-tag tests of `events.rs`, and `tests/log.rs` and `tests/markers.rs` in
-`editor-ffi`.
+(`FfiTest.transactionChecks`), its marker checks
+(`FfiTest.markerChecks`) and its inverse checks (`FfiTest.inverseChecks`);
+the unit tests of `text.rs`, `document.rs`, `snapshot.rs`, `words.rs`,
+`transaction.rs`, `log.rs`, `marker.rs` and `inverse.rs`, the tag tests of
+`events.rs`, and `tests/log.rs`, `tests/markers.rs` and `tests/inverse.rs`
+in `editor-ffi`.
 
 The editor does not call these bindings. It reaches the library through a
 port it defines (`Editor/Text.lean`), whose real binding
@@ -691,7 +697,9 @@ private structure RawWords where
   words : ByteArray
   /-- 0 answered, and otherwise the refusal of the call that filled it: for
   the log's, 1 the revision is unknown and 2 it is forgotten; for a marker's
-  and for extents, the status `markRefusal` reads. -/
+  and for extents, the status `markRefusal` reads; for an inverse's, 1 the
+  revision is unknown, 2 no inverse is kept and 3 the text is not in the
+  state. -/
   status : UInt64
 
 /-- `Document.changesSince` as it crosses. -/
@@ -833,6 +841,21 @@ private def Shape.ofWord? : UInt64 → Option Shape
   | 3 => some .block
   | _ => none
 
+/-- The selection the words from the index `first` to the last spell, in the
+layout of `pushShaped`: its shape, its primary, its count of ranges, and an
+anchor and a head for each. `none` when they spell none, or the count is not
+the count of ranges there. -/
+private def selectionAt? (words : Array UInt64) (first : Nat) : Option Selection := do
+  let shape ← Shape.ofWord? (← words[first]?)
+  let count := (← words[first + 2]?).toNat
+  guard (words.size == first + 3 + 2 * count)
+  return {
+      ranges :=
+        (Array.range count).map fun range =>
+          { anchor := words[first + 3 + 2 * range]!, head := words[first + 3 + 2 * range + 1]! }
+      primary := ← words[first + 1]?
+      shape }
+
 /-- The marker `words` spell, in the layout of `Marker.words`. `none` when
 they spell none. -/
 private def markerOf? (words : Array UInt64) : Option Marker := do
@@ -851,15 +874,7 @@ private def markerOf? (words : Array UInt64) : Option Marker := do
         none
     return .anchor { offset := ← words[1]?, bias }
   | 1 =>
-    let shape ← Shape.ofWord? (← words[1]?)
-    let count := (← words[3]?).toNat
-    guard (words.size == 4 + 2 * count)
-    return .selection
-        { ranges :=
-            (Array.range count).map fun range =>
-              { anchor := words[4 + 2 * range]!, head := words[4 + 2 * range + 1]! }
-          primary := ← words[2]?
-          shape }
+    return .selection (← selectionAt? words 1)
   | _ =>
     none
 
@@ -971,6 +986,90 @@ def Snapshot.extents (snapshot : Snapshot) (selection : Selection) :
     return none
   | status =>
     throw (IO.userError s!"the library could not read a selection's words (status {status})")
+
+/-- What applying the inverse of a run of revisions did. -/
+structure Inverted where
+  /-- The revision the inverse produced. -/
+  revision : UInt64
+  /-- The selection in force before the run: the selection before that the
+  run's first transaction carried, in the text as the inverse left it. `none`
+  when that transaction carried none. -/
+  selection : Option Selection
+  deriving DecidableEq, Repr
+
+/-- Why the library refused the inverse of a run. -/
+inductive InverseRefusal where
+  /-- The document has not reached a revision of the run. -/
+  | unknownRevision
+  /-- The document keeps no inverse for a revision of the run: the run starts
+  at revision 0, its first revision is after its last, or one of its inverses
+  was dropped. -/
+  | noInverse
+  /-- The document's text is not in the state the run ended in. -/
+  | notInState
+  deriving DecidableEq, Repr
+
+/-- The inverted result `words` spell: the revision, a presence word, and for
+a selection its words (`selectionAt?`). `none` when they spell none. -/
+private def invertedOf? (words : Array UInt64) : Option Inverted := do
+  let revision ← words[0]?
+  let present : UInt64 ← words[1]?
+  match present with
+  | 0 =>
+    guard (words.size == 2)
+    return { revision, selection := none }
+  | 1 =>
+    return { revision, selection := some (← selectionAt? words 2) }
+  | _ =>
+    none
+
+/-- `Document.applyInverse` as it crosses: the run and the origin as numbers,
+and the inverted result as words with the status 0, or no words and the
+status of the refusal. -/
+@[extern "editor_glue_document_apply_inverse"]
+private opaque Document.applyInverseRaw (document : @& Document) (first last origin : UInt64) :
+    IO RawWords
+
+/-- Applies to the document the inverse of the run of revisions from `first`
+to `last`, both included, as one transaction, recording `origin` as who made
+the edit: the document holds again what it held before the transaction that
+produced `first`. It is one more revision and one entry of the log, like any
+transaction, and its own inverse is kept, so the inverse of the revision this
+returns takes it back.
+
+A refused inverse changes nothing. A run that names a revision the document
+has not reached is refused first, then a run the document keeps no inverse
+for, then a run the text is not in the state at the end of: the text is there
+just after the run, and again whenever inverses have brought it back, and
+not when it merely reads the same. A revision given as the largest `UInt64`
+is one no document has reached. -/
+def Document.applyInverse (document : Document) (first last origin : UInt64) :
+    IO (Except InverseRefusal Inverted) := do
+  let raw ← document.applyInverseRaw first last origin
+  match raw.status with
+  | 0 =>
+    match (wordsOf? raw.words).bind invertedOf? with
+    | some inverted =>
+      return .ok inverted
+    | none =>
+      throw (IO.userError "the library's words do not spell an inverted result")
+  | 1 =>
+    return .error .unknownRevision
+  | 2 =>
+    return .error .noInverse
+  | 3 =>
+    return .error .notInState
+  | status =>
+    throw (IO.userError s!"the library reported an unknown inverse status ({status})")
+
+/-- Drops the document's kept inverses for the revisions from `first` to
+`last`, and returns whether the library did. Afterwards the inverse of a run
+that names one of them is refused. The text and its log are untouched; a
+revision with no inverse kept is passed over.
+
+`false`, with nothing dropped, for a `last` the document has not reached. -/
+@[extern "editor_glue_document_drop_inverses"]
+opaque Document.dropInverses (document : @& Document) (first last : UInt64) : IO Bool
 
 /-- Which of the process's two event queues. -/
 inductive Queue where

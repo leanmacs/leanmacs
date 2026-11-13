@@ -542,6 +542,38 @@ lean_obj_res editor_glue_snapshot_extents(b_lean_obj_arg snapshot,
   return lean_io_result_mk_ok(raw_words_take(raw));
 }
 
+// ---- A document's kept inverses ----
+//
+// A run of revisions and an origin go to the library as numbers, and what
+// applying the run's inverse did comes back as words: a revision, and the
+// selection handed back if there is one. Dropping kept inverses answers with
+// a `bool`, as forgetting the log does.
+
+void editor_ffi_document_apply_inverse(const editor_ffi_document *document,
+                                       uint64_t first, uint64_t last,
+                                       uint64_t origin,
+                                       editor_ffi_raw_words *out);
+bool editor_ffi_document_drop_inverses(const editor_ffi_document *document,
+                                       uint64_t first, uint64_t last);
+
+// `Editor.Ffi.Document.applyInverseRaw : @& Document → UInt64 → UInt64 →
+// UInt64 → IO RawWords`
+lean_obj_res editor_glue_document_apply_inverse(b_lean_obj_arg document,
+                                                uint64_t first, uint64_t last,
+                                                uint64_t origin) {
+  editor_ffi_raw_words raw;
+  editor_ffi_document_apply_inverse(lean_get_external_data(document), first,
+                                    last, origin, &raw);
+  return lean_io_result_mk_ok(raw_words_take(raw));
+}
+
+// `Editor.Ffi.Document.dropInverses : @& Document → UInt64 → UInt64 → IO Bool`
+lean_obj_res editor_glue_document_drop_inverses(b_lean_obj_arg document,
+                                                uint64_t first, uint64_t last) {
+  return lean_io_result_mk_ok(lean_box(editor_ffi_document_drop_inverses(
+      lean_get_external_data(document), first, last)));
+}
+
 // ---- The event queues ----
 //
 // Rust threads push events and Lean pulls them: nothing here calls Lean. A
