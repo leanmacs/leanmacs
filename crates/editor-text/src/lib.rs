@@ -71,9 +71,18 @@
 //!   set fits the text and every end of each selection is a position of
 //!   its own text, the one before or the one after. [`Text::replace`] is
 //!   the transaction with one change and no selection.
-//! - **A selection**, so far, is plain data ([`Selection`]): one or more
-//!   ranges of two offsets, one of them the primary, kept exactly as given.
-//!   Nothing sorts, merges or moves them yet.
+//! - **A selection** ([`Selection`]) is one or more ranges of two offsets,
+//!   an anchor and a head ([`SelectionRange`]), one of them the primary,
+//!   with one [`Shape`] for them all. It is kept in one form whatever it
+//!   was built from: the ranges sorted by start and then by end, and ranges
+//!   that overlap made one, from the lowest start to the highest end. In
+//!   the exclusive shape two ranges overlap when the later starts before
+//!   the earlier ends or both start at one offset, so ranges that only
+//!   touch stay two; in the other shapes, whose ends are on characters,
+//!   when the later starts at or before the earlier's end. A merged range
+//!   points the way the primary did if the primary is in it, and otherwise
+//!   the way its first range did. The primary is the range the one given
+//!   as primary ended in.
 //! - **An origin** ([`Origin`]) says who made an edit. It is an opaque
 //!   number given when a transaction is applied, not part of the
 //!   transaction. The crate keeps it in the transaction's log entry
@@ -186,7 +195,7 @@ pub use change::{Bias, Change, ChangeSet};
 pub use log::{Attribution, LogEntry, LogError, Origin, Source, Subscription};
 pub use patch::{Edit, InputEdit, Patch, Span};
 pub use point::{Point, PointUtf16};
-pub use selection::{Selection, SelectionRange};
+pub use selection::{Selection, SelectionRange, Shape};
 pub use snapshot::{Chunks, Revision, Snapshot};
 pub use text::{BadRange, Text};
 pub use transaction::{ApplyError, Transaction};
