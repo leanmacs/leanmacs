@@ -85,7 +85,7 @@ structure TextContent where
   contents : String
   /-- How many edits the text had accepted. -/
   revision : Nat := 0
-  deriving Repr
+  deriving DecidableEq, Repr
 
 /-- One byte of a text, as the model of its edit log knows it. -/
 structure Cell where
