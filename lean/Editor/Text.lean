@@ -7,7 +7,8 @@ The editor's interface to text storage, in the editor's own terms: make a
 text, insert into it, delete from it, apply a transaction to it, read it,
 take a snapshot of it, ask a text or a snapshot a question, ask a text's
 edit log what changed and who wrote a range, forget the start of that log,
-mark a text with anchors and selections that every edit moves, and release a
+mark a text with anchors and selections that every edit moves, apply the
+inverse of a run of its edits, drop the inverses it keeps, and release a
 text or a snapshot. It is deliberately small. The point is the
 pattern every later interface follows:
 
@@ -200,10 +201,64 @@ same value runs against the model and against the real binding.
 - `release` gives up a text or a snapshot. Its id is refused from then on,
   for good: an id is never used again. Releasing a text leaves its snapshots
   readable.
+- Every accepted edit *keeps an inverse*: an insert, a delete, a transaction
+  and an applied inverse. The store keeps it by the revision the edit
+  produced, with the selections the edit carried, until it is dropped. It is
+  never handed out: text that was deleted stays in the store.
+- The *inverse of a run* of consecutive revisions, from a first to a last,
+  is applied as one edit (`TextId.applyInverse`): the text reads again what
+  it read before the edit that produced the first. It is an edit like any
+  other. It adds one to the revision; it is one entry of the log, with the
+  origin it is given, whose changed ranges are those of the run's inverses
+  made one; text it puts back is its own in a trace, at its revision and
+  with its origin, not whoever first wrote it; and every marker moves
+  through its changed ranges as through any edit's, and not back to where
+  it was. An anchor inside text that was deleted went to where the range
+  was; when the inverse puts the text back, the anchor is before it or
+  after it by its bias. Its own inverse is kept, so the inverse of the
+  revision it produced takes it back: a redo is the inverse of an undo.
+- A *state* is where a text is in its history, not what it holds. An edit
+  puts the text in a new state, and the inverse of a run puts it back in
+  the state it was in before the run. So a text is in the state a run ended
+  in just after the run, and again whenever inverses have brought it back
+  there. A text edited by hand until it reads what it read then is in
+  another state. Nothing answers which state a text is in: the store only
+  accepts an inverse or refuses it.
+- The inverse of a run is refused, in this order: with `noSuchText`; with
+  `unknownRevision` when the text has not reached the first or the last;
+  with `noInverse` when the text keeps no inverse for a revision of the
+  run, because the run starts at revision 0, which no edit produced, its
+  first is after its last, or one of its inverses was dropped; and with
+  `notInState` when the text is not in the state the run ended in.
+- Applying an inverse *hands back* the selection in force before the run
+  (`Inverted`): the selection before that the run's first transaction
+  carried, in the form the store keeps one in, or none when it carried none
+  (an insert and a delete carry none). A selection a later edit of the run
+  carried is not looked for. It is a selection of the text as the inverse
+  left it. A text holds no current selection: placing what is handed back
+  is the caller's. The inverse of an inverse hands back the selection after
+  that the run's last transaction carried.
+- A revision is a number of its own text. It carries no text, so one that
+  another text produced, given to this text, names this text's revision of
+  that number.
+- `dropInverses` drops the inverses a text keeps for a run of revisions.
+  From then on the inverse of a run that names one of them is refused with
+  `noInverse`. The text, its revision and its log are untouched. A revision
+  with nothing kept is passed over, and a run whose first is after its last
+  drops nothing. It is refused, in this order, with `noSuchText` and with
+  `unknownRevision` for a last the text has not reached. `forget` and
+  `dropInverses` are independent: one drops what the log holds and leaves
+  every inverse, the other leaves the log, and an inverse of a run the log
+  has forgotten still applies.
+- Nothing else drops an inverse: the store keeps one for each accepted edit,
+  each holding what the edit removed, until `dropInverses`. That is
+  unbounded, and when to drop is the editor's to decide: its history knows
+  which it still needs.
 - A refused request changes nothing.
 - A refusal is a `throw` in `EditorM`. A command that fails leaves the store
   as it was at the failure: nothing here rolls back the requests it had
-  already made.
+  already made. A caller that wants that applies the inverse of the run the
+  command made.
 
 The library keeps a byte of a file that is not valid UTF-8 as one character
 in `U+10DC80..U+10DCFF` (`crates/editor-text`). To this port it is a
@@ -274,6 +329,12 @@ inductive TextError where
   /-- The id names no marker of the text: no `TextId.mark` of that text
   returned it (another text's did, or none), or the marker was given up. -/
   | noSuchMarker
+  /-- The text keeps no inverse for a revision of the run: the run starts at
+  revision 0, its first revision is after its last, or one of its inverses
+  was dropped. -/
+  | noInverse
+  /-- The text is not in the state the run ended in. -/
+  | notInState
   deriving DecidableEq, Repr
 
 /-- The unit a point's column is counted in. -/
@@ -460,6 +521,18 @@ text. -/
 def Transaction.replacing (length start stop : Nat) (s : String) : Transaction where
   changes := #[.retain start, .insert s, .delete (stop - start), .retain (length - stop)]
 
+/-- What applying the inverse of a run of revisions did
+(`TextId.applyInverse`). -/
+structure Inverted where
+  /-- The revision the inverse produced. -/
+  revision : Nat
+  /-- The selection in force before the run: the selection before that the
+  run's first transaction carried, in the form the store keeps one in. It is
+  a selection of the text as the inverse left it. `none` when that
+  transaction carried none. -/
+  selection : Option Selection
+  deriving DecidableEq, Repr
+
 /-- A range of one text: its byte offsets, and their points with the columns
 in bytes. -/
 structure Span where
@@ -563,6 +636,12 @@ inductive TextRequest where
   | place (text : TextId) (id : MarkerId) (marker : Marker)
   /-- Give up the marker `id` of `text`. -/
   | unmark (text : TextId) (id : MarkerId)
+  /-- Apply to `text` the inverse of its run of revisions from `first` to
+  `last`, with `origin` as who made the edit. -/
+  | applyInverse (text : TextId) (first last : Nat) (origin : Origin)
+  /-- Drop the inverses `text` keeps for its revisions from `first` to
+  `last`. -/
+  | dropInverses (text : TextId) (first last : Nat)
 
 /-- The type of the reply to each request: the new text's id for `create`,
 and for the others a refusal or the result. -/
@@ -581,6 +660,8 @@ def TextRequest.Reply : TextRequest → Type
   | .marker .. => Except TextError Marker
   | .place .. => Except TextError Unit
   | .unmark .. => Except TextError Unit
+  | .applyInverse .. => Except TextError Inverted
+  | .dropInverses .. => Except TextError Unit
 
 /-- The text port: `TextRequest` and the reply to each request. -/
 abbrev textPort : Port :=
@@ -697,6 +778,35 @@ def TextId.place (text : TextId) (id : MarkerId) (marker : Marker) : EditorM Uni
 Refused with `noSuchMarker` for an id the text holds no marker for. -/
 def TextId.unmark (text : TextId) (id : MarkerId) : EditorM Unit :=
   ExceptT.mk (Program.request (port := textPort) (.unmark text id))
+
+/-- Applies to `text` the inverse of its run of revisions from `first` to
+`last`, both included, as one edit, with `origin` as who made it: the text
+reads again what it read before the edit that produced `first`. Returns the
+revision the inverse produced, one more than before, and the selection in
+force before the run, to place: the selection before that the run's first
+transaction carried, or none.
+
+The inverse of the revision this returns takes it back: a redo is the inverse
+of an undo.
+
+Refused, changing nothing, with `unknownRevision` for a run that names a
+revision the text has not reached, with `noInverse` for a run the text keeps
+no inverse for (it starts at revision 0, its first revision is after its
+last, or one of its inverses was dropped), and with `notInState` when the
+text is not in the state the run ended in. That is the order the refusals
+are looked for in. -/
+def TextId.applyInverse (text : TextId) (first last : Nat) (origin : Origin := .unattributed) :
+    EditorM Inverted :=
+  ExceptT.mk (Program.request (port := textPort) (.applyInverse text first last origin))
+
+/-- Drops the inverses `text` keeps for its revisions from `first` to `last`,
+both included. From then on the inverse of a run that names one of them is
+refused with `noInverse`. The text, its revision and its edit log are
+untouched. A revision with no inverse kept is passed over, and a run whose
+first revision is after its last drops nothing. Refused with
+`unknownRevision` for a `last` the text has not reached. -/
+def TextId.dropInverses (text : TextId) (first last : Nat) : EditorM Unit :=
+  ExceptT.mk (Program.request (port := textPort) (.dropInverses text first last))
 
 /-- The revision of `text`: how many edits it has accepted. -/
 def TextId.revision (text : TextId) : EditorM Nat :=

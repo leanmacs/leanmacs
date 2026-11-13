@@ -556,6 +556,36 @@ def setup : SetupM Unit := do
   command \"lost\" lost
 "
 
+/-- A chunk with three commands that take an edit back: `undone`, which
+applies the inverse of its edit and reads the text as it was made, at one
+more revision; `dropped`, which drops that inverse and then asks for it; and
+`elsewhere`, which asks for the inverse of an edit after it made another. -/
+def inverseChunk : String :=
+  "def undone : EditorM Unit := do
+  let text ← createText \"héllo\"
+  text.insert 0 \"x\"
+  let inverted ← text.applyInverse 1 1
+  unless inverted.revision == 2 && (← text.read) == \"héllo\" do
+    throw .badPosition
+
+def dropped : EditorM Unit := do
+  let text ← createText \"héllo\"
+  text.insert 0 \"x\"
+  text.dropInverses 1 1
+  discard <| text.applyInverse 1 1
+
+def elsewhere : EditorM Unit := do
+  let text ← createText \"héllo\"
+  text.insert 0 \"x\"
+  text.insert 0 \"y\"
+  discard <| text.applyInverse 1 1
+
+def setup : SetupM Unit := do
+  command \"undone\" undone
+  command \"dropped\" dropped
+  command \"elsewhere\" elsewhere
+"
+
 /-- The store of `counterChunk` with its type changed and its version raised
 to 2: the number gets a label, and a number written at version 1 is migrated
 with the label \"migrated\". -/
@@ -753,6 +783,15 @@ def hostChecks (context : Context) : List Check :=
           return (← session.lines) ==
               #["reload 1: installed, 1 chunks, 2 commands", "run kept: ok",
                 "run lost: refused: no such marker"] },
+    { name :=
+        "a command that applies the inverse of its edit reads the text as it was, and one that asks for an inverse it dropped, and one whose text is not where the edit left it, are each reported with that refusal's name"
+      run :=
+        withHost context [("config.lean", inverseChunk)] fun session => do
+          session.ask [.reload]
+          session.ask [.run "undone", .run "dropped", .run "elsewhere"]
+          return (← session.lines) ==
+              #["reload 1: installed, 1 chunks, 3 commands", "run undone: ok",
+                "run dropped: refused: no inverse", "run elsewhere: refused: not in state"] },
     { name :=
         "a config directory that does not exist is a rejected reload whose one diagnostic line names the directory"
       run :=

@@ -41,6 +41,19 @@ spliced by, and not the library's walk of its changes. The form a selection
 is kept in (`TextModel.normal`) is a sort and one pass over the ranges, on
 plain offsets.
 
+What a text keeps of its edits so that they can be taken back is modelled
+beside the texts as well (`TextModel.histories`, a `TextHistory` a text),
+and the model keeps no inverse at all. The text the inverse of a run leaves
+is read, not computed: the log's model already holds the text at every
+revision. What the inverse changed, for the log and the markers, is the gaps
+between the bytes the text at the run's last revision and the text before
+its first share, by the identities the log's model gives every byte
+(`TextHistory.runsBetween`), and it goes through `TextModel.changed` like
+any edit. The library composes the inverses it kept of each edit of the run.
+Whether an inverse is allowed is decided as the library decides it, by the
+name of the state the text was in at each revision, which the history keeps
+with the selections each edit carried and which inverses were dropped.
+
 What a selection covers (`TextModel.extents`) is read off the string's rows
 (`TextModel.rowsOf`), each with the cells of its content, found in one walk
 of its characters. A block's columns are indexes into a row's cells. The
@@ -90,6 +103,24 @@ structure TextLog where
   horizon : Nat := 0
   deriving Repr
 
+/-- The model of what a text keeps of its edits so that they can be taken
+back. It keeps no inverse at all: the text an inverse leaves is read off the
+log's model, which holds the text at every revision. What is here is what
+decides whether an inverse is allowed and what it hands back. Each array is
+indexed by revision, with a slot for revision 0, which no edit produced. It
+forgets nothing. -/
+structure TextHistory where
+  /-- The name of the state the text was in at each revision: the revision
+  of the edit that first put it there. An edit names a new state, and the
+  inverse of a run copies the name the text had before the run. -/
+  names : Array Nat := #[0]
+  /-- The selection before and the selection after that the edit which
+  produced each revision carried, in the form the store keeps one in. -/
+  carried : Array (Option Selection × Option Selection) := #[(none, none)]
+  /-- Whether the inverse of each revision was dropped. -/
+  dropped : Array Bool := #[false]
+  deriving Repr
+
 /-- The model of the text store: every text and every snapshot made so far.
 An id is an index here, and a slot is `none` once its text or its snapshot
 has been released, so an id is never used again. -/
@@ -107,6 +138,10 @@ structure TextModel where
   marker has been given up. It is beside the texts for the reason the logs
   are: a snapshot carries none. -/
   markers : Array (Array (Option Marker)) := #[]
+  /-- What each text keeps of its edits so that they can be taken back, in
+  the order the texts were made. It is beside the texts for the reason the
+  logs are: a snapshot carries none. -/
+  histories : Array TextHistory := #[]
   deriving Repr
 
 namespace TextModel
@@ -602,21 +637,114 @@ def trace (log : TextLog) (content : TextContent) (start stop : Nat) :
 
 end TextLog
 
+namespace TextHistory
+
+/-- The history after an edit that carried the selections `carried` and put
+the text in the state named `state`, or for `none` in a new state, named by
+`revision`, the revision the edit produced. -/
+def record (history : TextHistory) (revision : Nat) (state : Option Nat)
+    (carried : Option Selection × Option Selection) : TextHistory
+    where
+  names := history.names.push (state.getD revision)
+  carried := history.carried.push carried
+  dropped := history.dropped.push false
+
+/-- Whether the inverse of a revision from `first` to `last` was dropped. -/
+def touchesDrop (history : TextHistory) (first last : Nat) : Bool :=
+  (List.range' first (last + 1 - first)).any fun revision => history.dropped[revision]?.getD false
+
+/-- The history with the inverse of every revision from `first` to `last`
+dropped. -/
+def drop (history : TextHistory) (first last : Nat) : TextHistory :=
+  { history with
+    dropped :=
+      history.dropped.mapIdx fun revision was => was || (first ≤ revision && revision ≤ last) }
+
+/-- The characters of `text` that start at a byte offset from `start` up to,
+not including, `stop`. -/
+def between (text : String) (start stop : Nat) : String :=
+  String.ofList (go text.toList 0)
+where
+  /-- Walks the characters that are left. `here` is the byte offset
+  reached. -/
+  go : List Char → Nat → List Char
+    | [], _ => []
+    | c :: rest, here =>
+      if start ≤ here ∧ here < stop then c :: go rest (here + c.utf8Size)
+      else go rest (here + c.utf8Size)
+
+/-- What an inverse changes: the ranges of a text whose bytes had the
+identities `oldIds` that are replaced to make the text that held `new`,
+whose bytes had the identities `newIds`.
+
+The bytes the two share are those with one identity in both, and they are in
+both in the same order. Each stretch between two of them that is not empty in
+both texts is one run: the old text's bytes there are replaced by the new
+text's. This is the shape of `TextLog.editsBetween`, and not how the library
+finds the inverse of a run, which composes the inverse it kept of each
+edit. The two agree because a composed inverse keeps exactly the bytes every
+edit of the run kept, which are the bytes the two states share.
+
+`oldIds` must be the identities the text had when the run ended, not those
+it has now. The two texts read the same when the inverse is allowed, but a
+byte that was deleted and restored since has another identity now, and
+would be found changed. -/
+def runsBetween (oldIds newIds : Array Nat) (new : String) : Array TextModel.Run :=
+  go (oldIds.size + newIds.size + 1) 0 0 #[]
+where
+  /-- Finds the runs from the offsets `oldHere` and `newHere` on. `fuel` is
+  more than the bytes left, so it does not run out. -/
+  go : Nat → Nat → Nat → Array TextModel.Run → Array TextModel.Run
+    | 0, _, _, runs => runs
+    | fuel + 1, oldHere, newHere, runs =>
+      -- What only the new text holds, up to the next byte both hold.
+      let newStop := skipNew newHere (newIds.size - newHere)
+      let shared := newIds[newStop]?
+      -- What only the old text holds, up to that byte.
+      let oldStop := skipOld shared oldHere (oldIds.size - oldHere)
+      let runs :=
+        if oldStop > oldHere ∨ newStop > newHere then
+          runs.push ⟨oldHere, oldStop, between new newHere newStop⟩
+        else runs
+      if shared.isNone then runs else go fuel (oldStop + 1) (newStop + 1) runs
+  /-- The offset of the first byte of the new text at or after `here` that the
+  old text held too, or the new text's length. -/
+  skipNew (here : Nat) : Nat → Nat
+    | 0 => here
+    | fuel + 1 =>
+      match newIds[here]? with
+      | some id => if oldIds.contains id then here else skipNew (here + 1) fuel
+      | none => here
+  /-- The offset of the byte `shared` of the old text at or after `here`, or
+  the old text's length when there is none. -/
+  skipOld (shared : Option Nat) (here : Nat) : Nat → Nat
+    | 0 => here
+    | fuel + 1 =>
+      match oldIds[here]? with
+      | some id => if some id == shared then here else skipOld shared (here + 1) fuel
+      | none => here
+
+end TextHistory
+
 namespace TextModel
 
 /-- The model after an edit by `origin` to the text `id`, which held
 `content`: it holds `text`, made by changing the ranges `runs`, at the next
-revision, its log has recorded the edit, and every marker it holds has
-moved. Every accepted edit comes through here. -/
+revision, its log has recorded the edit, every marker it holds has moved,
+and its history has recorded the selections `carried` and the state the edit
+put the text in: `state`, or for `none` a new one. Every accepted edit comes
+through here, an applied inverse included. -/
 def changed (model : TextModel) (id : TextId) (content : TextContent) (text : String)
-    (runs : Array Run) (origin : Origin) : TextModel :=
+    (runs : Array Run) (origin : Origin) (state : Option Nat := none)
+    (carried : Option Selection × Option Selection := (none, none)) : TextModel :=
   { model with
     texts :=
       model.texts.setIfInBounds id.index
         (some { contents := text, revision := content.revision + 1 })
     logs :=
       model.logs.modify id.index (·.record content.contents (content.revision + 1) runs origin)
-    markers := model.markers.modify id.index (·.map (·.map (mapMarker runs))) }
+    markers := model.markers.modify id.index (·.map (·.map (mapMarker runs)))
+    histories := model.histories.modify id.index (·.record (content.revision + 1) state carried) }
 
 /-- The model's answer to an edit of the text `id`, replacing its bytes from
 `start` up to `stop` by `s`, and the model after it. An accepted edit adds
@@ -651,8 +779,56 @@ def apply (model : TextModel) (id : TextId) (transaction : Transaction) (origin 
             selectionFits content.contents transaction.before &&
               selectionFits text transaction.after then
           (.ok (content.revision + 1),
-            model.changed id content text (runsOf transaction.changes).1 origin)
+            model.changed id content text (runsOf transaction.changes).1 origin none
+              (transaction.before.map normal, transaction.after.map normal))
         else (.error .badSelection, model)
+
+/-- The model's answer to applying to the text `id` the inverse of its run
+of revisions from `first` to `last`, with `origin` as who made the edit, and
+the model after it. The refusals are looked for in the order the port gives.
+
+The text an accepted inverse leaves is read, not computed: the log's model
+holds the text at every revision, so it is the text at the revision before
+`first`. What the inverse changed, for the log and the markers, is the gaps
+between the bytes that text shares with the text as it was at `last`
+(`TextHistory.runsBetween`). Whether it is allowed is decided as the library
+decides it, by the names of the states. A refused inverse leaves the model
+as it was. -/
+def applyInverse (model : TextModel) (id : TextId) (first last : Nat) (origin : Origin) :
+    Except TextError Inverted × TextModel :=
+  match model.lookup (.text id) with
+  | .error refusal => (.error refusal, model)
+  | .ok content =>
+    let history := model.histories[id.index]?.getD {}
+    let log := model.logs[id.index]?.getD {}
+    if first > content.revision ∨ last > content.revision then (.error .unknownRevision, model)
+    else
+      if first == 0 ∨ first > last ∨ history.touchesDrop first last then (.error .noInverse, model)
+      else
+        if history.names[content.revision]? != history.names[last]? then (.error .notInState, model)
+        else
+          match log.past[first - 1]? with
+          -- Every revision before the one the text is at has a past state.
+          | none => (.error .notInState, model)
+          | some (text, ids) =>
+            -- The identities the text had when the run ended: only the
+            -- revision the text is at has no past state.
+            let ended := (log.past[last]?.map (·.2)).getD (log.cells.map (·.id))
+            let selection := history.carried[first]?.bind (·.1)
+            (.ok ⟨content.revision + 1, selection⟩,
+              model.changed id content text (TextHistory.runsBetween ended ids text) origin
+                history.names[first - 1]? (history.carried[last]?.bind (·.2), selection))
+
+/-- The model's answer to dropping the inverses the text `id` keeps for its
+revisions from `first` to `last`, and the model after it. The text and its
+log are untouched. -/
+def dropInverses (model : TextModel) (id : TextId) (first last : Nat) :
+    Except TextError Unit × TextModel :=
+  match model.lookup (.text id) with
+  | .error refusal => (.error refusal, model)
+  | .ok content =>
+    if last > content.revision then (.error .unknownRevision, model)
+    else (.ok (), { model with histories := model.histories.modify id.index (·.drop first last) })
 
 /-- The model's answer to `query` about the log `log` of a text that holds
 `content`. -/
@@ -771,7 +947,8 @@ def handle : (request : TextRequest) → TextModel → request.Reply × TextMode
       { model with
         texts := model.texts.push (some { contents := initial })
         logs := model.logs.push (.new initial)
-        markers := model.markers.push #[] })
+        markers := model.markers.push #[]
+        histories := model.histories.push {} })
   | .insert id offset s, model => model.edit id offset offset s
   | .delete id start stop, model => model.edit id start stop ""
   | .read id, model =>
@@ -801,6 +978,8 @@ def handle : (request : TextRequest) → TextModel → request.Reply × TextMode
   | .marker id marker, model => (model.markerOf id marker, model)
   | .place id «at» marker, model => model.place id «at» marker
   | .unmark id marker, model => model.unmark id marker
+  | .applyInverse id first last origin, model => model.applyInverse id first last origin
+  | .dropInverses id first last, model => model.dropInverses id first last
 
 end TextModel
 
@@ -844,7 +1023,8 @@ theorem runModel_createText (initial : String) (model : TextModel) :
         { model with
           texts := model.texts.push (some { contents := initial })
           logs := model.logs.push (.new initial)
-          markers := model.markers.push #[] }) :=
+          markers := model.markers.push #[]
+          histories := model.histories.push {} }) :=
   rfl
 
 @[simp]
@@ -911,6 +1091,17 @@ theorem runModel_place (id : TextId) («at» : MarkerId) (marker : Marker) (mode
 @[simp]
 theorem runModel_unmark (id : TextId) (marker : MarkerId) (model : TextModel) :
     (id.unmark marker).runModel model = model.unmark id marker :=
+  rfl
+
+@[simp]
+theorem runModel_applyInverse (id : TextId) (first last : Nat) (origin : Origin)
+    (model : TextModel) :
+    (id.applyInverse first last origin).runModel model = model.applyInverse id first last origin :=
+  rfl
+
+@[simp]
+theorem runModel_dropInverses (id : TextId) (first last : Nat) (model : TextModel) :
+    (id.dropInverses first last).runModel model = model.dropInverses id first last :=
   rfl
 
 end EditorM

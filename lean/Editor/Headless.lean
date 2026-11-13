@@ -241,6 +241,8 @@ def refusalName : TextError → String
   | .unknownRevision => "unknown revision"
   | .forgotten => "forgotten revision"
   | .noSuchMarker => "no such marker"
+  | .noInverse => "no inverse"
+  | .notInState => "not in state"
 
 /-- The lines a reload's report is printed as: what it came to, then its
 diagnostics. -/

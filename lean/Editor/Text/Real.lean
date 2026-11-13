@@ -41,6 +41,13 @@ the document and one call. A marker's offsets go as a transaction's do, as
 the largest word when no word holds them. An id no word holds names no
 marker.
 
+A text's kept inverses are the library's too, and the binding keeps no table
+for them either: a run is two of the text's revisions, which are numbers of
+its own document, so applying the inverse of a run and dropping kept
+inverses are each one lookup of the document and one call. A revision no
+word holds is one no text has reached. Nothing of an inverse comes back but
+the revision it produced and the selection to place.
+
 A text or a snapshot lives until it is released or its table is dropped,
 whichever is first. Releasing empties its slot, which drops the last
 reference to the library's object, and the finaliser frees it at once.
@@ -126,6 +133,18 @@ def marker : Marker → Ffi.Marker
           | .after => .after }
   | .selection ranges => .selection (selection ranges)
 
+/-- The port's form of a selection of the library: what a marker read back
+and an applied inverse both carry. -/
+def selectionOf (ranges : Ffi.Selection) : Selection where
+  ranges := ranges.ranges.map fun range => ⟨range.anchor.toNat, range.head.toNat⟩
+  primary := ranges.primary.toNat
+  shape :=
+    match ranges.shape with
+    | .exclusive => .exclusive
+    | .inclusive => .inclusive
+    | .line => .line
+    | .block => .block
+
 /-- The port's form of a marker of the library. -/
 def markerOf : Ffi.Marker → Marker
   | .anchor position =>
@@ -135,16 +154,7 @@ def markerOf : Ffi.Marker → Marker
           match position.bias with
           | .before => .before
           | .after => .after }
-  | .selection ranges =>
-    .selection
-      { ranges := ranges.ranges.map fun range => ⟨range.anchor.toNat, range.head.toNat⟩
-        primary := ranges.primary.toNat
-        shape :=
-          match ranges.shape with
-          | .exclusive => .exclusive
-          | .inclusive => .inclusive
-          | .line => .line
-          | .block => .block }
+  | .selection ranges => .selection (selectionOf ranges)
 
 /-- The port's refusal for a refusal of a marker by the library. -/
 def markRefusal : Ffi.MarkRefusal → TextError
@@ -281,6 +291,40 @@ def forget (id : TextId) (revision : Nat) : StateT RealTexts IO (Except TextErro
     return .ok ()
   return .error .unknownRevision
 
+/-- The library's answer to applying to the text `id` the inverse of its run
+of revisions from `first` to `last`, with `origin` as who made the edit.
+When an inverse is allowed, in what order it is refused and what it hands
+back are the library's decisions. A revision no word holds is one no text
+has reached: converted, it would wrap round to one the text might have. -/
+def applyInverse (id : TextId) (first last : Nat) (origin : Origin) :
+    StateT RealTexts IO (Except TextError Inverted) := do
+  let some document ← document? id | return .error .noSuchText
+  unless first < UInt64.size ∧ last < UInt64.size do
+    return .error .unknownRevision
+  match ← document.applyInverse first.toUInt64 last.toUInt64 origin.id with
+  | .ok inverted =>
+    return .ok ⟨inverted.revision.toNat, inverted.selection.map selectionOf⟩
+  | .error .unknownRevision =>
+    return .error .unknownRevision
+  | .error .noInverse =>
+    return .error .noInverse
+  | .error .notInState =>
+    return .error .notInState
+
+/-- The library's answer to dropping the inverses the text `id` keeps for
+its revisions from `first` to `last`. A last revision no word holds is one
+no text has reached. A first one no word holds is sent as the largest word
+(`word`), which is after any last the library accepts, so nothing is
+dropped: what a run whose first is after its last drops. -/
+def dropInverses (id : TextId) (first last : Nat) : StateT RealTexts IO (Except TextError Unit) :=
+  do
+  let some document ← document? id | return .error .noSuchText
+  unless last < UInt64.size do
+    return .error .unknownRevision
+  if ← document.dropInverses (word first) last.toUInt64 then
+    return .ok ()
+  return .error .unknownRevision
+
 /-- The library's name for a column unit of the port. -/
 def unit : ColumnUnit → Ffi.ColumnUnit
   | .bytes => .bytes
@@ -375,6 +419,8 @@ def handle : (request : TextRequest) → StateT RealTexts IO request.Reply
   | .marker id held => markerAt id held
   | .place id held next => place id held next
   | .unmark id held => unmark id held
+  | .applyInverse id first last origin => applyInverse id first last origin
+  | .dropInverses id first last => dropInverses id first last
 
 end RealTexts
 

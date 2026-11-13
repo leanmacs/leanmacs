@@ -1306,6 +1306,372 @@ def extentProperties : List Property :=
               -- Column 1 of each row: "é", "ö" and "x".
               #[extent 1 3, extent 9 11, extent 19 20] }]
 
+/-- Whether applying the inverse of the run from `first` to `last` to `text`
+is refused with `error`. -/
+def inverseRefusedWith (error : TextError) (text : TextId) (first last : Nat) : EditorM Bool :=
+  refusedWith error (discard <| text.applyInverse first last)
+
+/-- Applies the inverse of the run from `first` to `last` to `text`, and
+returns the revision it produced and what the text then reads. -/
+def invertedTo (text : TextId) (first last : Nat) : EditorM (Nat × String) := do
+  let inverted ← text.applyInverse first last
+  return (inverted.revision, ← text.read)
+
+/-- Makes a text holding "héllo wörld" and changes it three times, by a
+transaction, an insert and a delete, to "hello, rld😀": "é" becomes "e" and
+"😀" is added at the end; "," is inserted after "hello"; and "wö" is
+deleted. -/
+def changedThreeWays : EditorM TextId := do
+  let text ← createText "héllo wörld"
+  discard <| text.apply { changes := #[.retain 1, .delete 2, .insert "e", .retain 10, .insert "😀"] }
+  text.insert 5 ","
+  text.delete 7 10
+  return text
+
+/-- Makes a text holding "héllo" and adds "1" to "5" at its end, one edit
+each: "héllo12345", at revision 5. -/
+def editedFiveTimes : EditorM TextId := do
+  let text ← createText "héllo"
+  text.insert 6 "1"
+  text.insert 7 "2"
+  text.insert 8 "3"
+  text.insert 9 "4"
+  text.insert 10 "5"
+  return text
+
+/-- The selection of shape `shape` with `ranges`, each an anchor and a head,
+whose primary is the one at `primary`. -/
+def selection (shape : Shape) (ranges : Array (Nat × Nat)) (primary : Nat := 0) : Selection :=
+  { ranges := ranges.map fun (anchor, head) => ⟨anchor, head⟩, primary, shape }
+
+/-- The properties of kept inverses: applying the inverse of a run of
+revisions, and dropping the inverses a text keeps. -/
+def inverseProperties : List Property :=
+  [{
+      name :=
+        "the inverse of a run of revisions restores the text the run started from, as one new revision and one entry of the log, whichever way each edit of the run was made",
+      holds := do
+        let text ← changedThreeWays
+        let made := (← text.read) == "hello, rld😀" && (← text.revision) == 3
+        let inverted ← text.applyInverse 1 3
+        -- The old spans are ranges of "hello, rld😀" and the new ones of
+        -- "héllo wörld".
+        return made && inverted == ⟨4, none⟩ && (← text.read) == "héllo wörld" &&
+            (← text.revision) == 4 &&
+            (← text.changesSince 3) ==
+              ⟨3, 4,
+                #[⟨span 1 2 (0, 1) (0, 2), span 1 3 (0, 1) (0, 3)⟩,
+                  ⟨span 5 6 (0, 5) (0, 6), span 6 6 (0, 6) (0, 6)⟩,
+                  ⟨span 7 7 (0, 7) (0, 7), span 7 10 (0, 7) (0, 10)⟩,
+                  ⟨span 10 14 (0, 10) (0, 14), span 13 13 (0, 13) (0, 13)⟩]⟩ },
+    { name :=
+        "the inverse of an inverse restores the text again, and the two go back and forth, each at one more revision"
+      holds := do
+        let text ← changedThreeWays
+        discard <| text.applyInverse 1 3
+        let redone ← invertedTo text 4 4
+        let undone ← invertedTo text 5 5
+        let again ← invertedTo text 6 6
+        return redone == (5, "hello, rld😀") && undone == (6, "héllo wörld") &&
+            again == (7, "hello, rld😀") },
+    -- "é😀llo wörld": "é" is the bytes 0 and 1 and "😀" the bytes 2 to 5.
+    { name :=
+        "an inverse is refused, and the text, its revision, its log and its markers unchanged, when the text is not in the state its run ended in"
+      holds := do
+        let text ← createText "héllo wörld"
+        text.insert 3 "😀"
+        text.delete 0 1
+        let marker ← text.mark (anchorAt 2 .after)
+        let newest ← text.changesSince 1
+        -- The first edit's run did not end where the text is.
+        let refused ← inverseRefusedWith .notInState text 1 1
+        let unchanged :=
+          (← text.read) == "é😀llo wörld" && (← text.revision) == 2 &&
+            (← text.changesSince 1) == newest &&
+            (← text.changesSince 2) == ⟨2, 2, #[]⟩ &&
+            (← text.marker marker) == anchorAt 2 .after
+        -- Once the second edit is taken back, its inverse is refused and the
+        -- first's is accepted.
+        let second ← invertedTo text 2 2
+        let again ← inverseRefusedWith .notInState text 2 2
+        let first ← invertedTo text 1 1
+        return refused && unchanged && second == (3, "hé😀llo wörld") && again &&
+            first == (4, "héllo wörld") },
+    { name :=
+        "a state is where a text is in its history, not what it holds: a text edited by hand back to what it read is not where it was, and one brought back by inverses is"
+      holds := do
+        let typed ← createText "héllo"
+        typed.insert 0 "é"
+        typed.delete 0 2
+        let reads := (← typed.read) == "héllo"
+        let refused ← inverseRefusedWith .notInState typed 1 1
+        -- An edit, its inverse and the inverse of that leave the text where
+        -- the edit left it, so the edit's own inverse is accepted again.
+        let brought ← createText "héllo"
+        brought.insert 0 "é"
+        discard <| brought.applyInverse 1 1
+        let back ← invertedTo brought 2 2
+        let accepted ← invertedTo brought 1 1
+        return reads && refused && (← typed.revision) == 2 && back == (3, "éhéllo") &&
+            accepted == (4, "héllo") },
+    { name :=
+        "a branch is switched by inverses: after an edit is taken back and another made, the first is reached again by the inverse of the second and the inverse of the inverse, though the inverses each crossing no longer needs are dropped"
+      holds := do
+        let text ← createText "héllo"
+        -- Edits A and B.
+        text.insert 6 " A"
+        text.insert 8 "B"
+        -- Undo B, and drop what the crossing no longer needs.
+        let undoB ← invertedTo text 2 2
+        text.dropInverses 2 2
+        -- B's own inverse is gone, and the text is not where B left it.
+        let gone ← inverseRefusedWith .noInverse text 2 2
+        -- Edit C, a new branch.
+        text.insert 8 "C"
+        let branched := (← text.read) == "héllo AC" && (← text.revision) == 4
+        -- Back to B: undo C, then redo B by the inverse of its undo.
+        let undoC ← invertedTo text 4 4
+        text.dropInverses 4 4
+        let redoB ← invertedTo text 3 3
+        text.dropInverses 3 3
+        -- And to C again, by the inverses the last two crossings left.
+        let undoAgain ← invertedTo text 6 6
+        let redoC ← invertedTo text 5 5
+        return undoB == (3, "héllo A") && gone && branched && undoC == (5, "héllo A") &&
+            redoB == (6, "héllo AB") &&
+            undoAgain == (7, "héllo A") &&
+            redoC == (8, "héllo AC") },
+    -- "Xhéllo": "é" is the bytes 2 and 3. A model that found what an inverse
+    -- changed from the bytes the text holds now, and not from those it held
+    -- when the run ended, would say the restored "é" was changed again.
+    { name :=
+        "an inverse keeps what its run kept though the text has been away and back: text another inverse restored in between is not changed by it, and is still traced to the inverse that restored it"
+      holds := do
+        let text ← createText "héllo"
+        text.insert 0 "X"
+        text.delete 2 4
+        let restored ← invertedTo text 2 2
+        let inverted ← text.applyInverse 1 1 ⟨5⟩
+        return restored == (3, "Xhéllo") && inverted == ⟨4, none⟩ && (← text.read) == "héllo" &&
+            (← text.changesSince 3) ==
+              ⟨3, 4, #[⟨span 0 1 (0, 0) (0, 1), span 0 0 (0, 0) (0, 0)⟩]⟩ &&
+            (← text.trace 0 6) ==
+              #[⟨0, 1, .earlier 0⟩, ⟨1, 3, .entry 3 .unattributed⟩, ⟨3, 6, .earlier 0⟩] },
+    { name :=
+        "a run may hold inverses: an edit, its inverse and the inverse of that are one run, and so are edits with the inverse of the last of them, or with that inverse left out"
+      holds := do
+        let replaced : Transaction :=
+          { changes := #[.retain 1, .delete 2, .insert "E", .retain 10] }
+        let text ← createText "héllo wörld"
+        discard <| text.apply replaced
+        discard <| text.applyInverse 1 1
+        let redone ← invertedTo text 2 2
+        let whole ← invertedTo text 1 3
+        -- Three edits and the inverse of the third: the text is where the
+        -- second left it.
+        let thrice : EditorM TextId := do
+          let text ← createText "héllo wörld"
+          discard <| text.apply replaced
+          text.insert 12 "😀"
+          text.delete 0 1
+          discard <| text.applyInverse 3 3
+          return text
+        let short ← thrice
+        let long ← thrice
+        let there := (← short.read) == "hEllo wörld😀"
+        return redone == (3, "hEllo wörld") && whole == (4, "héllo wörld") && there &&
+            (← invertedTo short 1 2) == (5, "héllo wörld") &&
+            (← invertedTo long 1 4) == (5, "héllo wörld") },
+    -- "😀 héllo" is 11 bytes: "😀" is the bytes 0 to 3 and "é" the bytes 6
+    -- and 7. With "X" inserted after "😀" it is "😀X héllo", and with "é"
+    -- then deleted "😀X hllo".
+    { name :=
+        "applying an inverse hands back the selection before that its run's first transaction carried, in the store's form, of each shape; none when that transaction carried none; and the inverse of the inverse hands back the selection after that the run's last carried"
+      holds := do
+        let inserting : Transaction := { changes := #[.retain 4, .insert "X", .retain 7] }
+        let deleting : Transaction := { changes := #[.retain 7, .delete 2, .retain 3] }
+        let shapes : List Shape := [.exclusive, .inclusive, .line, .block]
+        let handedBack ←
+          shapes.allM fun shape => do
+              let text ← createText "😀 héllo"
+              -- Given out of order, and with two ranges that overlap.
+              discard <|
+                  text.apply
+                    { inserting with
+                      before := some (selection shape #[(8, 5), (0, 4), (6, 8)])
+                      after := some (selection shape #[(5, 5)]) }
+              discard <|
+                  text.apply
+                    { deleting with
+                      before := some (selection shape #[(7, 9)])
+                      after := some (selection shape #[(7, 7), (0, 4)]) }
+              let before := selection shape #[(0, 4), (8, 5)] 1
+              let after := selection shape #[(0, 4), (7, 7)] 1
+              let undone ← text.applyInverse 1 2
+              -- It is a selection of the text the inverse left.
+              let placed ← text.mark (.selection before)
+              let held := (← text.marker placed) == .selection before
+              let redone ← text.applyInverse 3 3
+              let marked ← text.mark (.selection after)
+              return undone == ⟨3, some before⟩ && held && redone == ⟨4, some after⟩ &&
+                  (← text.marker marked) == .selection after &&
+                  (← text.read) == "😀X hllo"
+        -- The first transaction carried none, though the second did.
+        let text ← createText "😀 héllo"
+        discard <| text.apply inserting
+        discard <|
+            text.apply
+              { deleting with
+                before := some (selection .exclusive #[(7, 9)])
+                after := some (selection .inclusive #[(7, 7)]) }
+        let undone ← text.applyInverse 1 2
+        let redone ← text.applyInverse 3 3
+        return handedBack && undone == ⟨3, none⟩ &&
+            redone == ⟨4, some (selection .inclusive #[(7, 7)])⟩ },
+    { name :=
+        "an inverse is an edit to the log: its entry has the origin it was given, a trace names the bytes it restored with its revision and that origin, and what changed across an edit and its inverse is nothing for an insert and one range replaced by itself for a delete"
+      holds := do
+        -- The character of four bytes is deleted by one origin and restored
+        -- by another's inverse.
+        let text ← createText "a😀b"
+        discard <| text.apply { changes := #[.retain 1, .delete 4, .retain 1] } ⟨3⟩
+        let inverted ← text.applyInverse 1 1 ⟨7⟩
+        let inserted ← createText "héllo"
+        inserted.insert 3 "😀"
+        discard <| inserted.applyInverse 1 1
+        return inverted == ⟨2, none⟩ && (← text.read) == "a😀b" &&
+            (← text.trace 0 6) == #[⟨0, 1, .earlier 0⟩, ⟨1, 5, .entry 2 ⟨7⟩⟩, ⟨5, 6, .earlier 0⟩] &&
+            (← text.changesSince 1) ==
+              ⟨1, 2, #[⟨span 1 1 (0, 1) (0, 1), span 1 5 (0, 1) (0, 5)⟩]⟩ &&
+            (← text.changesSince 0) ==
+              ⟨0, 2, #[⟨span 1 5 (0, 1) (0, 5), span 1 5 (0, 1) (0, 5)⟩]⟩ &&
+            (← inserted.changesSince 0) == ⟨0, 2, #[]⟩ },
+    { name :=
+        "a marker follows an inverse as it follows any edit: an anchor inside text an edit deleted is before or after the restored text by its bias and not inside it, one outside is where it was, and through a run of two revisions an anchor is where the one change of the run's inverse puts it"
+      holds := do
+        let text ← createText "héllo wörld"
+        let stays ← text.mark (anchorAt 8 .before)
+        let goes ← text.mark (anchorAt 8 .after)
+        let outside ← text.mark (anchorAt 3 .after)
+        -- "wörld" is deleted, and put back at 7.
+        text.delete 7 13
+        let collapsed := (← text.marker stays, ← text.marker goes) == anchorsAt 7 7
+        discard <| text.applyInverse 1 1
+        let one :=
+          (← text.marker stays, ← text.marker goes) == anchorsAt 7 13 &&
+            (← text.marker outside) == anchorAt 3 .after
+        -- "é" is deleted and "E" inserted where it was. The inverse of the
+        -- two replaces "E" by "é" as one change: an anchor at the end of
+        -- "E" is after "é", where through the two inverses in turn it would
+        -- be before it.
+        let run ← createText "héllo wörld"
+        run.delete 1 3
+        run.insert 1 "E"
+        let before ← run.mark (anchorAt 1 .before)
+        let after ← run.mark (anchorAt 1 .after)
+        let past ← run.mark (anchorAt 2 .before)
+        discard <| run.applyInverse 1 2
+        return collapsed && one && (← run.read) == "héllo wörld" &&
+            (← run.marker before, ← run.marker after) == anchorsAt 1 3 &&
+            (← run.marker past) == anchorAt 3 .before },
+    -- Cut down to a 64-bit word, `2 ^ 64 + 2` is 2, a revision the text
+    -- reached, whose inverse the text is at the end of.
+    { name :=
+        "an inverse is refused, changing nothing, in this order: for a run that names a revision the text has not reached or that no machine word holds; for a run the text keeps no inverse for, because it starts at revision 0, is backwards or names a dropped revision; and then for a run the text is not at the end of"
+      holds := do
+        let text ← createText "héllo"
+        text.insert 0 "x"
+        text.insert 0 "y"
+        let ahead ← inverseRefusedWith .unknownRevision text 1 3
+        let bothAhead ← inverseRefusedWith .unknownRevision text 3 3
+        let firstAhead ← inverseRefusedWith .unknownRevision text 3 2
+        let huge ← inverseRefusedWith .unknownRevision text (2 ^ 64 + 2) (2 ^ 64 + 2)
+        let hugeLast ← inverseRefusedWith .unknownRevision text 2 (2 ^ 64 + 2)
+        let fromZero ← inverseRefusedWith .noInverse text 0 2
+        let zero ← inverseRefusedWith .noInverse text 0 0
+        let backwards ← inverseRefusedWith .noInverse text 2 1
+        -- A revision not reached is looked for first, and a missing inverse
+        -- before the state: the text is not where the first edit left it.
+        let aheadFirst ← inverseRefusedWith .unknownRevision text 0 3
+        let elsewhere ← inverseRefusedWith .notInState text 1 1
+        text.dropInverses 1 1
+        let dropped ← inverseRefusedWith .noInverse text 1 1
+        let run ← inverseRefusedWith .noInverse text 1 2
+        return ahead && bothAhead && firstAhead && huge && hugeLast && fromZero && zero &&
+            backwards &&
+            aheadFirst &&
+            elsewhere &&
+            dropped &&
+            run &&
+            (← text.read) == "yxhéllo" &&
+            (← text.revision) == 2 &&
+            (← text.changesSince 2) == ⟨2, 2, #[]⟩ },
+    { name :=
+        "a revision is a number of its own text: two texts at the same revisions each keep and apply their own inverses, and an id that names no text, or one that was released, is refused"
+      holds := do
+        let one ← createText "héllo"
+        let other ← createText "wörld"
+        one.insert 0 "a"
+        one.insert 0 "b"
+        other.insert 0 "c"
+        other.insert 0 "d"
+        let first ← invertedTo one 2 2
+        let untouched := (← other.read) == "dcwörld" && (← other.revision) == 2
+        let second ← invertedTo other 2 2
+        let stranger : TextId := ⟨7⟩
+        let noText ← inverseRefusedWith .noSuchText stranger 1 1
+        let noDrop ← refusedWith .noSuchText (stranger.dropInverses 1 1)
+        one.release
+        let released ← inverseRefusedWith .noSuchText one 3 3
+        let releasedDrop ← refusedWith .noSuchText (one.dropInverses 1 1)
+        return first == (3, "ahéllo") && untouched && second == (3, "cwörld") && noText && noDrop &&
+            released &&
+            releasedDrop },
+    -- Cut down to a 64-bit word, `2 ^ 64 + 5` is 5, the text's revision.
+    { name :=
+        "after the inverses of a run are dropped, every run that names one of them is refused and the others still apply; a drop changes neither the text nor its revision nor its log; dropping what is not kept changes nothing; and a drop past the text's revision, or to one no machine word holds, is refused"
+      holds := do
+        let text ← editedFiveTimes
+        let since ← text.changesSince 0
+        text.dropInverses 2 3
+        let runs : List (Nat × Nat) :=
+          [(1, 5), (2, 5), (3, 5), (2, 2), (3, 3), (2, 3), (1, 2), (3, 4)]
+        let refused ← runs.allM fun (first, last) => inverseRefusedWith .noInverse text first last
+        let unchanged :=
+          (← text.read) == "héllo12345" && (← text.revision) == 5 &&
+            (← text.changesSince 0) == since &&
+            since == ⟨0, 5, #[⟨span 6 6 (0, 6) (0, 6), span 6 11 (0, 6) (0, 11)⟩]⟩
+        -- What is not kept: dropped already, revision 0, a run whose first
+        -- is after its last, and one whose first no word holds.
+        text.dropInverses 2 3
+        text.dropInverses 0 0
+        text.dropInverses 5 4
+        text.dropInverses (2 ^ 64 + 4) 5
+        let ahead ← refusedWith .unknownRevision (text.dropInverses 1 6)
+        let huge ← refusedWith .unknownRevision (text.dropInverses 4 (2 ^ 64 + 5))
+        let fifth ← invertedTo text 5 5
+        let fourth ← invertedTo text 4 4
+        return refused && unchanged && ahead && huge && fifth == (6, "héllo1234") &&
+            fourth == (7, "héllo123") },
+    { name :=
+        "forgetting the log and dropping inverses are independent: with the whole log forgotten an inverse is still accepted and is the one entry after where the log starts, and with every inverse dropped the log still answers"
+      holds := do
+        let forgotten ← editedFiveTimes
+        forgotten.forget 5
+        let inverted ← forgotten.applyInverse 1 5 ⟨9⟩
+        let behind ← refusedWith .forgotten (discard <| forgotten.changesSince 4)
+        let dropped ← editedFiveTimes
+        dropped.dropInverses 1 5
+        return inverted == ⟨6, none⟩ && (← forgotten.read) == "héllo" && behind &&
+            (← forgotten.changesSince 5) ==
+              ⟨5, 6, #[⟨span 6 11 (0, 6) (0, 11), span 6 6 (0, 6) (0, 6)⟩]⟩ &&
+            (← forgotten.trace 0 6) == #[⟨0, 6, .earlier 5⟩] &&
+            (← dropped.changesSince 0) ==
+              ⟨0, 5, #[⟨span 6 6 (0, 6) (0, 6), span 6 11 (0, 6) (0, 11)⟩]⟩ &&
+            (← dropped.trace 5 8) ==
+              #[⟨5, 6, .earlier 0⟩, ⟨6, 7, .entry 1 .unattributed⟩,
+                ⟨7, 8, .entry 2 .unattributed⟩] }]
+
 /-- The properties every implementation of the text port has. -/
 def properties : List Property :=
   editProperties ++ revisionProperties ++ snapshotProperties ++ positionProperties ++
@@ -1314,7 +1680,8 @@ def properties : List Property :=
     logProperties ++
     forgetProperties ++
     markerProperties ++
-    extentProperties
+    extentProperties ++
+    inverseProperties
 
 /-- Runs each of `properties` with `run`, which must start every command from
 an empty store, and returns the names of those that did not hold. A property
