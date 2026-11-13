@@ -46,20 +46,43 @@ world, and key lookup never does.
 ### Keymaps
 
 A keymap is parametric in what a key is bound to. The core knows only how
-to walk prefixes:
+to walk prefixes. A keymap is a flat list of bound key sequences, one entry
+a sequence and what it is bound to:
 
 ```lean
-inductive Entry (β : Type) where
-  | bound  (b : β)
-  | submap (m : List (Key × Entry β))
-
 structure Keymap (β : Type) where
-  entries : List (Key × Entry β)
+  bindings : List (List Key × β)
 ```
 
-The list stands for whatever map is chosen. A nested inductive through
-`Std.HashMap` is believed to be rejected by Lean; a flat map keyed by key
-sequence avoids the question.
+A sequence is a prefix when some binding begins with it and is longer; no
+entry stands for a prefix by itself.
+
+Why a flat list, and not a tree of submaps:
+
+- **The list is its own specification.** What is proved of the walk is
+  stated over the bindings, not over the internals of a hash table.
+- **Equality and `Repr` are derivable**, and no function over a keymap is a
+  nested recursion.
+- **`Std.Data.HashMap` stays out of the modules config is elaborated on**
+  (the root `Editor`).
+
+A lookup is linear in the bindings. Nothing is measured. The list is reached
+only through the keymap's own operations, so a hashed map can replace it
+behind them if a measurement asks for one.
+
+What the pinned toolchain (`leanprover/lean4:v4.35.0`) makes of the
+alternatives, checked with scratch files that are not in the repository (a
+declaration being rejected cannot be a `lake test` check). Look again when
+the toolchain is bumped:
+
+| Declaration | Lean 4.35.0 |
+|---|---|
+| `inductive Entry (β) \| bound (b : β) \| submap (m : Std.HashMap String (Entry β))` | Rejected by the kernel: `(kernel) application type mismatch  Std.DHashMap.Raw.WF inner  argument has type  _nested.Std.DHashMap.Raw_3`. A `Std.HashMap` carries a proof that its table is well formed, and a nested occurrence cannot go through it |
+| The same through `List (String × Entry β)` | Accepted, and a structurally recursive lookup over it (a `mutual` pair, over the entry and over the list) compiles and runs |
+| `deriving DecidableEq` on that nested inductive | Refused: "None of the deriving handlers for class `DecidableEq` applied to `Entry`" |
+
+So a tree of submaps is possible through `List` and not through
+`Std.HashMap`, and it would cost derived equality and structural proofs.
 
 ### Input schemes
 
@@ -317,7 +340,6 @@ resets pending state; `x` then `u` restores the buffer.
 - **The `kbd` macro.** Macros need the `Lean` package at elaboration time,
   and importing it at runtime is what the memory figures in
   [lean-runtime.md](lean-runtime.md) argue against. Not measured.
-- **Not verified:** that a nested inductive through `Std.HashMap` is
-  rejected; that `#guard` in interpreted config is fast enough to run on
-  every reload; how well the Plausible property-testing library works on
-  the pinned toolchain.
+- **Not verified:** that `#guard` in interpreted config is fast enough to
+  run on every reload; how well the Plausible property-testing library
+  works on the pinned toolchain.
