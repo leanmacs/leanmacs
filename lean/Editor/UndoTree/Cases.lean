@@ -25,29 +25,29 @@ open TextContract (Property refusedWith selection)
 
 /-- Applies `transaction` to the text of `tree` and tells the tree the
 revision it produced. -/
-def edit (tree : UndoTree) (transaction : Transaction) : EditorM UndoTree :=
+def edit (tree : UndoTree) (transaction : Transaction) : TextM UndoTree :=
   return tree.record (← tree.text.apply transaction)
 
 /-- Adds `added` at the end of the text of `tree`, by an insert, and tells
 the tree. -/
-def addAtEnd (tree : UndoTree) (added : String) : EditorM UndoTree := do
+def addAtEnd (tree : UndoTree) (added : String) : TextM UndoTree := do
   tree.text.insert (← tree.text.byteLength) added
   tree.sync
 
 /-- Adds `added` at the end of the text of `tree` as a group of its own: the
 edit, then a boundary. -/
-def group (tree : UndoTree) (added : String) : EditorM UndoTree :=
+def group (tree : UndoTree) (added : String) : TextM UndoTree :=
   return (← addAtEnd tree added).close
 
 /-- What the text of `tree` reads, and its revision. -/
-def reads (tree : UndoTree) : EditorM (String × Nat) :=
+def reads (tree : UndoTree) : TextM (String × Nat) :=
   return (← tree.text.read, ← tree.text.revision)
 
 /-- A new text holding "héllo wörld" with a tree over it, changed three
 ways, each told to the tree, to "hello, rld😀" at revision 3: by a
 transaction ("é" becomes "e" and "😀" is added at the end), by an insert
 ("," after "hello") and by a delete ("wö"). No boundary is set. -/
-def changedThreeWays : EditorM UndoTree := do
+def changedThreeWays : TextM UndoTree := do
   let text ← createText "héllo wörld"
   let tree ← UndoTree.over text
   let tree ← edit tree { changes := #[.retain 1, .delete 2, .insert "e", .retain 10, .insert "😀"] }
@@ -79,7 +79,7 @@ def afterB : Selection :=
 move back to the root crossed two edges (3 and 4), and revision 5 made
 `b`. A move back to the root that had nothing to do, which is not expected,
 fails the command. -/
-def branches : EditorM Branches := do
+def branches : TextM Branches := do
   let text ← createText "héllo"
   let tree ← UndoTree.over text
   let tree ← group tree " A"

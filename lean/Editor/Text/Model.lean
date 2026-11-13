@@ -6,7 +6,7 @@ import Editor.Text
 The text store as a value: the texts and the snapshots made so far, and a
 pure function that answers each request of the port (`Editor/Text.lean`).
 Editor logic is tested against it, with no Rust library, and theorems about
-commands are stated about `EditorM.runModel`.
+commands are stated about `TextM.runModel`.
 
 A text is a string and a revision. A snapshot is a copy of that pair, so
 that a snapshot is unaffected by later edits holds of the model by
@@ -1034,7 +1034,7 @@ end TextModel
 
 /-- Runs a command against the model `model`: its result, or the refusal it
 failed with, and the model after its last request. -/
-def EditorM.runModel {α : Type} (command : EditorM α) (model : TextModel) :
+def TextM.runModel {α : Type} (command : TextM α) (model : TextModel) :
     Except TextError α × TextModel :=
   Program.run (port := textPort) TextModel.handle command.run model
 
@@ -1043,22 +1043,22 @@ and each operation of the port. They are `simp` lemmas, so a theorem about a
 command is proved by unfolding the command and calling `simp`, which is left
 with facts about the model alone. A new operation gets its lemma here. -/
 
-namespace EditorM
+namespace TextM
 
 variable {α β : Type}
 
 @[simp]
 theorem runModel_pure (value : α) (model : TextModel) :
-    (pure value : EditorM α).runModel model = (.ok value, model) :=
+    (pure value : TextM α).runModel model = (.ok value, model) :=
   rfl
 
 @[simp]
-theorem runModel_bind (command : EditorM α) (after : α → EditorM β) (model : TextModel) :
+theorem runModel_bind (command : TextM α) (after : α → TextM β) (model : TextModel) :
     (command >>= after).runModel model =
       match command.runModel model with
       | (.ok value, model) => (after value).runModel model
       | (.error refusal, model) => (.error refusal, model) := by
-  -- A bind in `EditorM` is a bind of programs, whose second part goes on to
+  -- A bind in `TextM` is a bind of programs, whose second part goes on to
   -- `after` on a result and stops on a refusal.
   have unfolded : (command >>= after).run = command.run >>= ExceptT.bindCont after := rfl
   simp only [runModel, unfolded, Program.run_bind]
@@ -1163,7 +1163,7 @@ theorem runModel_adopt (snapshot : JobSnapshotId) (model : TextModel) :
     snapshot.adopt.runModel model = model.adopt snapshot :=
   rfl
 
-end EditorM
+end TextM
 
 /-- A splice at the end of a text is an append: the length of a text in bytes
 is a character boundary of it, and nothing follows it. -/

@@ -14,8 +14,8 @@ a text is in the state last saved are decided here. Its cases
 real binding.
 
 A tree is a value. An operation that changes it takes it and returns it, as
-a store's command does, and one that edits the text is a command, a value of
-`EditorM`.
+a store's command does, and one that edits the text is a program over the
+text port, a value of `TextM`.
 
 ## The rules of the tree
 
@@ -65,7 +65,7 @@ a store's command does, and one that edits the text is a command, a value of
 - `none` is the tree's own "there is nothing to do": an undo at the root, a
   redo with no child to go to, a move to an id that names no node. It is not
   a refusal, and nothing has changed. A refusal by the store is a `throw`,
-  as everywhere in `EditorM`.
+  as everywhere in `TextM`.
 - **A move that throws has dropped nothing**: the drops of a move come after
   its last edge. So the tree the caller still holds stays good. Told the
   text's revision, it has whatever the move did as edits in its open group,
@@ -242,7 +242,7 @@ def new (text : TextId) (revision : Nat) : UndoTree where
 
 /-- A tree for `text` as it is now: `new` with the revision the text is
 at. -/
-def over (text : TextId) : EditorM UndoTree :=
+def over (text : TextId) : TextM UndoTree :=
   return new text (← text.revision)
 
 /-- The node `id` names; `none` when it names none. -/
@@ -264,7 +264,7 @@ def record (tree : UndoTree) (revision : Nat) : UndoTree :=
 
 /-- Tells the tree the revision its text is at (`record`), for a caller that
 does not thread one. -/
-def sync (tree : UndoTree) : EditorM UndoTree :=
+def sync (tree : UndoTree) : TextM UndoTree :=
   return tree.record (← tree.text.revision)
 
 /-- The boundary. With nothing pending, the tree as it is. Otherwise the
@@ -313,7 +313,7 @@ in the state of the node it crossed to: the revision the inverse produced
 names no state. `none`, with nothing done, for the root and for an id that
 names no node. -/
 def crossEdge (tree : UndoTree) (child : NodeId) (down : Bool) (origin : Origin) :
-    EditorM (Option (UndoTree × Option Selection × Run)) := do
+    TextM (Option (UndoTree × Option Selection × Run)) := do
   let some node := tree.node? child | return none
   let some parent := node.parent | return none
   let some above := tree.node? parent | return none
@@ -335,7 +335,7 @@ def crossEdge (tree : UndoTree) (child : NodeId) (down : Bool) (origin : Origin)
 the node the text is at, by an inverse applied with `origin`, and drops the
 run it crossed. `none`, with nothing done, at the root with nothing
 pending. -/
-def undo (tree : UndoTree) (origin : Origin := .unattributed) : EditorM (Option Moved) := do
+def undo (tree : UndoTree) (origin : Origin := .unattributed) : TextM (Option Moved) := do
   let tree := tree.close
   let some (tree, selection, run) ← tree.crossEdge tree.current false origin | return none
   tree.text.dropInverses run.first run.last
@@ -344,7 +344,7 @@ def undo (tree : UndoTree) (origin : Origin := .unattributed) : EditorM (Option 
 /-- Redoes one step: crosses to the child the text was last in, by an
 inverse applied with `origin`, and drops the run it crossed. `none`, with
 nothing done, at a node with no child, and whenever anything is pending. -/
-def redo (tree : UndoTree) (origin : Origin := .unattributed) : EditorM (Option Moved) := do
+def redo (tree : UndoTree) (origin : Origin := .unattributed) : TextM (Option Moved) := do
   if tree.pending then
     return none
   let some next := (tree.node? tree.current).bind (·.next) | return none
@@ -359,7 +359,7 @@ selection is the last edge's. `none`, with nothing done, for an id that
 names no node. To the node the text is at, with nothing pending, it applies
 nothing. -/
 def goTo (tree : UndoTree) (target : NodeId) (origin : Origin := .unattributed) :
-    EditorM (Option Moved) := do
+    TextM (Option Moved) := do
   if (tree.node? target).isNone then
     return none
   let tree := tree.close
@@ -398,7 +398,7 @@ is that node's.
 `none`, with nothing done, for a state of another node and for one that is
 not of the open group. To the state the text is in, it applies nothing. -/
 def revertTo (tree : UndoTree) (state : State) (origin : Origin := .unattributed) :
-    EditorM (Option Moved) := do
+    TextM (Option Moved) := do
   if state == tree.state then
     return some ⟨tree, none⟩
   if (tree.node? tree.current).map (·.state) == some state then
@@ -424,7 +424,7 @@ def revertTo (tree : UndoTree) (state : State) (origin : Origin := .unattributed
 
 /-- Reverts the whole open group: `revertTo` the node the text was at when
 the group began. -/
-def revert (tree : UndoTree) (origin : Origin := .unattributed) : EditorM (Option Moved) := do
+def revert (tree : UndoTree) (origin : Origin := .unattributed) : TextM (Option Moved) := do
   let some node := tree.node? tree.current | return none
   tree.revertTo node.state origin
 

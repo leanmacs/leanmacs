@@ -23,9 +23,10 @@ pattern every later interface follows:
   against the model by `model-test` and against the real binding by
   `contract-test`.
 
-A command is a value of `EditorM`: a program over this port that may be
-refused. Config and compiled commands are written at that one type, and the
-same value runs against the model and against the real binding.
+A program over this port that may be refused is a value of `TextM`. Every
+operation here is one, and the same value runs against the model and against
+the real binding. A command is written at `EditorM`, the editor's port, and
+reaches these operations through it.
 
 ## The rules of the port
 
@@ -281,7 +282,7 @@ same value runs against the model and against the real binding.
   unbounded, and when to drop is the editor's to decide: its history knows
   which it still needs.
 - A refused request changes nothing.
-- A refusal is a `throw` in `EditorM`. A command that fails leaves the store
+- A refusal is a `throw` in `TextM`. A command that fails leaves the store
   as it was at the failure: nothing here rolls back the requests it had
   already made. A caller that wants that applies the inverse of the run the
   command made.
@@ -712,43 +713,47 @@ def TextRequest.Reply : TextRequest → Type
 abbrev textPort : Port :=
   { Request := TextRequest, Reply := TextRequest.Reply }
 
-/-- A command: a program over the editor's port that may be refused with a
-`TextError`. It may change editor state, and it cannot block: it holds no
-`IO`, and the port has no request that waits. -/
-abbrev EditorM :=
+/-- A program over the text port that may be refused with a `TextError`. It
+cannot block: it holds no `IO`, and the port has no request that waits. -/
+abbrev TextM :=
   ExceptT TextError (Program textPort)
 
+/-- A command: a program over the editor's port that may be refused with a
+`TextError`. For now the editor's port is the text port alone. -/
+abbrev EditorM :=
+  TextM
+
 /-- Makes a new text holding `initial` and returns its id. -/
-def createText (initial : String) : EditorM TextId :=
+def createText (initial : String) : TextM TextId :=
   ExceptT.lift (Program.request (port := textPort) (.create initial))
 
 /-- Inserts `s` into `text` at the byte offset `offset`. Refused with
 `badRange` unless `offset` is a character boundary within the text. -/
-def TextId.insert (text : TextId) (offset : Nat) (s : String) : EditorM Unit :=
+def TextId.insert (text : TextId) (offset : Nat) (s : String) : TextM Unit :=
   ExceptT.mk (Program.request (port := textPort) (.insert text offset s))
 
 /-- Deletes the bytes of `text` from `start` up to, not including, `stop`.
 Refused with `badRange` unless both are character boundaries within the text
 and `start ≤ stop`. -/
-def TextId.delete (text : TextId) (start stop : Nat) : EditorM Unit :=
+def TextId.delete (text : TextId) (start stop : Nat) : TextM Unit :=
   ExceptT.mk (Program.request (port := textPort) (.delete text start stop))
 
 /-- The whole of `text`. -/
-def TextId.read (text : TextId) : EditorM String :=
+def TextId.read (text : TextId) : TextM String :=
   ExceptT.mk (Program.request (port := textPort) (.read text))
 
 /-- Takes a snapshot of `text` as it is now and returns its id. Later edits
 to the text do not change what the snapshot holds. -/
-def TextId.snapshot (text : TextId) : EditorM SnapshotId :=
+def TextId.snapshot (text : TextId) : TextM SnapshotId :=
   ExceptT.mk (Program.request (port := textPort) (.snapshot text))
 
 /-- The answer of `source` to `query`. The operations below ask each question
 by name, of a text or of a snapshot. -/
-def TextSource.ask (source : TextSource) (query : TextQuery) : EditorM query.Answer :=
+def TextSource.ask (source : TextSource) (query : TextQuery) : TextM query.Answer :=
   ExceptT.mk (Program.request (port := textPort) (.ask source query))
 
 /-- Gives `source` up. Its id is refused from then on. -/
-def TextSource.release (source : TextSource) : EditorM Unit :=
+def TextSource.release (source : TextSource) : TextM Unit :=
   ExceptT.mk (Program.request (port := textPort) (.release source))
 
 /-- Applies `transaction` to `text`, with `origin` as who made the edit, and
@@ -761,12 +766,12 @@ with `badChange` when the changes do not fit the text, and with
 text before, or one of the selection after is not a position of the text
 after. That is the order the refusals are looked for in. -/
 def TextId.apply (text : TextId) (transaction : Transaction) (origin : Origin := .unattributed) :
-    EditorM Nat :=
+    TextM Nat :=
   ExceptT.mk (Program.request (port := textPort) (.apply text transaction origin))
 
 /-- The answer of the edit log of `text` to `query`. The operations below ask
 each question by name. -/
-def TextId.askLog (text : TextId) (query : LogQuery) : EditorM query.Answer :=
+def TextId.askLog (text : TextId) (query : LogQuery) : TextM query.Answer :=
   ExceptT.mk (Program.request (port := textPort) (.log text query))
 
 /-- What changed in `text` since `revision`, as one patch, however many edits
@@ -777,21 +782,21 @@ with `forgotten` for one before where its log starts.
 
 A consumer that follows a text keeps the `revision` of the last patch it got
 and asks again from there. -/
-def TextId.changesSince (text : TextId) (revision : Nat) : EditorM Patch :=
+def TextId.changesSince (text : TextId) (revision : Nat) : TextM Patch :=
   text.askLog (.since revision)
 
 /-- Who wrote the bytes of `text` from `start` up to, not including, `stop`:
 the range cut into pieces, in order, each with its author. Empty for an empty
 range. Refused with `badRange` unless both offsets are positions and
 `start ≤ stop`. -/
-def TextId.trace (text : TextId) (start stop : Nat) : EditorM (Array Attribution) :=
+def TextId.trace (text : TextId) (start stop : Nat) : TextM (Array Attribution) :=
   text.askLog (.trace start stop)
 
 /-- Forgets the edit log of `text` up to `revision`: the log starts there
 from then on. The text and its revision are untouched. A revision at or
 before where the log starts already changes nothing. Refused with
 `unknownRevision` for a revision the text has not reached. -/
-def TextId.forget (text : TextId) (revision : Nat) : EditorM Unit :=
+def TextId.forget (text : TextId) (revision : Nat) : TextM Unit :=
   ExceptT.mk (Program.request (port := textPort) (.forget text revision))
 
 /-- Has `text` hold `marker`, and returns the id it is read back by. From
@@ -800,13 +805,13 @@ then on every edit the text accepts moves it, until it is given up.
 Refused, holding nothing, with `badSelection` for a selection that is none
 or has an end that is not a position of the text, and with `badPosition`
 for an anchor whose offset is not one. -/
-def TextId.mark (text : TextId) (marker : Marker) : EditorM MarkerId :=
+def TextId.mark (text : TextId) (marker : Marker) : TextM MarkerId :=
   ExceptT.mk (Program.request (port := textPort) (.mark text marker))
 
 /-- The marker `id` of `text`, where it is in the text as it is now. A
 selection comes back in the form the store keeps one in. Refused with
 `noSuchMarker` for an id the text holds no marker for. -/
-def TextId.marker (text : TextId) (id : MarkerId) : EditorM Marker :=
+def TextId.marker (text : TextId) (id : MarkerId) : TextM Marker :=
   ExceptT.mk (Program.request (port := textPort) (.marker text id))
 
 /-- Puts `marker` in place of the marker `id` of `text`, which keeps its id:
@@ -816,12 +821,12 @@ Refused, changing nothing, with `badSelection` for a selection that is none,
 with `noSuchMarker` for an id the text holds no marker for, and then as
 `TextId.mark` refuses a marker. That is the order the refusals are looked
 for in. -/
-def TextId.place (text : TextId) (id : MarkerId) (marker : Marker) : EditorM Unit :=
+def TextId.place (text : TextId) (id : MarkerId) (marker : Marker) : TextM Unit :=
   ExceptT.mk (Program.request (port := textPort) (.place text id marker))
 
 /-- Gives up the marker `id` of `text`. The id is refused from then on.
 Refused with `noSuchMarker` for an id the text holds no marker for. -/
-def TextId.unmark (text : TextId) (id : MarkerId) : EditorM Unit :=
+def TextId.unmark (text : TextId) (id : MarkerId) : TextM Unit :=
   ExceptT.mk (Program.request (port := textPort) (.unmark text id))
 
 /-- Applies to `text` the inverse of its run of revisions from `first` to
@@ -841,7 +846,7 @@ last, or one of its inverses was dropped), and with `notInState` when the
 text is not in the state the run ended in. That is the order the refusals
 are looked for in. -/
 def TextId.applyInverse (text : TextId) (first last : Nat) (origin : Origin := .unattributed) :
-    EditorM Inverted :=
+    TextM Inverted :=
   ExceptT.mk (Program.request (port := textPort) (.applyInverse text first last origin))
 
 /-- Drops the inverses `text` keeps for its revisions from `first` to `last`,
@@ -850,7 +855,7 @@ refused with `noInverse`. The text, its revision and its edit log are
 untouched. A revision with no inverse kept is passed over, and a run whose
 first revision is after its last drops nothing. Refused with
 `unknownRevision` for a `last` the text has not reached. -/
-def TextId.dropInverses (text : TextId) (first last : Nat) : EditorM Unit :=
+def TextId.dropInverses (text : TextId) (first last : Nat) : TextM Unit :=
   ExceptT.mk (Program.request (port := textPort) (.dropInverses text first last))
 
 /-- Makes a new text holding what `source` holds and returns its id: a text
@@ -859,15 +864,15 @@ inverses, whatever the source's revision and whatever its text holds of
 those. An edit to either leaves the other as it was, and the new text
 outlives the release of its source. Refused, making no text, with
 `noSuchText` or `noSuchSnapshot` for a source that names nothing. -/
-def TextSource.copy (source : TextSource) : EditorM TextId :=
+def TextSource.copy (source : TextSource) : TextM TextId :=
   ExceptT.mk (Program.request (port := textPort) (.copy source))
 
 /-- A new text holding what `text` holds now (`TextSource.copy`). -/
-def TextId.copy (text : TextId) : EditorM TextId :=
+def TextId.copy (text : TextId) : TextM TextId :=
   (TextSource.text text).copy
 
 /-- A new text holding what `snapshot` holds (`TextSource.copy`). -/
-def SnapshotId.copy (snapshot : SnapshotId) : EditorM TextId :=
+def SnapshotId.copy (snapshot : SnapshotId) : TextM TextId :=
   (TextSource.snapshot snapshot).copy
 
 /-- Takes the snapshot `snapshot`, which a job held and this command's run
@@ -879,91 +884,91 @@ use the job's id up: adopted again it gives another id.
 Refused with `noSuchSnapshot`, taking nothing in, for an id this run was not
 handed: one no job was given, another job's, or any id in a command that is
 not a job's. -/
-def JobSnapshotId.adopt (snapshot : JobSnapshotId) : EditorM SnapshotId :=
+def JobSnapshotId.adopt (snapshot : JobSnapshotId) : TextM SnapshotId :=
   ExceptT.mk (Program.request (port := textPort) (.adopt snapshot))
 
 /-- A new text holding what the job's snapshot `snapshot` holds: how a file a
 job loaded becomes a text. It adopts the snapshot, copies it, and releases
 what it adopted, so the store gains the text and no snapshot. Refused as
 `JobSnapshotId.adopt` is. -/
-def JobSnapshotId.toText (snapshot : JobSnapshotId) : EditorM TextId := do
+def JobSnapshotId.toText (snapshot : JobSnapshotId) : TextM TextId := do
   let adopted ← snapshot.adopt
   let text ← adopted.copy
   (TextSource.snapshot adopted).release
   return text
 
 /-- The revision of `text`: how many edits it has accepted. -/
-def TextId.revision (text : TextId) : EditorM Nat :=
+def TextId.revision (text : TextId) : TextM Nat :=
   (TextSource.text text).ask .revision
 
 /-- The length of `text` in bytes. -/
-def TextId.byteLength (text : TextId) : EditorM Nat :=
+def TextId.byteLength (text : TextId) : TextM Nat :=
   (TextSource.text text).ask .byteLength
 
 /-- How many rows `text` has: one more than its line feeds. -/
-def TextId.rowCount (text : TextId) : EditorM Nat :=
+def TextId.rowCount (text : TextId) : TextM Nat :=
   (TextSource.text text).ask .rowCount
 
 /-- The point of the byte offset `offset` of `text`, with its column in
 `unit`. Refused with `badPosition` unless `offset` is a position. -/
-def TextId.pointOf (text : TextId) (offset : Nat) (unit : ColumnUnit := .bytes) : EditorM Point :=
+def TextId.pointOf (text : TextId) (offset : Nat) (unit : ColumnUnit := .bytes) : TextM Point :=
   (TextSource.text text).ask (.pointOf unit offset)
 
 /-- The byte offset of `point` in `text`, where the point's column is in
 `unit`. Refused with `badPosition` unless `point` names a position. -/
-def TextId.offsetOf (text : TextId) (point : Point) (unit : ColumnUnit := .bytes) : EditorM Nat :=
+def TextId.offsetOf (text : TextId) (point : Point) (unit : ColumnUnit := .bytes) : TextM Nat :=
   (TextSource.text text).ask (.offsetOf unit point)
 
 /-- The ranges of bytes `selection` covers in `text`, by its shape: sorted,
 with those that overlap made one. Refused with `badSelection` for a
 selection that is none or has an end that is not a position. -/
-def TextId.extents (text : TextId) (selection : Selection) : EditorM (Array Extent) :=
+def TextId.extents (text : TextId) (selection : Selection) : TextM (Array Extent) :=
   (TextSource.text text).ask (.extents selection)
 
 /-- Gives `text` up. Its id is refused from then on; its snapshots still
 read. -/
-def TextId.release (text : TextId) : EditorM Unit :=
+def TextId.release (text : TextId) : TextM Unit :=
   (TextSource.text text).release
 
 /-- The whole of the text `snapshot` holds. -/
-def SnapshotId.read (snapshot : SnapshotId) : EditorM String :=
+def SnapshotId.read (snapshot : SnapshotId) : TextM String :=
   (TextSource.snapshot snapshot).ask .contents
 
 /-- The revision its text had when `snapshot` was taken. -/
-def SnapshotId.revision (snapshot : SnapshotId) : EditorM Nat :=
+def SnapshotId.revision (snapshot : SnapshotId) : TextM Nat :=
   (TextSource.snapshot snapshot).ask .revision
 
 /-- The length in bytes of the text `snapshot` holds. -/
-def SnapshotId.byteLength (snapshot : SnapshotId) : EditorM Nat :=
+def SnapshotId.byteLength (snapshot : SnapshotId) : TextM Nat :=
   (TextSource.snapshot snapshot).ask .byteLength
 
 /-- How many rows the text `snapshot` holds has. -/
-def SnapshotId.rowCount (snapshot : SnapshotId) : EditorM Nat :=
+def SnapshotId.rowCount (snapshot : SnapshotId) : TextM Nat :=
   (TextSource.snapshot snapshot).ask .rowCount
 
 /-- The point of the byte offset `offset` of the text `snapshot` holds, with
 its column in `unit`. Refused with `badPosition` unless `offset` is a
 position. -/
 def SnapshotId.pointOf (snapshot : SnapshotId) (offset : Nat) (unit : ColumnUnit := .bytes) :
-    EditorM Point :=
+    TextM Point :=
   (TextSource.snapshot snapshot).ask (.pointOf unit offset)
 
 /-- The byte offset of `point` in the text `snapshot` holds, where the
 point's column is in `unit`. Refused with `badPosition` unless `point` names
 a position. -/
 def SnapshotId.offsetOf (snapshot : SnapshotId) (point : Point) (unit : ColumnUnit := .bytes) :
-    EditorM Nat :=
+    TextM Nat :=
   (TextSource.snapshot snapshot).ask (.offsetOf unit point)
 
 /-- The ranges of bytes `selection` covers in the text `snapshot` holds, by
 its shape: sorted, with those that overlap made one. Refused with
 `badSelection` for a selection that is none or has an end that is not a
 position. -/
-def SnapshotId.extents (snapshot : SnapshotId) (selection : Selection) : EditorM (Array Extent) :=
+def SnapshotId.extents (snapshot : SnapshotId) (selection : Selection) : TextM (Array Extent) :=
   (TextSource.snapshot snapshot).ask (.extents selection)
 
 /-- Gives `snapshot` up. Its id is refused from then on. -/
-def SnapshotId.release (snapshot : SnapshotId) : EditorM Unit :=
+def SnapshotId.release (snapshot : SnapshotId) : TextM Unit :=
   (TextSource.snapshot snapshot).release
 
 end Editor

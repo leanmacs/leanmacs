@@ -29,7 +29,7 @@ taken of the text for the copy and dropped after it. The library shares the
 text between the two and copies none of it.
 
 What a job held when it ended is handed to the run of the job's command
-(`EditorM.runReal`'s `arrived`): the library's snapshots, each under the
+(`TextM.runReal`'s `arrived`): the library's snapshots, each under the
 job's name for it. `adopt` finds a name among them and adds the library's
 snapshot to the table, which then holds the object together with whoever
 handed it over. A run that is handed nothing, as every command's is but a
@@ -161,7 +161,7 @@ structure RealTexts where
   or adopted. -/
   snapshots : Snapshots
   /-- The snapshots this run was handed: what a job held when it ended, each
-  under the job's name for it. `EditorM.runReal` sets it for one run and
+  under the job's name for it. `TextM.runReal` sets it for one run and
   empties it after, so it is never part of the tables a later command
   finds. -/
   arrived : Array (JobSnapshotId × Ffi.Snapshot) := #[]
@@ -545,7 +545,7 @@ last request.
 `arrived` is what the run is handed: the snapshots a job held when it ended,
 for the run of that job's command, and nothing for any other command. The
 table that comes back holds none of it but what the command adopted. -/
-def EditorM.runReal {α : Type} (command : EditorM α) (texts : RealTexts)
+def TextM.runReal {α : Type} (command : TextM α) (texts : RealTexts)
     (arrived : Array (JobSnapshotId × Ffi.Snapshot) := #[]) : IO (Except TextError α × RealTexts) :=
   do
   let (result, texts) ←

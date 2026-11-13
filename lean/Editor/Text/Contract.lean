@@ -30,10 +30,10 @@ structure Property where
   name : String
   /-- Observes the property, from an empty store; `true` when it holds. A
   command that fails has not held. -/
-  holds : EditorM Bool
+  holds : TextM Bool
 
 /-- Runs `command` and returns whether it was refused with `error`. -/
-def refusedWith (error : TextError) (command : EditorM Unit) : EditorM Bool :=
+def refusedWith (error : TextError) (command : TextM Unit) : TextM Bool :=
   try
     command
     return false
@@ -42,7 +42,7 @@ def refusedWith (error : TextError) (command : EditorM Unit) : EditorM Bool :=
 
 /-- The point of `offset` in `source`, with its column in `unit`; `none` when
 it is refused as not a position. Any other refusal fails the command. -/
-def pointOf? (source : TextSource) (unit : ColumnUnit) (offset : Nat) : EditorM (Option Point) :=
+def pointOf? (source : TextSource) (unit : ColumnUnit) (offset : Nat) : TextM (Option Point) :=
   try
     return some (← source.ask (.pointOf unit offset))
   catch refusal =>
@@ -52,7 +52,7 @@ def pointOf? (source : TextSource) (unit : ColumnUnit) (offset : Nat) : EditorM 
 
 /-- The offset of `point` in `source`, with its column in `unit`; `none` when
 it is refused as not a position. Any other refusal fails the command. -/
-def offsetOf? (source : TextSource) (unit : ColumnUnit) (point : Point) : EditorM (Option Nat) :=
+def offsetOf? (source : TextSource) (unit : ColumnUnit) (point : Point) : TextM (Option Nat) :=
   try
     return some (← source.ask (.offsetOf unit point))
   catch refusal =>
@@ -403,8 +403,7 @@ def severalChanges : Array Change :=
     .retain 1]
 
 /-- Whether applying `transaction` to `text` is refused with `error`. -/
-def applyRefusedWith (error : TextError) (text : TextId) (transaction : Transaction) :
-    EditorM Bool :=
+def applyRefusedWith (error : TextError) (text : TextId) (transaction : Transaction) : TextM Bool :=
   refusedWith error (discard <| text.apply transaction)
 
 /-- The properties of applying a transaction. -/
@@ -603,7 +602,7 @@ def span (start stop : Nat) (startPoint stopPoint : Nat × Nat) : Span where
 replaced by "XY", by the origin 7; "!" is added at the end, by the origin 9;
 and the "A" is deleted, by nobody. Returns the text and the revisions the
 two transactions produced. -/
-def changedFourTimes : EditorM (TextId × Nat × Nat) := do
+def changedFourTimes : TextM (TextId × Nat × Nat) := do
   let text ← createText "héllo\nwörld"
   text.insert 0 "A\n"
   let second ← text.apply { changes := #[.retain 3, .delete 2, .insert "XY", .retain 10] } ⟨7⟩
@@ -801,14 +800,14 @@ def selected (shape : Shape) (ranges : Array (Nat × Nat)) (primary : Nat := 0) 
   .selection { ranges := ranges.map fun (anchor, head) => ⟨anchor, head⟩, primary, shape }
 
 /-- Whether marking `text` with `marker` is refused with `error`. -/
-def markRefusedWith (error : TextError) (text : TextId) (marker : Marker) : EditorM Bool :=
+def markRefusedWith (error : TextError) (text : TextId) (marker : Marker) : TextM Bool :=
   refusedWith error (discard <| text.mark marker)
 
 /-- Where two anchors at `offset` of a new text holding `initial`, one of
 each bias, are after `edit`: the one that stays before, then the one that
 goes after. -/
-def movedBy (initial : String) (offset : Nat) (edit : TextId → EditorM Unit) :
-    EditorM (Marker × Marker) := do
+def movedBy (initial : String) (offset : Nat) (edit : TextId → TextM Unit) :
+    TextM (Marker × Marker) := do
   let text ← createText initial
   let before ← text.mark (anchorAt offset .before)
   let after ← text.mark (anchorAt offset .after)
@@ -822,14 +821,14 @@ def anchorsAt (before after : Nat) : Marker × Marker :=
 
 /-- What the selection of shape `shape` with `ranges` and `primary` reads
 back as, once a new text of twenty letters holds it. -/
-def keptAs (shape : Shape) (ranges : Array (Nat × Nat)) (primary : Nat := 0) : EditorM Marker := do
+def keptAs (shape : Shape) (ranges : Array (Nat × Nat)) (primary : Nat := 0) : TextM Marker := do
   let text ← createText "abcdefghijklmnopqrst"
   text.marker (← text.mark (selected shape ranges primary))
 
 /-- What the selection of shape `shape` with `ranges` and `primary`, held by
 a new text holding `initial`, reads back as after `changes` are applied. -/
 def selectionAfter (initial : String) (shape : Shape) (ranges : Array (Nat × Nat)) (primary : Nat)
-    (changes : Array Change) : EditorM Marker := do
+    (changes : Array Change) : TextM Marker := do
   let text ← createText initial
   let marker ← text.mark (selected shape ranges primary)
   discard <| text.apply { changes }
@@ -885,7 +884,7 @@ def markerProperties : List Property :=
         let text := "héllo wörld"
         -- "éllo" is replaced by "ÖK", three bytes, and "!" is added at the
         -- end.
-        let replacing : TextId → EditorM Unit :=
+        let replacing : TextId → TextM Unit :=
           (discard <|
             ·.apply { changes := #[.retain 1, .insert "ÖK", .delete 5, .retain 7, .insert "!"] })
         let atStart ← movedBy text 1 replacing
@@ -1113,7 +1112,7 @@ def markerProperties : List Property :=
         -- Edits to the other text move nothing here.
         other.insert 0 "XY"
         let unmoved := (← text.marker marker) == anchorAt 3 .after
-        let requests (text : TextId) : List (EditorM Unit) :=
+        let requests (text : TextId) : List (TextM Unit) :=
           [discard <| text.mark (anchorAt 0 .after), discard <| text.marker marker,
             text.place marker (anchorAt 0 .after), text.unmark marker,
             -- The text is looked for before a selection that is none is.
@@ -1130,20 +1129,20 @@ def markerProperties : List Property :=
 head, covers in a new text holding `initial`: each extent as its start and
 its stop. -/
 def covered (initial : String) (shape : Shape) (ranges : Array (Nat × Nat)) :
-    EditorM (Array (Nat × Nat)) := do
+    TextM (Array (Nat × Nat)) := do
   let text ← createText initial
   let extents ← text.extents { ranges := ranges.map fun (anchor, head) => ⟨anchor, head⟩, shape }
   return extents.map fun extent => (extent.start, extent.stop)
 
 /-- What the normal-state cursor on the character at `offset` covers in a new
 text holding `initial`: an inclusive range with equal ends. -/
-def cursorCovers (initial : String) (offset : Nat) : EditorM (Array (Nat × Nat)) :=
+def cursorCovers (initial : String) (offset : Nat) : TextM (Array (Nat × Nat)) :=
   covered initial .inclusive #[(offset, offset)]
 
 /-- Whether asking `text` what the selection of shape `shape` with `ranges`
 and `primary` covers is refused with `badSelection`. -/
 def extentsRefused (text : TextId) (shape : Shape) (ranges : Array (Nat × Nat))
-    (primary : Nat := 0) : EditorM Bool :=
+    (primary : Nat := 0) : TextM Bool :=
   refusedWith .badSelection
     (discard <|
       text.extents { ranges := ranges.map fun (anchor, head) => ⟨anchor, head⟩, primary, shape })
@@ -1308,12 +1307,12 @@ def extentProperties : List Property :=
 
 /-- Whether applying the inverse of the run from `first` to `last` to `text`
 is refused with `error`. -/
-def inverseRefusedWith (error : TextError) (text : TextId) (first last : Nat) : EditorM Bool :=
+def inverseRefusedWith (error : TextError) (text : TextId) (first last : Nat) : TextM Bool :=
   refusedWith error (discard <| text.applyInverse first last)
 
 /-- Applies the inverse of the run from `first` to `last` to `text`, and
 returns the revision it produced and what the text then reads. -/
-def invertedTo (text : TextId) (first last : Nat) : EditorM (Nat × String) := do
+def invertedTo (text : TextId) (first last : Nat) : TextM (Nat × String) := do
   let inverted ← text.applyInverse first last
   return (inverted.revision, ← text.read)
 
@@ -1321,7 +1320,7 @@ def invertedTo (text : TextId) (first last : Nat) : EditorM (Nat × String) := d
 transaction, an insert and a delete, to "hello, rld😀": "é" becomes "e" and
 "😀" is added at the end; "," is inserted after "hello"; and "wö" is
 deleted. -/
-def changedThreeWays : EditorM TextId := do
+def changedThreeWays : TextM TextId := do
   let text ← createText "héllo wörld"
   discard <| text.apply { changes := #[.retain 1, .delete 2, .insert "e", .retain 10, .insert "😀"] }
   text.insert 5 ","
@@ -1330,7 +1329,7 @@ def changedThreeWays : EditorM TextId := do
 
 /-- Makes a text holding "héllo" and adds "1" to "5" at its end, one edit
 each: "héllo12345", at revision 5. -/
-def editedFiveTimes : EditorM TextId := do
+def editedFiveTimes : TextM TextId := do
   let text ← createText "héllo"
   text.insert 6 "1"
   text.insert 7 "2"
@@ -1469,7 +1468,7 @@ def inverseProperties : List Property :=
         let whole ← invertedTo text 1 3
         -- Three edits and the inverse of the third: the text is where the
         -- second left it.
-        let thrice : EditorM TextId := do
+        let thrice : TextM TextId := do
           let text ← createText "héllo wörld"
           discard <| text.apply replaced
           text.insert 12 "😀"
@@ -1767,7 +1766,7 @@ def properties : List Property :=
 /-- Runs each of `properties` with `run`, which must start every command from
 an empty store, and returns the names of those that did not hold. A property
 whose command failed is named with the error it failed with. -/
-def failures (run : EditorM Bool → IO (Except TextError Bool)) (properties : List Property) :
+def failures (run : TextM Bool → IO (Except TextError Bool)) (properties : List Property) :
     IO (List String) :=
   properties.filterMapM fun property => do
     match ← run property.holds with
@@ -1791,7 +1790,7 @@ structure AdoptProperty where
   arrived : Array (JobSnapshotId × String)
   /-- Observes the property, from an empty store, in a run that was handed
   `arrived`; `true` when it holds. A command that fails has not held. -/
-  holds : EditorM Bool
+  holds : TextM Bool
 
 /-- What a job's snapshot holds, in the properties below: "héllo", a
 carriage return and a line feed, "😀", and the escape of the byte `0xFF`.
@@ -1881,7 +1880,7 @@ def adoptProperties : List AdoptProperty :=
 /-- Runs each of `properties` with `run`, which is given what the run is
 handed and must start the command from an empty store, and returns the names
 of those that did not hold. -/
-def adoptFailures (run : Array (JobSnapshotId × String) → EditorM Bool → IO (Except TextError Bool))
+def adoptFailures (run : Array (JobSnapshotId × String) → TextM Bool → IO (Except TextError Bool))
     (properties : List AdoptProperty) : IO (List String) :=
   properties.filterMapM fun property => do
     match ← run property.arrived property.holds with

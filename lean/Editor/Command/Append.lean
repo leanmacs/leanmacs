@@ -3,21 +3,22 @@ import Editor.Text.Model
 /-!
 # A command: append to a text
 
-The first command, and the pattern later ones follow. A command is an
-ordinary definition at `EditorM`, written in `do` notation over the port's
-operations. It is one source: tests run it against the pure model
+The first command, and the pattern later ones follow. It is an ordinary
+definition at `TextM`, the text port's programs, written in `do` notation
+over the port's operations, and a command at `EditorM` uses it as it uses
+any of them. It is one source: tests run it against the pure model
 (`ModelTest.commandProperties`), and the `editor` executable runs the same
 value against the real binding.
 
 ## A theorem about a command
 
-A theorem about a command is stated about `EditorM.runModel`: what the command
+A theorem about a command is stated about `TextM.runModel`: what the command
 returns and what model it leaves, for every model that meets the hypotheses.
 `lake build` checks it, since `Editor.lean` imports this module.
 
 The proof follows one pattern. Unfold the command, and let `simp` take it
 apart with the port's lemmas (`Program.run_bind` under
-`EditorM.runModel_bind`, and one lemma for each operation, in
+`TextM.runModel_bind`, and one lemma for each operation, in
 `Editor/Text/Model.lean`). What is left is about the model alone: here, how
 the model finds a text (`TextModel.lookup`), that the text is there (`live`)
 and that a splice at the end of a text is an append
@@ -31,7 +32,7 @@ namespace Editor
 
 /-- Appends `s` to the end of `text`: reads it, then inserts at its length in
 bytes, which is the offset just past its last character. -/
-def append (text : TextId) (s : String) : EditorM Unit := do
+def append (text : TextId) (s : String) : TextM Unit := do
   let old ← text.read
   text.insert old.utf8ByteSize s
 

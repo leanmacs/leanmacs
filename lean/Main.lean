@@ -24,7 +24,7 @@ Any other command line is reported, with the exit status 2.
 it back. `Editor.append` is the command the model tests run against the pure
 model (`ModelTest.commandProperties`); here the same source runs against the
 Rust library. -/
-def greeting : Editor.EditorM String := do
+def greeting : Editor.TextM String := do
   let text ← Editor.createText "héllo"
   Editor.append text " wörld"
   text.read
