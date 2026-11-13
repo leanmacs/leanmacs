@@ -22,5 +22,6 @@
 //! every real adapter runs. No crate downstream pins the fake's geometry.
 
 pub mod layer;
+pub mod line;
 pub mod shaper;
 pub mod tabs;
