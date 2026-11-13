@@ -24,6 +24,11 @@ moment it is started until its result is taken or its owner is removed.
   was waiting for the editor thread, has no entry, so `finish` finds nothing
   and no handler runs for it.
 - **`cancelAll`** cancels every job, for a runtime that is ending.
+- **What a job holds is released.** A job that finished holds what its
+  loads made until its command has run (`Editor/Job/Runner.lean`, "What a
+  job holds"): whoever takes its result with `finish` runs the command and
+  then calls `Handle.settle`. `removeOwner` and `cancelAll` settle each job
+  themselves, since the command of a job they remove never runs.
 -/
 
 namespace Editor.Job
@@ -59,19 +64,25 @@ def finish (jobs : Jobs) (id : Nat) :
   let some outcome ← entry.handle.outcome? | return (none, jobs)
   return (some (entry, outcome), { jobs with table })
 
-/-- Removes `owner`: takes its jobs out of the table and cancels each one.
-Returns those jobs, oldest first, and the jobs without them. -/
+/-- Removes `owner`: takes its jobs out of the table, cancels each one and
+releases what it holds. Returns those jobs, oldest first, and the jobs
+without them. -/
 def removeOwner (jobs : Jobs) (owner : Config.Owner) : BaseIO (Array (Entry Handle) × Jobs) := do
   let (removed, table) := jobs.table.removeOwner owner
   for entry in removed do
     entry.handle.cancel
+    -- A job that had finished holds what its loads made for a command that
+    -- will now never run. One that is still running settles itself when it
+    -- ends cancelled, and this finds nothing of it to release.
+    entry.handle.settle
   return (removed, { jobs with table })
 
-/-- Cancels every job in the table: for a runtime that is ending, which will
-deal with no more results. -/
+/-- Cancels every job in the table and releases what each holds: for a
+runtime that is ending, which will deal with no more results. -/
 def cancelAll (jobs : Jobs) : BaseIO Unit := do
   for entry in jobs.table.entries do
     entry.handle.cancel
+    entry.handle.settle
 
 end Jobs
 

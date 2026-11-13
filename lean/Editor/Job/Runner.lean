@@ -50,8 +50,8 @@ cancellation is built here.
   the id of the wait it is in, if it is in one, changed together in one
   atomic step.
 - **Every wait races it.** `Handle.cancel` sets the token, takes the id,
-  tells the clock to withdraw that wait and ends it in the table as
-  `cancelled`. A promise resolves once, so whichever of the service and the
+  tells the clock and the file service to withdraw that wait and ends it in
+  the table as `cancelled`. A promise resolves once, so whichever of the service and the
   cancel comes first wins and the other does nothing. A wait the job was
   still making when it was cancelled is withdrawn by the job itself, as
   soon as it sees the token.
@@ -66,13 +66,51 @@ cancellation is built here.
   runner's to release: the wait it is in is withdrawn, and a handle to a
   library object is freed by its finaliser when the continuation is dropped.
 
-## The clock port
+- **What a cancelled job loaded is released**, like everything else it
+  holds ("What a job holds", below).
 
-`Timers` is the port the runner's waits are made of: read the clock, start a
-wait with an id and a deadline, withdraw a wait. It has a fake a test moves
-by hand (`Editor/Job/Fake.lean`) and a real implementation over the Rust
-library's timer service (`Editor/Job/Real.lean`). `Services` is what a
-runner is given: the table and the clock.
+## The ports its waits are made of
+
+`Timers` is the clock port: read the clock, start a wait with an id and a
+deadline, withdraw a wait. It has a fake a test moves by hand
+(`Editor/Job/Fake.lean`) and a real implementation over the Rust library's
+timer service (`Editor/Job/Real.lean`).
+
+`Files` is the file port, beside it: start a file request
+(`Editor/File.lean`) as a wait, take the request's reply once the wait has
+completed, withdraw a wait, and release a snapshot a load's reply named. It
+has a fake over the pure model of files (`FakeFiles`,
+`Editor/Job/Fake.lean`) and a real implementation over the library's file
+service (`Editor/Job/Real.lean`). A file wait is a wait like a timer's: it
+holds no thread, and cancelling the job withdraws it from both services,
+each of which is safe for an id it does not know.
+
+`Services` is what a runner is given: the table, the clock and the files. A
+runner that is given no file service has `Files.absent`, which refuses every
+request as failed, at once: an error as a value, and the job goes on.
+
+## What a job holds
+
+A load's reply names a snapshot the file service holds for the job, by a
+`JobSnapshotId`. The job's handle lists them (`Handle.holding`): when a
+load's reply is fetched and is a snapshot, its id is added, on the job's
+thread.
+
+- **A snapshot is named for the job that loaded it.** A save whose source
+  is a job's snapshot is looked for in that job's list first, and is
+  answered `noSuchSnapshot` at once, with nothing started, if the job does
+  not hold it. So a job cannot save what another job holds, though the ids
+  are plain numbers.
+- **`Handle.settle` releases everything a job holds**, through
+  `Files.release`, and leaves it holding nothing. It is safe to call again.
+- **Who settles.** The runner, on the job's own thread, when the job ends
+  failed or cancelled, after its last request. For a job that finished,
+  whoever runs its command, after the command, so that the command can
+  take what the job held into the text store first
+  (`Editor/Headless.lean`); and `Jobs.removeOwner` and `Jobs.cancelAll`
+  (`Editor/Job/Jobs.lean`), for a finished job whose command will never
+  run. Every way a job can end is followed by one of them, and the job's
+  last addition to its list comes before it.
 -/
 
 namespace Editor.Job
@@ -139,12 +177,46 @@ structure Timers where
   that is not waiting. -/
   cancel : (id : UInt64) → BaseIO Unit
 
+/-- The file port: what the runner's file waits are made of. -/
+structure Files where
+  /-- Asks for `request` to be worked as the wait `id`, and for the wait to
+  be completed when it has been. It returns at once and never blocks. -/
+  start : (id : UInt64) → (request : FileRequest) → BaseIO Unit
+  /-- The reply to `request`, which was started as the wait `id` and has
+  completed. It is asked once, on the job's thread. A load's reply names the
+  snapshot the service then holds for the job. -/
+  take : (id : UInt64) → (request : FileRequest) → BaseIO request.Reply
+  /-- Withdraws the wait `id`: the service will not complete it, and keeps
+  nothing of it. Safe for any id, a timer's included. -/
+  cancel : (id : UInt64) → BaseIO Unit
+  /-- Gives up the snapshot `snapshot`, which a load's reply named: the
+  service holds it no longer. Safe for any id. -/
+  release : (snapshot : JobSnapshotId) → BaseIO Unit
+
+/-- The reply of a file service that is not there: every request is refused
+as failed. -/
+def Files.absentReply : (request : FileRequest) → request.Reply
+  | .load .. => .error (.failed "this runner has no file service")
+  | .save .. => .error (.failed "this runner has no file service")
+
+/-- No file service: every request completes at once, refused as failed,
+through the table `completions`. It is what a runner has when it was given
+none, so a job that asks for a file there gets an error as a value and goes
+on. -/
+def Files.absent (completions : Completions) : Files where
+  start id _ := completions.finish id .completed
+  take _ request := pure (Files.absentReply request)
+  cancel _ := pure ()
+  release _ := pure ()
+
 /-- What a runner is given. -/
 structure Services where
   /-- The waits in flight. -/
   completions : Completions
   /-- The clock. -/
   timers : Timers
+  /-- The files. A runner that is given none has `Files.absent`. -/
+  files : Files := Files.absent completions
 
 instance {α : Type} : Nonempty (Outcome α) :=
   ⟨.cancelled⟩
@@ -164,6 +236,9 @@ structure Handle where
   flags : IO.Ref Flags
   /-- How the job ended, once it has. -/
   outcome : IO.Promise (Outcome (EditorM Unit))
+  /-- The snapshots the job holds: the ones its loads made, oldest first.
+  Every change to it is one atomic step. -/
+  held : IO.Ref (Array JobSnapshotId)
 
 namespace Handle
 
@@ -171,11 +246,25 @@ namespace Handle
 def cancelled (handle : Handle) : BaseIO Bool :=
   return (← handle.flags.get).cancelled
 
-/-- Withdraws the wait `id`: tells the clock to drop it, and ends it as
+/-- The snapshots the job holds now: the ones its loads made and nothing has
+released, oldest first. -/
+def holding (handle : Handle) : BaseIO (Array JobSnapshotId) :=
+  handle.held.get
+
+/-- Releases everything the job holds, and leaves it holding nothing. It is
+safe to call again: a second call finds nothing to release. -/
+def settle (handle : Handle) : BaseIO Unit := do
+  let held ← handle.held.modifyGet fun held => (held, #[])
+  for snapshot in held do
+    handle.services.files.release snapshot
+
+/-- Withdraws the wait `id`: tells the clock and the file service to drop
+it, each of which is safe for an id it does not know, and ends it as
 `cancelled` in the table. Whichever of this and the service's completion
 comes first wins, and the other does nothing. -/
 def withdraw (handle : Handle) (id : UInt64) : BaseIO Unit := do
   handle.services.timers.cancel id
+  handle.services.files.cancel id
   handle.services.completions.finish id .cancelled
 
 /-- Cancels the job: sets its token, and withdraws the wait it is in, if it
@@ -197,9 +286,19 @@ def outcome? (handle : Handle) : BaseIO (Option (Outcome (EditorM Unit))) := do
   else
     return none
 
-/-- Leaves `outcome` in the handle, then calls `finished`: the job has ended. -/
+/-- Leaves `outcome` in the handle, then calls `finished`: the job has ended.
+
+A job that failed or was cancelled has no command to take what it holds, so
+what it holds is released here first, on the job's own thread, after its
+last request. A job that finished keeps what it holds for its command:
+whoever runs that command settles the job after it. -/
 def conclude (handle : Handle) (finished : BaseIO Unit) (outcome : Outcome (EditorM Unit)) :
     BaseIO Unit := do
+  match outcome with
+  | .finished _ =>
+    pure ()
+  | .failed _ | .cancelled =>
+    handle.settle
   handle.outcome.resolve outcome
   finished
 
@@ -216,14 +315,32 @@ inductive Answer (α : Type) where
   nothing to fetch, a timer's, answers `pure ()`. -/
   | later (id : UInt64) (wait : IO.Promise Completion) (reply : BaseIO α)
 
-/-- Answers a request. A request that waits is registered in the table of
-waits and handed to its service, and nothing here waits for it. -/
-def answer (services : Services) : (request : JobRequest) → BaseIO (Answer request.Reply)
-  | .now => return .now (← services.timers.now)
+/-- Answers a request of the job behind `handle`. A request that waits is
+registered in the table of waits and handed to its service, and nothing here
+waits for it. -/
+def answer (handle : Handle) : (request : JobRequest) → BaseIO (Answer request.Reply)
+  | .now => return .now (← handle.services.timers.now)
   | .waitUntil deadline => do
-    let (id, wait) ← services.completions.register
-    services.timers.start id deadline
+    let (id, wait) ← handle.services.completions.register
+    handle.services.timers.start id deadline
     return .later id wait (pure ())
+  | .file (.load path limit) => do
+    let (id, wait) ← handle.services.completions.register
+    handle.services.files.start id (.load path limit)
+    return .later id wait do
+        let reply ← handle.services.files.take id (.load path limit)
+        -- What the load made is the job's from here: the runner releases it.
+        if let .ok file := reply then
+          handle.held.modify (·.push file.snapshot)
+        return reply
+  | .file (.save source path expect) => do
+    -- A snapshot a job holds is named for that job and for no other.
+    if let .held snapshot := source then
+      unless (← handle.held.get).contains snapshot do
+        return .now (.error .noSuchSnapshot)
+    let (id, wait) ← handle.services.completions.register
+    handle.services.files.start id (.save source path expect)
+    return .later id wait (handle.services.files.take id (.save source path expect))
 
 /-- Runs `program` to its end, a request at a time. A request that is
 answered at once is a direct call, and the loop goes on on the same thread.
@@ -248,7 +365,7 @@ partial def drive (handle : Handle) (finished : BaseIO Unit) :
   | .step request next => do
     if ← handle.cancelled then
       return ← handle.conclude finished .cancelled
-    match ← answer handle.services request with
+    match ← answer handle request with
     | .now reply =>
       if ← handle.cancelled then
         return ← handle.conclude finished .cancelled
@@ -269,6 +386,8 @@ partial def drive (handle : Handle) (finished : BaseIO Unit) :
           if completion == some .completed && !cancelled then
             drive handle finished (next (← reply))
           else
+            -- The reply is never fetched. Whoever cancelled the job withdrew
+            -- the wait, so its service keeps nothing for it.
             handle.conclude finished .cancelled
 
 /-- The body of a job's task: applies `work`, then runs the program it gives.
@@ -286,7 +405,8 @@ def start (handle : Handle) (finished : BaseIO Unit) (work : Work) : BaseIO Unit
 the calling thread, its leading pure work included. `finished` is called once
 the job has ended and its outcome is in the handle. -/
 def spawn (services : Services) (work : Work) (finished : BaseIO Unit) : BaseIO Handle := do
-  let handle : Handle := { services, flags := ← IO.mkRef {}, outcome := ← IO.Promise.new }
+  let handle : Handle :=
+    { services, flags := ← IO.mkRef {}, outcome := ← IO.Promise.new, held := ← IO.mkRef #[] }
   discard <| BaseIO.asTask (start handle finished work)
   return handle
 

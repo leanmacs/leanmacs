@@ -1,3 +1,4 @@
+import Editor.File.Model
 import Editor.Job
 
 /-!
@@ -17,6 +18,13 @@ here.
   `cancelled` whatever it would have returned.
 - Cancellation is not a reply (`Editor/Job.lean`): the run stops, and the
   job's continuation, its `catch` handlers included, is not applied again.
+- A file request is answered by the model of the files the job reaches
+  (`JobModel.files`, `Editor/File/Model.lean`), which is part of this
+  model. It does not move the clock. A load adds to what the job holds
+  there (`FileModel.held`), and a save names its source in the tables
+  there, so whoever plays a command, a job and the job's command hands the
+  snapshots across as values: the published ones in, and what the job held
+  out.
 
 The model's clock is exact, where a real clock only promises "not before".
 So the contract of the port (`Editor/Job/Contract.lean`) holds inequalities
@@ -32,7 +40,10 @@ structure JobModel where
   now : Nat := 0
   /-- The instant at which the job is cancelled; `none` if it never is. -/
   cancelAt : Option Nat := none
-  deriving DecidableEq, Repr
+  /-- The files the job reaches, and the snapshots its file requests may
+  name (`Editor/File/Model.lean`). -/
+  files : FileModel := {}
+  deriving DecidableEq
 
 namespace JobModel
 
@@ -40,6 +51,9 @@ namespace JobModel
 def handle : (request : JobRequest) → JobModel → request.Reply × JobModel
   | .now, model => (model.now, model)
   | .waitUntil deadline, model => ((), { model with now := max model.now deadline })
+  | .file request, model =>
+    let (reply, files) := model.files.handle request
+    (reply, { model with files })
 
 /-- Whether the job is cancelled by now. -/
 def cancelled (model : JobModel) : Bool :=

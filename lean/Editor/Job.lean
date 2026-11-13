@@ -1,4 +1,4 @@
-import Editor.Text
+import Editor.File
 
 /-!
 # Jobs
@@ -16,7 +16,7 @@ smuggle one in.
 
 ## The port
 
-A job reaches time, and nothing else yet, through two requests:
+A job reaches time through two requests:
 
 - `now` reads the job clock, in milliseconds. The clock only says how far
   apart two readings are: where it starts is the clock's own business.
@@ -26,6 +26,17 @@ A job reaches time, and nothing else yet, through two requests:
 `sleep` is written with those two, and so is a `Timer`, which is plain data:
 the instant of its next tick and its period. A job may also fail: `JobM` has
 an error layer of messages, so a job has `throw`, `try` and `catch`.
+
+A job reaches files through one request, `file`, which carries a
+`FileRequest` (`Editor/File.lean`): `File.load` loads a file and `File.save`
+saves a snapshot as one. Each waits, as a wait on the clock does, and
+replies with a result or a refusal: an `Except FileError`, a value, which
+the job matches on. Nothing about a file ends a job or cancels it. A load
+replies with the name of a snapshot the job then holds (`JobSnapshotId`):
+the job can save it, and the job's command can take it into the text store
+(`JobSnapshotId.adopt`), which a job cannot do, since that is a request of
+the editor's port. Whatever runs the job releases what it holds once its
+command has run, or when it fails or is cancelled.
 
 No request carries a promise or a handle: a request is plain data. How a wait
 is completed is the runner's business (`Editor/Job/Runner.lean`), not
@@ -41,25 +52,30 @@ resume it, and it runs no cleanup of its own. What it ended as is an
 
 ## Adding to the port
 
-A new service a job can wait on (a process, a file) is a constructor of
+A new service a job can wait on (a process) is a constructor of
 `JobRequest` with its case in `JobRequest.Reply`, and an operation here that
 makes the request. It then needs a clause in the model (`JobModel.handle`,
 `Editor/Job/Model.lean`), an answer in the runner, and a property in the
-contract, which is what pins it for both.
+contract, which is what pins it for both. The file service is the example:
+`JobRequest.file`, whose requests are their own type so that a new file
+request is a constructor of `FileRequest` and not of this port
+(`Editor/File.lean` says what it needs).
 
 ## The pieces
 
 - the port, here: the requests, the reply to each, the operations a job is
   written with, `Timer`, and `Work`, a job as it is spawned;
+- the file requests as data, `Editor/File.lean`, and the pure model of the
+  files a job reaches, `Editor/File/Model.lean`;
 - its pure model, `Editor/Job/Model.lean`, which tests run against;
-- its contract, `Editor/Job/Contract.lean`: one list of properties, run
-  against the model and against the runner over a fake clock by
-  `model-test`, and against the runner over the Rust library's timer
-  service by `contract-test`;
+- its contract, `Editor/Job/Contract.lean`: two lists of properties, of the
+  clock and of the file requests, run against the model and against the
+  runner over a fake clock and a fake file service by `model-test`, and
+  against the runner over the Rust library's services by `contract-test`;
 - the runner, `Editor/Job/Runner.lean`, which runs a job on the pool, with
-  the clock port's fake (`Editor/Job/Fake.lean`) and its real
-  implementation (`Editor/Job/Real.lean`, the only job module that imports
-  `Editor.Ffi`);
+  the fakes of the clock port and of the file port (`Editor/Job/Fake.lean`)
+  and their real implementations (`Editor/Job/Real.lean`, the only job
+  module that imports `Editor.Ffi`);
 - the job table and the shell the editor thread calls,
   `Editor/Job/Table.lean` and `Editor/Job/Jobs.lean`;
 - `Editor/Job/Pool.lean`, which warms the pool at start-up.
@@ -76,13 +92,17 @@ inductive JobRequest where
   | now
   /-- Wait until the job clock reads `deadline` or later. -/
   | waitUntil (deadline : Nat)
+  /-- Load a file or save one (`Editor/File.lean`), and wait for it. -/
+  | file (request : FileRequest)
   deriving DecidableEq, Repr
 
-/-- The type of the reply to each request: the clock's reading for `now`, and
-nothing for a wait. No reply says a job was cancelled. -/
+/-- The type of the reply to each request: the clock's reading for `now`,
+nothing for a wait, and for a file request its own reply, a refusal or a
+result. No reply says a job was cancelled. -/
 def JobRequest.Reply : JobRequest → Type
   | .now => Nat
   | .waitUntil _ => Unit
+  | .file request => request.Reply
 
 /-- The job port: `JobRequest` and the reply to each request. -/
 abbrev jobPort : Port :=
@@ -128,6 +148,21 @@ it. A tick whose instant has passed returns at once. -/
 def Timer.tick (timer : Timer) : JobM Timer := do
   waitUntil timer.next
   return { timer with next := timer.next + timer.period }
+
+/-- Loads the file at `path`, unless it is longer than `limit` bytes, and
+waits for it: the file's text as a snapshot this job holds, its stamp and
+its line endings, or why it was refused. The refusal is a value: the job
+goes on. `Editor/File.lean` has the rules. -/
+def File.load (path : System.FilePath) (limit : Nat) : JobM (Except FileError File.Loaded) :=
+  ExceptT.lift (Program.request (port := jobPort) (.file (.load path limit)))
+
+/-- Saves what `source` holds as the file at `path`, if what is on disk is
+what `expect` says, and waits for it: the stamp of the file it wrote, or why
+it was refused. The refusal is a value: the job goes on. `Editor/File.lean`
+has the rules. -/
+def File.save (source : File.Source) (path : System.FilePath) (expect : File.Expect) :
+    JobM (Except FileError File.Stamp) :=
+  ExceptT.lift (Program.request (port := jobPort) (.file (.save source path expect)))
 
 namespace Job
 
@@ -245,6 +280,28 @@ example : True := by
 
 example : True := by
   fail_if_success exact (fun (_ : EditorM Unit) => True.intro) (pure () : JobM Unit)
+  trivial
+
+/-! A file request is a job, and it is not a command: alone, and after a text
+request in a `do` block. So a command cannot wait for a file. Seen to bite
+once by hand: offered at `JobM (Except FileError File.Loaded)` inside the
+first check, the module stops building. -/
+
+example : True :=
+  (fun (_ : JobM (Except FileError File.Loaded)) => True.intro) (File.load "/a" 1)
+
+example : True := by
+  fail_if_success
+    exact (fun (_ : EditorM (Except FileError File.Loaded)) => True.intro) (File.load "/a" 1)
+  trivial
+
+example : True := by
+  fail_if_success
+    exact
+      (fun (_ : EditorM Unit) => True.intro)
+        (do
+          (⟨0⟩ : TextId).insert 0 "x"
+          discard <| File.save (.snapshot ⟨0⟩) "/a" .whatever)
   trivial
 
 /-! A wait is not a command: alone, and after a text request in a `do` block.

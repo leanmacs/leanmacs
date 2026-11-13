@@ -1,12 +1,18 @@
+import Editor.File.Model
 import Editor.Job.Runner
 
 /-!
-# The fake clock
+# The fakes of the job runner's services
+
+Two fakes, published for `model-test` and `config-test`: the fake clock,
+below, and the fake file service (`FakeFiles`, at the end of this module,
+whose doc comment has its rules).
+
+## The fake clock
 
 The fake of the clock port (`Job.Timers`, `Editor/Job/Runner.lean`): a clock a
-test moves by hand. It is published for `model-test` and `config-test`, so a
-check of anything that waits controls time, and nothing sleeps to let
-something happen.
+test moves by hand. With it a check of anything that waits controls time,
+and nothing sleeps to let something happen.
 
 - The clock reads 0 until `advance` moves it. `advance` completes every wait
   that is then due, earliest deadline first, through the table of waits it
@@ -193,5 +199,194 @@ def readThreads (clock : FakeClock) : BaseIO (Array UInt64) :=
   return (← clock.state.get).readThreads
 
 end FakeClock
+
+/-- What a fake file service holds. -/
+structure FakeFiles.State where
+  /-- The files, and the snapshots a request may name. -/
+  model : FileModel := {}
+  /-- The requests that were started and have been neither taken nor
+  withdrawn, each with its wait's id, oldest first. -/
+  pending : Array (UInt64 × FileRequest) := #[]
+  /-- Every request ever started, each with its wait's id, oldest first. -/
+  started : Array (UInt64 × FileRequest) := #[]
+  /-- The waits that were withdrawn while their requests were pending,
+  oldest first. -/
+  withdrawn : Array UInt64 := #[]
+  /-- Every snapshot the service was asked to release, oldest first. -/
+  released : Array JobSnapshotId := #[]
+  /-- Whether completions are held: a request started while they are is not
+  completed until the test lets go. -/
+  holding : Bool := false
+  /-- The waits whose completion is held, oldest first. -/
+  parked : Array UInt64 := #[]
+  /-- The thread that started each request of `started`. -/
+  startThreads : Array UInt64 := #[]
+  /-- What a take parks on before it answers, if takes are held. -/
+  takeHold : Option (IO.Promise Unit) := none
+  /-- How many takes have arrived at the hold. -/
+  takesHeld : Nat := 0
+
+/-- The fake of the file port (`Job.Files`, `Editor/Job/Runner.lean`): the
+pure model of files (`Editor/File/Model.lean`) behind a reference. It is
+published for `model-test`, so the job port's file requests run on the
+runner with no library and no disk.
+
+- `start` records the request and completes its wait: at once, or, while the
+  test holds completions (`holdCompletions`), when the test lets go
+  (`letGo`).
+- `take` answers from the model, and that is when a request happens: a load
+  adds its snapshot to what the model holds for jobs then, and a save writes
+  its file then. So a request that was withdrawn before it was taken never
+  happened, and `take` of it is refused as failed.
+- `cancel` withdraws a request that was started and not taken, and is safe
+  for any id.
+- `release` empties the model's slot for a job's snapshot.
+
+It records what was started, withdrawn and released, and a test sets what
+the editor has published (`publish`). -/
+structure FakeFiles where
+  /-- The table the service completes its waits through. -/
+  completions : Completions
+  /-- What the service holds. Every change to it is one atomic step. -/
+  state : IO.Ref FakeFiles.State
+
+namespace FakeFiles
+
+/-- A file service over `model`, through the table `completions`, with no
+request started. -/
+def new (completions : Completions) (model : FileModel := {}) : BaseIO FakeFiles :=
+  return { completions, state := ← IO.mkRef { model } }
+
+/-- Holds every completion from now on: a request started from now is not
+completed until `letGo`. So a test can act while a job is in a file wait. -/
+def holdCompletions (files : FakeFiles) : BaseIO Unit :=
+  files.state.modify fun state => { state with holding := true }
+
+/-- Completes every wait whose completion is held, oldest first, and holds
+none from now on. -/
+def letGo (files : FakeFiles) : BaseIO Unit := do
+  let parked ←
+    files.state.modifyGet fun state =>
+        (state.parked,
+          { state with
+            holding := false, parked := #[] })
+  for id in parked do
+    files.completions.finish id .completed
+
+/-- Sets what the editor has published: the snapshots a save may name by a
+`SnapshotId`. -/
+def publish (files : FakeFiles) (snapshots : Array (Option TextContent)) : BaseIO Unit :=
+  files.state.modify fun state => { state with model := { state.model with snapshots } }
+
+/-- Holds every take from now on: a take parks, before it answers, until the
+promise this returns is resolved. So a test can act while a job is fetching
+the reply of a wait that has completed. -/
+def holdTakes (files : FakeFiles) : BaseIO (IO.Promise Unit) := do
+  let hold ← IO.Promise.new
+  files.state.modify fun state => { state with takeHold := some hold }
+  return hold
+
+/-- How many takes have arrived at the hold, parked or since let go. -/
+def takesHeld (files : FakeFiles) : BaseIO Nat :=
+  return (← files.state.get).takesHeld
+
+/-- Starts `request` as the wait `id`, records the thread that did, and
+completes the wait unless completions are held. -/
+def start (files : FakeFiles) (id : UInt64) (request : FileRequest) : BaseIO Unit := do
+  let thread ← IO.getTID
+  let held ←
+    files.state.modifyGet fun state =>
+        let state :=
+          { state with
+            pending := state.pending.push (id, request)
+            started := state.started.push (id, request)
+            startThreads := state.startThreads.push thread }
+        if state.holding then (true, { state with parked := state.parked.push id })
+        else (false, state)
+  unless held do
+    files.completions.finish id .completed
+
+/-- Parks the calling thread on the take hold, if there is one, until the
+test that made it resolves it, and counts the arrival. -/
+def parkTake (files : FakeFiles) : BaseIO Unit := do
+  let hold? ←
+    files.state.modifyGet fun state =>
+        (state.takeHold,
+          if state.takeHold.isSome then { state with takesHeld := state.takesHeld + 1 } else state)
+  if let some hold := hold? then
+    discard <| IO.wait hold.result?
+
+/-- The model's answer to `request`, which was started as the wait `id`, and
+the request is pending no longer. A request that is not pending, because it
+was withdrawn or never started, is refused as failed and changes nothing. -/
+def take (files : FakeFiles) (id : UInt64) : (request : FileRequest) → BaseIO request.Reply
+  | .load path limit => do
+    files.parkTake
+    files.state.modifyGet fun state =>
+        if state.pending.any (·.1 == id) then
+          let (reply, model) := state.model.load path limit
+          (reply,
+            { state with
+              model, pending := state.pending.filter (·.1 != id) })
+        else (.error (.failed "the request is not pending"), state)
+  | .save source path expect => do
+    files.parkTake
+    files.state.modifyGet fun state =>
+        if state.pending.any (·.1 == id) then
+          let (reply, model) := state.model.save source path expect
+          (reply,
+            { state with
+              model, pending := state.pending.filter (·.1 != id) })
+        else (.error (.failed "the request is not pending"), state)
+
+/-- Withdraws the wait `id`, if its request is pending: it is never
+completed here and never happens. -/
+def cancel (files : FakeFiles) (id : UInt64) : BaseIO Unit :=
+  files.state.modify fun state =>
+    if state.pending.any (·.1 == id) then
+      { state with
+        pending := state.pending.filter (·.1 != id)
+        parked := state.parked.filter (· != id)
+        withdrawn := state.withdrawn.push id }
+    else state
+
+/-- Gives up the job's snapshot `snapshot`: the model holds it no longer. -/
+def release (files : FakeFiles) (snapshot : JobSnapshotId) : BaseIO Unit :=
+  files.state.modify fun state =>
+    { state with
+      model := state.model.released snapshot
+      released := state.released.push snapshot }
+
+/-- The service as the port the runner is given. -/
+def files (files : FakeFiles) : Files :=
+  { start := files.start, take := files.take, cancel := files.cancel, release := files.release }
+
+/-- The model as it is now. -/
+def model (files : FakeFiles) : BaseIO FileModel :=
+  return (← files.state.get).model
+
+/-- How many requests are pending: started, and neither taken nor
+withdrawn. -/
+def waiting (files : FakeFiles) : BaseIO Nat :=
+  return (← files.state.get).pending.size
+
+/-- Every request ever started, each with its wait's id, oldest first. -/
+def started (files : FakeFiles) : BaseIO (Array (UInt64 × FileRequest)) :=
+  return (← files.state.get).started
+
+/-- The thread that started each request of `started`. -/
+def startThreads (files : FakeFiles) : BaseIO (Array UInt64) :=
+  return (← files.state.get).startThreads
+
+/-- The waits that were withdrawn while their requests were pending, oldest
+first. -/
+def withdrawn (files : FakeFiles) : BaseIO (Array UInt64) :=
+  return (← files.state.get).withdrawn
+
+/-- Every snapshot the service was asked to release, oldest first. -/
+def released (files : FakeFiles) : BaseIO (Array JobSnapshotId) :=
+  return (← files.state.get).released
+
+end FakeFiles
 
 end Editor.Job

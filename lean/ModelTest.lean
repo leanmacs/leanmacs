@@ -56,11 +56,19 @@ The job system is tested here with no Rust library:
   (`Editor/File/Model.lean`): its decoding of bytes into the text model's
   escapes against texts written out by hand, what a load and a save answer
   and in what order they are refused, and the file data's own functions.
-  They touch no file.
+  They touch no file;
+- `fileRunnerChecks`, and one check among `runnerChecks`: the runner's file
+  waits, on the fake of the file service (`Job.FakeFiles`,
+  `Editor/Job/Fake.lean`): a file wait holds no thread, cancelling
+  withdraws it, what a job loaded is released however the job ends, a job
+  cannot save what another job holds, and a save finds what the editor has
+  published when it is made.
 
 The job port's contract (`Editor/Job/Contract.lean`) is run here against the
-model and against the runner over the fake clock. `contract-test` runs the
-same list against the runner over the Rust library's timer service.
+model and against the runner over the fake clock, and its file properties
+against the model of files and against the runner over the fake of the file
+service, in a made-up directory: no file is touched. `contract-test` runs
+the same lists against the runner over the Rust library's services.
 
 The config session's decisions are tested here too, with no elaborator:
 
@@ -460,8 +468,13 @@ def Rig.spawn (rig : Rig) (work : Work) : BaseIO Spawned := do
 /-- Runs `job` on the runner over a fake clock of its own, and returns how it
 ended. The driver stands in for time: while a wait is waiting it advances the
 clock to the earliest deadline. A job that does not end in time has failed. -/
-def runOnFake (job : JobM Bool) : IO (Job.Outcome Bool) := do
-  let rig ← Rig.new
+def runOnFake (job : JobM Bool) (rig? : Option Rig := none) : IO (Job.Outcome Bool) := do
+  let rig ←
+    match rig? with
+    | some rig =>
+      pure rig
+    | none =>
+      Rig.new
   let spawned ← rig.spawn (reporting fun _ => job)
   let ended ←
     eventually do
@@ -484,8 +497,61 @@ def runOnFake (job : JobM Bool) : IO (Job.Outcome Bool) := do
 /-- The names of the job port's contract properties that do not hold of the
 runner over the fake clock. -/
 def jobRunnerFailures : IO (List String) := do
-  let failed ← JobContract.failures runOnFake JobContract.properties
+  let failed ← JobContract.failures (runOnFake ·) JobContract.properties
   return failed.map (s!"the job runner over the fake clock: {·}")
+
+/-- The made-up directory the files of a file property are in, for the model
+and for the fake of the file service: an absolute path that is never opened. -/
+def fileRoot : System.FilePath :=
+  "/files"
+
+/-- The model of the files a file property starts with: the directory
+`fileRoot`, and in it the property's files. -/
+def fileModelOf (property : JobContract.FileProperty) : FileModel :=
+  property.files.foldl (fun model (name, bytes) => model.withFile (fileRoot / name) bytes)
+    (({} : FileModel).withDirectory fileRoot)
+
+/-- The files of `model`, as a file property names them: one in `fileRoot`
+by its name, and one anywhere else by its whole path, so that a file written
+where none should be is seen. -/
+def filesIn (model : FileModel) : Array (String × ByteArray) :=
+  model.files.map fun file =>
+    let name :=
+      if file.path.parent == some fileRoot then file.path.fileName.getD file.path.toString
+      else file.path.toString
+    (name, file.bytes)
+
+/-- A rig whose services have a fake file service over `model`, and that
+service. -/
+def Rig.withFiles (model : FileModel) : BaseIO (Rig × Job.FakeFiles) := do
+  let rig ← Rig.new
+  let files ← Job.FakeFiles.new rig.services.completions model
+  return ({ rig with services := { rig.services with files := files.files } }, files)
+
+/-- Runs a file property's job against the job port's model, over the model
+of its files: how the job ended, and the files afterwards. -/
+def runFilesOnModel (property : JobContract.FileProperty) :
+    IO (Job.Outcome Bool × Array (String × ByteArray)) :=
+  let (outcome, model) := (property.holds fileRoot).runModel { files := fileModelOf property }
+  pure (outcome, filesIn model.files)
+
+/-- Runs a file property's job on the runner over a fake clock and the fake
+of the file service, over the model of its files: how the job ended, and the
+files afterwards. -/
+def runFilesOnFake (property : JobContract.FileProperty) :
+    IO (Job.Outcome Bool × Array (String × ByteArray)) := do
+  let (rig, files) ← Rig.withFiles (fileModelOf property)
+  let outcome ← runOnFake (property.holds fileRoot) (some rig)
+  return (outcome, filesIn (← files.model))
+
+/-- The names of the job port's file properties that do not hold of the job
+model, and of those that do not hold of the runner over the fake of the file
+service. -/
+def fileFailures : IO (List String) := do
+  let onModel ← JobContract.fileFailures runFilesOnModel JobContract.fileProperties
+  let onFake ← JobContract.fileFailures runFilesOnFake JobContract.fileProperties
+  return onModel.map (s!"the job model: {·}") ++
+      onFake.map (s!"the job runner over the fake file service: {·}")
 
 /-- `value`, once `gate` has been resolved: pure work a check can hold a
 thread in. It is never inlined, so the read of the gate stays where the call
@@ -623,6 +689,37 @@ def runnerChecks : List Check :=
           return notDelayed && allWaiting && noneEnded && threads < count && allFinished
         finally
           rig.clock.advance 1000 },
+    { name :=
+        "jobs in file waits do not delay a new pool task, and their waits hold no thread: more jobs than the pool has threads are all in a load at once, started from fewer threads than there are jobs"
+      run := do
+        let (rig, files) ←
+          Rig.withFiles
+              ((({} : FileModel).withDirectory fileRoot).withFile (fileRoot / "a.txt")
+                JobContract.rawFile)
+        files.holdCompletions
+        let count := max 64 ((← Job.Pool.whole warmPatience).size + 1)
+        let mut jobs := #[]
+        for _ in [0:count] do
+          jobs :=
+            jobs.push
+              (←
+                rig.spawn
+                    (reporting fun _ => do
+                      return (← JobContract.loaded (fileRoot / "a.txt")).stamp.size))
+        try
+          unless ← eventually (return (← files.waiting) == count) do
+            return false
+          let ran ← IO.Promise.new
+          discard <| BaseIO.asTask (ran.resolve ())
+          let notDelayed ← eventually ran.isResolved
+          let allWaiting := (← files.waiting) == count
+          let noneEnded ← jobs.allM fun job => return !(← job.handle.ended)
+          let threads := distinct (← files.startThreads)
+          files.letGo
+          let allFinished ← jobs.allM (·.endedAs (.finished #["17"]))
+          return notDelayed && allWaiting && noneEnded && threads < count && allFinished
+        finally
+          files.letGo },
     { name :=
         "a job's leading pure work does not run on the spawning thread: spawn returns while that work is still held"
       run := do
@@ -935,6 +1032,210 @@ def ownerChecks : List Check :=
         finally
           for entry in jobs.table.entries do
             entry.handle.cancel }]
+
+/-- A model with the directory `fileRoot` and, in it, `a.txt` holding
+`JobContract.rawFile`, seventeen bytes, and `b.txt` holding
+`JobContract.otherFile`, twelve. -/
+def twoFiles : FileModel :=
+  ((({} : FileModel).withDirectory fileRoot).withFile (fileRoot / "a.txt")
+        JobContract.rawFile).withFile
+    (fileRoot / "b.txt") JobContract.otherFile
+
+/-- What the editor has published, in the checks below: one snapshot, of a
+text with a two-byte character and an escape. Saved, it is the seven bytes
+`pubBytes`. -/
+def pubContent : TextContent :=
+  { contents := "pub é".push (Char.ofNat 0x10DCFF), revision := 2 }
+
+/-- The bytes `pubContent` is saved as, written out by hand. -/
+def pubBytes : ByteArray :=
+  ⟨#[0x70, 0x75, 0x62, 0x20, 0xC3, 0xA9, 0xFF]⟩
+
+/-- Whether `reply` is a refusal as failed, whatever its detail. -/
+def isFailed {α : Type} (reply : Except FileError α) : Bool :=
+  match reply with
+  | .error (.failed _) => true
+  | _ => false
+
+/-- The bytes of the file `name` of `fileRoot` in the fake's model, if it is
+there. -/
+def fileOf (files : Job.FakeFiles) (name : String) : BaseIO (Option ByteArray) :=
+  return ((← files.model).file? (fileRoot / name)).map (·.bytes)
+
+/-- The checks of the job runner's file waits (`Editor/Job/Runner.lean`),
+each on a fake of the file service of its own (`Job.FakeFiles`,
+`Editor/Job/Fake.lean`), over a model of two files. A check holds what it
+controls (the service's completions, its takes, a clock) and polls only as
+the bound after which it fails. -/
+def fileRunnerChecks : List Check :=
+  [{
+      name :=
+        "cancelling a job in a file wait withdraws the wait and ends the job cancelled, and its save never happens: no file is written, then or when the service lets go",
+      run := do
+        let (rig, files) ← Rig.withFiles twoFiles
+        files.publish #[some pubContent]
+        files.holdCompletions
+        let saver ←
+          rig.spawn
+              (reporting fun _ => do
+                return (← JobContract.saved (.snapshot ⟨0⟩) (fileRoot / "new.txt") .absent).size)
+        try
+          unless ← eventually (return (← files.waiting) == 1) do
+            return false
+          let started := (← files.started).map (·.1)
+          saver.handle.cancel
+          let cancelled ← saver.endedAs .cancelled
+          let withdrawn := (← files.withdrawn) == started && (← files.waiting) == 0
+          let forgotten := (← rig.services.completions.waiting) == 0
+          files.letGo
+          return cancelled && started.size == 1 && withdrawn && forgotten &&
+              (← fileOf files "new.txt").isNone
+        finally
+          saver.handle.cancel
+          files.letGo },
+    { name :=
+        "a job cancelled as its load completes is not continued, and what it loaded is released: cancelled while the reply is being fetched, it ends cancelled, and the snapshot the load made is given up"
+      run := do
+        let (rig, files) ← Rig.withFiles twoFiles
+        let hold ← files.holdTakes
+        let loader ←
+          rig.spawn
+              (reporting fun _ => do
+                let file ← JobContract.loaded (fileRoot / "a.txt")
+                -- Never reached: the job is cancelled before the reply is
+                -- handed to it.
+                return (←
+                      JobContract.saved (.held file.snapshot) (fileRoot / "new.txt") .absent).size)
+        try
+          unless ← eventually (return (← files.takesHeld) == 1) do
+            return false
+          loader.handle.cancel
+          hold.resolve ()
+          let cancelled ← loader.endedAs .cancelled
+          return cancelled && (← files.released) == #[⟨0⟩] && (← files.model).held == #[none] &&
+              (← loader.handle.holding).isEmpty &&
+              (← files.started).size == 1 &&
+              (← fileOf files "new.txt").isNone
+        finally
+          hold.resolve ()
+          loader.handle.cancel },
+    { name :=
+        "what a job loaded is the runner's to release: a job that fails after a load has its snapshot released with no call from here, and one that finishes keeps it until it is settled, once"
+      run := do
+        let (rig, files) ← Rig.withFiles twoFiles
+        let fails ←
+          rig.spawn fun _ => do
+              discard <| JobContract.loaded (fileRoot / "a.txt")
+              throw "no thanks"
+        let failed ← fails.endedAs (.failed "no thanks")
+        let afterFailure ← files.released
+        let finishes ←
+          rig.spawn
+              (reporting fun _ => do
+                discard <| JobContract.loaded (fileRoot / "a.txt")
+                return (← JobContract.loaded (fileRoot / "b.txt")).stamp.size)
+        let finished ← finishes.endedAs (.finished #["12"])
+        let kept ← files.released
+        let holding ← finishes.handle.holding
+        finishes.handle.settle
+        let settled ← files.released
+        finishes.handle.settle
+        return failed && afterFailure == #[⟨0⟩] && finished && kept == #[⟨0⟩] &&
+            holding == #[⟨1⟩, ⟨2⟩] &&
+            settled == #[⟨0⟩, ⟨1⟩, ⟨2⟩] &&
+            (← files.released) == settled &&
+            (← finishes.handle.holding).isEmpty &&
+            (← files.model).held == #[none, none, none] },
+    { name :=
+        "removing an owner releases what its finished job loaded though the job's command never ran, and so does cancelling every job"
+      run := do
+        let (rig, files) ← Rig.withFiles twoFiles
+        let woken ← IO.mkRef #[]
+        let finished (id : Nat) : BaseIO Unit := woken.modify (·.push id)
+        let loads : Work :=
+          reporting fun _ => do
+            return (← JobContract.loaded (fileRoot / "a.txt")).stamp.size
+        let jobs : Job.Jobs := { services := rig.services }
+        let (annas, jobs) ← jobs.start anna "loads" loads finished
+        unless ← eventually (return (← woken.get) == #[annas]) do
+          return false
+        let before ← files.released
+        let (removed, jobs) ← jobs.removeOwner anna
+        let afterRemoval ← files.released
+        let (bens, jobs) ← jobs.start ben "loads" loads finished
+        unless ← eventually (return (← woken.get) == #[annas, bens]) do
+          return false
+        jobs.cancelAll
+        return before.isEmpty && removed.map (·.id) == #[annas] && afterRemoval == #[⟨0⟩] &&
+            (← files.released) == #[⟨0⟩, ⟨1⟩] &&
+            (← files.model).held == #[none, none] },
+    { name :=
+        "a job cannot save what another job holds: with one job parked after its load, a second that saves that job's snapshot is refused as naming none, and the service is asked to start nothing for it"
+      run := do
+        let (rig, files) ← Rig.withFiles twoFiles
+        let holder ←
+          rig.spawn
+              (reporting fun _ => do
+                discard <| JobContract.loaded (fileRoot / "a.txt")
+                sleep 1000
+                return true)
+        try
+          unless ← eventually (return (← rig.clock.waiting) == 1) do
+            return false
+          let #[theirs] ← holder.handle.holding | return false
+          let thief ←
+            rig.spawn
+                (reporting fun _ =>
+                  JobContract.saveRefusedAs .noSuchSnapshot (.held theirs) (fileRoot / "new.txt")
+                    .absent)
+          let refused ← thief.endedAs (.finished #["true"])
+          return refused && (← files.started).size == 1 && (← fileOf files "new.txt").isNone &&
+              (← holder.handle.holding) == #[theirs]
+        finally
+          holder.handle.cancel },
+    { name :=
+        "a save of a snapshot the editor published finds it by its id when the save is made: one published before the job began, one published after, and none for one taken away since"
+      run := do
+        let (rig, files) ← Rig.withFiles twoFiles
+        files.publish #[some pubContent]
+        let saver ←
+          rig.spawn
+              (reporting fun _ => do
+                let early ← JobContract.saved (.snapshot ⟨0⟩) (fileRoot / "early.txt") .absent
+                sleep 10
+                let late ← JobContract.saved (.snapshot ⟨1⟩) (fileRoot / "late.txt") .absent
+                sleep 10
+                let gone ←
+                  JobContract.saveRefusedAs .noSuchSnapshot (.snapshot ⟨0⟩) (fileRoot / "gone.txt")
+                      .absent
+                return early.size == 7 && late.size == 4 && gone)
+        try
+          unless ← eventually (return (← rig.clock.waiting) == 1) do
+            return false
+          files.publish #[some pubContent, some { contents := "lé\n" }]
+          rig.clock.advance 10
+          unless ← eventually (return (← rig.clock.waiting) == 1) do
+            return false
+          files.publish #[none, some { contents := "lé\n" }]
+          rig.clock.advance 10
+          let held ← saver.endedAs (.finished #["true"])
+          return held && (← fileOf files "early.txt") == some pubBytes &&
+              (← fileOf files "late.txt") == some ⟨#[0x6C, 0xC3, 0xA9, 0x0A]⟩ &&
+              (← fileOf files "gone.txt").isNone
+        finally
+          saver.handle.cancel },
+    { name :=
+        "on a runner that was given no file service a load and a save are refused as failed, and the job goes on to finish"
+      run := do
+        let rig ← Rig.new
+        let asks ←
+          rig.spawn
+              (reporting fun _ => do
+                let load ← File.load (fileRoot / "a.txt") 1000
+                let save ← File.save (.snapshot ⟨0⟩) (fileRoot / "b.txt") .whatever
+                return isFailed load && isFailed save && (← now) == 0)
+        return (← asks.endedAs (.finished #["true"])) &&
+            (← rig.services.completions.waiting) == 0 }]
 
 /-- The texts a registered command leaves when it is a plain command, run
 against a text model with none; `none` for a command over a store. -/
@@ -2569,6 +2870,7 @@ makes Lean add a thread to the pool, which a later burst can land on. -/
 def checks : List Check :=
   poolChecks ++ programChecks ++ jobModelChecks ++ waitChecks ++ runnerChecks ++ tableChecks ++
     ownerChecks ++
+    fileRunnerChecks ++
     setupChecks ++
     registryChecks ++
     storeChecks ++
@@ -2643,7 +2945,8 @@ def main : IO UInt32 := do
     (← ModelTest.failures ModelTest.checks) ++ (← ModelTest.textFailures) ++
       (← ModelTest.adoptFailures) ++
       (← ModelTest.jobModelFailures) ++
-      (← ModelTest.jobRunnerFailures)
+      (← ModelTest.jobRunnerFailures) ++
+      (← ModelTest.fileFailures)
   for name in failed do
     IO.eprintln s!"FAILED: {name}"
   unless failed.isEmpty do
@@ -2651,6 +2954,6 @@ def main : IO UInt32 := do
     -- returning from `main` would wait for it for ever.
     IO.Process.exit 1
   IO.println
-      s!"model-test: {ModelTest.checks.length} checks passed, {Editor.TextContract.properties.length + Editor.TextContract.adoptProperties.length + ModelTest.commandProperties.length} properties hold of the text model, {Editor.UndoTreeCases.cases.length} cases of the undo tree hold over it, and {Editor.JobContract.properties.length} properties of the job model and of the job runner over the fake clock"
+      s!"model-test: {ModelTest.checks.length} checks passed, {Editor.TextContract.properties.length + Editor.TextContract.adoptProperties.length + ModelTest.commandProperties.length} properties hold of the text model, {Editor.UndoTreeCases.cases.length} cases of the undo tree hold over it, and {Editor.JobContract.properties.length} properties of the job model and of the job runner over the fake clock, and {Editor.JobContract.fileProperties.length} file properties of the job model and of the job runner over the fake file service"
   (← IO.getStdout).flush
   IO.Process.exit 0
