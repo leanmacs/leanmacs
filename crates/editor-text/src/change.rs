@@ -3,6 +3,7 @@
 //! The crate docs give the rules: what a change is, the one form a change
 //! set is kept in, and when a change set fits a text.
 
+use std::borrow::Cow;
 use std::iter::Peekable;
 use std::ops::Range;
 use std::slice;
@@ -115,20 +116,34 @@ impl ChangeSet {
     /// and joins an insert already there: the two are one replaced range,
     /// whichever was pushed first.
     pub fn insert(&mut self, text: &str) {
+        self.insert_cow(Cow::Borrowed(text));
+    }
+
+    /// [`insert`](Self::insert) of a string the caller gives up: where the
+    /// text is a change of its own, the string is that change and is not
+    /// copied.
+    pub(crate) fn insert_owned(&mut self, text: String) {
+        self.insert_cow(Cow::Owned(text));
+    }
+
+    /// Puts `text` in at this point, as [`insert`](Self::insert) says,
+    /// copying it only where it is borrowed or joins an insert already
+    /// there.
+    fn insert_cow(&mut self, text: Cow<'_, str>) {
         if text.is_empty() {
             return;
         }
         self.len_after = self.len_after.saturating_add(text.len());
         match self.changes.as_mut_slice() {
             [.., Change::Insert(last)] | [.., Change::Insert(last), Change::Delete(_)] => {
-                last.push_str(text);
+                last.push_str(&text);
             }
             [.., Change::Delete(_)] => {
                 let before_the_delete = self.changes.len() - 1;
                 self.changes
-                    .insert(before_the_delete, Change::Insert(text.to_owned()));
+                    .insert(before_the_delete, Change::Insert(text.into_owned()));
             }
-            _ => self.changes.push(Change::Insert(text.to_owned())),
+            _ => self.changes.push(Change::Insert(text.into_owned())),
         }
     }
 
@@ -235,9 +250,13 @@ impl ChangeSet {
                 }
                 Change::Delete(len) => {
                     let end = at.saturating_add(*len);
-                    for removed in before.chunks_in(at..end)? {
-                        inverse.insert(removed);
-                    }
+                    // Read into a string of the range's length, which the
+                    // fit bounded by the text's, and handed over whole: a
+                    // string grown a piece of the rope at a time is copied
+                    // each time it doubles.
+                    let mut removed = String::with_capacity(*len);
+                    removed.extend(before.chunks_in(at..end)?);
+                    inverse.insert_owned(removed);
                     at = end;
                 }
                 Change::Insert(text) => inverse.delete(text.len()),

@@ -230,6 +230,23 @@ fn a_transaction_on_a_text_that_holds_anchors_allocates_a_bounded_amount_for_eac
 }
 
 #[test]
+fn the_inverse_of_a_delete_of_a_megabyte_allocates_it_once() {
+    let string = megabyte();
+    let before = Text::from(string.as_str()).snapshot();
+    let delete = ChangeSet::replacing(string.len(), 0..string.len(), "").expect("the whole text");
+
+    let (inverse, counted) = allocated_by(|| delete.invert(&before));
+
+    let inverse = inverse.expect("it fits");
+    assert_eq!(inverse.len_after(), string.len());
+    // Measured: 1,048,804 bytes: the string the removed text is read into,
+    // sized once, and the change set's one change. Reading it a piece of
+    // the rope at a time into a string that doubles was 4,193,504. The
+    // bound is the text and a half.
+    assert!(counted < string.len() * 3 / 2, "{counted} bytes allocated");
+}
+
+#[test]
 fn a_pull_across_many_entries_allocates_a_bounded_amount_for_each() {
     let string = megabyte();
     let mut text = Text::from(string.as_str());
