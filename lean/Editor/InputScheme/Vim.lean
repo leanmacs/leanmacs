@@ -35,12 +35,12 @@ is `parse` with the edit compiled, and `scheme` packages it as an
 `InputScheme` over a registry of Vim states. The rules:
 
 - **A key is walked through the active keymaps, then the Vim state's**
-  (`Keymap.walk` over `maps view ++ states.initial.keymaps`: every view is
-  in the initial state, since nothing enters another yet). The active keymaps
-  are the specific ones, so a binding of theirs replaces a default. It is
-  one walk, so prefixes merge across the two lists, and a part of speech
-  bound in an active keymap is the same to the grammar as one bound in a
-  state's keymap.
+  (`Keymap.walk` over `maps view ++ record.keymaps`, with `record` the
+  record of the Vim state the key's view is in). The active keymaps are the
+  specific ones, so a binding of theirs replaces a default, and it holds in
+  every Vim state. It is one walk, so prefixes merge across the two lists,
+  and a part of speech bound in an active keymap is the same to the grammar
+  as one bound in a state's keymap.
 - **A motion alone is a move**, and **a command is run**.
 - **An operator waits for its target** (`State.operator`). There is no
   keymap for the wait: the motion that moves when typed alone is the
@@ -53,9 +53,11 @@ is `parse` with the edit compiled, and `scheme` packages it as an
   the doubled operator counts lines. It is the same operator when it has
   the same name.
 - **A different operator, or a command, while an operator waits resets.**
-- **An unbound key resets the edit begun**: nothing is yielded, no count is
-  kept, no operator waits, no prefix is walked, and the state is the
-  initial state.
+- **An unbound key resets the edit begun**: nothing is yielded, and no
+  count, no operator and no prefix are left. A reset keeps which Vim state
+  each view is in, so in a view that entered no state the state is then the
+  scheme's initial state.
+- **`pending` is every key of the edit begun** (`State.typed`), as chords.
 
 ## Counts
 
@@ -72,7 +74,6 @@ is `parse` with the edit compiled, and `scheme` packages it as an
   any key, so it can be bound to a motion. Digits are not bound in a
   keymap: the rule for `0` needs the count typed so far, which a keymap
   does not see.
-- **`pending` is every key of the edit begun** (`State.typed`), as chords.
 
 ## Vim states
 
@@ -88,6 +89,21 @@ A Vim state (normal, insert, a visual state) is a record in a registry
   special case.
 - **A record has no equality.** It holds keymaps, and `Keymap` derives
   none. Compare two records by their fields.
+- **Which state a view is in is in the scheme's state**, one entry a view
+  (`State.current`): `step` is pure and is the only thing that sees the key
+  that enters a state, so the next key is looked up in the new state's
+  keymaps with no editor API. A view with no entry is in the initial state
+  (`State.record`, `State.stateOf`), and entering the initial state removes
+  the entry.
+- **A state is entered by an edit that names it** (`Edit.enters`): a
+  command bound in a keymap, or an operator. The view that enters is the
+  one the completing key is for.
+- **A name the registry does not have is the initial state**, when it is
+  read and when it is entered, so a registry that loses a state strands no
+  view.
+- **The edit begun is one for the scheme**, not one a view: there is one
+  keyboard. A key for another view goes on with it, and is looked up in the
+  keymaps of its own view and that view's state.
 
 ## Where an addition goes
 
@@ -96,11 +112,12 @@ A Vim state (normal, insert, a visual state) is a record in a registry
 | A new target of an operator | A variant of `Over`, and its row in `Edit.compile` |
 | A new fact about an operator or a command that the grammar needs | A field of `Operator` or of `Command` |
 | A new fact about a Vim state | A field of `StateRecord` |
-| A new part of speech | A variant of `Bound`, and its case in `parse` |
-| Something the scheme remembers between keys | A field of `State`, with what a reset does to it |
+| A new part of speech | A variant of `Bound`, and its case in `State.reached` |
+| Something the scheme remembers between keys | A field of `State`, with what a reset does to it (`State.reset`) |
 
-Pinned by `ModelTest.vimEditChecks`, `ModelTest.vimRegistryChecks` and
-`ModelTest.vimGrammarChecks`. The scheme runs the scheme contract
+Pinned by `ModelTest.vimEditChecks`, `ModelTest.vimRegistryChecks`,
+`ModelTest.vimGrammarChecks` and `ModelTest.vimStateChecks`. The scheme
+runs the scheme contract
 (`Editor/InputScheme/Contract.lean`) in `ModelTest.vimContractChecks`.
 -/
 
@@ -253,6 +270,9 @@ end States
 
 /-- What the Vim scheme remembers between keys. -/
 structure State where
+  /-- The name of the Vim state of each view that is not in the initial
+  state. A view with no entry is in the initial state. -/
+  current : List (ViewId × String) := []
   /-- The chords of every key of the edit begun, in order; none when no
   edit is begun. -/
   typed : List Key := []
@@ -265,6 +285,18 @@ structure State where
   /-- The keymap prefix walked so far, within the edit begun. -/
   walked : List Key := []
   deriving DecidableEq, Repr
+
+/-- The record of the Vim state `view` is in: the registry's record of the
+name held for the view, and the initial record when none is held or the
+registry has no state of that name. -/
+def State.record (states : States) (state : State) (view : ViewId) : StateRecord :=
+  match state.current.find? (·.1 == view) with
+  | some entry => states.get entry.2
+  | none => states.initial
+
+/-- The name of the Vim state `view` is in. -/
+def State.stateOf (states : States) (state : State) (view : ViewId) : String :=
+  (state.record states view).name
 
 /-- The product of two counts, with an absent one left out; none when both
 are absent. -/
@@ -305,9 +337,63 @@ inductive Parsed where
   | edit (edit : Edit)
   deriving DecidableEq, Repr
 
-/-- One key of the grammar: the state it leaves, and what it parsed to (the
-rules in the module docs). The key is walked through the active keymaps of
-`view` and then the keymaps of the initial Vim state. -/
+/-- The state with the edit begun dropped. A reset keeps which Vim state
+each view is in, and nothing else. -/
+private def State.reset (state : State) : State :=
+  { current := state.current }
+
+/-- The state with `view` in the Vim state `name`. The initial state has no
+entry, and a name the registry does not have is the initial state's, so
+entering either removes the view's entry. -/
+private def State.enter (states : States) (state : State) (view : ViewId) (name : String) : State :=
+  let others := state.current.filter (·.1 != view)
+  let entered := (states.get name).name
+  { state with
+    current := if entered == states.initial.name then others else others ++ [(view, entered)] }
+
+/-- The edit begun, completed as `edit` by a key for `view`: the edit begun
+is dropped, and the view enters the Vim state the edit names, if it names
+one. -/
+private def State.finish (states : States) (view : ViewId) (state : State) (edit : Edit) :
+    State × Parsed :=
+  let next := state.reset
+  match edit.enters with
+  | some name => (next.enter states view name, .edit edit)
+  | none => (next, .edit edit)
+
+/-- What the grammar makes of a binding that a key for `view` reached, with
+`typed` the keys of the edit begun, that key included. -/
+private def State.reached (states : States) (view : ViewId) (state : State) (typed : List Key) :
+    Bound → State × Parsed
+  | .motion name =>
+    match state.operator with
+    | some operator => state.finish states view (.operate operator (.motion name) state.count none)
+    | none => state.finish states view (.move name state.count)
+  | .textObject name =>
+    match state.operator with
+    | some operator =>
+      state.finish states view (.operate operator (.textObject name) state.count none)
+    | none => (state.reset, .nothing)
+  | .operator operator =>
+    match state.operator with
+    | some waiting =>
+      if waiting.name == operator.name then
+        state.finish states view (.operate waiting .lines (some (state.count.getD 1)) none)
+      else (state.reset, .nothing)
+    | none =>
+      ({ state with
+          typed, multiplier := state.count, digits := none, operator := some operator,
+          walked := [] },
+        .nothing)
+  | .command command =>
+    match state.operator with
+    | some _ => (state.reset, .nothing)
+    | none => state.finish states view (.run command state.count none)
+
+/-- One key of the grammar, a key for `view`: the state it leaves, and what
+it parsed to (the rules in the module docs). A digit of a count is taken
+first; any other key is walked through the active keymaps of `view` and
+then the keymaps of the view's Vim state. -/
 def parse (states : States) (maps : ViewId → List (Keymap Bound)) (view : ViewId) (state : State)
     (key : Key) : State × Parsed :=
   let typed := state.typed ++ [key.chord]
@@ -317,32 +403,14 @@ def parse (states : States) (maps : ViewId → List (Keymap Bound)) (view : View
         typed, digits := some (state.digits.getD 0 * 10 + digit) },
       .nothing)
   | none =>
-    match Keymap.walk (maps view ++ states.initial.keymaps) state.walked key with
+    match Keymap.walk (maps view ++ (state.record states view).keymaps) state.walked key with
+    | (_, some binding) => state.reached states view typed binding
     | (walked, none) =>
-      if walked.isEmpty then ({}, .nothing)
+      if walked.isEmpty then (state.reset, .nothing)
       else
         ({ state with
             typed, walked },
           .nothing)
-    | (_, some (.motion name)) =>
-      match state.operator with
-      | some operator => ({}, .edit (.operate operator (.motion name) state.count none))
-      | none => ({}, .edit (.move name state.count))
-    | (_, some (.textObject name)) =>
-      match state.operator with
-      | some operator => ({}, .edit (.operate operator (.textObject name) state.count none))
-      | none => ({}, .nothing)
-    | (_, some (.operator operator)) =>
-      match state.operator with
-      | some waiting =>
-        if waiting.name == operator.name then
-          ({}, .edit (.operate waiting .lines (some (state.count.getD 1)) none))
-        else ({}, .nothing)
-      | none => ({ typed, multiplier := state.count, operator := some operator }, .nothing)
-    | (_, some (.command command)) =>
-      match state.operator with
-      | some _ => ({}, .nothing)
-      | none => ({}, .edit (.run command state.count none))
 
 /-- One key of the Vim scheme: `parse`, with the edit it completed compiled
 to its invocation. -/

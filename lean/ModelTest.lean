@@ -166,6 +166,8 @@ with no model:
   equality: the checks compare records by their fields (`vimSeen`);
 - `vimGrammarChecks`: the grammar: which keymaps a key is looked up in,
   and what a key sequence parses to and yields;
+- `vimStateChecks`: Vim states: which state a view is in, how one is
+  entered, and what the grammar reads of a state's record;
 - `vimContractChecks`: the scheme contract holds of the Vim scheme.
 
 The grammar's checks run on a registry and keymaps written here
@@ -4840,6 +4842,101 @@ def vimGrammarChecks : List Check :=
             vimPending "1 0" == keys "1 0" &&
             vimPending "2 d 3 w" == []) }]
 
+/-- `vimStates` with a state the checks register, `test`, whose keymap
+binds `m` to a motion and whose cursor is an underline, and with `q` bound
+in the normal state's keymaps to a command that enters it. -/
+def vimWithTest : Vim.States :=
+  let registered :=
+    vimStates.register
+      { name := "test", keymaps := [vimKeymap [("m", .motion "test-motion")]],
+        cursor := .underline }
+  registered.register
+    { registered.initial with
+      keymaps :=
+        vimKeymap [("q", .command { name := "enter-test", enters := some "test" })] ::
+          registered.initial.keymaps }
+
+/-- The invocation the command `name` compiles to when a key bound to it is
+typed with no count and no register. -/
+def vimRun (name : String) : Invocation :=
+  { command := name, arguments := [.nat 0, .str ""] }
+
+/-- The checks of the Vim scheme's states (`Editor/InputScheme/Vim.lean`):
+which Vim state a view is in, how one is entered, and what the grammar
+reads of a state's record. -/
+def vimStateChecks : List Check :=
+  [{  name :=
+        "a state a check registers, entered by a key bound in the normal state's keymap, is the view's state, and the next key is looked up in its keymap"
+      run :=
+        let (state, yields) := vimFed "q m" (states := vimWithTest)
+        pure
+          ((vimFed "m" (states := vimWithTest)).2 == [none] &&
+            vimInit.stateOf vimWithTest ⟨0⟩ == "normal" &&
+            yields == [some (vimRun "enter-test"), some (vimMove "test-motion")] &&
+            state.stateOf vimWithTest ⟨0⟩ == "test" &&
+            (state.record vimWithTest ⟨0⟩).cursor == .underline &&
+            (vimFed "q w" (states := vimWithTest)).2 == [some (vimRun "enter-test"), none]) },
+    { name :=
+        "an operator and a command that name a state leave the view in it, and ones that name none leave it where it was"
+      run :=
+        pure
+          ((vimFed "c w").1.stateOf vimStates ⟨0⟩ == "insert" &&
+            (vimFed "i").1.stateOf vimStates ⟨0⟩ == "insert" &&
+            (vimFed "d w").1.stateOf vimStates ⟨0⟩ == "normal" &&
+            (vimFed "u").1.stateOf vimStates ⟨0⟩ == "normal" &&
+            (vimFed "v w").1.stateOf vimStates ⟨0⟩ == "visual") },
+    { name :=
+        "a Vim state is one view's: after a key for one view entered a state, another view is in the initial state and its keys are looked up there"
+      run :=
+        let (state, _) := vimFed "q" (states := vimWithTest)
+        let typed (text : String) (view : ViewId) : List (Option Invocation) :=
+          (vimFedFrom state text (view := view) (states := vimWithTest)).2
+        pure
+          (state.stateOf vimWithTest ⟨0⟩ == "test" && state.stateOf vimWithTest ⟨1⟩ == "normal" &&
+            typed "m" ⟨0⟩ == [some (vimMove "test-motion")] &&
+            typed "m" ⟨1⟩ == [none] &&
+            typed "w" ⟨1⟩ == [some (vimMove "word")] &&
+            typed "w" ⟨0⟩ == [none]) },
+    { name :=
+        "a view not in the initial state has one entry in the scheme's state, and entering the initial state removes it: the state is then the initial state"
+      run :=
+        let (both, _) := vimFedFrom (vimFed "i").1 "v" (view := ⟨1⟩)
+        pure
+          ((vimFed "i").1.current == [(⟨0⟩, "insert")] && (vimFed "i <Escape>").1.current == [] &&
+            decide ((vimFed "i <Escape>").1 = vimInit) &&
+            (vimFed "v i").1.current == [(⟨0⟩, "insert")] &&
+            both.current == [(⟨0⟩, "insert"), (⟨1⟩, "visual")] &&
+            (vimFedFrom both "<Escape>").1.current == [(⟨1⟩, "visual")]) },
+    { name :=
+        "a state's name that the registry does not have is read as the initial state, and a command that enters such a name enters the initial state"
+      run :=
+        let stale : Vim.State := { current := [(⟨0⟩, "gone")] }
+        let nowhere (_ : ViewId) : List (Keymap Vim.Bound) :=
+          [vimKeymap [("n", .command { name := "leave", enters := some "nowhere" })]]
+        pure
+          (stale.stateOf vimStates ⟨0⟩ == "normal" &&
+            (vimFedFrom stale "w").2 == [some (vimMove "word")] &&
+            (vimFed "i n" nowhere).1.current == [] &&
+            decide ((vimFed "n" nowhere).1 = vimInit)) },
+    { name :=
+        "an edit begun by a key for one view is completed by a key for another, looked up in the keymaps of that view's state, and the state it enters is that view's"
+      run :=
+        let (entered, _) := vimFed "q" (view := ⟨1⟩) (states := vimWithTest)
+        let (begun, _) := vimFedFrom entered "2 c" (view := ⟨0⟩) (states := vimWithTest)
+        let (state, yields) := vimFedFrom begun "m" (view := ⟨1⟩) (states := vimWithTest)
+        pure
+          (yields == [some (vimOperate "change" "motion" "test-motion" 2)] &&
+            state.current == [(⟨1⟩, "insert")] &&
+            (vimFedFrom begun "m" (view := ⟨0⟩) (states := vimWithTest)).2 == [none]) },
+    { name :=
+        "an unbound key resets the edit begun and keeps which state each view is in: the state is the one the view was left in when it entered"
+      run :=
+        let (entered, _) := vimFed "v"
+        let (state, yields) := vimFedFrom entered "2 g z"
+        pure
+          (yields == [none, none, none] && state.current == [(⟨0⟩, "visual")] &&
+            decide (state = entered)) }]
+
 /-- The checks that the Vim scheme keeps the scheme contract
 (`Editor/InputScheme/Contract.lean`). -/
 def vimContractChecks : List Check :=
@@ -4882,6 +4979,7 @@ def checks : List Check :=
     vimEditChecks ++
     vimRegistryChecks ++
     vimGrammarChecks ++
+    vimStateChecks ++
     vimContractChecks
 
 /-- Runs `checks` and returns the names of those that failed. A check that
