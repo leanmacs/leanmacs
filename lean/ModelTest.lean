@@ -3154,8 +3154,8 @@ def originChecks : List Check :=
       run :=
         pure
           ([TextError.noSuchText, .badRange, .noSuchSnapshot, .badPosition, .badChange,
-                .badSelection, .unknownRevision, .forgotten, .noSuchMarker, .noInverse,
-                .notInState].map
+                  .badSelection, .unknownRevision, .forgotten, .noSuchMarker, .noInverse,
+                  .notInState].map
               TextError.describe ==
             ["no such text", "bad range", "no such snapshot", "bad position", "bad change",
               "bad selection", "unknown revision", "forgotten revision", "no such marker",
