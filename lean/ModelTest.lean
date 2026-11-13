@@ -2695,6 +2695,21 @@ def shownBy (texts : List String) (query : Display.RowsQuery)
     DisplayError ⊕ Array Display.Row :=
   answered ((Display.rowsShown query).runModel (displayOver texts cells)).1
 
+/-- Lines of 6, 2, 10 and 3 characters. Four characters wide, the first takes
+two rows and the third three: rows 0 to 6 start at 0, 4, 7, 10, 14, 18 and
+21. -/
+def wrapping : String :=
+  "abcdef\nab\nabcdefghij\nxyz"
+
+/-- Where the display model over `texts` moves `position` of `snapshot`, in a
+view `width` pixels wide, by `lines` rows aiming for `goal`. -/
+def movedBy (texts : List String) (width position : Nat) (lines : Int) (goal : Option Nat)
+    (cells : Display.Cells := { advance := 1, lineHeight := 1 }) (snapshot : SnapshotId := ⟨0⟩) :
+    DisplayError ⊕ Display.Moved :=
+  answered
+    ((Display.linesFrom { snapshot, width, position, lines, goal }).runModel
+        (displayOver texts cells)).1
+
 /-- The checks of the display model that only it shows: what it recorded of
 the scenes published to it. What it answers to the queries is the display
 interface's contract (`displayFailures`). -/
@@ -2768,7 +2783,44 @@ def displayChecks : List Check :=
             shownBy ["é"] { snapshot := ⟨0⟩, width := 4, height := 1, anchor := 1 } ==
               .inl .badPosition &&
             shownBy ["é"] { snapshot := ⟨0⟩, width := 4, height := 1, anchor := 3 } ==
-              .inl .badPosition) }]
+              .inl .badPosition) },
+    { name :=
+        "n lines down and then n lines up, with the goal passed back, is the start: over plain lines"
+      run :=
+        pure
+          (movedBy ["abc\ndef\nghi"] 10 1 2 none == .inr ⟨9, 1⟩ &&
+            movedBy ["abc\ndef\nghi"] 10 9 (-2) (some 1) == .inr ⟨1, 1⟩) },
+    { name := "n visual lines down and up is the start across a wrapped line"
+      run :=
+        pure
+          (movedBy [wrapping] 4 8 3 none == .inr ⟨19, 1⟩ &&
+            movedBy [wrapping] 4 19 (-3) (some 1) == .inr ⟨8, 1⟩) },
+    { name :=
+        "across a shorter line the position stops at its end, and the goal passed back brings it to the start's column again"
+      run :=
+        pure
+          (movedBy [wrapping] 4 3 2 none == .inr ⟨9, 3⟩ &&
+            movedBy [wrapping] 4 9 (-2) (some 3) == .inr ⟨3, 3⟩ &&
+            movedBy [wrapping] 4 9 (-2) none == .inr ⟨2, 2⟩) },
+    { name :=
+        "a row a line wraps after holds no end-of-line position: aiming past it lands on its last character"
+      run := pure (movedBy [wrapping] 4 9 1 (some 6) == .inr ⟨13, 6⟩) },
+    { name := "a move past the first or the last row stops there, and a move of 0 stays"
+      run :=
+        pure
+          (movedBy [wrapping] 4 1 (-5) none == .inr ⟨1, 1⟩ &&
+            movedBy [wrapping] 4 22 5 none == .inr ⟨22, 1⟩ &&
+            movedBy [wrapping] 4 15 0 none == .inr ⟨15, 1⟩) },
+    { name := "the goal is in pixels: a column times the cells' advance"
+      run :=
+        pure
+          (movedBy [wrapping] 32 3 2 none (cells := { advance := 8, lineHeight := 16 }) ==
+            .inr ⟨9, 24⟩) },
+    { name := "a move in a snapshot the model does not have, or from inside a character, is refused"
+      run :=
+        pure
+          (movedBy ["é"] 4 0 1 none (snapshot := ⟨1⟩) == .inl .noSuchSnapshot &&
+            movedBy ["é"] 4 1 1 none == .inl .badPosition) }]
 
 /-- The checks of the undo tree's pure operations alone, which ask nothing of
 a text: being told a revision, and the boundary. What the tree does to a

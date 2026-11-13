@@ -62,6 +62,7 @@ structure Laid where
   /-- Whether it is the last row of its line, the one row of a line that
   holds the position at the line's end. -/
   lastOfLine : Bool
+  deriving Inhabited
 
 /-- The lines of a text whose characters, from the byte offset `offset`, are
 `chars`, added to `lines`: for each line, the offset of each of its
@@ -136,9 +137,22 @@ def rows (model : DisplayModel) (query : Display.RowsQuery) :
   let first := rowOf laid query.anchor
   return (laid.extract first (first + query.height / model.cells.lineHeight)).map (·.row)
 
-/-- Where a position goes. -/
-def move (_ : DisplayModel) (_ : Display.MoveQuery) : Except DisplayError Display.Moved :=
-  .error .noSuchSnapshot
+/-- Where a position goes: to the row `query.lines` from the one that holds
+it, kept within the first and the last row, at the column the goal aims for
+(`goal / advance`, or the position's own column when there is no goal), kept
+within that row. Only a line's last row admits the column at its end. The
+goal passed back is the one aimed for. -/
+def move (model : DisplayModel) (query : Display.MoveQuery) : Except DisplayError Display.Moved :=
+  do
+  let laid ← model.laidOut query.snapshot query.width query.position
+  let here := rowOf laid query.position
+  let column := (laid[here]!.chars.filter (· < query.position)).size
+  let goal := query.goal.getD (column * model.cells.advance)
+  let target := (max 0 (min (here + query.lines) (laid.size - 1 : Int))).toNat
+  let row := laid[target]!
+  let last := if row.lastOfLine then row.chars.size else row.chars.size - 1
+  let wanted := min (goal / model.cells.advance) last
+  return { position := row.chars[wanted]?.getD row.row.stop, goal }
 
 /-- Answers `request`: a scene is recorded, and a query is answered from the
 model as it is. -/

@@ -71,7 +71,7 @@ structure Row where
   /-- The byte offset where the row's characters stop, before any line
   break. -/
   stop : Nat
-  deriving DecidableEq, Repr
+  deriving DecidableEq, Inhabited, Repr
 
 /-- Which rows a view shows. -/
 structure RowsQuery where
