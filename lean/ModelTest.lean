@@ -10,6 +10,7 @@ import Editor.Job.Fake
 import Editor.Job.Jobs
 import Editor.Job.Model
 import Editor.Job.Pool
+import Editor.Loop
 import Editor.Scene
 import Editor.State
 import Editor.Text.Contract
@@ -52,6 +53,10 @@ The editor state (`Editor/State.lean`) is checked on the text model
 (`stateChecks`): the initial state, that a split tree's views tile the
 frame, and the two layout operations, each refused with the state as it
 was when it would break an invariant.
+
+The command loop (`Editor/Loop.lean`) is checked on the editor's models
+(`loopChecks`): events fed to `Loop.step` one by one, the state each leaves
+and the scenes the display model records.
 
 The undo tree (`Editor/UndoTree.lean`) is plain Lean over the text port, so
 its cases (`Editor/UndoTree/Cases.lean`) are properties of the same kind and
@@ -3340,6 +3345,140 @@ def stateChecks : List Check :=
                 after == { state with frame := { state.frame with focused := ⟨1⟩ } }
             | _ => false }]
 
+/-- Starts a loop from the state `start` makes, feeds it `events` in order,
+and returns the loop and what each step said to do next. -/
+def stepsFrom (start : TextM EditorState) (events : List Event) :
+    EditorM (Loop × Array Loop.Next) := do
+  let mut loop : Loop := { state := ← start }
+  let mut nexts := #[]
+  for event in events do
+    let (next, said) ← loop.step event
+    loop := next
+    nexts := nexts.push said
+  return (loop, nexts)
+
+/-- What a run of the loop on the editor's models came to: the loop and what
+each step said, the scenes the display recorded, and the models. `none` when
+it was refused. -/
+def looped (start : TextM EditorState) (events : List Event) :
+    Option ((Loop × Array Loop.Next) × Array Scene × EditorModel) :=
+  match (stepsFrom start events).runModel editorModel with
+  | (.ok result, model) => some (result, model.display.scenes, model)
+  | (.error _, _) => none
+
+/-- A key press with no text: what the loop drops in this phase. -/
+def pressA : Event :=
+  .key { logical := .character "a", physical := .code "KeyA" } true "a"
+
+/-- The text of the snapshot a view shows, as the text model holds it. -/
+def shownText (model : EditorModel) (view : View) : Option String :=
+  (model.texts.snapshots[view.snapshot.index]?).join.map (·.contents)
+
+/-- The checks of the loop (`Editor/Loop.lean`) on the editor's models: what
+each event does to the state, and the scene it publishes. -/
+def loopChecks : List Check :=
+  [{  name :=
+        "a resize to 641 by 479 of a frame of three windows publishes a scene whose views' rectangles tile 641 by 479"
+      run :=
+        pure <|
+          match looped threeWindows [.resize { width := 641, height := 479, scale := 2.0 }] with
+          | some ((loop, nexts), scenes, _) =>
+            nexts == #[.continue] && loop.state.frame.size == ⟨641, 479⟩ &&
+              match scenes with
+              | #[scene] =>
+                scene.size == ⟨641, 479⟩ && scene.views.map (·.id) == #[⟨0⟩, ⟨1⟩, ⟨2⟩] &&
+                  tiles (frameRect ⟨641, 479⟩) (scene.views.map (·.rect))
+              | _ => false
+          | none => false },
+    { name :=
+        "a preedit publishes a scene that carries it for the focused view, and leaves the buffer's text and revision as they were"
+      run :=
+        pure <|
+          let start : TextM EditorState := do
+            let state ← threeWindows
+            let some buffer := state.buffers[0]? | throw .noSuchText
+            buffer.text.insert 0 "hello"
+            return (state.focusWindow ⟨1⟩).2
+          match looped start [.preedit "ka"] with
+          | some ((loop, _), scenes, model) =>
+            loop.state.preedit == some "ka" &&
+              (match scenes with
+              | #[scene] =>
+                scene.preedit == some "ka" && scene.focused == some ⟨1⟩ &&
+                  scene.views.all fun view => shownText model view == some "hello"
+              | _ => false) &&
+              match loop.state.buffers[0]? with
+              | some buffer =>
+                model.texts.contents == #["hello"] &&
+                  (model.texts.texts[buffer.text.index]?).join.map (·.revision) == some 1
+              | none => false
+          | none => false },
+    { name :=
+        "an empty preedit and the input method going away each clear the preedit; enabling it changes nothing"
+      run :=
+        pure <|
+          match
+            looped (EditorState.initial ⟨640, 480⟩)
+              [.preedit "k", .preedit "", .preedit "ka", .compositionDisabled, .preedit "s",
+                .compositionEnabled] with
+          | some (_, scenes, _) =>
+            scenes.map (·.preedit) == #[some "k", none, some "ka", none, some "s", some "s"]
+          | none => false },
+    { name :=
+        "while the frame does not have the keyboard focus its scene names no focused view, and once it has it again the focused one"
+      run :=
+        pure <|
+          match looped threeWindows [.focus false, .focus true] with
+          | some (_, scenes, _) => scenes.map (·.focused) == #[none, some ⟨0⟩]
+          | none => false },
+    { name :=
+        "a key, a pointer and the window opening leave the state as it was, and each publishes one scene"
+      run :=
+        pure <|
+          let events : List Event :=
+            [pressA, .pointer { action := .press, x := 3.0, y := 4.0, button := some .primary },
+              .windowOpened "headless"]
+          let start : EditorM (EditorState × Loop × Array Loop.Next) := do
+            let state ← EditorState.initial ⟨640, 480⟩
+            let (loop, nexts) ← stepsFrom (pure state) events
+            return (state, loop, nexts)
+          match (start.runModel editorModel) with
+          | (.ok (state, loop, nexts), model) =>
+            loop.state == state && nexts == #[.continue, .continue, .continue] &&
+              model.display.scenes.size == 3
+          | (.error _, _) => false },
+    { name := "a close request and a quit say stop and publish nothing"
+      run :=
+        pure <|
+          (match looped threeWindows [.closeRequested] with
+            | some ((_, nexts), scenes, _) => nexts == #[.stop] && scenes.isEmpty
+            | none => false) &&
+            match looped threeWindows [.quit] with
+            | some ((_, nexts), scenes, _) => nexts == #[.stop] && scenes.isEmpty
+            | none => false },
+    { name :=
+        "a view whose text has not changed keeps its snapshot from one scene to the next, and two views of one buffer share it"
+      run :=
+        pure <|
+          match looped threeWindows [pressA, pressA] with
+          | some (_, #[first, second], model) =>
+            first.views.map (·.snapshot) == second.views.map (·.snapshot) &&
+              (first.views.map (·.snapshot)).toList.eraseDups.length == 1 &&
+              second.views.all fun view => shownText model view == some ""
+          | _ => false },
+    { name :=
+        "a view shows its window's scroll anchor and selection marker, a bar cursor in the face cursor, and no decorations or status"
+      run :=
+        pure <|
+          match looped threeWindows [pressA] with
+          | some ((loop, _), #[scene], _) =>
+            scene.views.map (·.scroll) == loop.state.windows.map (·.scroll) &&
+              scene.views.map (·.selections) == loop.state.windows.map (#[·.selection]) &&
+              scene.views.all fun view =>
+                view.cursor == { shape := .bar, face := ⟨"cursor"⟩ } && view.decorations.isEmpty &&
+                  view.status.isEmpty
+          | _ => false }]
+
 /-- Every check, in the order they run.
 
 The order matters where the process's one pool is measured. `poolChecks` run
@@ -3365,7 +3504,8 @@ def checks : List Check :=
     displayChecks ++
     commandPortChecks ++
     originChecks ++
-    stateChecks
+    stateChecks ++
+    loopChecks
 
 /-- Runs `checks` and returns the names of those that failed. A check that
 throws has failed, and its error is reported with its name. -/
