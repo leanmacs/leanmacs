@@ -17,9 +17,10 @@ every scheme runs:
 | The scheme contract | `lean/Editor/InputScheme/Contract.lean` |
 
 Nothing calls a scheme yet: the command loop drops keys, and running an
-invocation is not built. The rest of this document (the vocabulary, the Vim
-scheme, modes, registering from config) is a proposal from a design
-discussion, and nothing is measured. The one settled input is the priority:
+invocation is not built. The Vim scheme's grammar is decided and not built
+("The Vim scheme"). The rest of this document (the vocabulary, modes,
+registering from config) is a proposal from a design discussion, and
+nothing is measured. The one settled input is the priority:
 Vim-style editing is the scheme that ships and is polished; other schemes
 must stay possible without being paid for now.
 
@@ -217,32 +218,21 @@ command.
 
 ## The Vim scheme
 
-Keys are bound to parts of speech, not to opaque commands:
+Status: decided, not built. This section says what the scheme's grammar is
+and where each thing it remembers is held, so that the code is written to
+it. It is the grammar only: keys in, an invocation out, in pure Lean on the
+scheme interface. What a motion or an operator does to a text is not here.
 
-```lean
-inductive Bound where
-  | motion     (m : Motion)
-  | operator   (o : Operator)
-  | textObject (t : TextObject)
-  | command    (c : Command)
-```
-
-The scheme's `State` holds the count so far, the operator waiting for a
-motion, and the prefix walked so far. It parses a key sequence into an
-internal `Edit` and compiles that to an `Invocation`:
-
-```lean
-inductive Edit where
-  | move    (m : Motion) (count : Nat)
-  | operate (o : Operator) (over : Target) (count : Nat)
-  | run     (c : Command)
-```
+Keys are bound to parts of speech, not to opaque commands. The scheme's
+`State` holds the count so far, the operator waiting for a motion, and the
+prefix walked so far. It parses a key sequence into an `Edit` and compiles
+that to an `Invocation`.
 
 - **Operator-pending needs no separate keymap.** `w` is bound once, as a
   motion. Alone it moves; after `d` it supplies the range. A motion added
   later, by a mode or by config, works with every operator.
-- **Dot-repeat is replaying data.** The last `Edit` is a value in the
-  scheme's `State`.
+- **Dot-repeat is replaying data.** The last `Edit` that changes text is a
+  value in the scheme's `State`.
 - **Vim states** (normal, insert, visual) are records in a registry, like
   modes, so a state defined in config is not a special case.
 - **A state's selection is a shape and ends.** The text store keeps a
@@ -258,6 +248,210 @@ inductive Edit where
 
 Keymaps are not indexed by Vim state in their types. That would need a
 closed set of states, which conflicts with states being open.
+
+### What a key is bound to
+
+```lean
+structure Operator where
+  name    : String                  -- its vocabulary name
+  changes : Bool := true            -- an edit with it changes text
+  enters  : Option String := none   -- the Vim state the view is in after it
+
+structure Command where
+  name    : String                  -- the command's name, as the registry names it
+  changes : Bool := false
+  enters  : Option String := none
+
+inductive Bound where
+  | motion     (name : String)
+  | operator   (operator : Operator)
+  | textObject (name : String)
+  | command    (command : Command)
+  | register
+```
+
+- **Every part of speech is named by its vocabulary name**, a `String`, so
+  the grammar needs no vocabulary entry to exist. An earlier sketch bound a
+  key to a `Motion` value; a name replaces it, and the vocabulary is looked
+  up when the invocation runs.
+- **An operator and a command carry the two facts the grammar needs and
+  cannot look up**: whether an edit with it changes text, and which Vim
+  state the view is in afterwards. They are data on the binding, not a
+  table of names in the scheme. So a state is entered by a command bound in
+  a keymap, and `c` enters insert state the same way.
+- **A motion needs only its name.** Whether it is line-wise is the
+  vocabulary's, read when the edit runs.
+- **`register`** is the key that begins a register's name (`"`). See
+  Registers.
+
+### Edits
+
+```lean
+inductive Over where
+  | motion (name : String) | textObject (name : String) | lines | selection
+
+inductive Edit where
+  | move    (motion : String) (count : Option Nat)
+  | operate (operator : Operator) (over : Over) (count : Option Nat) (register : Option String)
+  | run     (command : Command) (count : Option Nat) (register : Option String)
+```
+
+The rules of the grammar:
+
+- A motion alone is a `move`. After an operator it is the operator's
+  target.
+- A text object after an operator is its target. With no operator waiting
+  it is dropped, and the input is reset.
+- The operator that is waiting, typed again, acts on lines (`Over.lines`):
+  `dd`.
+- A different operator, a command or the register prefix while an operator
+  waits resets the input.
+- An unbound key resets the input: no count, no operator, no register and
+  no prefix are left.
+
+An edit compiles to an invocation, and the layout is the scheme's one rule
+for it:
+
+| Edit | Invocation |
+|---|---|
+| `move m c` | `move`, with `[.str m, .nat c]` |
+| `operate o over c r` | `operate`, with `[.str o.name, .str kind, .str name, .nat c, .str r]`. Kind and name are `motion` and the motion, `text-object` and the object, `lines` and `""`, `selection` and `""` |
+| `run cmd c r` | `cmd.name`, with `[.nat c, .str r]` |
+
+The commands `move` and `operate` are registered with the vocabulary, not
+here.
+
+### Counts
+
+- **In the scheme's state**: two fields. `digits` is the count being typed;
+  `multiplier` is the product of the counts already completed. A key that
+  is not a digit and goes on with the edit (an operator, the register
+  prefix) folds `digits` into `multiplier`. The count of the edit is their
+  product, with an absent one left out, and none when no digit was typed.
+  So `2d3w` is 6, and a count in any position multiplies, with no slot for
+  each position.
+- **In an edit**: `count : Option Nat`. None is not 1: `G` and `gg` read a
+  count as a line number, so `G` and `1G` differ.
+- **In the invocation**: `.nat n`, with `.nat 0` for no count. A typed
+  count is never 0, since a count cannot begin with `0`. `Argument` has no
+  optional kind; whoever runs invocations may widen it.
+- **The doubled operator** counts lines, so its edit always has a count:
+  `dd` is 1, `3dd` is 3, `2d3d` is 6.
+- **What a digit is**: a key whose chord is one digit character with no
+  modifier, read as a count when no keymap prefix is being walked and the
+  view's Vim state does not insert text. `0` is a digit only while a count
+  is being typed; otherwise it is looked up like any key, so `0` can be
+  bound to a motion. Digits are not bound in a keymap: the rule for `0`
+  needs the count typed so far, which a keymap does not see.
+
+### Registers
+
+- **In the scheme's state**: `register`, the register named for the edit
+  being typed, and `awaitsRegister`, set by the key bound to the register
+  prefix until the next key names the register.
+- **In an edit**: `register : Option String` on `operate` and `run`. A move
+  carries none: a register typed before a motion is dropped when the motion
+  completes.
+- **In the invocation**: `.str name`, with `.str ""` when none was named,
+  which is the unnamed register.
+- **In a keymap**: `Bound.register`, a fifth thing a key can be bound to
+  beside the four parts of speech. The key after it names the register by
+  the text it prints; a key that prints nothing resets the input. The
+  prefix is refused, and resets, after an operator and when a register is
+  already named.
+- Which registers exist and what they hold is not the scheme's: it is
+  editor state.
+- Consequence for the scheme contract: after the register prefix every
+  printable key goes on with the input, so the key the Vim scheme gives the
+  contract as unbound is a named key.
+
+### The visual selection
+
+- **Not in the scheme's state.** The selection is the view's selection
+  marker in the text store, with the shape of the view's Vim state (the
+  bullet above). The scheme's state holds only which Vim state each view
+  is in.
+- **In an edit**: the target `Over.selection`. A state's record says
+  whether operators act on the selection (`operatesOnSelection`). In such a
+  state an operator key completes an edit at once, `operate o .selection
+  count register`, and waits for no motion.
+- An edit over the selection ends it: the view enters the state the
+  operator names (`c` names insert), or the registry's initial state when
+  it names none.
+- A motion in a visual state is the same `move` edit as in normal state.
+  That it extends the selection is the command's, when the edit runs.
+
+### Vim states
+
+```lean
+structure StateRecord where
+  name                : String
+  keymaps             : List (Keymap Bound) := []
+  cursor              : CursorShape := .block
+  insertsText         : Bool := false   -- an unbound printable key is text, and a digit is not a count
+  operatesOnSelection : Bool := false   -- an operator acts on the selection at once
+
+structure States where
+  initial : StateRecord
+  others  : List StateRecord := []
+```
+
+- **The registry always has an initial record**, so looking a state up is
+  total, and registering a record replaces one of the same name, the
+  initial one included.
+- **What the grammar must know of a state is data on its record**, never a
+  match on its name, so a state that a test or config registers is not a
+  special case. A digit is text exactly where typing is text, so one field
+  says both.
+- **The scheme is a function of the registry**: `Vim.scheme states` is an
+  `InputScheme`. The registry is a value; a reload that changes it builds
+  the scheme again, and the scheme's state type does not change.
+  Registering a state from `setup` is not built.
+- The selection shape a state gives a cursor is added to the record with
+  the text store's shapes.
+
+**Where the current Vim state is held**: in the scheme's state, one entry a
+view. `current : List (ViewId × String)` is the name of the Vim state of
+each view that is not in the registry's initial state. A view with no entry
+is in the initial state, and entering the initial state removes the entry,
+so the state after a reset in a fresh view equals the scheme's initial
+state.
+
+- **In the scheme's state and not in the editor state's window**: `step` is
+  pure, and it is the only thing that sees the key that enters a state.
+  Held in the editor state, the next key could not be looked up in the new
+  state's keymaps without the editor API, and the grammar is tested without
+  it.
+- **By view and not one for the scheme**: the selection is the window's,
+  and its shape must agree with the Vim state, so two windows cannot share
+  one. `step` is already given the view.
+- **The pending edit and the last change are one for the scheme**, not one
+  a view: there is one keyboard. A key for another view goes on with the
+  pending edit, and is looked up in the keymaps of its own view and that
+  view's state.
+- **A name the registry no longer has is read as the initial state**, so a
+  registry that loses a state strands no view.
+- The scene's cursor shape and status field will read the view's state
+  through the scheme's state. That wiring is not built.
+
+### Which keymaps a key is looked up in
+
+For a key for a view whose Vim state has the record `record`, the walk runs
+over `maps view ++ record.keymaps`: the active keymaps passed to `step`
+first, in their own order, then the state's.
+
+- **The active keymaps are the specific ones** (the view's modes, the
+  user's config) and the state's are the scheme's defaults. A specific
+  binding must be able to replace a default, as a mode's role key such as
+  `j` in a list buffer has to.
+- **It is one walk** (`Keymap.walk`), so prefixes merge across both lists,
+  and a part of speech bound in an active keymap is the same to the grammar
+  as one bound in a state's keymap. That is what makes a motion bound after
+  the scheme was built work after every operator with no further binding.
+- **Consequence**: an active keymap's binding holds in every Vim state,
+  insert included. A binding meant for one state belongs in that state's
+  keymaps. Limiting a mode's key to some states is not built (open
+  questions).
 
 ## Other schemes
 
@@ -467,11 +661,21 @@ every build); the second is a proposal.
   one.
 - **Which scheme is active where.** One per editor or one per view; how a
   terminal view or the minibuffer takes keys.
-- **Counts, registers and visual selection** in the Vim scheme's `State`
-  and `Edit`. How a selection is represented is settled
-  ([text-and-display.md](text-and-display.md)); what is open is where the
-  scheme keeps which state it is in and the column it wants, and how
-  entering and leaving a visual state changes the selection's shape.
+- **The wanted column and the selection's shape** in the Vim scheme. How
+  counts, registers and the visual selection appear in the scheme's state
+  and in an edit, and where the current Vim state is held, are decided
+  ("The Vim scheme"), and how a selection is represented is settled
+  ([text-and-display.md](text-and-display.md)). What is open is where the
+  column a vertical motion wants is kept, and how entering and leaving a
+  visual state changes the selection's shape.
+- **A mode's key in some Vim states only.** An active keymap's binding
+  holds in every Vim state. Whether a mode's role key can be limited to
+  some states goes with the Vim role table.
+- **The Vim state of a view that is closed.** The scheme's state keeps an
+  entry for each view that is not in the initial state, and the scheme
+  interface gives no notice that a view is gone.
+- **A command that fails after its key entered a state.** The scheme enters
+  the state when the key is parsed, before the invocation runs.
 - **The `kbd` macro.** Macros need the `Lean` package at elaboration time,
   and importing it at runtime is what the memory figures in
   [lean-runtime.md](lean-runtime.md) argue against. Not measured, and not
