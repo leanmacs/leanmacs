@@ -52,7 +52,10 @@ use std::sync::Arc;
 pub use scripted::ScriptedPlatform;
 
 /// One thing a window reports.
-#[derive(Debug, Clone, PartialEq, Eq)]
+///
+/// It is `PartialEq` and not `Eq`: a pointer's position and a resize's
+/// scale are floating point.
+#[derive(Debug, Clone, PartialEq)]
 pub enum Input {
     /// The window is open. This is the first thing a platform reports.
     Opened {
@@ -65,25 +68,176 @@ pub enum Input {
     Key(Key),
     /// A step of an input method's composition.
     Composition(Composition),
-    /// A pointer button was pressed in the window.
-    PointerPressed,
+    /// The pointer did something in the window: a button went down or up,
+    /// it moved with a button held, or a wheel turned.
+    Pointer(Pointer),
+    /// The window's drawable area changed size, or its scale factor did.
+    Resized(Resize),
     /// The user asked for the window to be closed. The window stays open
     /// until [`Platform::close`] is called.
     CloseRequested,
 }
 
-/// A key event: what happened to a key, and the text it produced.
+/// A key event: which key, what happened to it, the modifiers held, and the
+/// text it produced.
+///
+/// The key's identity ([`logical`](Self::logical),
+/// [`physical`](Self::physical)) and the text it produced are separate: a
+/// key may have an identity and produce no text (`Escape`), or produce text
+/// an input method chose.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Key {
     /// Whether the key went down; `false` when it came up.
     pub pressed: bool,
     /// Whether this is a press the platform repeated because the key is held.
     pub repeat: bool,
-    /// Whether the key is a dead key: one that produces nothing by itself
-    /// and changes the key after it.
-    pub dead: bool,
+    /// What the keyboard layout makes of the key.
+    pub logical: LogicalKey,
+    /// Where the key is on the keyboard, whatever the layout.
+    pub physical: PhysicalKey,
+    /// The modifiers held when the key went down or came up.
+    pub modifiers: Modifiers,
     /// The text the key produced; empty when it produced none.
     pub text: String,
+}
+
+impl Key {
+    /// A release of a key the platform could not identify, with no modifier
+    /// held and no text: the base to build a key from with `..`.
+    pub const fn unidentified() -> Self {
+        Self {
+            pressed: false,
+            repeat: false,
+            logical: LogicalKey::Unidentified,
+            physical: PhysicalKey::Unidentified,
+            modifiers: Modifiers {
+                shift: false,
+                control: false,
+                alt: false,
+                super_key: false,
+            },
+            text: String::new(),
+        }
+    }
+}
+
+/// What the keyboard layout makes of a key.
+///
+/// Named keys are W3C UI Events `key` values, as strings (`Escape`,
+/// `ArrowLeft`, `Enter`), so a new one needs no new number on either side of
+/// the Lean boundary.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum LogicalKey {
+    /// A key that produces a character: the characters the layout gives it,
+    /// usually one.
+    Character(String),
+    /// A key with a name and no character: its W3C UI Events `key` value.
+    Named(String),
+    /// A dead key: one that produces nothing by itself and changes the key
+    /// after it. The character it would add, when the platform says.
+    Dead(Option<char>),
+    /// The platform could not say.
+    Unidentified,
+}
+
+/// Where a key is on the keyboard, whatever the layout.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PhysicalKey {
+    /// The key's W3C UI Events `code` value (`KeyA`, `Digit1`, `Escape`).
+    Code(String),
+    /// The platform could not say.
+    Unidentified,
+}
+
+/// The modifier keys held.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Modifiers {
+    /// Shift.
+    pub shift: bool,
+    /// Control.
+    pub control: bool,
+    /// Alt, which macOS calls Option.
+    pub alt: bool,
+    /// The system key: Command on macOS, the Windows key elsewhere.
+    pub super_key: bool,
+}
+
+/// What the pointer did, where, with which button, and the modifiers held.
+///
+/// The position is in the window's physical pixels, from its top left.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Pointer {
+    /// What happened.
+    pub action: PointerAction,
+    /// How far from the left of the window, in physical pixels.
+    pub x: f64,
+    /// How far from the top of the window, in physical pixels.
+    pub y: f64,
+    /// The button that went down or up, or that is held while dragging;
+    /// `None` when there is none, as for a wheel.
+    pub button: Option<Button>,
+    /// The modifiers held.
+    pub modifiers: Modifiers,
+}
+
+/// What a pointer did.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum PointerAction {
+    /// A button went down.
+    Press,
+    /// The pointer moved with a button held.
+    Drag,
+    /// A button came up.
+    Release,
+    /// A wheel turned, or a trackpad scrolled, by this much.
+    Wheel(WheelDelta),
+}
+
+/// How far a wheel turned.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum WheelDelta {
+    /// In lines and columns, as a mouse wheel's notches count.
+    Lines {
+        /// Columns.
+        x: f64,
+        /// Lines.
+        y: f64,
+    },
+    /// In physical pixels, as a trackpad scrolls.
+    Pixels {
+        /// Pixels across.
+        x: f64,
+        /// Pixels down.
+        y: f64,
+    },
+}
+
+/// A pointer button.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Button {
+    /// The main button: usually the left.
+    Primary,
+    /// The context button: usually the right.
+    Secondary,
+    /// The middle button, often the wheel.
+    Middle,
+    /// The back button.
+    Back,
+    /// The forward button.
+    Forward,
+    /// Another button, by the platform's number for it.
+    Other(u16),
+}
+
+/// The window's new size and scale factor.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Resize {
+    /// The drawable width, in physical pixels.
+    pub width: u64,
+    /// The drawable height, in physical pixels.
+    pub height: u64,
+    /// How many physical pixels a logical pixel is.
+    pub scale: f64,
 }
 
 /// A step of an input method's composition (IME).

@@ -71,6 +71,8 @@ pub enum EventKind {
     PointerPressed = 7,
     /// The user asked for the window to be closed.
     CloseRequested = 8,
+    /// The window's drawable area changed size, or its scale factor did.
+    Resize = 9,
 }
 
 impl EventKind {
@@ -91,6 +93,7 @@ impl EventKind {
             6 => Some(Self::Composition),
             7 => Some(Self::PointerPressed),
             8 => Some(Self::CloseRequested),
+            9 => Some(Self::Resize),
             _ => None,
         }
     }
@@ -787,6 +790,7 @@ mod tests {
             (6, EventKind::Composition),
             (7, EventKind::PointerPressed),
             (8, EventKind::CloseRequested),
+            (9, EventKind::Resize),
         ];
         for (tag, kind) in kinds {
             assert_eq!(EventKind::from_tag(tag), Some(kind));
@@ -796,7 +800,7 @@ mod tests {
 
     #[test]
     fn an_unknown_event_kind_tag_is_refused() {
-        assert_eq!(EventKind::from_tag(9), None);
+        assert_eq!(EventKind::from_tag(10), None);
         assert_eq!(EventKind::from_tag(u64::MAX), None);
     }
 

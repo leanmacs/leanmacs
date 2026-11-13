@@ -13,9 +13,10 @@
 //! |---|---|---|---|
 //! | `Opened` | `WindowOpened` | 0 | The platform's name |
 //! | `Focus` | `WindowFocus` | 1 gained, 0 lost | Empty |
-//! | `Key` | `Key` | Bit 0 pressed, bit 1 repeat, bit 2 dead | What the key produced, or empty |
+//! | `Key` | `Key` | Bit 0 pressed, bit 1 repeat, bit 2 a dead logical key | What the key produced, or empty |
 //! | `Composition` | `Composition` | 0 enabled, 1 preedit, 2 commit, 3 disabled | The preedit or the committed text |
-//! | `PointerPressed` | `PointerPressed` | 0 | Empty |
+//! | `Pointer` | `PointerPressed` | 0 | Empty |
+//! | `Resized` | `Resize` | 0 | Empty |
 //! | `CloseRequested` | `CloseRequested` | 0 | Empty |
 //!
 //! A window is run by the main-thread service: "run the window" is a request
@@ -37,7 +38,7 @@ use std::sync::{Arc, LazyLock, OnceLock};
 use std::time::Instant;
 
 use editor_platform::{
-    CannotOpen, Composition, Input, Platform, Report, ScriptedPlatform, WindowOptions,
+    CannotOpen, Composition, Input, LogicalKey, Platform, Report, ScriptedPlatform, WindowOptions,
 };
 use editor_platform_winit::WinitPlatform;
 
@@ -143,9 +144,9 @@ pub fn event(input: Input, stamp: u64) -> Event {
         Input::Focus(gained) => (EventKind::WindowFocus, u64::from(gained), String::new()),
         Input::Key(key) => {
             let bit = |set: bool, bit: u64| if set { bit } else { 0 };
-            let code = bit(key.pressed, KEY_PRESSED)
-                | bit(key.repeat, KEY_REPEAT)
-                | bit(key.dead, KEY_DEAD);
+            let dead = matches!(key.logical, LogicalKey::Dead(_));
+            let code =
+                bit(key.pressed, KEY_PRESSED) | bit(key.repeat, KEY_REPEAT) | bit(dead, KEY_DEAD);
             (EventKind::Key, code, key.text)
         }
         Input::Composition(step) => {
@@ -157,7 +158,10 @@ pub fn event(input: Input, stamp: u64) -> Event {
             };
             (EventKind::Composition, code, text)
         }
-        Input::PointerPressed => (EventKind::PointerPressed, 0, String::new()),
+        // A pointer's action, position, button and modifiers, and a resize's
+        // size and scale, do not cross yet: only the kind does.
+        Input::Pointer(_) => (EventKind::PointerPressed, 0, String::new()),
+        Input::Resized(_) => (EventKind::Resize, 0, String::new()),
         Input::CloseRequested => (EventKind::CloseRequested, 0, String::new()),
     };
     Event {
@@ -357,7 +361,7 @@ pub extern "C" fn editor_ffi_input_clock_now() -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use editor_platform::Key;
+    use editor_platform::{Button, Key, LogicalKey, Modifiers, Pointer, PointerAction, Resize};
     use std::sync::mpsc::{self, Receiver};
     use std::thread;
     use std::time::Duration;
@@ -381,13 +385,29 @@ mod tests {
         }
     }
 
-    /// A key event.
+    /// A key event, of a dead key or of one the platform could not identify.
     fn key(pressed: bool, repeat: bool, dead: bool, text: &str) -> Input {
         Input::Key(Key {
             pressed,
             repeat,
-            dead,
+            logical: if dead {
+                LogicalKey::Dead(None)
+            } else {
+                LogicalKey::Unidentified
+            },
             text: text.into(),
+            ..Key::unidentified()
+        })
+    }
+
+    /// A press of the primary button at the origin, with no modifier.
+    fn pointer_press() -> Input {
+        Input::Pointer(Pointer {
+            action: PointerAction::Press,
+            x: 0.0,
+            y: 0.0,
+            button: Some(Button::Primary),
+            modifiers: Modifiers::default(),
         })
     }
 
@@ -441,7 +461,12 @@ mod tests {
             Input::Composition(Composition::Preedit("´".into())),
             Input::Composition(Composition::Commit("é".into())),
             Input::Composition(Composition::Disabled),
-            Input::PointerPressed,
+            pointer_press(),
+            Input::Resized(Resize {
+                width: 800,
+                height: 600,
+                scale: 2.0,
+            }),
             Input::CloseRequested,
         ];
         let platform = Arc::new(ScriptedPlatform::new(script));
@@ -452,7 +477,7 @@ mod tests {
         // The stamps are the clock's readings 1, 2, 3 and so on: one reading
         // for each input, taken as it was reported.
         assert_eq!(
-            pull(&queue, 13),
+            pull(&queue, 14),
             [
                 from_window(EventKind::WindowOpened, 0, ScriptedPlatform::NAME, 1),
                 from_window(EventKind::WindowFocus, 1, "", 2),
@@ -466,7 +491,8 @@ mod tests {
                 from_window(EventKind::Composition, 2, "é", 10),
                 from_window(EventKind::Composition, 3, "", 11),
                 from_window(EventKind::PointerPressed, 0, "", 12),
-                from_window(EventKind::CloseRequested, 0, "", 13),
+                from_window(EventKind::Resize, 0, "", 13),
+                from_window(EventKind::CloseRequested, 0, "", 14),
             ]
         );
         platform.close();

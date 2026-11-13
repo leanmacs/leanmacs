@@ -39,8 +39,9 @@ use std::time::{Duration, Instant};
 
 use crate::{CannotOpen, Input, Platform, Report, WindowOptions};
 
-/// A rule of the contract that a platform broke.
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// A rule of the contract that a platform broke. It is `PartialEq` only, as
+/// [`Input`] is.
+#[derive(Debug, Clone, PartialEq)]
 pub enum Violation {
     /// No window could be opened, for the reason given.
     CouldNotOpen(String),

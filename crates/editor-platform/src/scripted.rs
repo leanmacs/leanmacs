@@ -6,7 +6,10 @@
 
 use std::sync::{Condvar, Mutex, MutexGuard, PoisonError};
 
-use crate::{CannotOpen, Composition, Input, Key, Platform, Report, WindowOptions};
+use crate::{
+    Button, CannotOpen, Composition, Input, Key, LogicalKey, Modifiers, PhysicalKey, Platform,
+    Pointer, PointerAction, Report, WindowOptions,
+};
 
 /// A platform whose window reports [`Input::Opened`], then a script of
 /// inputs in order, and then waits for [`close`](Platform::close).
@@ -67,29 +70,52 @@ impl ScriptedPlatform {
     }
 
     /// One fixed script with each thing a window reports in it, which tests
-    /// on both sides of the Lean boundary run: the focus gained; `a` pressed
-    /// and released (a release produces no text); a dead key pressed, which
-    /// produces none either; `é` pressed; a composition enabled, its preedit
-    /// `´` and its commit `é`; a pointer press; and a request to close.
+    /// on both sides of the Lean boundary run: the focus gained; `a` pressed,
+    /// as the key `KeyA` with shift and control held, and released (a
+    /// release produces no text); a dead key `´` pressed, which produces none
+    /// either; `é` pressed; a composition enabled, its preedit `´` and its
+    /// commit `é`; the secondary button pressed at (12.5, 40) with alt held;
+    /// and a request to close. The keys but the first two carry no physical
+    /// key and no modifiers.
     pub fn sample_script() -> Vec<Input> {
-        let key = |pressed, dead, text: &str| {
-            Input::Key(Key {
-                pressed,
-                repeat: false,
-                dead,
-                text: text.into(),
-            })
-        };
         vec![
             Input::Focus(true),
-            key(true, false, "a"),
-            key(false, false, ""),
-            key(true, true, ""),
-            key(true, false, "é"),
+            Input::Key(Key {
+                pressed: true,
+                repeat: false,
+                logical: LogicalKey::Character("a".into()),
+                physical: PhysicalKey::Code("KeyA".into()),
+                modifiers: Modifiers {
+                    shift: true,
+                    control: true,
+                    ..Modifiers::default()
+                },
+                text: "a".into(),
+            }),
+            Input::Key(Key::unidentified()),
+            Input::Key(Key {
+                pressed: true,
+                logical: LogicalKey::Dead(Some('´')),
+                ..Key::unidentified()
+            }),
+            Input::Key(Key {
+                pressed: true,
+                text: "é".into(),
+                ..Key::unidentified()
+            }),
             Input::Composition(Composition::Enabled),
             Input::Composition(Composition::Preedit("´".into())),
             Input::Composition(Composition::Commit("é".into())),
-            Input::PointerPressed,
+            Input::Pointer(Pointer {
+                action: PointerAction::Press,
+                x: 12.5,
+                y: 40.0,
+                button: Some(Button::Secondary),
+                modifiers: Modifiers {
+                    alt: true,
+                    ..Modifiers::default()
+                },
+            }),
             Input::CloseRequested,
         ]
     }
@@ -219,9 +245,8 @@ mod tests {
     fn press(text: &str) -> Input {
         Input::Key(Key {
             pressed: true,
-            repeat: false,
-            dead: false,
             text: text.into(),
+            ..Key::unidentified()
         })
     }
 
@@ -361,12 +386,11 @@ mod tests {
 
     #[test]
     fn the_sample_script_has_each_thing_a_window_reports() {
-        let key = |pressed, dead, text: &str| {
+        let unidentified = |pressed, text: &str| {
             Input::Key(Key {
                 pressed,
-                repeat: false,
-                dead,
                 text: text.into(),
+                ..Key::unidentified()
             })
         };
 
@@ -374,16 +398,60 @@ mod tests {
             ScriptedPlatform::sample_script(),
             [
                 Input::Focus(true),
-                key(true, false, "a"),
-                key(false, false, ""),
-                key(true, true, ""),
-                key(true, false, "é"),
+                Input::Key(Key {
+                    pressed: true,
+                    repeat: false,
+                    logical: LogicalKey::Character("a".into()),
+                    physical: PhysicalKey::Code("KeyA".into()),
+                    modifiers: Modifiers {
+                        shift: true,
+                        control: true,
+                        ..Modifiers::default()
+                    },
+                    text: "a".into(),
+                }),
+                unidentified(false, ""),
+                Input::Key(Key {
+                    pressed: true,
+                    logical: LogicalKey::Dead(Some('´')),
+                    ..Key::unidentified()
+                }),
+                unidentified(true, "é"),
                 Input::Composition(Composition::Enabled),
                 Input::Composition(Composition::Preedit("´".into())),
                 Input::Composition(Composition::Commit("é".into())),
-                Input::PointerPressed,
+                Input::Pointer(Pointer {
+                    action: PointerAction::Press,
+                    x: 12.5,
+                    y: 40.0,
+                    button: Some(Button::Secondary),
+                    modifiers: Modifiers {
+                        alt: true,
+                        ..Modifiers::default()
+                    },
+                }),
                 Input::CloseRequested,
             ]
+        );
+    }
+
+    #[test]
+    fn an_unidentified_key_is_a_release_with_no_identity_no_modifiers_and_no_text() {
+        assert_eq!(
+            Key::unidentified(),
+            Key {
+                pressed: false,
+                repeat: false,
+                logical: LogicalKey::Unidentified,
+                physical: PhysicalKey::Unidentified,
+                modifiers: Modifiers {
+                    shift: false,
+                    control: false,
+                    alt: false,
+                    super_key: false,
+                },
+                text: String::new(),
+            }
         );
     }
 

@@ -34,7 +34,10 @@
 
 use std::sync::{Mutex, MutexGuard, PoisonError};
 
-use editor_platform::{CannotOpen, Composition, Input, Key, Platform, Report, WindowOptions};
+use editor_platform::{
+    CannotOpen, Composition, Input, Key, LogicalKey, Modifiers, Platform, Pointer, PointerAction,
+    Report, WindowOptions,
+};
 use winit::application::ApplicationHandler;
 use winit::event::{ElementState, Ime, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, EventLoop, EventLoopProxy};
@@ -114,22 +117,35 @@ impl Platform for WinitPlatform {
 /// The key event winit reports with these parts, as the port's input. It
 /// takes the parts and not winit's whole key event, which cannot be built
 /// outside winit.
+///
+/// The mapping is minimal: a dead key is a dead logical key, with its
+/// character, and every other key is unidentified, with no physical key
+/// and no modifiers. Giving a key its full identity, and a pointer its
+/// position, button and modifiers, and reporting a resize, are the display
+/// pipeline's (its phase 5).
 fn key(
     state: ElementState,
     repeat: bool,
     logical_key: &keyboard::Key,
     text: Option<&str>,
 ) -> Input {
+    let logical = match logical_key {
+        keyboard::Key::Dead(character) => LogicalKey::Dead(*character),
+        _ => LogicalKey::Unidentified,
+    };
     Input::Key(Key {
         pressed: state == ElementState::Pressed,
         repeat,
-        dead: matches!(logical_key, keyboard::Key::Dead(_)),
+        logical,
         text: text.unwrap_or_default().to_owned(),
+        ..Key::unidentified()
     })
 }
 
 /// What the port reports for `event`, if it reports anything for it. A key
-/// event goes through [`key`].
+/// event goes through [`key`]. A pressed button is a press at the origin
+/// with no button and no modifiers, and a resize is not reported: the
+/// minimal mapping [`key`] describes.
 fn translate(event: &WindowEvent) -> Option<Input> {
     match event {
         WindowEvent::Focused(gained) => Some(Input::Focus(*gained)),
@@ -142,7 +158,13 @@ fn translate(event: &WindowEvent) -> Option<Input> {
         WindowEvent::MouseInput {
             state: ElementState::Pressed,
             ..
-        } => Some(Input::PointerPressed),
+        } => Some(Input::Pointer(Pointer {
+            action: PointerAction::Press,
+            x: 0.0,
+            y: 0.0,
+            button: None,
+            modifiers: Modifiers::default(),
+        })),
         WindowEvent::CloseRequested => Some(Input::CloseRequested),
         _ => None,
     }
@@ -223,13 +245,14 @@ mod tests {
     use winit::event::{DeviceId, MouseButton};
     use winit::keyboard::{Key as WinitKey, NamedKey};
 
-    /// A key event of the port.
-    fn input_key(pressed: bool, repeat: bool, dead: bool, text: &str) -> Input {
+    /// A key event of the port, with no identity but whether it is dead.
+    fn input_key(pressed: bool, repeat: bool, logical: LogicalKey, text: &str) -> Input {
         Input::Key(Key {
             pressed,
             repeat,
-            dead,
+            logical,
             text: text.into(),
+            ..Key::unidentified()
         })
     }
 
@@ -242,11 +265,11 @@ mod tests {
     fn a_pressed_key_carries_the_text_it_produced() {
         assert_eq!(
             key(ElementState::Pressed, false, &character("a"), Some("a")),
-            input_key(true, false, false, "a")
+            input_key(true, false, LogicalKey::Unidentified, "a")
         );
         assert_eq!(
             key(ElementState::Pressed, false, &character("é"), Some("é")),
-            input_key(true, false, false, "é")
+            input_key(true, false, LogicalKey::Unidentified, "é")
         );
     }
 
@@ -259,7 +282,7 @@ mod tests {
                 &WinitKey::Named(NamedKey::Shift),
                 None
             ),
-            input_key(true, false, false, "")
+            input_key(true, false, LogicalKey::Unidentified, "")
         );
     }
 
@@ -267,7 +290,7 @@ mod tests {
     fn a_released_key_is_not_pressed() {
         assert_eq!(
             key(ElementState::Released, false, &character("a"), None),
-            input_key(false, false, false, "")
+            input_key(false, false, LogicalKey::Unidentified, "")
         );
     }
 
@@ -275,12 +298,12 @@ mod tests {
     fn a_repeated_press_is_marked_a_repeat() {
         assert_eq!(
             key(ElementState::Pressed, true, &character("a"), Some("a")),
-            input_key(true, true, false, "a")
+            input_key(true, true, LogicalKey::Unidentified, "a")
         );
     }
 
     #[test]
-    fn a_dead_key_is_marked_dead_and_has_no_text() {
+    fn a_dead_key_is_a_dead_logical_key_with_its_character_and_has_no_text() {
         assert_eq!(
             key(
                 ElementState::Pressed,
@@ -288,11 +311,11 @@ mod tests {
                 &WinitKey::Dead(Some('´')),
                 None
             ),
-            input_key(true, false, true, "")
+            input_key(true, false, LogicalKey::Dead(Some('´')), "")
         );
         assert_eq!(
             key(ElementState::Released, false, &WinitKey::Dead(None), None),
-            input_key(false, false, true, "")
+            input_key(false, false, LogicalKey::Dead(None), "")
         );
     }
 
@@ -335,7 +358,8 @@ mod tests {
     }
 
     #[test]
-    fn a_pressed_pointer_button_is_reported_and_its_release_is_not() {
+    fn a_pressed_pointer_button_is_reported_as_a_press_at_the_origin_with_no_button_and_its_release_is_not()
+     {
         let button = |state| WindowEvent::MouseInput {
             device_id: DeviceId::dummy(),
             state,
@@ -344,7 +368,13 @@ mod tests {
 
         assert_eq!(
             translate(&button(ElementState::Pressed)),
-            Some(Input::PointerPressed)
+            Some(Input::Pointer(Pointer {
+                action: PointerAction::Press,
+                x: 0.0,
+                y: 0.0,
+                button: None,
+                modifiers: Modifiers::default(),
+            }))
         );
         assert_eq!(translate(&button(ElementState::Released)), None);
     }
