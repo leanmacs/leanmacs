@@ -290,7 +290,61 @@ def moveCases : List Property :=
         let back := (← reads made.tree) == ("héllo😀B", 7) && undone.tree.current == made.b
         let some first ← undone.tree.undo | return false
         return thrown && partWay && back && (← reads made.tree) == ("héllo", 8) &&
-            first.tree.current == UndoTree.root }]
+            first.tree.current == UndoTree.root },
+    { name :=
+        "the undo tree: a move closes the open group and drops what it crosses: with an edit pending and no boundary set, a move to a leaf of another branch makes a node of the group under the node the text was at, reads the target's text at one more revision for each edge, the new node's among them, and has dropped the run of every edge it crossed; and a move to the new node reads what the group made"
+      holds := do
+        let made ← branches
+        let pending ← addAtEnd made.tree "!"
+        let before :=
+          (← reads pending) == ("héllo😀B!", 6) && pending.pending && pending.nodes.size == 4
+        -- Up from the node of the group and from `b`, down to `a` and `a2`.
+        let some toA2 ← pending.goTo made.a2 | return false
+        let there :=
+          (← reads pending) == ("héllo A2", 10) && toA2.tree.current == made.a2 &&
+            !toA2.tree.pending
+        -- The group is a node, the one child of `b`.
+        let some closed := (toA2.tree.node? made.b).bind (·.next) | return false
+        let node :=
+          toA2.tree.nodes.size == 5 &&
+            (toA2.tree.node? made.b).map (·.children) == some #[closed] &&
+            (toA2.tree.node? closed).bind (·.parent) == some made.b
+        -- By hand, behind the tree's back: the move crossed the edge of the
+        -- group (revision 6), of `b` (5), of `a` (4) and of `a2` (3).
+        let ofGroup ← refusedWith .noInverse (discard <| pending.text.applyInverse 6 6)
+        let ofB ← refusedWith .noInverse (discard <| pending.text.applyInverse 5 5)
+        let ofA ← refusedWith .noInverse (discard <| pending.text.applyInverse 4 4)
+        let ofA2 ← refusedWith .noInverse (discard <| pending.text.applyInverse 3 3)
+        -- Two edges up and two down.
+        let some back ← toA2.tree.goTo closed | return false
+        return before && there && node && ofGroup && ofB && ofA && ofA2 &&
+            back.tree.current == closed &&
+            (← reads pending) == ("héllo😀B!", 14) },
+    { name :=
+        "the undo tree: a move to the node the open group began at closes the group and undoes it: with an edit pending and no boundary set, the group is made a node under that node, the text reads what it read there at one more revision, the selection before the group's first transaction is handed back, the group's run is dropped, and one redo makes the group again"
+      holds := do
+        let text ← createText "héllo"
+        let tree ← UndoTree.over text
+        let tree ← group tree " A"
+        let began := tree.current
+        let before := selection .inclusive #[(8, 8)]
+        let pending ← edit tree { changes := #[.retain 8, .insert "😀"], before := some before }
+        let waiting :=
+          (← reads pending) == ("héllo A😀", 2) && pending.pending && pending.nodes.size == 2 &&
+            pending.current == began
+        let some moved ← pending.goTo began | return false
+        let back :=
+          (← reads pending) == ("héllo A", 3) && moved.tree.current == began &&
+            !moved.tree.pending &&
+            moved.selection == some before
+        let some closed := (moved.tree.node? began).bind (·.next) | return false
+        let node :=
+          moved.tree.nodes.size == 3 && (moved.tree.node? closed).bind (·.parent) == some began
+        -- By hand, behind the tree's back: the group was revision 2.
+        let dropped ← refusedWith .noInverse (discard <| text.applyInverse 2 2)
+        let some redone ← moved.tree.redo | return false
+        return waiting && back && node && dropped && redone.tree.current == closed &&
+            (← reads pending) == ("héllo A😀", 4) }]
 
 /-- The cases of reverting the open group, and of the saved state. -/
 def stateCases : List Property :=
