@@ -108,6 +108,11 @@ impl<S: Shaper> Layout<S> {
         self.counters
     }
 
+    /// How many texts layout keeps entries of.
+    pub fn texts_kept(&self) -> usize {
+        self.texts.len()
+    }
+
     /// The rows of `text` a view `width` pixels wide and `height` tall
     /// shows from the visual line that holds `anchor`, as many as fit
     /// whole, fewer at the end of the text.
@@ -153,7 +158,8 @@ impl<S: Shaper> Layout<S> {
         width: f32,
         ask: impl FnOnce(&mut Walker<'_, S>) -> T,
     ) -> T {
-        let state = state(&mut self.texts, text, self.tab_width, Some(width));
+        let mut state = state(&mut self.texts, text, self.tab_width, Some(width));
+        let state = &mut *state;
         let sources: Vec<&dyn DecorationSource> = match &state.sources {
             Some((selections, decorations)) => vec![selections, decorations],
             None => Vec::new(),

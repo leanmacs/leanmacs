@@ -298,6 +298,11 @@ impl TabLayer {
         }
     }
 
+    /// A tab layer that last took `snapshot`.
+    pub fn over(snapshot: TabSnapshot) -> Self {
+        Self { snapshot }
+    }
+
     /// The snapshot last taken.
     pub fn snapshot(&self) -> &TabSnapshot {
         &self.snapshot

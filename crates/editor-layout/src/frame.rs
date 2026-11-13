@@ -36,7 +36,7 @@ use crate::decoration::{
     merge,
 };
 use crate::query::{Visual, Walker};
-use crate::scene::{CursorShape, Rect, Scene, View, ViewId};
+use crate::scene::{CursorShape, Rect, Scene, TextKey, View, ViewId};
 use crate::shaper::{Shaper, VisualLine};
 use crate::wrap::Outcome;
 
@@ -176,15 +176,23 @@ pub fn at_or_before(snapshot: &Snapshot, offset: usize) -> usize {
 }
 
 impl<S: Shaper> Layout<S> {
-    /// Lays `scene` out into a frame.
+    /// Lays `scene` out into a frame, and drops what is kept of every text
+    /// it does not name.
     pub fn frame(&mut self, scene: &Scene) -> Frame {
-        Frame {
+        let frame = Frame {
             views: scene
                 .views
                 .iter()
                 .map(|view| self.view_frame(view, &[]))
                 .collect(),
-        }
+        };
+        let named: Vec<TextKey> = scene
+            .views
+            .iter()
+            .filter_map(|view| view.text.as_ref().map(|text| text.key))
+            .collect();
+        self.texts.retain(|key, _| named.contains(key));
+        frame
     }
 
     /// The frame of `view`, with `extra` sources of spans after its
@@ -239,12 +247,13 @@ impl<S: Shaper> Layout<S> {
             all.extend_from_slice(&sources);
             fonts_of(&all, snapshot, bytes, faces)
         };
-        let state = state(
+        let mut held = state(
             &mut self.texts,
             text,
             self.tab_width,
             Some(view.rect.width as f32),
         );
+        let state = &mut *held;
         let mut seen: HashMap<(usize, usize), Outcome> = HashMap::new();
         let mut walker = Walker {
             shaper: &self.shaper,
