@@ -2,8 +2,12 @@
 //!
 //! A [`Text`] holds the text of one buffer. Every read goes through a
 //! [`Snapshot`], which is the text as it was at one moment. The crate is
-//! pure: it does no I/O, reads no clock, starts no thread and knows nothing
-//! about Lean. `editor-ffi` puts a text behind a handle for the Lean editor.
+//! pure: it does no I/O of its own, reads no clock, starts no thread and
+//! knows nothing about Lean. It reaches a file system only through the
+//! [`fs::Fs`] port, which it defines and whose real adapter is another
+//! crate (`editor-fs-std`); the crate's `clippy.toml` refuses a line of it,
+//! a test included, that names a real file, a process or a clock.
+//! `editor-ffi` puts a text behind a handle for the Lean editor.
 //!
 //! # The text model
 //!
@@ -296,12 +300,14 @@
 //! | Another shape of selection | A variant of [`Shape`], with its overlap rule and its biases in `selection`, and what it covers in `extent` | The unit tests of both, and the properties in `tests/properties/selections.rs`, whose generator and reference gain the shape |
 //! | Another kind of marker | A variant of [`Marker`], with its check in [`Text::mark`] and its ends in the private `marker::Markers` | The unit tests of `text`, and a property in `tests/properties/anchors.rs` that compares it with mapping it by hand |
 //! | A change to what a cell is | The private module `cell`, and nowhere else | Its unit tests, and `extents_agree_with_a_reference_on_a_string`, whose reference changes with it |
+//! | Another thing the crate needs of a file system | A method of [`fs::Fs`], as the module docs of [`fs`] say | Its rule in [`fs::contract::check`], with a fake written to break it, which the fake and every real adapter are then held to |
 
 mod anchor;
 mod bytes;
 mod cell;
 mod change;
 mod extent;
+pub mod fs;
 mod inverse;
 mod log;
 mod marker;
