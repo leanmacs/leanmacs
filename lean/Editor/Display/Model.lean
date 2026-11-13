@@ -11,6 +11,22 @@ display every time.
 
 It sees a snapshot's text through `texts`, which a test fills, and which the
 command loop fills from the text model when it runs both ports together.
+
+## The layout rule
+
+- The text is split into lines at each line feed; a carriage return before
+  a line feed is part of the break. Every other character, a carriage return
+  alone included, is one cell `advance` pixels across.
+- A row of a view `width` pixels wide holds `columns := max 1 (width /
+  advance)` characters. A line of k characters takes `max 1 ⌈k / columns⌉`
+  rows, wrapped at character boundaries; an empty line takes one empty row.
+- A view `height` pixels tall shows `height / lineHeight` rows.
+- A position at a wrap is the start of the later row. Only a line's last row
+  holds the position at the line's end, before its break.
+
+A refusal is `noSuchSnapshot` for a snapshot it has no text for, and
+`badPosition` for an anchor or a position that is not a character boundary
+within the text.
 -/
 
 namespace Editor
@@ -34,9 +50,91 @@ def scenes (model : DisplayModel) : Array Scene :=
 def text? (model : DisplayModel) (snapshot : SnapshotId) : Option String :=
   (model.texts.find? (·.1 == snapshot)).map (·.2)
 
-/-- The rows a view shows. -/
-def rows (_ : DisplayModel) (_ : Display.RowsQuery) : Except DisplayError (Array Display.Row) :=
-  .error .noSuchSnapshot
+/-- One visual row as the model lays it out. -/
+structure Laid where
+  /-- The row's byte range, without its line break. -/
+  row : Display.Row
+  /-- The byte offset of each of its characters, in order. -/
+  chars : Array Nat
+  /-- The offset the positions this row holds stop before: the next row's
+  start, or, for the last row of the text, one past its end. -/
+  upTo : Nat
+  /-- Whether it is the last row of its line, the one row of a line that
+  holds the position at the line's end. -/
+  lastOfLine : Bool
+
+/-- The lines of a text whose characters, from the byte offset `offset`, are
+`chars`, added to `lines`: for each line, the offset of each of its
+characters, the offset where they stop, and the offset after its line break
+(its stop, for the last line). A carriage return before a line feed is part
+of the break; any other character is one of the line's. -/
+def splitLines :
+    List Char → Nat → Array Nat → Array (Array Nat × Nat × Nat) → Array (Array Nat × Nat × Nat)
+  | [], offset, line, lines => lines.push (line, offset, offset)
+  | '\r' :: '\n' :: rest, offset, line, lines =>
+    splitLines rest (offset + 2) #[] (lines.push (line, offset, offset + 2))
+  | '\n' :: rest, offset, line, lines =>
+    splitLines rest (offset + 1) #[] (lines.push (line, offset, offset + 1))
+  | char :: rest, offset, line, lines =>
+    splitLines rest (offset + char.utf8Size) (line.push offset) lines
+
+/-- How many characters a row of a view `width` pixels wide holds: as many
+whole cells as fit, and at least one. -/
+def columns (cells : Display.Cells) (width : Nat) : Nat :=
+  max 1 (width / cells.advance)
+
+/-- The layout rule: `text` in rows of `columns` characters. A line of k
+characters takes `max 1 ⌈k / columns⌉` rows, wrapped at character
+boundaries; an empty line takes one empty row. -/
+def layout (text : String) (columns : Nat) : Array Laid :=
+  Id.run do
+    let lines := splitLines text.toList 0 #[] #[]
+    let mut laid := #[]
+    for index in [0:lines.size] do
+      let (chars, stop, after) := lines[index]!
+      let lineUpTo := if index + 1 == lines.size then text.utf8ByteSize + 1 else after
+      if chars.isEmpty then
+        laid := laid.push { row := ⟨stop, stop⟩, chars, upTo := lineUpTo, lastOfLine := true }
+      else
+        let count := (chars.size + columns - 1) / columns
+        for row in [0:count] do
+          let first := row * columns
+          let next := first + columns
+          let last := row + 1 == count
+          let rowStop := if last then stop else chars[next]!
+          laid :=
+            laid.push
+              { row := ⟨chars[first]!, rowStop⟩, chars := chars.extract first next
+                upTo := if last then lineUpTo else rowStop, lastOfLine := last }
+    return laid
+
+/-- Whether `offset` is a position of `text`: a character boundary within
+it, its end included. -/
+def isPosition (text : String) (offset : Nat) : Bool :=
+  offset == text.utf8ByteSize ||
+    (text.toList.foldl (fun (here, found) char => (here + char.utf8Size, found || here == offset))
+        (0, false)).2
+
+/-- The index of the row of `laid` that holds the position `offset`. -/
+def rowOf (laid : Array Laid) (offset : Nat) : Nat :=
+  (laid.findIdx? fun row => row.row.start <= offset && offset < row.upTo).getD 0
+
+/-- The text of `snapshot`, laid out for a view `width` pixels wide, with the
+position `offset` checked: refused with `noSuchSnapshot` or `badPosition`. -/
+def laidOut (model : DisplayModel) (snapshot : SnapshotId) (width offset : Nat) :
+    Except DisplayError (Array Laid) := do
+  let some text := model.text? snapshot | throw .noSuchSnapshot
+  unless isPosition text offset do
+    throw .badPosition
+  return layout text (columns model.cells width)
+
+/-- The rows a view shows: from the row that holds the anchor, as many as
+whole rows fit its height, fewer at the end of the text. -/
+def rows (model : DisplayModel) (query : Display.RowsQuery) :
+    Except DisplayError (Array Display.Row) := do
+  let laid ← model.laidOut query.snapshot query.width query.anchor
+  let first := rowOf laid query.anchor
+  return (laid.extract first (first + query.height / model.cells.lineHeight)).map (·.row)
 
 /-- Where a position goes. -/
 def move (_ : DisplayModel) (_ : Display.MoveQuery) : Except DisplayError Display.Moved :=

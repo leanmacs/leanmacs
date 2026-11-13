@@ -2683,6 +2683,18 @@ def displayOver (texts : List String) (cells : Display.Cells := { advance := 1, 
     DisplayModel :=
   { cells, texts := (texts.toArray.mapIdx fun index text => (⟨index⟩, text)) }
 
+/-- A display program's answer, or the refusal it failed with on the left, as
+a value with equality. -/
+def answered {α : Type} : Except DisplayError α → DisplayError ⊕ α
+  | .ok answer => .inr answer
+  | .error refusal => .inl refusal
+
+/-- The rows the display model over `texts` answers to `query`. -/
+def shownBy (texts : List String) (query : Display.RowsQuery)
+    (cells : Display.Cells := { advance := 1, lineHeight := 1 }) :
+    DisplayError ⊕ Array Display.Row :=
+  answered ((Display.rowsShown query).runModel (displayOver texts cells)).1
+
 /-- The checks of the display model that only it shows: what it recorded of
 the scenes published to it. What it answers to the queries is the display
 interface's contract (`displayFailures`). -/
@@ -2705,7 +2717,58 @@ def displayChecks : List Check :=
         let (result, model) := program.runModel (displayOver [])
         return result matches .ok () && model.scenes == #[first, second, third] },
     { name := "a display model that nothing was published to has no scene"
-      run := pure ((displayOver ["a"]).scenes == #[]) }]
+      run := pure ((displayOver ["a"]).scenes == #[]) },
+    { name := "a view r rows tall over lines no longer than its width shows r lines from its anchor"
+      run :=
+        pure
+          (shownBy ["ab\ncd\nef\ngh"] { snapshot := ⟨0⟩, width := 4, height := 3, anchor := 3 } ==
+            .inr #[⟨3, 5⟩, ⟨6, 8⟩, ⟨9, 11⟩]) },
+    { name := "a line twice the view's width takes two rows, split at the width"
+      run :=
+        pure
+          (shownBy ["abcdefgh\nij"] { snapshot := ⟨0⟩, width := 4, height := 3, anchor := 0 } ==
+            .inr #[⟨0, 4⟩, ⟨4, 8⟩, ⟨9, 11⟩]) },
+    { name := "the rows stop at the end of the text"
+      run :=
+        pure
+          (shownBy ["ab\ncd"] { snapshot := ⟨0⟩, width := 4, height := 10, anchor := 0 } ==
+            .inr #[⟨0, 2⟩, ⟨3, 5⟩]) },
+    { name := "an anchor in the middle of a row starts at that row"
+      run :=
+        pure
+          (shownBy ["abcdefgh\nij"] { snapshot := ⟨0⟩, width := 4, height := 2, anchor := 6 } ==
+            .inr #[⟨4, 8⟩, ⟨9, 11⟩]) },
+    { name :=
+        "the layout rule in cells of 8 by 16: a width is cut down to whole cells, a height to whole rows, and a carriage return before a line feed is part of the break"
+      run :=
+        pure
+          (shownBy ["abcdef\r\nxy"] { snapshot := ⟨0⟩, width := 39, height := 47, anchor := 0 }
+                (cells := { advance := 8, lineHeight := 16 }) ==
+              .inr #[⟨0, 4⟩, ⟨4, 6⟩] &&
+            shownBy ["abcdef\r\nxy"] { snapshot := ⟨0⟩, width := 39, height := 48, anchor := 0 }
+                (cells := { advance := 8, lineHeight := 16 }) ==
+              .inr #[⟨0, 4⟩, ⟨4, 6⟩, ⟨8, 10⟩]) },
+    { name := "a view narrower than a cell still shows one character a row"
+      run :=
+        pure
+          (shownBy ["abc"] { snapshot := ⟨0⟩, width := 3, height := 32, anchor := 0 } (cells :=
+              { advance := 8, lineHeight := 16 }) ==
+            .inr #[⟨0, 1⟩, ⟨1, 2⟩]) },
+    { name := "a carriage return that is not before a line feed is a character of its own"
+      run :=
+        pure
+          (shownBy ["a\rb"] { snapshot := ⟨0⟩, width := 2, height := 2, anchor := 0 } ==
+            .inr #[⟨0, 2⟩, ⟨2, 3⟩]) },
+    { name :=
+        "the rows of a snapshot the model does not have, or from an anchor inside a character or past the end, are refused"
+      run :=
+        pure
+          (shownBy ["é"] { snapshot := ⟨1⟩, width := 4, height := 1, anchor := 0 } ==
+              .inl .noSuchSnapshot &&
+            shownBy ["é"] { snapshot := ⟨0⟩, width := 4, height := 1, anchor := 1 } ==
+              .inl .badPosition &&
+            shownBy ["é"] { snapshot := ⟨0⟩, width := 4, height := 1, anchor := 3 } ==
+              .inl .badPosition) }]
 
 /-- The checks of the undo tree's pure operations alone, which ask nothing of
 a text: being told a revision, and the boundary. What the tree does to a
