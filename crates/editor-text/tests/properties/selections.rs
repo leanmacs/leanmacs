@@ -1,12 +1,13 @@
 //! Properties of selections: the form a selection is kept in, compared
 //! with a reference that merges ranges two at a time.
 
-use editor_text::{Bias, ChangeSet, Selection, SelectionRange, Shape};
+use editor_text::{Bias, ChangeSet, Selection, SelectionRange, Shape, Text};
 use proptest::collection::vec;
 use proptest::prelude::*;
 use proptest::sample::select;
+use proptest::test_runner::TestCaseError;
 
-use crate::{check, short_text, walk};
+use crate::{check, floor, initial_text_to_walk, short_text, walk};
 
 /// Every shape a selection can have.
 pub(crate) const SHAPES: [Shape; 4] = [
@@ -181,6 +182,163 @@ fn a_mapped_selection_is_its_ends_mapped_and_merged() {
                     prop_assert!(range.end() <= changes.len_after());
                 }
             }
+            Ok(())
+        },
+    );
+}
+
+/// One row of a string, found by splitting it on line feeds.
+struct Row {
+    /// Where the row starts.
+    start: usize,
+    /// Where its content ends: before its line break.
+    content: usize,
+    /// Where the row ends, its line feed included if it has one.
+    end: usize,
+    /// The cells of its content, each a start and an end.
+    cells: Vec<(usize, usize)>,
+}
+
+/// The rows of `string`.
+fn rows(string: &str) -> Vec<Row> {
+    let pieces: Vec<&str> = string.split('\n').collect();
+    let mut start = 0;
+    let mut rows = Vec::new();
+    for (index, piece) in pieces.iter().enumerate() {
+        let has_line_feed = index + 1 < pieces.len();
+        let content = if has_line_feed {
+            piece.strip_suffix('\r').unwrap_or(piece)
+        } else {
+            piece
+        };
+        // Content holds no carriage return with a line feed after it, so
+        // each of its characters is a cell.
+        let cells = content
+            .char_indices()
+            .map(|(at, character)| (start + at, start + at + character.len_utf8()))
+            .collect();
+        let end = start + piece.len() + usize::from(has_line_feed);
+        rows.push(Row {
+            start,
+            content: start + content.len(),
+            end,
+            cells,
+        });
+        start = end;
+    }
+    rows
+}
+
+/// The row of `rows` the position `offset` is in.
+fn row_of(rows: &[Row], offset: usize) -> usize {
+    rows.iter()
+        .rposition(|row| row.start <= offset)
+        .unwrap_or(0)
+}
+
+/// How many cells of its row start before the position `offset`. A line
+/// break is one more cell after the content.
+fn column(row: &Row, offset: usize) -> usize {
+    let before = row.cells.iter().filter(|cell| cell.0 < offset).count();
+    before + usize::from(offset > row.content)
+}
+
+/// The reference for extents: what `selection` covers in `string`, found
+/// from the string's rows and characters.
+fn covered(string: &str, selection: &Selection) -> Vec<(usize, usize)> {
+    let rows = rows(string);
+    let mut extents = Vec::new();
+    for range in selection.ranges() {
+        let (start, end) = span(range);
+        let (first, last) = (row_of(&rows, start), row_of(&rows, end));
+        match selection.shape() {
+            Shape::Exclusive => extents.push((start, end)),
+            Shape::Inclusive => {
+                let rest = &string[end..];
+                let cell = if rest.starts_with("\r\n") {
+                    2
+                } else {
+                    rest.chars().next().map_or(0, char::len_utf8)
+                };
+                extents.push((start, end + cell));
+            }
+            Shape::Line => extents.push((rows[first].start, rows[last].end)),
+            Shape::Block => {
+                let one = column(&rows[row_of(&rows, range.anchor)], range.anchor);
+                let other = column(&rows[row_of(&rows, range.head)], range.head);
+                let (lower, higher) = (one.min(other), one.max(other));
+                for row in &rows[first..=last] {
+                    extents.push(match row.cells.get(lower) {
+                        Some(from) => {
+                            let through = higher.min(row.cells.len() - 1);
+                            (from.0, row.cells[through].1)
+                        }
+                        None => (row.content, row.content),
+                    });
+                }
+            }
+        }
+    }
+    // Extents merge as exclusive ranges do.
+    merged_pairwise(Shape::Exclusive, &extents)
+}
+
+#[test]
+fn extents_agree_with_a_reference_on_a_string() {
+    check(
+        1024,
+        (initial_text_to_walk(), parts(5, usize::MAX)),
+        |(string, mut parts)| {
+            for (anchor, head) in &mut parts.ranges {
+                *anchor = floor(&string, *anchor % (string.len() + 1));
+                *head = floor(&string, *head % (string.len() + 1));
+            }
+            let selection = parts.selection();
+            let snapshot = Text::from(string.as_str()).snapshot();
+
+            let extents = snapshot.extents(&selection);
+
+            let Some(extents) = extents else {
+                return Err(TestCaseError::fail("a selection that fits has no extents"));
+            };
+            let extents: Vec<_> = extents
+                .into_iter()
+                .map(|extent| (extent.start, extent.end))
+                .collect();
+            prop_assert_eq!(&extents, &covered(&string, &selection));
+            for (index, &(start, end)) in extents.iter().enumerate() {
+                // Two positions in order.
+                prop_assert!(start <= end);
+                prop_assert!(string.is_char_boundary(start) && string.is_char_boundary(end));
+                // Sorted, and no two overlap.
+                if let Some(&next) = extents.get(index + 1) {
+                    prop_assert!((start, end) <= next);
+                    prop_assert!(!overlap(Shape::Exclusive, (start, end), next));
+                }
+            }
+            Ok(())
+        },
+    );
+}
+
+#[test]
+fn a_selection_that_does_not_fit_has_no_extents() {
+    check(
+        512,
+        (short_text(12), parts(4, usize::MAX)),
+        |(string, mut parts)| {
+            for (anchor, head) in &mut parts.ranges {
+                *anchor %= string.len() + 3;
+                *head %= string.len() + 3;
+            }
+            let selection = parts.selection();
+            let fits = selection.ranges().iter().all(|range| {
+                string.is_char_boundary(range.anchor) && string.is_char_boundary(range.head)
+            });
+
+            let extents = Text::from(string.as_str()).snapshot().extents(&selection);
+
+            prop_assert_eq!(extents.is_some(), fits);
             Ok(())
         },
     );

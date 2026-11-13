@@ -106,6 +106,23 @@
 //!   points the way the primary did if the primary is in it, and otherwise
 //!   the way its first range did. The primary is the range the one given
 //!   as primary ended in.
+//! - **A cell** is the unit a cursor is on: one character, or a carriage
+//!   return and the line feed after it together. A character is a Unicode
+//!   scalar value, not an extended grapheme cluster. The private module
+//!   `cell` is the one place that says so.
+//! - **What a selection covers** is computed against a text
+//!   ([`Snapshot::extents`]): the ends of a range say where two cursors
+//!   are, and the shape says what is selected between them. An exclusive
+//!   range covers from its lower end up to its higher; an inclusive one
+//!   through the cell at its higher end; a line-wise one the whole rows of
+//!   both ends, through the last one's line feed; a block, on each of its
+//!   rows, the columns between its corners, counted in cells and cut off
+//!   at the row's content. The table is on the method. So a cursor on a
+//!   character is an inclusive range with equal ends: on the last
+//!   character of a line it covers that character and not the line break,
+//!   on an empty line it covers the line break, and at the end of the text
+//!   it covers nothing. No end is clamped: keeping a cursor off a line
+//!   break is the editor's rule.
 //! - **An origin** ([`Origin`]) says who made an edit. It is an opaque
 //!   number given when a transaction is applied, not part of the
 //!   transaction. The crate keeps it in the transaction's log entry
@@ -179,9 +196,13 @@
 //!   is how a language server counts. The library can count it beside this
 //!   one without the stored text changing.
 //! - Composing transactions.
-//! - What a selection covers, and undo.
+//! - Undo.
 //! - A bound on how many markers a text holds, and a marker that a
 //!   transaction sets to its selection after.
+//! - Extended grapheme clusters as the cell: a letter and a combining mark
+//!   after it are two cells here.
+//! - A block's columns counted by display width (tab stops, wide
+//!   characters), and a block that runs to the end of every row.
 //! - Rebasing a transaction built for an older revision: the log keeps no
 //!   text, so it cannot supply the change sets to rebase through.
 //! - Points in UTF-16 in an edit. A client that speaks them converts with
@@ -202,10 +223,15 @@
 //! | A rule about what bytes a text loads from or saves as | The private module `bytes` | Its unit tests on named byte strings, and the byte properties in `tests/properties/` |
 //! | A bound on what an operation costs, the log's growth included | `tests/snapshot_cost.rs`, as a count of bytes allocated | Itself |
 //! | Something more of the rope library | A method of the private `rope::Rope`, in this crate's terms | The tests of the read that needs it |
+//! | Another shape of selection | A variant of [`Shape`], with its overlap rule and its biases in `selection`, and what it covers in `extent` | The unit tests of both, and the properties in `tests/properties/selections.rs`, whose generator and reference gain the shape |
+//! | Another kind of marker | A variant of [`Marker`], with its check in [`Text::mark`] and its ends in the private `marker::Markers` | The unit tests of `text`, and a property in `tests/properties/anchors.rs` that compares it with mapping it by hand |
+//! | A change to what a cell is | The private module `cell`, and nowhere else | Its unit tests, and `extents_agree_with_a_reference_on_a_string`, whose reference changes with it |
 
 mod anchor;
 mod bytes;
+mod cell;
 mod change;
+mod extent;
 mod log;
 mod marker;
 mod patch;
