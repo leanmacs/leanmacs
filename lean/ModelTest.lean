@@ -3969,6 +3969,15 @@ def keyNotationChecks : List Check :=
             refusesKey "<Escape" "<Escape" &&
             refusesKey "<>" "<>" &&
             refusesKey "S-SPC" "S-SPC") },
+    { name :=
+        "a name in angle brackets that is not letters and digits is refused, naming the stroke: a modifier prefix inside the brackets, an underscore"
+      run := pure (refusesKey "<C-x>" "<C-x>" && refusesKey "x <a_b>" "<a_b>") },
+    { name :=
+        "a letter that is no modifier's is not a prefix: the stroke it begins is refused, naming it, and it is the minus key's stroke that stays a key"
+      run :=
+        pure
+          (refusesKey "X-a" "X-a" && refusesKey "C-X-a" "C-X-a" && refusesKey "c-x" "c-x" &&
+            parses "C-- X" [controlKey "-", charKey "X"]) },
     { name := "the keys a key string names are chords"
       run :=
         pure <|
@@ -4209,6 +4218,52 @@ def silent : InputScheme :=
     step := TestScheme.step
     pending := fun _ => [] }
 
+/-- A scheme written for the test that breaks the contract: the test scheme,
+except that an unbound key after a prefix hides the prefix and does not drop
+it. It then reports no pending keys, and the key typed next is still walked
+from the prefix, so the input typed next does not yield what it yields from
+the initial state. Its state is the test scheme's, and whether its pending
+keys are hidden. -/
+def masking : InputScheme :=
+  { State := TestScheme.State × Bool
+    Binding := Invocation
+    init := ({}, false)
+    step := fun maps view state key =>
+      match TestScheme.step maps view state.1 key with
+      | (next, some invocation) => ((next, false), some invocation)
+      | (next, none) =>
+        if !state.1.pending.isEmpty && next.pending.isEmpty && !state.2 then ((state.1, true), none)
+        else ((next, false), none)
+    pending := fun state => if state.2 then [] else state.1.pending }
+
+/-- A scheme written for the test that breaks the contract: the test scheme,
+except that an unbound key after a prefix yields an invocation. -/
+def noisy : InputScheme :=
+  { State := TestScheme.State
+    Binding := Invocation
+    init := {}
+    step := fun maps view state key =>
+      match TestScheme.step maps view state key with
+      | (next, some invocation) => (next, some invocation)
+      | (next, none) =>
+        if !state.pending.isEmpty && next.pending.isEmpty then (next, some (invoke "noise"))
+        else (next, none)
+    pending := (·.pending) }
+
+/-- A scheme written for the test that breaks the contract: the test scheme,
+except that after a key that yields an invocation it reports the keys of the
+input just completed as pending. Its state is the test scheme's, and the
+keys it reports. -/
+def lingering : InputScheme :=
+  { State := TestScheme.State × List Key
+    Binding := Invocation
+    init := ({}, [])
+    step := fun maps view state key =>
+      match TestScheme.step maps view state.1 key with
+      | (next, some invocation) => ((next, state.1.pending ++ [key.chord]), some invocation)
+      | (next, none) => ((next, next.pending), none)
+    pending := (·.2) }
+
 /-- The subject the scheme contract is run on: `scheme` over the scheme
 checks' keymaps for view 0, the sequences those bind, and a key none of
 them goes on with. -/
@@ -4262,7 +4317,31 @@ def schemeContractChecks : List Check :=
         let subject :=
           { subjectOf TestScheme.scheme schemeMaps with
             sequences := [keys "C-x C-s", keys "C-x <Escape>"] }
-        pure (failsOnly subject [SchemeContract.completeEmits]) }]
+        pure (failsOnly subject [SchemeContract.completeEmits]) },
+    { name :=
+        "the scheme contract reports a scheme that reports no pending keys after an unbound key and keeps the prefix, so that the input typed next yields something else"
+      run :=
+        let subject := subjectOf masking schemeMaps
+        let (state, yields) := subject.feed (keys "C-x z")
+        pure
+          (failsOnly subject [SchemeContract.unboundResets] && yields == [none, none] &&
+            (subject.scheme.pending state).isEmpty) },
+    { name :=
+        "the scheme contract reports a scheme that yields an invocation on an unbound key after a prefix"
+      run :=
+        let subject := subjectOf noisy schemeMaps
+        let (state, _) := subject.feed (keys "C-x z")
+        pure
+          (failsOnly subject [SchemeContract.unboundResets] &&
+            (subject.scheme.pending state).isEmpty &&
+            (subject.feedFrom state (keys "C-x C-s")).2 == (subject.feed (keys "C-x C-s")).2) },
+    { name :=
+        "the scheme contract reports a scheme that still reports pending keys after the key that completes an input"
+      run :=
+        let subject := subjectOf lingering schemeMaps
+        pure
+          (failsOnly subject [SchemeContract.completeEmits] &&
+            (subject.feed (keys "C-x C-s")).2.getLast? == some (some (invoke "save"))) }]
 
 /-- Every check, in the order they run.
 
