@@ -67,8 +67,10 @@ pub(crate) struct Walker<'a, S: Shaper> {
     pub shaper: &'a S,
     /// The text's wrap layer.
     pub wrap: &'a mut WrapLayer<S::Shaped>,
-    /// The spans in another font, by absolute bytes, in order.
-    pub fonts: &'a [(Range<usize>, FontId)],
+    /// The spans of a segment's bytes (absolute) in another font, by
+    /// absolute bytes, later over earlier; asked only for the segments the
+    /// walker lays out.
+    pub fonts: &'a dyn Fn(Range<usize>) -> Vec<(Range<usize>, FontId)>,
     /// Told how each segment was got.
     pub outcome: &'a mut dyn FnMut(Outcome),
 }
@@ -81,13 +83,12 @@ impl<S: Shaper> Walker<'_, S> {
 
     /// `row`'s `segment`, laid out.
     pub fn entry(&mut self, row: usize, segment: usize) -> Option<Arc<LineEntry<S::Shaped>>> {
-        let fonts = if self.fonts.is_empty() {
-            Vec::new()
-        } else {
+        let fonts = {
             let snapshot = self.wrap.tabs().buffer();
             let content = row_content(snapshot, row)?;
             let bytes = segment_range(snapshot, &content, segment)?;
-            relative_spans(self.fonts, &bytes)
+            let spans = (self.fonts)(bytes.clone());
+            relative_spans(&spans, &bytes)
         };
         let (entry, outcome) = self.wrap.entry(self.shaper, row, segment, &fonts)?;
         (self.outcome)(outcome);
@@ -200,6 +201,10 @@ impl<S: Shaper> Walker<'_, S> {
             }
             used += tall;
             rows.push(visual);
+            // A view filled exactly lays out no row past it.
+            if used >= height {
+                break;
+            }
             match self.next(visual) {
                 Some(next) => visual = next,
                 None => break,

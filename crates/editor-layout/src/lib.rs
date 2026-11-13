@@ -1,5 +1,5 @@
-//! Layout: from a published scene to a frame, and the layout queries the
-//! editor asks in the same call.
+//! Layout: from a published scene ([`scene`]) to a frame ([`frame`]), and
+//! the layout queries the editor asks in the same call ([`query`]).
 //!
 //! The crate is pure: it does no I/O, reads no clock and starts no thread.
 //! It measures text only through the [`shaper::Shaper`] port it defines,
@@ -24,21 +24,29 @@
 //!   ([`decoration`]);
 //! - the rows a view shows and where a move goes, with its goal x
 //!   ([`query`]);
+//! - the frame: rows from a view's anchor stacked by height, cursor and
+//!   selection geometry, content hashes that a cursor move leaves alone,
+//!   decorations asked for the rows shown only ([`frame`]), and the fixture
+//!   frame checked in at `tests/display/frame.expected`
+//!   (`tests/frame_fixture.rs`);
 //! - the round trip of a position through the layers (`tests/layers.rs`).
 //!
 //! The adapter-neutral rules of shaping are [`shaper::contract`]'s, which
 //! every real adapter runs. No crate downstream pins the fake's geometry.
 
 pub mod decoration;
+pub mod frame;
 pub mod layer;
 pub mod line;
 pub mod query;
+pub mod scene;
 pub mod shaper;
 pub mod tabs;
 pub mod wrap;
 
 use editor_text::Snapshot;
 
+use crate::decoration::{FaceTable, SELECTION_FACE};
 use crate::query::{Moved, QueryError, RowRange, Walker};
 use crate::shaper::Shaper;
 use crate::tabs::{DEFAULT_TAB_WIDTH, TabSnapshot};
@@ -50,16 +58,33 @@ pub struct Layout<S: Shaper> {
     shaper: S,
     /// The tab width, in columns.
     tab_width: usize,
+    /// The faces named so far.
+    faces: FaceTable,
 }
 
 impl<S: Shaper> Layout<S> {
     /// A layout measuring with `shaper`, with tabs [`DEFAULT_TAB_WIDTH`]
     /// columns wide.
     pub fn new(shaper: S) -> Self {
+        let mut faces = FaceTable::default();
+        faces.intern(SELECTION_FACE);
         Self {
             shaper,
             tab_width: DEFAULT_TAB_WIDTH,
+            faces,
         }
+    }
+
+    /// The faces named so far: the selection face first, then each in the
+    /// order a scene first named it.
+    pub fn faces(&self) -> &FaceTable {
+        &self.faces
+    }
+
+    /// The faces, to set a face's font in a test until faces resolve to
+    /// fonts (phase 2).
+    pub fn faces_mut(&mut self) -> &mut FaceTable {
+        &mut self.faces
     }
 
     /// The shaper.
@@ -81,7 +106,7 @@ impl<S: Shaper> Layout<S> {
         let mut walker = Walker {
             shaper: &self.shaper,
             wrap: &mut wrap,
-            fonts: &[],
+            fonts: &|_| Vec::new(),
             outcome: &mut |_| {},
         };
         let rows = walker.rows_shown(height, anchor)?;
@@ -108,7 +133,7 @@ impl<S: Shaper> Layout<S> {
         Walker {
             shaper: &self.shaper,
             wrap: &mut wrap,
-            fonts: &[],
+            fonts: &|_| Vec::new(),
             outcome: &mut |_| {},
         }
         .lines_from(position, lines, goal)

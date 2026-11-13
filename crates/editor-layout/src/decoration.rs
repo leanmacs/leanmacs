@@ -87,6 +87,11 @@ impl FaceTable {
         self.fonts.insert(id, font);
     }
 
+    /// Whether any face resolves to a font other than the default.
+    pub fn has_fonts(&self) -> bool {
+        !self.fonts.is_empty()
+    }
+
     /// The font a run covered by `faces` is shaped in: that of the first
     /// face that names one, the default font when none does. Phase 2's
     /// merge of faces replaces this rule.
