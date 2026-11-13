@@ -683,6 +683,86 @@ mod tests {
         );
     }
 
+    /// The area at `x` and `y`, `width` across and `height` down.
+    fn area(x: f32, y: f32, width: f32, height: f32) -> Area {
+        Area {
+            x,
+            y,
+            width,
+            height,
+        }
+    }
+
+    #[test]
+    fn a_selection_across_wrapped_rows_has_an_area_on_each() {
+        let mut layout = layout();
+        // At four columns the rows are abcd, efgh and ij. From c to j:
+        // the rest of the first row, the whole of the second, which is a
+        // continuation, and the first glyph of the third.
+        let text = "abcdefgh\nij";
+        let across = frame(&mut layout, view(text, 4, 64, 0, &[(2, 10)]));
+        assert_eq!(
+            across.selections,
+            vec![
+                area(20.0, 0.0, 20.0, 16.0),
+                area(0.0, 16.0, 40.0, 16.0),
+                area(0.0, 32.0, 10.0, 16.0),
+            ]
+        );
+        // Inside a continuation row, an area starts at its first glyph's x
+        // on that row: f is the second glyph of efgh.
+        let inside = frame(&mut layout, view(text, 4, 64, 0, &[(5, 7)]));
+        assert_eq!(inside.selections, vec![area(10.0, 16.0, 20.0, 16.0)]);
+        // An area is as tall as its row and starts at its top: with the
+        // second row 32 tall, the third row's area is 48 down.
+        let mut tall = view(text, 4, 64, 0, &[(6, 10)]);
+        tall.decorations = vec![Decoration {
+            start: 4,
+            stop: 5,
+            face: "tall".to_owned(),
+        }];
+        assert_eq!(
+            frame(&mut layout, tall).selections,
+            vec![area(20.0, 16.0, 20.0, 32.0), area(0.0, 48.0, 10.0, 16.0)]
+        );
+        // Scrolled, areas are from the first row shown, and a row above
+        // the view has none.
+        let scrolled = frame(&mut layout, view(text, 4, 64, 4, &[(2, 10)]));
+        assert_eq!(
+            scrolled.selections,
+            vec![area(0.0, 0.0, 40.0, 16.0), area(0.0, 16.0, 10.0, 16.0)]
+        );
+    }
+
+    #[test]
+    fn a_selected_tab_is_as_wide_as_the_spaces_of_it_each_row_draws() {
+        let mut layout = layout();
+        // Tabs are 8 columns wide. Unwrapped, the tab of "a\tb" is columns
+        // 1 to 8.
+        let whole = frame(&mut layout, view("a\tb", 12, 64, 0, &[(1, 2)]));
+        assert_eq!(whole.selections, vec![area(10.0, 0.0, 70.0, 16.0)]);
+        // At four columns the tab of "\tgh" is two rows of spaces; the
+        // second would hold no position and is no row, so the rows are
+        // abcd, ef, four spaces, gh and ij. From c to i, the tab is
+        // selected over the four spaces drawn.
+        let wrapped = frame(&mut layout, view("abcdef\n\tgh\nij", 4, 160, 0, &[(2, 12)]));
+        let bytes: Vec<Range<usize>> = wrapped.rows.iter().map(|row| row.bytes.clone()).collect();
+        assert_eq!(bytes, vec![0..4, 4..6, 7..8, 8..10, 11..13]);
+        assert_eq!(
+            wrapped.selections,
+            vec![
+                area(20.0, 0.0, 20.0, 16.0),
+                area(0.0, 16.0, 20.0, 16.0),
+                area(0.0, 32.0, 40.0, 16.0),
+                area(0.0, 48.0, 20.0, 16.0),
+                area(0.0, 64.0, 10.0, 16.0),
+            ]
+        );
+        let selection = layout.faces_mut().intern(SELECTION_FACE);
+        assert_eq!(wrapped.rows[2].runs, vec![(0..4, vec![selection])]);
+        assert_eq!(wrapped.rows[3].runs, vec![(0..2, vec![selection])]);
+    }
+
     #[test]
     fn a_cursor_move_keeps_every_row_hash() {
         let mut layout = layout();
