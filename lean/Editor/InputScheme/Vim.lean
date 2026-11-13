@@ -133,6 +133,20 @@ A Vim state (normal, insert, a visual state) is a record in a registry
   keyboard. A key for another view goes on with it, and is looked up in the
   keymaps of its own view and that view's state.
 
+## The visual selection
+
+The selection is not in the scheme's state: it is the view's selection in
+the text store, and the scheme holds only which Vim state the view is in.
+
+- **A state's record says whether operators act on the selection**
+  (`StateRecord.operatesOnSelection`). In such a state an operator key
+  completes an edit at once, over `Over.selection`, with the count and the
+  register typed before it, and waits for no motion.
+- **An edit over the selection ends it**: the view enters the state the
+  operator names, or the initial state when it names none.
+- **A motion in such a state is the same move as anywhere.** That it
+  extends the selection is the command's, when the edit runs.
+
 ## Where an addition goes
 
 | Addition | Where |
@@ -390,12 +404,12 @@ private def State.enter (states : States) (state : State) (view : ViewId) (name 
     current := if entered == states.initial.name then others else others ++ [(view, entered)] }
 
 /-- The edit begun, completed as `edit` by a key for `view`: the edit begun
-is dropped, and the view enters the Vim state the edit names, if it names
-one. -/
-private def State.finish (states : States) (view : ViewId) (state : State) (edit : Edit) :
-    State × Parsed :=
+is dropped, and the view enters the Vim state `enters`, if it is one: the
+state the edit names, unless the caller says another. -/
+private def State.finish (states : States) (view : ViewId) (state : State) (edit : Edit)
+    (enters : Option String := edit.enters) : State × Parsed :=
   let next := state.reset
-  match edit.enters with
+  match enters with
   | some name => (next.enter states view name, .edit edit)
   | none => (next, .edit edit)
 
@@ -421,10 +435,16 @@ private def State.reached (states : States) (view : ViewId) (state : State) (typ
           (.operate waiting .lines (some (state.count.getD 1)) state.register)
       else (state.reset, .nothing)
     | none =>
-      ({ state with
-          typed, multiplier := state.count, digits := none, operator := some operator,
-          walked := [] },
-        .nothing)
+      if (state.record states view).operatesOnSelection then
+        -- The edit ends the selection, so the view leaves the state: for
+        -- the one the operator names, or else the initial state.
+        state.finish states view (.operate operator .selection state.count state.register)
+          (some (operator.enters.getD states.initial.name))
+      else
+        ({ state with
+            typed, multiplier := state.count, digits := none, operator := some operator,
+            walked := [] },
+          .nothing)
   | .command command =>
     match state.operator with
     | some _ => (state.reset, .nothing)

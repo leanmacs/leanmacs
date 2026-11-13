@@ -5044,7 +5044,39 @@ def vimStateChecks : List Check :=
       run :=
         let (inserting, _) := vimFed "i"
         let (state, _) := vimFedFrom inserting "a b"
-        pure (decide (state = inserting) && state.typed == []) }]
+        pure (decide (state = inserting) && state.typed == []) },
+    { name :=
+        "in a state where operators act on the selection an operator yields its edit over the selection at once, waiting for no motion, and the view is then in the initial state"
+      run :=
+        let (state, yields) := vimFed "v d"
+        pure
+          (yields == [some (vimRun "visual"), some (vimOperate "delete" "selection" "")] &&
+            (vimParsed "v d").2.getLast? ==
+              some (.edit (.operate vimDelete .selection none none)) &&
+            decide (state = vimInit) &&
+            (vimFed "v d w").2.getLast? == some (some (vimMove "word"))) },
+    { name :=
+        "an operator over the selection that names a state leaves the view in that state, and one that names none in the initial state"
+      run :=
+        pure
+          ((vimFed "v c").1.current == [(⟨0⟩, "insert")] &&
+            (vimFed "v c").2.getLast? == some (some (vimOperate "change" "selection" "")) &&
+            (vimFed "v y").1.current == [] &&
+            (vimFed "v y").2.getLast? == some (some (vimOperate "yank" "selection" ""))) },
+    { name :=
+        "a count and a register typed before an operator over the selection are carried by its edit"
+      run :=
+        pure
+          ((vimFed "v 2 \" a d").2 ==
+            [some (vimRun "visual"), none, none, none,
+              some (vimOperate "delete" "selection" "" 2 "a")]) },
+    { name :=
+        "in a state where operators act on the selection a motion is still a move, and the view stays in the state"
+      run :=
+        let (state, yields) := vimFed "v 2 w"
+        pure
+          (yields == [some (vimRun "visual"), none, some (vimMove "word" 2)] &&
+            state.current == [(⟨0⟩, "visual")]) }]
 
 /-- The checks that the Vim scheme keeps the scheme contract
 (`Editor/InputScheme/Contract.lean`). -/
