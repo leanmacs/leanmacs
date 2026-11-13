@@ -24,8 +24,11 @@
 //!   second apart that the ground sets.
 //! - **A rename replaces.** After one the new name reads the file and the
 //!   old name is gone; the file keeps its permissions, as the ground reads
-//!   them; renaming nothing is refused as not found and the target is as it
-//!   was.
+//!   them, and **its stamp**: the stat of the new name says the
+//!   modification time, which the ground set to an instant in the past, and
+//!   the size that the stat of the old name said before the rename. A save
+//!   returns the stamp it took of its temporary file, so it relies on this.
+//!   Renaming nothing is refused as not found and the target is as it was.
 //! - **A directory.** Its stat says it is one, and reading it is refused as
 //!   [`FsErrorKind::NotAFile`].
 //! - **Links.** A link resolves to the file it names and a file to itself;
@@ -135,6 +138,10 @@ pub enum Violation {
     /// A renamed file did not keep its permissions, as the ground reads
     /// them.
     RenameChangedPermissions,
+    /// A renamed file did not keep its stamp: the stat of its new name did
+    /// not say the modification time and the size the stat of its old name
+    /// said before the rename.
+    RenameChangedTheStamp,
     /// Renaming nothing was not refused as not found, or changed the
     /// target.
     RenameOfNothing,
@@ -205,6 +212,9 @@ impl fmt::Display for Violation {
             Self::RenameLostTheFile => "after a rename the new name did not read the file",
             Self::RenameLeftTheOldName => "after a rename the old name still held something",
             Self::RenameChangedPermissions => "a renamed file did not keep its permissions",
+            Self::RenameChangedTheStamp => {
+                "a renamed file did not keep its modification time and its size"
+            }
             Self::RenameOfNothing => {
                 "renaming nothing was not refused as not found, or changed the target"
             }
@@ -408,7 +418,8 @@ fn modified(fs: &dyn Fs, ground: &dyn Ground, file: &Path) -> Result<(), Violati
 }
 
 /// After a rename the new name reads the file, the old name is gone and
-/// the file has kept its permissions; renaming nothing is refused.
+/// the file has kept its permissions and its stamp; renaming nothing is
+/// refused.
 fn a_rename_replaces(fs: &dyn Fs, ground: &dyn Ground, root: &Path) -> Result<(), Violation> {
     let (from, to) = (root.join("from"), root.join("to"));
     let kept = Permissions::new(0o640);
@@ -420,6 +431,15 @@ fn a_rename_replaces(fs: &dyn Fs, ground: &dyn Ground, root: &Path) -> Result<()
         "writing a new file",
         write(fs, &to, &[b"old"], Some(Permissions::new(0o600))),
     )?;
+    // An instant in the past, so that a rename that stamps the file with
+    // the time it was renamed at cannot land on it.
+    let written_at = Modified {
+        seconds: 1_000_000_007,
+        nanoseconds: 0,
+    };
+    grounded(ground.set_modified(&from, written_at))?;
+    let stamp = |stat: Option<super::Stat>| stat.map(|stat| (stat.modified, stat.size));
+    let before = stamp(must("the stat of a file", fs.stat(&from))?);
     must("renaming a file over a file", fs.rename(&from, &to))?;
     if !reads(fs, &to, b"new")? {
         return Err(Violation::RenameLostTheFile);
@@ -429,6 +449,10 @@ fn a_rename_replaces(fs: &dyn Fs, ground: &dyn Ground, root: &Path) -> Result<()
     }
     if grounded(ground.permissions(&to))? != kept {
         return Err(Violation::RenameChangedPermissions);
+    }
+    let after = stamp(must("the stat of a renamed file", fs.stat(&to))?);
+    if before.is_none() || after != before {
+        return Err(Violation::RenameChangedTheStamp);
     }
     let of_nothing = fs.rename(&root.join("missing"), &to);
     if !refused_as(&of_nothing, FsErrorKind::NotFound) || !reads(fs, &to, b"new")? {
@@ -551,6 +575,8 @@ mod tests {
         StatsTheWrongSize,
         /// A rename leaves the file at its old name too.
         RenameLeavesTheOldName,
+        /// A rename stamps the file as modified when it was renamed.
+        RenameRestamps,
         /// A resolve answers the path it was given.
         ResolveIgnoresLinks,
         /// A link that names nothing is read as no link.
@@ -666,6 +692,14 @@ mod tests {
             self.inner.rename(from, to)?;
             if let (Fault::RenameLeavesTheOldName, Some(kept)) = (self.fault, kept) {
                 self.inner.file(from, &kept);
+            }
+            if self.fault == Fault::RenameRestamps {
+                // An instant no file of the check was written or set at.
+                let renamed_at = Modified {
+                    seconds: 2_000_000_000,
+                    nanoseconds: 0,
+                };
+                self.inner.set_modified(to, renamed_at);
             }
             Ok(())
         }
@@ -797,6 +831,14 @@ mod tests {
         assert_eq!(
             verdict_on(Fault::RenameLeavesTheOldName),
             Err(Violation::RenameLeftTheOldName)
+        );
+    }
+
+    #[test]
+    fn a_rename_that_stamps_the_file_as_modified_then_is_refused() {
+        assert_eq!(
+            verdict_on(Fault::RenameRestamps),
+            Err(Violation::RenameChangedTheStamp)
         );
     }
 
@@ -964,6 +1006,10 @@ mod tests {
             (
                 Violation::RenameChangedPermissions,
                 "a renamed file did not keep its permissions",
+            ),
+            (
+                Violation::RenameChangedTheStamp,
+                "a renamed file did not keep its modification time and its size",
             ),
             (
                 Violation::RenameOfNothing,

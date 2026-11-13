@@ -458,8 +458,9 @@ fn loading_a_megabyte_with_invalid_bytes_allocates_under_six_megabytes() {
 }
 
 /// A file system that counts the bytes it is given to write and keeps none
-/// of them. It holds no file until one is renamed into place; after that
-/// its one file is as long as what was written.
+/// of them. It holds no file at [`FILE`] until one is renamed into place,
+/// and none at any other path, which is where a save's temporary file is,
+/// until one is written; a file it holds is as long as what was written.
 ///
 /// The cost of a save is counted on this and not on the published fake:
 /// the fake keeps every byte it is written, so through it the count would
@@ -469,13 +470,20 @@ fn loading_a_megabyte_with_invalid_bytes_allocates_under_six_megabytes() {
 struct Discard {
     /// How many bytes it was given to write.
     written: AtomicU64,
+    /// Whether a file has been written, at a path that is not [`FILE`].
+    made: AtomicBool,
     /// Whether a file has been renamed into place.
     renamed: AtomicBool,
 }
 
 impl Fs for Discard {
-    fn stat(&self, _: &Path) -> Result<Option<Stat>, FsError> {
-        Ok(self.renamed.load(Ordering::SeqCst).then(|| Stat {
+    fn stat(&self, path: &Path) -> Result<Option<Stat>, FsError> {
+        let there = if path == Path::new(FILE) {
+            &self.renamed
+        } else {
+            &self.made
+        };
+        Ok(there.load(Ordering::SeqCst).then(|| Stat {
             kind: Kind::File,
             size: self.written.load(Ordering::SeqCst),
             modified: Modified::default(),
@@ -496,6 +504,7 @@ impl Fs for Discard {
         for piece in pieces {
             self.written.fetch_add(piece.len() as u64, Ordering::SeqCst);
         }
+        self.made.store(true, Ordering::SeqCst);
         Ok(())
     }
 

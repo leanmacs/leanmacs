@@ -75,20 +75,35 @@
 //!    [`TEMPORARY_NAMES`] names, then [`SaveError::NoTemporaryName`].
 //! 5. If the caller says the save is cancelled, it stops
 //!    ([`SaveError::Cancelled`]).
-//! 6. The target's stat is taken again and checked again: a change made
+//! 6. The temporary file's stat is taken: its stamp is the one the save
+//!    returns, for the next save to expect (below).
+//! 7. The target's stat is taken again and checked again: a change made
 //!    while the temporary file was being written is caught.
-//! 7. The temporary file is renamed over the target.
-//! 8. The target's stat is taken: its stamp is returned, for the next save
-//!    to expect.
+//! 8. The temporary file is renamed over the target. Nothing is asked of
+//!    the file system after that.
 //!
 //! - **A crash never leaves a half-written file.** The target is only ever
 //!   replaced by a rename of a file that is whole and on disk (the port's
 //!   `write` has it there before it returns). A crash before the rename
 //!   leaves the old file and perhaps a temporary one; after it, the new
 //!   file.
-//! - **A failure at any step from 4 to 7 removes the temporary file** and
+//! - **A failure at any step from 4 to 8 removes the temporary file** and
 //!   leaves the target as it was. A failure to remove it is ignored: the
 //!   save says why it failed, not why its tidying up did.
+//! - **The stamp returned is the temporary file's, taken before the
+//!   rename.** A rename keeps a file's modification time and its size,
+//!   which the port's contract holds every implementation to, so that
+//!   stamp is the stamp of exactly what this save wrote. It is not read
+//!   from the target once the file is in place: another program that
+//!   writes the file just after the rename would have its stamp handed
+//!   back as this save's, and the next save, expecting it, would overwrite
+//!   that program's file unnoticed. As it is, the next save finds the file
+//!   changed.
+//! - **A save that is refused has not replaced the file.** The rename is
+//!   the last thing asked, so there is no refusal after it, and no state in
+//!   which the file is replaced and the caller is told it was not. A
+//!   temporary file that is no longer there when its stat is taken refuses
+//!   the save ([`SaveError::Fs`], in this crate's words).
 //! - **Kept**: the nine permission bits the target had at step 3; a new
 //!   file is written with none named, so it gets the platform's default.
 //!   And every byte: nothing is translated, so line endings are as the text
@@ -133,7 +148,9 @@
 //!   whatever, or load again.
 //! - **When**: twice in each save. Before anything is written, so a refusal
 //!   costs one stat; and again just before the rename. The window left is
-//!   between that stat and the rename.
+//!   between that stat and the rename. There is none after the rename: the
+//!   stamp returned was taken of the temporary file, so a change made once
+//!   the file is in place is found by the next save.
 //! - **Not otherwise.** Nothing here polls or watches: a change is noticed
 //!   when a save is asked for.
 //! - **What is not seen**: a change that keeps the size and lands in the
@@ -413,10 +430,7 @@ pub enum SaveError {
     /// links without reaching a file or a place for one.
     NotAFile,
     /// The file is not as the caller expected ([`Expect`]): it changed on
-    /// disk, appeared, or is gone. Nothing was written over it. It is also
-    /// what a save says, with no stamp found, when the file was gone again
-    /// once it had been renamed into place: there is then no stamp to hand
-    /// back.
+    /// disk, appeared, or is gone. Nothing was written over it.
     Changed {
         /// The stamp of the file there now, or none when there is no file.
         found: Option<Stamp>,
@@ -426,8 +440,11 @@ pub enum SaveError {
     NoTemporaryName,
     /// The caller cancelled the save before the file was replaced.
     Cancelled,
-    /// The file system refused. If it refused the stat that follows the
-    /// rename, the file has been replaced; otherwise it is as it was.
+    /// The file system refused, and the file is as it was: the rename is
+    /// the last thing a save asks, so no refusal comes after the file is
+    /// replaced. It is also what a save says, as [`FsErrorKind::Other`] and
+    /// in this crate's words, when its temporary file was no longer there
+    /// to be renamed.
     Fs(FsError),
 }
 
@@ -481,18 +498,14 @@ pub fn save(
     let permissions = expected(fs, &target, expect)?;
     let temporary = write_temporary(fs, directory, name, snapshot, permissions)?;
     // From here on a failure takes the temporary file away, and the target
-    // is as it was until the rename.
+    // is as it was: the rename is the last thing asked of the file system,
+    // so a save that is refused has not replaced the file.
     let replaced = replace(fs, &temporary, &target, expect, cancelled);
     if replaced.is_err() {
         // Its own failure is ignored: the save says why it failed.
         let _ = fs.remove(&temporary);
     }
-    replaced?;
-    match fs.stat(&target) {
-        Ok(Some(stat)) => Ok(Stamp::of(&stat)),
-        Ok(None) => Err(SaveError::Changed { found: None }),
-        Err(error) => Err(SaveError::Fs(error)),
-    }
+    replaced
 }
 
 /// The path of the file a save to `path` replaces, or makes: the file a
@@ -581,21 +594,43 @@ fn write_temporary(
 }
 
 /// Puts the temporary file in place of the target, unless the save was
-/// cancelled or the target is no longer what `expect` says.
+/// cancelled or the target is no longer what `expect` says, and returns the
+/// stamp of the file put there.
+///
+/// The stamp is the temporary file's, taken before the rename: a rename
+/// keeps a file's modification time and its size, which the port's contract
+/// holds an implementation to. So it is the stamp of what this save wrote,
+/// whatever is done to the file once it is in place, and nothing is asked
+/// after the rename that could be refused.
 fn replace(
     fs: &dyn Fs,
     temporary: &Path,
     target: &Path,
     expect: Expect,
     cancelled: &dyn Fn() -> bool,
-) -> Result<(), SaveError> {
+) -> Result<Stamp, SaveError> {
     if cancelled() {
         return Err(SaveError::Cancelled);
     }
+    let written = match fs.stat(temporary).map_err(SaveError::Fs)? {
+        Some(stat) if stat.kind == Kind::File => Stamp::of(&stat),
+        // Taken away, or put aside for something else, since it was
+        // written: there is nothing of this save's to rename.
+        _ => {
+            return Err(SaveError::Fs(FsError::new(
+                FsErrorKind::Other,
+                format!(
+                    "the temporary file {} was not there to be renamed",
+                    temporary.display()
+                ),
+            )));
+        }
+    };
     // Again: writing the temporary file took time, and the file may have
     // changed meanwhile.
     expected(fs, target, expect)?;
-    fs.rename(temporary, target).map_err(SaveError::Fs)
+    fs.rename(temporary, target).map_err(SaveError::Fs)?;
+    Ok(written)
 }
 
 #[cfg(test)]
@@ -989,9 +1024,11 @@ mod tests {
                 Call::Resolve(PATH.into()),
                 Call::Stat(PATH.into()),
                 Call::Write(TEMPORARY.into(), Some(FakeFs::DEFAULT_PERMISSIONS)),
+                // The stamp returned is the temporary file's, taken before
+                // the rename, and the rename is the last thing asked.
+                Call::Stat(TEMPORARY.into()),
                 Call::Stat(PATH.into()),
                 Call::Rename(TEMPORARY.into(), PATH.into()),
-                Call::Stat(PATH.into()),
             ]
         );
         assert_eq!(fs.bytes(PATH).as_deref(), Some(NEW_BYTES));
@@ -999,13 +1036,93 @@ mod tests {
     }
 
     #[test]
+    fn the_stamp_a_save_returns_is_of_the_file_it_wrote_and_not_of_one_written_since() {
+        let fs = fake_with(OLD);
+        // Someone else writes the file as soon as it is in place.
+        fs.after(Op::Rename, |fs| {
+            fs.set_now(LATER);
+            fs.file(PATH, b"someone else's text\n");
+        });
+
+        let saved = save_new(&fs, PATH, Expect::Whatever);
+
+        // The stamp is of what this save wrote, at the time it wrote it.
+        let written = Stamp {
+            modified: THEN,
+            size: size(NEW_BYTES),
+        };
+        assert_eq!(saved, Ok(written));
+        // So the next save, which expects it, finds the other writer's
+        // file and does not overwrite it.
+        assert_eq!(
+            save_new(&fs, PATH, Expect::Unchanged(written)),
+            Err(SaveError::Changed {
+                found: Some(Stamp {
+                    modified: LATER,
+                    size: 20
+                })
+            })
+        );
+        assert_eq!(
+            fs.bytes(PATH).as_deref(),
+            Some(b"someone else's text\n".as_slice())
+        );
+    }
+
+    #[test]
+    fn a_file_taken_away_once_it_was_renamed_into_place_is_noticed_by_the_next_save() {
+        let fs = fake_with(OLD);
+        fs.after(Op::Rename, |fs| fs.take_away(PATH));
+
+        let saved = save_new(&fs, PATH, Expect::Whatever);
+
+        // The save replaced the file and says so, with the stamp of what
+        // it wrote; that the file is gone since is the next save's to find.
+        let written = Stamp {
+            modified: THEN,
+            size: size(NEW_BYTES),
+        };
+        assert_eq!(saved, Ok(written));
+        assert_eq!(
+            save_new(&fs, PATH, Expect::Unchanged(written)),
+            Err(SaveError::Changed { found: None })
+        );
+        assert_eq!(left_over(&fs), Vec::<std::path::PathBuf>::new());
+    }
+
+    #[test]
+    fn a_temporary_file_that_is_not_there_to_be_renamed_refuses_the_save() {
+        let gone: [fn(&FakeFs); 2] = [
+            |fs| fs.take_away(TEMPORARY),
+            // Something else is there in its place.
+            |fs| fs.other(TEMPORARY),
+        ];
+        for change in gone {
+            let fs = fake_with(OLD);
+            fs.after(Op::Write, change);
+
+            let saved = save_new(&fs, PATH, Expect::Whatever);
+
+            assert!(
+                matches!(&saved, Err(SaveError::Fs(error)) if error.kind == FsErrorKind::Other),
+                "{saved:?}"
+            );
+            assert_eq!(fs.bytes(PATH).as_deref(), Some(OLD));
+            assert!(fs.calls().iter().all(|call| call.op() != Op::Rename));
+            assert_eq!(left_over(&fs), Vec::<std::path::PathBuf>::new());
+        }
+    }
+
+    #[test]
     fn a_save_that_fails_at_any_step_leaves_the_file_whole_and_no_temporary_file() {
-        // The calls of a save, in order, as the test above pins them.
+        // The calls of a save, in order, as the test above pins them: every
+        // one of them, so no refusal leaves the file replaced.
         let steps = [
             (Op::Resolve, 0),
             (Op::Stat, 0),
             (Op::Write, 0),
             (Op::Stat, 1),
+            (Op::Stat, 2),
             (Op::Rename, 0),
         ];
         for (op, nth) in steps {
@@ -1028,19 +1145,6 @@ mod tests {
     }
 
     #[test]
-    fn a_failure_of_the_stat_after_the_rename_is_reported_and_the_file_is_the_new_one() {
-        let fs = fake_with(OLD);
-        let error = FsError::new(FsErrorKind::Other, "injected");
-        fail_nth(&fs, Op::Stat, 2, error.clone());
-
-        let saved = save_new(&fs, PATH, Expect::Whatever);
-
-        assert_eq!(saved, Err(SaveError::Fs(error)));
-        assert_eq!(fs.bytes(PATH).as_deref(), Some(NEW_BYTES));
-        assert_eq!(left_over(&fs), Vec::<std::path::PathBuf>::new());
-    }
-
-    #[test]
     fn a_write_cut_short_leaves_the_file_as_it_was_and_no_temporary_file() {
         for cut in [0, 1, 5, NEW_BYTES.len() - 1] {
             let fs = fake_with(OLD);
@@ -1056,18 +1160,6 @@ mod tests {
             assert_eq!(left_over(&fs), Vec::<std::path::PathBuf>::new(), "{cut}");
             assert_eq!(fs.calls().last(), Some(&Call::Remove(TEMPORARY.into())));
         }
-    }
-
-    #[test]
-    fn a_file_gone_once_it_was_renamed_into_place_is_reported_as_changed() {
-        let fs = fake_with(OLD);
-        fs.after(Op::Rename, |fs| fs.take_away(PATH));
-
-        let saved = save_new(&fs, PATH, Expect::Whatever);
-
-        // There is no stamp to hand back for the next save to expect.
-        assert_eq!(saved, Err(SaveError::Changed { found: None }));
-        assert_eq!(left_over(&fs), Vec::<std::path::PathBuf>::new());
     }
 
     #[test]

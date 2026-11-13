@@ -25,7 +25,9 @@
 //! - **`rename`** is `fs::rename`. The directory the file is now in is then
 //!   opened and synced, so the new name is on disk too, and **a failure of
 //!   that sync is ignored**: some file systems cannot sync a directory, and
-//!   the file is whole either way.
+//!   the file is whole either way. The system's rename changes neither the
+//!   file's modification time nor its size, which the port asks and the
+//!   contract checks here on real files.
 //! - **`remove`** is `fs::remove_file`.
 //! - **`resolve`** is `fs::canonicalize`.
 //! - **`read_link`** is `fs::read_link`, which follows nothing and gives

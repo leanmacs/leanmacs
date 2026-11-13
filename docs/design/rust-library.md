@@ -129,8 +129,10 @@ are not built.
   answers are compared with. An implementation whose `write` and `stat`
   agree on permissions the file does not have is refused. What the port
   says of a link to nothing is among the rules: its stat is none, resolving
-  it is refused as not found, and it is read as the path it holds. The
-  check is shown to bite by fourteen fakes written to break one rule each.
+  it is refused as not found, and it is read as the path it holds. So is
+  what a save's stamp rests on: a renamed file keeps its modification time
+  and its size. The check is shown to bite by fifteen fakes written to
+  break one rule each.
 - **The adapter.** `editor-fs-std`, a crate of its own: `StdFs` over
   `std::fs`, Unix only, made by the one constructor `StdFs::system()`. A
   write is `create_new` with the permissions set on the open file, then
@@ -155,9 +157,16 @@ are not built.
   file, check it against what the caller expects, and keep its permissions;
   write a temporary file beside it, `.<name>.<n>.tmp`, passing over a name
   that is taken, for at most 32 names; stop if the caller cancelled; stat
-  and check again; rename; stat for the stamp returned. A failure from the
-  write on removes the temporary file and leaves the target as it was, so a
-  crash never leaves a half-written file. **Kept**: the nine permission
+  the temporary file, for the stamp returned; stat the target and check
+  again; rename. A failure from the write on removes the temporary file and
+  leaves the target as it was, so a crash never leaves a half-written file.
+  **The stamp returned is the temporary file's, taken before the rename**,
+  which keeps a file's modification time and size (a rule of the contract).
+  It is not read from the target afterwards: a program that wrote the file
+  just after the rename would have its stamp returned as the save's, and
+  the next save would overwrite its file unnoticed. The rename is the last
+  thing asked of the file system, so a save that is refused has not
+  replaced the file. **Kept**: the nine permission
   bits, and every byte. **Not kept**, since the file is replaced by a
   rename: other hard links, a foreign owner, the special mode bits, extended
   attributes. A directory that cannot be written refuses the save; there is

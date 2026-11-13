@@ -23,8 +23,10 @@
 //!   link names. It takes pieces so that a caller hands over a rope's
 //!   pieces and never a copy of the text.
 //! - **[`Fs::rename`]** puts the file at one path in place of whatever
-//!   file is at another, in one step, with its permissions; afterwards the
-//!   first path holds nothing.
+//!   file is at another, in one step, with its permissions and **with its
+//!   stamp**: the modification time and the size its stat said before the
+//!   rename are what its stat says after it. Afterwards the first path
+//!   holds nothing.
 //! - **[`Fs::remove`]** removes the file at a path.
 //! - **[`Fs::resolve`]** gives the path of what a path names once every
 //!   link in it is followed, and is refused as [`FsErrorKind::NotFound`]
@@ -117,9 +119,11 @@ pub trait Fs: Send + Sync {
 
     /// Puts the file at `from` in place of whatever file is at `to`, in one
     /// step: at every moment `to` holds the old file whole or the new one
-    /// whole. The file keeps its permissions, and afterwards `from` holds
-    /// nothing. Refused as [`FsErrorKind::NotFound`], changing nothing,
-    /// when nothing is at `from`.
+    /// whole. The file keeps its permissions, its modification time and its
+    /// size, so the stat of `to` afterwards says of them what the stat of
+    /// `from` said before; and afterwards `from` holds nothing. Refused as
+    /// [`FsErrorKind::NotFound`], changing nothing, when nothing is at
+    /// `from`.
     fn rename(&self, from: &Path, to: &Path) -> Result<(), FsError>;
 
     /// Removes the file at `path`. Refused as [`FsErrorKind::NotFound`]
