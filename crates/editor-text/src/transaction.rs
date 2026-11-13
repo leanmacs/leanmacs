@@ -194,4 +194,17 @@ mod tests {
 
         assert_eq!(Transaction::new(changes()).invert(&other), None);
     }
+
+    #[test]
+    fn each_refusal_of_a_transaction_says_which_part_of_it_was_refused() {
+        let bad_change = ApplyError::BadChange.to_string();
+        let bad_selection = ApplyError::BadSelection.to_string();
+
+        // Each names its own part of the transaction, and not the other's.
+        assert!(bad_change.contains("change set"), "{bad_change:?}");
+        assert!(!bad_change.contains("selection"), "{bad_change:?}");
+        assert!(bad_selection.contains("selection"), "{bad_selection:?}");
+        assert!(!bad_selection.contains("change set"), "{bad_selection:?}");
+        assert_ne!(bad_change, bad_selection);
+    }
 }

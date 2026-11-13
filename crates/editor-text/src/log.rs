@@ -1068,6 +1068,20 @@ mod tests {
     }
 
     #[test]
+    fn each_refusal_of_the_log_says_which_it_is() {
+        let unknown = LogError::Unknown.to_string();
+        let forgotten = LogError::Forgotten.to_string();
+
+        // One is about the text, which has not reached the revision, and
+        // the other about the log, which no longer reaches back to it.
+        assert!(unknown.contains("not reached"), "{unknown:?}");
+        assert!(!unknown.contains("log"), "{unknown:?}");
+        assert!(forgotten.contains("log"), "{forgotten:?}");
+        assert!(forgotten.contains("no longer"), "{forgotten:?}");
+        assert_ne!(unknown, forgotten);
+    }
+
+    #[test]
     fn an_origin_gives_back_the_value_it_was_made_with() {
         assert_eq!(Origin::new(7).get(), 7);
         assert_eq!(Origin::new(u64::MAX).get(), u64::MAX);
