@@ -420,6 +420,27 @@ fn a_scene_published_through_c_is_laid_out_as_layout_lays_it_out() {
     }
 }
 
+/// The scene of one view, numbered 1, of `text` from its start, `width`
+/// pixels across and `height` down, and nothing else: what a `WireScene` of
+/// one `WireView` with only its id, its rectangle and its snapshot set
+/// resolves to. As layout takes it, to lay out with `Layout` itself.
+fn plain_scene_directly(text: &str, width: u32, height: u32) -> Scene {
+    Scene {
+        views: vec![View {
+            id: ViewId(1),
+            rect: Rect {
+                x: 0,
+                y: 0,
+                width,
+                height,
+            },
+            text: Some(TextRef::fixed(TextKey(0), Text::from(text).snapshot())),
+            ..View::default()
+        }],
+        ..Scene::default()
+    }
+}
+
 #[test]
 fn words_that_spell_no_scene_are_refused_and_the_last_frame_is_kept() {
     let _alone = alone();
@@ -438,8 +459,16 @@ fn words_that_spell_no_scene_are_refused_and_the_last_frame_is_kept() {
     };
     let (words, strings) = wire.encode();
     assert!(publish(display, &words, &strings, &[snapshot]));
+    // The frame kept is the scene's, as layout lays it out, and not the
+    // frame of a display nothing was published to.
     let published = frame_text(display);
-    assert!(published.contains("bytes 0..3"), "{published}");
+    let mut layout = Layout::new(CellShaper::new(8.0, 16.0));
+    let direct = layout.frame(&plain_scene_directly("abc", 80, 16));
+    assert_eq!(published, direct.describe());
+    let unpublished = editor_ffi_display_new_cells(8, 16);
+    assert_ne!(published, frame_text(unpublished));
+    // SAFETY: `unpublished` is live and freed once.
+    unsafe { editor_ffi_display_free(unpublished) };
     assert!(!publish(
         display,
         &words[..words.len() - 8],
@@ -476,5 +505,10 @@ fn the_latest_frame_is_taken_on_another_thread_as_it_was_published() {
     let here = display.latest();
     let there = std::thread::scope(|scope| scope.spawn(|| display.latest()).join().unwrap());
     assert_eq!(*there, *here);
-    assert_eq!(there.views[0].rows.len(), 2);
+    // And it is the scene's frame, as layout lays it out.
+    let mut layout = Layout::new(CellShaper::new(8.0, 16.0));
+    assert_eq!(
+        *there,
+        layout.frame(&plain_scene_directly("one\ntwo", 80, 32))
+    );
 }
