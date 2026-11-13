@@ -27,6 +27,7 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 
 // The Rust library.
 bool editor_ffi_is_main_thread(void);
@@ -232,6 +233,110 @@ lean_obj_res editor_glue_document_read(b_lean_obj_arg document) {
 // `Editor.Ffi.Document.live : IO UInt64`
 lean_obj_res editor_glue_document_live(void) {
   return lean_io_result_mk_ok(lean_box_uint64(editor_ffi_document_live()));
+}
+
+// ---- A document's transactions and its edit log ----
+//
+// The example of lists crossing. A list is words: a buffer of 64-bit numbers,
+// eight bytes each, least significant first. Lean writes and reads the words
+// (`Editor/Ffi.lean`) and Rust reads and writes them (`words.rs` in
+// `editor-ffi`); the glue knows only that they are bytes. A `ByteArray` goes
+// to Rust as a pointer and a length, borrowed for the call, and a buffer of
+// words the library owns is copied into a `ByteArray` and handed straight
+// back with `editor_ffi_text_free`, as text is.
+
+// The bytes of a Lean `ByteArray`, and how many there are.
+static const uint8_t *byte_array_bytes(b_lean_obj_arg bytes) {
+  return lean_sarray_cptr(bytes);
+}
+static size_t byte_array_len(b_lean_obj_arg bytes) {
+  return lean_sarray_size(bytes);
+}
+
+// A new `ByteArray` holding a copy of the `len` bytes at `bytes`.
+static lean_object *byte_array_copy(const uint8_t *bytes, size_t len) {
+  lean_object *array = lean_alloc_sarray(1, len, len);
+  if (len != 0) {
+    memcpy(lean_sarray_cptr(array), bytes, len);
+  }
+  return array;
+}
+
+// The library's `RawApplied`.
+typedef struct {
+  uint64_t status;
+  uint64_t revision;
+} editor_ffi_raw_applied;
+// The library's `RawWords`.
+typedef struct {
+  uint64_t status;
+  uint8_t *words;
+  size_t len;
+} editor_ffi_raw_words;
+void editor_ffi_document_apply(const editor_ffi_document *document,
+                               const uint8_t *words, size_t words_len,
+                               const uint8_t *inserted, size_t inserted_len,
+                               uint64_t origin, editor_ffi_raw_applied *out);
+void editor_ffi_document_changes_since(const editor_ffi_document *document,
+                                       uint64_t revision,
+                                       editor_ffi_raw_words *out);
+bool editor_ffi_document_trace(const editor_ffi_document *document,
+                               size_t start, size_t end,
+                               editor_ffi_raw_words *out);
+bool editor_ffi_document_forget(const editor_ffi_document *document,
+                                uint64_t revision);
+
+// `Editor.Ffi.Document.applyRaw : @& Document → @& ByteArray → @& String →
+// UInt64 → IO RawApplied`
+lean_obj_res editor_glue_document_apply(b_lean_obj_arg document,
+                                        b_lean_obj_arg words,
+                                        b_lean_obj_arg inserted,
+                                        uint64_t origin) {
+  editor_ffi_raw_applied raw;
+  editor_ffi_document_apply(lean_get_external_data(document),
+                            byte_array_bytes(words), byte_array_len(words),
+                            string_bytes(inserted), string_len(inserted),
+                            origin, &raw);
+  // `RawApplied`: no object fields, then `status` and `revision`.
+  lean_object *applied = lean_alloc_ctor(0, 0, 2 * sizeof(uint64_t));
+  lean_ctor_set_uint64(applied, uint64_field(0, 0), raw.status);
+  lean_ctor_set_uint64(applied, uint64_field(0, 1), raw.revision);
+  return lean_io_result_mk_ok(applied);
+}
+
+// `Editor.Ffi.Document.changesSinceRaw : @& Document → UInt64 → IO RawWords`
+lean_obj_res editor_glue_document_changes_since(b_lean_obj_arg document,
+                                                uint64_t revision) {
+  editor_ffi_raw_words raw;
+  editor_ffi_document_changes_since(lean_get_external_data(document), revision,
+                                    &raw);
+  // `RawWords`: the object field `words`, then `status`.
+  lean_object *words = lean_alloc_ctor(0, 1, sizeof(uint64_t));
+  lean_ctor_set(words, 0, byte_array_copy(raw.words, raw.len));
+  lean_ctor_set_uint64(words, uint64_field(1, 0), raw.status);
+  editor_ffi_text_free(raw.words, raw.len);
+  return lean_io_result_mk_ok(words);
+}
+
+// `Editor.Ffi.Document.traceRaw : @& Document → USize → USize → IO (Option
+// ByteArray)`
+lean_obj_res editor_glue_document_trace(b_lean_obj_arg document, size_t start,
+                                        size_t stop) {
+  editor_ffi_raw_words raw;
+  if (!editor_ffi_document_trace(lean_get_external_data(document), start, stop,
+                                 &raw)) {
+    return lean_io_result_mk_ok(lean_box(0)); // `none`
+  }
+  lean_object *words = byte_array_copy(raw.words, raw.len);
+  editor_ffi_text_free(raw.words, raw.len);
+  return lean_io_result_mk_ok(option_some(words));
+}
+
+// `Editor.Ffi.Document.forget : @& Document → UInt64 → IO Bool`
+lean_obj_res editor_glue_document_forget(b_lean_obj_arg document,
+                                         uint64_t revision) {
+  return lean_io_result_mk_ok(lean_box(
+      editor_ffi_document_forget(lean_get_external_data(document), revision)));
 }
 
 // ---- The snapshot ----

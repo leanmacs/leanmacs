@@ -46,6 +46,7 @@ outlives its document (`FfiTest.snapshotChecks`); `tests/c_api.rs` and
 | Small structure | The wrapper passes the fields as scalar arguments | The glue builds the structure in one call. Declare object fields first, then `UInt64` fields and nothing else, so the declaration order is the layout the glue writes |
 | Option | The wrapper passes a presence flag and a value | The glue builds `none` or `some` |
 | Byte range | Two scalars | `ByteRange`: two `UInt64`, half-open, in bytes |
+| List | *Words*: a `@& ByteArray` of 64-bit numbers, eight bytes each, least significant first, written by a private encoder here; the glue passes its bytes and byte length, and Rust checks every count against the buffer | The glue copies the library's buffer of words into a `ByteArray` and hands the buffer back; a private decoder here builds the typed value, and words it cannot read are an `IO` error |
 
 Prefer a few scalar arguments or one structure to many calls: one `nextEvent`
 returns one whole event. A raw structure whose shape the glue knows stays
@@ -58,11 +59,19 @@ directions), `Document` (a string in, to `Document.new` and
 `USize`; a refusal as a `Bool`) and `Snapshot` (a structure of three numbers
 out, `SnapshotInfo`; an enumeration in, `ColumnUnit`; an option of a
 structure out, from `Snapshot.pointOf`, and an option of a number, from
-`Snapshot.offsetOf`; rows and columns as `UInt64`). Tests: the `find` and
-event checks of `ffi-test` (`FfiTest.dataChecks`), its document checks
-(`FfiTest.documentChecks`) and its snapshot checks
-(`FfiTest.snapshotChecks`); the unit tests of `text.rs`, `document.rs` and
-`snapshot.rs` and the tag tests of `events.rs` in `editor-ffi`.
+`Snapshot.offsetOf`; rows and columns as `UInt64`). A document's
+transactions and its edit log are the example of lists: a `Transaction` in,
+as words and one string of everything it inserts (`Document.apply`); a
+`Patch` and a trace out, as words (`Document.changesSince`,
+`Document.trace`); and a refusal as a `Bool` (`Document.forget`). A length
+or an offset in words is a `UInt64`, and the largest one is a number no text
+accepts: a caller with a number no word holds sends that, so the library
+refuses it and nothing is cut down. Tests: the `find` and event checks of
+`ffi-test` (`FfiTest.dataChecks`), its document checks
+(`FfiTest.documentChecks`), its snapshot checks (`FfiTest.snapshotChecks`)
+and its transaction checks (`FfiTest.transactionChecks`); the unit tests of
+`text.rs`, `document.rs`, `snapshot.rs`, `words.rs`, `transaction.rs` and
+`log.rs`, the tag tests of `events.rs` and `tests/log.rs` in `editor-ffi`.
 
 The editor does not call these bindings. It reaches the library through a
 port it defines (`Editor/Text.lean`), whose real binding
@@ -394,6 +403,316 @@ and `ContractTest` to see that the text port's table is the only holder of
 its snapshots. -/
 @[extern "editor_glue_snapshot_live"]
 opaque Snapshot.live : IO UInt64
+
+/-- One step of a change set's walk over a document's text, with its length
+in bytes. -/
+inductive Change where
+  /-- Keep the next `count` bytes. -/
+  | retain (count : UInt64)
+  /-- Remove the next `count` bytes. -/
+  | delete (count : UInt64)
+  /-- Put `text` in at this point. -/
+  | insert (text : String)
+  deriving DecidableEq, Repr
+
+/-- One range of a selection: two byte offsets. -/
+structure SelectionRange where
+  /-- The end that stays when the selection is extended. -/
+  anchor : UInt64
+  /-- The end that moves. -/
+  head : UInt64
+  deriving DecidableEq, Repr
+
+/-- The ranges of a selection, and which of them is the primary one. -/
+structure Selection where
+  /-- The ranges, kept as given. -/
+  ranges : Array SelectionRange
+  /-- The index in `ranges` of the primary range. -/
+  primary : UInt64 := 0
+  deriving DecidableEq, Repr
+
+/-- A transaction, as plain data: the changes to make to a document's text,
+and optionally the selection before them and the selection after them. -/
+structure Transaction where
+  /-- The changes, which walk the text from its start to its end. -/
+  changes : Array Change
+  /-- The selection in the text before the changes. -/
+  before : Option Selection := none
+  /-- The selection in the text after the changes. -/
+  after : Option Selection := none
+  deriving DecidableEq, Repr
+
+/-- Why the library refused a transaction. -/
+inductive ApplyRefusal where
+  /-- The changes do not fit the text: they are for another length, or a
+  boundary between two of them is inside a character. -/
+  | badChange
+  /-- A selection has no range, its primary names none, or an end of one of
+  its ranges is not a position of its text. -/
+  | badSelection
+  deriving DecidableEq, Repr
+
+/-- `words` with `word` added: its eight bytes, least significant first. -/
+private def pushWord (words : ByteArray) (word : UInt64) : ByteArray :=
+  (List.range 8).foldl (fun words byte => words.push (word >>> (8 * byte).toUInt64).toUInt8) words
+
+/-- The words of a selection block: a presence word, and for a selection its
+primary, its count of ranges, and an anchor and a head for each. -/
+private def pushSelection (words : ByteArray) : Option Selection → ByteArray
+  | none => pushWord words 0
+  | some selection =>
+    let words := pushWord (pushWord words 1) selection.primary
+    selection.ranges.foldl (fun words range => pushWord (pushWord words range.anchor) range.head)
+      (pushWord words selection.ranges.size.toUInt64)
+
+/-- The length of `change`, as the word that follows its kind. -/
+private def Change.length : Change → UInt64
+  | .retain count | .delete count => count
+  | .insert text => text.utf8ByteSize.toUInt64
+
+/-- The kind of `change`, as a word: 0 a retain, 1 a delete, 2 an insert. -/
+private def Change.kind : Change → UInt64
+  | .retain _ => 0
+  | .delete _ => 1
+  | .insert _ => 2
+
+/-- A transaction as it crosses: its words. They are the count of changes, a
+kind and a length for each, and a block for each selection. -/
+private def Transaction.words (transaction : Transaction) : ByteArray :=
+  let words := pushWord ByteArray.empty transaction.changes.size.toUInt64
+  let words :=
+    transaction.changes.foldl
+      (fun words change => pushWord (pushWord words change.kind) change.length) words
+  pushSelection (pushSelection words transaction.before) transaction.after
+
+/-- Everything a transaction inserts, joined in order. An insert's length
+cuts its text from it. -/
+private def Transaction.inserted (transaction : Transaction) : String :=
+  transaction.changes.foldl
+    (fun inserted change =>
+      match change with
+      | .insert text => inserted ++ text
+      | _ => inserted)
+    ""
+
+/-- The result of applying a transaction, as the glue builds it in one call:
+`UInt64` fields only, so the order here is the layout the glue writes. -/
+private structure RawApplied where
+  /-- 0 applied, 1 the changes do not fit, 2 a selection does not fit, 3 the
+  words could not be read. -/
+  status : UInt64
+  /-- The revision the transaction produced, when it was applied. -/
+  revision : UInt64
+
+/-- `Document.apply` as it crosses: the transaction as words, and what it
+inserts as one string. -/
+@[extern "editor_glue_document_apply"]
+private opaque Document.applyRaw (document : @& Document) (words : @& ByteArray)
+    (inserted : @& String) (origin : UInt64) : IO RawApplied
+
+/-- Applies `transaction` to the document, recording `origin` as who made the
+edit, and returns the revision it produced: one more than before, however
+many changes it has. `origin` is a number the library stores and gives back
+(`Document.trace`) and never reads.
+
+A refused transaction changes nothing. A selection that is none (no range,
+or a primary that names none) is refused first, then changes that do not
+fit, then a selection with an end that is not a position of its text. A
+length or an offset given as the largest `UInt64` is one no text accepts. -/
+def Document.apply (document : Document) (transaction : Transaction) (origin : UInt64) :
+    IO (Except ApplyRefusal UInt64) := do
+  let raw ← document.applyRaw transaction.words transaction.inserted origin
+  match raw.status with
+  | 0 =>
+    return .ok raw.revision
+  | 1 =>
+    return .error .badChange
+  | 2 =>
+    return .error .badSelection
+  | status =>
+    throw (IO.userError s!"the library could not read a transaction's words (status {status})")
+
+/-- A range of one text, as byte offsets and as points with their columns in
+bytes. -/
+structure Span where
+  /-- The offset the range starts at. -/
+  start : UInt64
+  /-- The offset the range stops at, not included. -/
+  stop : UInt64
+  /-- The point of `start`. -/
+  startPoint : Point
+  /-- The point of `stop`. -/
+  stopPoint : Point
+  deriving DecidableEq, Repr
+
+/-- One changed range: the bytes of `old`, a range of the text before, were
+replaced by the bytes of `new`, a range of the text after. -/
+structure Edit where
+  /-- The range that was replaced, in the text before. -/
+  old : Span
+  /-- The range that replaced it, in the text after. -/
+  new : Span
+  deriving DecidableEq, Repr
+
+/-- What changed in a document between two of its revisions, as one set of
+edits in order, no two of which overlap or touch. -/
+structure Patch where
+  /-- The revision the patch starts from: the old spans are ranges of the
+  text then. -/
+  since : UInt64
+  /-- The revision the patch reaches: the new spans are ranges of the text
+  then, which is the text when the patch was asked for. -/
+  revision : UInt64
+  /-- What changed. -/
+  edits : Array Edit
+  deriving DecidableEq, Repr
+
+/-- Why the library could not say what changed since a revision. -/
+inductive LogRefusal where
+  /-- The document has not reached the revision. -/
+  | unknownRevision
+  /-- The revision is before the log's horizon: `Document.forget` dropped the
+  entries that led from it. -/
+  | forgotten
+  deriving DecidableEq, Repr
+
+/-- Where a piece of a document's text came from. -/
+inductive Author where
+  /-- The transaction that produced `revision`, applied with `origin`,
+  inserted the bytes. -/
+  | entry (revision origin : UInt64)
+  /-- The bytes were already in the text at `revision`, which is as far back
+  as the log reaches. -/
+  | earlier (revision : UInt64)
+  deriving DecidableEq, Repr
+
+/-- One piece of a traced range: the bytes from `start` up to, not including,
+`stop`, of the text as it is now, and where they came from. -/
+structure Attribution where
+  /-- The offset the piece starts at. -/
+  start : UInt64
+  /-- The offset the piece stops at, not included. -/
+  stop : UInt64
+  /-- Where its bytes came from. -/
+  author : Author
+  deriving DecidableEq, Repr
+
+/-- The words `bytes` holds, eight bytes each, least significant first.
+`none` unless its size is whole words. -/
+private def wordsOf? (bytes : ByteArray) : Option (Array UInt64) :=
+  if bytes.size % 8 != 0 then none
+  else
+    some <|
+      (Array.range (bytes.size / 8)).map fun index =>
+        (List.range 8).foldr
+          (fun byte word => (word <<< 8) ||| (bytes.get! (8 * index + byte)).toUInt64) 0
+
+/-- The span six words spell, from the index `first`: its offsets, then its
+points. -/
+private def spanAt (words : Array UInt64) (first : Nat) : Span where
+  start := words[first]!
+  stop := words[first + 1]!
+  startPoint := { row := words[first + 2]!, column := words[first + 3]! }
+  stopPoint := { row := words[first + 4]!, column := words[first + 5]! }
+
+/-- The patch `words` spell: the two revisions, the count of edits, and
+twelve words an edit. `none` unless the count is the count of edits there. -/
+private def patchOf? (words : Array UInt64) : Option Patch := do
+  let count := (← words[2]?).toNat
+  guard (words.size == 3 + 12 * count)
+  return {
+      since := ← words[0]?
+      revision := ← words[1]?
+      edits :=
+        (Array.range count).map fun edit =>
+          { old := spanAt words (3 + 12 * edit), new := spanAt words (3 + 12 * edit + 6) } }
+
+/-- The piece five words spell, from the index `first`. `none` when the word
+that says who wrote it is neither 0 nor 1. -/
+private def attributionAt? (words : Array UInt64) (first : Nat) : Option Attribution := do
+  let author ←
+    match words[first + 2]! with
+    | 0 =>
+      some (Author.earlier words[first + 3]!)
+    | 1 =>
+      some (Author.entry words[first + 3]! words[first + 4]!)
+    | _ =>
+      none
+  return { start := words[first]!, stop := words[first + 1]!, author }
+
+/-- The trace `words` spell: the count of pieces, and five words a piece.
+`none` unless the count is the count of pieces there. -/
+private def traceOf? (words : Array UInt64) : Option (Array Attribution) := do
+  let count := (← words[0]?).toNat
+  guard (words.size == 1 + 5 * count)
+  (Array.range count).mapM fun piece => attributionAt? words (1 + 5 * piece)
+
+/-- An answer in words, as the glue builds it in one call: the object field
+first and the `UInt64` field after it, so the order here is the layout the
+glue writes. -/
+private structure RawWords where
+  /-- The words, copied from the library's buffer. -/
+  words : ByteArray
+  /-- 0 answered, 1 the revision is unknown, 2 it is forgotten. -/
+  status : UInt64
+
+/-- `Document.changesSince` as it crosses. -/
+@[extern "editor_glue_document_changes_since"]
+private opaque Document.changesSinceRaw (document : @& Document) (revision : UInt64) : IO RawWords
+
+/-- What changed in the document since `revision`, as one patch: however many
+transactions were applied since, their changes come back as one set of edits.
+Text inserted and deleted again in between is in none of them. Empty when
+`revision` is the document's revision now.
+
+A consumer that wants to follow a document keeps the revision of the last
+patch it got and asks again from there: nothing is registered with the
+library. -/
+def Document.changesSince (document : Document) (revision : UInt64) :
+    IO (Except LogRefusal Patch) := do
+  let raw ← document.changesSinceRaw revision
+  match raw.status with
+  | 0 =>
+    match (wordsOf? raw.words).bind patchOf? with
+    | some patch =>
+      return .ok patch
+    | none =>
+      throw (IO.userError "the library's words do not spell a patch")
+  | 1 =>
+    return .error .unknownRevision
+  | 2 =>
+    return .error .forgotten
+  | status =>
+    throw (IO.userError s!"the library reported an unknown log status ({status})")
+
+/-- `Document.trace` as it crosses: the words, when the library gave any. -/
+@[extern "editor_glue_document_trace"]
+private opaque Document.traceRaw (document : @& Document) (start stop : USize) :
+    IO (Option ByteArray)
+
+/-- Where the bytes of the document from `start` up to, not including, `stop`
+came from: the range cut into pieces, in order, each with the revision and
+the origin of the transaction that inserted it, or as earlier than the log
+reaches. `none` unless both offsets are positions of the text and
+`start ≤ stop`. -/
+def Document.trace (document : Document) (start stop : USize) : IO (Option (Array Attribution)) :=
+  do
+  let some words ← document.traceRaw start stop | return none
+  match (wordsOf? words).bind traceOf? with
+  | some trace =>
+    return some trace
+  | none =>
+    throw (IO.userError "the library's words do not spell a trace")
+
+/-- Drops the entries of the document's log up to `revision`, and returns
+whether the library did. Afterwards `changesSince` an earlier revision is
+refused as forgotten, and `trace` names older bytes as earlier than
+`revision`. The text is untouched.
+
+`false`, with nothing changed, for a revision the document has not
+reached. -/
+@[extern "editor_glue_document_forget"]
+opaque Document.forget (document : @& Document) (revision : UInt64) : IO Bool
 
 /-- A range of byte offsets into text: from `start` up to, not including,
 `stop`. -/
