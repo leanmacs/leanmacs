@@ -7,9 +7,10 @@
 //! - the count of changes, then two words for each: its kind (0 a retain,
 //!   1 a delete, 2 an insert) and its length in bytes;
 //! - for the selection before, and then again for the selection after: a
-//!   presence word (0 or 1), and if it is 1 the index of the primary
-//!   range, the count of ranges, and two words for each range, its anchor
-//!   and its head;
+//!   presence word (0 or 1), and if it is 1 the selection's shape (0
+//!   exclusive, 1 inclusive, 2 line-wise, 3 block-wise), the index of the
+//!   primary range, the count of ranges, and two words for each range, its
+//!   anchor and its head;
 //! - `inserted`: the text of every insert, joined in order. An insert's
 //!   length cuts its text from it.
 //!
@@ -18,7 +19,7 @@
 //! reads the words and forwards.
 
 use editor_text::{
-    ApplyError, ChangeSet, Origin, Revision, Selection, SelectionRange, Transaction,
+    ApplyError, ChangeSet, Origin, Revision, Selection, SelectionRange, Shape, Transaction,
 };
 
 use crate::document::Document;
@@ -28,8 +29,8 @@ use crate::words::Reader;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Undecoded {
     /// The words or the inserted text could not be read: the buffer is not
-    /// whole words, a count runs past it, words are left over, a kind or a
-    /// presence word is unknown, the inserts' lengths do not add up to the
+    /// whole words, a count runs past it, words are left over, a kind, a
+    /// presence word or a shape is unknown, the inserts' lengths do not add up to the
     /// inserted text or cut a character of it, or the text is not UTF-8.
     Unreadable,
     /// A selection has no range, or its primary names none: it is not a
@@ -54,7 +55,9 @@ pub fn decode(words: &[u8], inserted: &[u8]) -> Result<Transaction, Undecoded> {
 }
 
 /// A selection as its words spell it, before it is known to be one.
-struct SelectionWords {
+pub(crate) struct SelectionWords {
+    /// What the ranges cover.
+    shape: Shape,
     /// The index of the primary range.
     primary: usize,
     /// The ranges.
@@ -63,8 +66,37 @@ struct SelectionWords {
 
 impl SelectionWords {
     /// The selection, if the words spell one.
-    fn selection(self) -> Result<Selection, Undecoded> {
-        Selection::new(self.ranges, self.primary).ok_or(Undecoded::NotASelection)
+    pub(crate) fn selection(self) -> Result<Selection, Undecoded> {
+        Selection::shaped(self.shape, self.ranges, self.primary).ok_or(Undecoded::NotASelection)
+    }
+
+    /// The next selection of `reader`, from its shape on: the shape, the
+    /// index of the primary range, the count of ranges, and an anchor and
+    /// a head for each. `None` when the words cannot be read.
+    pub(crate) fn read(reader: &mut Reader<'_>) -> Option<Self> {
+        let shape = shape_of(reader.word()?)?;
+        let primary = reader.size()?;
+        let mut ranges = Vec::new();
+        for _ in 0..reader.count(2)? {
+            ranges.push(SelectionRange::new(reader.size()?, reader.size()?));
+        }
+        Some(Self {
+            shape,
+            primary,
+            ranges,
+        })
+    }
+}
+
+/// The shape `word` stands for: 0 exclusive, 1 inclusive, 2 line-wise, 3
+/// block-wise. `None` for any other word.
+pub(crate) fn shape_of(word: u64) -> Option<Shape> {
+    match word {
+        0 => Some(Shape::Exclusive),
+        1 => Some(Shape::Inclusive),
+        2 => Some(Shape::Line),
+        3 => Some(Shape::Block),
+        _ => None,
     }
 }
 
@@ -105,14 +137,7 @@ fn read(
 fn read_selection(reader: &mut Reader<'_>) -> Option<Option<SelectionWords>> {
     match reader.word()? {
         0 => Some(None),
-        1 => {
-            let primary = reader.size()?;
-            let mut ranges = Vec::new();
-            for _ in 0..reader.count(2)? {
-                ranges.push(SelectionRange::new(reader.size()?, reader.size()?));
-            }
-            Some(Some(SelectionWords { primary, ranges }))
-        }
+        1 => Some(Some(SelectionWords::read(reader)?)),
         _ => None,
     }
 }
@@ -240,13 +265,26 @@ mod tests {
         changes.iter().cloned().collect()
     }
 
-    /// A selection of the ranges `ranges`, each an anchor and a head.
+    /// The shapes of a selection, as words.
+    const EXCLUSIVE: u64 = 0;
+    const INCLUSIVE: u64 = 1;
+    const LINE: u64 = 2;
+    const BLOCK: u64 = 3;
+
+    /// An exclusive selection of the ranges `ranges`, each an anchor and a
+    /// head.
     fn selection(ranges: &[(usize, usize)], primary: usize) -> Selection {
+        shaped(Shape::Exclusive, ranges, primary)
+    }
+
+    /// A selection of shape `shape` of the ranges `ranges`, each an anchor
+    /// and a head.
+    fn shaped(shape: Shape, ranges: &[(usize, usize)], primary: usize) -> Selection {
         let ranges = ranges
             .iter()
             .map(|&(anchor, head)| SelectionRange::new(anchor, head))
             .collect();
-        Selection::new(ranges, primary).expect("a primary among the ranges")
+        Selection::shaped(shape, ranges, primary).expect("a primary among the ranges")
     }
 
     #[test]
@@ -254,9 +292,10 @@ mod tests {
         let words = buffer(&[
             // Four changes.
             4, RETAIN, 1, DELETE, 2, INSERT, 5, RETAIN, 10,
-            // A selection before: the primary is the second of two ranges.
-            1, 1, 2, 0, 3, 13, 1, // A selection after: one range.
-            1, 0, 1, 14, 14,
+            // A selection before: exclusive, and the primary is the second
+            // of two ranges.
+            1, EXCLUSIVE, 1, 2, 0, 3, 13, 1, // A selection after: line-wise, one range.
+            1, LINE, 0, 1, 14, 14,
         ]);
 
         let transaction = decode(&words, "e😀".as_bytes());
@@ -270,8 +309,47 @@ mod tests {
                 Change::Retain(10),
             ]))
             .with_before(selection(&[(0, 3), (13, 1)], 1))
-            .with_after(selection(&[(14, 14)], 0)))
+            .with_after(shaped(Shape::Line, &[(14, 14)], 0)))
         );
+    }
+
+    #[test]
+    fn the_shape_word_of_a_selection_is_its_shape() {
+        let shapes = [
+            (EXCLUSIVE, Shape::Exclusive),
+            (INCLUSIVE, Shape::Inclusive),
+            (LINE, Shape::Line),
+            (BLOCK, Shape::Block),
+        ];
+        for (word, shape) in shapes {
+            // Before and after, each with the one range from 2 to 5.
+            let words = buffer(&[0, 1, word, 0, 1, 2, 5, 1, word, 0, 1, 5, 2]);
+
+            assert_eq!(
+                decode(&words, b""),
+                Ok(Transaction::new(ChangeSet::new())
+                    .with_before(shaped(shape, &[(2, 5)], 0))
+                    .with_after(shaped(shape, &[(5, 2)], 0))),
+                "{shape:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_shape_word_that_names_no_shape_is_unreadable() {
+        for word in [4, 5, u64::MAX] {
+            assert_eq!(
+                decode(&buffer(&[0, 1, word, 0, 1, 2, 5, 0]), b""),
+                Err(Undecoded::Unreadable),
+                "{word}"
+            );
+            // Unreadable, whatever else is wrong with the selection.
+            assert_eq!(
+                decode(&buffer(&[0, 0, 1, word, 0, 0]), b""),
+                Err(Undecoded::Unreadable),
+                "{word}"
+            );
+        }
     }
 
     #[test]
@@ -300,7 +378,7 @@ mod tests {
 
     #[test]
     fn a_length_no_size_holds_is_the_largest_size_and_not_cut_down() {
-        let words = buffer(&[1, RETAIN, u64::MAX, 1, 0, 1, u64::MAX, 0, 0]);
+        let words = buffer(&[1, RETAIN, u64::MAX, 1, EXCLUSIVE, 0, 1, u64::MAX, 0, 0]);
 
         let transaction = decode(&words, b"").expect("words that can be read");
 
@@ -334,7 +412,10 @@ mod tests {
         unreadable(&[0, 2, 0], "");
         unreadable(&[0, 0, 2], "");
         // A count of ranges that runs past the buffer.
-        unreadable(&[0, 1, 0, 2, 0, 0, 0], "");
+        unreadable(&[0, 1, EXCLUSIVE, 0, 2, 0, 0, 0], "");
+        // A selection that stops after its presence word, or its shape.
+        unreadable(&[0, 0, 1], "");
+        unreadable(&[0, 0, 1, EXCLUSIVE], "");
         // Words left over.
         unreadable(&[0, 0, 0, 0], "");
         unreadable(&[1, RETAIN, 1, 0, 0, 7], "");
@@ -377,16 +458,16 @@ mod tests {
     fn a_selection_with_no_range_or_whose_primary_names_none_is_not_a_selection() {
         // Before: present, primary 0, no range.
         assert_eq!(
-            decode(&buffer(&[0, 1, 0, 0, 0]), b""),
+            decode(&buffer(&[0, 1, EXCLUSIVE, 0, 0, 0]), b""),
             Err(Undecoded::NotASelection)
         );
         // After: present, primary 1, one range.
         assert_eq!(
-            decode(&buffer(&[0, 0, 1, 1, 1, 0, 0]), b""),
+            decode(&buffer(&[0, 0, 1, BLOCK, 1, 1, 0, 0]), b""),
             Err(Undecoded::NotASelection)
         );
         assert_eq!(
-            decode(&buffer(&[0, 0, 1, u64::MAX, 1, 0, 0]), b""),
+            decode(&buffer(&[0, 0, 1, INCLUSIVE, u64::MAX, 1, 0, 0]), b""),
             Err(Undecoded::NotASelection)
         );
     }
@@ -414,7 +495,8 @@ mod tests {
         let document = Document::new(TEXT);
         // "é" becomes "e", and "!" is added at the end.
         let words = buffer(&[
-            5, RETAIN, 1, DELETE, 2, INSERT, 1, RETAIN, 10, INSERT, 1, 0, 1, 0, 1, 13, 13,
+            5, RETAIN, 1, DELETE, 2, INSERT, 1, RETAIN, 10, INSERT, 1, 0, 1, INCLUSIVE, 0, 1, 13,
+            13,
         ]);
 
         // Which revision a transaction produces is the text's rule: the
@@ -431,9 +513,10 @@ mod tests {
         let document = Document::new(TEXT);
         let before = document.snapshot().revision();
         let short = buffer(&[1, RETAIN, 12, 0, 0]);
-        let inside = buffer(&[1, RETAIN, 13, 1, 0, 1, 2, 2, 0]);
-        let no_range = buffer(&[1, RETAIN, 13, 1, 0, 0, 0]);
+        let inside = buffer(&[1, RETAIN, 13, 1, EXCLUSIVE, 0, 1, 2, 2, 0]);
+        let no_range = buffer(&[1, RETAIN, 13, 1, LINE, 0, 0, 0]);
         let unknown_kind = buffer(&[1, 9, 13, 0, 0]);
+        let unknown_shape = buffer(&[1, RETAIN, 13, 1, 4, 0, 1, 0, 0, 0]);
 
         assert_eq!(
             document.apply_words(&short, b"", 1),
@@ -451,6 +534,10 @@ mod tests {
             document.apply_words(&unknown_kind, b"", 1),
             refused(ApplyStatus::Unreadable)
         );
+        assert_eq!(
+            document.apply_words(&unknown_shape, b"", 1),
+            refused(ApplyStatus::Unreadable)
+        );
         assert_eq!(document.read(), TEXT);
         assert_eq!(document.snapshot().revision(), before);
     }
@@ -459,7 +546,7 @@ mod tests {
     fn a_selection_that_is_none_is_refused_before_the_change_set_is_looked_at() {
         let document = Document::new(TEXT);
         // The change set stops short, and the selection after has no range.
-        let both = buffer(&[1, RETAIN, 12, 0, 1, 0, 0]);
+        let both = buffer(&[1, RETAIN, 12, 0, 1, EXCLUSIVE, 0, 0]);
 
         assert_eq!(
             document.apply_words(&both, b"", 1),

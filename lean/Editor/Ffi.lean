@@ -423,12 +423,28 @@ structure SelectionRange where
   head : UInt64
   deriving DecidableEq, Repr
 
-/-- The ranges of a selection, and which of them is the primary one. -/
+/-- What the ranges of a selection cover, given their two ends. -/
+inductive Shape where
+  /-- From the lower end up to, not including, the higher. -/
+  | exclusive
+  /-- From the lower end through the character at the higher. -/
+  | inclusive
+  /-- The whole rows of both ends and those between them. -/
+  | line
+  /-- A rectangle of characters whose corners are the two ends. -/
+  | block
+  deriving DecidableEq, Repr
+
+/-- The ranges of a selection, which of them is the primary one, and the
+shape they all have. The library sorts the ranges and makes those that
+overlap one. -/
 structure Selection where
-  /-- The ranges, kept as given. -/
+  /-- The ranges, in any order. -/
   ranges : Array SelectionRange
   /-- The index in `ranges` of the primary range. -/
   primary : UInt64 := 0
+  /-- What the ranges cover. -/
+  shape : Shape := .exclusive
   deriving DecidableEq, Repr
 
 /-- A transaction, as plain data: the changes to make to a document's text,
@@ -456,14 +472,26 @@ inductive ApplyRefusal where
 private def pushWord (words : ByteArray) (word : UInt64) : ByteArray :=
   (List.range 8).foldl (fun words byte => words.push (word >>> (8 * byte).toUInt64).toUInt8) words
 
+/-- The shape as a word: 0 exclusive, 1 inclusive, 2 line-wise, 3
+block-wise. -/
+private def Shape.word : Shape → UInt64
+  | .exclusive => 0
+  | .inclusive => 1
+  | .line => 2
+  | .block => 3
+
+/-- The words of a selection: its shape, its primary, its count of ranges,
+and an anchor and a head for each. -/
+private def pushShaped (words : ByteArray) (selection : Selection) : ByteArray :=
+  let words := pushWord (pushWord words selection.shape.word) selection.primary
+  selection.ranges.foldl (fun words range => pushWord (pushWord words range.anchor) range.head)
+    (pushWord words selection.ranges.size.toUInt64)
+
 /-- The words of a selection block: a presence word, and for a selection its
-primary, its count of ranges, and an anchor and a head for each. -/
+words (`pushShaped`). -/
 private def pushSelection (words : ByteArray) : Option Selection → ByteArray
   | none => pushWord words 0
-  | some selection =>
-    let words := pushWord (pushWord words 1) selection.primary
-    selection.ranges.foldl (fun words range => pushWord (pushWord words range.anchor) range.head)
-      (pushWord words selection.ranges.size.toUInt64)
+  | some selection => pushShaped (pushWord words 1) selection
 
 /-- The length of `change`, as the word that follows its kind. -/
 private def Change.length : Change → UInt64

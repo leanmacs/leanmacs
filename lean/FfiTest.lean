@@ -430,6 +430,22 @@ def transactionChecks (_ : Unit) : List Check :=
         let document ← Editor.Ffi.Document.new rows
         let applied ← document.apply threeChanges 7
         return applied == .ok 1 && (← document.read) == "héa\nbllöRLXd\n😀x" },
+    { name := "a transaction whose selections have each shape is applied"
+      run := do
+        let document ← Editor.Ffi.Document.new rows
+        let shapes : List Editor.Ffi.Shape := [.exclusive, .inclusive, .line, .block]
+        let applied ←
+          shapes.mapM fun shape =>
+              document.apply
+                { changes := #[.retain 20]
+                  before := some { ranges := #[{ anchor := 0, head := 3 }], shape }
+                  after :=
+                    some
+                      { ranges := #[{ anchor := 20, head := 15 }, { anchor := 1, head := 1 }]
+                        primary := 1
+                        shape } }
+                0
+        return applied == [.ok 1, .ok 2, .ok 3, .ok 4] },
     { name := "the revision a transaction returns is the revision of a snapshot taken then"
       run := do
         let document ← Editor.Ffi.Document.new rows

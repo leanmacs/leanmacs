@@ -161,9 +161,9 @@ fn a_transaction_is_applied_and_the_log_is_read_through_c() {
         // after, and an origin: "é" becomes "E\n", and "d" is added.
         let transaction = [
             5, RETAIN, 1, DELETE, 2, INSERT, 2, RETAIN, 9, INSERT, 1,
-            // Before: one range, from 1 to 3.
-            1, 0, 1, 1, 3, // After: two ranges, the second the primary.
-            1, 1, 2, 1, 3, 13, 13,
+            // Before: exclusive, one range, from 1 to 3.
+            1, 0, 0, 1, 1, 3, // After: block-wise, two ranges, the second the primary.
+            1, 3, 1, 2, 1, 3, 13, 13,
         ];
         assert_eq!(
             document_apply(document, &transaction, "E\nd", 7),
@@ -175,13 +175,16 @@ fn a_transaction_is_applied_and_the_log_is_read_through_c() {
         let short = [1, RETAIN, 12, 0, 0];
         assert_eq!(document_apply(document, &short, "", 1), (BAD_CHANGE, 0));
         // A selection after with an end inside "ö".
-        let astray = [1, RETAIN, 13, 0, 1, 0, 1, 9, 9];
+        let astray = [1, RETAIN, 13, 0, 1, 1, 0, 1, 9, 9];
         assert_eq!(document_apply(document, &astray, "", 1), (BAD_SELECTION, 0));
-        let no_range = [1, RETAIN, 13, 1, 0, 0, 0];
+        let no_range = [1, RETAIN, 13, 1, 2, 0, 0, 0];
         assert_eq!(
             document_apply(document, &no_range, "", 1),
             (BAD_SELECTION, 0)
         );
+        // A shape that is none of the four.
+        let shapeless = [1, RETAIN, 13, 1, 4, 0, 1, 0, 0, 0];
+        assert_eq!(document_apply(document, &shapeless, "", 1), (UNREADABLE, 0));
         let cut = [1, INSERT, 9, 0, 0];
         assert_eq!(document_apply(document, &cut, "x", 1), (UNREADABLE, 0));
         assert_eq!(document_apply(document, &[], "", 1), (UNREADABLE, 0));
