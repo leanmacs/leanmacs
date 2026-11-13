@@ -95,7 +95,12 @@ the text port: the undo tree (`lean/Editor/UndoTree.lean`, decided
   new line gets is Lean's policy, and detecting a file's dominant ending
   belongs with loading it.
 - The crate takes bytes and gives bytes. Reading and writing a file is the
-  file port's.
+  file port's: `editor_text::fs::Fs`, which the crate defines, with loading
+  and saving over it in `editor_text::file`. A load counts the file's line
+  endings (line feeds alone, and line feeds after a carriage return) and
+  changes none; which is the dominant one is Lean's to say from the counts.
+  rust-library.md, "Files and watching", has the port, the adapter and the
+  rules as built.
 
 **Revisions and snapshots.**
 

@@ -231,6 +231,17 @@ that apply the inverses of random runs of revisions and drop them, against
 the strings the text held at every revision. The property tests run from a
 fixed seed and write no file.
 
+Loading and saving a file are tested there too, and make no real file: the
+logic (`crates/editor-text/src/file.rs`) reaches a file system only through
+a port the crate defines, and its tests run on the port's published fake,
+which `mise run lint` holds them to (`crates/editor-text/clippy.toml`). The
+port's real adapter, over `std::fs`, is a crate of its own
+(`crates/editor-fs-std`) whose tests hold it to the port's contract in a
+temporary directory they make and remove. One test runs the logic over the
+real adapter, the file service's wiring test
+(`crates/editor-ffi/tests/files.rs`), also in a temporary directory of its
+own.
+
 The Lean half's logic needs no Rust library. The editor reaches the library
 through interfaces it defines, each with a pure Lean model, and
 `mise run lean-test` runs `lake test`: the model tests

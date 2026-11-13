@@ -95,6 +95,91 @@ process is a handle plus a stream of events.
 | **Small reads and writes, stat, list, rename, remove** | Lean | Lean's own file functions, called from jobs on a dedicated thread, behind the editor's file interface. |
 | **Watching** | Rust | Watch a path or tree; events debounced and coalesced. |
 
+As built, loading and saving are the library's half only: the port, its
+adapter, the logic and the service behind the completion queue. **Nothing in
+Lean reaches them yet**: the bindings, the job port's file requests and how
+a job names a snapshot are the rest of `phase/text-core/phase-5-file-io`.
+Watching is not built.
+
+- **The port.** `editor_text::fs::Fs`, defined by `editor-text` in its own
+  terms, with six methods. `stat` says what is at a path, following links,
+  and is none for nothing; it is the one way time and metadata reach the
+  core, which reads no clock. `read` gives a file's bytes whole. `write`
+  makes a *new* file from pieces, with exactly the permissions given
+  whatever the process's mask, or the platform's default, has it on disk
+  before it returns, and is refused where anything is, a link included.
+  `rename` puts a file in place of another in one step. `remove` removes a
+  file. `resolve` follows every link in a path. An error is a kind the core
+  decides on (not found, denied, exists, not a file, other) and the
+  platform's words.
+- **The fake.** `editor_text::fs::FakeFs`, published and not test-only: a
+  file system in memory whose time only a test moves, which records every
+  call, fails when a test says so, and runs a test's closure between two
+  calls.
+- **The contract and its ground.** `editor_text::fs::contract::check` holds
+  any `Fs` to the port's rules, in order, in one directory, and names the
+  first rule broken. The check needs things done that the port has no
+  method for (a link made, a modification time and permissions set and
+  read), so its caller supplies them as a `Ground`: the truth the port's
+  answers are compared with. An implementation whose `write` and `stat`
+  agree on permissions the file does not have is refused. The check is
+  shown to bite by ten fakes written to break one rule each.
+- **The adapter.** `editor-fs-std`, a crate of its own: `StdFs` over
+  `std::fs`, Unix only, made by the one constructor `StdFs::system()`. A
+  write is `create_new` with the permissions set on the open file, then
+  synced; a rename syncs the directory and ignores a failure of that. It is
+  held to the contract by its own test, in a temporary directory the test
+  makes, against a ground that asks the system directly; its other test is
+  how it names the system's errors. It runs nothing of the logic.
+- **Load** (`editor_text::file::load`). A path that is not absolute is
+  refused before the file system is asked. The file is statted before it is
+  read, so what is not a file, or is longer than the caller's limit, is
+  never opened; it is read whole, once. A file with a NUL byte among its
+  first 8,000 bytes is refused as binary, which is git's rule; a file that
+  is not UTF-8 loads, its invalid bytes kept. Line endings are counted
+  (line feeds alone, and line feeds after a carriage return) and none is
+  changed. The stamp returned is the modification time and size from the
+  stat made before the read.
+- **Save** (`editor_text::file::save`) saves a snapshot, a rope piece at a
+  time, in eight steps: refuse a path that is not absolute; resolve it, so a
+  link's file is the one replaced; stat the target, refuse what is not a
+  file, check it against what the caller expects, and keep its permissions;
+  write a temporary file beside it, `.<name>.<n>.tmp`, passing over a name
+  that is taken, for at most 32 names; stop if the caller cancelled; stat
+  and check again; rename; stat for the stamp returned. A failure from the
+  write on removes the temporary file and leaves the target as it was, so a
+  crash never leaves a half-written file. **Kept**: the nine permission
+  bits, and every byte. **Not kept**, since the file is replaced by a
+  rename: other hard links, a foreign owner, the special mode bits, extended
+  attributes. A directory that cannot be written refuses the save; there is
+  no fallback to writing in place.
+- **Noticing a change on disk.** A stamp is compared for equality, not for
+  "newer". A save is told what to expect (the stamp a load or a save
+  returned, no file, or whatever, which is the override), and one that
+  finds something else is refused with what is there now and writes nothing
+  over the file. It is checked when a save is asked for and at no other
+  time. A change that keeps the size inside one tick of the file system's
+  clock is not seen; a test pins that.
+- **The service** (`editor-ffi`, `src/files.rs`), in the timer service's
+  shape: a load or a save is started with the caller's id and returns at
+  once; **one thread works the requests in the order they were started**,
+  so two saves of one file land in order; one completion is queued; the
+  result is then taken once by its id, as a status, a snapshot handle for a
+  load, words and a detail string. Cancelling a request that waits means it
+  is never worked; a save being worked reads the flag before it replaces
+  the file. The statuses: done, not absolute, not found, not a file,
+  denied, binary, too large, changed, no temporary name, failed.
+- **How the tests are kept off the disk.** `editor-text`'s tests, and the
+  service's unit tests, run on the fake. That is held by the gate, not by
+  review: a `clippy.toml` beside each of the two crates lists `std::fs`,
+  the disk-asking methods of `Path`, the working and temporary directory,
+  `Command::new` and the adapter's constructor as disallowed
+  (`editor-text`'s also the clocks), and `deny.toml` keeps `tempfile` and
+  the adapter out of `editor-text`. Two places are marked as exceptions,
+  both in `editor-ffi`: the process's file service, and the one wiring test
+  over real files, which asserts bytes in and bytes out. What the lists
+  cannot hold is said in their headers.
+
 ## What Lean's runtime provides directly
 
 | Service | Notes |
@@ -243,3 +328,19 @@ better generic primitive, not a feature-specific service.
   keep that possible; nothing more is planned.
 - **In-process git**: if a process per query proves too slow for status in
   large repositories, a library can sit behind the same Lean interface.
+- **A save that would lose something.** Replacing a file by a rename loses
+  its other hard links, a foreign owner, the special mode bits and extended
+  attributes. The usual remedy is to write in place where a rename would
+  lose one, as Vim's `backupcopy` does, which gives up the guarantee that a
+  crash leaves the file whole.
+- **File names that are not UTF-8.** The service takes a path as bytes and
+  decodes nothing, but Lean's paths are strings, so such a file cannot be
+  named from Lean. The route is the text model's escapes, applied to names.
+- **A change inside the clock's granularity** that keeps the size is not
+  noticed by a stamp. A content hash would notice it, at the cost of reading
+  the file at every save.
+- **A streamed load**, which would not hold the file's bytes whole beside
+  the rope; **an override of the binary rule**; and **one slow file holding
+  the file service**, whose one thread works requests in order (a thread a
+  directory, or a small pool keyed by path, would keep the order that
+  matters).
