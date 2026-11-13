@@ -8,21 +8,34 @@
 //! real adapter; `editor-ffi` runs a platform and puts what it reports on the
 //! editor's event queue.
 //!
-//! # This is a first cut
+//! # What a window reports
 //!
-//! The vocabulary is what the keyboard check needs to tell a key, a dead key
-//! and a composition apart (`editor window-check`,
-//! `docs/dev-practices/on-demand-checks.md`). An [`Input`]
-//! carries no key identity: no physical or logical key and no modifiers. The
-//! display pipeline defines those, and may replace [`Input`] when it does.
+//! A key with its identity: its logical key ([`LogicalKey`], what the layout
+//! makes of it), its physical key ([`PhysicalKey`], where it is) and the
+//! [`Modifiers`] held, with the text it produced beside them. Named keys and
+//! physical keys are W3C UI Events names, as strings, so a new one needs no
+//! number on either side of the Lean boundary. A pointer ([`Pointer`]) with
+//! its action, position, button and modifiers; a resize ([`Resize`]) with
+//! the size and the scale factor; the focus; an input method's composition;
+//! that the window opened; and a request to close.
+//!
+//! The command loop fixed this shape (its phase 1), so that it and the
+//! display pipeline build on one. The winit adapter maps only a dead key and
+//! a bare pointer press so far; producing the rest from winit is the display
+//! pipeline's (its phase 5).
 //!
 //! # Where an addition goes
 //!
-//! The port grows by data, not by methods.
+//! The port grows by data, not by methods. Each addition crosses to Lean as
+//! a row of the table in `editor-ffi`'s `window.rs` and a case in Lean's
+//! `Editor/Event/Queue.lean`; `Editor/Event.lean` says which roadmap owns
+//! each side.
 //!
 //! | Addition | Where | Pinned by |
 //! |---|---|---|
-//! | Something more a window reports | A variant of [`Input`], or a field of one | The fake's tests in [`scripted`], and the adapter's translation tests |
+//! | Something more a window reports | A variant of [`Input`] (as [`Input::Pointer`] and [`Input::Resized`] were), or a field of one | The fake's tests in [`scripted`], and the adapter's translation tests |
+//! | A new key attribute | A field of [`Key`] or of [`Modifiers`] | The same |
+//! | A new named key or physical key | Nothing here: the adapter produces its W3C name in [`LogicalKey::Named`] or [`PhysicalKey::Code`] | The adapter's translation tests |
 //! | Another way to open the window | A field of [`WindowOptions`] | The fake's tests: it records the options it was run with |
 //! | A rule every platform keeps | [`contract`] | Its own tests, on the fake and on platforms written to break it |
 //!

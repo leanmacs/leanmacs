@@ -239,12 +239,24 @@ keyboard reaches Lean:
   of `WindowOptions`.
 - **What a window reports today** (`Input`): that it opened, with the
   platform's name; the focus gained or lost; a key pressed or released,
-  whether it is a repeat, whether it is a dead key, and the text it
-  produced; a step of an input method's composition (enabled, a preedit, a
-  commit, disabled); a pointer press; and a request to close. There is no
-  key identity yet, no physical or logical key and no modifiers, and no
-  resize, scale or redraw: the display pipeline defines those and may
-  replace `Input`. The one option is whether composition is allowed.
+  whether it is a repeat, its logical key (a character, a named key, a dead
+  key with its character, or unidentified), its physical key and the
+  modifiers held, with the text it produced beside them; a step of an input
+  method's composition (enabled, a preedit, a commit, disabled); the pointer
+  pressed, dragged, released or wheeled, with its position, button and
+  modifiers; the frame resized, with its size and scale; and a request to
+  close. Named keys and physical keys are W3C UI Events names, as strings.
+  The command loop fixed this shape (its phase 1) so that both roadmaps
+  build on one; the winit adapter maps only a dead key and a bare press so
+  far, and producing the rest from winit is the display pipeline's (its
+  phase 5). There is no redraw yet. The one option is whether composition
+  is allowed.
+- **How it crosses to Lean.** `editor-ffi`'s `window::event` makes each
+  input an event of the editor queue, with a key's identity, a pointer's
+  detail and a resize as words beside it (the table in `window.rs`), and
+  `window::input` is its inverse, which `editor_ffi_window_post_input`
+  uses to post an input as a window would, for tests and the headless
+  driver.
 - **What real keyboards have shown.** On macOS, with composition allowed,
   no key event is marked dead: a dead key reaches Lean only as a
   composition's preedit and commit. Whether that holds in a window that was

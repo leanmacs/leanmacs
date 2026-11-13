@@ -479,6 +479,17 @@ real implementation is not one call a request:
 | The job table, pure, and the shell the editor thread calls | `lean/Editor/Job/Table.lean`, `lean/Editor/Job/Jobs.lean` |
 | Warming the pool | `lean/Editor/Job/Pool.lean` |
 
+The display interface is the third. Its real binding is not built here: it is
+the display pipeline's, which holds it to the same contract:
+
+| Piece | Where |
+|---|---|
+| The scene, plain data published after a command: views by handles (a snapshot, markers), faces by name, the echo text, the pending prefix and the preedit | `lean/Editor/Scene.lean` |
+| The display port: `publish` a scene, and two layout queries answered in the same call, the rows a view shows from its anchor (`rowsShown`) and the position some visual lines away with the goal x passed back (`linesFrom`); `DisplayM`; the cell size the contract runs at (`Display.Cells`) | `lean/Editor/Display.lean` |
+| Its pure model: the scenes published, in order, and a layout in fixed-size cells, for tests only | `lean/Editor/Display/Model.lean` |
+| Its contract, imported from the port alone: properties of the two queries at a cell size, run against the model by `lake test` at two sizes, and to be run against the real binding over a fake shaper whose glyphs have that size | `lean/Editor/Display/Contract.lean` |
+| The events of the editor queue as plain data (a key with its logical and physical identity and modifiers, a pointer, a resize), and the one module that reads and writes their layouts on the queue | `lean/Editor/Event.lean`, `lean/Editor/Event/Queue.lean` |
+
 The runner is the job port's real handler. It is not a function from a
 request to an `IO` reply, as the text port's is, because a job must hold no
 thread while it waits: the runner answers a wait by registering a promise

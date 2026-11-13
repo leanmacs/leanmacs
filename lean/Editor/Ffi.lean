@@ -193,10 +193,11 @@ arrives on the editor queue.
   window, so that a failure to open is seen to cross. The real one opens a
   window.
 
-The editor does not call these bindings yet. The one caller is the keyboard
-check (`Editor/WindowCheck/Real.lean`, `editor window-check`). The editor's
-own port for the window, with its model and its contract, arrives with the
-command loop.
+The editor does not run a window yet. The callers are the keyboard check
+(`Editor/WindowCheck/Real.lean`, `editor window-check`), and
+`Editor/Event/Queue.lean`, whose `Event.post` the headless driver sends keys
+with through `postInput`. The editor's events as one Lean type are
+`Editor/Event.lean`.
 
 Tests: the window checks of `ffi-test` (`FfiTest.windowChecks`), on the
 scripted platforms: the bindings, a run that fails to open among them, and
