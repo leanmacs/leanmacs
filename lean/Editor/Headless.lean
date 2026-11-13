@@ -1,6 +1,7 @@
 import Editor.Config.Directory
 import Editor.Config.Elaborate
 import Editor.Config.Reload
+import Editor.Event.Queue
 import Editor.Job.Jobs
 import Editor.Job.Pool
 import Editor.Job.Real
@@ -31,8 +32,8 @@ installed between two events, and the editor answers events while a chunk
 elaborates. It is a dedicated task, not one of the pool's: it reads files.
 
 It knows a request from its driver, the wake-up of a reload job, the wake-up
-of a job that has ended, an event of the library's scripted source and quit,
-and nothing else. It has no keys, keymaps, dispatch, scene or rollback: those
+of a job that has ended, an event of the library's scripted source, a key
+press from the window and quit, and nothing else. It has no keys, keymaps, dispatch, scene or rollback: those
 are the command loop's, which will replace this loop and call the same
 operations of the reducer and of the job table.
 
@@ -93,6 +94,8 @@ spawn <name>: job <id>    (or "no such job")
 job <id> <name>: ok       (the handler's command ran; or "refused: <error>",
                            "failed: <first line of the message>", "cancelled")
 event <source id> <code>  (an event from the library's scripted source)
+key arrived: <logical> <physical> <modifiers>
+                          (a key press from the window, `Key.describe`)
 commands: <names>
 text <index>: <quoted text>
 store <name> v<version>: <value>
@@ -115,8 +118,14 @@ handled in the order they were sent, and a request sent while a reload runs
 is handled before that reload is installed: settle first to see its effect.
 
 `run` drives a host through a script, one directive a line: `reload`,
-`run <name>`, `spawn <name>` and `show` are requests, and `settle` and `join`
-are the driver's own. Blank lines and lines that start with `#` are skipped.
+`run <name>`, `spawn <name>` and `show` are requests, and `settle`, `join`
+and `key <logical> <physical> <modifiers>` are the driver's own. A `key` is
+sent with `Host.press`: a press with no text, posted through the library's
+window input as a window would report it (`Event.post`), in order with the
+requests. The loop decodes a window's events (`Event.ofFfi`) and prints a key
+press with its identity; it ignores every other window event, which the
+command loop will handle. Blank lines and lines that start with `#` are
+skipped.
 
 A script that cannot run to its end is data too. `Host.await` and `Host.join`
 say what a wait came to (`Wait`): settled, or run out with a reload or a job
@@ -147,6 +156,8 @@ clock it moves, with the thread each line was emitted from
 (`ConfigTest.scriptChecks`). The `ffi-test` task runs the real executable
 once, on the fixture under `tests/headless`, which covers the command line,
 the pump and the timer service: the fixture's job sleeps on the real clock.
+It runs it a second time on `tests/headless/keys-script`, which sends keys
+with their identity through the library's window input.
 -/
 
 namespace Editor.Headless
@@ -422,8 +433,18 @@ def handle (collaborators : Collaborators σ) (running : Running σ) (event : Ff
   | .script =>
     collaborators.emit s!"event {event.source.id} {event.code}"
     return running
-  | .library | .window =>
+  | .library =>
     return running
+  | .window =>
+    -- A key press is printed with its identity; every other window event,
+    -- and one that cannot be read, is ignored. The command loop replaces
+    -- this with real handling.
+    match Event.ofFfi event with
+    | .ok { event := .key which true _, .. } =>
+      collaborators.emit s!"key arrived: {which.describe}"
+      return running
+    | _ =>
+      return running
   | .lean =>
     if event.source.id == collaborators.wakeups then
       return ← running.finish collaborators
@@ -541,6 +562,14 @@ def post (host : Host) (signal : Signal) : IO Unit := do
 def send (host : Host) (request : Request) : IO Unit :=
   host.post (.request request)
 
+/-- Sends a press of `key`, with no text, as the window would report it: it
+goes through the library's window input (`Event.post`), onto the editor
+queue after everything sent before. Throws if the queue refuses it, which it
+does once the queues are quit. -/
+def press (_ : Host) (key : Key) : IO Unit := do
+  unless ← Event.post (.key key true "") do
+    throw (IO.userError "the editor queue refused a key: it has been quit")
+
 /-- Waits until the editor thread has handled everything sent so far and
 `busy` no longer holds of its progress, for at most `patience` milliseconds.
 Says what the wait came to: `still` if it ran out with the editor thread up
@@ -609,6 +638,8 @@ inductive Directive where
   /-- Wait until the editor thread has handled everything asked so far and no
   job is running. The driver's own, too. -/
   | join
+  /-- Send a press of this key, with no text, as the window would. -/
+  | key (key : Key)
   deriving DecidableEq, Repr
 
 /-- The name a directive gives after its keyword, which is the first
@@ -616,6 +647,46 @@ inductive Directive where
 def named (line : String) (keyword : Nat) : Option String :=
   let name := (line.drop keyword).trimAscii.toString
   if name.isEmpty then none else some name
+
+/-- The logical key a `key` directive names: one character, or a named key
+in angle brackets (`<Escape>`). -/
+def logicalKey? (part : String) : Except String LogicalKey :=
+  if part.length == 1 then .ok (.character part)
+  else
+    if part.length > 2 && part.startsWith "<" && part.endsWith ">" then
+      .ok (.named ⟨((part.drop 1).dropEnd 1).toString⟩)
+    else .error s!"`{part}` is not a key: expected one character or a <Name>"
+
+/-- The physical key a `key` directive names: a W3C UI Events code, or `-`
+for none. -/
+def physicalKey (part : String) : PhysicalKey :=
+  if part == "-" then .unidentified else .code part
+
+/-- The modifiers a `key` directive names: `shift`, `control`, `alt` and
+`super` joined with `+`, or `-` for none. -/
+def modifiers? (part : String) : Except String Modifiers :=
+  if part == "-" then .ok {}
+  else
+    (part.splitOn "+").foldlM
+      (fun held name =>
+        match name with
+        | "shift" => .ok { held with shift := true }
+        | "control" => .ok { held with control := true }
+        | "alt" => .ok { held with alt := true }
+        | "super" => .ok { held with superKey := true }
+        | _ =>
+          .error
+            s!"`{name}` is not a modifier: expected shift, control, alt or super, joined with +, or -")
+      {}
+
+/-- The key a `key` directive's line names after its keyword. -/
+def keyDirective? (line : String) : Except String Directive :=
+  match ((line.drop 4).trimAscii.toString.splitOn " ").filter (!·.isEmpty) with
+  | [logical, physical, held] => do
+    let logical ← logicalKey? logical
+    let modifiers ← modifiers? held
+    return .key { logical, physical := physicalKey physical, modifiers }
+  | _ => .error s!"`{line}` is not a key: expected key <logical> <physical> <modifiers>"
 
 /-- The directive `line` is, `none` for a blank line or a comment, or what is
 wrong with it. -/
@@ -641,8 +712,10 @@ def directive? (line : String) : Except String (Option Directive) :=
                 | none => .error s!"`{line}` names no job"
                 | some name => .ok (some (.request (.spawn name)))
               else
-                .error
-                  s!"`{line}` is not a directive: expected reload, run <name>, spawn <name>, show, settle or join"
+                if line.startsWith "key " then some <$> keyDirective? line
+                else
+                  .error
+                    s!"`{line}` is not a directive: expected reload, run <name>, spawn <name>, show, settle, join or key <logical> <physical> <modifiers>"
 
 /-- A directive of a script, and the line it is on. -/
 structure Line where
@@ -723,6 +796,9 @@ def run {σ : Type} (collaborators : Collaborators σ) (script : Array Line) (pa
       match line.directive with
       | .request request =>
         host.send request
+        continue
+      | .key key =>
+        host.press key
         continue
       | .settle =>
         host.await patience

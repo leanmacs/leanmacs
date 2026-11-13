@@ -145,6 +145,11 @@ run = [
   # loads the config directory, runs the script, and must print exactly
   # `expected`. Every path is an argument.
   "out=$(.lake/build/bin/editor headless \"$(lean --print-prefix)\" .lake/build/lib/lean ../tests/headless/config ../tests/headless/script) && printf '%s\\n' \"$out\" | diff ../tests/headless/expected -",
+  # The same, with a script that sends keys with their identity: each goes
+  # through the library's window input, as a window's would, and must be
+  # printed back with its logical key, physical key and modifiers
+  # (`keys-expected`).
+  "out=$(.lake/build/bin/editor headless \"$(lean --print-prefix)\" .lake/build/lib/lean ../tests/headless/config ../tests/headless/keys-script) && printf '%s\\n' \"$out\" | diff ../tests/headless/keys-expected -",
   # The editor's failure statuses. A command line it does not understand is
   # status 2, with the usage on stderr.
   "status=0; .lake/build/bin/editor bogus || status=$?; test \"$status\" -eq 2",

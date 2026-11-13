@@ -71,6 +71,7 @@ are skipped.
 | `spawn <name>` | Starts the job registered under that name. It runs in the background, and the editor goes on answering. |
 | `join` | Waits, for up to 30 seconds, until everything asked so far has been handled and no job is running. |
 | `show` | Prints the commands, the texts and the stores. |
+| `key <logical> <physical> <modifiers>` | Sends a press of a key, with no text, as the window would report it: through the library's window input, in order with what was asked before. `<logical>` is one character (`a`) or a named key in angle brackets (`<Escape>`, a W3C UI Events `key` name); `<physical>` is a W3C UI Events `code` (`KeyA`) or `-`; `<modifiers>` is `shift`, `control`, `alt` and `super` joined with `+`, or `-`. The editor prints `key arrived:` with the three. |
 
 With the fixture the gate uses (`tests/headless`):
 
@@ -89,6 +90,15 @@ text 0: "hello, world"
 text 1: "counted 42"
 ```
 
+The gate runs a second script on the same config, `tests/headless/keys-script`,
+whose output must be exactly `tests/headless/keys-expected`:
+
+```console
+$ .lake/build/bin/editor headless "$(lean --print-prefix)" .lake/build/lib/lean ../tests/headless/config ../tests/headless/keys-script
+key arrived: a KeyA shift+control
+key arrived: <Escape> Escape -
+```
+
 The lines it can print:
 
 ```
@@ -99,6 +109,7 @@ run <name>: ok            (or "refused: <error>", or "no such command")
 spawn <name>: job <id>    (or "no such job")
 job <id> <name>: ok       (or "refused: <error>", "failed: <message>", "cancelled")
 event <source id> <code>
+key arrived: <logical> <physical> <modifiers>
 commands: <names>
 text <index>: <quoted text>
 store <name> v<version>: <value>

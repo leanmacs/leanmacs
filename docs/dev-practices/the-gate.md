@@ -71,9 +71,11 @@ whatever `LEAN_NUM_THREADS` says: a bare `lake test` is enough.
 
 `mise run ffi-test` runs `lean/.lake/build/bin/ffi-test`, the test executable
 linked against the real library, then `contract-test`, `config-test`, and
-then the editor: once with no arguments, and once in its headless mode on
-the fixture under `tests/headless`, whose output must be exactly
-`tests/headless/expected`. Two more runs pin its failure statuses: a command
+then the editor: once with no arguments, and twice in its headless mode on
+the fixture under `tests/headless`: with `script`, whose output must be
+exactly `expected`, and with `keys-script`, which sends keys with their
+identity through the library's window input and whose output must be exactly
+`keys-expected`. Two more runs pin its failure statuses: a command
 line it does not understand must give status 2, and a script that cannot be
 read status 1 with a line on stderr that says why. `contract-test` runs the
 text interface's contract, the same list of properties the model tests run,

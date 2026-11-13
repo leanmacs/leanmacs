@@ -1255,6 +1255,51 @@ def scriptChecks (context : Context) : List Check :=
             (refusal "# a comment\n\nreload\nrun\n").startsWith "line 4: " &&
             (refusal "settle now\n").startsWith "line 1: ") },
     { name :=
+        "a key directive is a logical key, a physical key and modifiers: one character or a <Name>, a code or -, and modifiers joined with + or -"
+      run :=
+        pure
+          ((Headless.script
+                "key a KeyA shift+control\nkey <Escape> - -\nkey é - alt+super\n").toOption ==
+            some
+              #[⟨1,
+                  .key
+                    { logical := .character "a", physical := .code "KeyA"
+                      modifiers := { shift := true, control := true } }⟩,
+                ⟨2, .key { logical := .named .escape }⟩,
+                ⟨3,
+                  .key
+                    { logical := .character "é",
+                      modifiers := { alt := true, superKey := true } }⟩]) },
+    { name :=
+        "a key directive with a part missing or left over, a logical key of two characters, an empty name, or a modifier it does not know is refused"
+      run :=
+        pure
+          (["key", "key a", "key a KeyA", "key a KeyA - more", "key ab KeyA -", "key <> - -",
+                "key a KeyA shift+meta", "key a KeyA shift+"].all
+            fun line =>
+            match Headless.script line with
+            | .error message => message.startsWith "line 1: "
+            | .ok _ => false) },
+    { name :=
+        "a script that sends a key with modifiers prints that the key arrived with those modifiers, in order with what it asked for"
+      run :=
+        IO.FS.withTempDir fun directory => do
+          writeFiles directory greetConfig
+          let stage ← Stage.new context context.elaborator (Config.Directory.source directory)
+          let failure ←
+            Headless.run stage.collaborators
+                #[⟨1, .request .reload⟩, ⟨2, .settle⟩,
+                  ⟨3,
+                    .key
+                      { logical := .character "a", physical := .code "KeyA"
+                        modifiers := { shift := true, control := true } }⟩,
+                  ⟨4, .request (.run "greet")⟩, ⟨5, .key { logical := .named .escape }⟩]
+                patience
+          return failure == none &&
+              (← stage.output.get) ==
+                #["reload 1: installed, 2 chunks, 1 commands", "key arrived: a KeyA shift+control",
+                  "run greet: ok", "key arrived: <Escape> - -"] },
+    { name :=
         "a script that runs to its end has no failure, and what it asked for was printed before the loop stopped"
       run :=
         IO.FS.withTempDir fun directory => do

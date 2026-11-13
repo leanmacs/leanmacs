@@ -1,0 +1,6 @@
+# The script `mise run ffi-test` has the editor's headless mode run against
+# the config in `config/`, to send keys with their identity as a window
+# would. What it prints must be exactly `keys-expected`.
+
+key a KeyA shift+control
+key <Escape> Escape -
