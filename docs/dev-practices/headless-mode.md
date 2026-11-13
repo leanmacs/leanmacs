@@ -71,7 +71,9 @@ are skipped.
 | `spawn <name>` | Starts the job registered under that name. It runs in the background, and the editor goes on answering. |
 | `join` | Waits, for up to 30 seconds, until everything asked so far has been handled and no job is running. |
 | `show` | Prints the commands, the texts and the stores. |
-| `key <logical> <physical> <modifiers>` | Sends a press of a key, with no text, as the window would report it: through the library's window input, in order with what was asked before. `<logical>` is one character (`a`) or a named key in angle brackets (`<Escape>`, a W3C UI Events `key` name); `<physical>` is a W3C UI Events `code` (`KeyA`) or `-`; `<modifiers>` is `shift`, `control`, `alt` and `super` joined with `+`, or `-`. The editor prints `key arrived:` with the three. |
+| `key <logical> <physical> <modifiers>` | Sends a press of a key, with no text, as the window would report it: through the library's window input, in order with what was asked before. `<logical>` is one character (`a`) or a named key in angle brackets (`<Escape>`, a W3C UI Events `key` name); `<physical>` is a W3C UI Events `code` (`KeyA`) or `-`; `<modifiers>` is `shift`, `control`, `alt` and `super` joined with `+`, or `-`. The editor prints `key arrived:` with the three. The editor loop drops the key: key lookup comes later. |
+| `commit <text>` | Sends the rest of the line, trimmed, as an input method's composition would end with it, the same way as `key`. The editor loop inserts it at the focused window's cursors. A `commit` with no text is refused. |
+| `scene` | Prints the last scene the editor loop published: the frame, then each view and the text its snapshot holds. |
 
 With the fixture the gate uses (`tests/headless`):
 
@@ -99,6 +101,33 @@ key arrived: a KeyA shift+control
 key arrived: <Escape> Escape -
 ```
 
+A third script, `tests/headless/scene-script`, commits text and asks for
+the scene, then reloads and runs a job; its output must be exactly
+`tests/headless/scene-expected`:
+
+```console
+$ .lake/build/bin/editor headless "$(lean --print-prefix)" .lake/build/lib/lean ../tests/headless/config ../tests/headless/scene-script
+scene 0x0, focused 0, echo "", preedit -, published 1
+view 0 0,0 0x0: "hello", scroll 0, selections 5..5
+reload 1: installed, 2 chunks, 1 commands
+spawn count: job 1
+job 1 count: ok
+scene 0x0, focused 0, echo "", preedit -, published 8
+view 0 0,0 0x0: "hello", scroll 0, selections 5..5
+```
+
+The editor runs its command loop. The loop has no frame until the first
+event from the window input arrives (a `key` or a `commit`): it then makes
+one, 0 by 0, with one window on a buffer called `scratch` of an empty text.
+So a script that sends no window event has no frame, and the texts its
+commands make keep the indices `show` prints. Once there is a frame, every
+event the editor handles is followed by a scene, published to a recorder
+that stands in for the window's display: a window event, a request, a
+reload that installs, a job's command. `published` counts them, so the
+second `scene` above, seven events after the first, shows that the reload
+and the job were each followed by one. A window's close request ends the
+loop.
+
 The lines it can print:
 
 ```
@@ -113,7 +142,18 @@ key arrived: <logical> <physical> <modifiers>
 commands: <names>
 text <index>: <quoted text>
 store <name> v<version>: <value>
+scene <w>x<h>, focused <id or ->, echo <quoted>, preedit <quoted or ->, published <n>
+view <id> <x>,<y> <w>x<h>: <quoted text>, scroll <offset>, selections <anchor>..<head> …
+scene: none
 ```
+
+`scene` prints the frame's size, the focused view (`-` while the frame does
+not have the keyboard focus), the echo area, the input method's preedit
+(`-` when there is none) and how many scenes have been published; then, for
+each view in drawing order, its rectangle, the text of its snapshot, read
+from the library, and the offsets of its scroll anchor and of each range of
+its selection. `scene: none` means no scene has been published: no window
+event has arrived.
 
 A job's line is printed when the editor has dealt with its result: `ok` when
 the handler's command ran, `refused` when the library refused that command,

@@ -114,11 +114,18 @@ to see that keys reach a Lean loop, and how fast.
 
 What is built of this is the headless mode (`lean/Editor/Headless.lean`;
 `editor headless <sysroot> <olean dir> <config dir> <script file>`): an
-editor loop on a dedicated task with no window, keys or keymaps, which loads
-a config directory in the background, runs its commands against the library,
-starts its jobs and prints what happened. It exists for integration tests,
-and the command loop will replace its loop. The first load is an ordinary
-reload: the loop answers events before and while it runs. Where an installed
+editor loop on a dedicated task with no window and no keymaps, which loads a
+config directory in the background, runs its commands against the library,
+starts its jobs and prints what happened. It exists for integration tests.
+It runs the command loop (`lean/Editor/Loop.lean`): events from the window
+input go to `Loop.step`, which handles each against the editor state
+(`lean/Editor/State.lean`) and publishes a scene; after every other event,
+a driver's request, a reload's install or a job's command among them, a
+scene is published too. With no window, the display is a recorder of the
+scenes (`lean/Editor/Display/Recorder.lean`), and the frame is made, 0 by 0,
+at the first event from the window input, so that the texts commands make
+before it keep their indices. The first load is an ordinary reload: the
+loop answers events before and while it runs. Where an installed
 editor finds the toolchain's `.olean` files and its own is not decided: the
 headless mode takes both directories as arguments.
 
@@ -133,8 +140,10 @@ start-up will:
   life of the process. Quit ends it, like every pull.
 
 Its script has a directive for each thing a driver can ask: `reload`,
-`run <name>`, `spawn <name>` and `show`, and two waits of the driver's own,
-`settle` (no reload is running) and `join` (no job is running).
+`run <name>`, `spawn <name>`, `show` and `scene` (the last scene published),
+two waits of the driver's own, `settle` (no reload is running) and `join`
+(no job is running), and two events sent as a window would send them,
+`key` and `commit`.
 
 Rules found the hard way:
 
@@ -199,7 +208,7 @@ elaborator.
 | The reducer that serialises reloads and installs their outcomes | `lean/Editor/Config/Reload.lean` |
 | The elaborator port answered by Lean's elaborator | `lean/Editor/Config/Elaborate.lean` |
 | The source port answered by a directory of `.lean` files | `lean/Editor/Config/Directory.lean` |
-| The headless loop: the editor thread, the reload job, the output | `lean/Editor/Headless.lean` |
+| The headless loop: the editor thread, the reload job, the output, and the command loop run against the library with a display recorder | `lean/Editor/Headless.lean` |
 
 - **The core has no elaborator in it.** Which chunks are elaborated and from
   which cached state, all-or-nothing, when `setup` runs, replacement by
@@ -568,7 +577,7 @@ shape is:
 
 | State | Held by | Across a reload | Across a restart |
 |---|---|---|---|
-| Buffers, windows, keymaps, registers, the agent table | Compiled Lean, on the editor thread | Untouched | Lost unless its owner persists it |
+| Buffers, windows, keymaps, registers, the agent table | Compiled Lean, on the editor thread. Buffers, windows, the frame's split tree, the echo area and the preedit are the editor state (`lean/Editor/State.lean`), which the command loop (`lean/Editor/Loop.lean`) holds | Untouched | Lost unless its owner persists it |
 | Text, kept inverses, anchors | Rust, behind handles | Untouched | Files on disk; the kept inverses are lost |
 | The undo tree of each text: its nodes, where the text is in it, and the state last saved | Compiled Lean, with the buffer it is the history of, on the editor thread | Untouched | Lost |
 | A file's stamp (when it was last modified and how long it is, as the last load or save answered it), its path and its line ending | Compiled Lean, with the buffer that shows the file: the buffer's to keep, for the next save to expect. Nothing keeps one yet: buffers are the command loop's | Untouched | Lost; the file is loaded again |

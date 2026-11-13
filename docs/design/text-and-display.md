@@ -781,6 +781,35 @@ scroll position is an anchor. Layout invariants (for example, a minibuffer
 exists) are part of the data model, and operations that would break one
 return a typed refusal.
 
+#### Views as built
+
+The editor state is one Lean value (`lean/Editor/State.lean`, decided
+2026-11-13 by the command loop's phase 2): buffers, windows, one frame, the
+echo area and the preedit.
+
+- A **window** is a view of a buffer, named by the `ViewId` its view has in
+  every scene. Its scroll position is an anchor marker of the buffer's text,
+  and its selections one selection marker of that text, whose ranges are its
+  cursors.
+- The **split tree** is binary: a leaf is a window or the minibuffer's
+  place, and a split divides its rectangle between two children along an
+  axis, rows (stacked) or columns (side by side), the first taking half,
+  rounded down. A subtree with no window takes no space, and its sibling
+  takes all of it, so the minibuffer's place takes none until a prompt is
+  open (the command loop's phase 10) and the views tile the frame.
+- **The invariants**: the focused window is in the tree; there is exactly one
+  minibuffer leaf; the tree's window ids are distinct and are the windows';
+  each window's buffer exists. Removing a window and focusing one are the two
+  operations that can break one, and they refuse with a `LayoutRefusal` and
+  the state unchanged: `onlyWindow` for the last window, `noSuchWindow` for
+  one not in the tree. The minibuffer's place has no id, so neither can
+  remove it; a later operation that could adds its own refusal. When the
+  focused window is removed, the focus moves to the first window, in drawing
+  order, of the subtree that took its place, or of the tree when that has
+  none.
+- **No ambient context**: a handler is given the window it acts on and its
+  buffer, never "the current buffer".
+
 ### The scene
 
 After each command Lean publishes a **scene** to the library: the
@@ -833,9 +862,39 @@ display interface (`lean/Editor/Display.lean`): the rows a view shows from
 its scroll anchor, and the position some visual lines above or below a
 position, with the x it aimed for passed back for the next move. Its model
 (`lean/Editor/Display/Model.lean`) lays text out in fixed-size cells, for
-tests only. Its contract (`lean/Editor/Display/Contract.lean`) holds the
+tests. Its contract (`lean/Editor/Display/Contract.lean`) holds the
 model and the real binding to the same properties, the real binding over a
 fake shaper whose glyphs all have the cells' size.
+
+The one place the model's layout rule runs outside a test is a host with no
+window, which has no layout to ask: the headless host's display is a
+recorder (`lean/Editor/Display/Recorder.lean`) that keeps the last scene
+published and answers the two queries with the model's rule over the
+library's snapshot. The contract holds it too, over real snapshots. An
+editor with a window asks the real binding every time.
+
+**Publishing**, as the command loop does it (`lean/Editor/Loop.lean`,
+decided 2026-11-13 by its phase 2):
+
+- Once a frame exists, a scene is published after every event the loop
+  handles, whether the event changed the state or not: an input event, a
+  driver's request, a reload's install, a job's command, any of which may
+  have edited a text a view shows. A close request and a quit end the loop
+  and publish nothing.
+- Before the scene is made, each buffer's undo tree is told its text's
+  revision and its group is closed, so what one event edited is one step of
+  the history.
+- A view whose buffer's text is at the revision it was last shown at keeps
+  the same snapshot; otherwise a new one is taken, and views of one buffer
+  share it.
+- Once the scene is published, each snapshot the previous scene named that
+  this one does not is released. So a scene's handles are alive while it is
+  the last one published, and a real binding resolves them when it is
+  published.
+- Until later phases choose them, every view's cursor is a bar in the face
+  `cursor`, with no decorations and an empty status line, and the pending
+  prefix is empty. The focused view is named only while the frame has the
+  keyboard focus, and the preedit is the input method's text for it.
 
 ## Layout and rendering
 

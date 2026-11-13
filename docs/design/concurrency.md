@@ -40,8 +40,11 @@ runs on that main thread on both.
 
 ### Sharing state
 
-Editor state is an immutable Lean value held by the editor thread. Handing
-a job a snapshot is handing it that value. Text lives in Rust ropes, whose
+Editor state is an immutable Lean value held by the editor thread
+(`EditorState`, `lean/Editor/State.lean`: buffers, windows, the frame, the
+echo area), which the command loop takes from one event to the next
+(`lean/Editor/Loop.lean`). Handing a job a snapshot is handing it that
+value. Text lives in Rust ropes, whose
 snapshots are cheap; a job or the renderer holds a snapshot handle.
 
 The text snapshot is built: taking one copies none of the text, it never
