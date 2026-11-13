@@ -93,7 +93,9 @@ pub struct StatusField {
 }
 
 /// Which text: a key the binding gives each text, unique in the process.
-/// Layout keeps its state per key.
+/// Layout keeps its state per key, so two snapshots of one key at one
+/// revision must hold the same text: the binding gives a key to each
+/// document, and one of its own to each snapshot no document holds.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct TextKey(pub u64);
 

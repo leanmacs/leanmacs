@@ -28,15 +28,17 @@ use std::sync::Arc;
 use editor_text::{Selection, SelectionRange, Snapshot};
 
 use crate::Layout;
+use std::collections::HashMap;
+
+use crate::cache::state;
 use crate::decoration::{
-    DecorationSource, FaceId, FaceSpanSource, SELECTION_FACE, SelectionSource, Span, font_spans,
+    DecorationSource, FaceId, FaceSpanSource, SELECTION_FACE, SelectionSource, Span, fonts_of,
     merge,
 };
-use crate::query::Walker;
+use crate::query::{Visual, Walker};
 use crate::scene::{CursorShape, Rect, Scene, View, ViewId};
 use crate::shaper::{Shaper, VisualLine};
-use crate::tabs::TabSnapshot;
-use crate::wrap::WrapLayer;
+use crate::wrap::Outcome;
 
 /// A rectangle in pixels from a view's top left.
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
@@ -233,21 +235,24 @@ impl<S: Shaper> Layout<S> {
         };
         let faces = &self.faces;
         let fonts = |bytes: Range<usize>| {
-            if !faces.has_fonts() {
-                return Vec::new();
-            }
-            let (spans, _) = spans_of(bytes.clone());
-            font_spans(&merge(bytes, &spans), faces)
+            let mut all: Vec<&dyn DecorationSource> = vec![&selection_source];
+            all.extend_from_slice(&sources);
+            fonts_of(&all, snapshot, bytes, faces)
         };
-        let mut wrap = WrapLayer::new(
-            TabSnapshot::new(snapshot.clone(), self.tab_width),
+        let state = state(
+            &mut self.texts,
+            text,
+            self.tab_width,
             Some(view.rect.width as f32),
         );
+        let mut seen: HashMap<(usize, usize), Outcome> = HashMap::new();
         let mut walker = Walker {
             shaper: &self.shaper,
-            wrap: &mut wrap,
+            wrap: &mut state.wrap,
             fonts: &fonts,
-            outcome: &mut |_| {},
+            outcome: &mut |row, segment, outcome| {
+                seen.entry((row, segment)).or_insert(outcome);
+            },
         };
         let anchor = at_or_before(snapshot, view.scroll);
         let shown = walker
@@ -292,9 +297,11 @@ impl<S: Shaper> Layout<S> {
             y += line.height;
         }
         // The cursors on the rows shown.
-        let Some(last) = shown.last() else {
-            return frame;
-        };
+        let last = shown.last().copied().unwrap_or(Visual {
+            row: 0,
+            segment: 0,
+            line: 0,
+        });
         let from = frame.rows.first().map_or(0, |row| row.bytes.start);
         let to = snapshot
             .row_range(last.row)
@@ -302,7 +309,7 @@ impl<S: Shaper> Layout<S> {
         let advance = self.shaper.metrics().advance;
         for range in selections.iter().flat_map(|selection| selection.ranges()) {
             let head = range.head;
-            if head < from || head > to {
+            if shown.is_empty() || head < from || head > to {
                 continue;
             }
             let Ok((visual, x)) = walker.locate(head) else {
@@ -335,6 +342,8 @@ impl<S: Shaper> Layout<S> {
                 face: cursor_face,
             });
         }
+        state.sources = Some((selection_source.clone(), face_source.clone()));
+        self.counters.add(&seen);
         frame
     }
 }
@@ -371,6 +380,7 @@ fn hash(line: &VisualLine, runs: &[(Range<usize>, Vec<FaceId>)]) -> u64 {
 #[cfg(test)]
 mod tests {
     use std::cell::RefCell;
+    use std::hash::{DefaultHasher, Hash, Hasher};
     use std::ops::Range;
 
     use editor_text::{Selection, SelectionRange, Snapshot, Text};
@@ -392,6 +402,14 @@ mod tests {
         layout
     }
 
+    /// A key for `text`: one per text, as the binding gives one per
+    /// document.
+    fn key(text: &str) -> TextKey {
+        let mut hasher = DefaultHasher::new();
+        text.hash(&mut hasher);
+        TextKey(hasher.finish())
+    }
+
     /// A view of `text` `columns` cells wide and `height` pixels tall,
     /// scrolled to `scroll`, with the cursors and selections `ranges`.
     fn view(
@@ -409,7 +427,7 @@ mod tests {
                 width: columns * 10,
                 height,
             },
-            text: Some(TextRef::fixed(TextKey(1), Text::from(text).snapshot())),
+            text: Some(TextRef::fixed(key(text), Text::from(text).snapshot())),
             scroll,
             selections: if ranges.is_empty() {
                 vec![]
@@ -474,7 +492,7 @@ mod tests {
         let text = "abcdefgh\nij\nklmnopqrst\nuv";
         let mut layout = layout();
         let at_top = frame(&mut layout, view(text, 4, 160, 0, &[]));
-        let snapshot = Text::from(text).snapshot();
+        let snapshot = TextRef::fixed(key(text), Text::from(text).snapshot());
         for n in 1..=5 {
             let moved = layout.lines_from(&snapshot, 40.0, 0, n, Some(0.0)).unwrap();
             let scrolled = frame(&mut layout, view(text, 4, 160, moved.position, &[]));

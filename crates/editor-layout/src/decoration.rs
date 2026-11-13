@@ -237,6 +237,25 @@ pub fn merge(bytes: Range<usize>, spans: &[Span]) -> Vec<StyledRun> {
     runs
 }
 
+/// The spans of `bytes` of `snapshot` in a font other than the default:
+/// every source's spans merged, each run in the font `faces` resolves it
+/// to. No source is asked when no face names a font.
+pub fn fonts_of(
+    sources: &[&dyn DecorationSource],
+    snapshot: &Snapshot,
+    bytes: Range<usize>,
+    faces: &FaceTable,
+) -> Vec<(Range<usize>, FontId)> {
+    if !faces.has_fonts() {
+        return Vec::new();
+    }
+    let mut spans = Vec::new();
+    for source in sources {
+        source.spans(snapshot, bytes.clone(), &mut spans);
+    }
+    font_spans(&merge(bytes, &spans), faces)
+}
+
 /// The spans of `runs` in a font other than the default, by `faces`.
 pub fn font_spans(runs: &[StyledRun], faces: &FaceTable) -> Vec<(Range<usize>, FontId)> {
     if faces.fonts.is_empty() {

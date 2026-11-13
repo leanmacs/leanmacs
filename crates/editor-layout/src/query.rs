@@ -71,8 +71,8 @@ pub(crate) struct Walker<'a, S: Shaper> {
     /// absolute bytes, later over earlier; asked only for the segments the
     /// walker lays out.
     pub fonts: &'a dyn Fn(Range<usize>) -> Vec<(Range<usize>, FontId)>,
-    /// Told how each segment was got.
-    pub outcome: &'a mut dyn FnMut(Outcome),
+    /// Told how each segment was got, by row and segment.
+    pub outcome: &'a mut dyn FnMut(usize, usize, Outcome),
 }
 
 impl<S: Shaper> Walker<'_, S> {
@@ -91,7 +91,7 @@ impl<S: Shaper> Walker<'_, S> {
             relative_spans(&spans, &bytes)
         };
         let (entry, outcome) = self.wrap.entry(self.shaper, row, segment, &fonts)?;
-        (self.outcome)(outcome);
+        (self.outcome)(row, segment, outcome);
         Some(entry)
     }
 
@@ -271,6 +271,7 @@ mod tests {
 
     use super::{Moved, QueryError, RowRange};
     use crate::Layout;
+    use crate::scene::{TextKey, TextRef};
     use crate::shaper::fake::CellShaper;
 
     /// A layout on cells 10 by 16.
@@ -281,7 +282,7 @@ mod tests {
     /// The rows of `text` a view `columns` cells wide and `rows` tall shows
     /// from `anchor`, as pairs.
     fn rows(text: &str, columns: u32, rows: u32, anchor: usize) -> Vec<(usize, usize)> {
-        let snapshot = Text::from(text).snapshot();
+        let snapshot = TextRef::fixed(TextKey(1), Text::from(text).snapshot());
         layout()
             .rows_shown(&snapshot, columns as f32 * 10.0, rows as f32 * 16.0, anchor)
             .unwrap()
@@ -293,7 +294,7 @@ mod tests {
     /// Where `position` of `text` goes `lines` down in a view `columns`
     /// wide, aiming for `goal`.
     fn moved(text: &str, columns: u32, position: usize, lines: i64, goal: Option<f32>) -> Moved {
-        let snapshot = Text::from(text).snapshot();
+        let snapshot = TextRef::fixed(TextKey(1), Text::from(text).snapshot());
         layout()
             .lines_from(&snapshot, columns as f32 * 10.0, position, lines, goal)
             .unwrap()
@@ -312,7 +313,7 @@ mod tests {
         );
         assert_eq!(rows("ab\ncd", 4, 10, 0), vec![(0, 2), (3, 5)]);
         // A view shorter than a row shows none.
-        let snapshot = Text::from("ab").snapshot();
+        let snapshot = TextRef::fixed(TextKey(1), Text::from("ab").snapshot());
         assert_eq!(layout().rows_shown(&snapshot, 40.0, 15.0, 0), Ok(vec![]));
     }
 
@@ -390,7 +391,7 @@ mod tests {
 
     #[test]
     fn an_offset_that_is_not_a_position_is_refused() {
-        let snapshot = Text::from("é\nab").snapshot();
+        let snapshot = TextRef::fixed(TextKey(1), Text::from("é\nab").snapshot());
         let mut layout = layout();
         assert_eq!(
             layout.rows_shown(&snapshot, 40.0, 16.0, 1),
