@@ -41,8 +41,9 @@ record carries no equality on `State`: a scheme's state may hold what a
 reset must keep, so the contract speaks of `pending` and of what the scheme
 then yields.
 
-The scheme that ships is not here. `Editor/InputScheme/Test.lean` is the
-test scheme, published for other modules' tests.
+The scheme that ships is not here: it is the Vim scheme
+(`Editor/InputScheme/Vim.lean`). `Editor/InputScheme/Test.lean` is the test
+scheme, published for other modules' tests.
 
 ## Where an addition goes
 

@@ -28,6 +28,24 @@ A key sequence parses to an `Edit`, and an edit compiles to an invocation
   whether an edit with it changes text (`Edit.changes`) and which Vim state
   the view is in afterwards (`Edit.enters`).
 
+## The grammar
+
+`parse` is one key: the state it leaves and what the key parsed to. `step`
+is `parse` with the edit compiled, and `scheme` packages it as an
+`InputScheme` over a registry of Vim states. The rules:
+
+- **A key is walked through the active keymaps, then the Vim state's**
+  (`Keymap.walk` over `maps view ++ states.initial.keymaps`: every view is
+  in the initial state, since nothing enters another yet). The active keymaps
+  are the specific ones, so a binding of theirs replaces a default. It is
+  one walk, so prefixes merge across the two lists, and a part of speech
+  bound in an active keymap is the same to the grammar as one bound in a
+  state's keymap.
+- **A motion alone is a move**, and **a command is run**.
+- **An unbound key resets the edit begun**: nothing is yielded, and the
+  state is the initial state.
+- **`pending` is every key of the edit begun** (`State.typed`), as chords.
+
 ## Vim states
 
 A Vim state (normal, insert, a visual state) is a record in a registry
@@ -50,8 +68,12 @@ A Vim state (normal, insert, a visual state) is a record in a registry
 | A new target of an operator | A variant of `Over`, and its row in `Edit.compile` |
 | A new fact about an operator or a command that the grammar needs | A field of `Operator` or of `Command` |
 | A new fact about a Vim state | A field of `StateRecord` |
+| A new part of speech | A variant of `Bound`, and its case in `parse` |
+| Something the scheme remembers between keys | A field of `State`, with what a reset does to it |
 
-Pinned by `ModelTest.vimEditChecks` and `ModelTest.vimRegistryChecks`.
+Pinned by `ModelTest.vimEditChecks`, `ModelTest.vimRegistryChecks` and
+`ModelTest.vimGrammarChecks`. The scheme runs the scheme contract
+(`Editor/InputScheme/Contract.lean`) in `ModelTest.vimContractChecks`.
 -/
 
 namespace Editor.Vim
@@ -200,5 +222,49 @@ def register (states : States) (record : StateRecord) : States :=
   else { states with others := states.others.filter (·.name != record.name) ++ [record] }
 
 end States
+
+/-- What the Vim scheme remembers between keys. -/
+structure State where
+  /-- The chords of every key of the edit begun, in order; none when no
+  edit is begun. -/
+  typed : List Key := []
+  /-- The keymap prefix walked so far, within the edit begun. -/
+  walked : List Key := []
+  deriving DecidableEq, Repr
+
+/-- What one key parses to. -/
+inductive Parsed where
+  /-- Nothing yet, or nothing at all: the key went on with an edit, or
+  reset one. -/
+  | nothing
+  /-- The key completed this edit. -/
+  | edit (edit : Edit)
+  deriving DecidableEq, Repr
+
+/-- One key of the grammar: the state it leaves, and what it parsed to (the
+rules in the module docs). The key is walked through the active keymaps of
+`view` and then the keymaps of the initial Vim state. -/
+def parse (states : States) (maps : ViewId → List (Keymap Bound)) (view : ViewId) (state : State)
+    (key : Key) : State × Parsed :=
+  match Keymap.walk (maps view ++ states.initial.keymaps) state.walked key with
+  | (walked, none) =>
+    if walked.isEmpty then ({}, .nothing)
+    else ({ typed := state.typed ++ [key.chord], walked }, .nothing)
+  | (_, some (.motion name)) => ({}, .edit (.move name none))
+  | (_, some (.command command)) => ({}, .edit (.run command none none))
+  | (_, some (.operator _)) | (_, some (.textObject _)) => ({}, .nothing)
+
+/-- One key of the Vim scheme: `parse`, with the edit it completed compiled
+to its invocation. -/
+def step (states : States) (maps : ViewId → List (Keymap Bound)) (view : ViewId) (state : State)
+    (key : Key) : State × Option Invocation :=
+  match parse states maps view state key with
+  | (next, .nothing) => (next, none)
+  | (next, .edit edit) => (next, some edit.compile)
+
+/-- The Vim scheme over the registry `states`. Its bindings are parts of
+speech, and it reports every key of the edit begun as pending. -/
+def scheme (states : States) : InputScheme :=
+  { State, Binding := Bound, init := {}, step := step states, pending := (·.typed) }
 
 end Editor.Vim

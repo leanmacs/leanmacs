@@ -163,7 +163,10 @@ with no model:
   invocation, and what an edit says of itself;
 - `vimRegistryChecks`: the registry of Vim states: looking a state up by
   its name, and registering one. A record holds keymaps and so has no
-  equality: the checks compare records by their fields (`vimSeen`).
+  equality: the checks compare records by their fields (`vimSeen`);
+- `vimGrammarChecks`: the grammar: which keymaps a key is looked up in,
+  and what a key sequence parses to and yields;
+- `vimContractChecks`: the scheme contract holds of the Vim scheme.
 
 The grammar's checks run on a registry and keymaps written here
 (`vimStates`), so that none of them names a default binding.
@@ -4536,6 +4539,156 @@ def vimRegistryChecks : List Check :=
             vimSeen (replaced.get "normal") == ("normal", .underline, false, false, 0) &&
             replaced.others.map (·.name) == ["insert", "visual"]) }]
 
+/-- No active keymaps, for every view: a key is looked up in the keymaps of
+the view's Vim state alone. -/
+def vimNoMaps (_ : ViewId) : List (Keymap Vim.Bound) :=
+  []
+
+/-- The initial state of the Vim scheme over `vimStates`, at its own type:
+instance search does not see through the scheme's `State` field. -/
+def vimInit : Vim.State :=
+  (Vim.scheme vimStates).init
+
+/-- The Vim scheme over `states` stepped from `state` through the keys the
+key string `text` names, keys for `view`, with `maps` the active keymaps:
+the state it is left in, at its own type, and what each key yielded. -/
+def vimFedFrom (state : Vim.State) (text : String)
+    (maps : ViewId → List (Keymap Vim.Bound) := vimNoMaps) (view : ViewId := ⟨0⟩)
+    (states : Vim.States := vimStates) : Vim.State × List (Option Invocation) :=
+  (Vim.scheme states).feed maps view state (keys text)
+
+/-- `vimFedFrom` the scheme's initial state. -/
+def vimFed (text : String) (maps : ViewId → List (Keymap Vim.Bound) := vimNoMaps)
+    (view : ViewId := ⟨0⟩) (states : Vim.States := vimStates) :
+    Vim.State × List (Option Invocation) :=
+  vimFedFrom (Vim.scheme states).init text maps view states
+
+/-- `Vim.parse` over `states` folded from `state` through the keys the key
+string `text` names: the state it is left in, and what each key parsed
+to. -/
+def vimParsedFrom (state : Vim.State) (text : String)
+    (maps : ViewId → List (Keymap Vim.Bound) := vimNoMaps) (view : ViewId := ⟨0⟩)
+    (states : Vim.States := vimStates) : Vim.State × List Vim.Parsed :=
+  (keys text).foldl
+    (fun (state, parsed) key =>
+      let (next, result) := Vim.parse states maps view state key
+      (next, parsed ++ [result]))
+    (state, [])
+
+/-- `vimParsedFrom` the scheme's initial state. -/
+def vimParsed (text : String) (maps : ViewId → List (Keymap Vim.Bound) := vimNoMaps)
+    (view : ViewId := ⟨0⟩) (states : Vim.States := vimStates) : Vim.State × List Vim.Parsed :=
+  vimParsedFrom (Vim.scheme states).init text maps view states
+
+/-- The keys the Vim scheme over `vimStates` reports as pending after the
+keys `text` names. -/
+def vimPending (text : String) : List Key :=
+  (Vim.scheme vimStates).pending (vimFed text).1
+
+/-- The invocation a move by `motion` compiles to, with `count`, 0 for
+none. -/
+def vimMove (motion : String) (count : Nat := 0) : Invocation :=
+  { command := "move", arguments := [.str motion, .nat count] }
+
+/-- The inputs the Vim checks give the scheme contract as complete, as key
+strings. -/
+def vimSequences : List String :=
+  ["g g", "w"]
+
+/-- The key the Vim checks give the scheme contract as unbound. -/
+def vimUnbound : Key :=
+  charKey "z"
+
+/-- The subject the scheme contract is run on for the Vim scheme: the
+scheme over `vimStates`, with no active keymaps, for view 0. -/
+def vimSubject : SchemeContract.Subject :=
+  { scheme := Vim.scheme vimStates
+    maps := vimNoMaps
+    view := ⟨0⟩
+    sequences := vimSequences.map keys
+    unbound := vimUnbound }
+
+/-- The checks of the Vim scheme's grammar (`Editor/InputScheme/Vim.lean`),
+on the registry written here: the keymaps a key is looked up in, and what a
+key sequence parses to. -/
+def vimGrammarChecks : List Check :=
+  [{  name := "every row of the Vim checks' tables binds its keys"
+      run :=
+        pure
+          ((vimKeymap vimNormalTable).bindings.length == vimNormalTable.length &&
+            (vimKeymap vimEscapeTable).bindings.length == vimEscapeTable.length &&
+            vimSequences.all fun text => !(keys text).isEmpty) },
+    { name := "a key bound to a motion, typed alone, yields a move by that motion with no count"
+      run :=
+        pure
+          ((vimFed "w").2 == [some (vimMove "word")] &&
+            (vimParsed "w").2 == [.edit (.move "word" none)]) },
+    { name :=
+        "a motion bound to two keys yields its move on the second key, and nothing on the first"
+      run := pure ((vimFed "g g").2 == [none, some (vimMove "first-line")]) },
+    { name := "a key bound to a command yields the edit that runs it, with no count and no register"
+      run :=
+        pure
+          ((vimFed "u").2 == [some { command := "undo", arguments := [.nat 0, .str ""] }] &&
+            (vimParsed "u").2 == [.edit (.run { name := "undo" } none none)]) },
+    { name :=
+        "the Vim scheme reports the keys typed of an edit begun as pending, and none before a key and after the edit completes"
+      run :=
+        pure
+          (vimPending "" == [] && vimPending "g" == keys "g" && vimPending "g g" == [] &&
+            vimPending "w" == []) },
+    { name :=
+        "an unbound key after a prefix yields nothing and leaves the Vim scheme in its initial state, and the motion typed next yields its move"
+      run :=
+        let (state, yields) := vimFed "g z"
+        let (alone, aloneYields) := vimFed "z"
+        pure
+          (yields == [none, none] && decide (state = vimInit) && aloneYields == [none] &&
+            decide (alone = vimInit) &&
+            (vimFed "g z g g").2 == [none, none, none, some (vimMove "first-line")]) },
+    { name :=
+        "a key bound in an active keymap and in the Vim state's keymap yields the active keymap's binding"
+      run :=
+        let active (_ : ViewId) : List (Keymap Vim.Bound) := [vimKeymap [("w", .motion "big-word")]]
+        pure
+          ((vimFed "w" active).2 == [some (vimMove "big-word")] &&
+            (vimFed "w").2 == [some (vimMove "word")]) },
+    { name :=
+        "a prefix of a binding in an active keymap and of one in the Vim state's keymap goes on to either: the two lists are one walk"
+      run :=
+        let active (_ : ViewId) : List (Keymap Vim.Bound) := [vimKeymap [("g x", .motion "other")]]
+        pure
+          ((vimFed "g x" active).2 == [none, some (vimMove "other")] &&
+            (vimFed "g g" active).2 == [none, some (vimMove "first-line")] &&
+            (vimFed "g x").2 == [none, none]) },
+    { name :=
+        "the Vim scheme asks for the active keymaps of the view the key is for: another view's are not walked"
+      run :=
+        let active (view : ViewId) : List (Keymap Vim.Bound) :=
+          if view.index == 1 then [vimKeymap [("m", .motion "late")]] else []
+        pure
+          ((vimFed "m" active ⟨1⟩).2 == [some (vimMove "late")] &&
+            (vimFed "m" active ⟨0⟩).2 == [none]) },
+    { name :=
+        "the Vim scheme takes a key by its chord: a key from a window, with its physical code and repeated, continues and completes a sequence, and is reported pending as its chord"
+      run :=
+        let typed : Key :=
+          { charKey "g" with
+            physical := .code "KeyG", repeated := true }
+        let fromWindow (typed : List Key) : Vim.State × List (Option Invocation) :=
+          (Vim.scheme vimStates).feed vimNoMaps ⟨0⟩ vimInit typed
+        let (state, yields) := fromWindow [typed, typed]
+        let (begun, _) := fromWindow [typed]
+        pure
+          (yields == [none, some (vimMove "first-line")] && decide (state = vimInit) &&
+            (Vim.scheme vimStates).pending begun == keys "g") }]
+
+/-- The checks that the Vim scheme keeps the scheme contract
+(`Editor/InputScheme/Contract.lean`). -/
+def vimContractChecks : List Check :=
+  [{  name := "the scheme contract holds of the Vim scheme over the registry written for the checks"
+      run := pure (SchemeContract.failures vimSubject == []) }]
+
 /-- Every check, in the order they run.
 
 The order matters where the process's one pool is measured. `poolChecks` run
@@ -4570,7 +4723,9 @@ def checks : List Check :=
     schemeChecks ++
     schemeContractChecks ++
     vimEditChecks ++
-    vimRegistryChecks
+    vimRegistryChecks ++
+    vimGrammarChecks ++
+    vimContractChecks
 
 /-- Runs `checks` and returns the names of those that failed. A check that
 throws has failed, and its error is reported with its name. -/
