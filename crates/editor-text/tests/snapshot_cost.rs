@@ -391,6 +391,21 @@ fn a_pull_across_many_entries_allocates_a_bounded_amount_for_each() {
     );
 }
 
+#[test]
+fn a_text_made_from_a_snapshot_copies_none_of_the_text() {
+    let string = megabyte();
+    let snapshot = Text::from(string.as_str()).snapshot();
+
+    let (text, counted) = allocated_by(|| Text::from_snapshot(&snapshot));
+
+    assert_eq!(text.current().len(), string.len());
+    assert_eq!(text.current().revision(), Revision::new(0));
+    // Measured: 0 bytes. The text is a new reference to the snapshot's
+    // tree; making it from the snapshot's string would be the megabyte of
+    // the rope again. The bound leaves room for a small header.
+    assert!(counted < 1024, "{counted} bytes allocated");
+}
+
 /// Where the file the costs are counted on is, in the fake.
 const FILE: &str = "/dir/a megabyte.txt";
 

@@ -47,6 +47,27 @@ impl Text {
         Self::default()
     }
 
+    /// A text holding what `snapshot` holds, **at revision 0**: a new text,
+    /// with an empty log, no markers and no kept inverses, whatever revision
+    /// the snapshot was at. It shares the snapshot's text and copies none of
+    /// it; an edit to either text, or to the one the snapshot was taken
+    /// from, leaves the others as they were.
+    ///
+    /// This is how a text is made from what another thread loaded, since a
+    /// snapshot is what crosses threads, and how a text is copied.
+    pub fn from_snapshot(snapshot: &Snapshot) -> Self {
+        Self {
+            current: Snapshot {
+                // A clone of a rope shares its tree.
+                rope: snapshot.rope.clone(),
+                revision: Revision::default(),
+            },
+            log: Log::default(),
+            markers: Markers::default(),
+            inverses: Inverses::default(),
+        }
+    }
+
     /// The text as it is now, borrowed: a read that keeps nothing.
     pub fn current(&self) -> &Snapshot {
         &self.current
@@ -474,6 +495,81 @@ mod tests {
     use crate::change::{Bias, Change};
     use crate::selection::{Selection, SelectionRange, Shape};
     use crate::snapshot::Revision;
+
+    /// A text holding [`LINES`] after three edits, so at revision 3, and
+    /// what it holds.
+    fn text_at_revision_3() -> (Text, String) {
+        let mut text = Text::from(LINES);
+        let mut reference = String::from(LINES);
+        for (range, insert) in [(0..1, "H"), (7..7, "\u{10DCFF}"), (3..6, "")] {
+            assert_eq!(text.replace(range.clone(), insert), Ok(()));
+            reference.replace_range(range, insert);
+        }
+        assert_eq!(text.current().revision(), Revision::new(3));
+        (text, reference)
+    }
+
+    #[test]
+    fn a_text_made_from_a_snapshot_holds_what_it_holds_at_revision_0_with_an_empty_log() {
+        let (source, reference) = text_at_revision_3();
+        let snapshot = source.snapshot();
+
+        let copy = Text::from_snapshot(&snapshot);
+
+        assert_eq!(copy.current().to_string(), reference);
+        assert_eq!(copy.current().revision(), Revision::new(0));
+        assert_eq!(copy.horizon(), Revision::new(0));
+        assert!(copy.entry(Revision::new(1)).is_none());
+        assert_eq!(
+            copy.changes_since(Revision::new(0))
+                .map(|patch| patch.edits),
+            Ok(Vec::new())
+        );
+        // Whatever the snapshot's own state: an empty one too.
+        let empty = Text::from_snapshot(&Snapshot::default());
+        assert_eq!(empty.current().to_string(), "");
+        assert_eq!(empty.current().revision(), Revision::new(0));
+    }
+
+    #[test]
+    fn an_edit_to_a_text_made_from_a_snapshot_leaves_the_snapshot_and_the_source_as_they_were() {
+        let (mut source, reference) = text_at_revision_3();
+        let snapshot = source.snapshot();
+        let mut copy = Text::from_snapshot(&snapshot);
+
+        assert_eq!(copy.replace(0..0, "copy: "), Ok(()));
+
+        assert_eq!(copy.current().to_string(), format!("copy: {reference}"));
+        assert_eq!(copy.current().revision(), Revision::new(1));
+        assert_eq!(snapshot.to_string(), reference);
+        assert_eq!(snapshot.revision(), Revision::new(3));
+        assert_eq!(source.current().to_string(), reference);
+        // And the other way: an edit to the source leaves the copy.
+        assert_eq!(source.replace(0..0, "source: "), Ok(()));
+        assert_eq!(copy.current().to_string(), format!("copy: {reference}"));
+    }
+
+    #[test]
+    fn a_text_made_from_a_snapshot_holds_no_marker_of_the_source_and_keeps_no_inverse() {
+        let (mut source, _) = text_at_revision_3();
+        let marker = Marker::Anchor(Anchor::new(4, Bias::Before));
+        let Ok(id) = source.mark(marker) else {
+            panic!("the source takes the marker");
+        };
+
+        let mut copy = Text::from_snapshot(&source.snapshot());
+
+        assert!(source.marker(id).is_some());
+        assert!(copy.marker(id).is_none());
+        // The source keeps the inverse of its revision 1. The copy never
+        // reached a revision 1.
+        assert_eq!(
+            copy.apply_inverse(Revision::new(1), Revision::new(1), Origin::default())
+                .err(),
+            Some(InverseError::UnknownRevision)
+        );
+        assert_eq!(copy.current().revision(), Revision::new(0));
+    }
 
     /// "é" and "ö" are two bytes each, so byte offsets and character counts
     /// differ from the second character on: in "héllo" the offsets 0, 1, 3,

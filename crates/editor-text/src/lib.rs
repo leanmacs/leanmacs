@@ -235,6 +235,11 @@
 //!   It is `Send + Sync`: a snapshot is what a worker thread, a job or the
 //!   renderer reads, and none of them sees the text itself. Two snapshots of
 //!   one text at the same revision hold the same text.
+//! - **A text is made from a snapshot** ([`Text::from_snapshot`]): a new
+//!   text holding what the snapshot holds, at revision 0, with an empty
+//!   log, no markers and no kept inverses. It copies none of the text. That
+//!   is how what another thread loaded becomes a text, and how a text is
+//!   copied.
 //! - **Nothing panics on a caller's value.** Every read that takes an
 //!   offset, a row, a point or a range returns an `Option`, and an edit a
 //!   `Result`.
