@@ -273,6 +273,7 @@ mod tests {
     use crate::Layout;
     use crate::scene::{TextKey, TextRef};
     use crate::shaper::fake::CellShaper;
+    use crate::tabs::SEGMENT_BYTES;
 
     /// A layout on cells 10 by 16.
     fn layout() -> Layout<CellShaper> {
@@ -366,6 +367,33 @@ mod tests {
         // From b of "ab" (x 10) three lines down is j of "ij", and back.
         assert_eq!(to(text, 4, 8, 3), 19);
         assert_eq!(to(text, 4, 19, -3), 8);
+    }
+
+    #[test]
+    fn a_move_crosses_a_segment_boundary_inside_a_long_row() {
+        // One row of two segments. `SEGMENT_BYTES` is a multiple of 8, so
+        // at 8 columns the first segment is whole lines of 8: its last
+        // visual line starts 8 before the cut, and the second segment's
+        // first starts at the cut.
+        let text = "a".repeat(SEGMENT_BYTES + 64);
+        let cut = SEGMENT_BYTES;
+        // One line up from the first visual line of the second segment is
+        // the same column of the last line of the first, and one line down
+        // from there is back.
+        assert_eq!(to(&text, 8, cut + 3, -1), cut - 5);
+        assert_eq!(to(&text, 8, cut - 5, 1), cut + 3);
+        // The cut is the start of the later segment's first line.
+        assert_eq!(to(&text, 8, cut, -1), cut - 8);
+        assert_eq!(to(&text, 8, cut - 8, 1), cut);
+        // From the third line before the cut, n lines down and n back up
+        // return to the start; from three lines on they cross the cut.
+        let start = cut - 19;
+        for n in 1..=6_usize {
+            let lines = i64::try_from(n).unwrap();
+            let down = to(&text, 8, start, lines);
+            assert_eq!(down, start + 8 * n, "{n} lines down");
+            assert_eq!(to(&text, 8, down, -lines), start, "{n} lines back up");
+        }
     }
 
     #[test]
