@@ -6,6 +6,7 @@ import Editor.Job.Jobs
 import Editor.Job.Model
 import Editor.Job.Pool
 import Editor.Text.Contract
+import Editor.UndoTree.Cases
 import Editor.WindowCheck
 
 /-!
@@ -26,6 +27,12 @@ model here. `contract-test` runs the same list against the real binding.
 A command is tested the same way: as a property, a command that returns
 whether it held, run against the model (`commandProperties`). The `editor`
 executable runs the same command source against the real binding.
+
+The undo tree (`Editor/UndoTree.lean`) is plain Lean over the text port, so
+its cases (`Editor/UndoTree/Cases.lean`) are properties of the same kind and
+run against the model in the same list; `contract-test` runs them against
+the real binding. `undoTreeChecks` are the checks of its pure operations,
+which ask nothing of a text.
 
 The job system is tested here with no Rust library:
 
@@ -2263,6 +2270,34 @@ def windowArgumentChecks : List Check :=
         return checked.lines == typedReport && checked.calls[1]? == some "run true" &&
             checked.status == some 0 }]
 
+/-- The checks of the undo tree's pure operations alone, which ask nothing of
+a text: being told a revision, and the boundary. What the tree does to a
+text is in `UndoTreeCases.cases`, run against the text model below. -/
+def undoTreeChecks : List Check :=
+  [{
+      name :=
+        "an undo tree told a revision has it in its open group, and told one that is not after the last it knew it is unchanged",
+      run := do
+        let tree := UndoTree.new ⟨0⟩ 3
+        let told := tree.record 5
+        return !tree.pending && told.pending && told.head == 5 && told.base == 3 &&
+            told.record 5 == told &&
+            told.record 4 == told &&
+            tree.record 3 == tree &&
+            tree.record 0 == tree },
+    { name :=
+        "a boundary with nothing pending makes no node, and with something pending makes one whose parent is where the text was"
+      run := do
+        let tree := UndoTree.new ⟨0⟩ 3
+        let closed := (tree.record 5).close
+        let made : UndoTree.NodeId := ⟨1⟩
+        return tree.close == tree && closed.nodes.size == 2 && closed.current == made &&
+            !closed.pending &&
+            closed.node? made == some { parent := some UndoTree.root, cross := some ⟨4, 5⟩ } &&
+            closed.node? UndoTree.root ==
+              some { parent := none, children := #[made], next := some made } &&
+            closed.close == closed }]
+
 /-- Every check, in the order they run.
 
 The order matters where the process's one pool is measured. `poolChecks` run
@@ -2280,7 +2315,8 @@ def checks : List Check :=
     reloadChecks ++
     windowTallyChecks ++
     windowLoopChecks ++
-    windowArgumentChecks
+    windowArgumentChecks ++
+    undoTreeChecks
 
 /-- Runs `checks` and returns the names of those that failed. A check that
 throws has failed, and its error is reported with its name. -/
@@ -2299,10 +2335,11 @@ def commandProperties : List TextContract.Property :=
        append text " wörld"
        return (← text.read) == "héllo wörld" }]
 
-/-- The properties run against the text model: the text port's contract, then
-those of the commands. -/
+/-- The properties run against the text model: the text port's contract,
+those of the commands, and the cases of the undo tree, which is plain Lean
+over the port. -/
 def textProperties : List TextContract.Property :=
-  TextContract.properties ++ commandProperties
+  TextContract.properties ++ commandProperties ++ UndoTreeCases.cases
 
 /-- The names of the `textProperties` that do not hold of the text model, each
 run from a model with no texts. -/
@@ -2338,6 +2375,6 @@ def main : IO UInt32 := do
     -- returning from `main` would wait for it for ever.
     IO.Process.exit 1
   IO.println
-      s!"model-test: {ModelTest.checks.length} checks passed, {ModelTest.textProperties.length} properties hold of the text model, and {Editor.JobContract.properties.length} of the job model and of the job runner over the fake clock"
+      s!"model-test: {ModelTest.checks.length} checks passed, {Editor.TextContract.properties.length + ModelTest.commandProperties.length} properties hold of the text model, {Editor.UndoTreeCases.cases.length} cases of the undo tree hold over it, and {Editor.JobContract.properties.length} properties of the job model and of the job runner over the fake clock"
   (← IO.getStdout).flush
   IO.Process.exit 0

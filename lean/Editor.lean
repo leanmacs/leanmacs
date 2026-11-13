@@ -1,12 +1,14 @@
 import Editor.Command.Append
 import Editor.Setup
+import Editor.UndoTree
 
 /-!
 # The editor
 
 The root module user config imports: the editor's ports, the commands written
-over them, the pure models that tests and theorems run them against, and what
-config registers with (`setup` and stores, `Editor/Setup.lean`). The job port
+over them, the pure models that tests and theorems run them against, the undo
+tree over the text port (`Editor/UndoTree.lean`), and what config registers
+with (`setup` and stores, `Editor/Setup.lean`). The job port
 (`Editor/Job.lean`) comes with `Editor/Setup.lean`, which registers jobs.
 
 It never imports `Editor.Ffi` or a port's real binding (`Editor/Text/Real.lean`).

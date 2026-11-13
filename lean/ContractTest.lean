@@ -4,6 +4,7 @@ import Editor.Job.Real
 import Editor.Text.Contract
 import Editor.Text.Model
 import Editor.Text.Real
+import Editor.UndoTree.Cases
 
 /-!
 # The contract checks against the real bindings
@@ -20,6 +21,10 @@ library.
   can show, since it is about the library's objects: that the binding's
   table is the only holder of its documents and of its snapshots, and that
   releasing one frees it at once (`failures`, `releaseFrees`).
+- The cases of the undo tree (`Editor/UndoTree/Cases.lean`), which is plain
+  Lean over the text port, through the same binding and in the same run, so
+  the count of live documents covers the texts they make. `model-test` runs
+  them against the text model.
 - The job port's contract (`Editor/Job/Contract.lean`) against the runner
   over the library's timer service, with the completion pump
   (`Editor/Job/Real.lean`). `model-test` runs it against the model and
@@ -318,7 +323,10 @@ def main : IO UInt32 := do
   let services : Editor.Job.Services := { completions, timers := Editor.Job.realTimers completions }
   let pump ← IO.asTask (prio := .dedicated) (Editor.Job.pump completions)
   let properties := Editor.TextContract.properties
-  let textFailed ← ContractTest.failures properties
+  -- The undo tree's cases run through the same binding, so the count of
+  -- live documents covers the texts they make too.
+  let cases := Editor.UndoTreeCases.cases
+  let textFailed ← ContractTest.failures (properties ++ cases)
   let jobFailed ← ContractTest.jobFailures services
   let checks := ContractTest.jobChecks services pool
   let checkFailed ← ContractTest.checkFailures checks
@@ -332,6 +340,6 @@ def main : IO UInt32 := do
   unless failed.isEmpty do
     IO.Process.exit 1
   IO.println
-      s!"contract-test: {properties.length} properties hold of the real text binding, and its documents and snapshots are freed when released and with its table; {Editor.JobContract.properties.length} properties hold of the job runner over the timer service, {checks.length} checks of it passed, and quit ended the pump"
+      s!"contract-test: {properties.length} properties hold of the real text binding, {cases.length} cases of the undo tree hold over it, and its documents and snapshots are freed when released and with its table; {Editor.JobContract.properties.length} properties hold of the job runner over the timer service, {checks.length} checks of it passed, and quit ended the pump"
   (← IO.getStdout).flush
   IO.Process.exit 0
