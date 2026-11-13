@@ -3,7 +3,7 @@ view 1 rect 0 0 96 80 background ffffffff selection ffffffff
   row y 16 height 16 baseline 12 bytes 12..17 glyphs 32@0 32@8 32@16 32@24 32@32 32@40 32@48 32@56 108@64 101@72 116@80 32@88 runs 0..12:000000ff/ffffffff
   row y 32 height 16 baseline 12 bytes 17..23 glyphs 120@0 32@8 61@16 32@24 49@32 59@40 runs 0..6:000000ff/ffffffff
   row y 48 height 16 baseline 12 bytes 24..25 glyphs 125@0 runs 0..1:000000ff/ffffffff
-  row y 64 height 16 baseline 12 bytes 26..38 glyphs 97@0 98@8 99@16 100@24 101@32 102@40 103@48 104@56 105@64 106@72 107@80 108@88 runs 0..12:000000ff/ffffffff
+  status y 64 height 16 baseline 12 background ffffffff glyphs 78@0 79@8 82@16 77@24 65@32 76@40 runs 0..6:000000ff/ffffffff
   cursor block paint 000000ff/ffffffff at 56 0 8 16
   cursor block paint 000000ff/ffffffff at 8 32 8 16
   selection at 24 0 32 16

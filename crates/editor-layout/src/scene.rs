@@ -14,9 +14,11 @@
 //!
 //! What is laid out of it: each view's text across its `rect`, from its
 //! scroll anchor, with its selections, cursors and decorations, each run
-//! in the font its faces resolve to. What it carries and lays out nothing
-//! of: a view's `status`, and the scene's `echo`, `pending`, `preedit` and
-//! `focused`, which no phase of the display pipeline draws yet.
+//! in the font its faces resolve to; and a view's `status` as one row at
+//! the bottom of its `rect`, above which its text has what is left. What
+//! it carries and lays out nothing of: the scene's `echo`, `pending`,
+//! `preedit` and `focused`, which no phase of the display pipeline draws
+//! yet.
 //!
 //! # Where an addition goes
 //!

@@ -7,6 +7,20 @@
 //! geometry of its cursors and of its selections. Geometry is in pixels
 //! from the view's top left.
 //!
+//! **The mode line.** A view with at least one status field has a status
+//! row ([`StatusRow`]): its fields' texts one after another with no
+//! separator, shaped through the `Shaper` port as one unbroken line, each
+//! field in its face over the face `mode-line` over the default face. A
+//! tab, a carriage return or a line feed in a field is shaped as a space.
+//! The row is at the bottom of the view's rectangle and as tall as its
+//! shaped line; the view's text rows are those that fit whole in the
+//! height that remains, and none when the status row is taller than the
+//! view. A view with no status field gives its whole height to its text.
+//! The layout queries take an explicit height and know no status row: a
+//! caller that wants the rows of a view's text area has no way yet to
+//! learn the status row's height (`docs/design/text-and-display.md`, open
+//! questions).
+//!
 //! **Every value is resolved.** A frame names no face: a run carries the
 //! [`Paint`] its faces come to ([`face`](crate::face), "The precedence":
 //! lowest first, the view's decorations in the scene's order and then the
@@ -51,12 +65,12 @@ use editor_text::{Selection, SelectionRange, Snapshot};
 use crate::Layout;
 use std::collections::HashMap;
 
-use crate::cache::state;
+use crate::cache::{StatusKept, state};
 use crate::decoration::{DecorationSource, FaceSpanSource, SelectionSource, Span, fonts_of, merge};
-use crate::face::{Color, FaceId, Paint, SELECTION_FACE, UnderlineStyle};
+use crate::face::{Color, FaceId, MODE_LINE_FACE, Paint, SELECTION_FACE, UnderlineStyle};
 use crate::query::{Visual, Walker};
 use crate::scene::{CursorShape, Rect, Scene, TextKey, View, ViewId};
-use crate::shaper::{FontId, Shaper, VisualLine};
+use crate::shaper::{FontId, FontRun, ShapeInput, ShapedLine, Shaper, VisualLine};
 use crate::tabs::boundary_at_or_before;
 use crate::wrap::Outcome;
 
@@ -112,6 +126,32 @@ pub struct CursorBox {
     pub paint: Paint,
 }
 
+/// The status row of a view: its status fields, one after another, as one
+/// line at the view's bottom.
+#[derive(Debug, Clone, PartialEq)]
+pub struct StatusRow {
+    /// Its top, from the view's top: the view's height less its own, and
+    /// the view's top when it is taller than the view.
+    pub y: f32,
+    /// How far down it is: its shaped line's height.
+    pub height: f32,
+    /// Its baseline, from its top.
+    pub baseline: f32,
+    /// Its glyphs: the fields' texts shaped as one unbroken line. Their
+    /// clusters are bytes of that text.
+    pub line: Arc<VisualLine>,
+    /// Its runs, as bytes of that text, each with the paint of its
+    /// field's face over the mode line's over the default face's;
+    /// neighbours of one paint are one run.
+    pub runs: Vec<(Range<usize>, Paint)>,
+    /// The colour behind it, across the view: the mode line face's
+    /// background.
+    pub background: Color,
+    /// The content hash: its glyphs, its runs, its height and baseline,
+    /// and its background.
+    pub hash: u64,
+}
+
 /// The frame of one view.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ViewFrame {
@@ -121,8 +161,11 @@ pub struct ViewFrame {
     pub rect: Rect,
     /// The colour behind it: the default face's background.
     pub background: Color,
-    /// Its rows, top to bottom.
+    /// Its text rows, top to bottom: those that fit whole above its status
+    /// row, or in its whole height when it has none.
     pub rows: Vec<FrameRow>,
+    /// Its status row, when it has a status field.
+    pub status: Option<StatusRow>,
     /// Its cursors on the rows shown: the head of every range of every
     /// selection.
     pub cursors: Vec<CursorBox>,
@@ -143,7 +186,8 @@ pub struct Frame {
 impl Frame {
     /// The frame as text: per view its rectangle, its background and its
     /// selection colour, then per row its geometry, its glyphs and its
-    /// runs, then its cursors and selections. No hash.
+    /// runs, then its status row if it has one, then its cursors and
+    /// selections. No hash.
     ///
     /// - A colour is its eight hexadecimal digits, `rrggbbaa`.
     /// - A glyph is `id@x`, and `id@x#font` in a font other than font 0.
@@ -168,20 +212,18 @@ impl Frame {
             for row in &view.rows {
                 let _ = write!(
                     out,
-                    "  row y {} height {} baseline {} bytes {}..{} glyphs",
+                    "  row y {} height {} baseline {} bytes {}..{}",
                     row.y, row.height, row.baseline, row.bytes.start, row.bytes.end
                 );
-                for glyph in &row.line.glyphs {
-                    let _ = write!(out, " {}@{}", glyph.id, glyph.x);
-                    if glyph.font != FontId::default() {
-                        let _ = write!(out, "#{}", glyph.font.0);
-                    }
-                }
-                out.push_str(" runs");
-                for (bytes, paint) in &row.runs {
-                    let _ = write!(out, " {}..{}:{}", bytes.start, bytes.end, described(paint));
-                }
-                out.push('\n');
+                describe_line(&mut out, &row.line, &row.runs);
+            }
+            if let Some(status) = &view.status {
+                let _ = write!(
+                    out,
+                    "  status y {} height {} baseline {} background {:08x}",
+                    status.y, status.height, status.baseline, status.background.0
+                );
+                describe_line(&mut out, &status.line, &status.runs);
             }
             for cursor in &view.cursors {
                 let shape = match cursor.shape {
@@ -211,6 +253,23 @@ impl Frame {
         }
         out
     }
+}
+
+/// Adds to `out` the glyphs of `line` and `runs`, as [`Frame::describe`]
+/// writes them, and ends the line.
+fn describe_line(out: &mut String, line: &VisualLine, runs: &[(Range<usize>, Paint)]) {
+    out.push_str(" glyphs");
+    for glyph in &line.glyphs {
+        let _ = write!(out, " {}@{}", glyph.id, glyph.x);
+        if glyph.font != FontId::default() {
+            let _ = write!(out, "#{}", glyph.font.0);
+        }
+    }
+    out.push_str(" runs");
+    for (bytes, paint) in runs {
+        let _ = write!(out, " {}..{}:{}", bytes.start, bytes.end, described(paint));
+    }
+    out.push('\n');
 }
 
 /// `paint` as [`Frame::describe`] writes it.
@@ -278,7 +337,99 @@ impl<S: Shaper> Layout<S> {
                 .wrap
                 .retain_rows(|row| near.iter().any(|rows| rows.contains(&row)));
         }
+        // The status row of every view the scene does not name is dropped.
+        self.status
+            .retain(|id, _| scene.views.iter().any(|view| view.id == *id));
         frame
+    }
+
+    /// The status row of `view`, when it has a status field: its fields'
+    /// texts one after another, with no separator, shaped as one unbroken
+    /// line, each field in its face over the mode line's over the default
+    /// face's. A tab, a carriage return and a line feed in a field are
+    /// shaped as a space each, so the row is one line and holds no tab.
+    ///
+    /// The line is kept per view, and shaped again only when its text, its
+    /// font runs or the shaper's generation change: a change of paint
+    /// shapes nothing.
+    fn status_row(&mut self, view: &View) -> Option<StatusRow> {
+        if view.status.is_empty() {
+            self.status.remove(&view.id);
+            return None;
+        }
+        let mode_line = self.styles.intern(MODE_LINE_FACE);
+        let mut text = String::new();
+        let mut fonts: Vec<FontRun> = Vec::new();
+        let mut runs: Vec<(Range<usize>, Paint)> = Vec::new();
+        for field in &view.status {
+            let face = self.styles.intern(&field.face);
+            let style = self.styles.style(&self.shaper, &[mode_line, face]);
+            let start = text.len();
+            text.extend(field.text.chars().map(|character| match character {
+                '\t' | '\r' | '\n' => ' ',
+                other => other,
+            }));
+            let bytes = start..text.len();
+            if bytes.is_empty() {
+                continue;
+            }
+            match fonts.last_mut() {
+                Some(last) if last.font == style.font => last.bytes.end = bytes.end,
+                _ => fonts.push(FontRun {
+                    bytes: bytes.clone(),
+                    font: style.font,
+                }),
+            }
+            match runs.last_mut() {
+                Some((last, paint)) if *paint == style.paint => last.end = bytes.end,
+                _ => runs.push((bytes, style.paint)),
+            }
+        }
+        let mode = self.styles.style(&self.shaper, &[mode_line]);
+        // An empty row is as tall as the mode line's font.
+        if fonts.is_empty() {
+            fonts.push(FontRun {
+                bytes: 0..0,
+                font: mode.font,
+            });
+        }
+        let generation = self.shaper.generation();
+        let line = match self.status.get(&view.id) {
+            Some(kept)
+                if kept.text == text && kept.runs == fonts && kept.generation == generation =>
+            {
+                Arc::clone(&kept.line)
+            }
+            _ => {
+                let shaped = self.shaper.shape(&ShapeInput {
+                    text: text.clone(),
+                    runs: fonts.clone(),
+                });
+                let line = Arc::new(shaped.break_lines(None).into_iter().next()?);
+                let kept = StatusKept {
+                    text,
+                    runs: fonts,
+                    generation,
+                    line: Arc::clone(&line),
+                };
+                self.status.insert(view.id, kept);
+                line
+            }
+        };
+        let background = mode.paint.background;
+        Some(StatusRow {
+            y: (view.rect.height as f32 - line.height).max(0.0),
+            height: line.height,
+            baseline: line.baseline,
+            hash: {
+                let mut hasher = DefaultHasher::new();
+                (hash(&line, &runs), background).hash(&mut hasher);
+                hasher.finish()
+            },
+            line,
+            runs,
+            background,
+        })
     }
 
     /// The frame of `view`, with `extra` sources of spans under its
@@ -286,6 +437,10 @@ impl<S: Shaper> Layout<S> {
     /// order, the view's decorations in the order the scene lists them, and
     /// the selections ([`face`](crate::face), "The precedence").
     pub(crate) fn view_frame(&mut self, view: &View, extra: &[&dyn DecorationSource]) -> ViewFrame {
+        let status = self.status_row(view);
+        // What is left for the text above the status row.
+        let text_height =
+            view.rect.height as f32 - status.as_ref().map_or(0.0, |status| status.height);
         let cursor_face = self.styles.intern(&view.cursor.face);
         let selection_face = self.styles.intern(SELECTION_FACE);
         let paint_of = |stack: &[FaceId]| self.styles.style(&self.shaper, stack).paint;
@@ -295,6 +450,7 @@ impl<S: Shaper> Layout<S> {
             rect: view.rect,
             background: paint_of(&[]).background,
             rows: Vec::new(),
+            status,
             cursors: Vec::new(),
             selections: Vec::new(),
             selection: paint_of(&[selection_face]).background,
@@ -356,9 +512,7 @@ impl<S: Shaper> Layout<S> {
             },
         };
         let anchor = boundary_at_or_before(snapshot, view.scroll);
-        let shown = walker
-            .rows_shown(view.rect.height as f32, anchor)
-            .unwrap_or_default();
+        let shown = walker.rows_shown(text_height, anchor).unwrap_or_default();
         let mut y = 0.0;
         for &visual in &shown {
             let Some(entry) = walker.entry(visual.row, visual.segment) else {
@@ -518,7 +672,7 @@ mod tests {
         BASE_BACKGROUND, BASE_FOREGROUND, Color, Face, FaceDef, Paint, Underline, UnderlineStyle,
     };
     use crate::scene::{
-        Cursor, CursorShape, Decoration, Rect, Scene, TextKey, TextRef, View, ViewId,
+        Cursor, CursorShape, Decoration, Rect, Scene, StatusField, TextKey, TextRef, View, ViewId,
     };
     use crate::shaper::fake::CellShaper;
     use crate::shaper::{FontId, FontSpec, Length, Shaper, VisualLine, Weight};
@@ -1573,6 +1727,308 @@ mod tests {
              row y 0 height 16 baseline 12 bytes 0..2 glyphs 97@0#1 98@10 \
              runs 0..1:cc0000ff/808080ff+curly:00cc00ff+strike 1..2:000000ff/808080ff\n  \
              cursor block paint 000000ff/cc0000ff at 10 0 10 16\n"
+        );
+    }
+
+    /// `view` with the status fields `fields`: each its text and its
+    /// face's name.
+    fn with_status(mut view: View, fields: &[(&str, &str)]) -> View {
+        view.status = fields
+            .iter()
+            .map(|(text, face)| StatusField {
+                text: (*text).to_owned(),
+                face: (*face).to_owned(),
+            })
+            .collect();
+        view
+    }
+
+    /// The faces of the status tests: a default face on grey, a mode line
+    /// in green on blue, the face `name` in red, and the face `big` at
+    /// twice the base size.
+    fn status_faces() -> Vec<FaceDef> {
+        vec![
+            def("default", bg(GREY)),
+            def(
+                "mode-line",
+                Face {
+                    background: Some(BLUE),
+                    ..fg(GREEN)
+                },
+            ),
+            def("name", fg(RED)),
+            def("big", sized(32)),
+        ]
+    }
+
+    /// The id and the x of each glyph of `line`.
+    fn glyphs_of(line: &VisualLine) -> Vec<(u32, f32)> {
+        line.glyphs
+            .iter()
+            .map(|glyph| (glyph.id, glyph.x))
+            .collect()
+    }
+
+    #[test]
+    fn a_views_status_fields_are_one_row_at_its_bottom_each_in_its_face() {
+        let mut layout = layout_with(&status_faces());
+        // The face `position` is not defined: its field is drawn in the
+        // mode line's face.
+        let fields = [("a.rs", "name"), (" 1:2", "position")];
+        let shown = frame(
+            &mut layout,
+            with_status(view("ab\ncd", 20, 80, 0, &[]), &fields),
+        );
+        let status = shown.status.expect("a status row");
+        // One row of the view's last 16 pixels.
+        assert_eq!(
+            (status.y, status.height, status.baseline),
+            (64.0, 16.0, 12.0)
+        );
+        // The fields' texts one after another, with no separator.
+        let expected: Vec<(u32, f32)> = "a.rs 1:2"
+            .chars()
+            .enumerate()
+            .map(|(index, character)| (u32::from(character), index as f32 * 10.0))
+            .collect();
+        assert_eq!(glyphs_of(&status.line), expected);
+        assert_eq!(status.line.bytes, 0..8);
+        // Each field in its face over the mode line's over the default's.
+        assert_eq!(
+            status.runs,
+            vec![(0..4, paint(RED, BLUE)), (4..8, paint(GREEN, BLUE))]
+        );
+        assert_eq!(status.background, BLUE);
+        // The text rows are in the default face, not the mode line's.
+        assert_eq!(
+            shown.rows[0].runs,
+            vec![(0..2, paint(BASE_FOREGROUND, GREY))]
+        );
+        assert_eq!(shown.background, GREY);
+    }
+
+    #[test]
+    fn a_status_field_is_shaped_in_the_font_of_its_face() {
+        let mut layout = layout_with(&status_faces());
+        let fields = [("ab", "name"), ("X", "big"), ("c", "name")];
+        let shown = frame(
+            &mut layout,
+            with_status(view("ab", 20, 80, 0, &[]), &fields),
+        );
+        let status = shown.status.expect("a status row");
+        // X is twice the size: 20 across, and the row is as tall as it,
+        // still ending at the view's bottom.
+        assert_eq!(
+            glyphs_of(&status.line),
+            vec![
+                (u32::from('a'), 0.0),
+                (u32::from('b'), 10.0),
+                (u32::from('X'), 20.0),
+                (u32::from('c'), 40.0)
+            ]
+        );
+        assert_eq!((status.y, status.height), (48.0, 32.0));
+        // The mode line's own font is every field's it sets none for.
+        layout.define(&[def("mode-line", sized(32))]);
+        let shown = frame(
+            &mut layout,
+            with_status(view("ab", 20, 80, 0, &[]), &fields),
+        );
+        let status = shown.status.expect("a status row");
+        let xs: Vec<f32> = status.line.glyphs.iter().map(|glyph| glyph.x).collect();
+        assert_eq!(xs, vec![0.0, 20.0, 40.0, 60.0]);
+        // And not the text's.
+        assert_eq!(shown.rows[0].height, 16.0);
+    }
+
+    #[test]
+    fn the_text_rows_are_those_that_fit_above_the_status_row() {
+        let mut layout = layout_with(&status_faces());
+        let text = "a\nb\nc\nd\ne\nf\ng";
+        let rows = |layout: &mut Layout<CellShaper>, height: u32, fields: &[(&str, &str)]| {
+            let shown = frame(layout, with_status(view(text, 20, height, 0, &[]), fields));
+            let status = shown.status.map(|status| (status.y, status.height));
+            (shown.rows.len(), status)
+        };
+        // 80 pixels: five rows with no status row, and four above one.
+        assert_eq!(rows(&mut layout, 80, &[]), (5, None));
+        assert_eq!(
+            rows(&mut layout, 80, &[("x", "name")]),
+            (4, Some((64.0, 16.0)))
+        );
+        // Only rows that fit whole: 79 pixels leave 63 above the status
+        // row, which hold three.
+        assert_eq!(
+            rows(&mut layout, 79, &[("x", "name")]),
+            (3, Some((63.0, 16.0)))
+        );
+        // A taller status row leaves less: 48 pixels hold three.
+        assert_eq!(
+            rows(&mut layout, 80, &[("x", "big")]),
+            (3, Some((48.0, 32.0)))
+        );
+        // A cursor on a row the status row took the place of is not
+        // drawn: the fifth row starts at byte 8.
+        let hidden = frame(
+            &mut layout,
+            with_status(view(text, 20, 80, 0, &[(8, 8)]), &[("x", "name")]),
+        );
+        assert_eq!(hidden.cursors, vec![]);
+        let shown = frame(&mut layout, view(text, 20, 80, 0, &[(8, 8)]));
+        assert_eq!(shown.cursors.len(), 1);
+    }
+
+    #[test]
+    fn a_view_with_no_status_field_gives_its_whole_height_to_text() {
+        let mut layout = layout_with(&status_faces());
+        let shown = frame(&mut layout, view("a\nb\nc\nd\ne\nf", 20, 80, 0, &[]));
+        assert_eq!(shown.status, None);
+        assert_eq!(shown.rows.len(), 5);
+        assert_eq!(tops(&shown.rows), vec![0.0, 16.0, 32.0, 48.0, 64.0]);
+    }
+
+    #[test]
+    fn a_view_whose_status_fields_are_empty_has_an_empty_status_row() {
+        let mut layout = layout_with(&status_faces());
+        let shown = frame(
+            &mut layout,
+            with_status(view("a\nb\nc\nd\ne\nf", 20, 80, 0, &[]), &[("", "name")]),
+        );
+        let status = shown.status.expect("a status row");
+        assert_eq!(glyphs_of(&status.line), vec![]);
+        assert_eq!(status.runs, vec![]);
+        assert_eq!(
+            (status.y, status.height, status.background),
+            (64.0, 16.0, BLUE)
+        );
+        assert_eq!(shown.rows.len(), 4);
+        // An empty row is as tall as the mode line's font.
+        layout.define(&[def("mode-line", sized(32))]);
+        let shown = frame(
+            &mut layout,
+            with_status(view("a\nb\nc", 20, 80, 0, &[]), &[("", "name"), ("", "x")]),
+        );
+        assert_eq!(
+            shown.status.map(|status| (status.y, status.height)),
+            Some((48.0, 32.0))
+        );
+    }
+
+    #[test]
+    fn a_tab_a_return_or_a_line_feed_in_a_status_field_is_shaped_as_a_space() {
+        let mut layout = layout_with(&status_faces());
+        let shown = frame(
+            &mut layout,
+            with_status(
+                view("ab", 20, 80, 0, &[]),
+                &[("a\tb\r\nc", "name"), ("\n", "x")],
+            ),
+        );
+        let status = shown.status.expect("a status row");
+        let ids: Vec<u32> = status.line.glyphs.iter().map(|glyph| glyph.id).collect();
+        let space = u32::from(' ');
+        assert_eq!(
+            ids,
+            vec![
+                u32::from('a'),
+                space,
+                u32::from('b'),
+                space,
+                space,
+                u32::from('c'),
+                space
+            ]
+        );
+        // Still one row of one line.
+        assert_eq!(status.line.bytes, 0..7);
+        assert_eq!(status.height, 16.0);
+    }
+
+    #[test]
+    fn a_status_row_taller_than_its_view_is_at_its_top_and_leaves_no_text_row() {
+        let mut layout = layout_with(&status_faces());
+        let shown = frame(
+            &mut layout,
+            with_status(view("ab\ncd", 20, 10, 0, &[(0, 0)]), &[("x", "name")]),
+        );
+        assert_eq!(
+            shown.status.map(|status| (status.y, status.height)),
+            Some((0.0, 16.0))
+        );
+        assert_eq!(shown.rows, vec![]);
+        assert_eq!(shown.cursors, vec![]);
+    }
+
+    #[test]
+    fn a_view_with_no_text_still_has_its_status_row() {
+        let mut layout = layout_with(&status_faces());
+        let mut empty = with_status(view("ab", 20, 80, 0, &[]), &[("x", "name")]);
+        empty.text = None;
+        let shown = frame(&mut layout, empty);
+        assert_eq!(shown.rows, vec![]);
+        let status = shown.status.expect("a status row");
+        assert_eq!(status.runs, vec![(0..1, paint(RED, BLUE))]);
+        assert_eq!(status.y, 64.0);
+    }
+
+    #[test]
+    fn a_change_of_a_status_field_changes_the_status_rows_hash_and_no_text_rows() {
+        let mut layout = layout_with(&status_faces());
+        let shown = |layout: &mut Layout<CellShaper>, fields: &[(&str, &str)]| {
+            let shown = frame(layout, with_status(view("ab\ncd", 20, 80, 0, &[]), fields));
+            let status = shown.status.as_ref().map(|status| status.hash);
+            (hashes(&shown), status.expect("a status row"))
+        };
+        let (rows, status) = shown(&mut layout, &[("a.rs", "name"), (" 1:2", "position")]);
+        // The same fields: the same hash.
+        assert_eq!(
+            shown(&mut layout, &[("a.rs", "name"), (" 1:2", "position")]),
+            (rows.clone(), status)
+        );
+        // Another text, another face of a field, and the same glyphs
+        // split into fields another way under faces that differ.
+        let others: [&[(&str, &str)]; 3] = [
+            &[("a.rs", "name"), (" 1:3", "position")],
+            &[("a.rs", "position"), (" 1:2", "position")],
+            &[("a.r", "name"), ("s 1:2", "position")],
+        ];
+        for fields in others {
+            let (now, changed) = shown(&mut layout, fields);
+            assert_eq!(now, rows, "{fields:?}");
+            assert_ne!(changed, status, "{fields:?}");
+        }
+        // A change of the mode line's background alone.
+        let mut faces = status_faces();
+        faces[1] = def(
+            "mode-line",
+            Face {
+                background: Some(RED),
+                ..fg(GREEN)
+            },
+        );
+        layout.define(&faces);
+        let (now, changed) = shown(&mut layout, &[("", "name")]);
+        layout.define(&status_faces());
+        let (_, before) = shown(&mut layout, &[("", "name")]);
+        assert_eq!(now, rows);
+        assert_ne!(changed, before);
+    }
+
+    #[test]
+    fn a_frame_is_described_with_its_status_row() {
+        let mut layout = layout_with(&status_faces());
+        let scene = Scene {
+            views: vec![with_status(
+                view("ab", 4, 40, 0, &[(1, 1)]),
+                &[("x", "name"), ("y", "big")],
+            )],
+            ..Scene::default()
+        };
+        assert_eq!(
+            layout.frame(&scene).describe(),
+            "view 1 rect 0 0 40 40 background 808080ff selection 808080ff\n  \
+             status y 8 height 32 baseline 24 background 0000ccff glyphs 120@0 121@10#1 \
+             runs 0..1:cc0000ff/0000ccff 1..2:00cc00ff/0000ccff\n"
         );
     }
 

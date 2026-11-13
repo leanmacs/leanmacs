@@ -14,7 +14,7 @@ use editor_layout::cache::Counters;
 use editor_layout::face::{Color, Face, FaceDef, Underline, UnderlineStyle};
 use editor_layout::frame::Frame;
 use editor_layout::scene::{
-    Changes, Cursor, Decoration, Rect, Scene, TextKey, TextRef, View, ViewId,
+    Changes, Cursor, Decoration, Rect, Scene, StatusField, TextKey, TextRef, View, ViewId,
 };
 use editor_layout::shaper::fake::CellShaper;
 use editor_layout::shaper::{Length, LineHeight, Slant, Weight};
@@ -427,4 +427,135 @@ fn a_selection_in_a_face_that_sets_a_weight_shapes_the_rows_it_covers() {
         layout.frame(&selected(&text, 0, 0, &faces));
     });
     assert_eq!(unmade, count(3, 3, 17));
+}
+
+/// The scene of the twenty rows `text` with the faces `faces` and the
+/// status fields `fields`: each its text and its face's name.
+fn with_status(text: &TextRef, fields: &[(&str, &str)], faces: &[(&str, Face)]) -> Scene {
+    let mut scene = styled(text, 0..0, "none", faces);
+    scene.views[0].status = fields
+        .iter()
+        .map(|(text, face)| StatusField {
+            text: (*text).to_owned(),
+            face: (*face).to_owned(),
+        })
+        .collect();
+    scene
+}
+
+/// How many bytes the shaper of `layout` was asked to shape while `run`
+/// ran. A status row is no segment of a text, so the counters do not
+/// count it; the fake's bytes do.
+fn bytes_shaped(
+    layout: &mut Layout<CellShaper>,
+    run: impl FnOnce(&mut Layout<CellShaper>),
+) -> usize {
+    let before = layout.shaper().bytes_shaped();
+    run(layout);
+    layout.shaper().bytes_shaped() - before
+}
+
+#[test]
+fn an_unchanged_status_row_is_not_shaped_again() {
+    let (text, _) = twenty();
+    let fields = [("words.txt", "name"), (" 1:1", "position")];
+    let mut layout = Layout::new(CellShaper::new(10.0, 16.0));
+    let first = bytes_shaped(&mut layout, |layout| {
+        layout.frame(&with_status(&text, &fields, &[]));
+    });
+    // The twenty rows, and the status row's thirteen bytes.
+    assert_eq!(first, text.snapshot.len() - 19 + 13);
+    let again = bytes_shaped(&mut layout, |layout| {
+        layout.frame(&with_status(&text, &fields, &[]));
+    });
+    assert_eq!(again, 0);
+    // A cursor move shapes neither a row nor the status row.
+    let mut moved = with_status(&text, &fields, &[]);
+    moved.views[0].selections = vec![Selection::new(vec![SelectionRange::new(12, 12)], 0).unwrap()];
+    let moving = bytes_shaped(&mut layout, |layout| {
+        layout.frame(&moved);
+    });
+    assert_eq!(moving, 0);
+    // Another text is shaped, and only it.
+    let fields = [("words.txt", "name"), (" 2:1", "position")];
+    let changed = bytes_shaped(&mut layout, |layout| {
+        layout.frame(&with_status(&text, &fields, &[]));
+    });
+    assert_eq!(changed, 13);
+    // The same glyphs in fields cut another way are the same line while
+    // their faces come to one font.
+    let fields = [("words", "name"), (".txt 2:1", "position")];
+    let recut = bytes_shaped(&mut layout, |layout| {
+        layout.frame(&with_status(&text, &fields, &[]));
+    });
+    assert_eq!(recut, 0);
+    // A font change shapes it again, with every row.
+    layout.shaper().change_fonts();
+    let reshaped = bytes_shaped(&mut layout, |layout| {
+        layout.frame(&with_status(&text, &fields, &[]));
+    });
+    assert_eq!(reshaped, first);
+}
+
+#[test]
+fn a_paint_only_change_does_not_shape_the_status_row() {
+    let (text, _) = twenty();
+    let fields = [("words.txt", "name"), (" 1:1", "position")];
+    let mut layout = Layout::new(CellShaper::new(10.0, 16.0));
+    layout.frame(&with_status(&text, &fields, &[("name", coloured(1))]));
+    let paints: [&[(&str, Face)]; 3] = [
+        &[("name", coloured(2))],
+        &[(
+            "mode-line",
+            Face {
+                background: Some(Color::rgb(0, 0, 9)),
+                ..Face::default()
+            },
+        )],
+        &[(
+            "position",
+            Face {
+                strike_through: Some(true),
+                ..Face::default()
+            },
+        )],
+    ];
+    for faces in paints {
+        let mut status = None;
+        let repainted = bytes_shaped(&mut layout, |layout| {
+            status = layout.frame(&with_status(&text, &fields, faces)).views[0]
+                .status
+                .clone();
+        });
+        assert_eq!(repainted, 0, "{faces:?}");
+        assert!(status.is_some(), "{faces:?}");
+    }
+    // A face of a field that sets a font attribute shapes the status row
+    // again, and no row of the text.
+    let bold = [(
+        "name",
+        Face {
+            weight: Some(Weight::BOLD),
+            ..Face::default()
+        },
+    )];
+    let reshaped = bytes_shaped(&mut layout, |layout| {
+        let counted = counted(layout, |layout| {
+            layout.frame(&with_status(&text, &fields, &bold));
+        });
+        assert_eq!(counted, count(0, 0, 20));
+    });
+    assert_eq!(reshaped, 13);
+    // And the mode line's font, which every field is under.
+    let sized = [(
+        "mode-line",
+        Face {
+            size: Some(Length::pixels(8)),
+            ..Face::default()
+        },
+    )];
+    let resized = bytes_shaped(&mut layout, |layout| {
+        layout.frame(&with_status(&text, &fields, &sized));
+    });
+    assert_eq!(resized, 13);
 }

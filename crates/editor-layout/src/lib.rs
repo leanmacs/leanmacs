@@ -31,7 +31,8 @@
 //! - the frame: rows from a view's anchor stacked by height, cursor and
 //!   selection geometry, the paint each run, cursor and view resolves to,
 //!   content hashes that cover paint and that a cursor move leaves alone,
-//!   decorations asked for the rows shown only ([`frame`]), and the fixture
+//!   the status row at a view's bottom and the text rows that fit above
+//!   it, decorations asked for the rows shown only ([`frame`]), and the fixture
 //!   frame checked in at `tests/display/frame.expected`
 //!   (`tests/frame_fixture.rs`);
 //! - what is kept between calls and what it costs, by the counters
@@ -59,11 +60,11 @@ pub mod wrap;
 
 use std::collections::HashMap;
 
-use crate::cache::{Counters, Texts, state};
+use crate::cache::{Counters, StatusKept, Texts, state};
 use crate::decoration::{DecorationSource, Styles, fonts_of};
 use crate::face::{FaceDef, SELECTION_FACE};
 use crate::query::{Moved, QueryError, RowRange, Walker};
-use crate::scene::{TextKey, TextRef};
+use crate::scene::{TextKey, TextRef, ViewId};
 use crate::shaper::{FontId, Shaper};
 use crate::tabs::{DEFAULT_TAB_WIDTH, row_content, segment_count};
 use crate::wrap::Outcome;
@@ -84,6 +85,8 @@ pub struct Layout<S: Shaper> {
     counters: Counters,
     /// What is kept of each text.
     texts: Texts<S::Shaped>,
+    /// What is kept of each view's status row.
+    status: HashMap<ViewId, StatusKept>,
 }
 
 impl<S: Shaper> Layout<S> {
@@ -100,6 +103,7 @@ impl<S: Shaper> Layout<S> {
             base,
             counters: Counters::default(),
             texts: HashMap::new(),
+            status: HashMap::new(),
         }
     }
 

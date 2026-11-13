@@ -26,6 +26,13 @@
 //! queries read and fill the same entries, so a query after a frame lays
 //! out nothing the frame laid out, and a frame after a query likewise.
 //!
+//! **A view's status row is kept by view**, not by text
+//! ([`StatusKept`]): its fields are the scene's own text. It is shaped
+//! again when its text, its font runs or the shaper's generation change,
+//! and dropped when a scene does not name its view. It is no segment of a
+//! text, so the counters below do not count it; a test bounds it by the
+//! bytes the fake shaper was asked to shape.
+//!
 //! # Counters
 //!
 //! [`Counters`] count the work, for the performance gates. Each frame or
@@ -36,13 +43,14 @@
 
 use std::collections::HashMap;
 use std::ops::{Deref, DerefMut};
+use std::sync::Arc;
 
 use editor_text::{Patch, Snapshot};
 
 use crate::decoration::{FaceSpanSource, SelectionSource};
 use crate::layer::{Layer, LayerEdit};
 use crate::scene::{TextKey, TextRef};
-use crate::shaper::ShapedLine;
+use crate::shaper::{FontRun, ShapedLine, VisualLine};
 use crate::tabs::{TabLayer, TabSnapshot};
 use crate::wrap::{Outcome, WrapLayer};
 
@@ -86,6 +94,20 @@ pub(crate) struct TextState<L> {
 
 /// What layout keeps, by text.
 pub(crate) type Texts<L> = HashMap<TextKey, TextState<L>>;
+
+/// What layout keeps of a view's status row: its shaped line, and what it
+/// was shaped from, so that it is shaped again only when one of those
+/// changes.
+pub(crate) struct StatusKept {
+    /// The text: the view's status fields, one after another.
+    pub text: String,
+    /// The font runs it was shaped with.
+    pub runs: Vec<FontRun>,
+    /// The shaper's generation it was shaped under.
+    pub generation: u64,
+    /// The line, unbroken.
+    pub line: Arc<VisualLine>,
+}
 
 /// What layout keeps of one text for one call: the kept state, or, for
 /// a snapshot older than what is kept, a scratch state thrown away after

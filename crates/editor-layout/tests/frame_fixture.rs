@@ -11,11 +11,11 @@
 //! The scene, which `lean/FfiTest.lean` builds the same way:
 //!
 //! - cells 8 pixels across and 16 down, tabs 8 columns wide;
-//! - view 1, at 0,0 and 96 by 80 (12 columns, 5 rows), shows text A from
-//!   offset 0, with the selections 3..7 and, in a second selection, a
-//!   cursor at 18; the decorations 0..2 in `keyword` and 17..18 in
-//!   `number`; block cursors in `cursor.normal`; a status field `NORMAL` in
-//!   `mode`;
+//! - view 1, at 0,0 and 96 by 80 (12 columns; 5 rows, of which its status
+//!   row is the last), shows text A from offset 0, with the selections
+//!   3..7 and, in a second selection, a cursor at 18; the decorations 0..2
+//!   in `keyword` and 17..18 in `number`; block cursors in
+//!   `cursor.normal`; a status field `NORMAL` in `mode`;
 //! - view 2, at 0,80 and 64 by 32 (8 columns, 2 rows), shows text B from
 //!   offset 6, with a cursor at 12; bar cursors in `cursor.insert`;
 //! - the frame 96 by 112, view 1 focused, the echo `fixture`.
