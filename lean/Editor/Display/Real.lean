@@ -36,7 +36,13 @@ every document a command can name alive.
 It is never imported by `Editor` or by anything `model-test` reaches: it
 links the Rust library. `contract-test` holds it to the display contract
 (`Editor/Display/Contract.lean`), and `ffi-test display` to the fixture
-frame checked in at `tests/display/frame.expected`.
+frame checked in at `tests/display/frame.expected`. The library writes a
+scene back as it was sent whatever it was sent, so `ffi-test` also compares
+the words of one scene with the library's layout written out
+(`FfiTest.sceneChecks`): a scene with what the fixture has none of, a
+pending prefix, a preedit, a view whose snapshot the table does not hold
+and a view whose markers are of two texts, and it checks what the library
+shows of each of those views.
 -/
 
 namespace Editor

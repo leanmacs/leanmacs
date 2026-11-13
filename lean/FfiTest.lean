@@ -1597,6 +1597,149 @@ def displayFixture : IO (Editor.RealDisplay × Editor.Scene × Array Editor.Ffi.
       focused := some ⟨1⟩, echo := "fixture", pending := "", preedit := none }
   return ({ display, snapshots := table.reader }, scene, #[a, b])
 
+/-- What `sceneChecks` publish from: one text, "ab\ncd\nef", its markers, and
+the binding over a table that holds its snapshot alone. -/
+structure SceneFixture where
+  /-- The binding, over a display in cells 8 pixels across and 16 down. -/
+  real : Editor.RealDisplay
+  /-- The text's snapshot, the only one in the binding's table. -/
+  snapshot : Editor.SnapshotId
+  /-- The number of the text's anchor marker at offset 3, where its second
+  row starts. -/
+  anchor : Nat
+  /-- The number of its selection marker of the range 4..5. -/
+  selection : Nat
+  /-- The number of its anchor marker at offset 0. -/
+  top : Nat
+  /-- The text's document. The library reads the markers in it, and a
+  snapshot holds it weakly, so whoever publishes keeps it alive. -/
+  document : Editor.Ffi.Document
+
+/-- Makes a `SceneFixture`. -/
+def sceneFixture : IO SceneFixture := do
+  let document ← Editor.Ffi.Document.new "ab\ncd\nef"
+  let anchor ← markIn document (.anchor { offset := 3, bias := .before })
+  let selection ← markIn document (rangeMarker 4 5)
+  let top ← markIn document (.anchor { offset := 0, bias := .before })
+  let table ← Editor.Snapshots.new
+  let snapshot ← table.add (← document.snapshot)
+  let display ← Editor.Ffi.Display.newCells 8 16
+  return {
+      real := { display, snapshots := table.reader }, snapshot, anchor, selection, top
+      document }
+
+/-- The marker numbered `index` of the fixture's text, which is text 0. -/
+def SceneFixture.own (index : Nat) : Editor.MarkerId :=
+  { text := ⟨0⟩, index }
+
+/-- A scene that takes the branches of the binding's encoding the display
+fixture does not: a pending prefix and a preedit; view 1, of a snapshot the
+table does not hold, before view 2, of the one it holds, scrolled to its
+second row with a selection; and view 3, of the same snapshot, whose scroll
+marker is `scroll` and whose selection markers are `selections`. Each view
+is 4 columns by 3 rows. -/
+def SceneFixture.scene (fixture : SceneFixture) (scroll : Editor.MarkerId)
+    (selections : Array Editor.MarkerId) : Editor.Scene :=
+  let rect (y : Nat) : Editor.Rect := { x := 0, y, width := 32, height := 48 }
+  { size := { width := 32, height := 144 }
+    views :=
+      #[{ id := ⟨1⟩, rect := rect 0, snapshot := ⟨fixture.snapshot.index + 1⟩
+          scroll := SceneFixture.own fixture.anchor, selections := #[]
+          cursor := { shape := .block, face := ⟨"c1"⟩ }, decorations := #[], status := #[] },
+        { id := ⟨2⟩, rect := rect 48, snapshot := fixture.snapshot
+          scroll := SceneFixture.own fixture.anchor
+          selections := #[SceneFixture.own fixture.selection]
+          cursor := { shape := .bar, face := ⟨"c2"⟩ }
+          decorations := #[{ start := 0, stop := 2, face := ⟨"kw"⟩ }]
+          status := #[{ text := "NORMAL", face := ⟨"mode"⟩ }] },
+        { id := ⟨3⟩, rect := rect 96, snapshot := fixture.snapshot, scroll, selections
+          cursor := { shape := .underline, face := ⟨"c3"⟩ }, decorations := #[], status := #[] }]
+    focused := some ⟨2⟩, echo := "fixture", pending := "g", preedit := some "é" }
+
+/-- The fixture's scene with view 3's markers of two texts: its scroll
+marker is the text's anchor at offset 3, and its selection marker is a
+marker of text 1 with the number of the text's own selection marker, which
+is what the library would read if the number were sent. -/
+def SceneFixture.mixed (fixture : SceneFixture) : Editor.Scene :=
+  fixture.scene (SceneFixture.own fixture.anchor) #[{ text := ⟨1⟩, index := fixture.selection }]
+
+/-- The rows of the fixture's text the rows query answers for one of its
+views, from `anchor`, as pairs; `none` when it is refused. -/
+def SceneFixture.asked (fixture : SceneFixture) (anchor : Nat) : IO (Option (Array (Nat × Nat))) :=
+  do
+  let answer ← fixture.real.rows { snapshot := fixture.snapshot, width := 32, height := 48, anchor }
+  return answer.toOption.map (·.map fun row => (row.start, row.stop))
+
+/-- The rows the view numbered `view` shows in the frame the fixture's
+display holds, as pairs; `none` when the frame has no such view. -/
+def SceneFixture.shown (fixture : SceneFixture) (view : UInt64) : IO (Option (Array (Nat × Nat))) :=
+  do
+  return (← fixture.real.display.frameRows view).map
+      (·.map fun row => (row.start.toNat, row.stop.toNat))
+
+/-- The checks of the real binding's encoding of a scene
+(`Editor.RealDisplay.encode`) that the display fixture does not make: a
+pending prefix and a preedit, a view whose snapshot the table does not
+hold, and a view whose markers are of two texts. The words are compared
+with the library's layout written out here once
+(`crates/editor-ffi/src/display/wire.rs`), since the library writes back
+what it was sent whatever it was. What a frame holds is layout's rule: a
+view's rows are compared with the rows query's answer, and a frame with
+another frame. -/
+def sceneChecks (_ : Unit) : List Check :=
+  [{  name :=
+        "a scene with a pending prefix, a preedit, a view of a snapshot the table does not hold and a view whose markers are of two texts is the words and the string of the library's layout"
+      run := do
+        let fixture ← sceneFixture
+        let encoded ← fixture.real.encode fixture.mixed
+        let anchor := fixture.anchor.toUInt64
+        let selection := fixture.selection.toUInt64
+        let scene : Array UInt64 := #[32, 144, 1, 2, 7, 1, 1, 2, 3]
+        -- No snapshot; its scroll marker; no selection; a block cursor.
+        let first : Array UInt64 := #[1, 0, 0, 32, 48, 0, 0, 1, anchor, 0, 0, 2, 0, 0]
+        -- The first handle; its scroll marker and its selection; a bar
+        -- cursor; a decoration and a status field.
+        let second : Array UInt64 :=
+          #[2, 0, 48, 32, 48, 1, 0, 1, anchor, 1, selection, 1, 2, 1, 0, 2, 2, 1, 6, 4]
+        -- The second handle; no scroll marker and no selection; an
+        -- underline cursor.
+        let third : Array UInt64 := #[3, 0, 96, 32, 48, 1, 1, 0, 0, 0, 2, 2, 0, 0]
+        return encoded.words == scene ++ first ++ second ++ third &&
+            encoded.strings == "fixturegéc1c2kwNORMALmodec3" &&
+            encoded.snapshots.size == 2 },
+    { name :=
+        "published, that scene comes back as sent; the view of the unknown snapshot shows nothing, the view after it shows its text from its anchor, and the view whose markers are of two texts shows its text from the start with no selection"
+      run := do
+        let fixture ← sceneFixture
+        let real := fixture.real
+        real.publish fixture.mixed
+        let encoded ← real.encode fixture.mixed
+        let back ← real.display.scene
+        let mixed ← real.display.frameText
+        let unknown ← fixture.shown 1
+        let second ← fixture.shown 2
+        let third ← fixture.shown 3
+        let fromAnchor ← fixture.asked 3
+        let fromStart ← fixture.asked 0
+        -- View 3 scrolled to the start, with no selection: the same frame.
+        real.publish (fixture.scene (SceneFixture.own fixture.top) #[])
+        let plain ← real.display.frameText
+        -- View 3 with the scroll marker and the selection marker the
+        -- library would read if the numbers were sent: another frame.
+        real.publish
+            (fixture.scene (SceneFixture.own fixture.anchor) #[SceneFixture.own fixture.selection])
+        let whole ← real.display.frameText
+        -- The document is held until here, past the last publish.
+        let held ← fixture.document.read
+        return back == some (encoded.words, encoded.strings) && unknown == some #[] &&
+            second.isSome &&
+            second == fromAnchor &&
+            third == fromStart &&
+            second != third &&
+            mixed == plain &&
+            mixed != whole &&
+            held == "ab\ncd\nef" }]
+
 /-- Publishes the display fixture through the real binding and checks it
 against the frame checked in at `fixture` (`tests/display/frame.expected`),
 which `editor-layout`'s own test lays out from the same scene: the frame's
@@ -1663,6 +1806,7 @@ def checks (_ : Unit) : List Check :=
     inverseChecks () ++
     windowChecks () ++
     displayChecks () ++
+    sceneChecks () ++
     decodeChecks () ++
     eventDecodeChecks () ++
     eventChecks ()
