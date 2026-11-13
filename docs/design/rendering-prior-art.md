@@ -167,7 +167,8 @@ What this leaves us to write, and where a library serves:
 | Layer | Source |
 |---|---|
 | Rope | Library |
-| Change sets, anchors, selections, undo tree, the edit log | Ours, on Helix's model |
+| Change sets, anchors, selections, kept inverses, the edit log | Ours, on Helix's model |
+| The undo tree | Ours, in Lean, over the kept inverses. Helix's is in its core, beside the text |
 | Display layers and excerpt buffers | Ours, on Zed's model. The largest piece; nobody ships it separately |
 | Shaping, font fallback, line breaking | Parley and fontique |
 | The per-line layout cache, hit testing, frame building | Ours, over the shaper |

@@ -69,7 +69,8 @@ can be interpreted and live-reloaded.
 
 | Component | Where | Why |
 |---|---|---|
-| Rope, transactions, anchors, undo, edit log | Rust | Test 1: layout and parsing read them without going through Lean |
+| Rope, transactions, anchors, kept inverses, edit log | Rust | Test 1: layout and parsing read them without going through Lean. The inverse of each transaction holds the bytes it removed, which stay in the library |
+| The undo tree, and every undo policy (groups, branches, reverting, the saved state) | Lean, compiled | Policy: a history is a few numbers a node, moved by two requests of the library (apply the inverse of a run of revisions, drop kept inverses); other undo styles are written over the same primitives |
 | Buffers, windows, views, modes (the editor's state) | Lean, compiled | The editor |
 | The command loop, keymap lookup, self-insert | Lean, compiled | Measured at 6 to 12 µs from key to edit, so there is no reason to split it |
 | Commands, keymap contents, evil, the minibuffer | Lean, compiled, overridable from config | Policy |
@@ -159,12 +160,12 @@ Rust crates:
 
 | Crate | Contents |
 |---|---|
-| `editor-text` | Rope, transactions, anchors, undo, edit log, diff. Pure. Built so far: a text over a rope (`ropey`, behind one private module), its revision, snapshots that never change and are shared between threads, positions as byte offsets with rows and points in bytes and in UTF-16, and the bytes of a file in and out with invalid bytes kept; change sets that apply, compose, invert and map a position; transactions, applied all or nothing; and the edit log, with pulled coalesced patches, an origin for each entry, a trace from a range to the entries that wrote it, and forgetting; anchors, the markers a text holds and moves with every transaction, selections with a shape, kept sorted and merged, and what a selection covers. Undo and diff are planned. |
+| `editor-text` | Rope, transactions, anchors, kept inverses, edit log, diff. Pure. Built so far: a text over a rope (`ropey`, behind one private module), its revision, snapshots that never change and are shared between threads, positions as byte offsets with rows and points in bytes and in UTF-16, and the bytes of a file in and out with invalid bytes kept; change sets that apply, compose, invert and map a position; transactions, applied all or nothing; and the edit log, with pulled coalesced patches, an origin for each entry, a trace from a range to the entries that wrote it, and forgetting; anchors, the markers a text holds and moves with every transaction, selections with a shape, kept sorted and merged, and what a selection covers; and the kept inverse of every applied transaction, the inverse of a run of revisions applied as one transaction where the text is in the state the run ended in, and dropping kept inverses. The undo tree is not here: it is Lean (`Editor.UndoTree`). Diff is planned. |
 | `editor-layout` | Display lists and line caches over a `Shaper` port. |
 | `editor-shape-parley`, `editor-render-wgpu`, `editor-platform-winit` | Adapters for shaping, drawing and the window. Of these `editor-platform-winit` is built: it opens one window with winit, on the process's main thread, and translates what winit reports about it into the window port's inputs. No winit type is public. |
 | `editor-platform` | The window port, with no dependencies: what a window reports (`Input`), how it is opened (`WindowOptions`), the `Platform` trait, its published fake (`ScriptedPlatform`) and its contract. It is a crate of its own because the fake and the contract belong to the port's owner, and nothing may depend on `editor-ffi`. Its inputs are a first cut with no key identity; the display pipeline defines that. |
 | `editor-proc` | The process and pseudo-terminal service. |
-| `editor-ffi` | The static library Lean links: the C functions Lean calls, handles, the event queues, the timer service, the first service behind the completion queue, and the main-thread service, which runs a platform's window onto the editor queue. Two of its handles are text: a document, which is an `editor-text` text behind a lock, and a snapshot of one. A document applies a transaction, answers for its edit log and holds markers, and a snapshot says what a selection covers; those are lists, which cross the boundary as words, a buffer of 64-bit numbers. The only crate that knows Lean exists. |
+| `editor-ffi` | The static library Lean links: the C functions Lean calls, handles, the event queues, the timer service, the first service behind the completion queue, and the main-thread service, which runs a platform's window onto the editor queue. Two of its handles are text: a document, which is an `editor-text` text behind a lock, and a snapshot of one. A document applies a transaction, answers for its edit log, holds markers, applies the inverse of a run of its revisions and drops kept inverses, and a snapshot says what a selection covers; those are lists, which cross the boundary as words, a buffer of 64-bit numbers. The only crate that knows Lean exists. |
 | `editor-term-ghostty`, `editor-syntax-treesitter` | Added after the first milestone. |
 
 The Lean package in `lean/` builds the executable with Lake, which runs
@@ -174,6 +175,7 @@ Cargo for the static library:
 |---|---|
 | `Editor.Ffi` | Bindings to the library, and a small C glue file. |
 | `Editor` | The interfaces and their models, editor state, the command loop, jobs, the config session. |
+| `Editor.UndoTree` | The undo tree: a text's history as a tree of states, in plain Lean over the text interface. Groups, undo, redo, branches, reverting the open group, and the saved state. |
 | Standard library | evil, the minibuffer; later agents, review, version control, the rdm client. |
 | `Main` | Wires the real bindings together and starts the loop. |
 

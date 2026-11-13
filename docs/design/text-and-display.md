@@ -1,9 +1,10 @@
 # Text and display
 
 The data structures every feature reads, and the path from them to pixels.
-All of this is the Rust library. Lean holds handles to buffers' text and
-tells the library what each view shows; the library stores, lays out and
-draws it.
+All of this is the Rust library, but for the undo tree, which is Lean over
+two requests of the library. Lean holds handles to buffers' text and tells
+the library what each view shows; the library stores, lays out and draws
+it.
 
 ## Text
 
@@ -18,8 +19,14 @@ draws it.
   locations and jump-list entries are all anchors.
 - **Selections**: any number, each an anchor and a head, able to express
   evil's character-wise, line-wise and (later) block-wise semantics.
-- **Undo tree**, with group boundaries set by Lean (one insert session is
-  one step) and selections restored.
+- **Undo**, in two halves (decided 2026-11-13). The library keeps the
+  inverse of every applied transaction and applies the inverse of a run of
+  them; deleted text never leaves it. The **undo tree** is Lean: a tree of
+  states over those two requests, with group boundaries set by the caller
+  (one insert session is one step), branches, reverting a failed command,
+  the selections to restore, and whether a text is in the state last saved.
+  Every undo policy is Lean's, so another undo style is written over the
+  same requests.
 
 Lean reaches these through a text interface that also has a pure Lean
 model, so commands can be tested and reasoned about without the library
@@ -27,10 +34,11 @@ model, so commands can be tested and reasoned about without the library
 
 ### As built
 
-All but the last item are built, as the crate `editor-text`: the rope and
-the text model (decided 2026-11-12), transactions with the edit log, and
-anchors, markers and selections (both decided 2026-11-13). The undo tree
-is not.
+All of it is built. In the crate `editor-text`: the rope and the text model
+(decided 2026-11-12), transactions with the edit log, anchors, markers and
+selections, and the kept inverses (all decided 2026-11-13). In Lean, over
+the text port: the undo tree (`lean/Editor/UndoTree.lean`, decided
+2026-11-13).
 
 **Positions.**
 
@@ -177,14 +185,16 @@ is not.
 - A *replace* (an insert or a delete at the Lean port) is the transaction
   with that one change and no selection.
 - A transaction's selections are of the selection type below, with its
-  shape. A transaction carries them and the text holds neither: nothing
-  reads a transaction's selections yet; undo will.
+  shape. A transaction carries them and the text holds no current
+  selection. They are kept, swapped, with the transaction's inverse, and
+  applying the inverse hands one back ("Kept inverses", below).
 - An accepted transaction moves every marker the text holds, and a refused
   one moves none.
 - Because a transaction is applied to a clone, an edit copies the nodes
-  from the root to a leaf whether or not a snapshot is held: 4,761 bytes
-  allocated for one insert into a megabyte of text, where an edit in place
-  with no snapshot held was 1,048.
+  from the root to a leaf whether or not a snapshot is held: 6,457 bytes
+  allocated for one insert into a megabyte of text, the first, with its
+  log entry and its kept inverse (4,761 before a transaction kept its
+  inverse), where an edit in place with no snapshot held was 1,048.
 
 **Anchors and markers.**
 
@@ -197,7 +207,7 @@ is not.
     coalesced ranges and no change sets, and forgetting would strand every
     anchor older than the horizon.
 - A *marker* is an anchor or a selection that a text holds, under an id the
-  text gives out and never uses again. "Text, undo history, anchors: Rust,
+  text gives out and never uses again. "Text, kept inverses, anchors: Rust,
   behind handles" ([lean-runtime.md](lean-runtime.md)), so the text holds
   them. A marker can be read back, put somewhere else or made the other
   kind under the same id, and given up.
@@ -336,6 +346,122 @@ is not.
   has four requests for markers and one question for extents, with thirteen
   and ten properties in its contract.
 
+**Kept inverses** (the Rust half of undo).
+
+- *Two numbers*, as in Vim, Helix and VS Code. The **revision** only grows:
+  every applied transaction gets a new one, an undo's included, and the
+  log, its subscribers, snapshots and forgetting go on keying on it. A
+  **state** is where a text is in its history: undo returns to an earlier
+  state at a later revision. The revision, the log and the rope are never
+  rewound: consumers hold revisions, and one that named two texts would
+  break every one of them.
+- *What is kept.* The inverse of every accepted transaction, by the revision
+  it produced: the inverse change set, the transaction's two selections
+  swapped, and the names of the states before and after it. One direction
+  only. An inverse holds the bytes its transaction removed and only the
+  lengths of what it inserted, so a transaction that inserts a megabyte
+  keeps a few bytes (measured: 1,194,328 bytes allocated to apply it, the
+  rope's pieces, against 2.24 megabytes if the transaction were kept too).
+  The other direction is made when it is needed: applying an inverse keeps
+  *its* inverse, which reads what it is about to remove back out of the
+  rope, once (measured: 1,049,980 bytes for the inverse of that insert).
+- *Deleted text never leaves the library.* Nothing hands a kept inverse or
+  a change set to Lean.
+- *A state's name* is the revision of the transaction that first put the
+  text there, and 0 for a text as it was made. A transaction names a new
+  state; the inverse of a run copies the name the text had before the run.
+  A name is given once, to the text one transaction made, so whenever a
+  text has a name it holds byte for byte what it held then. Identity is by
+  position in the history and never by content: comparing texts costs the
+  text, and a text typed back by hand to what it held is a different state
+  in every editor.
+- *The inverse of a run* of consecutive revisions is applied as one
+  transaction, by the path every transaction takes: one new revision, one
+  log entry with the origin the caller passes, every marker moved. It is
+  **allowed only when the text is in the state the run ended in**, and is
+  otherwise refused with nothing changed. A run of one revision is applied
+  where it is kept, with no copy (measured: 1,192,664 bytes for the inverse
+  of the inverse of that insert, what an insert of the megabyte allocates).
+  A longer run's inverses are composed pairwise as a balanced tree
+  (measured: 1,738 bytes a revision for a run of a thousand, where
+  composing one after the other was about 64,000). Its own inverse is kept
+  like any other, so a redo is the inverse of an undo and there is one
+  primitive, not two.
+- *The refusals*, in order: a revision the text has not reached; a run the
+  text keeps no inverse for (it starts at revision 0, is backwards, or
+  names a dropped revision); a run the text is not at the end of.
+- *What is handed back* is the selection in force before the run: the
+  selection before that the run's first transaction carried, or none when
+  it carried none. A text holds no current selection, so placing it is the
+  caller's. The inverse of an inverse hands back the selection after that
+  the run's last transaction carried.
+- *The log, a trace and the markers.* The entry's edits are the composed
+  change set's. What changed across an edit and its inverse coalesces as
+  for any two transactions: nothing for an insert, and one range replaced
+  by itself for a delete. A trace names text an inverse restored as the
+  inverse's, with its revision and origin, not whoever first wrote it.
+  Markers move through the one change set applied and not back to where
+  they were: an anchor inside text that was deleted collapsed to a point,
+  and is before or after the text when it is put back. That is why the
+  selection to restore is handed back and not read from a marker.
+- *Dropping.* Lean drops the kept inverses of a run it no longer needs; a
+  run, not a prefix, because what a history no longer needs is not one. An
+  inverse that names a dropped revision is refused. Dropping and forgetting
+  the log are independent: they have different readers. The library never
+  drops an inverse by itself.
+- *What is unbounded*: one kept inverse for each accepted transaction until
+  Lean drops it, each holding the bytes its transaction removed, two
+  selections and two state names. A text nobody undoes keeps them all the
+  same. Measured: a thousand one-change transactions on a megabyte of text
+  allocate 4,017 bytes each with their inverses kept, 3,651 without.
+- No library: what is kept is a map of our own inverse transactions and one
+  check. `undo` 0.52.0 and `neco-history` 0.2.0 are trees and stacks over a
+  caller's edits; with the tree in Lean neither has anything left to do
+  (crates.io, 2026-11-13).
+- Across the boundary a run is two revisions and an origin a number, what
+  an inverse did comes back as words (a revision and the selection, if
+  there is one), and a refusal is a status. The text port has two requests
+  for them, two refusals and one reply type, with fourteen properties in
+  its contract.
+
+**The undo tree** (the Lean half of undo).
+
+- A tree of states over the text port, in plain Lean
+  (`lean/Editor/UndoTree.lean`, whose module docs have the rules). It
+  imports the port alone: its cases run against the port's model and
+  against the real binding. A node holds a few numbers and no text.
+- *Told, not wrapping.* The tree is told the text's revision after each
+  command; every revision since the last it knew is in its open group, so
+  an edit made by something else is absorbed. It is not a gate round
+  `apply`, which every other writer of the text would go round. An edit it
+  was not told of makes its next move refused by the library with nothing
+  changed.
+- *Groups.* The caller sets the boundary; a boundary makes the open group a
+  node. A node's edge to its parent is one run of revisions, so a group
+  undoes as one step: one request, one revision, one log entry.
+- *Moves.* Undo, redo and a move to any node cross one edge at a time, each
+  by one inverse. The revision a crossing produces is then the edge's run,
+  and the run that was crossed is dropped, so an edge holds one kept
+  inverse after its first crossing. Undo then a new edit makes a second
+  child: the old branch stays. A move that is refused part-way has dropped
+  nothing, so the caller's tree stays good.
+- *Reverting.* A failed command is rolled back by keeping the tree's state
+  before it and reverting to it, which may be a point inside an insert
+  session's open group: groups need not nest. Reverting the whole open
+  group makes no node and leaves nothing to redo.
+- *Saved.* The tree keeps the state last marked as saved and answers
+  whether the text is in another. A new tree is saved at its root. A
+  boundary does not change the answer. Saving itself is the file port's.
+- *Other styles* are written over the same two requests: a linear history
+  is two lists of runs; Vim's is this tree with moves by the order nodes
+  were made and a time on each; Emacs's records the revision an inverse
+  produced as an edit.
+- No library: no Lean 4 package is a history tree (Reservoir, 2026-11-13),
+  and the tree's moves are our own port's requests.
+- *What is unbounded*: the tree's nodes, and so one kept inverse in the
+  library for each edge that has been crossed and one for each transaction
+  of a group that has not. Nothing prunes the tree.
+
 | Piece | Where |
 |---|---|
 | The text model, and where an addition goes | The crate docs of `crates/editor-text/src/lib.rs` |
@@ -353,13 +479,16 @@ is not.
 | What a selection covers | `crates/editor-text/src/extent.rs` |
 | The edit log: entries, origins, tracing, forgetting | `crates/editor-text/src/log.rs` |
 | Edits and patches, and composing them | `crates/editor-text/src/patch.rs` |
-| The properties, against a `String` | `crates/editor-text/tests/properties/`: the text in `main.rs`, the laws of change sets in `changes.rs`, the log in `log.rs`, anchors and markers in `anchors.rs`, the selection's form, its mapping and its extents in `selections.rs` |
-| What a snapshot, a transaction, a pull and moving markers cost, counted in bytes allocated | `crates/editor-text/tests/snapshot_cost.rs` |
+| Kept inverses: what is kept, the names of states, the inverse of a run | `crates/editor-text/src/inverse.rs`, and `Text::apply_inverse` and `drop_inverses` in `text.rs` |
+| The properties, against a `String` | `crates/editor-text/tests/properties/`: the text in `main.rs`, the laws of change sets in `changes.rs`, the log in `log.rs`, anchors and markers in `anchors.rs`, the selection's form, its mapping and its extents in `selections.rs`, kept inverses in `inverses.rs` |
+| What a snapshot, a transaction, a pull, moving markers, keeping an inverse and applying one cost, counted in bytes allocated | `crates/editor-text/tests/snapshot_cost.rs` |
 | That moving markers is one walk of the change set, counted in looks at it (a counter that exists in tests only), bounded by the ends held plus the changes | The unit tests of `crates/editor-text/src/change.rs` (a mapper asked in rising order) and `marker.rs` (markers held out of order) |
 | The text and the snapshot as handles for Lean | `crates/editor-ffi/src/document.rs`, `crates/editor-ffi/src/snapshot.rs` |
 | A transaction and the log across the boundary, as words | `crates/editor-ffi/src/transaction.rs`, `crates/editor-ffi/src/log.rs`, `crates/editor-ffi/src/words.rs` |
 | Markers and extents across the boundary, as words | `crates/editor-ffi/src/marker.rs`, and `editor_ffi_snapshot_extents` in `snapshot.rs` |
+| Applying an inverse and dropping inverses across the boundary | `crates/editor-ffi/src/inverse.rs` |
 | The Lean text port, its model, real binding and contract | `lean/Editor/Text.lean`, `lean/Editor/Text/` ([lean-runtime.md](lean-runtime.md)) |
+| The undo tree, and its cases | `lean/Editor/UndoTree.lean`, `lean/Editor/UndoTree/Cases.lean` ([lean-runtime.md](lean-runtime.md)) |
 
 ## The edit log
 
@@ -468,8 +597,9 @@ origin, and its edits.
   to nobody.
 - Until Lean forgets, the log grows by one entry a transaction. A thousand
   one-change transactions on a megabyte of text were measured to allocate
-  3,651 bytes each, the tree's nodes included; an entry itself is its
-  origin and 96 bytes an edit.
+  4,017 bytes each, the tree's nodes and the kept inverse included (3,651
+  before a transaction kept its inverse); an entry itself is its origin and
+  96 bytes an edit.
 
 Nothing calls forget yet outside tests.
 
@@ -734,9 +864,38 @@ these hunks" is a fact the editor can state.
   with the command loop and agent hosting.
 - **Rebasing a stale transaction.** A transaction built for an older
   revision is refused by its length. The log keeps no text, so it cannot
-  supply the change sets to rebase through; the undo history, or the first
-  job that proposes an edit, settles where they come from
+  supply the change sets to rebase through. The kept inverses do not settle
+  it either: each is a revision's own inverse, holds only what its
+  transaction removed, and may have been dropped. The first job that
+  proposes an edit settles where the change sets come from
   ([concurrency.md](concurrency.md)).
+- **Bounding the undo tree, and pruning it.** Nothing prunes a node, and
+  the library keeps an inverse for each edge and for each transaction of a
+  group that has not been crossed. A bound (by count, by bytes, by age) is
+  the command loop's policy; pruning a branch is dropping its edges' runs.
+- **A text that keeps no inverses.** A text nobody undoes (a transcript, a
+  log buffer) keeps an inverse for each transaction until Lean drops it.
+  There is no switch that keeps none; whoever makes such buffers decides
+  whether dropping after each edit is enough.
+- **Squashing a closed group's inverses.** A group that has not been
+  crossed keeps one inverse for each of its transactions, and they are
+  composed when the group is first undone. Composing them when the group
+  is closed would hold less; nothing measured asks for it yet.
+- **Whose text an inverse's is in a trace.** Text an undo restores is
+  traced to the undo, with the origin it was given, not to whoever first
+  wrote it. Review, which reads provenance, decides whether an undo should
+  carry the original author forward.
+- **A query for a text's state.** Neither half can be asked which state a
+  text is in: the library only accepts or refuses an inverse, and the tree
+  knows only the moves it made. So an inverse applied behind the tree's
+  back is a new state to the tree, which may say "modified" of a text that
+  is back in its saved state. A query would settle it if a caller needs it.
+- **A history that survives a restart.** The tree is a Lean value and the
+  kept inverses are in memory: both are lost at a restart.
+- **A selection a later transaction of a run carried.** When a run's first
+  transaction carried no selection, none is handed back, though a later one
+  did. Taking a later one back through the transactions before it is one
+  function in the library and one in the model if a caller needs it.
 - **Points in UTF-16 in an edit.** An edit's points count columns in bytes.
   A language server client converts with the snapshots of the two
   revisions, or the log grows a second pair of points.
@@ -762,7 +921,8 @@ these hunks" is a fact the editor can state.
 - **A marker set by a transaction.** A transaction could name a marker to
   set to its selection after. It does not: the author places its marker
   with a second request, and the one writer path stays one argument
-  simpler. Undo, which restores a selection, may want it.
+  simpler. Undo did not need it: applying an inverse hands the selection
+  back, and the caller places it.
 - **Tabs**: Parley has no tab stops. Expand before shaping, use inline
   boxes, or split runs.
 - **The other choices the survey left open** are listed in

@@ -70,8 +70,15 @@ time, in order, on the editor thread.
 - **Interrupt.** An interrupt key (Emacs's `C-g`) sets a flag in the Rust
   library as the key arrives. Editor API calls check it, so an interrupted
   command unwinds as an ordinary exception at its next call.
-- **Rollback.** A command's edits form one transaction group, so a failed
-  or interrupted command's edits are reverted as a unit.
+- **Rollback.** A failed or interrupted command's edits are reverted as a
+  unit. The mechanism is built, in the undo tree
+  (`lean/Editor/UndoTree.lean`): the loop keeps the tree's state before a
+  command and reverts to it if the command fails, by one inverse of the run
+  of revisions the command made. That state may be a point inside an insert
+  session's open group, so a command's edits need no group of their own. A
+  command that moved in the history (an undo, a redo) is not rolled back
+  this way, since the move closed the group; what the loop does then is the
+  command loop's to decide. The loop that does this is not built yet.
 - **Slow commands are logged**, with their duration, so a command that
   should have been a job is easy to find.
 

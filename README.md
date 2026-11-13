@@ -224,16 +224,19 @@ compare them, convert every offset to a point and back, and load and save
 arbitrary bytes; that hold the laws of change sets (composing, inverting,
 mapping a position); that compare what the edit log records, the one
 patch a subscriber gets and the trace of a range with references computed
-from the strings; and that keep the anchors a text holds in bounds and in
+from the strings; that keep the anchors a text holds in bounds and in
 order through random transactions, merge selections that overlap, and
-compare what a selection covers with a reference read off the string. The
-property tests run from a fixed seed and write no file.
+compare what a selection covers with a reference read off the string; and
+that apply the inverses of random runs of revisions and drop them, against
+the strings the text held at every revision. The property tests run from a
+fixed seed and write no file.
 
 The Lean half's logic needs no Rust library. The editor reaches the library
 through interfaces it defines, each with a pure Lean model, and
 `mise run lean-test` runs `lake test`: the model tests
-(`lean/ModelTest.lean`), which run editor commands and the text interface's
-contract against the model, and the config session's decisions (what a
+(`lean/ModelTest.lean`), which run editor commands, the text interface's
+contract and the cases of the undo tree, which is Lean over that interface,
+against the model, and the config session's decisions (what a
 reload elaborates, what it installs, how reloads are serialised) on
 hand-written fakes, with no elaborator. They test the job system the same
 way: the job interface's contract against its model and against the job
@@ -261,7 +264,9 @@ and their refusals, revisions, snapshots that later edits leave alone, rows
 and points in bytes and in UTF-16 against a table written out by hand,
 releasing a text or a snapshot, applying a transaction and each way one is
 refused, what changed since a revision and who wrote a range against tables
-written out by hand, and forgetting the start of a text's edit log. It also
+written out by hand, forgetting the start of a text's edit log, and applying
+the inverse of a run of revisions and dropping kept inverses. It runs the
+cases of the undo tree through the same binding. It also
 checks what only the real binding
 shows: the binding's table is the only holder of its documents and
 snapshots, and releasing one frees it at once. It
