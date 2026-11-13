@@ -200,9 +200,13 @@ port that contains it.
 
 ## Choices this leaves open
 
-- **Rope**: `ropey` 1.x is stable but indexed by character and unchanged
+- **Rope**: decided 2026-11-12, and no longer open: `ropey` 2.0.0-beta.1,
+  behind `editor-text`'s own types
+  ([text-and-display.md](text-and-display.md), "Text", as built). What the
+  survey found: `ropey` 1.x is stable but indexed by character and unchanged
   since 2023; 2.0 is in beta, which is not in itself a reason against it. Zed's summarised tree serves text and display
-  layers with one structure. The boundary wants byte offsets either way,
+  layers with one structure, and whether the display layers get a tree of
+  their own is still open. The boundary wants byte offsets either way,
   since Parley, tree-sitter and language servers all do.
 - **Tabs**: expand before shaping, use inline boxes, or split runs.
 - **Height of lines not yet laid out** when wrapping or line heights vary:

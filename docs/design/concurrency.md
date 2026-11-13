@@ -44,6 +44,14 @@ Editor state is an immutable Lean value held by the editor thread. Handing
 a job a snapshot is handing it that value. Text lives in Rust ropes, whose
 snapshots are cheap; a job or the renderer holds a snapshot handle.
 
+The text snapshot is built: taking one copies none of the text, it never
+changes, and the library's object is safe to read from any thread
+([text-and-display.md](text-and-display.md), "Text", as built). What is not
+built is the hand-off. A command names a snapshot by an id in the text
+port's table, which the editor thread owns, and the job port has no request
+that reads one. So no job reads text yet. The first that must is saving a
+file, and how it names its snapshot is decided there.
+
 After each command the editor thread publishes the scene (which views show
 which text snapshots, with which decorations) to the Rust library. Rendering
 reads the last published scene. Layout queries from a command are

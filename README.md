@@ -42,7 +42,8 @@ has not been attempted ([`docs/design/lean-runtime.md`](docs/design/lean-runtime
   libxkbcommon-x11-0 libxcb1` on Debian). `tools/linux/Dockerfile` is the
   whole list as it was run, on Debian 13.
 - Network access for the first build, when Lake fetches lean-fmt and Cargo
-  the window library.
+  the libraries the crates pin: the window library, the rope and, for the
+  tests, the property-test library.
 
 ### Build and run
 
@@ -216,7 +217,12 @@ window it runs is the window port's fake, the scripted platform
 What needs a display, a person or a container is a task of its own, below.
 
 The Rust half needs no Lean toolchain: `mise run test` (`cargo test
---workspace`) builds and tests every crate with Cargo alone.
+--workspace`) builds and tests every crate with Cargo alone. Text storage
+(`crates/editor-text`) is tested there in full: its unit tests, and property
+tests that drive a text and a `String` with the same random edits and
+compare them, convert every offset to a point and back, and load and save
+arbitrary bytes. The property tests run from a fixed seed and write no
+file.
 
 The Lean half's logic needs no Rust library. The editor reaches the library
 through interfaces it defines, each with a pure Lean model, and
@@ -245,7 +251,12 @@ the fixture under `tests/headless`, whose output must be exactly
 line it does not understand must give status 2, and a script that cannot be
 read status 1 with a line on stderr that says why. `contract-test` runs the
 text interface's contract, the same list of properties the model tests run,
-against the real binding, so the model cannot drift from the library. It
+against the real binding, so the model cannot drift from the library: edits
+and their refusals, revisions, snapshots that later edits leave alone, rows
+and points in bytes and in UTF-16 against a table written out by hand, and
+releasing a text or a snapshot. It also checks what only the real binding
+shows: the binding's table is the only holder of its documents and
+snapshots, and releasing one frees it at once. It
 runs the job interface's contract the same way, against the job runner over
 the library's timer service, and checks what only the real service shows:
 jobs in real waits hold no thread, cancelling a job takes its timer out of
@@ -270,7 +281,9 @@ elaborates; reloads are serialised; and a script that cannot run to its end
 says why. Its config directories are temporary directories of its own.
 
 With no arguments `ffi-test` runs its checks of handles, plain data, the
-event queues, the timer service, the document and the window: the scripted
+event queues, the timer service, the document, the snapshot of a document
+and the window: a snapshot reads what its document held after the document
+is edited, and outlives it; the scripted
 platform's inputs arrive on the editor queue, each stamped with the instant
 it was reported, and the keyboard check's loop (below) reports them; a
 scripted platform that cannot open a window gives its reason, which the

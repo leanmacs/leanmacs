@@ -25,6 +25,111 @@ Lean reaches these through a text interface that also has a pure Lean
 model, so commands can be tested and reasoned about without the library
 (see [lean-runtime.md](lean-runtime.md)).
 
+### As built
+
+The first two items are built (decided 2026-11-12), as the crate
+`editor-text`. Transactions, anchors, selections and the undo tree are not.
+
+**Positions.**
+
+- An *offset* is a byte offset into the text's UTF-8. A *position* is an
+  offset that is a character boundary within the text, its end included.
+  Offsets are the unit at the Lean boundary: Parley, tree-sitter and
+  language servers all want bytes or UTF-16.
+- A *row* begins at the start of the text and after each line feed. A text
+  has one more row than it has line feeds: an empty text has one row, and a
+  text that ends in a line feed has an empty last row. A carriage return is
+  an ordinary character of its row, so the rows of a CRLF file end in one,
+  and a carriage return alone starts no row. This is tree-sitter's rule,
+  which the edit log needs.
+- A *point* is a row and a column counted from the row's start: in bytes
+  (`Point`) or in UTF-16 code units (`PointUtf16`). They are two types, so
+  the units cannot be mixed.
+- A conversion answers only for a position and clamps nothing: clamping is
+  Lean's policy. An offset inside a character or past the end has no point.
+  A point in a row the text does not have, past the end of its row, inside
+  a character or between the two code units of one has no offset.
+- There is no character index. Nothing at the boundary counts in
+  characters.
+
+**The text model.**
+
+- A text is always valid UTF-8. The rope, shaping, tree-sitter and a Lean
+  string all want that.
+- A byte of a loaded file that is not part of valid UTF-8 is kept as one
+  reserved character, its *escape*: the byte `b`, always `0x80` or more, is
+  the code point `U+10DC00 + b`, in `U+10DC80..U+10DCFF` of Supplementary
+  Private Use Area-B. The scheme is Python's `surrogateescape`, moved from
+  surrogates, which neither a Rust `str` nor a Lean `String` can hold.
+  - In: a valid character is kept, and each byte of an invalid sequence
+    becomes its escape. A valid character that is itself in the reserved
+    range is kept as its four bytes, each escaped, so the mapping is
+    one-to-one.
+  - Out: an escape becomes its one byte, and every other character its
+    UTF-8.
+  - So the bytes of a file loaded and saved unchanged are identical, for
+    every file.
+- An escape is ordinary text, so a deletion and its undo, a cut and a
+  paste, a diff and a transaction carry the byte with no machinery of their
+  own. A table of original bytes beside replacement characters would lose
+  the byte the first time its character was deleted and restored, because
+  edits carry strings.
+- What that costs: in a file with invalid bytes, an offset in the text is
+  not an offset in the file (an escape is four bytes of text and two UTF-16
+  units); a parser or a language server sees an escape as a private-use
+  character; a file that validly holds a reserved code point shows it as
+  four raw bytes; and a reserved code point given as a string, typed or
+  pasted, is saved as one raw byte.
+- Line endings are kept as they are. Nothing is normalised on the way in or
+  out, so LF, CRLF and mixed files come back byte for byte. Which ending a
+  new line gets is Lean's policy, and detecting a file's dominant ending
+  belongs with loading it.
+- The crate takes bytes and gives bytes. Reading and writing a file is the
+  file port's.
+
+**Revisions and snapshots.**
+
+- A text has a *revision*. A new text is at 0, and every accepted edit adds
+  one, an edit that changes nothing included. A refused edit adds none, and
+  changes nothing. Transactions may make one transaction the unit.
+- A *snapshot* is the text at one revision. It never changes, it outlives
+  its text, and it is `Send + Sync`. Taking one copies none of the text. A
+  snapshot is the only thing a worker thread, a job or the renderer reads:
+  a text has one writer and hands out nothing else.
+- Every read is a method of a snapshot: its length, rows and points, its
+  text in the pieces the rope holds it in (for search, shaping and a
+  parser's read callback, with no copy), and its bytes to save.
+- No job, worker or renderer reads a snapshot yet. How a job names one is
+  an open question below.
+
+**The rope.**
+
+- `ropey`, pinned at exactly 2.0.0-beta.1, with the features for rows split
+  by line feed alone and for UTF-16. It is indexed by byte, counts both in
+  the tree, has edits that return an error where others panic, and shares
+  its nodes between a rope and its clone.
+- Against it: it is a beta, and its API can change before 2.0. `ropey` 1.x
+  is indexed by character. `crop` 0.4.3 has no fallible edit, does not
+  count a last empty row as a line, and has a fix for a data race that is
+  in no release; it is the fallback. A summarised tree of our own was set
+  aside because libraries fit; the display layers, anchors and decoration
+  ranges can have one when they need it.
+- One private module of `editor-text` names the library. No type of it is
+  public, and `deny.toml` lets no other crate depend on it.
+
+| Piece | Where |
+|---|---|
+| The text model, and where an addition goes | The crate docs of `crates/editor-text/src/lib.rs` |
+| The rope library, behind a private type | `crates/editor-text/src/rope.rs` |
+| A text, its edits and its revision | `crates/editor-text/src/text.rs` |
+| A snapshot and its reads | `crates/editor-text/src/snapshot.rs` |
+| Rows and points | `crates/editor-text/src/point.rs` |
+| Invalid bytes as escapes | `crates/editor-text/src/bytes.rs` |
+| The properties, against a `String` | `crates/editor-text/tests/properties.rs` |
+| What a snapshot costs, counted in bytes allocated | `crates/editor-text/tests/snapshot_cost.rs` |
+| The text and the snapshot as handles for Lean | `crates/editor-ffi/src/document.rs`, `crates/editor-ffi/src/snapshot.rs` |
+| The Lean text port, its model, real binding and contract | `lean/Editor/Text.lean`, `lean/Editor/Text/` ([lean-runtime.md](lean-runtime.md)) |
+
 ## The edit log
 
 Consumers (layout, parsing, Lean) do not receive each edit. Each asks for
@@ -287,10 +392,20 @@ these hunks" is a fact the editor can state.
 
 ## Open questions
 
-- **Rope choice** (`ropey`, `crop`, or a sum tree in the style of Zed's).
-  Display layers, excerpt buffers and decoration interval trees favour a
-  sum tree; `ropey` 1.x is indexed by character where the boundary wants
-  bytes.
+- **A summarised tree for the display layers.** The rope is a library's
+  ("Text", as built). Display layers, excerpt buffers and decoration
+  interval trees favour a sum tree in the style of Zed's; whether they get
+  one of their own is for the display pipeline to decide.
+- **How escape characters are displayed.** A raw byte of a file is a
+  private-use character in the text. Until the display draws it as its
+  byte, it shows as whatever the font has there.
+- **A second row rule.** A language server counts a carriage return alone
+  as the end of a line; rows here do not. The rope library can count that
+  rule beside this one without the stored text changing. The language
+  server client decides whether it is needed.
+- **How a job names a snapshot.** The text port names one by an id in the
+  editor thread's table, and the job port has no request for one. The
+  first job that reads text, which is saving a file, settles it.
 - **Tabs**: Parley has no tab stops. Expand before shaping, use inline
   boxes, or split runs.
 - **The other choices the survey left open** are listed in
