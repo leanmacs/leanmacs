@@ -42,6 +42,15 @@
 //! - **An edit** replaces the bytes between two positions with a string
 //!   ([`Text::replace`]). It is refused, changing nothing, unless both ends
 //!   are positions and are in order.
+//! - **A change set** ([`ChangeSet`]) is an edit as a walk over the whole
+//!   text: changes that keep the next bytes ([`Change::Retain`]), remove
+//!   them ([`Change::Delete`]) or put text in ([`Change::Insert`]), with
+//!   lengths in bytes. It is for a text of one length
+//!   ([`ChangeSet::len_before`]) and makes one of another
+//!   ([`ChangeSet::len_after`]). It is kept in one normal form, so two
+//!   change sets that do the same thing in the same places are equal: no
+//!   change of length zero, no two neighbours of one kind, and where bytes
+//!   are replaced the insert is before the delete.
 //! - **A revision** counts the edits a text has accepted ([`Revision`]). A
 //!   new text is at 0, every accepted edit adds one, one that changes
 //!   nothing included, and a refused edit adds none.
@@ -89,12 +98,14 @@
 //! | Something more of the rope library | A method of the private `rope::Rope`, in this crate's terms | The tests of the read that needs it |
 
 mod bytes;
+mod change;
 mod point;
 mod rope;
 mod snapshot;
 mod text;
 
 pub use bytes::ByteChunks;
+pub use change::{Change, ChangeSet};
 pub use point::{Point, PointUtf16};
 pub use snapshot::{Chunks, Revision, Snapshot};
 pub use text::{BadRange, Text};
