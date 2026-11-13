@@ -8,11 +8,11 @@ use std::fmt::Debug;
 use std::sync::{Arc, Mutex};
 
 use editor_layout::Layout;
+use editor_layout::face::{Face, FaceDef};
 use editor_layout::scene::{
     Changes, Cursor, Decoration, Rect, Scene, TextKey, TextRef, View, ViewId,
 };
 use editor_layout::shaper::fake::CellShaper;
-use editor_layout::shaper::{FontSpec, Shaper};
 use editor_text::{Patch, Revision, Text};
 use proptest::collection::vec;
 use proptest::prelude::*;
@@ -302,11 +302,6 @@ fn a_query_after_an_edit_is_in_the_default_font_until_a_frame_shows_the_text() {
     let shared = Shared(Arc::new(Mutex::new(Text::from("ab\ncd\nef"))));
     let changes: Arc<dyn Changes> = Arc::new(shared.clone());
     let mut layout = Layout::new(CellShaper::new(10.0, 16.0).with_family("tall", 10.0, 32.0));
-    let tall = layout.shaper().font(&FontSpec {
-        family: Some("tall".to_owned()),
-        ..FontSpec::default()
-    });
-    layout.faces_mut().set_font("tall", tall);
     // The second row is in a face whose font is twice as tall.
     let first = text_ref(1, &shared.0.lock().unwrap(), changes.clone());
     let mut shown = scene(std::slice::from_ref(&first));
@@ -315,6 +310,13 @@ fn a_query_after_an_edit_is_in_the_default_font_until_a_frame_shows_the_text() {
         stop: 5,
         face: "tall".to_owned(),
     }];
+    shown.faces = Some(vec![FaceDef {
+        name: "tall".to_owned(),
+        face: Face {
+            family: Some("tall".to_owned()),
+            ..Face::default()
+        },
+    }]);
     layout.frame(&shown);
     // A query is in the fonts of that frame: 48 pixels hold two rows.
     assert_eq!(layout.rows_shown(&first, 40.0, 48.0, 0).unwrap().len(), 2);

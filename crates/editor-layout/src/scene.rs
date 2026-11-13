@@ -1,27 +1,34 @@
 //! The scene as Rust data: what Lean publishes after each command, the
 //! input to layout.
 //!
-//! It is field for field `lean/Editor/Scene.lean`'s `Scene`, with the
-//! handles Lean names content by already resolved by the binding
-//! (`editor-ffi`): a view's snapshot is a [`TextRef`], its scroll anchor
-//! and its selections the values its markers held when it was published.
-//! The decoded wire form, with the handles and marker numbers unresolved,
-//! is the binding's.
+//! It is Lean's scene and the faces the binding sends with it. Field for
+//! field it is `lean/Editor/Scene.lean`'s `Scene`, with the handles Lean
+//! names content by already resolved by the binding (`editor-ffi`): a
+//! view's snapshot is a [`TextRef`], its scroll anchor and its selections
+//! the values its markers held when it was published. The decoded wire
+//! form, with the handles and marker numbers unresolved, is the binding's.
+//! Beside those fields it has one Lean's scene has not, [`Scene::faces`]:
+//! Lean's scene names faces and never says what one looks like, so the
+//! binding sends the definitions in the same call, and only when they
+//! changed.
 //!
-//! What phase 1 lays out of it: each view's text across its whole `rect`,
-//! from its scroll anchor, with its selections, cursors and decorations.
-//! What it carries and lays out nothing of: a view's `status` (the mode
-//! line, phase 2), and the scene's `echo`, `pending`, `preedit` and
+//! What is laid out of it: each view's text across its `rect`, from its
+//! scroll anchor, with its selections, cursors and decorations, each run
+//! in the font its faces resolve to. What it carries and lays out nothing
+//! of: a view's `status`, and the scene's `echo`, `pending`, `preedit` and
 //! `focused`, which no phase of the display pipeline draws yet.
 //!
 //! # Where an addition goes
 //!
 //! A new field of Lean's scene is a field here, decoded by the binding.
-//! Drawing it is the frame's ([`frame`](crate::frame)).
+//! Drawing it is the frame's ([`frame`](crate::frame)). A new attribute
+//! of a face is [`face`](crate::face)'s.
 
 use std::sync::Arc;
 
 use editor_text::{Patch, Revision, Selection, Snapshot};
+
+use crate::face::FaceDef;
 
 /// A size, in physical pixels.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -179,4 +186,10 @@ pub struct Scene {
     pub pending: String,
     /// The input method's preedit text, if it is composing.
     pub preedit: Option<String>,
+    /// What the faces the scene names look like: the definitions, in the
+    /// order they were made, a later one of a name over an earlier one
+    /// ([`face`](crate::face)). `None` is "as last given": layout keeps
+    /// the definitions of the last scene that carried any, and none before
+    /// the first.
+    pub faces: Option<Vec<FaceDef>>,
 }

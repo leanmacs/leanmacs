@@ -16,9 +16,10 @@
 //!
 //! - **A font attribute** (a family, a size, a weight, a slant, a line
 //!   height; later a stretch or a variation axis): a field of [`FontSpec`],
-//!   the port's term for a font. Layout asks the shaper for the
-//!   [`FontId`] of a spec ([`Shaper::font`]) and names a run's font by
-//!   it; the table from an id to its spec is the adapter's. Only what changes a glyph or a line's height is a font
+//!   the port's term for a font. Layout resolves the faces over a run to
+//!   a spec ([`face`](crate::face)), asks the shaper for the spec's
+//!   [`FontId`] ([`Shaper::font`]) and names the run's font by it; the
+//!   table from an id to its spec is the adapter's. Only what changes a glyph or a line's height is a font
 //!   attribute: colours, underlines and strike-through are paint, and never
 //!   reach a shaper.
 //! - **A shaping feature** (an OpenType feature, a language): data on

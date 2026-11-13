@@ -330,6 +330,7 @@ fn scene_directly() -> Scene {
         echo: "hello".to_owned(),
         pending: String::new(),
         preedit: None,
+        faces: None,
     }
 }
 

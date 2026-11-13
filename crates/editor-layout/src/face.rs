@@ -5,7 +5,8 @@
 //! family, a size, a weight, a slant, a foreground, a background, an
 //! underline (a style and a colour), strike-through and a line height.
 //! Faces are named. What a name means is a list of definitions
-//! ([`FaceDef`]), and [`Faces`] holds the list last given.
+//! ([`FaceDef`]) sent with a scene ([`Scene::faces`]), and layout holds the
+//! list last sent ([`Faces`]).
 //!
 //! # The precedence
 //!
@@ -29,8 +30,9 @@
 //! (syntax highlighting) says where it is in this order when it is added.
 //!
 //! [`Faces::resolve`] is that rule for a stack of faces given lowest
-//! first, under the default face; whoever resolves a run builds its stack
-//! in the order above.
+//! first, under the default face. The frame builds a run's stack in the
+//! order above ([`frame`](crate::frame)), and so does a query, from the
+//! selections and decorations of the last frame that showed its text.
 //!
 //! # What is font and what is paint
 //!
@@ -58,6 +60,8 @@
 
 use std::collections::HashMap;
 
+#[cfg(doc)]
+use crate::scene::Scene;
 use crate::shaper::{FontSpec, Length, LineHeight, Slant, Weight};
 
 /// The name of the face under every other: what a run no span covers is

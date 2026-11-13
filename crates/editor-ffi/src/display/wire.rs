@@ -306,6 +306,9 @@ impl WireScene {
             echo: self.echo.clone(),
             pending: self.pending.clone(),
             preedit: self.preedit.clone(),
+            // No face crosses yet: layout keeps the faces it has, which
+            // are none.
+            faces: None,
         }
     }
 }

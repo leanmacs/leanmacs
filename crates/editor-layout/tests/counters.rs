@@ -11,8 +11,12 @@ use std::sync::{Arc, Mutex};
 
 use editor_layout::Layout;
 use editor_layout::cache::Counters;
-use editor_layout::scene::{Changes, Cursor, Rect, Scene, TextKey, TextRef, View, ViewId};
+use editor_layout::face::{Color, Face, FaceDef, Underline, UnderlineStyle};
+use editor_layout::scene::{
+    Changes, Cursor, Decoration, Rect, Scene, TextKey, TextRef, View, ViewId,
+};
 use editor_layout::shaper::fake::CellShaper;
+use editor_layout::shaper::{Length, LineHeight, Slant, Weight};
 use editor_text::{Patch, Revision, Selection, SelectionRange, Text};
 
 /// A text behind a lock, as the binding holds one, and its changes.
@@ -200,4 +204,211 @@ fn an_edit_below_the_view_reshapes_nothing_shown() {
         layout.frame(&scene_rows(&shared.now(), 400, 0, 10));
     });
     assert_eq!(edited, count(0, 0, 10));
+}
+
+/// The twenty rows as a text, and where row `row` of it starts.
+fn twenty() -> (TextRef, impl Fn(usize) -> usize) {
+    let text = TextRef::fixed(TextKey(1), Text::from(twenty_words().as_str()).snapshot());
+    let snapshot = text.snapshot.clone();
+    (text, move |row| snapshot.row_range(row).unwrap().start)
+}
+
+/// The scene of the twenty rows `text`, 400 pixels wide, with a cursor at
+/// 0, the bytes `decorated` in the face `name`, and the faces `faces`.
+fn styled(
+    text: &TextRef,
+    decorated: std::ops::Range<usize>,
+    name: &str,
+    faces: &[(&str, Face)],
+) -> Scene {
+    let mut scene = scene(text, 400, 0);
+    scene.views[0].decorations = vec![Decoration {
+        start: decorated.start,
+        stop: decorated.end,
+        face: name.to_owned(),
+    }];
+    scene.faces = Some(
+        faces
+            .iter()
+            .map(|(name, face)| FaceDef {
+                name: (*name).to_owned(),
+                face: face.clone(),
+            })
+            .collect(),
+    );
+    scene
+}
+
+/// A face that sets a foreground alone.
+fn coloured(red: u8) -> Face {
+    Face {
+        foreground: Some(Color::rgb(red, 0, 0)),
+        ..Face::default()
+    }
+}
+
+#[test]
+fn a_paint_only_change_of_a_face_neither_shapes_nor_breaks() {
+    let (text, _) = twenty();
+    let all = 0..text.snapshot.len();
+    let mut layout = Layout::new(CellShaper::new(10.0, 16.0));
+    layout.frame(&styled(
+        &text,
+        all.clone(),
+        "body",
+        &[("body", coloured(1))],
+    ));
+    let paints = [
+        coloured(2),
+        Face {
+            background: Some(Color::rgb(0, 0, 9)),
+            ..Face::default()
+        },
+        Face {
+            underline: Some(Underline {
+                style: UnderlineStyle::Curly,
+                color: None,
+            }),
+            ..Face::default()
+        },
+        Face {
+            strike_through: Some(true),
+            ..Face::default()
+        },
+    ];
+    for paint in paints {
+        let repainted = counted(&mut layout, |layout| {
+            layout.frame(&styled(
+                &text,
+                all.clone(),
+                "body",
+                &[("body", paint.clone())],
+            ));
+        });
+        assert_eq!(repainted, count(0, 0, 20), "{paint:?}");
+    }
+    // The default face's paint likewise.
+    let repainted = counted(&mut layout, |layout| {
+        layout.frame(&styled(&text, all, "body", &[("default", coloured(3))]));
+    });
+    assert_eq!(repainted, count(0, 0, 20));
+}
+
+#[test]
+fn a_size_change_of_a_face_shapes_only_the_rows_drawn_in_it() {
+    let (text, start) = twenty();
+    // Rows 3 and 4 are in the face `big`.
+    let two = start(3)..start(5) - 1;
+    let mut layout = Layout::new(CellShaper::new(10.0, 16.0));
+    layout.frame(&styled(&text, two.clone(), "big", &[("big", coloured(1))]));
+    let big = Face {
+        size: Some(Length::pixels(32)),
+        ..Face::default()
+    };
+    let resized = counted(&mut layout, |layout| {
+        layout.frame(&styled(&text, two.clone(), "big", &[("big", big.clone())]));
+    });
+    assert_eq!(resized, count(2, 2, 18));
+    // The same faces again shape nothing, and a scene that carries no
+    // faces keeps them.
+    let mut kept = styled(&text, two.clone(), "big", &[]);
+    kept.faces = None;
+    for scene in [styled(&text, two, "big", &[("big", big)]), kept] {
+        let again = counted(&mut layout, |layout| {
+            layout.frame(&scene);
+        });
+        assert_eq!(again, count(0, 0, 20));
+    }
+}
+
+#[test]
+fn a_change_of_the_default_faces_font_shapes_every_row_again() {
+    let (text, _) = twenty();
+    let mut layout = Layout::new(CellShaper::new(10.0, 16.0));
+    layout.frame(&styled(&text, 0..0, "none", &[]));
+    let fonts = [
+        Face {
+            family: Some("serif".to_owned()),
+            ..Face::default()
+        },
+        Face {
+            size: Some(Length::pixels(20)),
+            ..Face::default()
+        },
+        Face {
+            weight: Some(Weight::BOLD),
+            ..Face::default()
+        },
+        Face {
+            slant: Some(Slant::Italic),
+            ..Face::default()
+        },
+        Face {
+            line_height: Some(LineHeight::Multiple(96)),
+            ..Face::default()
+        },
+    ];
+    for font in fonts {
+        let scene = styled(&text, 0..0, "none", &[("default", font.clone())]);
+        let reshaped = counted(&mut layout, |layout| {
+            layout.frame(&scene);
+        });
+        assert_eq!(reshaped, count(20, 20, 0), "{font:?}");
+        let again = counted(&mut layout, |layout| {
+            layout.frame(&scene);
+        });
+        assert_eq!(again, count(0, 0, 20), "{font:?}");
+    }
+}
+
+/// The scene of the twenty rows `text` with the faces `faces` and one
+/// selection from `anchor` to `head`.
+fn selected(text: &TextRef, anchor: usize, head: usize, faces: &[(&str, Face)]) -> Scene {
+    let mut scene = styled(text, 0..0, "none", faces);
+    scene.views[0].selections =
+        vec![Selection::new(vec![SelectionRange::new(anchor, head)], 0).unwrap()];
+    scene
+}
+
+#[test]
+fn a_selection_in_a_face_that_sets_no_font_attribute_neither_shapes_nor_breaks() {
+    let (text, start) = twenty();
+    let faces = [(
+        "selection",
+        Face {
+            background: Some(Color::rgb(0, 0, 9)),
+            ..Face::default()
+        },
+    )];
+    let mut layout = Layout::new(CellShaper::new(10.0, 16.0));
+    layout.frame(&selected(&text, 0, 0, &faces));
+    // From inside row 2 to inside row 4.
+    let made = counted(&mut layout, |layout| {
+        layout.frame(&selected(&text, start(2) + 1, start(4) + 2, &faces));
+    });
+    assert_eq!(made, count(0, 0, 20));
+}
+
+#[test]
+fn a_selection_in_a_face_that_sets_a_weight_shapes_the_rows_it_covers() {
+    let (text, start) = twenty();
+    let faces = [(
+        "selection",
+        Face {
+            weight: Some(Weight::BOLD),
+            ..Face::default()
+        },
+    )];
+    let mut layout = Layout::new(CellShaper::new(10.0, 16.0));
+    layout.frame(&selected(&text, 0, 0, &faces));
+    // From inside row 2 to inside row 4: three rows.
+    let made = counted(&mut layout, |layout| {
+        layout.frame(&selected(&text, start(2) + 1, start(4) + 2, &faces));
+    });
+    assert_eq!(made, count(3, 3, 17));
+    // Taken away, the same three are shaped again in the default font.
+    let unmade = counted(&mut layout, |layout| {
+        layout.frame(&selected(&text, 0, 0, &faces));
+    });
+    assert_eq!(unmade, count(3, 3, 17));
 }

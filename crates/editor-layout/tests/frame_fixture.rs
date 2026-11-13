@@ -109,6 +109,7 @@ fn scene() -> Scene {
         echo: "fixture".to_owned(),
         pending: String::new(),
         preedit: None,
+        faces: None,
     }
 }
 

@@ -8,25 +8,29 @@
 //! scene ([`FaceSpanSource`]). Tree-sitter highlights become a third
 //! source (syntax-tree-sitter), with no change here.
 //!
-//! A span names its face by a [`FaceId`] that a [`FaceTable`] interns from
-//! the face's name. What a face holds and how faces that overlap are
-//! merged into attributes are the display pipeline's phase 2; here
-//! merging only says which faces cover which bytes ([`merge`]): each
-//! styled run carries the faces over it, in the order of their sources
-//! and then of their spans, and no precedence is decided.
+//! A span names its face by a [`FaceId`] interned from the face's name
+//! ([`Styles::intern`]). Merging says which faces cover which bytes
+//! ([`merge`]): each styled run carries the faces over it in the order
+//! their spans were given, which is the order of their sources and then
+//! of each source's spans. Whoever collects the spans gives the sources
+//! lowest layer first, so a run's faces are a stack, lowest first, and
+//! what the stack comes to is [`face`](crate::face)'s rule
+//! ([`Styles::style`]).
 //!
-//! A face changes shaping only through the font it resolves to
-//! ([`FaceTable::font`]). In phase 1 every face is in the default font
-//! unless a test sets another, so decorations and selections are
-//! paint-only: they shape and break nothing again.
+//! A face changes shaping only through the font its stack resolves to. A
+//! face that sets no attribute of the font is paint only: it shapes and
+//! breaks nothing again. Where no face but the default one sets an
+//! attribute of the font, every run is in the base font and no source is
+//! asked for a segment's fonts ([`fonts_of`]).
 
+use std::cell::RefCell;
 use std::collections::HashMap;
 use std::ops::Range;
 
 use editor_text::{Selection, Shape, Snapshot};
 
-use crate::face::FaceId;
-use crate::shaper::FontId;
+use crate::face::{FaceDef, FaceId, Faces, Paint};
+use crate::shaper::{FontId, Shaper};
 
 /// A span of a snapshot drawn in a face.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -44,56 +48,64 @@ pub trait DecorationSource {
     fn spans(&self, snapshot: &Snapshot, bytes: Range<usize>, out: &mut Vec<Span>);
 }
 
-/// The faces by name, and the font each resolves to.
-#[derive(Debug, Clone, Default)]
-pub struct FaceTable {
-    /// The id of each name interned.
-    ids: HashMap<String, FaceId>,
-    /// The name of each id, by id.
-    names: Vec<String>,
-    /// The font of each face that is not in the default font.
-    fonts: HashMap<FaceId, FontId>,
+/// What a stack of faces comes to for a shaper: the id of the font its
+/// runs are shaped in, and what they are painted with.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct Style {
+    /// The font.
+    pub font: FontId,
+    /// The paint.
+    pub paint: Paint,
 }
 
-impl FaceTable {
-    /// The id of the face `name`, given it the first time it is asked.
+/// The faces a layout holds, and what each stack of them asked for so far
+/// comes to, kept until the definitions change. A font's id is its
+/// shaper's for the shaper's life, so what is kept stays true of the
+/// shaper it was asked with.
+#[derive(Debug, Default)]
+pub struct Styles {
+    /// The faces.
+    faces: Faces,
+    /// The style of each stack asked for since the definitions were given.
+    kept: RefCell<HashMap<Vec<FaceId>, Style>>,
+}
+
+impl Styles {
+    /// The id of the face `name` ([`Faces::intern`]).
     pub fn intern(&mut self, name: &str) -> FaceId {
-        if let Some(&id) = self.ids.get(name) {
-            return id;
+        self.faces.intern(name)
+    }
+
+    /// Takes `definitions` in place of the definitions held, and says
+    /// whether they differ ([`Faces::define`]).
+    pub fn define(&mut self, definitions: &[FaceDef]) -> bool {
+        let changed = self.faces.define(definitions);
+        if changed {
+            self.kept.get_mut().clear();
         }
-        let id = FaceId(u32::try_from(self.names.len()).unwrap_or(u32::MAX));
-        self.names.push(name.to_owned());
-        self.ids.insert(name.to_owned(), id);
-        id
+        changed
     }
 
-    /// The name of the face `id`.
-    pub fn name(&self, id: FaceId) -> Option<&str> {
-        self.names
-            .get(usize::try_from(id.0).ok()?)
-            .map(String::as_str)
+    /// Whether a face other than the default face sets an attribute of
+    /// the font ([`Faces::any_sets_font`]).
+    pub fn any_sets_font(&self) -> bool {
+        self.faces.any_sets_font()
     }
 
-    /// Resolves the face `name` to `font` from now on. Faces resolve to
-    /// fonts in phase 2; this is for tests until then.
-    pub fn set_font(&mut self, name: &str, font: FontId) {
-        let id = self.intern(name);
-        self.fonts.insert(id, font);
-    }
-
-    /// Whether any face resolves to a font other than the default.
-    pub fn has_fonts(&self) -> bool {
-        !self.fonts.is_empty()
-    }
-
-    /// The font a run covered by `faces` is shaped in: that of the first
-    /// face that names one, the default font when none does. Phase 2's
-    /// merge of faces replaces this rule.
-    pub fn font(&self, faces: &[FaceId]) -> FontId {
-        faces
-            .iter()
-            .find_map(|face| self.fonts.get(face).copied())
-            .unwrap_or_default()
+    /// What the faces `stack`, given lowest first, come to over the
+    /// default face ([`Faces::resolve`]), with the font as `shaper`'s id
+    /// for it.
+    pub fn style<S: Shaper>(&self, shaper: &S, stack: &[FaceId]) -> Style {
+        if let Some(style) = self.kept.borrow().get(stack) {
+            return *style;
+        }
+        let resolved = self.faces.resolve(stack);
+        let style = Style {
+            font: shaper.font(&resolved.font),
+            paint: resolved.paint,
+        };
+        self.kept.borrow_mut().insert(stack.to_vec(), style);
+        style
     }
 }
 
@@ -207,14 +219,15 @@ impl DecorationSource for FaceSpanSource {
 pub struct StyledRun {
     /// Its bytes.
     pub bytes: Range<usize>,
-    /// The faces over it, in the order of their spans.
+    /// The faces over it, in the order of their spans: a stack, lowest
+    /// first, when the spans were given lowest layer first.
     pub faces: Vec<FaceId>,
 }
 
-/// The styled runs of `bytes` under `spans`, given in source order and
-/// then span order: they cover `bytes` from start to end, a run with no
-/// face where no span is, and neighbours with the same faces are one run.
-/// An empty range has no run.
+/// The styled runs of `bytes` under `spans`, given lowest layer first:
+/// they cover `bytes` from start to end, a run with no face where no span
+/// is, and neighbours with the same faces are one run. An empty range has
+/// no run.
 pub fn merge(bytes: Range<usize>, spans: &[Span]) -> Vec<StyledRun> {
     let mut cuts: Vec<usize> = spans
         .iter()
@@ -243,50 +256,58 @@ pub fn merge(bytes: Range<usize>, spans: &[Span]) -> Vec<StyledRun> {
     runs
 }
 
-/// The spans of `bytes` of `snapshot` in a font other than the default:
-/// every source's spans merged, each run in the font `faces` resolves it
-/// to. No source is asked when no face names a font.
-pub fn fonts_of(
+/// The spans of `bytes` of `snapshot` in a font other than `base`, the
+/// default face's: the spans of `sources`, given lowest layer first,
+/// merged, each run in the font its faces come to by `styles`. No source
+/// is asked when no face but the default one sets an attribute of the
+/// font.
+pub fn fonts_of<S: Shaper>(
     sources: &[&dyn DecorationSource],
     snapshot: &Snapshot,
     bytes: Range<usize>,
-    faces: &FaceTable,
+    styles: &Styles,
+    shaper: &S,
+    base: FontId,
 ) -> Vec<(Range<usize>, FontId)> {
-    if !faces.has_fonts() {
+    if !styles.any_sets_font() {
         return Vec::new();
     }
     let mut spans = Vec::new();
     for source in sources {
         source.spans(snapshot, bytes.clone(), &mut spans);
     }
-    font_spans(&merge(bytes, &spans), faces)
+    font_spans(&merge(bytes, &spans), styles, shaper, base)
 }
 
-/// The spans of `runs` in a font other than the default, by `faces`.
-pub fn font_spans(runs: &[StyledRun], faces: &FaceTable) -> Vec<(Range<usize>, FontId)> {
-    if faces.fonts.is_empty() {
-        return Vec::new();
-    }
+/// The spans of `runs` in a font other than `base`, by `styles`.
+pub fn font_spans<S: Shaper>(
+    runs: &[StyledRun],
+    styles: &Styles,
+    shaper: &S,
+    base: FontId,
+) -> Vec<(Range<usize>, FontId)> {
     runs.iter()
         .filter_map(|run| {
-            let font = faces.font(&run.faces);
-            (font != FontId::default()).then(|| (run.bytes.clone(), font))
+            let font = styles.style(shaper, &run.faces).font;
+            (font != base).then(|| (run.bytes.clone(), font))
         })
         .collect()
 }
 
 #[cfg(test)]
 mod tests {
+    use std::cell::Cell;
     use std::ops::Range;
 
-    use editor_text::{Selection, SelectionRange, Shape, Text};
+    use editor_text::{Selection, SelectionRange, Shape, Snapshot, Text};
 
     use super::{
-        DecorationSource, FaceSpanSource, FaceTable, SelectionSource, Span, StyledRun, font_spans,
-        merge,
+        DecorationSource, FaceSpanSource, SelectionSource, Span, Style, StyledRun, Styles,
+        font_spans, fonts_of, merge,
     };
-    use crate::face::FaceId;
-    use crate::shaper::FontId;
+    use crate::face::{Color, Face, FaceDef, FaceId, Paint};
+    use crate::shaper::fake::CellShaper;
+    use crate::shaper::{FontId, FontSpec, Shaper, Weight};
 
     /// The spans `source` gives for `bytes` of `text`.
     fn asked(source: &dyn DecorationSource, text: &str, bytes: Range<usize>) -> Vec<Span> {
@@ -303,13 +324,70 @@ mod tests {
         }
     }
 
+    /// The definition of `name` as `face`.
+    fn def(name: &str, face: Face) -> FaceDef {
+        FaceDef {
+            name: name.to_owned(),
+            face,
+        }
+    }
+
+    /// A face of the weight `weight` and nothing else.
+    fn weighing(weight: u16) -> Face {
+        Face {
+            weight: Some(Weight(weight)),
+            ..Face::default()
+        }
+    }
+
+    /// The default font at the weight `weight`.
+    fn weight(weight: u16) -> FontSpec {
+        FontSpec {
+            weight: Weight(weight),
+            ..FontSpec::default()
+        }
+    }
+
     #[test]
-    fn a_face_name_is_interned_once() {
-        let mut faces = FaceTable::default();
-        let keyword = faces.intern("keyword");
-        assert_eq!(faces.intern("keyword"), keyword);
-        assert_ne!(faces.intern("string"), keyword);
-        assert_eq!(faces.name(keyword), Some("keyword"));
+    fn a_stack_of_faces_comes_to_the_shapers_font_for_what_it_resolves_to_and_its_paint() {
+        let shaper = CellShaper::new(10.0, 16.0);
+        let mut styles = Styles::default();
+        let red = Color::rgb(9, 0, 0);
+        styles.define(&[
+            def("heavy", weighing(900)),
+            def(
+                "red",
+                Face {
+                    foreground: Some(red),
+                    ..Face::default()
+                },
+            ),
+        ]);
+        let (heavy, red_face) = (styles.intern("heavy"), styles.intern("red"));
+        // No face: the default font, font 0 while no default face is
+        // defined, and the base paint.
+        let plain = styles.style(&shaper, &[]);
+        assert_eq!(
+            plain,
+            Style {
+                font: FontId(0),
+                paint: Paint::default()
+            }
+        );
+        let both = styles.style(&shaper, &[heavy, red_face]);
+        assert_eq!(both.font, shaper.font(&weight(900)));
+        assert_eq!(both.paint.foreground, red);
+        // A face that sets only paint is in the font of the stack under it.
+        assert_eq!(styles.style(&shaper, &[red_face]).font, FontId(0));
+        // The same stack again is the same style, and a change of the
+        // definitions is seen by a stack already asked for.
+        assert_eq!(styles.style(&shaper, &[heavy, red_face]), both);
+        assert!(styles.define(&[def("heavy", weighing(100))]));
+        let lighter = styles.style(&shaper, &[heavy, red_face]);
+        assert_eq!(lighter.font, shaper.font(&weight(100)));
+        assert_eq!(lighter.paint, Paint::default());
+        // The same definitions again are no change.
+        assert!(!styles.define(&[def("heavy", weighing(100))]));
     }
 
     #[test]
@@ -401,26 +479,80 @@ mod tests {
     }
 
     #[test]
-    fn a_run_is_in_the_font_of_the_first_of_its_faces_that_names_one() {
-        let mut faces = FaceTable::default();
-        let plain = faces.intern("plain");
-        let tall = faces.intern("tall");
-        faces.set_font("tall", FontId(1));
-        assert_eq!(faces.font(&[plain]), FontId(0));
-        assert_eq!(faces.font(&[plain, tall]), FontId(1));
-        let runs = merge(
-            0..6,
-            &[
-                Span {
-                    bytes: 2..4,
-                    face: tall,
-                },
-                Span {
-                    bytes: 0..6,
-                    face: plain,
-                },
-            ],
+    fn a_run_is_in_the_font_of_the_highest_of_its_faces_that_sets_one() {
+        let shaper = CellShaper::new(10.0, 16.0);
+        let mut styles = Styles::default();
+        styles.define(&[
+            def("light", weighing(100)),
+            def("heavy", weighing(900)),
+            def("plain", Face::default()),
+        ]);
+        let face = |styles: &mut Styles, bytes: Range<usize>, name: &str| Span {
+            bytes,
+            face: styles.intern(name),
+        };
+        // Lowest first: light over 0..6, heavy over 2..4, plain over 3..8.
+        let spans = [
+            face(&mut styles, 0..6, "light"),
+            face(&mut styles, 2..4, "heavy"),
+            face(&mut styles, 3..8, "plain"),
+        ];
+        let (light, heavy) = (shaper.font(&weight(100)), shaper.font(&weight(900)));
+        let base = FontId(0);
+        // Where both are, the later one's; a face that sets no font
+        // leaves the font of the faces under it; and a run in the base
+        // font is not given.
+        assert_eq!(
+            font_spans(&merge(0..10, &spans), &styles, &shaper, base),
+            vec![(0..2, light), (2..3, heavy), (3..4, heavy), (4..6, light)]
         );
-        assert_eq!(font_spans(&runs, &faces), vec![(2..4, FontId(1))]);
+        // Given the other way up, the light face is over the heavy one.
+        let reversed: Vec<Span> = spans.iter().rev().cloned().collect();
+        assert_eq!(
+            font_spans(&merge(0..10, &reversed), &styles, &shaper, base),
+            vec![(0..2, light), (2..3, light), (3..4, light), (4..6, light)]
+        );
+        // Under another base, the runs in it are the ones left out.
+        assert_eq!(
+            font_spans(&merge(0..10, &spans), &styles, &shaper, light),
+            vec![(2..3, heavy), (3..4, heavy), (6..8, base), (8..10, base)]
+        );
+    }
+
+    /// A source that counts how often it is asked.
+    struct Asked(Cell<usize>);
+
+    impl DecorationSource for Asked {
+        fn spans(&self, _snapshot: &Snapshot, _bytes: Range<usize>, _out: &mut Vec<Span>) {
+            self.0.set(self.0.get() + 1);
+        }
+    }
+
+    #[test]
+    fn no_source_is_asked_for_fonts_while_no_face_but_the_default_sets_one() {
+        let shaper = CellShaper::new(10.0, 16.0);
+        let snapshot = Text::from("abcdef").snapshot();
+        let asked = Asked(Cell::new(0));
+        let fonts = |styles: &Styles| {
+            let base = styles.style(&shaper, &[]).font;
+            fonts_of(&[&asked], &snapshot, 0..6, styles, &shaper, base)
+        };
+        let mut styles = Styles::default();
+        fonts(&styles);
+        styles.define(&[
+            def("default", weighing(900)),
+            def(
+                "red",
+                Face {
+                    foreground: Some(Color::rgb(9, 0, 0)),
+                    ..Face::default()
+                },
+            ),
+        ]);
+        fonts(&styles);
+        assert_eq!(asked.0.get(), 0);
+        styles.define(&[def("heavy", weighing(900))]);
+        fonts(&styles);
+        assert_eq!(asked.0.get(), 1);
     }
 }

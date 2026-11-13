@@ -43,7 +43,7 @@ use crate::decoration::{DecorationSource, FaceSpanSource, SelectionSource, Span,
 use crate::face::{FaceId, SELECTION_FACE};
 use crate::query::{Visual, Walker};
 use crate::scene::{CursorShape, Rect, Scene, TextKey, View, ViewId};
-use crate::shaper::{FontId, Shaper, VisualLine};
+use crate::shaper::{Shaper, VisualLine};
 use crate::tabs::boundary_at_or_before;
 use crate::wrap::Outcome;
 
@@ -181,11 +181,15 @@ impl Frame {
 pub const KEPT_VIEW_HEIGHTS: usize = 4;
 
 impl<S: Shaper> Layout<S> {
-    /// Lays `scene` out into a frame. What is kept of every text it does
-    /// not name is dropped, and of each text it names, every row farther
-    /// than [`KEPT_VIEW_HEIGHTS`] view heights from the rows every view of
-    /// it shows.
+    /// Lays `scene` out into a frame, in the faces it carries, or in those
+    /// of the last scene that carried any. What is kept of every text it
+    /// does not name is dropped, and of each text it names, every row
+    /// farther than [`KEPT_VIEW_HEIGHTS`] view heights from the rows every
+    /// view of it shows.
     pub fn frame(&mut self, scene: &Scene) -> Frame {
+        if let Some(definitions) = &scene.faces {
+            self.define(definitions);
+        }
         let frame = Frame {
             views: scene
                 .views
@@ -219,8 +223,10 @@ impl<S: Shaper> Layout<S> {
         frame
     }
 
-    /// The frame of `view`, with `extra` sources of spans after its
-    /// selections and its decorations.
+    /// The frame of `view`, with `extra` sources of spans under its
+    /// decorations: the layers over a run are, lowest first, `extra` in
+    /// order, the view's decorations in the order the scene lists them, and
+    /// the selections ([`face`](crate::face), "The precedence").
     pub(crate) fn view_frame(&mut self, view: &View, extra: &[&dyn DecorationSource]) -> ViewFrame {
         let mut frame = ViewFrame {
             id: view.id,
@@ -233,8 +239,8 @@ impl<S: Shaper> Layout<S> {
             return frame;
         };
         let snapshot = &text.snapshot;
-        let cursor_face = self.faces.intern(&view.cursor.face);
-        let selection_face = self.faces.intern(SELECTION_FACE);
+        let cursor_face = self.styles.intern(&view.cursor.face);
+        let selection_face = self.styles.intern(SELECTION_FACE);
         let decorations: Vec<Span> = view
             .decorations
             .iter()
@@ -242,7 +248,7 @@ impl<S: Shaper> Layout<S> {
                 let start = boundary_at_or_before(snapshot, decoration.start);
                 Span {
                     bytes: start..boundary_at_or_before(snapshot, decoration.stop).max(start),
-                    face: self.faces.intern(&decoration.face),
+                    face: self.styles.intern(&decoration.face),
                 }
             })
             .collect();
@@ -253,24 +259,23 @@ impl<S: Shaper> Layout<S> {
             .collect();
         let selection_source = SelectionSource::new(snapshot, &selections, selection_face);
         let face_source = FaceSpanSource::new(decorations);
-        let mut sources: Vec<&dyn DecorationSource> = vec![&face_source];
-        sources.extend_from_slice(extra);
-        // Every source's spans of `bytes`, the selections' first.
+        // Every source, lowest layer first.
+        let mut sources: Vec<&dyn DecorationSource> = extra.to_vec();
+        sources.push(&face_source);
+        sources.push(&selection_source);
+        // Every source's spans of `bytes`, lowest layer first, and how
+        // many of them are below the selections', which are last.
         let spans_of = |bytes: Range<usize>| {
             let mut spans = Vec::new();
-            selection_source.spans(snapshot, bytes.clone(), &mut spans);
-            let selected = spans.len();
+            let mut below = 0;
             for source in &sources {
+                below = spans.len();
                 source.spans(snapshot, bytes.clone(), &mut spans);
             }
-            (spans, selected)
+            (spans, below)
         };
-        let faces = &self.faces;
-        let fonts = |bytes: Range<usize>| {
-            let mut all: Vec<&dyn DecorationSource> = vec![&selection_source];
-            all.extend_from_slice(&sources);
-            fonts_of(&all, snapshot, bytes, faces)
-        };
+        let (styles, shaper, base) = (&self.styles, &self.shaper, self.base);
+        let fonts = |bytes: Range<usize>| fonts_of(&sources, snapshot, bytes, styles, shaper, base);
         let mut held = state(
             &mut self.texts,
             text,
@@ -282,7 +287,7 @@ impl<S: Shaper> Layout<S> {
         let mut walker = Walker {
             shaper: &self.shaper,
             wrap: &mut state.wrap,
-            base: FontId::default(),
+            base,
             fonts: &fonts,
             outcome: &mut |row, segment, outcome| {
                 seen.entry((row, segment)).or_insert(outcome);
@@ -306,7 +311,7 @@ impl<S: Shaper> Layout<S> {
             // The spans of the characters the row draws any of, which is
             // more than its bytes when it starts inside a tab's spaces.
             let drawn = entry.drawn_bytes(visual.line).unwrap_or(0..0);
-            let (spans, selected) = spans_of(row_start + drawn.start..row_start + drawn.end);
+            let (spans, below) = spans_of(row_start + drawn.start..row_start + drawn.end);
             // Each span as the columns of the row it covers, from the row's
             // start: a tab's span is cut to the spaces of it the row holds.
             let columns = line.bytes.clone();
@@ -323,7 +328,7 @@ impl<S: Shaper> Layout<S> {
                     face: span.face,
                 })
             };
-            for span in spans[..selected].iter().filter_map(on_row) {
+            for span in spans[below..].iter().filter_map(on_row) {
                 let left = entry.x_of_column(visual.line, columns.start + span.bytes.start);
                 let right = entry.x_of_column(visual.line, columns.start + span.bytes.end);
                 frame.selections.push(Area {
@@ -359,7 +364,7 @@ impl<S: Shaper> Layout<S> {
         let to = snapshot
             .row_range(last.row)
             .map_or(snapshot.len(), |row| row.end);
-        let advance = self.shaper.metrics(FontId::default()).advance;
+        let advance = self.shaper.metrics(base).advance;
         for range in selections.iter().flat_map(|selection| selection.ranges()) {
             let head = range.head;
             if shown.is_empty() || head < from || head > to {
@@ -441,18 +446,26 @@ mod tests {
     use super::{Area, Frame, FrameRow, ViewFrame};
     use crate::Layout;
     use crate::decoration::{DecorationSource, Span};
-    use crate::face::SELECTION_FACE;
+    use crate::face::{Face, FaceDef, SELECTION_FACE};
     use crate::scene::{
         Cursor, CursorShape, Decoration, Rect, Scene, TextKey, TextRef, View, ViewId,
     };
     use crate::shaper::fake::CellShaper;
-    use crate::shaper::{FontSpec, Shaper, VisualLine};
+    use crate::shaper::{FontId, FontSpec, Length, Shaper, VisualLine};
 
-    /// The default font in the family `name`.
-    fn family(name: &str) -> FontSpec {
-        FontSpec {
+    /// The definition of `name` as `face`.
+    fn def(name: &str, face: Face) -> FaceDef {
+        FaceDef {
+            name: name.to_owned(),
+            face,
+        }
+    }
+
+    /// A face in the family `name` and nothing else.
+    fn family(name: &str) -> Face {
+        Face {
             family: Some(name.to_owned()),
-            ..FontSpec::default()
+            ..Face::default()
         }
     }
 
@@ -460,8 +473,7 @@ mod tests {
     /// face `tall` is in.
     fn layout() -> Layout<CellShaper> {
         let mut layout = Layout::new(CellShaper::new(10.0, 16.0).with_family("tall", 10.0, 32.0));
-        let tall = layout.shaper().font(&family("tall"));
-        layout.faces_mut().set_font("tall", tall);
+        layout.define(&[def("tall", family("tall"))]);
         layout
     }
 
@@ -791,7 +803,7 @@ mod tests {
                 area(0.0, 64.0, 10.0, 16.0),
             ]
         );
-        let selection = layout.faces_mut().intern(SELECTION_FACE);
+        let selection = layout.styles.intern(SELECTION_FACE);
         assert_eq!(wrapped.rows[2].runs, vec![(0..4, vec![selection])]);
         assert_eq!(wrapped.rows[3].runs, vec![(0..2, vec![selection])]);
     }
@@ -860,23 +872,24 @@ mod tests {
             face: "tab".to_owned(),
         }];
         let frame = frame(&mut layout, crossing);
-        let selection = layout.faces_mut().intern(SELECTION_FACE);
-        let tab = layout.faces_mut().intern("tab");
+        let selection = layout.styles.intern(SELECTION_FACE);
+        let tab = layout.styles.intern("tab");
         let glyphs: Vec<usize> = frame.rows.iter().map(|row| row.line.glyphs.len()).collect();
         assert_eq!(glyphs, vec![10, 7]);
         // Each row's runs cover its glyphs and no more, and the tab's
-        // spaces take the tab's faces on both rows.
+        // spaces take the tab's faces on both rows: its decoration's, and
+        // over it the selection's.
         assert_eq!(
             frame.rows[0].runs,
             vec![
                 (0..8, vec![]),
                 (8..9, vec![selection]),
-                (9..10, vec![selection, tab])
+                (9..10, vec![tab, selection])
             ]
         );
         assert_eq!(
             frame.rows[1].runs,
-            vec![(0..6, vec![selection, tab]), (6..7, vec![selection])]
+            vec![(0..6, vec![tab, selection]), (6..7, vec![selection])]
         );
         assert_eq!(
             frame.selections,
@@ -1031,7 +1044,7 @@ mod tests {
                 face: "face".to_owned(),
             }];
             let row = frame(&mut layout, view).rows.remove(0);
-            let face = layout.faces_mut().intern("face");
+            let face = layout.styles.intern("face");
             (row.runs, face)
         };
         let (runs, face) = decorated(2, 4);
@@ -1057,22 +1070,114 @@ mod tests {
     fn a_cursor_is_as_wide_as_the_glyph_it_is_on() {
         // The face `wide` is in a font whose glyphs are 20 across.
         let mut layout = Layout::new(CellShaper::new(10.0, 16.0).with_family("wide", 20.0, 16.0));
-        let wide = layout.shaper().font(&family("wide"));
-        layout.faces_mut().set_font("wide", wide);
-        let mut area = |head: usize| {
+        layout.define(&[def("wide", family("wide"))]);
+        let cursor = |layout: &mut Layout<CellShaper>, head: usize| {
             let mut view = view("abc", 10, 16, 0, &[(head, head)]);
             view.decorations = vec![Decoration {
                 start: 1,
                 stop: 2,
                 face: "wide".to_owned(),
             }];
-            frame(&mut layout, view).cursors[0].area
+            frame(layout, view).cursors[0].area
         };
-        assert_eq!(area(0), self::area(0.0, 0.0, 10.0, 16.0));
-        assert_eq!(area(1), self::area(10.0, 0.0, 20.0, 16.0));
-        assert_eq!(area(2), self::area(30.0, 0.0, 10.0, 16.0));
+        assert_eq!(cursor(&mut layout, 0), area(0.0, 0.0, 10.0, 16.0));
+        assert_eq!(cursor(&mut layout, 1), area(10.0, 0.0, 20.0, 16.0));
+        assert_eq!(cursor(&mut layout, 2), area(30.0, 0.0, 10.0, 16.0));
         // Past the last glyph, the default advance.
-        assert_eq!(area(3), self::area(40.0, 0.0, 10.0, 16.0));
+        assert_eq!(cursor(&mut layout, 3), area(40.0, 0.0, 10.0, 16.0));
+        // Which is the default face's font's: with the default face in the
+        // wide family, every glyph and the cell past the last are 20.
+        layout.define(&[def("default", family("wide"))]);
+        assert_eq!(cursor(&mut layout, 3), area(60.0, 0.0, 20.0, 16.0));
+    }
+
+    /// A face of the size `pixels` and nothing else.
+    fn sized(pixels: u32) -> Face {
+        Face {
+            size: Some(Length::pixels(pixels)),
+            ..Face::default()
+        }
+    }
+
+    #[test]
+    fn overlapping_sizes_shape_the_run_in_the_later_ones() {
+        // `small` over 2..6 and `big` over 4..8, on cells 10 by 16 at the
+        // base size: glyphs 5 across at 8 pixels and 20 across at 32.
+        let frame_of = |first: &str, second: &str| {
+            let mut layout = Layout::new(CellShaper::new(10.0, 16.0));
+            layout.define(&[def("small", sized(8)), def("big", sized(32))]);
+            let mut view = view("abcdefghij", 40, 64, 0, &[]);
+            view.decorations = vec![
+                Decoration {
+                    start: 2,
+                    stop: 6,
+                    face: first.to_owned(),
+                },
+                Decoration {
+                    start: 4,
+                    stop: 8,
+                    face: second.to_owned(),
+                },
+            ];
+            let small = layout.shaper().font(&FontSpec {
+                size: Length::pixels(8),
+                ..FontSpec::default()
+            });
+            let big = layout.shaper().font(&FontSpec {
+                size: Length::pixels(32),
+                ..FontSpec::default()
+            });
+            let row = frame(&mut layout, view).rows.remove(0);
+            let glyphs: Vec<(FontId, f32)> = row
+                .line
+                .glyphs
+                .iter()
+                .map(|glyph| (glyph.font, glyph.advance))
+                .collect();
+            (glyphs, small, big, row.height)
+        };
+        // The later decoration of the list is over the earlier one: the
+        // overlap, 4..6, is in the later one's font.
+        let (glyphs, small, big, height) = frame_of("small", "big");
+        let base = (FontId(0), 10.0);
+        let expected: Vec<(FontId, f32)> = [
+            [base; 2],
+            [(small, 5.0); 2],
+            [(big, 20.0); 2],
+            [(big, 20.0); 2],
+            [base; 2],
+        ]
+        .concat();
+        assert_eq!(glyphs, expected);
+        assert_eq!(height, 32.0);
+        // Listed the other way round, the overlap is in the small one,
+        // which is now the later.
+        let (glyphs, small, big, _) = frame_of("big", "small");
+        let expected: Vec<(FontId, f32)> = [
+            [base; 2],
+            [(big, 20.0); 2],
+            [(small, 5.0); 2],
+            [(small, 5.0); 2],
+            [base; 2],
+        ]
+        .concat();
+        assert_eq!(glyphs, expected);
+    }
+
+    #[test]
+    fn a_selection_whose_face_sets_a_font_is_over_a_decoration_that_sets_one() {
+        let mut layout = Layout::new(CellShaper::new(10.0, 16.0));
+        layout.define(&[def("big", sized(32)), def("selection", sized(8))]);
+        // `big` over 0..4, and 2..6 selected.
+        let mut view = view("abcdef", 40, 64, 0, &[(2, 6)]);
+        view.decorations = vec![Decoration {
+            start: 0,
+            stop: 4,
+            face: "big".to_owned(),
+        }];
+        let row = frame(&mut layout, view).rows.remove(0);
+        let advances: Vec<f32> = row.line.glyphs.iter().map(|glyph| glyph.advance).collect();
+        assert_eq!(advances, vec![20.0, 20.0, 5.0, 5.0, 5.0, 5.0]);
     }
 
     /// A source that records the ranges it is asked for.
