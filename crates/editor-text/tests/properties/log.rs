@@ -4,11 +4,14 @@
 
 use std::ops::Range;
 
-use editor_text::{Change, ChangeSet, Edit, Origin, Point, Span, Text, Transaction};
+use editor_text::{
+    Attribution, Change, ChangeSet, Edit, LogError, Origin, Point, Revision, Source, Span, Text,
+    Transaction,
+};
 use proptest::collection::vec;
 use proptest::prelude::*;
 
-use crate::{applied, check, initial_text_to_walk, walks};
+use crate::{applied, check, floor, initial_text_to_walk, walks};
 
 /// The point of the position `offset` of `text`, by counting its line
 /// feeds.
@@ -238,6 +241,214 @@ fn a_subscriber_that_skips_edits_gets_one_equivalent_patch() {
                 prop_assert_eq!(&patched(&seen, &reference, &patch.edits), &reference);
                 check_input_edits(&seen, &reference, &patch.edits)?;
                 seen.clone_from(&reference);
+            }
+            Ok(())
+        },
+    );
+}
+
+/// Who wrote each byte of a text, kept beside the string: the revision and
+/// the origin of the transaction that inserted it, or revision 0 for a
+/// byte the text was made with. It is spliced with every change set, and
+/// is what a trace is compared with.
+#[derive(Debug, Clone)]
+struct Authors(Vec<(u64, u64)>);
+
+impl Authors {
+    /// The authors of a text just made holding `initial`.
+    fn of(initial: &str) -> Self {
+        Self(vec![(0, 0); initial.len()])
+    }
+
+    /// Splices the authors as `changes` splices the text: what is retained
+    /// keeps its author, and what is inserted is written at `revision` by
+    /// `origin`.
+    fn apply(&mut self, changes: &ChangeSet, revision: u64, origin: u64) {
+        let mut next = Vec::with_capacity(changes.len_after());
+        let mut at = 0;
+        for change in changes.changes() {
+            match change {
+                Change::Retain(len) => {
+                    next.extend_from_slice(&self.0[at..at + len]);
+                    at += len;
+                }
+                Change::Delete(len) => at += len,
+                Change::Insert(text) => {
+                    next.extend(std::iter::repeat_n((revision, origin), text.len()));
+                }
+            }
+        }
+        self.0 = next;
+    }
+
+    /// The trace of `range` these authors expect from a log whose horizon
+    /// is `horizon`: the authors of the range's bytes, with a byte written
+    /// at or before the horizon as earlier than it, and equal neighbours
+    /// as one piece.
+    fn trace(&self, range: Range<usize>, horizon: u64) -> Vec<Attribution> {
+        let mut pieces: Vec<Attribution> = Vec::new();
+        for offset in range {
+            let (revision, origin) = self.0[offset];
+            let source = if revision <= horizon {
+                Source::Earlier(Revision::new(horizon))
+            } else {
+                Source::Entry {
+                    revision: Revision::new(revision),
+                    origin: Origin::new(origin),
+                }
+            };
+            match pieces.last_mut() {
+                Some(last) if last.source == source => last.range.end = offset + 1,
+                _ => pieces.push(Attribution {
+                    range: offset..offset + 1,
+                    source,
+                }),
+            }
+        }
+        pieces
+    }
+}
+
+/// Two numbers cut down to a range of two positions of `reference`, in
+/// order.
+fn fitted_range(reference: &str, (one, other): (usize, usize)) -> Range<usize> {
+    let one = floor(reference, one % (reference.len() + 1));
+    let other = floor(reference, other % (reference.len() + 1));
+    one.min(other)..one.max(other)
+}
+
+/// The ranges to trace in a case, before they are cut down to the text.
+fn ranges() -> impl Strategy<Value = Vec<(usize, usize)>> {
+    vec((any::<usize>(), any::<usize>()), 4)
+}
+
+#[test]
+fn a_range_traces_back_to_the_entries_that_produced_it() {
+    /// The most transactions in a case.
+    const WALKS: usize = 8;
+
+    check(
+        256,
+        (
+            initial_text_to_walk(),
+            walks(WALKS),
+            origins(WALKS),
+            ranges(),
+        ),
+        |(initial, walks, origins, ranges)| {
+            let mut reference = initial;
+            let mut text = Text::from(reference.as_str());
+            let mut authors = Authors::of(&reference);
+
+            for (walk, origin) in walks.iter().zip(origins) {
+                let changes = walk.changes(&reference);
+                let result = text.apply(&Transaction::new(changes.clone()), Origin::new(origin));
+                if let (Ok(revision), Some(made)) = (result, applied(&changes, &reference)) {
+                    authors.apply(&changes, revision.get(), origin);
+                    reference = made;
+                }
+
+                // Each range of the text as it is now names, piece by
+                // piece, the entry that wrote it, and so its origin.
+                for &range in &ranges {
+                    let range = fitted_range(&reference, range);
+                    let trace = text.trace(range.clone());
+                    prop_assert_eq!(trace, Some(authors.trace(range, 0)));
+                }
+                let whole = text.trace(0..reference.len());
+                prop_assert_eq!(whole, Some(authors.trace(0..reference.len(), 0)));
+                prop_assert_eq!(text.trace(0..reference.len() + 1), None);
+            }
+            Ok(())
+        },
+    );
+}
+
+#[test]
+fn forgetting_keeps_everything_after_the_horizon() {
+    /// The most transactions in a case.
+    const WALKS: usize = 10;
+    // After how many transactions to forget, and which of the revisions
+    // reached by then to forget through, as a number to cut down.
+    let forget = (0..=WALKS, any::<usize>());
+
+    check(
+        256,
+        (
+            initial_text_to_walk(),
+            walks(WALKS),
+            origins(WALKS),
+            forget,
+            ranges(),
+        ),
+        |(initial, walks, origins, (forget_after, forget_through), ranges)| {
+            let mut reference = initial;
+            // Two texts driven alike: one forgets, and one keeps its log
+            // whole to say what the answers were.
+            let mut text = Text::from(reference.as_str());
+            let mut whole = Text::from(reference.as_str());
+            let mut authors = Authors::of(&reference);
+            let forget_after = forget_after.min(walks.len());
+
+            // One more round than there are transactions, so that the last
+            // place to forget is after them all.
+            let rounds = walks.iter().zip(&origins).map(Some).chain([None]);
+            for (index, round) in rounds.enumerate() {
+                if index == forget_after {
+                    let reached = text.current().revision().get();
+                    let through = Revision::new(forget_through as u64 % (reached + 1));
+                    prop_assert_eq!(text.forget(through), Ok(()));
+                    prop_assert_eq!(text.horizon(), through);
+                }
+                let Some((walk, &origin)) = round else {
+                    break;
+                };
+                let changes = walk.changes(&reference);
+                let transaction = Transaction::new(changes.clone());
+                let result = text.apply(&transaction, Origin::new(origin));
+                prop_assert_eq!(result, whole.apply(&transaction, Origin::new(origin)));
+                if let (Ok(revision), Some(made)) = (result, applied(&changes, &reference)) {
+                    authors.apply(&changes, revision.get(), origin);
+                    reference = made;
+                }
+            }
+
+            let horizon = text.horizon();
+            let current = text.current().revision();
+            prop_assert_eq!(&text.current().to_string(), &reference);
+            prop_assert_eq!(current, whole.current().revision());
+            for revision in (0..=current.get()).map(Revision::new) {
+                // A patch from the horizon on is what it was; one from
+                // before it is refused.
+                let patch = text.changes_since(revision);
+                if revision < horizon {
+                    prop_assert_eq!(patch, Err(LogError::Forgotten));
+                } else {
+                    prop_assert_eq!(patch, whole.changes_since(revision));
+                }
+                // An entry after the horizon is what it was; the others
+                // are gone.
+                let entry = text.entry(revision);
+                let kept = whole.entry(revision).filter(|_| revision > horizon);
+                prop_assert_eq!(
+                    entry.map(|entry| (entry.revision(), entry.origin(), entry.edits())),
+                    kept.map(|entry| (entry.revision(), entry.origin(), entry.edits()))
+                );
+            }
+            let ahead = Revision::new(current.get() + 1);
+            prop_assert_eq!(text.changes_since(ahead), Err(LogError::Unknown));
+            prop_assert_eq!(text.forget(ahead), Err(LogError::Unknown));
+            // A trace names later bytes as before, and the others as
+            // earlier than the horizon.
+            let mut ranges: Vec<_> = ranges
+                .into_iter()
+                .map(|range| fitted_range(&reference, range))
+                .collect();
+            ranges.push(0..reference.len());
+            for range in ranges {
+                let trace = text.trace(range.clone());
+                prop_assert_eq!(trace, Some(authors.trace(range.clone(), horizon.get())));
+                prop_assert_eq!(whole.trace(range.clone()), Some(authors.trace(range, 0)));
             }
             Ok(())
         },

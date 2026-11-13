@@ -39,9 +39,9 @@
 //!   a row the text has, and a column within the row that is not inside a
 //!   character (in UTF-16, not between the two units of one). So the
 //!   conversions are inverses wherever either answers.
-//! - **An edit** replaces the bytes between two positions with a string
-//!   ([`Text::replace`]). It is refused, changing nothing, unless both ends
-//!   are positions and are in order.
+//! - **A replace** puts a string in place of the bytes between two
+//!   positions ([`Text::replace`]). It is refused, changing nothing, unless
+//!   both ends are positions and are in order.
 //! - **A change set** ([`ChangeSet`]) is an edit as a walk over the whole
 //!   text: changes that keep the next bytes ([`Change::Retain`]), remove
 //!   them ([`Change::Delete`]) or put text in ([`Change::Insert`]), with
@@ -98,6 +98,21 @@
 //!   ([`Text::subscribe`], [`Text::pull`]): nothing is registered with the
 //!   text, so there is no queue of edits for a consumer and nothing to
 //!   release.
+//! - **A range of the text is traced to the entries that wrote it**
+//!   ([`Text::trace`]): the range comes back cut into pieces, each with
+//!   the revision and the origin of the transaction that inserted its
+//!   bytes ([`Source::Entry`]). The log is walked back from its newest
+//!   entry; no second structure is kept beside the text, so an edit pays
+//!   nothing for it.
+//! - **The log is bounded only by [`Text::forget`]**, which drops the
+//!   entries up to a revision and moves the log's horizon
+//!   ([`Text::horizon`]) there. The crate never drops an entry by itself:
+//!   when to forget is the editor's policy, since the editor knows who
+//!   still reads the log. Behind the horizon [`Text::changes_since`] is
+//!   refused ([`LogError::Forgotten`]), so a consumer that far behind
+//!   reads a snapshot whole and subscribes again; and bytes written at or
+//!   before the horizon trace to [`Source::Earlier`], with the horizon's
+//!   revision, never to nobody.
 //! - **A revision** counts the transactions a text has accepted
 //!   ([`Revision`]). A new text is at 0, every accepted transaction adds
 //!   one, however many changes it has and one that changes nothing
@@ -131,11 +146,15 @@
 //! - A second row rule, in which a carriage return alone ends a line, which
 //!   is how a language server counts. The library can count it beside this
 //!   one without the stored text changing.
-//! - Tracing a range of the text to the entries that wrote it, and dropping
-//!   old entries.
 //! - Composing transactions, and mapping many positions or a selection
 //!   through a change set in one pass.
-//! - Anchors, the selection type and undo.
+//! - Anchors, a selection type that is more than plain ranges, and undo.
+//! - Rebasing a transaction built for an older revision: the log keeps no
+//!   text, so it cannot supply the change sets to rebase through.
+//! - Points in UTF-16 in an edit. A client that speaks them converts with
+//!   the snapshots of the two revisions.
+//! - A policy for forgetting, and anywhere cheaper to keep provenance
+//!   older than the horizon.
 //! - Reading and writing a file, detecting a file's line ending, and
 //!   refusing a binary file: this crate takes bytes and gives bytes.
 //!
@@ -144,9 +163,11 @@
 //! | Addition | Where | Pinned by |
 //! |---|---|---|
 //! | Another read of the text | A method of [`Snapshot`] | The unit tests beside it, and a property in `tests/properties/` that compares it with the same read of a `String` |
-//! | Another way to change the text | A method of [`Text`] that takes `&mut self` | The same, and the revision rule above |
+//! | Another way to change the text | A way to build a [`Transaction`], applied by [`Text::apply`]: the text has one writer path | The unit tests beside it, and the revision rule above |
+//! | Another kind of change | A variant of [`Change`], with its push on [`ChangeSet`] that keeps the normal form, and its case in apply, compose, invert, map and the log's edits | The unit tests of `change`, and the laws in `tests/properties/changes.rs`, whose generator gains the kind |
+//! | Another read of the log | A method of [`Text`] over the private `log::Log` | Its unit tests on literal edits, and a property in `tests/properties/log.rs` that compares it with a reference computed from the strings |
 //! | A rule about what bytes a text loads from or saves as | The private module `bytes` | Its unit tests on named byte strings, and the byte properties in `tests/properties/` |
-//! | A bound on what an operation costs | `tests/snapshot_cost.rs`, as a count of bytes allocated | Itself |
+//! | A bound on what an operation costs, the log's growth included | `tests/snapshot_cost.rs`, as a count of bytes allocated | Itself |
 //! | Something more of the rope library | A method of the private `rope::Rope`, in this crate's terms | The tests of the read that needs it |
 
 mod bytes;
@@ -162,7 +183,7 @@ mod transaction;
 
 pub use bytes::ByteChunks;
 pub use change::{Bias, Change, ChangeSet};
-pub use log::{LogEntry, LogError, Origin, Subscription};
+pub use log::{Attribution, LogEntry, LogError, Origin, Source, Subscription};
 pub use patch::{Edit, InputEdit, Patch, Span};
 pub use point::{Point, PointUtf16};
 pub use selection::{Selection, SelectionRange};

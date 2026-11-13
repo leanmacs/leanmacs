@@ -5,7 +5,7 @@ use std::fmt;
 use std::ops::Range;
 
 use crate::change::ChangeSet;
-use crate::log::{Log, LogEntry, LogError, Origin, Subscription};
+use crate::log::{Attribution, Log, LogEntry, LogError, Origin, Subscription};
 use crate::patch::{Edit, Patch, Span};
 use crate::rope::Rope;
 use crate::snapshot::{Revision, Snapshot};
@@ -164,7 +164,8 @@ impl Text {
     /// `since` and whose new spans are ranges of the text now. Empty when
     /// `since` is the current revision.
     ///
-    /// [`LogError::Unknown`] for a revision the text has not reached.
+    /// [`LogError::Unknown`] for a revision the text has not reached, and
+    /// [`LogError::Forgotten`] for one before the [horizon](Self::horizon).
     pub fn changes_since(&self, since: Revision) -> Result<Patch, LogError> {
         self.log.changes_since(since, self.current.revision)
     }
@@ -183,6 +184,45 @@ impl Text {
         let patch = self.changes_since(subscription.seen)?;
         subscription.seen = patch.to;
         Ok(patch)
+    }
+
+    /// Where the bytes of `range`, a range of the text as it is now, came
+    /// from: the range cut into pieces, in order and covering it, each
+    /// with its [`Source`](crate::Source). A piece is the entry's whose
+    /// transaction inserted its bytes, which names the revision and the
+    /// origin; bytes no entry the log holds inserted were in the text at
+    /// the [horizon](Self::horizon), and are named as earlier than it.
+    /// Neighbours with one source are one piece, and text that was deleted
+    /// is in none. Empty for an empty range.
+    ///
+    /// `None` unless both ends of the range are positions and the start is
+    /// not after the end.
+    ///
+    /// This walks the log back from its newest entry, so it costs more the
+    /// more the log holds: it is a question for a review, not for a
+    /// keystroke.
+    pub fn trace(&self, range: Range<usize>) -> Option<Vec<Attribution>> {
+        let fits = range.start <= range.end
+            && self.current.is_char_boundary(range.start)
+            && self.current.is_char_boundary(range.end);
+        fits.then(|| self.log.trace(range))
+    }
+
+    /// Drops the log's entries for the revisions up to and including
+    /// `through`, and moves the [horizon](Self::horizon) there. The text
+    /// and its revision are untouched.
+    ///
+    /// Afterwards [`changes_since`](Self::changes_since) a revision before
+    /// `through` is [`LogError::Forgotten`], and [`trace`](Self::trace)
+    /// names bytes written at or before `through` as earlier than it. A
+    /// revision at or before the horizon changes nothing.
+    /// [`LogError::Unknown`] for a revision the text has not reached.
+    ///
+    /// This is the log's one bound. The text never drops an entry by
+    /// itself: the log grows by one entry for each transaction until the
+    /// caller, which knows who still reads it, forgets.
+    pub fn forget(&mut self, through: Revision) -> Result<(), LogError> {
+        self.log.forget(through, self.current.revision)
     }
 }
 

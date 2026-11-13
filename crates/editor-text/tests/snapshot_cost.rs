@@ -1,10 +1,14 @@
-//! What a snapshot costs, counted as bytes allocated and never as time.
+//! What a snapshot, a transaction and a pull cost, counted as bytes
+//! allocated and never as time.
 //!
 //! A snapshot is taken for every reader of a text, so it must not copy the
 //! text, and the edit that follows one must copy only the part of the tree
-//! it changes. Both are counted here with an allocator that adds up what
-//! each thread asks for. A count is the same on every machine, where a
-//! duration is not.
+//! it changes. A transaction is applied for every keystroke, so it must
+//! copy neither the text nor the log it is recorded in; and a consumer
+//! that pulls what changed across many entries must not pay for each entry
+//! again for every later one. All are counted here with an allocator that
+//! adds up what each thread asks for. A count is the same on every
+//! machine, where a duration is not.
 //!
 //! This is a test binary of its own because a global allocator is for a
 //! whole binary. The counts are per thread, so the harness running the
@@ -13,7 +17,7 @@
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::cell::Cell;
 
-use editor_text::Text;
+use editor_text::{ChangeSet, Origin, Revision, Text, Transaction};
 
 /// The system allocator, counting the bytes each thread asks it for.
 struct Counting;
@@ -128,4 +132,71 @@ fn an_edit_after_a_snapshot_copies_a_small_fraction_of_the_text() {
     assert!(counted < LENGTH / 16, "{counted} bytes allocated");
     assert_eq!(snapshot.len(), string.len());
     assert_eq!(text.current().len(), string.len() + 1);
+}
+
+/// How many transactions the log's costs are counted over.
+const TRANSACTIONS: usize = 1_000;
+
+/// [`TRANSACTIONS`] transactions for a text that starts as `string`, to
+/// apply in order: each inserts one byte at the start of a line, two lines
+/// on from the one before, so no two of their edits touch.
+fn insertions(string: &str) -> Vec<Transaction> {
+    (0..TRANSACTIONS)
+        .map(|index| {
+            // The bytes inserted so far are all before this line.
+            let at = LINE.len() * 2 * index + index;
+            let changes = ChangeSet::replacing(string.len() + index, at..at, "x")
+                .expect("a range within the length");
+            Transaction::new(changes)
+        })
+        .collect()
+}
+
+#[test]
+fn a_transaction_copies_neither_the_text_nor_the_log() {
+    let string = megabyte();
+    let mut text = Text::from(string.as_str());
+    let transactions = insertions(&string);
+
+    let (accepted, counted) = allocated_by(|| {
+        transactions
+            .iter()
+            .filter(|transaction| text.apply(transaction, Origin::new(1)).is_ok())
+            .count()
+    });
+
+    assert_eq!(accepted, TRANSACTIONS);
+    assert_eq!(text.current().len(), string.len() + TRANSACTIONS);
+    // Measured: 3,651,896 bytes in all, 3,651 a transaction: the nodes of
+    // the tree the edit copies, the entry's one edit (96 bytes), and the
+    // log's queue as it doubles. Copying the text for each would be a
+    // megabyte a transaction, and copying the log tens of kilobytes. The
+    // bound is a sixty-fourth of the text.
+    assert!(
+        counted / TRANSACTIONS < LENGTH / 64,
+        "{counted} bytes allocated by {TRANSACTIONS} transactions"
+    );
+}
+
+#[test]
+fn a_pull_across_many_entries_allocates_a_bounded_amount_for_each() {
+    let string = megabyte();
+    let mut text = Text::from(string.as_str());
+    for transaction in insertions(&string) {
+        text.apply(&transaction, Origin::new(1)).expect("it fits");
+    }
+
+    let (patch, counted) = allocated_by(|| text.changes_since(Revision::new(0)));
+
+    let patch = patch.expect("a revision the log reaches");
+    assert_eq!(patch.edits.len(), TRANSACTIONS);
+    // Measured: 957,696 bytes in all, 957 an entry skipped: the entries are
+    // composed pairwise as a balanced tree, ten levels deep here, and each
+    // level allocates one edit (96 bytes) for each entry. Composing them
+    // one after the other would allocate for every entry again at each
+    // step: about 48,000 bytes an entry. The bound is 4 KiB an entry.
+    assert!(
+        counted / TRANSACTIONS < 4096,
+        "{counted} bytes allocated across {TRANSACTIONS} entries"
+    );
 }

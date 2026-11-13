@@ -12,6 +12,14 @@ use crate::rope::{self, Rope};
 pub struct Revision(pub(crate) u64);
 
 impl Revision {
+    /// The revision a text is at once it has accepted `edits` edits. This
+    /// is for a consumer that kept a revision as a number, across a
+    /// boundary that carries numbers, and asks the log about it; whether
+    /// the text has reached it is the text's to say.
+    pub const fn new(edits: u64) -> Self {
+        Self(edits)
+    }
+
     /// The revision as a number: how many edits the text had accepted.
     pub const fn get(self) -> u64 {
         self.0
@@ -121,6 +129,20 @@ impl<'a> Iterator for Chunks<'a> {
 mod tests {
     use super::*;
     use crate::Text;
+
+    #[test]
+    fn a_revision_made_from_a_number_is_the_revision_a_text_reaches_after_that_many_edits() {
+        let mut text = Text::from("héllo");
+        assert_eq!(Revision::new(0), text.current().revision());
+        assert_eq!(Revision::new(0), Revision::default());
+
+        text.replace(0..0, "x").expect("an insert at the start");
+        text.replace(0..0, "y").expect("an insert at the start");
+
+        assert_eq!(Revision::new(2), text.current().revision());
+        assert_eq!(Revision::new(u64::MAX).get(), u64::MAX);
+        assert!(Revision::new(3) > text.current().revision());
+    }
 
     #[test]
     fn a_snapshot_holds_the_text_and_the_revision_of_the_moment_it_was_taken() {
