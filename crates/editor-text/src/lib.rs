@@ -12,6 +12,23 @@
 //!   offset that is a character boundary within the text, its end included
 //!   ([`Snapshot::is_char_boundary`]). Offsets are the unit the Lean editor
 //!   speaks.
+//! - **A row** begins at the start of the text and after each line feed.
+//!   So a text has one more row than it has line feeds
+//!   ([`Snapshot::row_count`]): an empty text has one row, and a text that
+//!   ends in a line feed has an empty last row. A carriage return is an
+//!   ordinary character of its row: the rows of a file with CRLF endings
+//!   end in one, and a carriage return alone starts no row. This is
+//!   tree-sitter's rule. [`Snapshot::row_range`] is a row's bytes without
+//!   its line feed.
+//! - **A point** is a row and a column counted from the row's start: in
+//!   bytes ([`Point`]) or in UTF-16 code units ([`PointUtf16`]). They are
+//!   two types so the units cannot be mixed.
+//! - **A conversion answers only for a position**, and clamps nothing:
+//!   clamping is the caller's policy. An offset converts to a point only if
+//!   it is a position. A point converts to an offset only if it names one:
+//!   a row the text has, and a column within the row that is not inside a
+//!   character (in UTF-16, not between the two units of one). So the
+//!   conversions are inverses wherever either answers.
 //! - **An edit** replaces the bytes between two positions with a string
 //!   ([`Text::replace`]). It is refused, changing nothing, unless both ends
 //!   are positions and are in order.
@@ -24,6 +41,9 @@
 //!   It is `Send + Sync`: a snapshot is what a worker thread, a job or the
 //!   renderer reads, and none of them sees the text itself. Two snapshots of
 //!   one text at the same revision hold the same text.
+//! - **Nothing panics on a caller's value.** Every read that takes an
+//!   offset, a row, a point or a range returns an `Option`, and an edit a
+//!   `Result`.
 //! - **A text has one writer.** [`Text::replace`] takes `&mut self`, and the
 //!   text holds no lock: a caller that shares a text between threads puts it
 //!   behind one.
@@ -34,6 +54,18 @@
 //! library. The private module `rope` is the only one that names it, and no
 //! type of it is public here.
 //!
+//! The pieces are what [`Snapshot::chunks`], [`Snapshot::chunks_in`] and
+//! [`Snapshot::chunk_at`] hand out, for a reader that wants the text
+//! without a copy: search, shaping, a parser. A piece ends on a character
+//! boundary; where is the rope's business.
+//!
+//! # Not here yet
+//!
+//! - A second row rule, in which a carriage return alone ends a line, which
+//!   is how a language server counts. The library can count it beside this
+//!   one without the stored text changing.
+//! - Transactions, anchors, selections and undo.
+//!
 //! # Where an addition goes
 //!
 //! | Addition | Where | Pinned by |
@@ -43,9 +75,11 @@
 //! | A bound on what an operation costs | `tests/snapshot_cost.rs`, as a count of bytes allocated | Itself |
 //! | Something more of the rope library | A method of the private `rope::Rope`, in this crate's terms | The tests of the read that needs it |
 
+mod point;
 mod rope;
 mod snapshot;
 mod text;
 
-pub use snapshot::{Revision, Snapshot};
+pub use point::{Point, PointUtf16};
+pub use snapshot::{Chunks, Revision, Snapshot};
 pub use text::{BadRange, Text};

@@ -59,9 +59,80 @@ impl Rope {
             && (text.is_empty() || self.0.try_insert(start, text).is_ok())
     }
 
+    /// How many rows the text has: one more than its line feeds.
+    pub(crate) fn row_count(&self) -> usize {
+        self.0.len_lines(ROWS)
+    }
+
+    /// The row that holds `offset`: how many line feeds are before it.
+    /// `None` past the end of the text.
+    pub(crate) fn row_of(&self, offset: usize) -> Option<usize> {
+        (offset <= self.len()).then(|| self.0.byte_to_line_idx(offset, ROWS))
+    }
+
+    /// The offset the row `row` starts at. `None` when the text has no such
+    /// row.
+    pub(crate) fn row_start(&self, row: usize) -> Option<usize> {
+        (row < self.row_count()).then(|| self.0.line_to_byte_idx(row, ROWS))
+    }
+
+    /// The length of the text in UTF-16 code units.
+    pub(crate) fn len_utf16(&self) -> usize {
+        self.0.len_utf16()
+    }
+
+    /// How many UTF-16 code units are before `offset`. `None` past the end
+    /// of the text. An offset inside a character counts as the character's
+    /// start.
+    pub(crate) fn utf16_of(&self, offset: usize) -> Option<usize> {
+        (offset <= self.len()).then(|| self.0.byte_to_utf16_idx(offset))
+    }
+
+    /// The offset `units` UTF-16 code units into the text. `None` past the
+    /// end of the text. A count that falls between the two units of one
+    /// character gives the character's start.
+    pub(crate) fn offset_of_utf16(&self, units: usize) -> Option<usize> {
+        (units <= self.len_utf16()).then(|| self.0.utf16_to_byte_idx(units))
+    }
+
     /// The pieces the text is held in, in order. Joined, they are the text.
     /// None is empty.
-    pub(crate) fn chunks(&self) -> impl Iterator<Item = &str> {
-        self.0.chunks()
+    pub(crate) fn chunks(&self) -> Chunks<'_> {
+        Chunks(self.0.chunks())
+    }
+
+    /// The pieces of the text from `start` up to, not including, `end`, in
+    /// order: the first and the last are cut to the range. `None` unless
+    /// both offsets are character boundaries within the text and
+    /// `start <= end`.
+    pub(crate) fn chunks_in(&self, start: usize, end: usize) -> Option<Chunks<'_>> {
+        // The library panics past the end before it reports a refusal.
+        if start > end || !self.is_char_boundary(start) || !self.is_char_boundary(end) {
+            return None;
+        }
+        let slice = self.0.try_slice(start..end).ok()?;
+        Some(Chunks(slice.chunks()))
+    }
+
+    /// The piece that holds the byte at `offset`, and the offset the piece
+    /// starts at. At the end of the text, the last piece, which is empty
+    /// only when the text is. `None` past the end.
+    pub(crate) fn chunk_at(&self, offset: usize) -> Option<(&str, usize)> {
+        self.0.get_chunk(offset)
+    }
+}
+
+/// The row rule the crate counts by: a row ends at a line feed and nowhere
+/// else, so a carriage return is a character of its row.
+const ROWS: ropey::LineType = ropey::LineType::LF;
+
+/// The pieces of a text, or of a range of one, in order.
+pub(crate) struct Chunks<'a>(ropey::iter::Chunks<'a>);
+
+impl<'a> Iterator for Chunks<'a> {
+    type Item = &'a str;
+
+    fn next(&mut self) -> Option<&'a str> {
+        self.0.next()
     }
 }

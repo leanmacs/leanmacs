@@ -24,8 +24,9 @@
 //! in many pieces.
 
 use std::fmt::Debug;
+use std::ops::Range;
 
-use editor_text::Text;
+use editor_text::{Point, PointUtf16, Snapshot, Text};
 use proptest::collection::vec;
 use proptest::prelude::*;
 use proptest::sample::select;
@@ -81,9 +82,22 @@ fn short_text(fragments: usize) -> impl Strategy<Value = String> {
 /// A text to start from: seven in eight are short, and the eighth is a
 /// short text repeated until the rope holds it in many pieces.
 fn initial_text() -> impl Strategy<Value = String> {
+    initial_text_repeated(200..4_000)
+}
+
+/// [`initial_text`], with the long texts shorter: tens of kilobytes at
+/// most, still in many pieces. For the properties that visit every offset
+/// of the text.
+fn initial_text_to_walk() -> impl Strategy<Value = String> {
+    initial_text_repeated(20..400)
+}
+
+/// A text to start from: seven in eight are short, and the eighth is a
+/// short text repeated a number of times in `times`.
+fn initial_text_repeated(times: Range<usize>) -> impl Strategy<Value = String> {
     prop_oneof![
         7 => short_text(24),
-        1 => (short_text(24), 200_usize..4_000).prop_map(|(text, times)| text.repeat(times)),
+        1 => (short_text(24), times).prop_map(|(text, times)| text.repeat(times)),
     ]
 }
 
@@ -213,6 +227,274 @@ fn a_snapshot_is_unaffected_by_later_edits() {
                 prop_assert_eq!(&snapshot.clone().to_string(), expected);
                 prop_assert_eq!(snapshot.len(), expected.len());
                 prop_assert_eq!(snapshot.revision().get(), *revision);
+            }
+            Ok(())
+        },
+    );
+}
+
+/// A text to ask positions of, and what it holds: `initial` after `steps`.
+/// The edits matter: they leave the rope's pieces uneven, as a text that
+/// was only ever loaded does not.
+fn edited(initial: String, steps: &[Step]) -> (Snapshot, String) {
+    let mut reference = initial;
+    let mut text = Text::from(reference.as_str());
+    for step in steps {
+        let (start, end) = step.range(&reference);
+        if text.replace(start..end, &step.insert).is_ok() {
+            reference.replace_range(start..end, &step.insert);
+        }
+    }
+    (text.snapshot(), reference)
+}
+
+/// The strategy of the properties about positions: a text to walk, and the
+/// edits to make to it first.
+fn text_and_edits() -> impl Strategy<Value = (String, Vec<Step>)> {
+    (initial_text_to_walk(), steps(8))
+}
+
+/// Where everything in a string is, from one walk over its characters:
+/// what the conversions are compared with.
+struct Reference {
+    /// The bytes of each row, without the line feed that ends it.
+    rows: Vec<Range<usize>>,
+    /// For each offset from 0 to the string's length: `None` inside a
+    /// character, and otherwise the row, the column in bytes and the column
+    /// in UTF-16 code units.
+    places: Vec<Option<(usize, usize, usize)>>,
+}
+
+impl Reference {
+    /// The reference for `string`. A row ends at a line feed and nowhere
+    /// else.
+    fn of(string: &str) -> Self {
+        let mut rows = Vec::new();
+        let mut places = vec![None; string.len() + 1];
+        let (mut row_start, mut units) = (0, 0);
+        for (offset, character) in string.char_indices() {
+            places[offset] = Some((rows.len(), offset - row_start, units));
+            if character == '\n' {
+                rows.push(row_start..offset);
+                row_start = offset + 1;
+                units = 0;
+            } else {
+                units += character.len_utf16();
+            }
+        }
+        places[string.len()] = Some((rows.len(), string.len() - row_start, units));
+        rows.push(row_start..string.len());
+        Self { rows, places }
+    }
+
+    /// The place of `offset`; `None` inside a character and past the end.
+    fn place(&self, offset: usize) -> Option<(usize, usize, usize)> {
+        self.places.get(offset).copied().flatten()
+    }
+
+    /// The point of `offset` with its column in bytes.
+    fn point(&self, offset: usize) -> Option<Point> {
+        self.place(offset)
+            .map(|(row, column, _)| Point::new(row, column))
+    }
+
+    /// The point of `offset` with its column in UTF-16 code units.
+    fn point_utf16(&self, offset: usize) -> Option<PointUtf16> {
+        self.place(offset)
+            .map(|(row, _, column)| PointUtf16::new(row, column))
+    }
+
+    /// The offset of the position at the byte column `column` of `row`.
+    fn offset(&self, row: usize, column: usize) -> Option<usize> {
+        let range = self.rows.get(row)?;
+        let offset = range.start.checked_add(column)?;
+        (offset <= range.end && self.place(offset).is_some()).then_some(offset)
+    }
+
+    /// For each UTF-16 column of `row`, from 0 to its length in bytes and
+    /// two past it: the offset of the position there, or `None` when the
+    /// column is between the two units of a character or past the row's
+    /// end. A row has no more code units than bytes. Empty for a row the
+    /// string does not have.
+    fn offsets_utf16(&self, row: usize) -> Vec<Option<usize>> {
+        let Some(range) = self.rows.get(row) else {
+            return Vec::new();
+        };
+        let mut offsets = vec![None; range.len() + 3];
+        for offset in range.start..=range.end {
+            if let Some((_, _, units)) = self.place(offset) {
+                offsets[units] = Some(offset);
+            }
+        }
+        offsets
+    }
+}
+
+#[test]
+fn byte_points_round_trip_at_every_position() {
+    check(256, text_and_edits(), |(initial, steps)| {
+        let (snapshot, string) = edited(initial, &steps);
+
+        // To two past the end: those offsets are not positions either.
+        for offset in 0..=string.len() + 2 {
+            match snapshot.offset_to_point(offset) {
+                Some(point) => {
+                    prop_assert!(string.is_char_boundary(offset), "{} has a point", offset);
+                    prop_assert_eq!(snapshot.point_to_offset(point), Some(offset));
+                }
+                None => prop_assert!(!string.is_char_boundary(offset), "{} has none", offset),
+            }
+        }
+        Ok(())
+    });
+}
+
+#[test]
+fn utf16_points_round_trip_at_every_position() {
+    check(256, text_and_edits(), |(initial, steps)| {
+        let (snapshot, string) = edited(initial, &steps);
+
+        for offset in 0..=string.len() + 2 {
+            match snapshot.offset_to_point_utf16(offset) {
+                Some(point) => {
+                    prop_assert!(string.is_char_boundary(offset), "{} has a point", offset);
+                    prop_assert_eq!(snapshot.point_utf16_to_offset(point), Some(offset));
+                }
+                None => prop_assert!(!string.is_char_boundary(offset), "{} has none", offset),
+            }
+        }
+        Ok(())
+    });
+}
+
+#[test]
+fn a_point_that_converts_names_the_offset_that_converts_back() {
+    // Rows and columns as numbers to cut down to the text: some land on a
+    // position, and some inside a character, past a row's end or in a row
+    // the text does not have.
+    let points = vec((any::<usize>(), any::<usize>()), 0..=64);
+
+    check(
+        256,
+        (text_and_edits(), points),
+        |((initial, steps), points)| {
+            let (snapshot, string) = edited(initial, &steps);
+            let reference = Reference::of(&string);
+
+            for (row, column) in points {
+                let row = row % (reference.rows.len() + 2);
+                let row_length = reference.rows.get(row).map_or(0, |row| row.len());
+                let column = column % (row_length + 3);
+
+                let point = Point::new(row, column);
+                if let Some(offset) = snapshot.point_to_offset(point) {
+                    prop_assert_eq!(snapshot.offset_to_point(offset), Some(point));
+                }
+                let point = PointUtf16::new(row, column);
+                if let Some(offset) = snapshot.point_utf16_to_offset(point) {
+                    prop_assert_eq!(snapshot.offset_to_point_utf16(offset), Some(point));
+                }
+                // The start of a row the text has always converts, in both
+                // units, so a conversion that refuses everything does not
+                // pass.
+                let has_row = row < reference.rows.len();
+                let start = snapshot.point_to_offset(Point::new(row, 0));
+                prop_assert_eq!(start.is_some(), has_row);
+                let start = snapshot.point_utf16_to_offset(PointUtf16::new(row, 0));
+                prop_assert_eq!(start.is_some(), has_row);
+            }
+            Ok(())
+        },
+    );
+}
+
+#[test]
+fn conversions_agree_with_a_reference_computed_from_the_string() {
+    check(256, text_and_edits(), |(initial, steps)| {
+        let (snapshot, string) = edited(initial, &steps);
+        let reference = Reference::of(&string);
+
+        prop_assert_eq!(snapshot.row_count(), reference.rows.len());
+        for (row, range) in reference.rows.iter().enumerate() {
+            prop_assert_eq!(snapshot.row_range(row), Some(range.clone()));
+        }
+        prop_assert_eq!(snapshot.row_range(reference.rows.len()), None);
+
+        for offset in 0..=string.len() + 2 {
+            prop_assert_eq!(
+                snapshot.is_char_boundary(offset),
+                reference.place(offset).is_some()
+            );
+            prop_assert_eq!(snapshot.offset_to_point(offset), reference.point(offset));
+            prop_assert_eq!(
+                snapshot.offset_to_point_utf16(offset),
+                reference.point_utf16(offset)
+            );
+        }
+
+        // Every row and one the text does not have, and in each every
+        // column to two past the row's end.
+        for row in 0..=reference.rows.len() {
+            let length = reference.rows.get(row).map_or(0, |row| row.len());
+            let offsets_utf16 = reference.offsets_utf16(row);
+            for column in 0..=length + 2 {
+                prop_assert_eq!(
+                    snapshot.point_to_offset(Point::new(row, column)),
+                    reference.offset(row, column),
+                    "row {}, byte column {}",
+                    row,
+                    column
+                );
+                prop_assert_eq!(
+                    snapshot.point_utf16_to_offset(PointUtf16::new(row, column)),
+                    offsets_utf16.get(column).copied().flatten(),
+                    "row {}, UTF-16 column {}",
+                    row,
+                    column
+                );
+            }
+        }
+        Ok(())
+    });
+}
+
+#[test]
+fn chunks_and_slices_agree_with_the_string() {
+    // Ranges and offsets as numbers to cut down to the text.
+    let ranges = vec((any::<usize>(), any::<usize>()), 0..=16);
+
+    check(
+        256,
+        (text_and_edits(), ranges),
+        |((initial, steps), ranges)| {
+            let (snapshot, string) = edited(initial, &steps);
+
+            prop_assert_eq!(&snapshot.chunks().collect::<String>(), &string);
+            prop_assert!(snapshot.chunks().all(|chunk| !chunk.is_empty()));
+
+            let reach = string.len() + 3;
+            for (start, end) in ranges {
+                let (start, end) = (start % reach, end % reach);
+
+                // A slice of a string is `None` exactly when the range is
+                // not two character boundaries in order.
+                let expected = string.get(start..end);
+                let chunks = snapshot.chunks_in(start..end);
+                prop_assert_eq!(chunks.is_some(), expected.is_some());
+                if let (Some(chunks), Some(expected)) = (chunks, expected) {
+                    prop_assert_eq!(&chunks.collect::<String>(), expected);
+                }
+                let slice = snapshot.slice_to_string(start..end);
+                prop_assert_eq!(slice.as_deref(), expected);
+
+                match snapshot.chunk_at(start) {
+                    Some((chunk, at)) => {
+                        prop_assert!(at <= start && start <= at + chunk.len());
+                        prop_assert!(start < at + chunk.len() || start == string.len());
+                        prop_assert_eq!(chunk.as_bytes(), &string.as_bytes()[at..at + chunk.len()]);
+                    }
+                    None => prop_assert!(start > string.len()),
+                }
             }
             Ok(())
         },
