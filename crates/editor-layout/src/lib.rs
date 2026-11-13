@@ -13,9 +13,14 @@
 //!
 //! - the fake's own geometry: one glyph per character, an advance and a
 //!   line height per font, greedy breaks with at least one glyph per line
-//!   ([`shaper::fake`]).
+//!   ([`shaper::fake`]);
+//! - tab stops, the cut of a long row into segments and the content of a
+//!   row ([`tabs`]), and the round trip of a position through the layers
+//!   (`tests/layers.rs`).
 //!
 //! The adapter-neutral rules of shaping are [`shaper::contract`]'s, which
 //! every real adapter runs. No crate downstream pins the fake's geometry.
 
+pub mod layer;
 pub mod shaper;
+pub mod tabs;
