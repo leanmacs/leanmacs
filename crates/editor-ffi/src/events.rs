@@ -62,17 +62,20 @@ pub enum EventKind {
     WindowOpened = 3,
     /// The window gained the keyboard focus (`code` 1) or lost it (0).
     WindowFocus = 4,
-    /// A key was pressed or released: the bits of its `code` say which, and
-    /// its `text` is what the key produced.
+    /// A key was pressed or released: the bits of its `code` say which, its
+    /// `text` is what the key produced, and its words are which key it was
+    /// and the modifiers held.
     Key = 5,
     /// A step of an input method's composition: its `code` says which, and
     /// its `text` is the text being composed or committed.
     Composition = 6,
-    /// A pointer button was pressed in the window.
-    PointerPressed = 7,
+    /// The pointer did something in the window: its `code` says what, and its
+    /// words where, with which button and with which modifiers held.
+    Pointer = 7,
     /// The user asked for the window to be closed.
     CloseRequested = 8,
-    /// The window's drawable area changed size, or its scale factor did.
+    /// The window's drawable area changed size, or its scale factor did: its
+    /// words are the new size and scale.
     Resize = 9,
 }
 
@@ -92,7 +95,7 @@ impl EventKind {
             4 => Some(Self::WindowFocus),
             5 => Some(Self::Key),
             6 => Some(Self::Composition),
-            7 => Some(Self::PointerPressed),
+            7 => Some(Self::Pointer),
             8 => Some(Self::CloseRequested),
             9 => Some(Self::Resize),
             _ => None,
@@ -872,7 +875,7 @@ mod tests {
             (4, EventKind::WindowFocus),
             (5, EventKind::Key),
             (6, EventKind::Composition),
-            (7, EventKind::PointerPressed),
+            (7, EventKind::Pointer),
             (8, EventKind::CloseRequested),
             (9, EventKind::Resize),
         ];

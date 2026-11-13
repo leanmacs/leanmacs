@@ -170,6 +170,20 @@ arrives on the editor queue.
   from `windowOpened` on, pulled with `nextEvent` like any other. Each is
   stamped with the reading of the library's input clock when the window
   reported it, and `inputClock` reads the same clock.
+- A key, a pointer and a resize carry their detail as the event's words.
+  The table of codes, texts and word layouts is in the module docs of
+  `crates/editor-ffi/src/window.rs`:
+
+  | Kind | Code | Words |
+  |---|---|---|
+  | `key` | Bit 0 pressed, bit 1 repeat, bit 2 dead | `[logical tag, n, n scalars, physical tag, m, m scalars, modifiers]`; logical 0 unidentified, 1 character, 2 named (a W3C UI Events `key` name), 3 dead (n is 0 or 1); physical 0 unidentified, 1 a W3C UI Events `code` |
+  | `pointer` | 0 press, 1 drag, 2 release, 3 wheel | `[x, y, button tag, other, modifiers, delta tag, dx, dy]`; button 0 none, 1 primary, 2 secondary, 3 middle, 4 back, 5 forward, 6 another (its number in `other`); delta 0 none, 1 lines, 2 pixels |
+  | `resize` | 0 | `[width, height, scale]` |
+
+  The modifiers are bits: shift 1, control 2, alt 4, super 8. A float
+  crosses as its IEEE 754 bits (`Float.ofBits`). These bindings carry the
+  words as they are; the one place on the Lean side that reads them is
+  `Editor/Event/Queue.lean`.
 - Lean closes the window. A window the user asks to close reports
   `closeRequested` and stays open until `windowClose`, which any thread may
   call.
@@ -1118,18 +1132,24 @@ inductive EventKind where
   | windowFocus
   /-- A key was pressed or released. Bit 0 of the code is set for a press,
   bit 1 for a press repeated because the key is held, and bit 2 for a dead
-  key; the text is what the key produced, or empty. -/
+  key; the text is what the key produced, or empty; the words are which key
+  it was and the modifiers held ("The window" in the module docs). -/
   | key
   /-- A step of an input method's composition. The code is 0 when the input
   method became available, 1 for a change of the text being composed, 2 when
   the composition ended with a text, and 3 when the input method is no longer
   available; the text is the text composed or committed. -/
   | composition
-  /-- A pointer button was pressed in the window. -/
-  | pointerPressed
+  /-- The pointer did something in the window. The code is 0 for a press, 1
+  for a drag, 2 for a release and 3 for a wheel; the words are where, with
+  which button, with which modifiers, and the wheel's delta. -/
+  | pointer
   /-- The user asked for the window to be closed. It stays open until Lean
   closes it. -/
   | closeRequested
+  /-- The window's drawable area changed size, or its scale factor did. The
+  code is 0; the words are the new width, height and scale. -/
+  | resize
   deriving DecidableEq, Repr
 
 /-- The kind the library's number `tag` stands for, if it is one. -/
@@ -1141,8 +1161,9 @@ def EventKind.ofTag? : UInt64 → Option EventKind
   | 4 => some .windowFocus
   | 5 => some .key
   | 6 => some .composition
-  | 7 => some .pointerPressed
+  | 7 => some .pointer
   | 8 => some .closeRequested
+  | 9 => some .resize
   | _ => none
 
 /-- What kind of thing an event came from. -/

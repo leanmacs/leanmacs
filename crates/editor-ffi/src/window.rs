@@ -9,15 +9,35 @@
 //! from the window source, stamped with the reading of an [`InputClock`]
 //! when it was reported.
 //!
-//! | [`Input`] | [`EventKind`] | Code | Text |
-//! |---|---|---|---|
-//! | `Opened` | `WindowOpened` | 0 | The platform's name |
-//! | `Focus` | `WindowFocus` | 1 gained, 0 lost | Empty |
-//! | `Key` | `Key` | Bit 0 pressed, bit 1 repeat, bit 2 a dead logical key | What the key produced, or empty |
-//! | `Composition` | `Composition` | 0 enabled, 1 preedit, 2 commit, 3 disabled | The preedit or the committed text |
-//! | `Pointer` | `PointerPressed` | 0 | Empty |
-//! | `Resized` | `Resize` | 0 | Empty |
-//! | `CloseRequested` | `CloseRequested` | 0 | Empty |
+//! | [`Input`] | [`EventKind`] | Code | Text | Words |
+//! |---|---|---|---|---|
+//! | `Opened` | `WindowOpened` | 0 | The platform's name | None |
+//! | `Focus` | `WindowFocus` | 1 gained, 0 lost | Empty | None |
+//! | `Key` | `Key` | Bit 0 pressed, bit 1 repeat, bit 2 a dead logical key | What the key produced, or empty | The logical key, the physical key, the modifiers |
+//! | `Composition` | `Composition` | 0 enabled, 1 preedit, 2 commit, 3 disabled | The preedit or the committed text | None |
+//! | `Pointer` | `Pointer` | 0 press, 1 drag, 2 release, 3 wheel | Empty | The position, the button, the modifiers, the wheel's delta |
+//! | `Resized` | `Resize` | 0 | Empty | The width, the height, the scale |
+//! | `CloseRequested` | `CloseRequested` | 0 | Empty | None |
+//!
+//! The words ([`crate::words`]) of each kind that has them:
+//!
+//! - **Key**: `[logical tag, n, n scalars, physical tag, m, m scalars,
+//!   modifiers]`. The logical tags are 0 unidentified (n is 0), 1 a
+//!   character and 2 a named key (the n scalar values of its characters or
+//!   of its W3C UI Events `key` name), and 3 a dead key (n is 1 with its
+//!   character, or 0). The physical tags are 0 unidentified (m is 0) and 1 a
+//!   W3C UI Events `code` (its m scalar values).
+//! - **Pointer**: `[x, y, button tag, other, modifiers, delta tag, dx, dy]`.
+//!   The button tags are 0 none, 1 primary, 2 secondary, 3 middle, 4 back,
+//!   5 forward and 6 another, whose number is `other` (0 for the rest). The
+//!   delta tags are 0 none (with `dx` and `dy` 0), 1 lines and 2 pixels, for
+//!   a wheel.
+//! - **Resize**: `[width, height, scale]`.
+//!
+//! The modifiers are one word of bits: shift [`MODIFIER_SHIFT`], control
+//! [`MODIFIER_CONTROL`], alt [`MODIFIER_ALT`] and the system key
+//! [`MODIFIER_SUPER`]. A float (a position, a delta, a scale) crosses as its
+//! IEEE 754 bits ([`f64::to_bits`]); Lean reads it back with `Float.ofBits`.
 //!
 //! A window is run by the main-thread service: "run the window" is a request
 //! of it ([`crate::main_thread::Request::RunWindow`]), so the window's loop
@@ -38,13 +58,14 @@ use std::sync::{Arc, LazyLock, OnceLock};
 use std::time::Instant;
 
 use editor_platform::{
-    CannotOpen, Composition, Input, LogicalKey, Platform, Report, ScriptedPlatform, WindowOptions,
+    Button, CannotOpen, Composition, Input, Key, LogicalKey, Modifiers, PhysicalKey, Platform,
+    Pointer, PointerAction, Report, ScriptedPlatform, WheelDelta, WindowOptions,
 };
 use editor_platform_winit::WinitPlatform;
 
 use crate::events::{Event, EventKind, Queue, QueueId, Source, SourceKind};
 use crate::main_thread::{self, Reply, Request};
-use crate::text;
+use crate::{text, words};
 
 /// The number of the process's one window: the id of the window source its
 /// events come from.
@@ -60,6 +81,43 @@ pub const KEY_REPEAT: u64 = 1 << 1;
 
 /// The bit of a key event's code that is set for a dead key.
 pub const KEY_DEAD: u64 = 1 << 2;
+
+/// The bit of a modifier word that is set when shift is held.
+pub const MODIFIER_SHIFT: u64 = 1;
+
+/// The bit of a modifier word that is set when control is held.
+pub const MODIFIER_CONTROL: u64 = 1 << 1;
+
+/// The bit of a modifier word that is set when alt is held.
+pub const MODIFIER_ALT: u64 = 1 << 2;
+
+/// The bit of a modifier word that is set when the system key is held.
+pub const MODIFIER_SUPER: u64 = 1 << 3;
+
+/// The tags of a key's logical key in its words.
+const LOGICAL_UNIDENTIFIED: u64 = 0;
+const LOGICAL_CHARACTER: u64 = 1;
+const LOGICAL_NAMED: u64 = 2;
+const LOGICAL_DEAD: u64 = 3;
+
+/// The tags of a key's physical key in its words.
+const PHYSICAL_UNIDENTIFIED: u64 = 0;
+const PHYSICAL_CODE: u64 = 1;
+
+/// The codes of a pointer event.
+const POINTER_PRESS: u64 = 0;
+const POINTER_DRAG: u64 = 1;
+const POINTER_RELEASE: u64 = 2;
+const POINTER_WHEEL: u64 = 3;
+
+/// The tag of a button the platform numbers itself; the tags before it are
+/// none (0) and the named buttons, primary (1) to forward (5).
+const BUTTON_OTHER: u64 = 6;
+
+/// The tags of a wheel's delta in a pointer event's words.
+const WHEEL_NONE: u64 = 0;
+const WHEEL_LINES: u64 = 1;
+const WHEEL_PIXELS: u64 = 2;
 
 /// The port a window's events are stamped through.
 pub trait InputClock: Send + Sync {
@@ -139,15 +197,21 @@ impl InputClock for CountingClock {
 /// so a new variant has to be given its kind and its code here before the
 /// crate builds.
 pub fn event(input: Input, stamp: u64) -> Event {
-    let (kind, code, text) = match input {
-        Input::Opened { platform } => (EventKind::WindowOpened, 0, platform),
-        Input::Focus(gained) => (EventKind::WindowFocus, u64::from(gained), String::new()),
+    let (kind, code, text, words) = match input {
+        Input::Opened { platform } => (EventKind::WindowOpened, 0, platform, Vec::new()),
+        Input::Focus(gained) => (
+            EventKind::WindowFocus,
+            u64::from(gained),
+            String::new(),
+            Vec::new(),
+        ),
         Input::Key(key) => {
             let bit = |set: bool, bit: u64| if set { bit } else { 0 };
             let dead = matches!(key.logical, LogicalKey::Dead(_));
             let code =
                 bit(key.pressed, KEY_PRESSED) | bit(key.repeat, KEY_REPEAT) | bit(dead, KEY_DEAD);
-            (EventKind::Key, code, key.text)
+            let words = key_words(&key);
+            (EventKind::Key, code, key.text, words)
         }
         Input::Composition(step) => {
             let (code, text) = match step {
@@ -156,13 +220,19 @@ pub fn event(input: Input, stamp: u64) -> Event {
                 Composition::Commit(text) => (2, text),
                 Composition::Disabled => (3, String::new()),
             };
-            (EventKind::Composition, code, text)
+            (EventKind::Composition, code, text, Vec::new())
         }
-        // A pointer's action, position, button and modifiers, and a resize's
-        // size and scale, do not cross yet: only the kind does.
-        Input::Pointer(_) => (EventKind::PointerPressed, 0, String::new()),
-        Input::Resized(_) => (EventKind::Resize, 0, String::new()),
-        Input::CloseRequested => (EventKind::CloseRequested, 0, String::new()),
+        Input::Pointer(pointer) => {
+            let (code, words) = pointer_words(&pointer);
+            (EventKind::Pointer, code, String::new(), words)
+        }
+        Input::Resized(resize) => (
+            EventKind::Resize,
+            0,
+            String::new(),
+            vec![resize.width, resize.height, resize.scale.to_bits()],
+        ),
+        Input::CloseRequested => (EventKind::CloseRequested, 0, String::new(), Vec::new()),
     };
     Event {
         source: Source {
@@ -172,9 +242,91 @@ pub fn event(input: Input, stamp: u64) -> Event {
         kind,
         code,
         text,
-        words: Vec::new(),
+        words,
         stamp,
     }
+}
+
+/// The bits of `modifiers`, as a word ([`MODIFIER_SHIFT`] and the rest).
+fn modifier_bits(modifiers: Modifiers) -> u64 {
+    let bit = |set: bool, bit: u64| if set { bit } else { 0 };
+    bit(modifiers.shift, MODIFIER_SHIFT)
+        | bit(modifiers.control, MODIFIER_CONTROL)
+        | bit(modifiers.alt, MODIFIER_ALT)
+        | bit(modifiers.super_key, MODIFIER_SUPER)
+}
+
+/// Adds the count of the scalar values of `text`, then each of them by its
+/// number.
+fn push_scalars(words: &mut Vec<u64>, text: &str) {
+    words.push(words::word(text.chars().count()));
+    words.extend(text.chars().map(u64::from));
+}
+
+/// The words of a key: its logical key, its physical key and its modifiers
+/// (the table in the module docs).
+fn key_words(key: &Key) -> Vec<u64> {
+    let mut words = Vec::new();
+    match &key.logical {
+        LogicalKey::Unidentified => words.extend([LOGICAL_UNIDENTIFIED, 0]),
+        LogicalKey::Character(text) => {
+            words.push(LOGICAL_CHARACTER);
+            push_scalars(&mut words, text);
+        }
+        LogicalKey::Named(name) => {
+            words.push(LOGICAL_NAMED);
+            push_scalars(&mut words, name);
+        }
+        LogicalKey::Dead(None) => words.extend([LOGICAL_DEAD, 0]),
+        LogicalKey::Dead(Some(character)) => {
+            words.extend([LOGICAL_DEAD, 1, u64::from(*character)]);
+        }
+    }
+    match &key.physical {
+        PhysicalKey::Unidentified => words.extend([PHYSICAL_UNIDENTIFIED, 0]),
+        PhysicalKey::Code(code) => {
+            words.push(PHYSICAL_CODE);
+            push_scalars(&mut words, code);
+        }
+    }
+    words.push(modifier_bits(key.modifiers));
+    words
+}
+
+/// The code and the words of a pointer event (the table in the module
+/// docs).
+fn pointer_words(pointer: &Pointer) -> (u64, Vec<u64>) {
+    let (code, delta) = match pointer.action {
+        PointerAction::Press => (POINTER_PRESS, [WHEEL_NONE, 0, 0]),
+        PointerAction::Drag => (POINTER_DRAG, [WHEEL_NONE, 0, 0]),
+        PointerAction::Release => (POINTER_RELEASE, [WHEEL_NONE, 0, 0]),
+        PointerAction::Wheel(WheelDelta::Lines { x, y }) => {
+            (POINTER_WHEEL, [WHEEL_LINES, x.to_bits(), y.to_bits()])
+        }
+        PointerAction::Wheel(WheelDelta::Pixels { x, y }) => {
+            (POINTER_WHEEL, [WHEEL_PIXELS, x.to_bits(), y.to_bits()])
+        }
+    };
+    let (button, other) = match pointer.button {
+        None => (0, 0),
+        Some(Button::Primary) => (1, 0),
+        Some(Button::Secondary) => (2, 0),
+        Some(Button::Middle) => (3, 0),
+        Some(Button::Back) => (4, 0),
+        Some(Button::Forward) => (5, 0),
+        Some(Button::Other(number)) => (BUTTON_OTHER, u64::from(number)),
+    };
+    let words = vec![
+        pointer.x.to_bits(),
+        pointer.y.to_bits(),
+        button,
+        other,
+        modifier_bits(pointer.modifiers),
+        delta[0],
+        delta[1],
+        delta[2],
+    ];
+    (code, words)
 }
 
 /// Runs `platform`'s window on the calling thread, opened as `options` say,
@@ -362,7 +514,9 @@ pub extern "C" fn editor_ffi_input_clock_now() -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use editor_platform::{Button, Key, LogicalKey, Modifiers, Pointer, PointerAction, Resize};
+    use editor_platform::{
+        Button, Key, LogicalKey, Modifiers, PhysicalKey, Pointer, PointerAction, Resize, WheelDelta,
+    };
     use std::sync::mpsc::{self, Receiver};
     use std::thread;
     use std::time::Duration;
@@ -477,9 +631,14 @@ mod tests {
         let done = start(&platform, WindowOptions::default(), &queue);
 
         // The stamps are the clock's readings 1, 2, 3 and so on: one reading
-        // for each input, taken as it was reported.
+        // for each input, taken as it was reported. The words of each event
+        // are left out here: the tests of `event` pin them.
+        let pulled: Vec<Event> = pull(&queue, 14)
+            .into_iter()
+            .map(|event| event.with_words(Vec::new()))
+            .collect();
         assert_eq!(
-            pull(&queue, 14),
+            pulled,
             [
                 from_window(EventKind::WindowOpened, 0, ScriptedPlatform::NAME, 1),
                 from_window(EventKind::WindowFocus, 1, "", 2),
@@ -492,7 +651,7 @@ mod tests {
                 from_window(EventKind::Composition, 1, "´", 9),
                 from_window(EventKind::Composition, 2, "é", 10),
                 from_window(EventKind::Composition, 3, "", 11),
-                from_window(EventKind::PointerPressed, 0, "", 12),
+                from_window(EventKind::Pointer, 0, "", 12),
                 from_window(EventKind::Resize, 0, "", 13),
                 from_window(EventKind::CloseRequested, 0, "", 14),
             ]
@@ -504,6 +663,254 @@ mod tests {
     #[test]
     fn the_bits_of_a_key_events_code_are_one_two_and_four() {
         assert_eq!((KEY_PRESSED, KEY_REPEAT, KEY_DEAD), (1, 2, 4));
+    }
+
+    /// The kind, the code, the text and the words of the event `input` is.
+    fn encoded(input: Input) -> (EventKind, u64, String, Vec<u64>) {
+        let event = event(input, 0);
+        (event.kind, event.code, event.text, event.words)
+    }
+
+    /// The modifiers with exactly these held.
+    fn held(shift: bool, control: bool, alt: bool, super_key: bool) -> Modifiers {
+        Modifiers {
+            shift,
+            control,
+            alt,
+            super_key,
+        }
+    }
+
+    /// The bits of a float, as they cross.
+    fn bits(value: f64) -> u64 {
+        value.to_bits()
+    }
+
+    #[test]
+    fn the_bits_of_the_modifiers_are_one_two_four_and_eight() {
+        assert_eq!(
+            (
+                MODIFIER_SHIFT,
+                MODIFIER_CONTROL,
+                MODIFIER_ALT,
+                MODIFIER_SUPER
+            ),
+            (1, 2, 4, 8)
+        );
+    }
+
+    #[test]
+    fn a_character_key_is_its_characters_its_code_and_its_modifiers() {
+        let input = Input::Key(Key {
+            pressed: true,
+            repeat: false,
+            logical: LogicalKey::Character("a".into()),
+            physical: PhysicalKey::Code("KeyA".into()),
+            modifiers: held(true, true, false, false),
+            text: "a".into(),
+        });
+
+        assert_eq!(
+            encoded(input),
+            (
+                EventKind::Key,
+                KEY_PRESSED,
+                "a".into(),
+                vec![1, 1, 97, 1, 4, 75, 101, 121, 65, 3]
+            )
+        );
+    }
+
+    #[test]
+    fn a_character_of_several_scalars_is_each_of_them_by_its_number() {
+        let input = Input::Key(Key {
+            pressed: true,
+            logical: LogicalKey::Character("é😀".into()),
+            ..Key::unidentified()
+        });
+
+        assert_eq!(encoded(input).3, vec![1, 2, 0xE9, 0x1F600, 0, 0, 0]);
+    }
+
+    #[test]
+    fn a_named_key_is_its_name_and_a_repeat_with_every_modifier_sets_every_bit() {
+        let input = Input::Key(Key {
+            pressed: true,
+            repeat: true,
+            logical: LogicalKey::Named("Escape".into()),
+            physical: PhysicalKey::Code("Escape".into()),
+            modifiers: held(true, true, true, true),
+            text: String::new(),
+        });
+        let escape: Vec<u64> = "Escape".chars().map(u64::from).collect();
+        let mut words = vec![2, 6];
+        words.extend(&escape);
+        words.extend([1, 6]);
+        words.extend(&escape);
+        words.push(15);
+
+        assert_eq!(
+            encoded(input),
+            (
+                EventKind::Key,
+                KEY_PRESSED | KEY_REPEAT,
+                String::new(),
+                words
+            )
+        );
+    }
+
+    #[test]
+    fn a_dead_key_is_tag_three_with_its_character_or_none_and_sets_the_dead_bit() {
+        let dead = |character| {
+            Input::Key(Key {
+                pressed: true,
+                logical: LogicalKey::Dead(character),
+                ..Key::unidentified()
+            })
+        };
+
+        assert_eq!(
+            encoded(dead(Some('´'))),
+            (
+                EventKind::Key,
+                KEY_PRESSED | KEY_DEAD,
+                String::new(),
+                vec![3, 1, 0xB4, 0, 0, 0]
+            )
+        );
+        assert_eq!(
+            encoded(dead(None)),
+            (
+                EventKind::Key,
+                KEY_PRESSED | KEY_DEAD,
+                String::new(),
+                vec![3, 0, 0, 0, 0]
+            )
+        );
+    }
+
+    #[test]
+    fn an_unidentified_key_is_tag_zero_twice_and_no_modifier() {
+        assert_eq!(
+            encoded(Input::Key(Key::unidentified())),
+            (EventKind::Key, 0, String::new(), vec![0, 0, 0, 0, 0])
+        );
+    }
+
+    #[test]
+    fn each_pointer_action_is_its_code_with_the_position_the_button_and_the_modifiers() {
+        let pointer = |action, button| {
+            Input::Pointer(Pointer {
+                action,
+                x: 12.5,
+                y: -3.25,
+                button,
+                modifiers: held(false, false, true, false),
+            })
+        };
+        let words = |button: u64, other: u64, delta: [u64; 3]| {
+            vec![
+                bits(12.5),
+                bits(-3.25),
+                button,
+                other,
+                4,
+                delta[0],
+                delta[1],
+                delta[2],
+            ]
+        };
+
+        assert_eq!(
+            encoded(pointer(PointerAction::Press, Some(Button::Primary))),
+            (EventKind::Pointer, 0, String::new(), words(1, 0, [0, 0, 0]))
+        );
+        assert_eq!(
+            encoded(pointer(PointerAction::Drag, Some(Button::Secondary))),
+            (EventKind::Pointer, 1, String::new(), words(2, 0, [0, 0, 0]))
+        );
+        assert_eq!(
+            encoded(pointer(PointerAction::Release, Some(Button::Middle))),
+            (EventKind::Pointer, 2, String::new(), words(3, 0, [0, 0, 0]))
+        );
+        assert_eq!(
+            encoded(pointer(
+                PointerAction::Wheel(WheelDelta::Lines { x: 0.0, y: -1.5 }),
+                None
+            )),
+            (
+                EventKind::Pointer,
+                3,
+                String::new(),
+                words(0, 0, [1, bits(0.0), bits(-1.5)])
+            )
+        );
+        assert_eq!(
+            encoded(pointer(
+                PointerAction::Wheel(WheelDelta::Pixels { x: 7.0, y: 0.5 }),
+                None
+            )),
+            (
+                EventKind::Pointer,
+                3,
+                String::new(),
+                words(0, 0, [2, bits(7.0), bits(0.5)])
+            )
+        );
+    }
+
+    #[test]
+    fn each_button_is_its_tag_and_another_button_carries_its_number() {
+        let button = |button| {
+            encoded(Input::Pointer(Pointer {
+                action: PointerAction::Press,
+                x: 0.0,
+                y: 0.0,
+                button: Some(button),
+                modifiers: Modifiers::default(),
+            }))
+            .3[2..4]
+                .to_vec()
+        };
+
+        assert_eq!(button(Button::Primary), [1, 0]);
+        assert_eq!(button(Button::Secondary), [2, 0]);
+        assert_eq!(button(Button::Middle), [3, 0]);
+        assert_eq!(button(Button::Back), [4, 0]);
+        assert_eq!(button(Button::Forward), [5, 0]);
+        assert_eq!(button(Button::Other(9)), [6, 9]);
+    }
+
+    #[test]
+    fn a_resize_is_its_width_its_height_and_the_bits_of_its_scale() {
+        assert_eq!(
+            encoded(Input::Resized(Resize {
+                width: 800,
+                height: 600,
+                scale: 2.0,
+            })),
+            (
+                EventKind::Resize,
+                0,
+                String::new(),
+                vec![800, 600, bits(2.0)]
+            )
+        );
+    }
+
+    #[test]
+    fn every_other_input_has_no_words() {
+        for input in [
+            Input::Opened {
+                platform: "scripted".into(),
+            },
+            Input::Focus(true),
+            Input::Composition(Composition::Preedit("´".into())),
+            Input::CloseRequested,
+        ] {
+            assert_eq!(encoded(input).3, Vec::<u64>::new());
+        }
     }
 
     #[test]

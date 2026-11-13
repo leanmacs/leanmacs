@@ -50,7 +50,9 @@ def decode (event : Ffi.Event) : Input :=
       | .composition, 1 => .preedit event.text
       | .composition, 2 => .commit event.text
       | .composition, 3 => .compositionDisabled
-      | .pointerPressed, _ => .pointerPressed
+      -- A pointer's code 0 is a press; its other actions and a resize are
+      -- nothing to the check.
+      | .pointer, 0 => .pointerPressed
       | .closeRequested, _ => .closeRequested
       | _, _ => .other
 

@@ -8,7 +8,7 @@ use std::sync::{Condvar, Mutex, MutexGuard, PoisonError};
 
 use crate::{
     Button, CannotOpen, Composition, Input, Key, LogicalKey, Modifiers, PhysicalKey, Platform,
-    Pointer, PointerAction, Report, WindowOptions,
+    Pointer, PointerAction, Report, Resize, WindowOptions,
 };
 
 /// A platform whose window reports [`Input::Opened`], then a script of
@@ -75,7 +75,7 @@ impl ScriptedPlatform {
     /// release produces no text); a dead key `´` pressed, which produces none
     /// either; `é` pressed; a composition enabled, its preedit `´` and its
     /// commit `é`; the secondary button pressed at (12.5, 40) with alt held;
-    /// and a request to close. The keys but the first two carry no physical
+    /// the window resized to 800 by 600 at scale 2; and a request to close. The keys but the first two carry no physical
     /// key and no modifiers.
     pub fn sample_script() -> Vec<Input> {
         vec![
@@ -115,6 +115,11 @@ impl ScriptedPlatform {
                     alt: true,
                     ..Modifiers::default()
                 },
+            }),
+            Input::Resized(Resize {
+                width: 800,
+                height: 600,
+                scale: 2.0,
             }),
             Input::CloseRequested,
         ]
@@ -429,6 +434,11 @@ mod tests {
                         alt: true,
                         ..Modifiers::default()
                     },
+                }),
+                Input::Resized(Resize {
+                    width: 800,
+                    height: 600,
+                    scale: 2.0,
                 }),
                 Input::CloseRequested,
             ]

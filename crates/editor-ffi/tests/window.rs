@@ -45,8 +45,8 @@ const SCRIPTED_FAILING: u8 = PlatformId::ScriptedFailing.tag();
 const NO_PLATFORM: u8 = u8::MAX;
 
 /// One event of the editor queue as the glue would read it: its source's
-/// kind and id, its kind, its code, its text and its stamp, the kinds still
-/// the library's numbers.
+/// kind and id, its kind, its code, its text, its words and its stamp, the
+/// kinds still the library's numbers.
 #[derive(Debug, PartialEq, Eq)]
 struct Seen {
     source_kind: u64,
@@ -54,6 +54,7 @@ struct Seen {
     kind: u64,
     code: u64,
     text: String,
+    words: Vec<u64>,
     stamp: u64,
 }
 
@@ -74,12 +75,19 @@ fn next_event() -> Seen {
         // SAFETY: the buffer came from the library in this record, and is
         // handed back once.
         unsafe { editor_ffi_text_free(raw.text, raw.text_len) };
+        // SAFETY: as for the text, with the buffer of words.
+        let words = unsafe { slice::from_raw_parts(raw.words, raw.words_len) }.to_vec();
+        // SAFETY: as for the text.
+        unsafe { editor_ffi_text_free(raw.words, raw.words_len) };
+        let (words, rest) = words.as_chunks::<8>();
+        assert!(rest.is_empty(), "an event's words are whole words");
         let _ = done.send(Seen {
             source_kind: raw.source_kind,
             source_id: raw.source_id,
             kind: raw.kind,
             code: raw.code,
             text: String::from_utf8(text).expect("an event's text is UTF-8"),
+            words: words.iter().copied().map(u64::from_le_bytes).collect(),
             stamp: raw.stamp,
         });
     });
@@ -133,6 +141,7 @@ fn sample(composition: bool) -> Vec<Seen> {
                 kind,
                 code,
                 text,
+                words,
                 ..
             } = window::event(input, 0);
             Seen {
@@ -141,6 +150,7 @@ fn sample(composition: bool) -> Vec<Seen> {
                 kind: kind.tag(),
                 code,
                 text,
+                words,
                 stamp: 0,
             }
         })

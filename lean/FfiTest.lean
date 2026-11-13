@@ -174,13 +174,13 @@ def dataChecks (_ : Unit) : List Check :=
     { name := "the tags of a window's events and of the window source are known"
       run :=
         pure
-          ((([3, 4, 5, 6, 7, 8] : List UInt64).map Editor.Ffi.EventKind.ofTag?) ==
-              [some .windowOpened, some .windowFocus, some .key, some .composition,
-                some .pointerPressed, some .closeRequested] &&
+          ((([3, 4, 5, 6, 7, 8, 9] : List UInt64).map Editor.Ffi.EventKind.ofTag?) ==
+              [some .windowOpened, some .windowFocus, some .key, some .composition, some .pointer,
+                some .closeRequested, some .resize] &&
             Editor.Ffi.SourceKind.ofTag? 3 == some .window) },
     { name := "a tag the bindings do not know is refused"
       run :=
-        pure ((Editor.Ffi.EventKind.ofTag? 9).isNone && (Editor.Ffi.SourceKind.ofTag? 4).isNone) }]
+        pure ((Editor.Ffi.EventKind.ofTag? 10).isNone && (Editor.Ffi.SourceKind.ofTag? 4).isNone) }]
 
 /-- An hour, in milliseconds: a deadline no check reaches. -/
 def hour : UInt64 :=
@@ -1012,17 +1012,30 @@ def inverseChecks (_ : Unit) : List Check :=
             !noWord &&
             (← document.read) == "héllo!" }]
 
+/-- The words of a key the scripted platform could not identify, with no
+modifier held. -/
+def unidentifiedKey : Array UInt64 :=
+  #[0, 0, 0, 0, 0]
+
 /-- What the library's scripted platform reports of its window, as the kind,
-the code and the text of each event: that it opened, with the platform's
-name; the focus gained; `a` pressed and released; a dead key pressed; `é`
-pressed; then, when composition is allowed, a composition enabled, its
-preedit and its commit; a pointer press; and a request to close. -/
-def windowSample (composition : Bool) : List (Editor.Ffi.EventKind × UInt64 × String) :=
-  [(.windowOpened, 0, "scripted"), (.windowFocus, 1, ""), (.key, 1, "a"), (.key, 0, ""),
-      (.key, 5, ""), (.key, 1, "é")] ++
-    (if composition then [(.composition, 0, ""), (.composition, 1, "´"), (.composition, 2, "é")]
+the code, the text and the words of each event: that it opened, with the
+platform's name; the focus gained; `a` pressed, the character `a` on the key
+`KeyA` (75, 101, 121, 65) with shift and control (bits 1 and 2); `a`
+released, unidentified; the dead key `´` (180) pressed; `é` pressed,
+unidentified; then, when composition is allowed, a composition enabled, its
+preedit and its commit; the secondary button (2) pressed at (12.5, 40) with
+alt (bit 4); the window resized to 800 by 600 at scale 2; and a request to
+close. A float is its bits. -/
+def windowSample (composition : Bool) :
+    List (Editor.Ffi.EventKind × UInt64 × String × Array UInt64) :=
+  [(.windowOpened, 0, "scripted", #[]), (.windowFocus, 1, "", #[]),
+      (.key, 1, "a", #[1, 1, 97, 1, 4, 75, 101, 121, 65, 3]), (.key, 0, "", unidentifiedKey),
+      (.key, 5, "", #[3, 1, 180, 0, 0, 0]), (.key, 1, "é", unidentifiedKey)] ++
+    (if composition then
+      [(.composition, 0, "", #[]), (.composition, 1, "´", #[]), (.composition, 2, "é", #[])]
     else []) ++
-    [(.pointerPressed, 0, ""), (.closeRequested, 0, "")]
+    [(.pointer, 0, "", #[(12.5 : Float).toBits, (40.0 : Float).toBits, 2, 0, 4, 0, 0, 0]),
+      (.resize, 0, "", #[800, 600, (2.0 : Float).toBits]), (.closeRequested, 0, "", #[])]
 
 /-- What one run of the scripted platform's window showed. -/
 structure WindowRun where
@@ -1068,7 +1081,8 @@ def runScripted (composition : Bool) : IO WindowRun := do
 from the window source of the window number 1. -/
 def isWindowSample (composition : Bool) (events : List Editor.Ffi.Event) : Bool :=
   events.all (·.source == { kind := .window, id := 1 }) &&
-    events.map (fun event => (event.kind, event.code, event.text)) == windowSample composition
+    events.map (fun event => (event.kind, event.code, event.text, event.words)) ==
+      windowSample composition
 
 /-- Runs the keyboard check (`Editor/WindowCheck.lean`) over the real
 bindings, on `platform`, and returns the lines of its report and its exit
@@ -1240,8 +1254,14 @@ def decodeChecks (_ : Unit) : List Check :=
     { name := "a pointer press and a request to close decode to themselves"
       run :=
         pure
-          (decoded .pointerPressed 0 == .pointerPressed &&
-            decoded .closeRequested 0 == .closeRequested) },
+          (decoded .pointer 0 == .pointerPressed && decoded .closeRequested 0 == .closeRequested) },
+    { name :=
+        "a pointer's drag, release and wheel, and a resize, decode to nothing: the keyboard check counts presses only"
+      run :=
+        pure
+          (decoded .pointer 1 == .other && decoded .pointer 2 == .other &&
+            decoded .pointer 3 == .other &&
+            decoded .resize 0 == .other) },
     { name := "a quit of the queue decodes to the stop, whatever its source"
       run :=
         pure
