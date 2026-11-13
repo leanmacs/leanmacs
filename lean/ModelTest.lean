@@ -4935,7 +4935,57 @@ def vimStateChecks : List Check :=
         let (state, yields) := vimFedFrom entered "2 g z"
         pure
           (yields == [none, none, none] && state.current == [(⟨0⟩, "visual")] &&
-            decide (state = entered)) }]
+            decide (state = entered)) },
+    { name :=
+        "in a state that inserts text an unbound printable key yields a self-insert of the text it prints: a letter, the space, and a shifted letter from a window"
+      run :=
+        let (inserting, _) := vimFed "i"
+        let shifted : Key :=
+          { logical := .character "A", physical := .code "KeyA", modifiers := { shift := true } }
+        let fromWindow : Vim.State × List (Option Invocation) :=
+          (Vim.scheme vimStates).feed vimNoMaps ⟨0⟩ inserting [shifted]
+        pure
+          (Vim.selfInsert "a" == { command := "self-insert", arguments := [.str "a"] } &&
+            (vimFedFrom inserting "a").2 == [some (Vim.selfInsert "a")] &&
+            (vimFedFrom inserting "SPC w").2 ==
+              [some (Vim.selfInsert " "), some (Vim.selfInsert "w")] &&
+            fromWindow.2 == [some (Vim.selfInsert "A")]) },
+    { name := "in a state that does not insert text an unbound printable key yields nothing"
+      run :=
+        pure
+          ((vimFed "a").2 == [none] && (vimFed "v a").2.getLast? == some none &&
+            (vimFed "i <Escape> a").2.getLast? == some none) },
+    { name :=
+        "in a state that inserts text a digit is text and not a count, 0 among them, and the key typed next carries no count"
+      run :=
+        let (inserting, _) := vimFed "i"
+        let (state, yields) := vimFedFrom inserting "2 0"
+        pure
+          (yields == [some (Vim.selfInsert "2"), some (Vim.selfInsert "0")] &&
+            state.count == none &&
+            (vimFedFrom inserting "2 <Escape> w").2.getLast? == some (some (vimMove "word"))) },
+    { name :=
+        "in a state that inserts text an unbound key that prints nothing yields nothing and leaves the view in the state: a named key, and a character with control held"
+      run :=
+        let (inserting, _) := vimFed "i"
+        let (state, yields) := vimFedFrom inserting "<Enter> C-z"
+        pure (yields == [none, none] && decide (state = inserting)) },
+    { name :=
+        "in a state that inserts text an unbound key after a pending prefix is dropped with the prefix: neither is text"
+      run :=
+        let (inserting, _) := vimFed "i"
+        let active (_ : ViewId) : List (Keymap Vim.Bound) :=
+          [vimKeymap [("j k", .command { name := "normal", enters := some "normal" })]]
+        let (state, yields) := vimFedFrom inserting "j z" active
+        pure
+          (yields == [none, none] && decide (state = inserting) &&
+            (vimFedFrom inserting "j" active).1.typed == keys "j" &&
+            (vimFedFrom inserting "j k" active).1.current == []) },
+    { name := "a self-insert leaves the scheme's state as it was, with nothing pending"
+      run :=
+        let (inserting, _) := vimFed "i"
+        let (state, _) := vimFedFrom inserting "a b"
+        pure (decide (state = inserting) && state.typed == []) }]
 
 /-- The checks that the Vim scheme keeps the scheme contract
 (`Editor/InputScheme/Contract.lean`). -/

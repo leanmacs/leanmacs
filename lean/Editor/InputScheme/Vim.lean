@@ -58,6 +58,12 @@ is `parse` with the edit compiled, and `scheme` packages it as an
   each view is in, so in a view that entered no state the state is then the
   scheme's initial state.
 - **`pending` is every key of the edit begun** (`State.typed`), as chords.
+- **Typed text is a self-insert** (`selfInsert`, the invocation
+  `self-insert` with the text as its argument). It is yielded for a key
+  that is unbound and prints (`Key.printed?`), typed with no edit begun,
+  for a view whose Vim state inserts text (`StateRecord.insertsText`). It
+  leaves the state as it was. Text typed is not an `Edit`. An unbound key
+  after a prefix is dropped with the prefix there too, and is not text.
 
 ## Counts
 
@@ -69,7 +75,9 @@ is `parse` with the edit compiled, and `scheme` packages it as an
 - **No count is not a count of 1.** An edit's count is optional, and
   compiles to 0 when absent. Only the doubled operator fills it in.
 - **A digit is a key whose chord is one digit character with no modifier.**
-  It is read as a count when no keymap prefix is being walked. `0` is a
+  It is read as a count when no keymap prefix is being walked and the
+  view's Vim state does not insert text: a digit is text exactly where
+  typing is text, so one field of the record says both. `0` is a
   digit only while a count is being typed; otherwise it is looked up like
   any key, so it can be bound to a motion. Digits are not bound in a
   keymap: the rule for `0` needs the count typed so far, which a keymap
@@ -335,6 +343,8 @@ inductive Parsed where
   | nothing
   /-- The key completed this edit. -/
   | edit (edit : Edit)
+  /-- The key is typed text: this is what it prints. -/
+  | text (text : String)
   deriving DecidableEq, Repr
 
 /-- The state with the edit begun dropped. A reset keeps which Vim state
@@ -392,25 +402,36 @@ private def State.reached (states : States) (view : ViewId) (state : State) (typ
 
 /-- One key of the grammar, a key for `view`: the state it leaves, and what
 it parsed to (the rules in the module docs). A digit of a count is taken
-first; any other key is walked through the active keymaps of `view` and
-then the keymaps of the view's Vim state. -/
+first, where typing is not text; any other key is walked through the
+active keymaps of `view` and then the keymaps of the view's Vim state. An
+unbound key is text when the view's state inserts text, the key prints and
+no edit is begun, and otherwise resets. -/
 def parse (states : States) (maps : ViewId → List (Keymap Bound)) (view : ViewId) (state : State)
     (key : Key) : State × Parsed :=
+  let record := state.record states view
   let typed := state.typed ++ [key.chord]
-  match state.countDigit? key with
+  match if record.insertsText then none else state.countDigit? key with
   | some digit =>
     ({ state with
         typed, digits := some (state.digits.getD 0 * 10 + digit) },
       .nothing)
   | none =>
-    match Keymap.walk (maps view ++ (state.record states view).keymaps) state.walked key with
+    match Keymap.walk (maps view ++ record.keymaps) state.walked key with
     | (_, some binding) => state.reached states view typed binding
     | (walked, none) =>
-      if walked.isEmpty then (state.reset, .nothing)
-      else
+      if !walked.isEmpty then
         ({ state with
             typed, walked },
           .nothing)
+      else
+        if record.insertsText && state.typed.isEmpty then
+          (state, (key.printed?.map Parsed.text).getD .nothing)
+        else (state.reset, .nothing)
+
+/-- The invocation typed text yields: the command `self-insert`, with the
+text a key printed as its argument. -/
+def selfInsert (text : String) : Invocation :=
+  { command := "self-insert", arguments := [.str text] }
 
 /-- One key of the Vim scheme: `parse`, with the edit it completed compiled
 to its invocation. -/
@@ -419,6 +440,7 @@ def step (states : States) (maps : ViewId → List (Keymap Bound)) (view : ViewI
   match parse states maps view state key with
   | (next, .nothing) => (next, none)
   | (next, .edit edit) => (next, some edit.compile)
+  | (next, .text text) => (next, some (selfInsert text))
 
 /-- The Vim scheme over the registry `states`. Its bindings are parts of
 speech, and it reports every key of the edit begun as pending. -/
