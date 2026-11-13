@@ -31,9 +31,14 @@
 //!
 //! The editor reaches a document only through the text port's real binding
 //! (`lean/Editor/Text/Real.lean`).
+//!
+//! Each document has a key no other document has ([`Document::key`]), and
+//! its text is shared, weakly, with the snapshots taken of it
+//! ([`crate::snapshot`]), so a snapshot handle is enough to reach the
+//! document's log and markers while the document lives.
 
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Mutex, MutexGuard, PoisonError};
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError, Weak};
 
 use editor_text::Text;
 
@@ -44,8 +49,22 @@ use crate::text;
 /// so every method takes `&self` and the type is `Send + Sync`.
 pub struct Document {
     /// The text. An edit holds the lock from its check to its change, so
-    /// edits from several threads apply one after another.
-    text: Mutex<Text>,
+    /// edits from several threads apply one after another. It is shared
+    /// with the snapshots taken of it only as a [`Weak`], so it is freed with
+    /// the document.
+    text: Arc<Mutex<Text>>,
+    /// The document's key: a number no other document or snapshot of the
+    /// process has ([`next_key`]). Layout keeps what it laid out of a text
+    /// by it.
+    key: u64,
+}
+
+/// The next key of a text: a number given out once in the process, to a
+/// document or to a snapshot no document holds.
+pub(crate) fn next_key() -> u64 {
+    /// The next key to give out.
+    static NEXT: AtomicU64 = AtomicU64::new(0);
+    NEXT.fetch_add(1, Ordering::Relaxed)
 }
 
 impl Document {
@@ -58,8 +77,21 @@ impl Document {
     /// markers and its kept inverses.
     pub(crate) fn over(text: Text) -> Self {
         Self {
-            text: Mutex::new(text),
+            text: Arc::new(Mutex::new(text)),
+            key: next_key(),
         }
+    }
+
+    /// The document's key: no other document's, and no snapshot's but those
+    /// taken of it.
+    pub fn key(&self) -> u64 {
+        self.key
+    }
+
+    /// The text, to be read later without keeping it alive: a snapshot's
+    /// source.
+    pub(crate) fn shared(&self) -> Weak<Mutex<Text>> {
+        Arc::downgrade(&self.text)
     }
 
     /// Replaces the bytes from `start` up to, not including, `end` with
