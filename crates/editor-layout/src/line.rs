@@ -437,6 +437,17 @@ mod tests {
     }
 
     #[test]
+    fn an_empty_row_is_as_tall_as_the_font_of_a_span_at_its_start() {
+        let entry = row_with("ab\n\ncd", 1, &[(0..0, FontId(1))], Some(40.0));
+        assert_eq!(lines(&entry), vec![0..0]);
+        assert_eq!(entry.lines()[0].height, 32.0);
+        // A later span is over an earlier one.
+        let spans = [(0..0, FontId(1)), (0..0, FontId(0))];
+        let entry = row_with("ab\n\ncd", 1, &spans, Some(40.0));
+        assert_eq!(entry.lines()[0].height, 16.0);
+    }
+
+    #[test]
     fn a_span_in_another_font_is_shaped_in_it() {
         let entry = row_with("abcd", 0, &[(1..3, FontId(1))], None);
         let fonts: Vec<FontId> = entry.lines()[0]

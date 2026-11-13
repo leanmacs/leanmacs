@@ -8,7 +8,10 @@ use std::fmt::Debug;
 use std::sync::{Arc, Mutex};
 
 use editor_layout::Layout;
-use editor_layout::scene::{Changes, Cursor, Rect, Scene, TextKey, TextRef, View, ViewId};
+use editor_layout::scene::{
+    Changes, Cursor, Decoration, Rect, Scene, TextKey, TextRef, View, ViewId,
+};
+use editor_layout::shaper::FontId;
 use editor_layout::shaper::fake::CellShaper;
 use editor_text::{Patch, Revision, Text};
 use proptest::collection::vec;
@@ -292,4 +295,29 @@ fn a_text_no_scene_names_is_dropped_when_a_scene_is_published() {
     assert_eq!(layout.texts_kept(), 2);
     layout.frame(&scene(&[first]));
     assert_eq!(layout.texts_kept(), 1);
+}
+
+#[test]
+fn a_query_after_an_edit_is_in_the_default_font_until_a_frame_shows_the_text() {
+    let shared = Shared(Arc::new(Mutex::new(Text::from("ab\ncd\nef"))));
+    let changes: Arc<dyn Changes> = Arc::new(shared.clone());
+    let mut layout = Layout::new(CellShaper::new(10.0, 16.0).with_font(FontId(1), 10.0, 32.0));
+    layout.faces_mut().set_font("tall", FontId(1));
+    // The second row is in a face whose font is twice as tall.
+    let first = text_ref(1, &shared.0.lock().unwrap(), changes.clone());
+    let mut shown = scene(std::slice::from_ref(&first));
+    shown.views[0].decorations = vec![Decoration {
+        start: 3,
+        stop: 5,
+        face: "tall".to_owned(),
+    }];
+    layout.frame(&shown);
+    // A query is in the fonts of that frame: 48 pixels hold two rows.
+    assert_eq!(layout.rows_shown(&first, 40.0, 48.0, 0).unwrap().len(), 2);
+    // The frame's decorations are offsets of the text it showed. After an
+    // edit they are not read: the rows are in the default font, and three
+    // fit.
+    shared.0.lock().unwrap().replace(0..0, "x").unwrap();
+    let edited = text_ref(1, &shared.0.lock().unwrap(), changes);
+    assert_eq!(layout.rows_shown(&edited, 40.0, 48.0, 0).unwrap().len(), 3);
 }

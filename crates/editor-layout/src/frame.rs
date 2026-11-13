@@ -951,6 +951,45 @@ mod tests {
         assert_eq!(rows[0].bytes, 0..3);
         let cursors = frame(&mut layout, view("aé\nb", 4, 64, 0, &[(9, 9)])).cursors;
         assert_eq!((cursors[0].area.x, cursors[0].area.y), (10.0, 16.0));
+        // A decoration that starts inside é starts at é, and one that
+        // stops inside it stops before it.
+        let decorated = |start: usize, stop: usize| {
+            let mut layout = self::layout();
+            let mut view = view("aéb", 4, 16, 0, &[]);
+            view.decorations = vec![Decoration {
+                start,
+                stop,
+                face: "face".to_owned(),
+            }];
+            let row = frame(&mut layout, view).rows.remove(0);
+            let face = layout.faces_mut().intern("face");
+            (row.runs, face)
+        };
+        let (runs, face) = decorated(2, 4);
+        assert_eq!(runs, vec![(0..1, vec![]), (1..4, vec![face])]);
+        let (runs, face) = decorated(0, 2);
+        assert_eq!(runs, vec![(0..1, vec![face]), (1..4, vec![])]);
+    }
+
+    #[test]
+    fn a_cursor_is_as_wide_as_the_glyph_it_is_on() {
+        // The face `wide` is in a font whose glyphs are 20 across.
+        let mut layout = Layout::new(CellShaper::new(10.0, 16.0).with_font(FontId(1), 20.0, 16.0));
+        layout.faces_mut().set_font("wide", FontId(1));
+        let mut area = |head: usize| {
+            let mut view = view("abc", 10, 16, 0, &[(head, head)]);
+            view.decorations = vec![Decoration {
+                start: 1,
+                stop: 2,
+                face: "wide".to_owned(),
+            }];
+            frame(&mut layout, view).cursors[0].area
+        };
+        assert_eq!(area(0), self::area(0.0, 0.0, 10.0, 16.0));
+        assert_eq!(area(1), self::area(10.0, 0.0, 20.0, 16.0));
+        assert_eq!(area(2), self::area(30.0, 0.0, 10.0, 16.0));
+        // Past the last glyph, the default advance.
+        assert_eq!(area(3), self::area(40.0, 0.0, 10.0, 16.0));
     }
 
     /// A source that records the ranges it is asked for.
