@@ -4465,13 +4465,15 @@ def vimKeymap (table : List (String × Vim.Bound)) : Keymap Vim.Bound :=
 `word` on `w`, a motion on two keys and one on `0`, a text object, and
 commands: one that enters `insert` and changes text, one that enters
 `visual`, one that does neither, and one that changes text and enters no
-state. The names are the checks' own, and are no default's. -/
+state; and the register prefix on `"`. The names are the checks' own, and
+are no default's. -/
 def vimNormalTable : List (String × Vim.Bound) :=
   [("d", .operator vimDelete), ("c", .operator vimChange), ("y", .operator vimYank),
     ("w", .motion "word"), ("g g", .motion "first-line"), ("0", .motion "line-start"),
     ("t", .textObject "thing"), ("i", .command vimInsert),
     ("v", .command { name := "visual", enters := some "visual" }),
-    ("u", .command { name := "undo" }), ("x", .command { name := "delete-char", changes := true })]
+    ("u", .command { name := "undo" }), ("x", .command { name := "delete-char", changes := true }),
+    ("\"", .register)]
 
 /-- What the Vim checks' insert and visual states bind first: a command
 that enters `normal`. -/
@@ -4603,11 +4605,13 @@ def vimOperate (operator kind name : String) (count : Nat := 0) (register : Stri
 /-- The inputs the Vim checks give the scheme contract as complete, as key
 strings. -/
 def vimSequences : List String :=
-  ["g g", "w", "d w", "d d", "d 2 w", "2 d 3 w"]
+  ["g g", "w", "d w", "d d", "d 2 w", "2 d 3 w", "\" + y w"]
 
-/-- The key the Vim checks give the scheme contract as unbound. -/
+/-- The key the Vim checks give the scheme contract as unbound: a named
+key. A key that prints goes on with one strict prefix whatever is bound,
+the register prefix, by naming the register. -/
 def vimUnbound : Key :=
-  charKey "z"
+  namedKey ⟨"F12"⟩
 
 /-- The subject the scheme contract is run on for the Vim scheme: the
 scheme over `vimStates`, with no active keymaps, for view 0. -/
@@ -4840,7 +4844,62 @@ def vimGrammarChecks : List Check :=
         pure
           (vimPending "d 2" == keys "d 2" && vimPending "2 d 3" == keys "2 d 3" &&
             vimPending "1 0" == keys "1 0" &&
-            vimPending "2 d 3 w" == []) }]
+            vimPending "2 d 3 w" == []) },
+    { name :=
+        "a register named before an operator is carried by its edit: the key after the register prefix names it by the text it prints"
+      run :=
+        pure
+          ((vimFed "\" + y w").2 ==
+              [none, none, none, some (vimOperate "yank" "motion" "word" 0 "+")] &&
+            (vimParsed "\" + y w").2.getLast? ==
+              some (.edit (.operate vimYank (.motion "word") none (some "+"))) &&
+            (vimFed "\" A d d").2.getLast? == some (some (vimOperate "delete" "lines" "" 1 "A"))) },
+    { name :=
+        "a register named before a command is carried by its edit, and a digit after the register prefix names a register"
+      run :=
+        pure
+          ((vimFed "\" a x").2 ==
+              [none, none, some { command := "delete-char", arguments := [.nat 0, .str "a"] }] &&
+            (vimFed "\" 2 x").2 ==
+              [none, none, some { command := "delete-char", arguments := [.nat 0, .str "2"] }]) },
+    { name :=
+        "a move carries no register: one named before a motion is dropped when the motion completes"
+      run :=
+        let (state, yields) := vimFed "\" a w"
+        pure
+          (yields == [none, none, some (vimMove "word")] && decide (state = vimInit) &&
+            (vimFed "\" a w x").2.getLast? ==
+              some (some { command := "delete-char", arguments := [.nat 0, .str ""] })) },
+    { name :=
+        "counts before the register prefix and after the register multiply: 2 \" a 3 d d is six lines into a"
+      run :=
+        pure
+          ((vimFed "2 \" a 3 d d").2 ==
+            [none, none, none, none, none, some (vimOperate "delete" "lines" "" 6 "a")]) },
+    { name :=
+        "a key that prints nothing after the register prefix yields nothing and resets the edit"
+      run :=
+        let (state, yields) := vimFed "2 \" <Escape>"
+        pure
+          (yields == [none, none, none] && decide (state = vimInit) &&
+            (vimFed "\" C-a w").2 == [none, none, some (vimMove "word")]) },
+    { name :=
+        "the register prefix after an operator, and after a register is already named, yields nothing and resets the edit"
+      run :=
+        let (afterOperator, operatorYields) := vimFed "d \""
+        let (twice, twiceYields) := vimFed "\" a \""
+        pure
+          (operatorYields == [none, none] && decide (afterOperator = vimInit) &&
+            twiceYields == [none, none, none] &&
+            decide (twice = vimInit) &&
+            (vimFed "d \" w").2 == [none, none, some (vimMove "word")]) },
+    { name :=
+        "the Vim scheme reports the register prefix and the key that names the register among the pending keys"
+      run :=
+        pure
+          (vimPending "\"" == keys "\"" && vimPending "\" a" == keys "\" a" &&
+            vimPending "\" a d" == keys "\" a d" &&
+            vimPending "\" a d d" == []) }]
 
 /-- `vimStates` with a state the checks register, `test`, whose keymap
 binds `m` to a motion and whose cursor is an underline, and with `q` bound
@@ -4991,7 +5050,12 @@ def vimStateChecks : List Check :=
 (`Editor/InputScheme/Contract.lean`). -/
 def vimContractChecks : List Check :=
   [{  name := "the scheme contract holds of the Vim scheme over the registry written for the checks"
-      run := pure (SchemeContract.failures vimSubject == []) }]
+      run := pure (SchemeContract.failures vimSubject == []) },
+    { name :=
+        "a key that prints is not unbound after the register prefix, where it names the register: given one as its unbound key, the scheme contract reports that it does not reset"
+      run :=
+        pure
+          (failsOnly { vimSubject with unbound := charKey "z" } [SchemeContract.unboundResets]) }]
 
 /-- Every check, in the order they run.
 

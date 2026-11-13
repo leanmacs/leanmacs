@@ -52,7 +52,8 @@ is `parse` with the edit compiled, and `scheme` packages it as an
   (`Over.lines`), and that edit always has a count, 1 when none was typed:
   the doubled operator counts lines. It is the same operator when it has
   the same name.
-- **A different operator, or a command, while an operator waits resets.**
+- **A different operator, a command, or the register prefix, while an
+  operator waits resets.**
 - **An unbound key resets the edit begun**: nothing is yielded, and no
   count, no operator and no prefix are left. A reset keeps which Vim state
   each view is in, so in a view that entered no state the state is then the
@@ -82,6 +83,25 @@ is `parse` with the edit compiled, and `scheme` packages it as an
   any key, so it can be bound to a motion. Digits are not bound in a
   keymap: the rule for `0` needs the count typed so far, which a keymap
   does not see.
+
+## Registers
+
+- **The register prefix is bound in a keymap** (`Bound.register`), beside
+  the four parts of speech. The key after it names the register by the
+  text it prints (`Key.printed?`), a digit included, and a key that prints
+  nothing resets.
+- **The state holds the register named** (`State.register`) and whether the
+  prefix was the last key (`State.awaitsRegister`). The prefix folds the
+  count being typed into the multiplier, as an operator does, so counts on
+  either side of it multiply.
+- **An edit with an operator and one that runs a command carry the
+  register.** A move carries none: a register named before a motion is
+  dropped when the motion completes.
+- **The prefix is refused, and resets, after an operator and when a
+  register is already named.**
+- **After the prefix every key that prints goes on with the edit.** So the
+  key this scheme gives the scheme contract as unbound is a named key.
+- Which registers exist and what they hold is editor state, and not here.
 
 ## Vim states
 
@@ -164,6 +184,9 @@ inductive Bound where
   | textObject (name : String)
   /-- A command. -/
   | command (command : Command)
+  /-- The register prefix: the key after it names the register of the edit
+  being typed. It is no part of speech. -/
+  | register
   deriving DecidableEq, Repr
 
 /-- What an operator acts on. -/
@@ -288,6 +311,11 @@ structure State where
   multiplier : Option Nat := none
   /-- The count being typed, if a digit was. -/
   digits : Option Nat := none
+  /-- The register named for the edit being typed, if one was. -/
+  register : Option String := none
+  /-- Whether the register prefix was the last key, so that the next key
+  names the register. -/
+  awaitsRegister : Bool := false
   /-- The operator waiting for its target, if one was typed. -/
   operator : Option Operator := none
   /-- The keymap prefix walked so far, within the edit begun. -/
@@ -377,18 +405,20 @@ private def State.reached (states : States) (view : ViewId) (state : State) (typ
     Bound → State × Parsed
   | .motion name =>
     match state.operator with
-    | some operator => state.finish states view (.operate operator (.motion name) state.count none)
+    | some operator =>
+      state.finish states view (.operate operator (.motion name) state.count state.register)
     | none => state.finish states view (.move name state.count)
   | .textObject name =>
     match state.operator with
     | some operator =>
-      state.finish states view (.operate operator (.textObject name) state.count none)
+      state.finish states view (.operate operator (.textObject name) state.count state.register)
     | none => (state.reset, .nothing)
   | .operator operator =>
     match state.operator with
     | some waiting =>
       if waiting.name == operator.name then
-        state.finish states view (.operate waiting .lines (some (state.count.getD 1)) none)
+        state.finish states view
+          (.operate waiting .lines (some (state.count.getD 1)) state.register)
       else (state.reset, .nothing)
     | none =>
       ({ state with
@@ -398,7 +428,13 @@ private def State.reached (states : States) (view : ViewId) (state : State) (typ
   | .command command =>
     match state.operator with
     | some _ => (state.reset, .nothing)
-    | none => state.finish states view (.run command state.count none)
+    | none => state.finish states view (.run command state.count state.register)
+  | .register =>
+    if state.operator.isSome || state.register.isSome then (state.reset, .nothing)
+    else
+      ({ state with
+          typed, multiplier := state.count, digits := none, awaitsRegister := true, walked := [] },
+        .nothing)
 
 /-- One key of the grammar, a key for `view`: the state it leaves, and what
 it parsed to (the rules in the module docs). A digit of a count is taken
@@ -410,23 +446,31 @@ def parse (states : States) (maps : ViewId → List (Keymap Bound)) (view : View
     (key : Key) : State × Parsed :=
   let record := state.record states view
   let typed := state.typed ++ [key.chord]
-  match if record.insertsText then none else state.countDigit? key with
-  | some digit =>
-    ({ state with
-        typed, digits := some (state.digits.getD 0 * 10 + digit) },
-      .nothing)
-  | none =>
-    match Keymap.walk (maps view ++ record.keymaps) state.walked key with
-    | (_, some binding) => state.reached states view typed binding
-    | (walked, none) =>
-      if !walked.isEmpty then
-        ({ state with
-            typed, walked },
-          .nothing)
-      else
-        if record.insertsText && state.typed.isEmpty then
-          (state, (key.printed?.map Parsed.text).getD .nothing)
-        else (state.reset, .nothing)
+  if state.awaitsRegister then
+    match key.printed? with
+    | some name =>
+      ({ state with
+          typed, register := some name, awaitsRegister := false },
+        .nothing)
+    | none => (state.reset, .nothing)
+  else
+    match if record.insertsText then none else state.countDigit? key with
+    | some digit =>
+      ({ state with
+          typed, digits := some (state.digits.getD 0 * 10 + digit) },
+        .nothing)
+    | none =>
+      match Keymap.walk (maps view ++ record.keymaps) state.walked key with
+      | (_, some binding) => state.reached states view typed binding
+      | (walked, none) =>
+        if !walked.isEmpty then
+          ({ state with
+              typed, walked },
+            .nothing)
+        else
+          if record.insertsText && state.typed.isEmpty then
+            (state, (key.printed?.map Parsed.text).getD .nothing)
+          else (state.reset, .nothing)
 
 /-- The invocation typed text yields: the command `self-insert`, with the
 text a key printed as its argument. -/
