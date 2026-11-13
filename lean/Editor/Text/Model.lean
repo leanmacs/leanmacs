@@ -32,7 +32,9 @@ the same patch and the same trace is what the contract checks. The model is
 quadratic and forgets nothing; it runs on texts of tens of bytes.
 
 A text's markers are modelled beside the texts too (`TextModel.markers`):
-one table a text, in which a marker's id is an index. Every accepted edit
+one table a text, in which a marker's id is an index, with the text the
+table is of: an id of another text names nothing in it
+(`TextModel.heldUnder?`). Every accepted edit
 goes through `TextModel.changed`, which moves each marker through the
 ranges the edit changed (`TextModel.mapOffset`): the same runs the text is
 spliced by, and not the library's walk of its changes. The form a selection
@@ -690,7 +692,8 @@ def markersOf (model : TextModel) (id : TextId) : Array (Option Marker) :=
   model.markers[id.index]?.getD #[]
 
 /-- The model's answer to marking the text `id` with `marker`, and the model
-after it: the marker is held, in its form, under the next id of that text.
+after it: the marker is held, in its form, under the next id of that text,
+which names the text.
 A refused marker leaves the model as it was. -/
 def mark (model : TextModel) (id : TextId) (marker : Marker) :
     Except TextError MarkerId × TextModel :=
@@ -700,17 +703,25 @@ def mark (model : TextModel) (id : TextId) (marker : Marker) :
     match markerRefusal? content.contents marker with
     | some refusal => (.error refusal, model)
     | none =>
-      (.ok ⟨(model.markersOf id).size⟩,
+      (.ok ⟨id, (model.markersOf id).size⟩,
         { model with markers := model.markers.modify id.index (·.push (some (held marker))) })
+
+/-- The marker the text `id` holds under `marker`; `none` when it holds
+none: another text gave the id out (`MarkerId.numberIn?`), no text did, or
+the marker was given up. -/
+def heldUnder? (model : TextModel) (id : TextId) (marker : MarkerId) : Option Marker :=
+  match marker.numberIn? id with
+  | some number => (model.markersOf id)[number]?.join
+  | none => none
 
 /-- The model's answer to reading the marker `marker` of the text `id`. -/
 def markerOf (model : TextModel) (id : TextId) (marker : MarkerId) : Except TextError Marker :=
   match model.lookup (.text id) with
   | .error refusal => .error refusal
   | .ok _ =>
-    match (model.markersOf id)[marker.index]? with
-    | some (some found) => .ok found
-    | _ => .error .noSuchMarker
+    match model.heldUnder? id marker with
+    | some found => .ok found
+    | none => .error .noSuchMarker
 
 /-- The model's answer to putting `marker` in place of the marker `at` of
 the text `id`, and the model after it. The refusals are looked for in the
@@ -728,8 +739,8 @@ def place (model : TextModel) (id : TextId) («at» : MarkerId) (marker : Marker
       | .anchor _ => false
     if none? then (.error .badSelection, model)
     else
-      match (model.markersOf id)[«at».index]? with
-      | some (some _) =>
+      match model.heldUnder? id «at» with
+      | some _ =>
         match markerRefusal? content.contents marker with
         | some refusal => (.error refusal, model)
         | none =>
@@ -737,7 +748,7 @@ def place (model : TextModel) (id : TextId) («at» : MarkerId) (marker : Marker
             { model with
               markers :=
                 model.markers.modify id.index (·.setIfInBounds «at».index (some (held marker))) })
-      | _ => (.error .noSuchMarker, model)
+      | none => (.error .noSuchMarker, model)
 
 /-- The model's answer to giving up the marker `marker` of the text `id`,
 and the model after it: its slot is emptied and stays, so its id is never
@@ -747,11 +758,11 @@ def unmark (model : TextModel) (id : TextId) (marker : MarkerId) :
   match model.lookup (.text id) with
   | .error refusal => (.error refusal, model)
   | .ok _ =>
-    match (model.markersOf id)[marker.index]? with
-    | some (some _) =>
+    match model.heldUnder? id marker with
+    | some _ =>
       (.ok (),
         { model with markers := model.markers.modify id.index (·.setIfInBounds marker.index none) })
-    | _ => (.error .noSuchMarker, model)
+    | none => (.error .noSuchMarker, model)
 
 /-- The model's answer to each request, and the model after it. -/
 def handle : (request : TextRequest) → TextModel → request.Reply × TextModel

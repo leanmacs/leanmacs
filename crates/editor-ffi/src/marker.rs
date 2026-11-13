@@ -11,7 +11,9 @@
 //!   inclusive, 2 line-wise, 3 block-wise), the index of its primary
 //!   range, the count of ranges, and an anchor and a head for each.
 //!
-//! A marker's id is the text's number for it, and crosses as a `u64`.
+//! A marker's id is the text's number for it, and crosses as a `u64`. Each
+//! document numbers its own markers, so the number names a marker only
+//! with the document that gave it out; the caller keeps the two together.
 //!
 //! What a selection covers in a snapshot
 //! ([`editor_ffi_snapshot_extents`](crate::snapshot::editor_ffi_snapshot_extents))

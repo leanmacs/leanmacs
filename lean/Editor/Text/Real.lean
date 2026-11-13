@@ -31,10 +31,15 @@ else it is refused here, as what the library would have said of a number
 that large.
 
 A text's markers are the library's: the binding keeps no table of them,
-because a marker's id is the library's number for it within its document.
-Each marker request is one lookup of the document and one call. A marker's
-offsets go as a transaction's do, as the largest word when no word holds
-them. An id no word holds names no marker.
+because a marker's id is its text and the library's number for it within
+that text's document. The library numbers each document's markers on their
+own, so the number alone does not say whose a marker is: an id is asked of
+a document only when its text is the one the request names
+(`RealTexts.markerWord?`, by the port's `MarkerId.numberIn?`), and is
+refused with `noSuchMarker` otherwise. Each marker request is one lookup of
+the document and one call. A marker's offsets go as a transaction's do, as
+the largest word when no word holds them. An id no word holds names no
+marker.
 
 A text or a snapshot lives until it is released or its table is dropped,
 whichever is first. Releasing empties its slot, which drops the last
@@ -153,33 +158,44 @@ def mark (id : TextId) (held : Marker) : StateT RealTexts IO (Except TextError M
   let some document ← document? id | return .error .noSuchText
   match ← document.mark (marker held) with
   | .ok number =>
-    return .ok ⟨number.toNat⟩
+    return .ok ⟨id, number.toNat⟩
   | .error refusal =>
     return .error (markRefusal refusal)
 
+/-- The library's number for the marker `held`, to ask the document of the
+text `id` with. `none` when the id names no marker of that text whatever the
+document holds: another text gave it out (`MarkerId.numberIn?`; the library
+numbers each document's markers on their own, so it could not tell), or no
+word holds its number. -/
+def markerWord? (id : TextId) (held : MarkerId) : Option UInt64 :=
+  match held.numberIn? id with
+  | some number => if number < UInt64.size then some number.toUInt64 else none
+  | none => none
+
 /-- The library's answer to reading the marker `held` of the text `id`. An
-id no word holds names no marker. -/
+id with no number for that text's document names no marker. -/
 def markerAt (id : TextId) (held : MarkerId) : StateT RealTexts IO (Except TextError Marker) := do
   let some document ← document? id | return .error .noSuchText
-  unless held.index < UInt64.size do
-    return .error .noSuchMarker
-  let some found ← document.marker held.index.toUInt64 | return .error .noSuchMarker
+  let some number := markerWord? id held | return .error .noSuchMarker
+  let some found ← document.marker number | return .error .noSuchMarker
   return .ok (markerOf found)
 
 /-- The library's answer to putting `next` in place of the marker `held` of
-the text `id`. The order of the refusals is the library's. An id no word
-holds names no marker; the library refuses a selection that is none before
-it looks an id up, so that is said here first for such an id. -/
+the text `id`. The order of the refusals is the library's. An id with no
+number for that text's document names no marker; the library refuses a
+selection that is none before it looks an id up, so that is said here first
+for such an id. -/
 def place (id : TextId) (held : MarkerId) (next : Marker) :
     StateT RealTexts IO (Except TextError Unit) := do
   let some document ← document? id | return .error .noSuchText
-  unless held.index < UInt64.size do
+  let some number := markerWord? id held
+    |
     match next with
     | .selection ranges =>
       return .error (if ranges.primary < ranges.ranges.size then .noSuchMarker else .badSelection)
     | .anchor _ =>
       return .error .noSuchMarker
-  match ← document.place held.index.toUInt64 (marker next) with
+  match ← document.place number (marker next) with
   | .ok () =>
     return .ok ()
   | .error refusal =>
@@ -188,9 +204,8 @@ def place (id : TextId) (held : MarkerId) (next : Marker) :
 /-- The library's answer to giving up the marker `held` of the text `id`. -/
 def unmark (id : TextId) (held : MarkerId) : StateT RealTexts IO (Except TextError Unit) := do
   let some document ← document? id | return .error .noSuchText
-  unless held.index < UInt64.size do
-    return .error .noSuchMarker
-  if ← document.unmark held.index.toUInt64 then
+  let some number := markerWord? id held | return .error .noSuchMarker
+  if ← document.unmark number then
     return .ok ()
   return .error .noSuchMarker
 

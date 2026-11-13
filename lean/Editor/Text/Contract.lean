@@ -1044,7 +1044,7 @@ def markerProperties : List Property :=
         let placed ← refusedWith .noSuchMarker (text.place first (anchorAt 0 .after))
         let again ← refusedWith .noSuchMarker (text.unmark first)
         let later ← text.mark (anchorAt 0 .before)
-        let never : MarkerId := ⟨later.index + 5⟩
+        let never : MarkerId := { later with index := later.index + 5 }
         let neverRead ← refusedWith .noSuchMarker (discard <| text.marker never)
         -- For an id that names nothing: a marker that is in the text, one
         -- that is not, and a selection that is none.
@@ -1053,7 +1053,7 @@ def markerProperties : List Property :=
         let neverNone ← refusedWith .badSelection (text.place never (selected .line #[]))
         let neverUnmarked ← refusedWith .noSuchMarker (text.unmark never)
         -- Cut down to a 64-bit word, `2 ^ 64 + second.index` is `second`.
-        let huge : MarkerId := ⟨2 ^ 64 + second.index⟩
+        let huge : MarkerId := { second with index := 2 ^ 64 + second.index }
         let hugeRead ← refusedWith .noSuchMarker (discard <| text.marker huge)
         let hugePlaced ← refusedWith .noSuchMarker (text.place huge (anchorAt 0 .after))
         let hugeNone ← refusedWith .badSelection (text.place huge (selected .block #[(0, 0)] 1))
@@ -1099,9 +1099,17 @@ def markerProperties : List Property :=
         let text ← createText "héllo"
         let other ← createText "wörld"
         let marker ← text.mark (anchorAt 3 .after)
+        -- The other text holds a marker of its own, the first it gave out
+        -- as `marker` is the first of `text`: the id of one is not taken
+        -- for the other's.
+        let own ← other.mark (anchorAt 1 .before)
         let ofOther ← refusedWith .noSuchMarker (discard <| other.marker marker)
         let placedInOther ← refusedWith .noSuchMarker (other.place marker (anchorAt 0 .after))
+        -- A selection that is none is still looked for before the id is.
+        let noneInOther ← refusedWith .badSelection (other.place marker (selected .line #[]))
         let unmarkedInOther ← refusedWith .noSuchMarker (other.unmark marker)
+        let ofText ← refusedWith .noSuchMarker (discard <| text.marker own)
+        let ownKept := (← other.marker own) == anchorAt 1 .before
         -- Edits to the other text move nothing here.
         other.insert 0 "XY"
         let unmoved := (← text.marker marker) == anchorAt 3 .after
@@ -1113,7 +1121,10 @@ def markerProperties : List Property :=
         let absent ← (requests ⟨7⟩).allM (refusedWith .noSuchText)
         text.release
         let released ← (requests text).allM (refusedWith .noSuchText)
-        return ofOther && placedInOther && unmarkedInOther && unmoved && absent && released }]
+        return ofOther && placedInOther && noneInOther && unmarkedInOther && ofText && ownKept &&
+            unmoved &&
+            absent &&
+            released }]
 
 /-- What the selection of shape `shape` with `ranges`, each an anchor and a
 head, covers in a new text holding `initial`: each extent as its start and

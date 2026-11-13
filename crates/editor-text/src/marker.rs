@@ -25,7 +25,10 @@ pub enum Marker {
 /// Which marker of a text: a number the text gave out when the marker was
 /// made ([`Text::mark`](crate::Text::mark)). A text never gives a number
 /// out twice, so the id of a marker that is gone names nothing, for good.
-/// The ids of different texts do not compare.
+/// The ids of different texts do not compare: each text numbers its own
+/// markers, so a number one text gave out may name another marker in
+/// another text, and the text cannot tell. Whoever holds the ids of
+/// several texts keeps, with each id, which text it is of.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct MarkerId(u64);
 

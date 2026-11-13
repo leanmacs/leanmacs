@@ -102,7 +102,11 @@ same value runs against the model and against the real binding.
   after and a later one that stays before can swap.
 - A marker id belongs to its text: it is refused with `noSuchMarker` by any
   other, and once it is given up (`TextId.unmark`), for good. An id is
-  never used again. `TextId.place` puts another marker under an id, of
+  never used again. The id says which text gave it out (`MarkerId.text`)
+  beside that text's number for the marker, since each text numbers its
+  own: so another text refuses it even where it holds a marker under the
+  same number (`MarkerId.numberIn?`). `TextId.place` puts another marker
+  under an id, of
   either kind. It is refused, in this order: with `noSuchText`; with
   `badSelection` for a selection that is none; with `noSuchMarker`; and
   then as marking is.
@@ -268,7 +272,7 @@ inductive TextError where
   forgotten up to a later one. -/
   | forgotten
   /-- The id names no marker of the text: no `TextId.mark` of that text
-  returned it, or the marker was given up. -/
+  returned it (another text's did, or none), or the marker was given up. -/
   | noSuchMarker
   deriving DecidableEq, Repr
 
@@ -420,11 +424,22 @@ inductive Marker where
   deriving DecidableEq, Repr
 
 /-- The name of a marker a text holds. It is plain data, and it belongs to
-the text that gave it out. -/
+the text that gave it out: it names that text, and every other text refuses
+it. -/
 structure MarkerId where
-  /-- Which marker: the text's number for it. -/
+  /-- The text that gave the id out, and holds the marker. -/
+  text : TextId
+  /-- Which marker: the text's number for it. Each text numbers its own
+  markers, so the number alone does not say whose it is. -/
   index : Nat
   deriving DecidableEq, Repr
+
+/-- The number `text` knows the marker `id` by; `none` when another text
+gave the id out, so that it names no marker of `text`. This is the port's
+rule that a marker id belongs to its text, and the model and the real
+binding both look a marker up through it. -/
+def MarkerId.numberIn? (id : MarkerId) (text : TextId) : Option Nat :=
+  if id.text = text then some id.index else none
 
 /-- A transaction: the changes to make to a text, and optionally the
 selection before them and the selection after them. It is plain data, built

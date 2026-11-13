@@ -201,6 +201,19 @@ is not.
   behind handles" ([lean-runtime.md](lean-runtime.md)), so the text holds
   them. A marker can be read back, put somewhere else or made the other
   kind under the same id, and given up.
+- Whose an id is. In `editor-text` an id is a number, and each text numbers
+  its own markers: a text has no name there, and its caller holds the text
+  itself. The Lean text port is where a text has a name, so there a marker
+  id is the text's id and that number, and a text refuses another text's id
+  with `noSuchMarker` even where it holds a marker under the same number.
+  The port owns that rule (`MarkerId.numberIn?` in `lean/Editor/Text.lean`);
+  the model and the real binding both look a marker up through it, and the
+  port's contract holds both to it. So an id Lean holds for one text cannot
+  read, replace or give up another text's marker.
+  - Not one counter for every text: in `editor-text` that is state shared
+    by every text in the process, which makes the numbers a test sees
+    depend on what else ran, and the model would need a counter of its own
+    to match.
 - A marker is refused unless it is in the text as it is: an anchor at a
   position, a selection with every end at one. So a marker read back is
   always at positions of the text. That is what "in bounds" means.
