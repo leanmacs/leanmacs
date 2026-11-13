@@ -118,7 +118,8 @@
 //! length or an offset the other side cannot hold is sent as the largest it
 //! can, which no text accepts, so it too is refused and never cut down.
 //! Tests: the unit tests in `text.rs`, `document.rs`, `snapshot.rs`,
-//! `words.rs`, `transaction.rs`, `log.rs`, `marker.rs` and `inverse.rs`;
+//! `words.rs`, `transaction.rs`, `log.rs`, `marker.rs` and `inverse.rs`,
+//! and, for a scene's words, in `display/wire.rs`;
 //! the tag tests in `events.rs`;
 //! `find_fills_the_range_it_found_and_reports_whether_it_found_one` and the
 //! document test in `tests/c_api.rs`; the snapshot test in
@@ -129,11 +130,16 @@
 //! `tests/markers.rs` and
 //! `the_inverse_of_a_run_is_applied_and_inverses_are_dropped_through_c` in
 //! `tests/inverse.rs`, integration tests of their own for the reason
-//! `tests/snapshot.rs` is one; the `find` and event checks of `ffi-test`
+//! `tests/snapshot.rs` is one; for a list of handles,
+//! `a_scene_published_through_c_is_laid_out_as_layout_lays_it_out`,
+//! `words_that_spell_no_scene_are_refused_and_the_last_frame_is_kept` and
+//! `a_display_nothing_was_published_to_has_no_scene` in `tests/display.rs`;
+//! the `find` and event checks of `ffi-test`
 //! (`dataChecks`), its document checks (`documentChecks`), its snapshot
 //! checks (`snapshotChecks`), its transaction checks (`transactionChecks`),
-//! its marker checks (`markerChecks`) and its inverse checks
-//! (`inverseChecks`).
+//! its marker checks (`markerChecks`), its inverse checks
+//! (`inverseChecks`) and, for a list of handles, its scene checks
+//! (`sceneChecks`).
 //!
 //! ## The event queues
 //!

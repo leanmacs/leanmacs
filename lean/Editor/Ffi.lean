@@ -56,6 +56,7 @@ answers cross (`FfiTest.displayChecks`); `tests/c_api.rs`,
 | Option | The wrapper passes a presence flag and a value | The glue builds `none` or `some` |
 | Byte range | Two scalars | `ByteRange`: two `UInt64`, half-open, in bytes |
 | List | *Words*: a `@& ByteArray` of 64-bit numbers, eight bytes each, least significant first, written by a private encoder here; the glue passes its bytes and byte length, and Rust checks every count against the buffer | The glue copies the library's buffer of words into a `ByteArray` and hands the buffer back; a private decoder here builds the typed value, and words it cannot read are an `IO` error |
+| List of handles | `@& Array Snapshot`, an array of handles borrowed for the call, beside the words, which name a handle by its index in it; the glue passes it as a C array of the handles' pointers and its count, which it builds for the call (`Display.publish`) | None yet |
 
 Prefer a few scalar arguments or one structure to many calls: one `nextEvent`
 returns one whole event. A raw structure whose shape the glue knows stays
@@ -78,7 +79,11 @@ in, as words (`Document.mark`, `Document.place`), and out, as words
 (`Document.marker`); and a `Selection` in and what it covers out, both as
 words (`Snapshot.extents`). A refusal with more than one reason is a status
 the library reports as a number, read here into an inductive
-(`MarkRefusal`). A document's kept inverses are scalars in and words out
+(`MarkRefusal`). A published scene is the example of a list of handles:
+words, one string of every text it holds, and the `Snapshot`s its views
+show, which the words name by index (`Display.publish`); it comes back as
+the same words and string, and as `none` before any is published
+(`Display.scene`). A document's kept inverses are scalars in and words out
 with an option inside them: a run of revisions and an origin in, as three
 numbers, and an `Inverted` out, the revision the inverse produced with the
 selection it hands back if there is one (`Document.applyInverse`, with its
@@ -90,11 +95,13 @@ the `find` and event checks of `ffi-test` (`FfiTest.dataChecks`), its
 document checks (`FfiTest.documentChecks`), its snapshot checks
 (`FfiTest.snapshotChecks`), its transaction checks
 (`FfiTest.transactionChecks`), its marker checks
-(`FfiTest.markerChecks`) and its inverse checks (`FfiTest.inverseChecks`);
-the unit tests of `text.rs`, `document.rs`, `snapshot.rs`, `words.rs`,
-`transaction.rs`, `log.rs`, `marker.rs` and `inverse.rs`, the tag tests of
-`events.rs`, and `tests/log.rs`, `tests/markers.rs` and `tests/inverse.rs`
-in `editor-ffi`.
+(`FfiTest.markerChecks`), its inverse checks (`FfiTest.inverseChecks`) and,
+for a list of handles, its scene checks (`FfiTest.sceneChecks`); the unit
+tests of `text.rs`, `document.rs`, `snapshot.rs`, `words.rs`,
+`transaction.rs`, `log.rs`, `marker.rs`, `inverse.rs` and, for a scene's
+words, `display/wire.rs`, the tag tests of `events.rs`, and `tests/log.rs`,
+`tests/markers.rs`, `tests/inverse.rs` and, for a scene published with its
+handles and written back, `tests/display.rs` in `editor-ffi`.
 
 The editor does not call these bindings. It reaches the library through a
 port it defines (`Editor/Text.lean`), whose real binding
