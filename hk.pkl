@@ -9,7 +9,7 @@ local rust_sources = List("**/*.rs", "**/Cargo.toml", "Cargo.lock")
 // The full gate, defined once in mise.toml's `ci` task.
 local ci = new Mapping<String, Step> {
     ["mise_ci"] {
-        glob = rust_sources + c_sources + List("mise.toml", "deny.toml", ".clang-format", "lean/**", "tests/**")
+        glob = rust_sources + c_sources + List("mise.toml", "deny.toml", "**/clippy.toml", ".clang-format", "lean/**", "tests/**")
         check = "mise run ci"
         exclusive = true
     }
@@ -25,8 +25,11 @@ local changed = new Mapping<String, Step> {
         check = "mise run fmt"
         exclusive = true
     }
+    // A crate's `clippy.toml` lists what the crate may not name (real files,
+    // processes, clocks), so a commit that changes only a list still runs
+    // the lint.
     ["rust"] {
-        glob = rust_sources + List("mise.toml")
+        glob = rust_sources + List("mise.toml", "**/clippy.toml")
         check = "mise run lint && mise run test"
         exclusive = true
     }
