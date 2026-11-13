@@ -52,7 +52,10 @@ snapshots, and a display refusal is the text port's of the same name.
 The editor state (`Editor/State.lean`) is checked on the text model
 (`stateChecks`): the initial state, that a split tree's views tile the
 frame, and the two layout operations, each refused with the state as it
-was when it would break an invariant.
+was when it would break an invariant. The invariants themselves are checked
+to refuse: states built in code that each break one (`spoilings`) are not
+well formed, so `EditorState.wellFormed` is seen to answer false for every
+one of its clauses.
 
 The command loop (`Editor/Loop.lean`) is checked on the editor's models
 (`loopChecks`): events fed to `Loop.step` one by one, the state each leaves
@@ -3256,6 +3259,29 @@ def onTextModel {α : Type} (program : TextM α) : Option α :=
 def laidOut (state : EditorState) : Array (ViewId × Rect) :=
   state.frame.tree.rects (frameRect state.frame.size)
 
+/-- Ways to spoil `threeWindows`, each breaking one layout invariant and
+keeping every other clause of `EditorState.wellFormed`, with what the state
+is then. So each is refused by one clause alone, and a `wellFormed` without
+that clause would accept it. -/
+def spoilings : List (String × (EditorState → EditorState)) :=
+  let window (index : Nat) : Split := .window ⟨index⟩
+  let top : Split := .split .columns (window 0) (window 1)
+  let withTree (tree : Split) (state : EditorState) : EditorState :=
+    { state with frame := { state.frame with tree } }
+  let withWindow (id : ViewId) (change : Window → Window) (state : EditorState) : EditorState :=
+    { state with windows := state.windows.map fun was => if was.id == id then change was else was }
+  [("whose focused window is not in the tree", fun state =>
+      { state with frame := { state.frame with focused := ⟨7⟩ } }),
+    ("whose tree has no minibuffer leaf", withTree (.split .rows top (window 2))),
+    ("whose tree has two minibuffer leaves",
+      withTree (.split .rows (.split .rows top .minibuffer) (.split .rows (window 2) .minibuffer))),
+    ("whose tree names one window twice, with as many leaves as there are windows",
+      withTree (.split .rows top (.split .rows (window 1) .minibuffer))),
+    ("whose tree names a window there is none of, with as many leaves as there are windows",
+      withWindow ⟨2⟩ ({ · with id := ⟨7⟩ })),
+    ("with a window that is not in the tree", withTree (.split .rows top .minibuffer)),
+    ("with a window whose buffer does not exist", withWindow ⟨1⟩ ({ · with buffer := ⟨5⟩ }))]
+
 /-- The checks of the editor state and its layout invariants
 (`Editor/State.lean`), on the text model. -/
 def stateChecks : List Check :=
@@ -3273,6 +3299,17 @@ def stateChecks : List Check :=
               state.frame.hasFocus &&
               state.echo == "" &&
               state.preedit == none },
+    { name :=
+        "a state that breaks one layout invariant is not well formed: a focus outside the tree, no minibuffer leaf or two, a window named twice, a tree window with no window, a window outside the tree, a window with no buffer"
+      run := do
+        let some state := onTextModel threeWindows | return false
+        -- A failure names the spoiled states that were taken for well formed.
+        let accepted := spoilings.filter fun (_, spoil) => (spoil state).wellFormed
+        unless accepted.isEmpty do
+          throw
+              (IO.userError
+                s!"well formed: a state {"; a state ".intercalate (accepted.map (·.1))}")
+        return state.wellFormed },
     { name :=
         "the views of a split tree tile the frame: each inside it, no two overlapping, their areas summing to its, for one to four windows, with and without the minibuffer's place, at even, odd and zero sizes"
       run :=

@@ -42,6 +42,10 @@ The invariants are part of the model (`EditorState.wellFormed`):
   ids;
 - each window's buffer exists.
 
+Each clause is seen to refuse: `ModelTest.spoilings` builds, for every
+clause, a state that breaks it and keeps the others, and none is well
+formed. A clause added here gets a state there.
+
 An operation that would break one is refused with a `LayoutRefusal` and
 changes nothing: it returns the state it was given. Two operations exist,
 with no command bound to either (the command loop's phase 8 offers them as
