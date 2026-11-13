@@ -10,7 +10,7 @@ import Editor.Job.Fake
 import Editor.Job.Jobs
 import Editor.Job.Model
 import Editor.Job.Pool
-import Editor.Keymap
+import Editor.Key.Notation
 import Editor.Loop
 import Editor.Scene
 import Editor.State
@@ -137,7 +137,10 @@ need no model and no fake of a collaborator:
 - `keymapChecks`: a keymap (`Editor/Keymap.lean`), on keys built in code:
   what a sequence is bound to, which sequences a binding begins with, the
   chord a binding names a key by, and the walk through a list of keymaps
-  in precedence order.
+  in precedence order;
+- `keyNotationChecks`: key strings (`Editor/Key/Notation.lean`): the keys
+  a string names, the strings that are refused, and that the notation of a
+  chord names it back.
 -/
 
 namespace ModelTest
@@ -3895,6 +3898,95 @@ def keymapChecks : List Check :=
             Keymap.walk [save] [] { controlKey "x" with physical := .code "KeyX" } ==
               ([controlKey "x"], none)) }]
 
+/-- Whether `text` is a key string that names exactly `keys`. -/
+def parses (text : String) (keys : List Key) : Bool :=
+  match Key.parse text with
+  | .ok named => named == keys
+  | .error _ => false
+
+/-- Whether `text` is refused as a key string, with a reason that names
+`token`. -/
+def refusesKey (text token : String) : Bool :=
+  match Key.parse text with
+  | .ok _ => false
+  | .error reason => (reason.splitOn token).length > 1
+
+/-- The checks of key strings (`Editor/Key/Notation.lean`): the keys a
+string names, the strings that are refused, and that a chord's notation
+names it. -/
+def keyNotationChecks : List Check :=
+  [{  name := "a key string names its strokes in order, each with the modifiers written before it"
+      run := pure (parses "C-x C-s" [controlKey "x", controlKey "s"]) },
+    { name :=
+        "a stroke of one character is that character, whatever it is: a capital, the minus sign, an angle bracket"
+      run :=
+        pure
+          (parses "A" [charKey "A"] && parses "-" [charKey "-"] && parses "C--" [controlKey "-"] &&
+            parses "<" [charKey "<"] &&
+            parses "x - >" [charKey "x", charKey "-", charKey ">"]) },
+    { name := "a name in angle brackets is the named key of that name"
+      run :=
+        pure
+          (parses "<Escape>" [namedKey .escape] && parses "<ArrowLeft>" [namedKey .arrowLeft] &&
+            parses "<F5>" [namedKey ⟨"F5"⟩]) },
+    { name := "RET, ESC and TAB are Enter, Escape and Tab, and SPC is the space character"
+      run :=
+        pure
+          (parses "RET ESC TAB SPC"
+            [namedKey .enter, namedKey .escape, namedKey .tab, charKey " "]) },
+    { name :=
+        "each modifier prefix holds its modifier: C- control, M- alt, s- super, and S- shift on a named key"
+      run :=
+        pure
+          (parses "M-s-<ArrowLeft>" [namedKey .arrowLeft { alt := true, superKey := true }] &&
+            parses "S-<Tab>" [namedKey .tab { shift := true }] &&
+            parses "S-TAB" [namedKey .tab { shift := true }] &&
+            parses "C-M-x" [charKey "x" { control := true, alt := true }] &&
+            parses "s-s" [charKey "s" { superKey := true }]) },
+    { name := "the empty string names no keys, and spaces around strokes name none"
+      run :=
+        pure
+          (parses "" [] && parses "   " [] &&
+            parses " C-x  C-s " [controlKey "x", controlKey "s"]) },
+    { name :=
+        "a string with a stroke that is not a key is refused, naming the stroke: shift on a character, a modifier with no key, two characters, a name that is not closed, an empty name"
+      run :=
+        pure
+          (refusesKey "S-a" "S-a" && refusesKey "x C-" "C-" && refusesKey "C-x xy" "xy" &&
+            refusesKey "<Escape" "<Escape" &&
+            refusesKey "<>" "<>" &&
+            refusesKey "S-SPC" "S-SPC") },
+    { name := "the keys a key string names are chords"
+      run :=
+        pure <|
+          ["C-x C-s", "A", "S-<Tab>", "M-s-<ArrowLeft>", "RET SPC"].all fun text =>
+            match Key.parse text with
+            | .ok keys => keys.map Key.chord == keys
+            | .error _ => false },
+    { name := "a key's notation is its modifiers, then the character or the name in angle brackets"
+      run :=
+        pure
+          (Key.notation (controlKey "x") == "C-x" && Key.notation (charKey "A") == "A" &&
+            Key.notation (charKey " ") == "SPC" &&
+            Key.notation (namedKey .enter) == "<Enter>" &&
+            Key.notation
+                (namedKey .arrowLeft
+                  { shift := true, control := true, alt := true, superKey := true }) ==
+              "C-M-s-S-<ArrowLeft>" &&
+            Key.notation { logical := .dead none } == "<Dead>" &&
+            Key.notation { logical := .unidentified } == "<Unidentified>" &&
+            Key.notations [controlKey "x", controlKey "s"] == "C-x C-s" &&
+            Key.notations [] == "") },
+    { name := "the notation of chords of characters and named keys names those chords"
+      run :=
+        pure <|
+          [[controlKey "x", controlKey "s"], [charKey "A"], [charKey "-"], [controlKey "-"],
+                [charKey "<"], [charKey " ", charKey "s" { superKey := true }],
+                [namedKey .escape, namedKey .enter, namedKey .tab { shift := true }],
+                [namedKey .arrowLeft { control := true, alt := true, superKey := true }],
+                [charKey "é" { alt := true }], []].all
+            fun keys => parses (Key.notations keys) keys }]
+
 /-- Every check, in the order they run.
 
 The order matters where the process's one pool is measured. `poolChecks` run
@@ -3923,7 +4015,8 @@ def checks : List Check :=
     stateChecks ++
     loopChecks ++
     commitChecks ++
-    keymapChecks
+    keymapChecks ++
+    keyNotationChecks
 
 /-- Runs `checks` and returns the names of those that failed. A check that
 throws has failed, and its error is reported with its name. -/
