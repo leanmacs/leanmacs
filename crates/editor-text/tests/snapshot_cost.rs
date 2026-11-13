@@ -20,9 +20,12 @@
 
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::cell::Cell;
-use std::path::Path;
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
-use editor_text::fs::FakeFs;
+use editor_text::fs::{
+    FakeFs, Fs, FsError, FsErrorKind, Kind, Modified, Permissions, Pieces, Stat,
+};
 use editor_text::{Anchor, Bias, ChangeSet, Marker, Origin, Revision, Text, Transaction, file};
 
 /// The system allocator, counting the bytes each thread asks it for.
@@ -437,4 +440,112 @@ fn loading_a_megabyte_with_invalid_bytes_allocates_under_six_megabytes() {
     // six megabytes: seen once by hand, with the bytes cloned in `load`, as
     // 6,402,944.
     assert!(counted < LENGTH * 6, "{counted} bytes allocated");
+}
+
+/// A file system that counts the bytes it is given to write and keeps none
+/// of them. It holds no file until one is renamed into place; after that
+/// its one file is as long as what was written.
+///
+/// The cost of a save is counted on this and not on the published fake:
+/// the fake keeps every byte it is written, so through it the count would
+/// be the megabyte the fake stores. It touches no file either. Everything a
+/// save *does* is pinned on the published fake, in `src/file.rs`.
+#[derive(Default)]
+struct Discard {
+    /// How many bytes it was given to write.
+    written: AtomicU64,
+    /// Whether a file has been renamed into place.
+    renamed: AtomicBool,
+}
+
+impl Fs for Discard {
+    fn stat(&self, _: &Path) -> Result<Option<Stat>, FsError> {
+        Ok(self.renamed.load(Ordering::SeqCst).then(|| Stat {
+            kind: Kind::File,
+            size: self.written.load(Ordering::SeqCst),
+            modified: Modified::default(),
+            permissions: Permissions::new(0o644),
+        }))
+    }
+
+    fn read(&self, _: &Path) -> Result<Vec<u8>, FsError> {
+        Err(FsError::new(FsErrorKind::NotFound, "nothing is kept"))
+    }
+
+    fn write(
+        &self,
+        _: &Path,
+        pieces: &mut Pieces<'_>,
+        _: Option<Permissions>,
+    ) -> Result<(), FsError> {
+        for piece in pieces {
+            self.written.fetch_add(piece.len() as u64, Ordering::SeqCst);
+        }
+        Ok(())
+    }
+
+    fn rename(&self, _: &Path, _: &Path) -> Result<(), FsError> {
+        self.renamed.store(true, Ordering::SeqCst);
+        Ok(())
+    }
+
+    fn remove(&self, _: &Path) -> Result<(), FsError> {
+        Ok(())
+    }
+
+    fn resolve(&self, _: &Path) -> Result<PathBuf, FsError> {
+        Err(FsError::new(FsErrorKind::NotFound, "nothing is kept"))
+    }
+}
+
+#[test]
+fn saving_a_megabyte_allocates_nothing_sized_by_the_text() {
+    let string = megabyte();
+    let snapshot = Text::from(string.as_str()).snapshot();
+    let fs = Discard::default();
+
+    let (saved, counted) = allocated_by(|| {
+        file::save(
+            &fs,
+            Path::new(FILE),
+            &snapshot,
+            file::Expect::Absent,
+            &|| false,
+        )
+    });
+
+    let saved = saved.expect("the file is saved");
+    assert_eq!(saved.size, string.len() as u64);
+    assert_eq!(fs.written.load(Ordering::SeqCst), string.len() as u64);
+    // Measured: 256 bytes: the paths of the file and of its temporary
+    // file. The text is handed over a rope piece at a time, each borrowed.
+    // Collecting it first (`to_bytes`) is a megabyte: seen once by hand as
+    // 1,048,836. The bound is 4 KiB.
+    assert!(counted < 4096, "{counted} bytes allocated");
+}
+
+#[test]
+fn saving_a_megabyte_with_escapes_copies_a_piece_at_a_time_and_never_the_text() {
+    let bytes = megabyte_with_invalid_bytes();
+    let snapshot = Text::from_bytes(&bytes).snapshot();
+    let fs = Discard::default();
+
+    let (saved, counted) = allocated_by(|| {
+        file::save(
+            &fs,
+            Path::new(FILE),
+            &snapshot,
+            file::Expect::Absent,
+            &|| false,
+        )
+    });
+
+    let saved = saved.expect("the file is saved");
+    assert_eq!(saved.size, bytes.len() as u64);
+    // Measured: 1,051,871 bytes in all: a piece that holds an escape is
+    // copied as it is written, and here nearly every piece holds one. No
+    // single allocation is sized by the text; collecting it first is a
+    // megabyte more: seen once by hand as 2,103,766. The bound is a
+    // megabyte and a half.
+    assert!(counted < LENGTH * 3 / 2, "{counted} bytes allocated");
 }

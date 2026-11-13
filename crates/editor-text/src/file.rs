@@ -1,4 +1,5 @@
-//! Files: a text loaded from a file, through the file port.
+//! Files: a text loaded from a file and a snapshot saved as one, through
+//! the file port.
 //!
 //! Everything here reaches the file system through an [`Fs`] the caller
 //! supplies, and is tested on the published fake
@@ -49,13 +50,89 @@
 //!   is being appended to must still open.
 //! - **The permissions are not returned.** A save takes them from the file
 //!   as it is on disk when the save is made.
+//!
+//! # Saving
+//!
+//! [`save`] saves a [`Snapshot`], so the thread that owns the text hands
+//! over a value that copies none of it and goes on. The bytes are the
+//! snapshot's [`byte_chunks`](Snapshot::byte_chunks), a rope piece at a
+//! time. The steps, in order:
+//!
+//! 1. A path that is not absolute is refused ([`SaveError::Relative`]).
+//! 2. The path is resolved: the file a link names is the one replaced, and
+//!    the link stays. Nothing there is not an error: the path is then its
+//!    own target.
+//! 3. The target's stat is taken. Something that is not a file is refused
+//!    ([`SaveError::NotAFile`]); the file is checked against what the
+//!    caller expects (below); its permissions are kept for the next step.
+//! 4. A temporary file is written **in the target's directory**, named
+//!    `.<file name>.<n>.tmp` with `n` from 0, with those permissions. A
+//!    name that is taken is passed over and left alone, for at most
+//!    [`TEMPORARY_NAMES`] names, then [`SaveError::NoTemporaryName`].
+//! 5. If the caller says the save is cancelled, it stops
+//!    ([`SaveError::Cancelled`]).
+//! 6. The target's stat is taken again and checked again: a change made
+//!    while the temporary file was being written is caught.
+//! 7. The temporary file is renamed over the target.
+//! 8. The target's stat is taken: its stamp is returned, for the next save
+//!    to expect.
+//!
+//! - **A crash never leaves a half-written file.** The target is only ever
+//!   replaced by a rename of a file that is whole and on disk (the port's
+//!   `write` has it there before it returns). A crash before the rename
+//!   leaves the old file and perhaps a temporary one; after it, the new
+//!   file.
+//! - **A failure at any step from 4 to 7 removes the temporary file** and
+//!   leaves the target as it was. A failure to remove it is ignored: the
+//!   save says why it failed, not why its tidying up did.
+//! - **Kept**: the nine permission bits the target had at step 3; a new
+//!   file is written with none named, so it gets the platform's default.
+//!   And every byte: nothing is translated, so line endings are as the text
+//!   holds them.
+//! - **Knowingly not kept**, since the file is replaced by a rename: the
+//!   other names of a file with hard links (they keep the old content), the
+//!   owner and group of a file that is not the user's own, the set-user-id,
+//!   set-group-id and sticky bits, extended attributes and access-control
+//!   lists. A file whose permissions deny writing is replaced like any
+//!   other, since a rename needs only the directory.
+//! - **A directory that cannot be written refuses the save**, with the file
+//!   system's error. There is no fallback to writing the file in place:
+//!   that is the half-written file this is for avoiding.
+//! - A file name within a few bytes of the platform's longest cannot take
+//!   the temporary name's suffix; the write is refused and so is the save.
+//! - **Cost**: nothing sized by the text for a text with no escape; a rope
+//!   piece that holds an escape is copied as it is written, one piece at a
+//!   time. `tests/snapshot_cost.rs` pins both.
+//!
+//! # Noticing a change on disk
+//!
+//! - **What is compared** is a [`Stamp`], the modification time and the
+//!   size, **for equality**. Not "newer than": a file put back from a
+//!   backup, or written by a tool that sets an old time, has changed.
+//! - **A save is told what to expect** ([`Expect`]): the file unchanged
+//!   since a stamp, no file, or whatever is there, which checks nothing and
+//!   is the override. A save that finds something else is refused with
+//!   [`SaveError::Changed`] and what is on disk now, and writes nothing
+//!   over the file. The caller reports it, and may ask again expecting
+//!   whatever, or load again.
+//! - **When**: twice in each save. Before anything is written, so a refusal
+//!   costs one stat; and again just before the rename. The window left is
+//!   between that stat and the rename.
+//! - **Not otherwise.** Nothing here polls or watches: a change is noticed
+//!   when a save is asked for.
+//! - **What is not seen**: a change that keeps the size and lands in the
+//!   same tick of the file system's clock (a second on some, nanoseconds on
+//!   APFS and ext4). The fake makes that case on purpose, and a test pins
+//!   that it is not seen. A content hash would close it, at the cost of
+//!   reading the file at every save.
 
 use std::error::Error;
+use std::ffi::{OsStr, OsString};
 use std::fmt;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
-use crate::Text;
-use crate::fs::{Fs, FsError, FsErrorKind, Kind, Modified};
+use crate::fs::{Fs, FsError, FsErrorKind, Kind, Modified, Permissions, Stat};
+use crate::{Snapshot, Text};
 
 /// How many bytes from the start of a file are looked at for a NUL byte,
 /// which makes the file binary ([`LoadError::Binary`]). It is git's number.
@@ -114,6 +191,16 @@ pub struct Stamp {
     pub modified: Modified,
     /// The file's length in bytes.
     pub size: u64,
+}
+
+impl Stamp {
+    /// The stamp of a file whose stat is `stat`.
+    pub fn of(stat: &Stat) -> Self {
+        Self {
+            modified: stat.modified,
+            size: stat.size,
+        }
+    }
 }
 
 /// The line endings of a file, counted on its bytes. A carriage return
@@ -264,11 +351,207 @@ pub fn load(fs: &dyn Fs, path: &Path, limit: u64) -> Result<Loaded, LoadError> {
     })
 }
 
+/// What a save expects to find at the path, which it checks before it
+/// writes and again before it replaces the file.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Expect {
+    /// The file as it was when this stamp was taken: the stamp a [`load`]
+    /// or the last [`save`] returned.
+    Unchanged(Stamp),
+    /// No file: one that has appeared is a change.
+    Absent,
+    /// Anything. Nothing is checked: this is how a caller overwrites a file
+    /// it has been told changed.
+    Whatever,
+}
+
+impl Expect {
+    /// Whether `found`, the stamp of the file there now or none, is what
+    /// is expected.
+    fn met_by(self, found: Option<Stamp>) -> bool {
+        match self {
+            Self::Unchanged(stamp) => found == Some(stamp),
+            Self::Absent => found.is_none(),
+            Self::Whatever => true,
+        }
+    }
+}
+
+/// How many names a save tries for its temporary file before it gives up
+/// ([`SaveError::NoTemporaryName`]).
+pub const TEMPORARY_NAMES: u32 = 32;
+
+/// Why a file was not saved. Unless it says otherwise, the file is as it
+/// was and no temporary file is left.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SaveError {
+    /// The path is not absolute. The file system was not asked.
+    Relative,
+    /// What is at the path is not a file.
+    NotAFile,
+    /// The file is not as the caller expected ([`Expect`]): it changed on
+    /// disk, appeared, or is gone. Nothing was written over it. It is also
+    /// what a save says, with no stamp found, when the file was gone again
+    /// once it had been renamed into place: there is then no stamp to hand
+    /// back.
+    Changed {
+        /// The stamp of the file there now, or none when there is no file.
+        found: Option<Stamp>,
+    },
+    /// Every one of the [`TEMPORARY_NAMES`] names tried for the temporary
+    /// file was taken.
+    NoTemporaryName,
+    /// The caller cancelled the save before the file was replaced.
+    Cancelled,
+    /// The file system refused. If it refused the stat that follows the
+    /// rename, the file has been replaced; otherwise it is as it was.
+    Fs(FsError),
+}
+
+impl fmt::Display for SaveError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Relative => f.write_str("the path is not absolute"),
+            Self::NotAFile => f.write_str("what is there is not a file"),
+            Self::Changed { found: Some(stamp) } => write!(
+                f,
+                "the file on disk is not the one expected: it is {} bytes long now",
+                stamp.size
+            ),
+            Self::Changed { found: None } => {
+                f.write_str("the file on disk is not the one expected: no file is there now")
+            }
+            Self::NoTemporaryName => write!(
+                f,
+                "no name was free for a temporary file beside the file, after {TEMPORARY_NAMES} tries"
+            ),
+            Self::Cancelled => f.write_str("the save was cancelled before the file was replaced"),
+            Self::Fs(error) => write!(f, "the file system refused: {error}"),
+        }
+    }
+}
+
+impl Error for SaveError {}
+
+/// Saves what `snapshot` holds as the file at `path`, which must be
+/// absolute, if what is there is what `expect` says. Returns the stamp of
+/// the file written, for the next save to expect. The module docs say what
+/// is done in what order.
+///
+/// `cancelled` is asked once, when the temporary file is written and before
+/// the file is replaced: if it says yes, the file is not replaced.
+pub fn save(
+    fs: &dyn Fs,
+    path: &Path,
+    snapshot: &Snapshot,
+    expect: Expect,
+    cancelled: &dyn Fn() -> bool,
+) -> Result<Stamp, SaveError> {
+    if !path.is_absolute() {
+        return Err(SaveError::Relative);
+    }
+    // The file a link names is the one replaced, and the link stays.
+    // Nothing there is not an error: the path is then its own target.
+    let target = match fs.resolve(path) {
+        Ok(target) => target,
+        Err(error) if error.kind == FsErrorKind::NotFound => path.to_path_buf(),
+        Err(error) => return Err(SaveError::Fs(error)),
+    };
+    let (Some(directory), Some(name)) = (target.parent(), target.file_name()) else {
+        // The root, or a path that ends in `..`: no file can be there.
+        return Err(SaveError::NotAFile);
+    };
+    let permissions = expected(fs, &target, expect)?;
+    let temporary = write_temporary(fs, directory, name, snapshot, permissions)?;
+    // From here on a failure takes the temporary file away, and the target
+    // is as it was until the rename.
+    let replaced = replace(fs, &temporary, &target, expect, cancelled);
+    if replaced.is_err() {
+        // Its own failure is ignored: the save says why it failed.
+        let _ = fs.remove(&temporary);
+    }
+    replaced?;
+    match fs.stat(&target) {
+        Ok(Some(stat)) => Ok(Stamp::of(&stat)),
+        Ok(None) => Err(SaveError::Changed { found: None }),
+        Err(error) => Err(SaveError::Fs(error)),
+    }
+}
+
+/// Checks that what is at `target` is a file, or nothing, and is what
+/// `expect` says, and returns the permissions of the file there.
+fn expected(fs: &dyn Fs, target: &Path, expect: Expect) -> Result<Option<Permissions>, SaveError> {
+    let stat = fs.stat(target).map_err(SaveError::Fs)?;
+    if stat.is_some_and(|stat| stat.kind != Kind::File) {
+        return Err(SaveError::NotAFile);
+    }
+    let found = stat.as_ref().map(Stamp::of);
+    if !expect.met_by(found) {
+        return Err(SaveError::Changed { found });
+    }
+    Ok(stat.map(|stat| stat.permissions))
+}
+
+/// Writes what `snapshot` holds to a new file in `directory`, named after
+/// `name`, with `permissions`, and returns its path. A name that is taken
+/// is passed over and left alone, for [`TEMPORARY_NAMES`] names.
+///
+/// The name is `.<name>.<n>.tmp`, with `n` counted from 0. There is no
+/// randomness and no clock in it: the port's `write` refuses a name in
+/// use, which is what makes a counter safe, between two editors as well.
+fn write_temporary(
+    fs: &dyn Fs,
+    directory: &Path,
+    name: &OsStr,
+    snapshot: &Snapshot,
+    permissions: Option<Permissions>,
+) -> Result<PathBuf, SaveError> {
+    for n in 0..TEMPORARY_NAMES {
+        let mut file = OsString::from(".");
+        file.push(name);
+        file.push(format!(".{n}.tmp"));
+        let temporary = directory.join(file);
+        // A rope piece at a time, borrowed unless it holds an escape:
+        // never the text at once.
+        match fs.write(&temporary, &mut snapshot.byte_chunks(), permissions) {
+            Ok(()) => return Ok(temporary),
+            // Someone else's, or one a crash left: not ours to touch.
+            Err(error) if error.kind == FsErrorKind::Exists => {}
+            Err(error) => {
+                // A write that failed partway may have left a file; one
+                // that made none has nothing to remove, and that refusal
+                // is ignored.
+                let _ = fs.remove(&temporary);
+                return Err(SaveError::Fs(error));
+            }
+        }
+    }
+    Err(SaveError::NoTemporaryName)
+}
+
+/// Puts the temporary file in place of the target, unless the save was
+/// cancelled or the target is no longer what `expect` says.
+fn replace(
+    fs: &dyn Fs,
+    temporary: &Path,
+    target: &Path,
+    expect: Expect,
+    cancelled: &dyn Fn() -> bool,
+) -> Result<(), SaveError> {
+    if cancelled() {
+        return Err(SaveError::Cancelled);
+    }
+    // Again: writing the temporary file took time, and the file may have
+    // changed meanwhile.
+    expected(fs, target, expect)?;
+    fs.rename(temporary, target).map_err(SaveError::Fs)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::Revision;
-    use crate::fs::{Call, FakeFs, FsErrorKind, Op};
+    use crate::fs::{Call, FakeFs, FsErrorKind, Op, Permissions};
 
     /// Where the tests' file is.
     const PATH: &str = "/dir/file.txt";
@@ -545,6 +828,590 @@ mod tests {
             ),
             (
                 LoadError::Fs(FsError::new(FsErrorKind::Denied, "os error 13")),
+                "the file system refused: it is not allowed: os error 13",
+            ),
+        ];
+
+        for (error, expected) in &said {
+            assert_eq!(error.to_string(), *expected, "{error:?}");
+        }
+    }
+
+    /// Where the first temporary file of a save of [`PATH`] is.
+    const TEMPORARY: &str = "/dir/.file.txt.0.tmp";
+
+    /// What the tests' file holds before a save.
+    const OLD: &[u8] = b"the old text\n";
+
+    /// What the tests save over it.
+    const NEW: &str = "the new text, with an \u{e9} and a raw byte \u{10DCFF}\r\n";
+
+    /// What [`NEW`] is saved as.
+    const NEW_BYTES: &[u8] = b"the new text, with an \xC3\xA9 and a raw byte \xFF\r\n";
+
+    /// A later time than [`THEN`].
+    const LATER: Modified = Modified {
+        seconds: THEN.seconds + 3600,
+        nanoseconds: 5,
+    };
+
+    /// A save that is never cancelled.
+    fn never() -> bool {
+        false
+    }
+
+    /// Saves [`NEW`] at `path`, expecting `expect`.
+    fn save_new(fs: &FakeFs, path: &str, expect: Expect) -> Result<Stamp, SaveError> {
+        let snapshot = Text::from(NEW).snapshot();
+        save(fs, Path::new(path), &snapshot, expect, &never)
+    }
+
+    /// The stamp of the file at [`PATH`], as the port says it.
+    fn stamp_on_disk(fs: &FakeFs) -> Option<Stamp> {
+        let stat = fs.stat(Path::new(PATH)).ok().flatten()?;
+        Some(Stamp {
+            modified: stat.modified,
+            size: stat.size,
+        })
+    }
+
+    /// The paths a fake holds that are neither the directory nor the file.
+    fn left_over(fs: &FakeFs) -> Vec<std::path::PathBuf> {
+        fs.paths()
+            .into_iter()
+            .filter(|path| path != Path::new("/dir") && path != Path::new(PATH))
+            .collect()
+    }
+
+    /// Makes the call of `op` that is `nth` from now fail with `error`; 0
+    /// is the next one.
+    fn fail_nth(fs: &FakeFs, op: Op, nth: usize, error: FsError) {
+        if nth == 0 {
+            fs.fail(op, error);
+        } else {
+            fs.after(op, move |fs| fail_nth(fs, op, nth - 1, error));
+        }
+    }
+
+    #[test]
+    fn a_file_loaded_and_saved_without_edits_is_byte_identical() {
+        for (name, bytes) in FIXTURES {
+            let fs = fake_with(bytes);
+            let loaded = loaded(&fs);
+            fs.set_now(LATER);
+
+            let saved = save(
+                &fs,
+                Path::new(PATH),
+                &loaded.text.snapshot(),
+                Expect::Unchanged(loaded.stamp),
+                &never,
+            );
+
+            assert_eq!(
+                saved,
+                Ok(Stamp {
+                    modified: LATER,
+                    size: size(bytes)
+                }),
+                "{name}"
+            );
+            assert_eq!(fs.bytes(PATH).as_deref(), Some(*bytes), "{name}");
+            // Nothing else is left in the directory.
+            assert_eq!(left_over(&fs), Vec::<std::path::PathBuf>::new(), "{name}");
+        }
+    }
+
+    #[test]
+    fn a_save_writes_a_temporary_file_beside_the_file_and_renames_it_over_the_file() {
+        let fs = fake_with(OLD);
+        let before = stamp_on_disk(&fs);
+        let calls_before = fs.calls().len();
+
+        let saved = save_new(&fs, PATH, Expect::Whatever);
+
+        assert!(saved.is_ok(), "{saved:?}");
+        assert_ne!(saved.ok(), before);
+        assert_eq!(
+            fs.calls()[calls_before..],
+            [
+                Call::Resolve(PATH.into()),
+                Call::Stat(PATH.into()),
+                Call::Write(TEMPORARY.into(), Some(FakeFs::DEFAULT_PERMISSIONS)),
+                Call::Stat(PATH.into()),
+                Call::Rename(TEMPORARY.into(), PATH.into()),
+                Call::Stat(PATH.into()),
+            ]
+        );
+        assert_eq!(fs.bytes(PATH).as_deref(), Some(NEW_BYTES));
+        assert_eq!(left_over(&fs), Vec::<std::path::PathBuf>::new());
+    }
+
+    #[test]
+    fn a_save_that_fails_at_any_step_leaves_the_file_whole_and_no_temporary_file() {
+        // The calls of a save, in order, as the test above pins them.
+        let steps = [
+            (Op::Resolve, 0),
+            (Op::Stat, 0),
+            (Op::Write, 0),
+            (Op::Stat, 1),
+            (Op::Rename, 0),
+        ];
+        for (op, nth) in steps {
+            for kind in [FsErrorKind::Denied, FsErrorKind::Other] {
+                let fs = fake_with(OLD);
+                let error = FsError::new(kind, "injected");
+                fail_nth(&fs, op, nth, error.clone());
+
+                let saved = save_new(&fs, PATH, Expect::Whatever);
+
+                assert_eq!(saved, Err(SaveError::Fs(error)), "{op:?} {nth}");
+                assert_eq!(fs.bytes(PATH).as_deref(), Some(OLD), "{op:?} {nth}");
+                assert_eq!(
+                    left_over(&fs),
+                    Vec::<std::path::PathBuf>::new(),
+                    "{op:?} {nth}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn a_failure_of_the_stat_after_the_rename_is_reported_and_the_file_is_the_new_one() {
+        let fs = fake_with(OLD);
+        let error = FsError::new(FsErrorKind::Other, "injected");
+        fail_nth(&fs, Op::Stat, 2, error.clone());
+
+        let saved = save_new(&fs, PATH, Expect::Whatever);
+
+        assert_eq!(saved, Err(SaveError::Fs(error)));
+        assert_eq!(fs.bytes(PATH).as_deref(), Some(NEW_BYTES));
+        assert_eq!(left_over(&fs), Vec::<std::path::PathBuf>::new());
+    }
+
+    #[test]
+    fn a_write_cut_short_leaves_the_file_as_it_was_and_no_temporary_file() {
+        for cut in [0, 1, 5, NEW_BYTES.len() - 1] {
+            let fs = fake_with(OLD);
+            fs.cut_write(cut);
+
+            let saved = save_new(&fs, PATH, Expect::Whatever);
+
+            assert!(
+                matches!(&saved, Err(SaveError::Fs(error)) if error.kind == FsErrorKind::Other),
+                "{cut}: {saved:?}"
+            );
+            assert_eq!(fs.bytes(PATH).as_deref(), Some(OLD), "{cut}");
+            assert_eq!(left_over(&fs), Vec::<std::path::PathBuf>::new(), "{cut}");
+            assert_eq!(fs.calls().last(), Some(&Call::Remove(TEMPORARY.into())));
+        }
+    }
+
+    #[test]
+    fn a_file_gone_once_it_was_renamed_into_place_is_reported_as_changed() {
+        let fs = fake_with(OLD);
+        fs.after(Op::Rename, |fs| fs.take_away(PATH));
+
+        let saved = save_new(&fs, PATH, Expect::Whatever);
+
+        // There is no stamp to hand back for the next save to expect.
+        assert_eq!(saved, Err(SaveError::Changed { found: None }));
+        assert_eq!(left_over(&fs), Vec::<std::path::PathBuf>::new());
+    }
+
+    #[test]
+    fn a_failure_to_remove_the_temporary_file_is_ignored() {
+        let fs = fake_with(OLD);
+        let error = FsError::new(FsErrorKind::Denied, "the rename");
+        fs.fail(Op::Rename, error.clone());
+        fs.fail(Op::Remove, FsError::new(FsErrorKind::Other, "the remove"));
+
+        let saved = save_new(&fs, PATH, Expect::Whatever);
+
+        // The save says why it failed, not why its tidying up did.
+        assert_eq!(saved, Err(SaveError::Fs(error)));
+        assert_eq!(fs.bytes(PATH).as_deref(), Some(OLD));
+    }
+
+    #[test]
+    fn the_saved_file_keeps_the_permissions_the_file_had() {
+        let fs = fake_with(OLD);
+        let had = Permissions::new(0o750);
+        assert_ne!(had, FakeFs::DEFAULT_PERMISSIONS);
+        fs.set_permissions(PATH, had);
+
+        let saved = save_new(&fs, PATH, Expect::Whatever);
+
+        assert!(saved.is_ok(), "{saved:?}");
+        assert_eq!(fs.permissions(PATH), Some(had));
+        // They were handed to the port's write, and not set afterwards.
+        assert!(
+            fs.calls()
+                .contains(&Call::Write(TEMPORARY.into(), Some(had)))
+        );
+    }
+
+    #[test]
+    fn a_new_file_is_written_with_no_permissions_named() {
+        let fs = FakeFs::new();
+        fs.directory("/dir");
+
+        let saved = save_new(&fs, PATH, Expect::Absent);
+
+        assert!(saved.is_ok(), "{saved:?}");
+        assert_eq!(fs.bytes(PATH).as_deref(), Some(NEW_BYTES));
+        assert!(fs.calls().contains(&Call::Write(TEMPORARY.into(), None)));
+        assert_eq!(left_over(&fs), Vec::<std::path::PathBuf>::new());
+    }
+
+    /// A way a file comes not to be what a save expects: its name, what the
+    /// save expected, and a change to the fake made since.
+    type Change = (&'static str, Expect, fn(&FakeFs));
+
+    /// The ways the tests make a file not what a save expects.
+    fn changes() -> Vec<Change> {
+        let loaded = Stamp {
+            modified: THEN,
+            size: size(OLD),
+        };
+        vec![
+            (
+                "another time and the same size",
+                Expect::Unchanged(loaded),
+                |fs| assert!(fs.set_modified(PATH, LATER)),
+            ),
+            (
+                "the same time and another size",
+                Expect::Unchanged(loaded),
+                |fs| fs.file(PATH, b"the old text, and more\n"),
+            ),
+            ("an earlier time", Expect::Unchanged(loaded), |fs| {
+                let earlier = Modified {
+                    seconds: THEN.seconds - 86_400,
+                    nanoseconds: THEN.nanoseconds,
+                };
+                assert!(fs.set_modified(PATH, earlier));
+            }),
+            ("removed", Expect::Unchanged(loaded), |fs| {
+                fs.take_away(PATH);
+            }),
+            ("appeared where none was expected", Expect::Absent, |_| {}),
+        ]
+    }
+
+    #[test]
+    fn a_file_that_is_not_as_expected_is_not_overwritten() {
+        for (name, expect, change) in changes() {
+            let fs = fake_with(OLD);
+            change(&fs);
+            let found = stamp_on_disk(&fs);
+            let held = fs.bytes(PATH);
+            let calls_before = fs.calls().len();
+
+            let saved = save_new(&fs, PATH, expect);
+
+            assert_eq!(saved, Err(SaveError::Changed { found }), "{name}");
+            assert_eq!(fs.bytes(PATH), held, "{name}");
+            assert_eq!(left_over(&fs), Vec::<std::path::PathBuf>::new(), "{name}");
+            // A refusal costs one stat: nothing was written.
+            assert_eq!(
+                fs.calls()[calls_before..],
+                [Call::Resolve(PATH.into()), Call::Stat(PATH.into())],
+                "{name}"
+            );
+        }
+    }
+
+    #[test]
+    fn whatever_overwrites() {
+        for (name, _, change) in changes() {
+            let fs = fake_with(OLD);
+            change(&fs);
+
+            let saved = save_new(&fs, PATH, Expect::Whatever);
+
+            assert!(saved.is_ok(), "{name}: {saved:?}");
+            assert_eq!(fs.bytes(PATH).as_deref(), Some(NEW_BYTES), "{name}");
+        }
+    }
+
+    #[test]
+    fn a_change_that_keeps_the_size_within_one_tick_of_the_clock_is_not_seen() {
+        let fs = fake_with(OLD);
+        let loaded = loaded(&fs);
+        // Someone else writes the file, the same length, before the file
+        // system's clock has moved: the fake's time is the one a test sets.
+        let theirs = b"THE OLD TEXT\n";
+        assert_eq!(theirs.len(), OLD.len());
+        fs.file(PATH, theirs);
+
+        let saved = save_new(&fs, PATH, Expect::Unchanged(loaded.stamp));
+
+        // A stamp is a time and a size, and both are what they were. This
+        // is the limit of the check, pinned so that it is a recorded fact.
+        assert!(saved.is_ok(), "{saved:?}");
+        assert_eq!(fs.bytes(PATH).as_deref(), Some(NEW_BYTES));
+    }
+
+    #[test]
+    fn a_file_changed_while_the_temporary_file_was_written_is_not_overwritten() {
+        let fs = fake_with(OLD);
+        let loaded = loaded(&fs);
+        fs.after(Op::Write, |fs| {
+            fs.set_now(LATER);
+            fs.file(PATH, b"someone else's text\n");
+        });
+
+        let saved = save_new(&fs, PATH, Expect::Unchanged(loaded.stamp));
+
+        assert_eq!(
+            saved,
+            Err(SaveError::Changed {
+                found: Some(Stamp {
+                    modified: LATER,
+                    size: 20
+                })
+            })
+        );
+        assert_eq!(
+            fs.bytes(PATH).as_deref(),
+            Some(b"someone else's text\n".as_slice())
+        );
+        assert_eq!(left_over(&fs), Vec::<std::path::PathBuf>::new());
+    }
+
+    #[test]
+    fn a_save_through_a_link_replaces_the_file_the_link_names_and_keeps_the_link() {
+        let fs = fake_with(OLD);
+        fs.link("/elsewhere/link.txt", PATH);
+
+        let saved = save_new(&fs, "/elsewhere/link.txt", Expect::Whatever);
+
+        assert!(saved.is_ok(), "{saved:?}");
+        assert_eq!(fs.bytes(PATH).as_deref(), Some(NEW_BYTES));
+        assert_eq!(fs.link_target("/elsewhere/link.txt"), Some(PATH.into()));
+        // The temporary file was beside the file, not beside the link: a
+        // rename is one step only within a directory's file system.
+        assert!(
+            fs.calls()
+                .contains(&Call::Rename(TEMPORARY.into(), PATH.into()))
+        );
+        assert_eq!(
+            fs.paths(),
+            ["/dir", PATH, "/elsewhere", "/elsewhere/link.txt"].map(std::path::PathBuf::from)
+        );
+    }
+
+    #[test]
+    fn a_taken_temporary_name_is_passed_over_and_left_alone() {
+        let fs = fake_with(OLD);
+        fs.file(TEMPORARY, b"left by a crash");
+
+        let saved = save_new(&fs, PATH, Expect::Whatever);
+
+        assert!(saved.is_ok(), "{saved:?}");
+        assert_eq!(fs.bytes(PATH).as_deref(), Some(NEW_BYTES));
+        assert_eq!(
+            fs.bytes(TEMPORARY).as_deref(),
+            Some(b"left by a crash".as_slice())
+        );
+        assert_eq!(left_over(&fs), [std::path::PathBuf::from(TEMPORARY)]);
+        assert!(
+            fs.calls()
+                .contains(&Call::Rename("/dir/.file.txt.1.tmp".into(), PATH.into()))
+        );
+    }
+
+    #[test]
+    fn with_every_temporary_name_taken_the_save_is_refused_after_32_tries() {
+        let fs = fake_with(OLD);
+        // More names are taken than are tried, so the bound is the save's.
+        for n in 0..40 {
+            fs.file(format!("/dir/.file.txt.{n}.tmp"), b"taken");
+        }
+
+        let saved = save_new(&fs, PATH, Expect::Whatever);
+
+        assert_eq!(saved, Err(SaveError::NoTemporaryName));
+        let writes: Vec<Call> = fs
+            .calls()
+            .into_iter()
+            .filter(|call| call.op() == Op::Write)
+            .collect();
+        assert_eq!(writes.len(), 32);
+        assert_eq!(
+            writes.last(),
+            Some(&Call::Write(
+                "/dir/.file.txt.31.tmp".into(),
+                Some(FakeFs::DEFAULT_PERMISSIONS)
+            ))
+        );
+        assert_eq!(fs.bytes(PATH).as_deref(), Some(OLD));
+        // None of the names it found taken was removed.
+        assert_eq!(left_over(&fs).len(), 40);
+    }
+
+    #[test]
+    fn a_cancelled_save_does_not_replace_the_file_and_leaves_no_temporary_file() {
+        let fs = fake_with(OLD);
+        let calls_before = fs.calls().len();
+        let snapshot = Text::from(NEW).snapshot();
+
+        let saved = save(&fs, Path::new(PATH), &snapshot, Expect::Whatever, &|| true);
+
+        assert_eq!(saved, Err(SaveError::Cancelled));
+        assert_eq!(fs.bytes(PATH).as_deref(), Some(OLD));
+        assert_eq!(left_over(&fs), Vec::<std::path::PathBuf>::new());
+        // The flag is read once the temporary file is written, and the
+        // file is not looked at again.
+        assert_eq!(
+            fs.calls()[calls_before..],
+            [
+                Call::Resolve(PATH.into()),
+                Call::Stat(PATH.into()),
+                Call::Write(TEMPORARY.into(), Some(FakeFs::DEFAULT_PERMISSIONS)),
+                Call::Remove(TEMPORARY.into()),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_save_is_not_cancelled_by_a_flag_that_says_no() {
+        let fs = fake_with(OLD);
+        let asked = std::cell::Cell::new(0);
+        let snapshot = Text::from(NEW).snapshot();
+
+        let saved = save(&fs, Path::new(PATH), &snapshot, Expect::Whatever, &|| {
+            asked.set(asked.get() + 1);
+            false
+        });
+
+        assert!(saved.is_ok(), "{saved:?}");
+        assert_eq!(asked.get(), 1);
+        assert_eq!(fs.bytes(PATH).as_deref(), Some(NEW_BYTES));
+    }
+
+    #[test]
+    fn a_save_returns_the_stamp_of_what_it_wrote_and_the_next_save_accepts_it() {
+        let fs = fake_with(OLD);
+        let loaded = loaded(&fs);
+        fs.set_now(LATER);
+
+        let first = save_new(&fs, PATH, Expect::Unchanged(loaded.stamp));
+
+        let expected = Stamp {
+            modified: LATER,
+            size: size(NEW_BYTES),
+        };
+        assert_eq!(first, Ok(expected));
+        assert_eq!(stamp_on_disk(&fs), Some(expected));
+        // The stamp of the load is stale now, and the save's is not.
+        assert_eq!(
+            save_new(&fs, PATH, Expect::Unchanged(loaded.stamp)),
+            Err(SaveError::Changed {
+                found: Some(expected)
+            })
+        );
+        assert_eq!(
+            save_new(&fs, PATH, Expect::Unchanged(expected)),
+            Ok(expected)
+        );
+    }
+
+    #[test]
+    fn a_directory_that_cannot_be_written_refuses_the_save_and_the_file_is_as_it_was() {
+        let fs = fake_with(OLD);
+        let error = FsError::new(FsErrorKind::Denied, "the directory is read-only");
+        fs.fail(Op::Write, error.clone());
+
+        let saved = save_new(&fs, PATH, Expect::Whatever);
+
+        // There is no fallback to writing the file in place.
+        assert_eq!(saved, Err(SaveError::Fs(error)));
+        assert_eq!(fs.bytes(PATH).as_deref(), Some(OLD));
+        assert!(
+            fs.calls()
+                .iter()
+                .all(|call| !matches!(call, Call::Write(path, _) if path == Path::new(PATH)))
+        );
+    }
+
+    #[test]
+    fn a_save_into_a_directory_that_is_not_there_is_refused_as_not_found() {
+        let fs = FakeFs::new();
+
+        let saved = save_new(&fs, "/nowhere/file.txt", Expect::Absent);
+
+        assert!(
+            matches!(&saved, Err(SaveError::Fs(error)) if error.kind == FsErrorKind::NotFound),
+            "{saved:?}"
+        );
+        assert_eq!(fs.paths(), Vec::<std::path::PathBuf>::new());
+    }
+
+    #[test]
+    fn what_is_not_a_file_is_not_replaced() {
+        let fs = FakeFs::new();
+        fs.directory("/dir/sub");
+        fs.other("/dir/pipe");
+
+        for path in ["/dir/sub", "/dir/pipe", "/"] {
+            assert_eq!(
+                save_new(&fs, path, Expect::Whatever),
+                Err(SaveError::NotAFile),
+                "{path}"
+            );
+        }
+        assert!(fs.calls().iter().all(|call| call.op() != Op::Write));
+        assert_eq!(
+            fs.paths(),
+            ["/dir", "/dir/pipe", "/dir/sub"].map(std::path::PathBuf::from)
+        );
+    }
+
+    #[test]
+    fn a_save_to_a_path_that_is_not_absolute_is_refused_before_anything_is_asked() {
+        let fs = fake_with(OLD);
+        let calls_before = fs.calls().len();
+
+        for path in ["dir/file.txt", "file.txt", ""] {
+            assert_eq!(
+                save_new(&fs, path, Expect::Whatever),
+                Err(SaveError::Relative),
+                "{path:?}"
+            );
+        }
+        assert_eq!(fs.calls().len(), calls_before);
+    }
+
+    #[test]
+    fn each_refusal_of_a_save_says_what_was_refused() {
+        let said = [
+            (SaveError::Relative, "the path is not absolute"),
+            (SaveError::NotAFile, "what is there is not a file"),
+            (
+                SaveError::Changed {
+                    found: Some(Stamp {
+                        modified: THEN,
+                        size: 42,
+                    }),
+                },
+                "the file on disk is not the one expected: it is 42 bytes long now",
+            ),
+            (
+                SaveError::Changed { found: None },
+                "the file on disk is not the one expected: no file is there now",
+            ),
+            (
+                SaveError::NoTemporaryName,
+                "no name was free for a temporary file beside the file, after 32 tries",
+            ),
+            (
+                SaveError::Cancelled,
+                "the save was cancelled before the file was replaced",
+            ),
+            (
+                SaveError::Fs(FsError::new(FsErrorKind::Denied, "os error 13")),
                 "the file system refused: it is not allowed: os error 13",
             ),
         ];

@@ -242,6 +242,25 @@
 //!   text holds no lock: a caller that shares a text between threads puts it
 //!   behind one.
 //!
+//! # Files
+//!
+//! A text is loaded from a file and a snapshot saved as one through the
+//! file port ([`fs::Fs`]), by the module [`mod@file`], whose docs have the
+//! rules in full:
+//!
+//! - **A load** ([`file::load`]) reads the file once, up to a limit the
+//!   caller gives, refuses a binary file (a NUL byte among its first 8,000
+//!   bytes), counts its line endings and changes none, and returns the text
+//!   with a stamp: the file's modification time and size.
+//! - **A save** ([`file::save`]) writes a temporary file beside the file
+//!   and renames it over the file, so a crash never leaves a half-written
+//!   file, and keeps the file's permissions. It is told what to expect on
+//!   disk, and a file that is not as expected is not overwritten: the
+//!   refusal says what is there now.
+//! - Both are tested on the port's published fake ([`fs::FakeFs`]) and
+//!   make no real file; the real adapter is another crate, held to the
+//!   port's contract by its own tests.
+//!
 //! # The rope
 //!
 //! The text is held in a rope, a tree of small pieces, from the `ropey`
@@ -281,8 +300,14 @@
 //!   first wrote it: it is the inverse's.
 //! - Handing back a selection that a later transaction of a run carried,
 //!   when the run's first carried none.
-//! - Writing a file. Reading one is [`file::load`], which counts the
-//!   file's line endings and refuses a binary file.
+//! - What a save that renames does not keep: the other names of a file
+//!   with hard links, a foreign owner, the special mode bits, extended
+//!   attributes. Writing in place where a rename would lose one gives up
+//!   the crash guarantee, and is not built.
+//! - A load that streams into the rope without holding the file's bytes
+//!   whole, and an override of the binary rule.
+//! - Noticing that a file changed on disk at any time but a save, and a
+//!   change inside the file system's clock granularity that keeps the size.
 //!
 //! # Where an addition goes
 //!
@@ -293,6 +318,7 @@
 //! | Another kind of change | A variant of [`Change`], with its push on [`ChangeSet`] that keeps the normal form, and its case in apply, compose, invert, map and the log's edits | The unit tests of `change`, and the laws in `tests/properties/changes.rs`, whose generator gains the kind |
 //! | Another read of the log | A method of [`Text`] over the private `log::Log` | Its unit tests on literal edits, and a property in `tests/properties/log.rs` that compares it with a reference computed from the strings |
 //! | A rule about what bytes a text loads from or saves as | The private module `bytes` | Its unit tests on named byte strings, and the byte properties in `tests/properties/` |
+//! | A rule about how a file is loaded or saved: what is refused, what is checked, what is kept | The module [`mod@file`], over the port | Its unit tests on [`fs::FakeFs`], and the properties in `tests/properties/files.rs`; never a test in an adapter's crate |
 //! | A bound on what an operation costs, the log's growth and what a kept inverse holds included | `tests/snapshot_cost.rs`, as a count of bytes allocated | Itself |
 //! | Another fact kept with a transaction's inverse | A field of the private `inverse::Kept`, set where [`Text::apply`] and [`Text::apply_inverse`] keep one | The unit tests of `inverse`, and a property in `tests/properties/inverses.rs`, whose history beside the text gains the fact |
 //! | Another bound on the kept inverses | A method of [`Text`] over the private `inverse::Inverses`, beside [`Text::drop_inverses`] | The unit tests of `inverse`, and the driver of `tests/properties/inverses.rs`, which gains the step |

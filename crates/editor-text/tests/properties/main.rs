@@ -34,6 +34,7 @@ use proptest::test_runner::{Config, RngAlgorithm, TestCaseError, TestRng, TestRu
 
 mod anchors;
 mod changes;
+mod files;
 mod inverses;
 mod log;
 mod selections;
