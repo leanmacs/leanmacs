@@ -6,6 +6,7 @@ import Editor.Event.Queue
 import Editor.Job.Jobs
 import Editor.Job.Pool
 import Editor.Job.Real
+import Editor.Loop
 import Editor.Text.Real
 
 /-!
@@ -34,10 +35,35 @@ installed between two events, and the editor answers events while a chunk
 elaborates. It is a dedicated task, not one of the pool's: it reads files.
 
 It knows a request from its driver, the wake-up of a reload job, the wake-up
-of a job that has ended, an event of the library's scripted source, a key
-press from the window and quit, and nothing else. It has no keys, keymaps, dispatch, scene or rollback: those
-are the command loop's, which will replace this loop and call the same
-operations of the reducer and of the job table.
+of a job that has ended, an event of the library's scripted source, an event
+from the window input and quit, and nothing else.
+
+## The editor loop
+
+The host runs the command loop (`Editor/Loop.lean`) beside the config
+session, and calls the same operations of the reducer and of the job table
+as before, so reload and job completion work as they did.
+
+- **The frame is made at the first window event.** The host holds no frame
+  (`Running.frame`) until the first event from the window input arrives, and
+  then makes it (`Loop.start`) in a frame of 0 by 0, which a resize changes.
+  A real window reports before anything is typed, so that is also when a
+  real frame would first have a size. Until then nothing is in the text
+  store but what commands made, so the indices `show` prints are what they
+  were before there was a loop.
+- **A window event goes to the loop** (`Running.input`): `Loop.step`, run
+  against the library with the recorder as the display, handles it and
+  publishes a scene. A key press is still printed with its identity, as the
+  host's own output; the loop drops it. A close request ends the loop, as
+  the driver's `stop` does. A window event that cannot be read is ignored.
+- **After every other event**, a scene is published once there is a frame
+  (`Running.publish`): a driver's request, a reload's install, a job's
+  command may each have edited a text a view shows. The driver's `stop`
+  publishes nothing.
+- **The display is a recorder** (`Editor/Display/Recorder.lean`), in cells
+  8 pixels across and 16 down (`cells`), over the table of snapshots the
+  text binding publishes: it keeps the last scene and counts them, and the
+  `scene` request prints it.
 
 The collaborators are handed in (`Collaborators`): the elaborator and the
 source of the config session, `emit`, the port every line of output goes
@@ -101,9 +127,18 @@ key arrived: <logical> <physical> <modifiers>
 commands: <names>
 text <index>: <quoted text>
 store <name> v<version>: <value>
+scene <w>x<h>, focused <id or ->, echo <quoted>, preedit <quoted or ->, published <n>
+view <id> <x>,<y> <w>x<h>: <quoted text>, scroll <offset>, selections <anchor>..<head> …
+scene: none               (no scene has been published)
 ```
 
-The last three answer `show`, which lists commands, not jobs. The loop keeps
+The last two answer `scene`: the last scene published, with how many scenes
+have been, then each view in drawing order, its snapshot's text read from
+the library, and the offsets of its scroll anchor and of each range of its
+selection, as the markers are when it is asked.
+
+`commands`, `text` and `store` answer `show`, which lists commands, not
+jobs. The loop keeps
 one table of texts for its life, and `show` lists every text in it that no
 command has released, under the index it was made with. A diagnostic that is about no place in particular has the
 position 0:0. A job's id is its number in this loop's table, from 1. A job
@@ -120,14 +155,15 @@ handled in the order they were sent, and a request sent while a reload runs
 is handled before that reload is installed: settle first to see its effect.
 
 `run` drives a host through a script, one directive a line: `reload`,
-`run <name>`, `spawn <name>` and `show` are requests, and `settle`, `join`
-and `key <logical> <physical> <modifiers>` are the driver's own. A `key` is
-sent with `Host.press`: a press with no text, posted through the library's
-window input as a window would report it (`Event.post`), in order with the
-requests. The loop decodes a window's events (`Event.ofFfi`) and prints a key
-press with its identity; it ignores every other window event, which the
-command loop will handle. Blank lines and lines that start with `#` are
-skipped.
+`run <name>`, `spawn <name>`, `show` and `scene` are requests, and `settle`,
+`join`, `key <logical> <physical> <modifiers>` and `commit <text>` are the
+driver's own. A `key` is sent with `Host.press`: a press with no text,
+posted through the library's window input as a window would report it
+(`Event.post`), in order with the requests. A `commit` is sent the same way
+with `Host.commit`, as an input method's composition ending with the rest of
+the line, trimmed; an empty one is refused. The loop decodes a window's
+events (`Event.ofFfi`) and hands each to the editor loop. Blank lines and
+lines that start with `#` are skipped.
 
 A script that cannot run to its end is data too. `Host.await` and `Host.join`
 say what a wait came to (`Wait`): settled, or run out with a reload or a job
@@ -159,7 +195,10 @@ clock it moves, with the thread each line was emitted from
 once, on the fixture under `tests/headless`, which covers the command line,
 the pump and the timer service: the fixture's job sleeps on the real clock.
 It runs it a second time on `tests/headless/keys-script`, which sends keys
-with their identity through the library's window input.
+with their identity through the library's window input, and a third on
+`tests/headless/scene-script`, which commits text, asks for the scene, and
+then reloads and runs a job once the frame exists, each followed by a
+scene.
 -/
 
 namespace Editor.Headless
@@ -174,6 +213,8 @@ inductive Request where
   | «show»
   /-- Start the job registered under `name`. -/
   | spawn (name : String)
+  /-- Print the last scene the editor loop published. -/
+  | scene
   deriving DecidableEq, Repr
 
 /-- What a host needs from outside. -/
@@ -223,6 +264,7 @@ def Signal.encode : Signal → UInt64 × String
   | .marker => (3, "")
   | .stop => (4, "")
   | .request (.spawn name) => (5, name)
+  | .request .scene => (6, "")
 
 /-- The signal an event's code and text stand for, if they stand for one. -/
 def Signal.decode? (code : UInt64) (text : String) : Option Signal :=
@@ -233,6 +275,7 @@ def Signal.decode? (code : UInt64) (text : String) : Option Signal :=
   | 3 => some .marker
   | 4 => some .stop
   | 5 => some (.request (.spawn text))
+  | 6 => some (.request .scene)
   | _ => none
 
 mutual
@@ -285,6 +328,9 @@ structure Running (σ : Type) where
   /-- The display: with no window, a recorder of what is published, over the
   snapshots `texts` publishes. -/
   display : DisplayRecorder
+  /-- The editor loop's frame: none until the first event from the window
+  input arrives. -/
+  frame : Option Loop := none
   /-- The jobs that are running, with their owners. -/
   jobs : Job.Jobs
   /-- Where the reload job that is running will leave its outcome. -/
@@ -408,6 +454,86 @@ def ended (collaborators : Collaborators σ) (running : Running σ) (id : Nat) :
     collaborators.emit s!"{label}: cancelled"
     return running
 
+/-- Publishes a scene of the frame's state, if there is a frame: what the
+loop does after every event that is not the window's. -/
+def publish (running : Running σ) : IO (Running σ) := do
+  let some frame := running.frame | return running
+  let (result, texts) ← frame.publish.runReal running.texts running.display.handle
+  match result with
+  | .ok frame =>
+    return { running with
+        frame := some frame, texts }
+  | .error _ =>
+    return { running with texts }
+
+/-- Handles an event from the window input: prints a key press with its
+identity, makes the frame if there is none, and feeds the event to the
+editor loop, which publishes a scene after it. A close request ends the
+loop. -/
+def input (collaborators : Collaborators σ) (running : Running σ) (received : Received) :
+    IO (Running σ) := do
+  if let .key which true _ := received.event then
+    collaborators.emit s!"key arrived: {which.describe}"
+  let (made, texts) ←
+    match running.frame with
+    | some frame =>
+      pure (Except.ok frame, running.texts)
+    | none =>
+      (Loop.start ⟨0, 0⟩).runReal running.texts
+  let .ok frame := made | return { running with texts }
+  let (result, texts) ← (frame.step received.event).runReal texts running.display.handle
+  match result with
+  | .ok (frame, .continue) =>
+    return { running with
+        frame := some frame, texts }
+  | .ok (frame, .stop) =>
+    return { running with
+        frame := some frame, texts, stopped := true }
+  | .error _ =>
+    return { running with
+        frame := some frame, texts }
+
+/-- A scene as `scene` prints it, read from the text store as it is now: its
+frame, then each view, its snapshot's text and its markers' offsets.
+`published` is how many scenes have been published. -/
+def sceneLines (scene : Scene) (published : Nat) : TextM (Array String) := do
+  let focused :=
+    match scene.focused with
+    | some id => toString id.index
+    | none => "-"
+  let preedit :=
+    match scene.preedit with
+    | some text => text.quote
+    | none => "-"
+  let mut lines :=
+    #[s!"scene {scene.size.width}x{scene.size.height}, focused {focused}, echo {scene.echo.quote}, preedit {preedit}, published {published}"]
+  for view in scene.views do
+    let .anchor scroll ← view.scroll.text.marker view.scroll | throw .noSuchMarker
+    let selections ←
+      view.selections.mapM fun id => do
+          let .selection selection ← id.text.marker id | throw .noSuchMarker
+          return " ".intercalate
+              (selection.ranges.map fun range => s!"{range.anchor}..{range.head}").toList
+    let rect := view.rect
+    lines :=
+      lines.push
+        s!"view {view.id.index} {rect.x},{rect.y} {rect.width}x{rect.height}: {(← view.snapshot.read).quote}, scroll {scroll.offset}, selections {" ".intercalate selections.toList}"
+  return lines
+
+/-- Prints the last scene published, or that there is none. -/
+def scene (collaborators : Collaborators σ) (running : Running σ) : IO (Running σ) := do
+  let some scene ← running.display.last? |
+    collaborators.emit "scene: none"
+    return running
+  let (result, texts) ← (sceneLines scene (← running.display.published)).runReal running.texts
+  match result with
+  | .ok lines =>
+    for line in lines do
+      collaborators.emit line
+  | .error refusal =>
+    collaborators.emit s!"scene: refused: {refusal.describe}"
+  return { running with texts }
+
 /-- Prints the commands, the texts and the stores. -/
 def «show» (collaborators : Collaborators σ) (running : Running σ) : IO Unit := do
   collaborators.emit (" ".intercalate ("commands:" :: running.config.registry.names.toList))
@@ -418,25 +544,15 @@ def «show» (collaborators : Collaborators σ) (running : Running σ) : IO Unit
   for cell in running.config.cells.cells do
     collaborators.emit s!"store {cell.name} v{cell.version}: {render cell.value}"
 
-/-- Handles one event of the editor queue to its end. -/
-def handle (collaborators : Collaborators σ) (running : Running σ) (event : Ffi.Event) :
+/-- Handles one event of the editor queue that is not the window's. -/
+def other (collaborators : Collaborators σ) (running : Running σ) (event : Ffi.Event) :
     IO (Running σ) := do
   match event.source.kind with
   | .script =>
     collaborators.emit s!"event {event.source.id} {event.code}"
     return running
-  | .library =>
+  | .library | .window =>
     return running
-  | .window =>
-    -- A key press is printed with its identity; every other window event,
-    -- and one that cannot be read, is ignored. The command loop replaces
-    -- this with real handling.
-    match Event.ofFfi event with
-    | .ok { event := .key which true _, .. } =>
-      collaborators.emit s!"key arrived: {which.describe}"
-      return running
-    | _ =>
-      return running
   | .lean =>
     if event.source.id == collaborators.wakeups then
       return ← running.finish collaborators
@@ -454,12 +570,34 @@ def handle (collaborators : Collaborators σ) (running : Running σ) (event : Ff
     | some (.request .show) =>
       running.show collaborators
       return running
+    | some (.request .scene) =>
+      running.scene collaborators
     | some .marker =>
       return { running with markers := running.markers + 1 }
     | some .stop =>
       return { running with stopped := true }
     | none =>
       return running
+
+/-- Handles one event of the editor queue to its end. An event from the
+window input goes to the editor loop (`input`), which publishes a scene after
+it; after any other event, a scene is published once there is a frame,
+unless the driver has ended the loop. A window event that cannot be read is
+ignored. -/
+def handle (collaborators : Collaborators σ) (running : Running σ) (event : Ffi.Event) :
+    IO (Running σ) := do
+  if event.source.kind == .window then
+    match Event.ofFfi event with
+    | .ok received =>
+      running.input collaborators received
+    | .error _ =>
+      return running
+  else
+    let running ← running.other collaborators event
+    if running.stopped then
+      return running
+    else
+      running.publish
 
 end Running
 
@@ -568,6 +706,14 @@ def press (_ : Host) (key : Key) : IO Unit := do
   unless ← Event.post (.key key true "") do
     throw (IO.userError "the editor queue refused a key: it has been quit")
 
+/-- Sends `text` as an input method's composition would end with it, as the
+window would report it: through the library's window input (`Event.post`),
+onto the editor queue after everything sent before. Throws if the queue
+refuses it, which it does once the queues are quit. -/
+def commit (_ : Host) (text : String) : IO Unit := do
+  unless ← Event.post (.commit text) do
+    throw (IO.userError "the editor queue refused a commit: it has been quit")
+
 /-- Waits until the editor thread has handled everything sent so far and
 `busy` no longer holds of its progress, for at most `patience` milliseconds.
 Says what the wait came to: `still` if it ran out with the editor thread up
@@ -638,6 +784,8 @@ inductive Directive where
   | join
   /-- Send a press of this key, with no text, as the window would. -/
   | key (key : Key)
+  /-- Send this text, as an input method's composition would end with it. -/
+  | commit (text : String)
   deriving DecidableEq, Repr
 
 /-- The name a directive gives after its keyword, which is the first
@@ -712,8 +860,15 @@ def directive? (line : String) : Except String (Option Directive) :=
               else
                 if line.startsWith "key " then some <$> keyDirective? line
                 else
-                  .error
-                    s!"`{line}` is not a directive: expected reload, run <name>, spawn <name>, show, settle, join or key <logical> <physical> <modifiers>"
+                  if line == "scene" then .ok (some (.request .scene))
+                  else
+                    if line == "commit" || line.startsWith "commit " then
+                      match named line 6 with
+                      | none => .error s!"`{line}` commits no text"
+                      | some text => .ok (some (.commit text))
+                    else
+                      .error
+                        s!"`{line}` is not a directive: expected reload, run <name>, spawn <name>, show, scene, settle, join, key <logical> <physical> <modifiers> or commit <text>"
 
 /-- A directive of a script, and the line it is on. -/
 structure Line where
@@ -797,6 +952,9 @@ def run {σ : Type} (collaborators : Collaborators σ) (script : Array Line) (pa
         continue
       | .key key =>
         host.press key
+        continue
+      | .commit text =>
+        host.commit text
         continue
       | .settle =>
         host.await patience

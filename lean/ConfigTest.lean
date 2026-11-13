@@ -30,7 +30,10 @@ fakes. The checks here pin what only real collaborators can show:
   result on the editor thread, a reload that installs cancels the old
   config's jobs and a rejected one does not, and how each ending of a job is
   reported;
-- `scriptChecks`: the headless mode's script and its driver;
+- `scriptChecks`: the headless mode's script and its driver, and the editor
+  loop through the host: a commit and the scene it prints, read from the
+  library, a scene published after a reload's install and a job's command
+  once the frame exists, and a window's close request ending the loop;
 - `fileChecks`: a job from config that loads a file through the host, over
   the library's file service, and whose handler makes a text of it. It is
   the one check whose host is over a real service, so it is the one that
@@ -1392,6 +1395,78 @@ def scriptChecks (context : Context) : List Check :=
         finally
           block.resolve ()
           discard <| host.halt patience },
+    { name :=
+        "a scene directive asks for the last scene, and a commit directive commits the rest of its line"
+      run :=
+        pure
+          ((Headless.script "scene\ncommit hello\n  commit  two words  \ncommit é\n").toOption ==
+            some
+              #[⟨1, .request .scene⟩, ⟨2, .commit "hello"⟩, ⟨3, .commit "two words"⟩,
+                ⟨4, .commit "é"⟩]) },
+    { name := "a commit directive with no text is refused, with the number of its line"
+      run :=
+        pure
+          (["commit", "commit   ", "scene now"].all fun line =>
+            match Headless.script ("reload\n" ++ line) with
+            | .error message => message.startsWith "line 2: "
+            | .ok _ => false) },
+    { name :=
+        "a script that commits text and asks for the scene prints the scene: its frame, and a view whose snapshot holds the text, read from the library, with the cursor after it"
+      run :=
+        IO.FS.withTempDir fun directory => do
+          writeFiles directory greetConfig
+          let stage ← Stage.new context context.elaborator (Config.Directory.source directory)
+          let failure ←
+            Headless.run stage.collaborators
+                #[⟨1, .request .scene⟩, ⟨2, .commit "héllo"⟩, ⟨3, .request .scene⟩,
+                  ⟨4, .commit " world"⟩, ⟨5, .request .scene⟩]
+                patience
+          return failure == none &&
+              (← stage.output.get) ==
+                #["scene: none", "scene 0x0, focused 0, echo \"\", preedit -, published 1",
+                  "view 0 0,0 0x0: \"héllo\", scroll 0, selections 6..6",
+                  "scene 0x0, focused 0, echo \"\", preedit -, published 3",
+                  "view 0 0,0 0x0: \"héllo world\", scroll 0, selections 12..12"] },
+    { name :=
+        "the scene is published again after a reload installs and after a job's command runs, once a frame exists"
+      run :=
+        withHost context jobsConfig fun session => do
+          session.ask [.reload]
+          unless ← Event.post (.commit "kept") do
+            return false
+          session.ask [.scene]
+          session.ask [.spawn "count"]
+          unless ← eventually (return (← session.clock.waiting) == 1) do
+            return false
+          session.clock.advance 10
+          unless (← session.host.join patience) == .settled do
+            return false
+          session.ask [.reload]
+          session.ask [.scene]
+          -- Between the two scene requests the editor thread handles nine
+          -- events, each followed by a scene: the first scene request, the
+          -- spawn, the job's wake-up, the reload, the reload's wake-up, and
+          -- the four markers the waits posted. Had the job's command or the
+          -- reload's install published nothing, the count would be short.
+          return (← session.lines) ==
+              #["reload 1: installed, 2 chunks, 1 commands",
+                "scene 0x0, focused 0, echo \"\", preedit -, published 1",
+                "view 0 0,0 0x0: \"kept\", scroll 0, selections 4..4", "spawn count: job 1",
+                "job 1 count: ok", "reload 2: installed, 2 chunks, 1 commands",
+                "scene 0x0, focused 0, echo \"\", preedit -, published 10",
+                "view 0 0,0 0x0: \"kept\", scroll 0, selections 4..4"] },
+    { name := "a window's close request ends the host's loop"
+      run := do
+        let stage ← Stage.new context context.elaborator { chunks := pure #[] }
+        let host ← Headless.start stage.collaborators
+        try
+          unless ← Event.post .closeRequested do
+            return false
+          let ended ← eventually (IO.hasFinished host.thread)
+          return ended && (← host.halt patience)
+        catch error =>
+          discard <| host.halt patience
+          throw error },
     { name := "each failure is described differently, and a settle's names its line"
       run :=
         let reloading := Headless.Failure.describe 30000 (.reloading (some 12))
