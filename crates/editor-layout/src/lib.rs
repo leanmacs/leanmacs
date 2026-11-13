@@ -29,7 +29,8 @@
 //! - the rows a view shows and where a move goes, with its goal x
 //!   ([`query`]);
 //! - the frame: rows from a view's anchor stacked by height, cursor and
-//!   selection geometry, content hashes that a cursor move leaves alone,
+//!   selection geometry, the paint each run, cursor and view resolves to,
+//!   content hashes that cover paint and that a cursor move leaves alone,
 //!   decorations asked for the rows shown only ([`frame`]), and the fixture
 //!   frame checked in at `tests/display/frame.expected`
 //!   (`tests/frame_fixture.rs`);

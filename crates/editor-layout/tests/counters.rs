@@ -12,6 +12,7 @@ use std::sync::{Arc, Mutex};
 use editor_layout::Layout;
 use editor_layout::cache::Counters;
 use editor_layout::face::{Color, Face, FaceDef, Underline, UnderlineStyle};
+use editor_layout::frame::Frame;
 use editor_layout::scene::{
     Changes, Cursor, Decoration, Rect, Scene, TextKey, TextRef, View, ViewId,
 };
@@ -252,12 +253,15 @@ fn a_paint_only_change_of_a_face_neither_shapes_nor_breaks() {
     let (text, _) = twenty();
     let all = 0..text.snapshot.len();
     let mut layout = Layout::new(CellShaper::new(10.0, 16.0));
-    layout.frame(&styled(
+    // The hash of each row of a frame.
+    let hashes =
+        |frame: Frame| -> Vec<u64> { frame.views[0].rows.iter().map(|row| row.hash).collect() };
+    let mut before = hashes(layout.frame(&styled(
         &text,
         all.clone(),
         "body",
         &[("body", coloured(1))],
-    ));
+    )));
     let paints = [
         coloured(2),
         Face {
@@ -277,21 +281,33 @@ fn a_paint_only_change_of_a_face_neither_shapes_nor_breaks() {
         },
     ];
     for paint in paints {
+        let mut after = Vec::new();
         let repainted = counted(&mut layout, |layout| {
-            layout.frame(&styled(
+            after = hashes(layout.frame(&styled(
                 &text,
                 all.clone(),
                 "body",
                 &[("body", paint.clone())],
-            ));
+            )));
         });
         assert_eq!(repainted, count(0, 0, 20), "{paint:?}");
+        // Every row is drawn in the face, so every row's hash changed:
+        // a renderer builds each again, and layout built none.
+        assert_eq!(after.len(), 20);
+        for (row, (now, then)) in after.iter().zip(&before).enumerate() {
+            assert_ne!(now, then, "row {row}, {paint:?}");
+        }
+        before = after;
     }
     // The default face's paint likewise.
+    let mut after = Vec::new();
     let repainted = counted(&mut layout, |layout| {
-        layout.frame(&styled(&text, all, "body", &[("default", coloured(3))]));
+        after = hashes(layout.frame(&styled(&text, all, "body", &[("default", coloured(3))])));
     });
     assert_eq!(repainted, count(0, 0, 20));
+    for (now, then) in after.iter().zip(&before) {
+        assert_ne!(now, then);
+    }
 }
 
 #[test]

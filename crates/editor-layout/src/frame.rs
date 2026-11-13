@@ -3,9 +3,19 @@
 //!
 //! For each view, the visual rows it shows from its scroll anchor, as many
 //! as fit its rectangle, each with its `y`, its glyphs (shared with the
-//! line store, never copied), its styled runs and a content hash; and the
+//! line store, never copied), its runs and a content hash; and the
 //! geometry of its cursors and of its selections. Geometry is in pixels
 //! from the view's top left.
+//!
+//! **Every value is resolved.** A frame names no face: a run carries the
+//! [`Paint`] its faces come to ([`face`](crate::face), "The precedence":
+//! lowest first, the view's decorations in the scene's order and then the
+//! selection, over the default face), a glyph the id of its font, a
+//! cursor the paint of the face the scene names for it over the default
+//! face, and a view the default face's background and the selection
+//! face's, which its selection areas are filled with. Neighbouring runs of
+//! one paint are one run, so two faces that come to the same paint cannot
+//! be told apart in a frame.
 //!
 //! A row's runs cover its glyphs from the first to the last and nothing
 //! past them, and a selection's area on a row is as wide as the glyphs it
@@ -15,18 +25,21 @@
 //! ([`line`](mod@crate::line), which also says which of a tab's spaces are
 //! no row at all in a view narrower than the tab).
 //!
-//! A row's hash covers its glyphs, its runs and its height, all relative to
-//! the row's start: never its `y` or an absolute offset. So scrolling, and
-//! an edit on another row, leave it as it was, and a renderer reuses what it
-//! built for a row whose hash it has seen. A cursor is not part of any row,
-//! so moving one changes no hash.
+//! A row's hash covers its glyphs (each with its font's id), its runs
+//! (their bytes and their paint) and its height and baseline, all relative
+//! to the row's start: never its `y` or an absolute offset. So scrolling,
+//! and an edit on another row, leave it as it was, and a renderer reuses
+//! what it built for a row whose hash it has seen. A change of a face's
+//! colour changes the hash of the rows drawn in it and of no other. A
+//! cursor is not part of any row, so moving one, or changing its face,
+//! changes no hash.
 //!
 //! Offsets in the scene that are not positions of the view's snapshot (a
 //! marker read at a newer revision than the snapshot) are moved back to the
 //! nearest position at or before them, and past the end to the end.
 //!
-//! [`Frame::describe`] is the frame as text, for tests: geometry, glyph ids
-//! and face ids, no hash.
+//! [`Frame::describe`] is the frame as text, for tests: geometry, glyph
+//! ids, font ids and paints, no hash.
 
 use std::fmt::Write as _;
 use std::hash::{DefaultHasher, Hash, Hasher};
@@ -40,10 +53,10 @@ use std::collections::HashMap;
 
 use crate::cache::state;
 use crate::decoration::{DecorationSource, FaceSpanSource, SelectionSource, Span, fonts_of, merge};
-use crate::face::{FaceId, SELECTION_FACE};
+use crate::face::{Color, FaceId, Paint, SELECTION_FACE, UnderlineStyle};
 use crate::query::{Visual, Walker};
 use crate::scene::{CursorShape, Rect, Scene, TextKey, View, ViewId};
-use crate::shaper::{Shaper, VisualLine};
+use crate::shaper::{FontId, Shaper, VisualLine};
 use crate::tabs::boundary_at_or_before;
 use crate::wrap::Outcome;
 
@@ -76,10 +89,11 @@ pub struct FrameRow {
     /// Its glyphs, as the line store holds them. Their clusters are bytes of
     /// the segment's expanded text; `line.bytes` is the row's part of it.
     pub line: Arc<VisualLine>,
-    /// Its styled runs, as bytes of the expanded text from the row's start
-    /// (`line.bytes.start`), with the faces over each. They cover
-    /// `line.bytes` from start to end; an empty row has none.
-    pub runs: Vec<(Range<usize>, Vec<FaceId>)>,
+    /// Its runs, as bytes of the expanded text from the row's start
+    /// (`line.bytes.start`), each with what it is painted with. They cover
+    /// `line.bytes` from start to end, and no two neighbours have the same
+    /// paint; an empty row has none. The font of a glyph is the glyph's.
+    pub runs: Vec<(Range<usize>, Paint)>,
     /// The content hash.
     pub hash: u64,
 }
@@ -88,12 +102,14 @@ pub struct FrameRow {
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct CursorBox {
     /// The cell it is on: the glyph at its position, or past a line's last
-    /// glyph one default advance.
+    /// glyph one advance of the default face's font.
     pub area: Area,
     /// Its shape.
     pub shape: CursorShape,
-    /// Its face.
-    pub face: FaceId,
+    /// What its face comes to over the default face: its background is
+    /// the cursor's colour, and its foreground the colour of the glyph
+    /// under a block cursor.
+    pub paint: Paint,
 }
 
 /// The frame of one view.
@@ -103,6 +119,8 @@ pub struct ViewFrame {
     pub id: ViewId,
     /// Where it is in the frame.
     pub rect: Rect,
+    /// The colour behind it: the default face's background.
+    pub background: Color,
     /// Its rows, top to bottom.
     pub rows: Vec<FrameRow>,
     /// Its cursors on the rows shown: the head of every range of every
@@ -111,6 +129,8 @@ pub struct ViewFrame {
     /// What its selections cover on the rows shown, one area per row and
     /// span.
     pub selections: Vec<Area>,
+    /// The colour of those areas: the selection face's background.
+    pub selection: Color,
 }
 
 /// What to draw: every view, in drawing order.
@@ -121,17 +141,29 @@ pub struct Frame {
 }
 
 impl Frame {
-    /// The frame as text: per view its rectangle, then per row its
-    /// geometry, its glyphs as `id@x` and its runs, then its cursors and
-    /// selections. No hash.
+    /// The frame as text: per view its rectangle, its background and its
+    /// selection colour, then per row its geometry, its glyphs and its
+    /// runs, then its cursors and selections. No hash.
+    ///
+    /// - A colour is its eight hexadecimal digits, `rrggbbaa`.
+    /// - A glyph is `id@x`, and `id@x#font` in a font other than font 0.
+    /// - A run is `start..end:paint`, and a paint is
+    ///   `foreground/background`, then `+style:colour` when it has an
+    ///   underline and `+strike` when it is struck through.
     pub fn describe(&self) -> String {
         let mut out = String::new();
         for view in &self.views {
             let rect = view.rect;
             let _ = writeln!(
                 out,
-                "view {} rect {} {} {} {}",
-                view.id.0, rect.x, rect.y, rect.width, rect.height
+                "view {} rect {} {} {} {} background {:08x} selection {:08x}",
+                view.id.0,
+                rect.x,
+                rect.y,
+                rect.width,
+                rect.height,
+                view.background.0,
+                view.selection.0
             );
             for row in &view.rows {
                 let _ = write!(
@@ -141,11 +173,13 @@ impl Frame {
                 );
                 for glyph in &row.line.glyphs {
                     let _ = write!(out, " {}@{}", glyph.id, glyph.x);
+                    if glyph.font != FontId::default() {
+                        let _ = write!(out, "#{}", glyph.font.0);
+                    }
                 }
                 out.push_str(" runs");
-                for (bytes, faces) in &row.runs {
-                    let faces: Vec<String> = faces.iter().map(|face| face.0.to_string()).collect();
-                    let _ = write!(out, " {}..{}:[{}]", bytes.start, bytes.end, faces.join(","));
+                for (bytes, paint) in &row.runs {
+                    let _ = write!(out, " {}..{}:{}", bytes.start, bytes.end, described(paint));
                 }
                 out.push('\n');
             }
@@ -159,8 +193,12 @@ impl Frame {
                 let area = cursor.area;
                 let _ = writeln!(
                     out,
-                    "  cursor {shape} face {} at {} {} {} {}",
-                    cursor.face.0, area.x, area.y, area.width, area.height
+                    "  cursor {shape} paint {} at {} {} {} {}",
+                    described(&cursor.paint),
+                    area.x,
+                    area.y,
+                    area.width,
+                    area.height
                 );
             }
             for area in &view.selections {
@@ -173,6 +211,26 @@ impl Frame {
         }
         out
     }
+}
+
+/// `paint` as [`Frame::describe`] writes it.
+fn described(paint: &Paint) -> String {
+    let mut out = format!("{:08x}/{:08x}", paint.foreground.0, paint.background.0);
+    if let Some((style, color)) = paint.underline {
+        let style = match style {
+            UnderlineStyle::None => "none",
+            UnderlineStyle::Single => "single",
+            UnderlineStyle::Double => "double",
+            UnderlineStyle::Curly => "curly",
+            UnderlineStyle::Dotted => "dotted",
+            UnderlineStyle::Dashed => "dashed",
+        };
+        let _ = write!(out, "+{style}:{:08x}", color.0);
+    }
+    if paint.strike_through {
+        out.push_str("+strike");
+    }
+    out
 }
 
 /// How far from the rows a view shows its text's entries are kept at a
@@ -228,19 +286,23 @@ impl<S: Shaper> Layout<S> {
     /// order, the view's decorations in the order the scene lists them, and
     /// the selections ([`face`](crate::face), "The precedence").
     pub(crate) fn view_frame(&mut self, view: &View, extra: &[&dyn DecorationSource]) -> ViewFrame {
+        let cursor_face = self.styles.intern(&view.cursor.face);
+        let selection_face = self.styles.intern(SELECTION_FACE);
+        let paint_of = |stack: &[FaceId]| self.styles.style(&self.shaper, stack).paint;
+        let cursor_paint = paint_of(&[cursor_face]);
         let mut frame = ViewFrame {
             id: view.id,
             rect: view.rect,
+            background: paint_of(&[]).background,
             rows: Vec::new(),
             cursors: Vec::new(),
             selections: Vec::new(),
+            selection: paint_of(&[selection_face]).background,
         };
         let Some(text) = &view.text else {
             return frame;
         };
         let snapshot = &text.snapshot;
-        let cursor_face = self.styles.intern(&view.cursor.face);
-        let selection_face = self.styles.intern(SELECTION_FACE);
         let decorations: Vec<Span> = view
             .decorations
             .iter()
@@ -339,10 +401,16 @@ impl<S: Shaper> Layout<S> {
                 });
             }
             let spans: Vec<Span> = spans.iter().filter_map(on_row).collect();
-            let runs: Vec<(Range<usize>, Vec<FaceId>)> = merge(0..columns.len(), &spans)
-                .into_iter()
-                .map(|run| (run.bytes, run.faces))
-                .collect();
+            // Each run with what its faces come to, neighbours of one
+            // paint made one run.
+            let mut runs: Vec<(Range<usize>, Paint)> = Vec::new();
+            for run in merge(0..columns.len(), &spans) {
+                let paint = styles.style(shaper, &run.faces).paint;
+                match runs.last_mut() {
+                    Some((bytes, last)) if *last == paint => bytes.end = run.bytes.end,
+                    _ => runs.push((run.bytes, paint)),
+                }
+            }
             frame.rows.push(FrameRow {
                 y,
                 height: line.height,
@@ -397,7 +465,7 @@ impl<S: Shaper> Layout<S> {
                     height: row.height,
                 },
                 shape: view.cursor.shape,
-                face: cursor_face,
+                paint: cursor_paint,
             });
         }
         state.sources = Some((selection_source.clone(), face_source.clone()));
@@ -423,7 +491,7 @@ fn moved_back(snapshot: &Snapshot, selection: &Selection) -> Option<Selection> {
 
 /// The content hash of a row of `line` with `runs`: its glyphs and runs
 /// relative to its start, and its height.
-fn hash(line: &VisualLine, runs: &[(Range<usize>, Vec<FaceId>)]) -> u64 {
+fn hash(line: &VisualLine, runs: &[(Range<usize>, Paint)]) -> u64 {
     let mut hasher = DefaultHasher::new();
     line.height.to_bits().hash(&mut hasher);
     line.baseline.to_bits().hash(&mut hasher);
@@ -446,12 +514,19 @@ mod tests {
     use super::{Area, Frame, FrameRow, ViewFrame};
     use crate::Layout;
     use crate::decoration::{DecorationSource, Span};
-    use crate::face::{Face, FaceDef, SELECTION_FACE};
+    use crate::face::{
+        BASE_BACKGROUND, BASE_FOREGROUND, Color, Face, FaceDef, Paint, Underline, UnderlineStyle,
+    };
     use crate::scene::{
         Cursor, CursorShape, Decoration, Rect, Scene, TextKey, TextRef, View, ViewId,
     };
     use crate::shaper::fake::CellShaper;
-    use crate::shaper::{FontId, FontSpec, Length, Shaper, VisualLine};
+    use crate::shaper::{FontId, FontSpec, Length, Shaper, VisualLine, Weight};
+
+    const RED: Color = Color::rgb(0xcc, 0, 0);
+    const GREEN: Color = Color::rgb(0, 0xcc, 0);
+    const BLUE: Color = Color::rgb(0, 0, 0xcc);
+    const GREY: Color = Color::rgb(0x80, 0x80, 0x80);
 
     /// The definition of `name` as `face`.
     fn def(name: &str, face: Face) -> FaceDef {
@@ -469,11 +544,60 @@ mod tests {
         }
     }
 
+    /// A face of the foreground `color` and nothing else.
+    fn fg(color: Color) -> Face {
+        Face {
+            foreground: Some(color),
+            ..Face::default()
+        }
+    }
+
+    /// A face of the background `color` and nothing else.
+    fn bg(color: Color) -> Face {
+        Face {
+            background: Some(color),
+            ..Face::default()
+        }
+    }
+
+    /// The paint of `foreground` on `background`, with no underline and
+    /// no strike-through.
+    fn paint(foreground: Color, background: Color) -> Paint {
+        Paint {
+            foreground,
+            background,
+            ..Paint::default()
+        }
+    }
+
+    /// The base paint: what a run under no face is drawn with while no
+    /// default face is defined.
+    const PLAIN: Paint = Paint {
+        foreground: BASE_FOREGROUND,
+        background: BASE_BACKGROUND,
+        underline: None,
+        strike_through: false,
+    };
+
+    /// What the selection of [`layout`] is drawn with over the base paint.
+    const SELECTED: Paint = Paint {
+        foreground: BASE_FOREGROUND,
+        background: BLUE,
+        underline: None,
+        strike_through: false,
+    };
+
     /// A layout on cells 10 by 16, with a family of lines 32 tall that the
-    /// face `tall` is in.
+    /// face `tall` is in, a selection on blue, and the faces `tab` in red
+    /// and `face` in green.
     fn layout() -> Layout<CellShaper> {
         let mut layout = Layout::new(CellShaper::new(10.0, 16.0).with_family("tall", 10.0, 32.0));
-        layout.define(&[def("tall", family("tall"))]);
+        layout.define(&[
+            def("tall", family("tall")),
+            def("selection", bg(BLUE)),
+            def("tab", fg(RED)),
+            def("face", fg(GREEN)),
+        ]);
         layout
     }
 
@@ -803,9 +927,8 @@ mod tests {
                 area(0.0, 64.0, 10.0, 16.0),
             ]
         );
-        let selection = layout.styles.intern(SELECTION_FACE);
-        assert_eq!(wrapped.rows[2].runs, vec![(0..4, vec![selection])]);
-        assert_eq!(wrapped.rows[3].runs, vec![(0..2, vec![selection])]);
+        assert_eq!(wrapped.rows[2].runs, vec![(0..4, SELECTED)]);
+        assert_eq!(wrapped.rows[3].runs, vec![(0..2, SELECTED)]);
     }
 
     #[test]
@@ -872,25 +995,17 @@ mod tests {
             face: "tab".to_owned(),
         }];
         let frame = frame(&mut layout, crossing);
-        let selection = layout.styles.intern(SELECTION_FACE);
-        let tab = layout.styles.intern("tab");
+        let tab = paint(RED, BLUE);
         let glyphs: Vec<usize> = frame.rows.iter().map(|row| row.line.glyphs.len()).collect();
         assert_eq!(glyphs, vec![10, 7]);
         // Each row's runs cover its glyphs and no more, and the tab's
-        // spaces take the tab's faces on both rows: its decoration's, and
-        // over it the selection's.
+        // spaces take the tab's faces on both rows: its decoration's red,
+        // and over it the selection's blue behind.
         assert_eq!(
             frame.rows[0].runs,
-            vec![
-                (0..8, vec![]),
-                (8..9, vec![selection]),
-                (9..10, vec![tab, selection])
-            ]
+            vec![(0..8, PLAIN), (8..9, SELECTED), (9..10, tab)]
         );
-        assert_eq!(
-            frame.rows[1].runs,
-            vec![(0..6, vec![tab, selection]), (6..7, vec![selection])]
-        );
+        assert_eq!(frame.rows[1].runs, vec![(0..6, tab), (6..7, SELECTED)]);
         assert_eq!(
             frame.selections,
             vec![
@@ -940,10 +1055,14 @@ mod tests {
                 let mut areas = Vec::new();
                 for row in &frame.rows {
                     let mut covered = 0;
-                    for (bytes, _) in &row.runs {
+                    let mut before = None;
+                    for (bytes, paint) in &row.runs {
                         assert_eq!(bytes.start, covered, "{text:?} at {columns}: {row:?}");
                         assert!(bytes.end > bytes.start, "{text:?} at {columns}: {row:?}");
+                        // Neighbours of one paint are one run.
+                        assert_ne!(before, Some(paint), "{text:?} at {columns}: {row:?}");
                         covered = bytes.end;
+                        before = Some(paint);
                     }
                     assert_eq!(
                         covered,
@@ -995,9 +1114,14 @@ mod tests {
 
     #[test]
     fn the_same_glyphs_at_another_height_or_advance_have_another_hash() {
-        // The first row of "ab" in a layout on cells `advance` by `height`.
+        // The first row of "ab" where the default face is in a family
+        // whose cells are `advance` by `height`. The family's font is the
+        // first each shaper is asked for after the default, so its id is
+        // the same in each layout.
         let row = |advance: f32, height: f32| {
-            let mut layout = Layout::new(CellShaper::new(advance, height));
+            let mut layout =
+                Layout::new(CellShaper::new(10.0, 16.0).with_family("cell", advance, height));
+            layout.define(&[def("default", family("cell"))]);
             frame(&mut layout, view("ab", 4, 160, 0, &[]))
                 .rows
                 .remove(0)
@@ -1026,6 +1150,31 @@ mod tests {
     }
 
     #[test]
+    fn the_same_glyphs_in_another_font_of_the_same_cell_have_another_hash() {
+        // Bold changes no geometry on the fake, and is another font.
+        let row = |weight: Weight| {
+            let mut layout = Layout::new(CellShaper::new(10.0, 16.0));
+            layout.define(&[def(
+                "default",
+                Face {
+                    weight: Some(weight),
+                    ..Face::default()
+                },
+            )]);
+            frame(&mut layout, view("ab", 4, 160, 0, &[]))
+                .rows
+                .remove(0)
+        };
+        let (normal, bold) = (row(Weight::NORMAL), row(Weight::BOLD));
+        assert_eq!(
+            (normal.height, normal.line.width),
+            (bold.height, bold.line.width)
+        );
+        assert_eq!(normal.runs, bold.runs);
+        assert_ne!(normal.hash, bold.hash);
+    }
+
+    #[test]
     fn an_offset_that_is_not_a_position_is_moved_back() {
         let mut layout = layout();
         // 2 is inside é: the anchor is moved back to 1, on row 0.
@@ -1043,14 +1192,11 @@ mod tests {
                 stop,
                 face: "face".to_owned(),
             }];
-            let row = frame(&mut layout, view).rows.remove(0);
-            let face = layout.styles.intern("face");
-            (row.runs, face)
+            frame(&mut layout, view).rows.remove(0).runs
         };
-        let (runs, face) = decorated(2, 4);
-        assert_eq!(runs, vec![(0..1, vec![]), (1..4, vec![face])]);
-        let (runs, face) = decorated(0, 2);
-        assert_eq!(runs, vec![(0..1, vec![face]), (1..4, vec![])]);
+        let green = paint(GREEN, BASE_BACKGROUND);
+        assert_eq!(decorated(2, 4), vec![(0..1, PLAIN), (1..4, green)]);
+        assert_eq!(decorated(0, 2), vec![(0..1, green), (1..4, PLAIN)]);
     }
 
     #[test]
@@ -1063,7 +1209,371 @@ mod tests {
             face: "face".to_owned(),
         }];
         let row = frame(&mut layout, reversed).rows.remove(0);
-        assert_eq!(row.runs, vec![(0..6, vec![])]);
+        assert_eq!(row.runs, vec![(0..6, PLAIN)]);
+    }
+
+    /// `view` with the decorations `decorations`: each its bytes and its
+    /// face's name, in the scene's order.
+    fn decorated(mut view: View, decorations: &[(Range<usize>, &str)]) -> View {
+        view.decorations = decorations
+            .iter()
+            .map(|(bytes, face)| Decoration {
+                start: bytes.start,
+                stop: bytes.end,
+                face: (*face).to_owned(),
+            })
+            .collect();
+        view
+    }
+
+    /// A layout on cells 10 by 16 with the faces `definitions`.
+    fn layout_with(definitions: &[FaceDef]) -> Layout<CellShaper> {
+        let mut layout = Layout::new(CellShaper::new(10.0, 16.0));
+        layout.define(definitions);
+        layout
+    }
+
+    /// The runs of the first row of `view`.
+    fn first_runs(layout: &mut Layout<CellShaper>, view: View) -> Vec<(Range<usize>, Paint)> {
+        frame(layout, view).rows.remove(0).runs
+    }
+
+    #[test]
+    fn a_later_decoration_is_over_an_earlier_one() {
+        // Both set a foreground, and the earlier one a background too.
+        let mut layout = layout_with(&[
+            def(
+                "first",
+                Face {
+                    background: Some(GREY),
+                    ..fg(RED)
+                },
+            ),
+            def("second", fg(GREEN)),
+        ]);
+        let text = "abcdefghij";
+        let runs = first_runs(
+            &mut layout,
+            decorated(
+                view(text, 20, 16, 0, &[]),
+                &[(2..6, "first"), (4..8, "second")],
+            ),
+        );
+        assert_eq!(
+            runs,
+            vec![
+                (0..2, PLAIN),
+                (2..4, paint(RED, GREY)),
+                // The overlap: the later one's foreground, and the
+                // background only the earlier one sets.
+                (4..6, paint(GREEN, GREY)),
+                (6..8, paint(GREEN, BASE_BACKGROUND)),
+                (8..10, PLAIN),
+            ]
+        );
+        // Listed the other way round, the overlap has the other's
+        // foreground, and is one run with the bytes before it.
+        let runs = first_runs(
+            &mut layout,
+            decorated(
+                view(text, 20, 16, 0, &[]),
+                &[(4..8, "second"), (2..6, "first")],
+            ),
+        );
+        assert_eq!(
+            runs,
+            vec![
+                (0..2, PLAIN),
+                (2..6, paint(RED, GREY)),
+                (6..8, paint(GREEN, BASE_BACKGROUND)),
+                (8..10, PLAIN),
+            ]
+        );
+    }
+
+    #[test]
+    fn the_selection_is_over_every_decoration() {
+        // The selection and both decorations set a background.
+        let mut layout = layout_with(&[
+            def("selection", bg(BLUE)),
+            def("first", bg(RED)),
+            def("second", bg(GREEN)),
+        ]);
+        // 3..7 is selected; the decorations cover 0..5 and 4..10.
+        for order in [
+            [(0..5, "first"), (4..10, "second")],
+            [(4..10, "second"), (0..5, "first")],
+        ] {
+            let runs = first_runs(
+                &mut layout,
+                decorated(view("abcdefghij", 20, 16, 0, &[(3, 7)]), &order),
+            );
+            let backgrounds: Vec<(Range<usize>, Color)> = runs
+                .into_iter()
+                .map(|(bytes, paint)| (bytes, paint.background))
+                .collect();
+            // Selected, the selection's, whichever decoration is under it
+            // and in whichever order the scene lists them.
+            assert_eq!(backgrounds[1], (3..7, BLUE), "{order:?}");
+            assert_eq!(backgrounds[0], (0..3, RED), "{order:?}");
+            assert_eq!(backgrounds[2], (7..10, GREEN), "{order:?}");
+        }
+        // What the selection leaves unset is still the decoration's.
+        let mut layout = layout_with(&[def("selection", bg(BLUE)), def("first", fg(RED))]);
+        let runs = first_runs(
+            &mut layout,
+            decorated(view("abcdef", 20, 16, 0, &[(2, 4)]), &[(0..6, "first")]),
+        );
+        assert_eq!(
+            runs,
+            vec![
+                (0..2, paint(RED, BASE_BACKGROUND)),
+                (2..4, paint(RED, BLUE)),
+                (4..6, paint(RED, BASE_BACKGROUND)),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_run_under_no_span_is_drawn_in_the_default_face() {
+        let default = Face {
+            underline: Some(Underline {
+                style: UnderlineStyle::Dotted,
+                color: None,
+            }),
+            strike_through: Some(true),
+            ..Face {
+                background: Some(GREY),
+                ..fg(GREEN)
+            }
+        };
+        let expected = Paint {
+            foreground: GREEN,
+            background: GREY,
+            underline: Some((UnderlineStyle::Dotted, GREEN)),
+            strike_through: true,
+        };
+        let mut layout = layout_with(&[def("default", default)]);
+        let shown = frame(&mut layout, view("abc\n\nde", 20, 48, 0, &[]));
+        assert_eq!(shown.rows[0].runs, vec![(0..3, expected)]);
+        // An empty row has no run, and the view's background is the
+        // default face's.
+        assert_eq!(shown.rows[1].runs, vec![]);
+        assert_eq!(shown.background, GREY);
+        // With no default face defined, the base paint.
+        let mut layout = layout_with(&[]);
+        let shown = frame(&mut layout, view("abc", 20, 16, 0, &[]));
+        assert_eq!(shown.rows[0].runs, vec![(0..3, PLAIN)]);
+        assert_eq!(shown.background, BASE_BACKGROUND);
+    }
+
+    #[test]
+    fn a_face_that_sets_only_a_foreground_keeps_the_default_background_and_font() {
+        let faces = |background: Color| {
+            [
+                def(
+                    "default",
+                    Face {
+                        weight: Some(Weight::BOLD),
+                        ..bg(background)
+                    },
+                ),
+                def("keyword", fg(RED)),
+            ]
+        };
+        let row = |layout: &mut Layout<CellShaper>| {
+            let view = decorated(view("abcdef", 20, 16, 0, &[]), &[(0..2, "keyword")]);
+            frame(layout, view).rows.remove(0)
+        };
+        let mut layout = layout_with(&faces(GREY));
+        let shown = row(&mut layout);
+        assert_eq!(
+            shown.runs,
+            vec![
+                (0..2, paint(RED, GREY)),
+                (2..6, paint(BASE_FOREGROUND, GREY))
+            ]
+        );
+        // Its glyphs are in the font of the run under no span: the
+        // default face's, which is bold.
+        let bold = layout.shaper().font(&FontSpec {
+            weight: Weight::BOLD,
+            ..FontSpec::default()
+        });
+        assert!(shown.line.glyphs.iter().all(|glyph| glyph.font == bold));
+        assert_ne!(bold, FontId(0));
+        // A change of the default face's background changes both runs'.
+        layout.define(&faces(BLUE));
+        assert_eq!(
+            row(&mut layout).runs,
+            vec![
+                (0..2, paint(RED, BLUE)),
+                (2..6, paint(BASE_FOREGROUND, BLUE))
+            ]
+        );
+    }
+
+    #[test]
+    fn a_colour_change_changes_the_hash_of_the_rows_drawn_in_the_face_and_of_no_other() {
+        let mut layout = layout_with(&[def("keyword", fg(RED))]);
+        // Three rows; the second has a keyword.
+        let shown = || decorated(view("ab\ncd\nef", 20, 48, 0, &[]), &[(3..4, "keyword")]);
+        let before = hashes(&frame(&mut layout, shown()));
+        layout.define(&[def("keyword", fg(GREEN))]);
+        let after = hashes(&frame(&mut layout, shown()));
+        assert_ne!(after[1], before[1]);
+        assert_eq!((after[0], after[2]), (before[0], before[2]));
+        // Each other attribute of paint likewise.
+        let others = [
+            bg(GREY),
+            Face {
+                underline: Some(Underline {
+                    style: UnderlineStyle::Single,
+                    color: None,
+                }),
+                ..fg(GREEN)
+            },
+            Face {
+                strike_through: Some(true),
+                ..fg(GREEN)
+            },
+        ];
+        for other in others {
+            layout.define(&[def("keyword", other.clone())]);
+            let now = hashes(&frame(&mut layout, shown()));
+            assert_ne!(now[1], after[1], "{other:?}");
+            assert_eq!((now[0], now[2]), (before[0], before[2]), "{other:?}");
+        }
+    }
+
+    #[test]
+    fn two_faces_that_resolve_alike_are_one_run_and_one_hash() {
+        let mut layout = layout_with(&[
+            def("one", fg(RED)),
+            def("other", fg(RED)),
+            def("unset", Face::default()),
+        ]);
+        let shown = |decorations: &[(Range<usize>, &str)]| {
+            decorated(view("abcdef", 20, 16, 0, &[]), decorations)
+        };
+        // Two neighbours in faces that come to one paint: one run.
+        let two = frame(&mut layout, shown(&[(0..3, "one"), (3..6, "other")]));
+        let one = frame(&mut layout, shown(&[(0..6, "one")]));
+        assert_eq!(two.rows[0].runs, vec![(0..6, paint(RED, BASE_BACKGROUND))]);
+        assert_eq!(hashes(&two), hashes(&one));
+        // A face that sets nothing, and a name nothing defines, are the
+        // run under no span.
+        let unset = frame(&mut layout, shown(&[(1..3, "unset"), (4..5, "undefined")]));
+        let bare = frame(&mut layout, shown(&[]));
+        assert_eq!(unset.rows[0].runs, vec![(0..6, PLAIN)]);
+        assert_eq!(hashes(&unset), hashes(&bare));
+    }
+
+    #[test]
+    fn a_cursor_takes_the_face_the_scene_names() {
+        let mut layout = layout_with(&[def("default", bg(GREY))]);
+        let shown = |face: &str| {
+            let mut view = view("abc\ndef", 20, 32, 0, &[(1, 1)]);
+            view.cursor.face = face.to_owned();
+            view
+        };
+        // A name nothing defines draws as the default face.
+        let undefined = frame(&mut layout, shown("cursor.normal"));
+        assert_eq!(undefined.cursors[0].paint, paint(BASE_FOREGROUND, GREY));
+        // Defined, the cursor has its paint over the default face's, and
+        // no row changed.
+        layout.define(&[
+            def("default", bg(GREY)),
+            def("cursor.normal", bg(RED)),
+            def(
+                "cursor.insert",
+                Face {
+                    background: Some(GREEN),
+                    ..fg(BLUE)
+                },
+            ),
+        ]);
+        let normal = frame(&mut layout, shown("cursor.normal"));
+        assert_eq!(normal.cursors[0].paint, paint(BASE_FOREGROUND, RED));
+        assert_eq!(hashes(&normal), hashes(&undefined));
+        assert_eq!(normal.rows, undefined.rows);
+        // Another name, another paint, and still no row changed.
+        let insert = frame(&mut layout, shown("cursor.insert"));
+        assert_eq!(insert.cursors[0].paint, paint(BLUE, GREEN));
+        assert_eq!(insert.rows, undefined.rows);
+    }
+
+    #[test]
+    fn a_change_of_the_cursors_face_changes_no_row_hash() {
+        let mut layout = layout_with(&[def("cursor", bg(RED))]);
+        let shown = || view("abc\ndef", 20, 32, 0, &[(1, 1)]);
+        let before = frame(&mut layout, shown());
+        // Its paint, and then its font, which no glyph is shaped in.
+        layout.define(&[def("cursor", bg(GREEN))]);
+        let repainted = frame(&mut layout, shown());
+        assert_eq!(hashes(&repainted), hashes(&before));
+        assert_ne!(repainted.cursors, before.cursors);
+        layout.define(&[def(
+            "cursor",
+            Face {
+                size: Some(Length::pixels(32)),
+                ..bg(GREEN)
+            },
+        )]);
+        let resized = frame(&mut layout, shown());
+        assert_eq!(hashes(&resized), hashes(&before));
+        assert_eq!(resized.rows, before.rows);
+    }
+
+    #[test]
+    fn a_view_carries_the_default_faces_background_and_the_selections() {
+        let mut layout = layout_with(&[def("default", bg(GREY)), def("selection", bg(BLUE))]);
+        let shown = frame(&mut layout, view("abc", 20, 16, 0, &[(0, 2)]));
+        assert_eq!((shown.background, shown.selection), (GREY, BLUE));
+        // A selection face that sets no background has the default
+        // face's, and a view with no text has both too.
+        layout.define(&[def("default", bg(GREY)), def("selection", fg(RED))]);
+        let shown = frame(&mut layout, view("abc", 20, 16, 0, &[(0, 2)]));
+        assert_eq!((shown.background, shown.selection), (GREY, GREY));
+        let mut empty = view("abc", 20, 16, 0, &[]);
+        empty.text = None;
+        let shown = frame(&mut layout, empty);
+        assert_eq!((shown.background, shown.selection), (GREY, GREY));
+    }
+
+    #[test]
+    fn a_frame_is_described_with_its_paints_and_the_fonts_that_are_not_font_0() {
+        let mut layout = layout_with(&[
+            def("default", bg(GREY)),
+            def("selection", bg(BLUE)),
+            def(
+                "keyword",
+                Face {
+                    weight: Some(Weight::BOLD),
+                    underline: Some(Underline {
+                        style: UnderlineStyle::Curly,
+                        color: Some(GREEN),
+                    }),
+                    strike_through: Some(true),
+                    ..fg(RED)
+                },
+            ),
+            def("cursor", bg(RED)),
+        ]);
+        let scene = Scene {
+            views: vec![decorated(
+                view("ab", 4, 16, 0, &[(1, 1)]),
+                &[(0..1, "keyword")],
+            )],
+            ..Scene::default()
+        };
+        assert_eq!(
+            layout.frame(&scene).describe(),
+            "view 1 rect 0 0 40 16 background 808080ff selection 0000ccff\n  \
+             row y 0 height 16 baseline 12 bytes 0..2 glyphs 97@0#1 98@10 \
+             runs 0..1:cc0000ff/808080ff+curly:00cc00ff+strike 1..2:000000ff/808080ff\n  \
+             cursor block paint 000000ff/cc0000ff at 10 0 10 16\n"
+        );
     }
 
     #[test]
