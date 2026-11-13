@@ -304,6 +304,7 @@ name = "editor-ffi"
 version = "0.1.0"
 dependencies = [
  "editor-fs-std",
+ "editor-layout",
  "editor-platform",
  "editor-platform-winit",
  "editor-text",

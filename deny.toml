@@ -31,6 +31,10 @@
 # `editor-ffi` of `tempfile`'s entry: with it taken out, it fails on the
 # wiring test's edge.
 #
+# For `editor-layout` (2026-11-13), whose entry came in the commit in which
+# `editor-ffi` came to depend on it: with it added to
+# `editor-platform-winit`'s dependencies, it fails.
+#
 # One rule has no entry: "no crate depends on `editor-ffi`", the one crate
 # that knows about Lean. No entry for it passes the gate. With
 # `wrappers = ["editor-ffi"]` the wrapper matches nothing and
@@ -50,6 +54,7 @@ deny = [
   { crate = "editor-platform", wrappers = ["editor-ffi", "editor-platform-winit"], reason = "the window port has two users today, its adapter and the crate that runs it onto the event queue; a third is a decision, so it is made here" },
   { crate = "ropey", wrappers = ["editor-text"], reason = "the rope stays behind editor-text's own types: only that crate may name the library's" },
   { crate = "editor-text", wrappers = ["editor-ffi", "editor-fs-std", "editor-layout"], reason = "text storage has two users, the crate that puts a text behind a handle for Lean and layout, which reads its snapshots, patches and selections as plain values; and the file port it defines has one adapter, which implements it; another is a decision, so it is made here" },
+  { crate = "editor-layout", wrappers = ["editor-ffi"], reason = "layout is reached by the crate that puts it behind a handle for Lean and wires it to text; the renderer takes its frames as plain data (the display pipeline's phase 4 decides where its port goes), so another user is a decision, made here" },
   { crate = "editor-fs-std", wrappers = ["editor-ffi"], reason = "the file adapter is linked only by the crate that wires the library together; everything else reaches a file through the port, and editor-text's tests through its fake" },
   { crate = "tempfile", wrappers = ["editor-fs-std", "editor-ffi"], reason = "a temporary directory is for a test that touches real files: the file adapter's contract test and editor-ffi's wiring test; editor-text's tests run on the fake and make no file" },
 ]

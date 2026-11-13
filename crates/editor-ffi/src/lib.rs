@@ -45,7 +45,9 @@
 //! from a string or from a snapshot
 //! ([`document::editor_ffi_document_from_snapshot`]). The module that owns
 //! the handle lists the functions that hand one out, and has one place that
-//! counts a handle live.
+//! counts a handle live. [`display`] is a handle over a `Mutex` because its
+//! layout is a cache its queries fill: the layout of `editor-layout` over
+//! that crate's fake shaper, asked about a snapshot handle.
 //! Tests: `a_counter_is_live_from_new_until_free` and
 //! `a_document_is_edited_and_read_through_c_and_is_live_from_new_until_free`
 //! in `tests/c_api.rs`;
@@ -53,7 +55,10 @@
 //! in `tests/snapshot.rs`, an integration test of its own because it makes
 //! documents and `tests/c_api.rs` counts its process's;
 //! `a_document_made_from_a_snapshot_through_c_is_a_live_document_of_its_own`
-//! in `tests/document_from_snapshot.rs`, its own for the same reason; the
+//! in `tests/document_from_snapshot.rs`, its own for the same reason;
+//! `a_display_is_live_from_new_until_free_and_answers_the_queries_as_layout_does`
+//! in `tests/display.rs`, its own because it counts its process's displays;
+//! the
 //! four counter
 //! checks of `ffi-test` (`handleChecks`), its check that a document is
 //! freed (`documentChecks`) and its checks that a snapshot is freed and
@@ -317,6 +322,7 @@
 //! constant defined as `add 2 3`.
 
 pub mod counter;
+pub mod display;
 pub mod document;
 pub mod events;
 pub mod files;

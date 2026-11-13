@@ -20,6 +20,10 @@ editor-platform-winit = { path = "../editor-platform-winit" }
 # Text storage: the text behind a document handle, and its snapshots; and
 # the file port, with loading and saving over it.
 editor-text = { path = "../editor-text" }
+# Layout: the display handle lays scenes out and answers the layout
+# queries with it, over its published fake shaper until a real adapter
+# exists (the display pipeline's phase 3).
+editor-layout = { path = "../editor-layout" }
 # The real file system, for the process's file service. This is the crate
 # that wires the library together, so it is the one that links the adapter;
 # `clippy.toml` here keeps the adapter out of everything but that one static

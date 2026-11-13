@@ -138,13 +138,29 @@ impl Snapshot {
     }
 
     /// `read` of its document's text, locked, if it has a document that is
-    /// still alive. A poisoned lock is used as it is, as the document does.
+    /// still alive.
     fn read_source<T>(&self, read: impl FnOnce(&Text) -> Option<T>) -> Option<T> {
-        let text = self.source.as_ref()?.upgrade()?;
-        let text = text.lock().unwrap_or_else(PoisonError::into_inner);
-        read(&text)
+        read_text(self.source.as_ref(), read)
     }
 
+    /// Its document's text, held weakly; `None` when no document holds it.
+    pub(crate) fn source(&self) -> Option<&Weak<Mutex<Text>>> {
+        self.source.as_ref()
+    }
+}
+
+/// `read` of the text `source` holds, locked, if there is one and it is
+/// still alive. A poisoned lock is used as it is, as a document does.
+pub(crate) fn read_text<T>(
+    source: Option<&Weak<Mutex<Text>>>,
+    read: impl FnOnce(&Text) -> Option<T>,
+) -> Option<T> {
+    let text = source?.upgrade()?;
+    let text = text.lock().unwrap_or_else(PoisonError::into_inner);
+    read(&text)
+}
+
+impl Snapshot {
     /// Hands `snapshot` out as a handle the caller owns, and counts it
     /// live: the caller must hand it to [`editor_ffi_snapshot_free`]
     /// exactly once. This is the one place a snapshot handle is made, so it
