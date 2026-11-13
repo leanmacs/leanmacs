@@ -1,4 +1,5 @@
 import Editor.Job.Contract
+import Editor.Job.Fake
 import Editor.Job.Pool
 import Editor.Job.Real
 import Editor.Text.Contract
@@ -33,11 +34,25 @@ library.
   over the library's timer service, with the completion pump
   (`Editor/Job/Real.lean`). `model-test` runs it against the model and
   against the runner over the fake clock.
+- The job port's file properties (`JobContract.fileProperties`) against the
+  runner over the library's file service, on real files
+  (`runFilesOnService`, `fileFailures`). Each property has a temporary
+  directory of its own, made here, handed to its job as a path, read back
+  when the job has ended and removed whatever happened; no file is touched
+  anywhere else. `model-test` runs the same list against the model of files
+  and against the runner over the fake of the file service.
 
 `jobChecks` then pins what only the real service can show: that a job in a
 real wait holds no thread, that cancelling a job takes its timer out of the
 library's schedule, that a deadline no machine word holds is not cut down,
 and that the pump is not one of the pool's tasks.
+
+`fileChecks` pins what only the file service and the real text binding
+together can show: that a load writes nothing to the editor's table of
+snapshots until the job's command adopts it, that what a job loaded is
+freed when the job is settled, that cancelling a job leaves the file
+service with nothing of it, and that a job saves a snapshot a command took
+through the published table and is refused one the command has released.
 
 `main` starts the pump once, on a dedicated task. When the checks are done
 it quits the queues, requires the pump to have ended, and exits explicitly:
@@ -206,13 +221,16 @@ def endedAs (handle : Job.Handle) (expected : Job.Outcome (Array String)) : IO B
   let ended ← eventually handle.ended
   return ended && (← handle.outcome?).map texts == some expected
 
-/-- Runs `job` on the runner over the library's timer service, and returns
-how it ended. A job that does not end in time has failed, and is cancelled. -/
+/-- Runs `job` on the runner over the library's services, and returns how it
+ended. A job that does not end in time has failed, and is cancelled. A job
+that ended is settled, as whoever takes a finished job's result settles it,
+so what its loads made is released. -/
 def runOnTimers (services : Job.Services) (job : JobM Bool) : IO (Job.Outcome Bool) := do
   let handle ← Job.spawn services (reporting fun _ => job) (pure ())
   unless ← eventually handle.ended do
     handle.cancel
     return .failed "the job did not end"
+  handle.settle
   match (← handle.outcome?).map texts with
   | some (.finished texts) =>
     return .finished (texts == #["true"])
@@ -226,6 +244,54 @@ runner over the library's timer service. -/
 def jobFailures (services : Job.Services) : IO (List String) := do
   let failed ← JobContract.failures (runOnTimers services) JobContract.properties
   return failed.map (s!"the job runner over the timer service: {·}")
+
+/-- Runs a file property's job on the runner over the library's file
+service, on real files: how the job ended, and the files afterwards.
+
+The files are in a temporary directory made here for this one property,
+whose path the job is handed; nothing else is written anywhere. The
+property's files are written into it, the job runs, every file then in it is
+read back, and it is removed, whatever happened. -/
+def runFilesOnService (services : Job.Services) (property : JobContract.FileProperty) :
+    IO (Job.Outcome Bool × Array (String × ByteArray)) := do
+  let directory ← IO.FS.createTempDir
+  try
+    for (name, bytes) in property.files do
+      IO.FS.writeBinFile (directory / name) bytes
+    let outcome ← runOnTimers services (property.holds directory)
+    let mut files := #[]
+    for entry in ← directory.readDir do
+      -- A directory would be a surprise too: it is named, with no bytes.
+      let bytes ←
+        if ← entry.path.isDir then
+          pure ByteArray.empty
+        else
+          IO.FS.readBinFile entry.path
+      files := files.push (entry.fileName, bytes)
+    return (outcome, files)
+  finally
+    IO.FS.removeDirAll directory
+
+/-- What must hold of the library's objects once the file properties have
+run: it is about the library's counts, so the port cannot say it. -/
+def fileLeakName : String :=
+  "what the jobs of the file properties loaded is released when each job is settled, and no request is left in the file service"
+
+/-- The names of the job port's file properties that do not hold of the
+runner over the library's file service, on real files. `fileLeakName` is
+among them if the library then holds a snapshot more than before, `held`
+still holds one, or the file service has a request or a result left. -/
+def fileFailures (services : Job.Services) (held : Job.HeldSnapshots) : IO (List String) := do
+  let before := (← Ffi.Snapshot.live, ← Ffi.filesPending)
+  let failed ← JobContract.fileFailures (runFilesOnService services) JobContract.fileProperties
+  let freed ←
+    eventually do
+        return (← Ffi.Snapshot.live, ← Ffi.filesPending) == before && (← held.size) == 0
+  let after := (← Ffi.Snapshot.live, ← Ffi.filesPending, ← held.size)
+  return failed.map (s!"the job runner over the file service: {·}") ++
+      if freed then []
+      else
+        [s!"{fileLeakName} ({before.1} snapshots and {before.2} requests before, {after.1} and {after.2.1} after, {after.2.2} held)"]
 
 /-- One behaviour, and how to observe it. -/
 structure Check where
@@ -354,6 +420,194 @@ def jobChecks (services : Job.Services) (pool : Array UInt64) : List Check :=
         let threads ← Job.Pool.warm (pool.size + 2) warmPatience
         return !pool.isEmpty && threads.size == pool.size && threads.all pool.contains }]
 
+/-- What a check of the runner over the library's file service works with: a
+text store whose table of snapshots is published, the file service over its
+read half, and a fake clock a check parks a job on. The file waits are
+completed by the process's pump, through `completions`; the clock's by the
+check. Each check has its own, over the process's one table of waits. -/
+structure FileRig where
+  /-- The table of snapshots the store publishes. -/
+  published : Snapshots
+  /-- What the rig's jobs hold. -/
+  held : Job.HeldSnapshots
+  /-- The clock a job of the rig sleeps on, which only the check moves. -/
+  clock : Job.FakeClock
+  /-- The table of waits, the clock and the library's file service. -/
+  services : Job.Services
+
+/-- A rig over the table of waits `completions`, which the pump serves. -/
+def FileRig.new (completions : Job.Completions) : BaseIO FileRig := do
+  let published ← Snapshots.new
+  let held ← Job.HeldSnapshots.new
+  let clock ← Job.FakeClock.new completions
+  return {
+      published, held, clock
+      services :=
+        { completions, timers := clock.timers
+          files := Job.realFiles completions published.reader held } }
+
+/-- A file's bytes, in the checks below: "héllo", a line feed, "😀" and the
+byte `FF`, which is not UTF-8. Twelve bytes. -/
+def noteBytes : ByteArray :=
+  ⟨#[0x68, 0xC3, 0xA9, 0x6C, 0x6C, 0x6F, 0x0A, 0xF0, 0x9F, 0x98, 0x80, 0xFF]⟩
+
+/-- The text `noteBytes` loads as, written out by hand. -/
+def noteText : String :=
+  "héllo\n😀".push (Char.ofNat 0x10DCFF)
+
+/-- Runs `check` on a directory of its own holding `note.txt`, which holds
+`noteBytes`, and removes the directory afterwards, whatever happened. -/
+def withNote (check : System.FilePath → IO Bool) : IO Bool := do
+  let directory ← IO.FS.createTempDir
+  try
+    IO.FS.writeBinFile (directory / "note.txt") noteBytes
+    check directory
+  finally
+    IO.FS.removeDirAll directory
+
+/-- The checks of the runner over the library's file service and the real
+text binding (`Editor/Job/Real.lean`, `Editor/Text/Real.lean`): what only the
+two together can show. It is a function, not a constant, because it calls
+bindings. Every file is in a temporary directory its check makes and
+removes. -/
+def fileChecks (completions : Job.Completions) : List Check :=
+  [{
+      name :=
+        "a load writes nothing to the editor's table: with a job parked after its load the published table is as it was and the library holds one snapshot more; the job's command adopts it into the table; and once the command has released it and the job is settled the library holds what it held",
+      run :=
+        withNote fun directory => do
+          let rig ← FileRig.new completions
+          let size ← rig.published.size
+          let live ← Ffi.Snapshot.live
+          let handle ←
+            Job.spawn rig.services
+                (reporting fun _ => do
+                  discard <| JobContract.loaded (directory / "note.txt")
+                  sleep 1000
+                  return true)
+                (pure ())
+          try
+            unless ← eventually (return (← rig.clock.waiting) == 1) do
+              return false
+            let parked :=
+              (← rig.published.size) == size && (← Ffi.Snapshot.live) == live + 1 &&
+                (← rig.held.size) == 1
+            rig.clock.advance 1000
+            unless ← eventually handle.ended do
+              return false
+            let #[loaded] ← handle.holding | return false
+            -- The job's command, on this thread, as the loop runs it.
+            let command : EditorM (SnapshotId × String) := do
+              let adopted ← loaded.adopt
+              return (adopted, ← adopted.read)
+            let (.ok (adopted, read), texts) ←
+              Job.finishWith rig.held handle command (.over rig.published) | return false
+            let adoptedHeld :=
+              (← rig.published.size) == size + 1 && (← Ffi.Snapshot.live) == live + 1 &&
+                (← rig.held.size) == 0 &&
+                (← handle.holding).isEmpty
+            let (released, _) ← adopted.release.runReal texts
+            return parked && read == noteText && adoptedHeld && released.isOk &&
+                (← eventually (return (← Ffi.Snapshot.live) == live))
+          finally
+            handle.cancel },
+    { name :=
+        "a snapshot a job loaded that no command adopted is freed when the job is settled: the library holds what it held, and the editor's table never grew"
+      run :=
+        withNote fun directory => do
+          let rig ← FileRig.new completions
+          let live ← Ffi.Snapshot.live
+          let handle ←
+            Job.spawn rig.services
+                (reporting fun _ => do
+                  return (← JobContract.loaded (directory / "note.txt")).stamp.size)
+                (pure ())
+          let ended ← endedAs handle (.finished #["12"])
+          let kept := (← Ffi.Snapshot.live) == live + 1 && (← rig.held.size) == 1
+          let (ran, _) ←
+            Job.finishWith rig.held handle (pure () : EditorM Unit) (.over rig.published)
+          return ended && kept && ran.isOk &&
+              (← eventually (return (← Ffi.Snapshot.live) == live)) &&
+              (← rig.held.size) == 0 &&
+              (← rig.published.size) == 0 },
+    { name :=
+        "cancelling a job whose load is in the file service behind other requests leaves the service and the runner with nothing of it, whether the cancel found the load waiting, being worked or done: the service's count is that of the requests ahead, and nothing is held"
+      run :=
+        withNote fun directory => do
+          let rig ← FileRig.new completions
+          let before ← Ffi.filesPending
+          let live ← Ffi.Snapshot.live
+          let snapshot ← (← Ffi.Document.new noteText).snapshot
+          -- Five saves ahead of the job's load, started straight at the
+          -- service under ids the table of waits gave out, so no job's wait
+          -- has them. Each syncs its file, so the load is behind them.
+          let mut ahead := #[]
+          for index in [0:5] do
+            let (id, _) ← completions.register
+            unless
+              ← Ffi.filesSave id snapshot (directory / s!"ahead-{index}.txt").toString .whatever do
+              return false
+            ahead := ahead.push id
+          let handle ←
+            Job.spawn rig.services
+                (reporting fun _ => do
+                  return (← JobContract.loaded (directory / "note.txt")).stamp.size)
+                (pure ())
+          try
+            -- The job is in its wait once its request is at the service. On
+            -- a file system that syncs slowly the load is still waiting
+            -- then; on a fast one it may be done, and the job with it.
+            let reached ←
+              eventually do
+                  return (← handle.flags.get).waiting.isSome || (← handle.ended)
+            unless reached do
+              return false
+            handle.cancel
+            let ended ← eventually handle.ended
+            handle.settle
+            -- The five ahead are waiting, being worked or done, and count
+            -- either way; the job's load is gone, whichever it was.
+            let withdrawn ← eventually (return (← Ffi.filesPending) == before + 5)
+            -- The one snapshot left is the one made here, which is read last
+            -- so that it is alive until then.
+            return ended && withdrawn && (← rig.held.size) == 0 &&
+                (← eventually (return (← Ffi.Snapshot.live) == live + 1)) &&
+                (← snapshot.info).byteLength == 15
+          finally
+            handle.cancel
+            for id in ahead do
+              discard <| Ffi.filesCancel id
+              completions.finish id .cancelled
+            discard <|
+                eventually do
+                  return (← Ffi.filesPending) == before && (← Ffi.Snapshot.live) ≤ live + 1 },
+    { name :=
+        "a job saves a snapshot a command took, found through the published table, and a snapshot the command has released since is refused as naming none, and writes no file"
+      run :=
+        withNote fun directory => do
+          let rig ← FileRig.new completions
+          let take : EditorM SnapshotId := do
+            let text ← createText noteText
+            let taken ← text.snapshot
+            -- The text moves on: the snapshot does not.
+            text.insert 0 "x"
+            return taken
+          let (.ok taken, texts) ← take.runReal (.over rig.published) | return false
+          let saver (name : String) (job : System.FilePath → JobM Bool) : IO Bool := do
+            let handle ←
+              Job.spawn rig.services (reporting fun _ => job (directory / name)) (pure ())
+            endedAs handle (.finished #["true"])
+          let saved ←
+            saver "taken.txt" fun path => do
+                return (← JobContract.saved (.snapshot taken) path .absent).size == 12
+          let (released, _) ← taken.release.runReal texts
+          let refused ←
+            saver "released.txt" fun path =>
+                JobContract.saveRefusedAs .noSuchSnapshot (.snapshot taken) path .absent
+          return saved && released.isOk && refused &&
+              (← IO.FS.readBinFile (directory / "taken.txt")) == noteBytes &&
+              !(← (directory / "released.txt").pathExists) }]
+
 /-- Runs `checks` and returns the names of those that failed. A check that
 throws has failed, and its error is reported with its name. -/
 def checkFailures (checks : List Check) : IO (List String) :=
@@ -378,7 +632,13 @@ exit: a task that failed a check may still be blocked in the library. -/
 def main : IO UInt32 := do
   let pool ← Editor.Job.Pool.whole ContractTest.warmPatience
   let completions ← Editor.Job.Completions.new
-  let services : Editor.Job.Services := { completions, timers := Editor.Job.realTimers completions }
+  -- No command of this run publishes a snapshot to these services: the file
+  -- properties save what their own jobs loaded.
+  let published ← Editor.Snapshots.new
+  let held ← Editor.Job.HeldSnapshots.new
+  let services : Editor.Job.Services :=
+    { completions, timers := Editor.Job.realTimers completions
+      files := Editor.Job.realFiles completions published.reader held }
   let pump ← IO.asTask (prio := .dedicated) (Editor.Job.pump completions)
   let properties := Editor.TextContract.properties
   -- The undo tree's cases run through the same binding, so the count of
@@ -387,18 +647,24 @@ def main : IO UInt32 := do
   let adoptProperties := Editor.TextContract.adoptProperties
   let textFailed ← ContractTest.failures (properties ++ cases) adoptProperties
   let jobFailed ← ContractTest.jobFailures services
+  let fileFailed ← ContractTest.fileFailures services held
+  -- The job checks first: the last of them measures the pool, which a later
+  -- check must not have grown.
   let checks := ContractTest.jobChecks services pool
   let checkFailed ← ContractTest.checkFailures checks
+  let fileChecks := ContractTest.fileChecks completions
+  let fileCheckFailed ← ContractTest.checkFailures fileChecks
   Editor.Ffi.quit
   let pumpEnded ← ContractTest.eventually (IO.hasFinished pump)
   let failed :=
-    textFailed.map (s!"the real text binding: {·}") ++ jobFailed ++ checkFailed ++
+    textFailed.map (s!"the real text binding: {·}") ++ jobFailed ++ fileFailed ++ checkFailed ++
+      fileCheckFailed ++
       if pumpEnded then [] else ["quit ends the completion pump"]
   for name in failed do
     IO.eprintln s!"FAILED: {name}"
   unless failed.isEmpty do
     IO.Process.exit 1
   IO.println
-      s!"contract-test: {properties.length + adoptProperties.length} properties hold of the real text binding, {cases.length} cases of the undo tree hold over it, and its documents and snapshots are freed when released and with its table; {Editor.JobContract.properties.length} properties hold of the job runner over the timer service, {checks.length} checks of it passed, and quit ended the pump"
+      s!"contract-test: {properties.length + adoptProperties.length} properties hold of the real text binding, {cases.length} cases of the undo tree hold over it, and its documents and snapshots are freed when released and with its table; {Editor.JobContract.properties.length} properties hold of the job runner over the timer service, and {Editor.JobContract.fileProperties.length} file properties over the file service, on real files; {checks.length} checks of the timer service passed, {fileChecks.length} of the file service, and quit ended the pump"
   (← IO.getStdout).flush
   IO.Process.exit 0

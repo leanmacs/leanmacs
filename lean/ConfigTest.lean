@@ -30,7 +30,12 @@ fakes. The checks here pin what only real collaborators can show:
   result on the editor thread, a reload that installs cancels the old
   config's jobs and a rejected one does not, and how each ending of a job is
   reported;
-- `scriptChecks`: the headless mode's script and its driver.
+- `scriptChecks`: the headless mode's script and its driver;
+- `fileChecks`: a job from config that loads a file through the host, over
+  the library's file service, and whose handler makes a text of it. It is
+  the one check whose host is over a real service, so it is the one that
+  starts a completion pump, and it runs last. Its file is in a temporary
+  directory of its own, whose path is written into the config it loads.
 
 A check controls time through a port, never by sleeping and hoping: a
 decorator of the elaborator port (`Gate`) holds one chunk's elaboration open
@@ -322,7 +327,8 @@ def Stage.new {σ : Type} (context : Context) (elaborator : Config.Elaborator σ
           emit := fun line => do
             threads.modify (·.push (← IO.getTID))
             output.modify (·.push line),
-          services := { completions, timers := clock.timers }, requests, wakeups := requests + 1,
+          services := { completions, timers := clock.timers }, published := ← Snapshots.new,
+          held := ← Job.HeldSnapshots.new, requests, wakeups := requests + 1,
           jobs := requests + 2 },
       output, threads, clock }
 
@@ -1150,6 +1156,78 @@ def jobChecks (context : Context) : List Check :=
             working != Headless.Failure.describe 30000 (.reloading (some 12)) &&
             working != Headless.Failure.describe 30000 (.unanswered (some 12))) }]
 
+/-- A chunk whose `setup` registers two jobs that each load a file and whose
+handler makes a text of what was loaded: `open`, of `note.txt` in
+`directory`, and `missing`, of a file that is not there. A load that is
+refused is thrown, as the refusal's description. -/
+def openChunk (directory : System.FilePath) : String :=
+  "def openFile (path : String) : Unit → JobM JobSnapshotId := fun _ => do
+  match ← File.load path 1000 with
+  | .ok file => return file.snapshot
+  | .error error => throw error.describe
+
+def setup : SetupM Unit := do
+  job \"open\" (openFile " ++
+    (directory / "note.txt").toString.quote ++
+    ") fun loaded => discard loaded.toText
+  job \"missing\" (openFile " ++
+    (directory / "missing.txt").toString.quote ++
+    ") fun loaded => discard loaded.toText
+"
+
+/-- The check of files through the headless host (`Editor/Headless.lean`),
+with the real elaborator, the real queue, the real text binding and the
+library's file service: the one check of this executable whose host is over
+a real service. So it starts the completion pump, once, on a dedicated task,
+over the table of waits its host's services use. No other check of the gated
+run starts a pump, so none takes this one's completions, and the executable
+exits explicitly, which a pump parked in its pull needs. -/
+def fileChecks (context : Context) : List Check :=
+  [{
+      name :=
+        "a job loads a file through the host and its handler makes a text of it, with its two-byte character: the job's line says ok, show prints the text, and the library then holds no snapshot more than before; a job whose file is not there fails with the refusal's description",
+      run :=
+        IO.FS.withTempDir fun files =>
+          IO.FS.withTempDir fun config => do
+            IO.FS.writeBinFile (files / "note.txt") "héllo\n".toUTF8
+            writeFiles config [("10-open.lean", openChunk files)]
+            let stage ← Stage.new context context.elaborator (Config.Directory.source config)
+            let completions := stage.collaborators.services.completions
+            discard <| IO.asTask (prio := .dedicated) (Job.pump completions)
+            let collaborators :=
+              { stage.collaborators with
+                services :=
+                  { stage.collaborators.services with
+                    files :=
+                      Job.realFiles completions stage.collaborators.published.reader
+                        stage.collaborators.held } }
+            let snapshots ← Ffi.Snapshot.live
+            let host ← Headless.start collaborators
+            try
+              let ask (requests : List Headless.Request) : IO Unit := do
+                for request in requests do
+                  host.send request
+                unless ← host.settle patience do
+                  throw (IO.userError "the editor thread did not settle")
+              ask [.reload]
+              ask [.spawn "open"]
+              let opened ← host.join patience
+              ask [.spawn "missing"]
+              let missed ← host.join patience
+              ask [.show]
+              let freed ← eventually (return (← Ffi.Snapshot.live) == snapshots)
+              let stopped ← host.stop patience
+              return opened == .settled && missed == .settled && freed && stopped &&
+                  (← stage.collaborators.held.size) == 0 &&
+                  (← stage.output.get) ==
+                    #["reload 1: installed, 1 chunks, 0 commands", "spawn open: job 1",
+                      "job 1 open: ok", "spawn missing: job 2",
+                      "job 2 missing: failed: nothing is at the path", "commands:",
+                      "text 0: \"héllo\\n\""]
+            catch error =>
+              discard <| host.halt patience
+              throw error }]
+
 /-- The checks of the headless mode's script and its driver
 (`Headless.script`, `Headless.run`). The command line itself is covered by
 one run of the real executable on the fixture under `tests/headless`, in the
@@ -1283,7 +1361,8 @@ def scriptChecks (context : Context) : List Check :=
 def checks (context : Context) : List Check :=
   elaboratorChecks context ++ directoryChecks () ++ hostChecks context ++ threadChecks context ++
     jobChecks context ++
-    scriptChecks context
+    scriptChecks context ++
+    fileChecks context
 
 /-- Runs `checks` and returns the names of those that failed. A check that
 throws has failed, and its error is reported with its name. -/
@@ -1365,8 +1444,8 @@ def start (elaborator : Config.Elaborator Config.Elaborate.State) : IO Rig := do
   let host ←
     Headless.start
         { elaborator, source := { chunks := chunks.get }, emit,
-          services := { completions, timers := clock.timers }, requests := 1, wakeups := 2,
-          jobs := 3 }
+          services := { completions, timers := clock.timers }, published := ← Snapshots.new,
+          held := ← Job.HeldSnapshots.new, requests := 1, wakeups := 2, jobs := 3 }
   return { host, chunks, reported, others }
 
 /-- Makes `config` the source's chunks, asks for a reload, and returns the
@@ -1634,7 +1713,8 @@ def jobs (sysroot oleanDir : String) (samples : Nat) : IO UInt8 := do
     let host ←
       Headless.start
           { elaborator, source := { chunks := pure jobsConfig }, emit,
-            services := { completions, timers := counted }, requests, wakeups := requests + 1,
+            services := { completions, timers := counted }, published := ← Snapshots.new,
+            held := ← Job.HeldSnapshots.new, requests, wakeups := requests + 1,
             jobs := requests + 2 }
     try
       host.send .reload

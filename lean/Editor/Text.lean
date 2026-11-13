@@ -205,7 +205,9 @@ same value runs against the model and against the real binding.
   refused with `noSuchSnapshot` and takes nothing in: an id no job was
   given, another job's, and any id at all in a command that is not a job's,
   since such a run is handed nothing. What a run was handed and did not
-  adopt is not in the store, before or after.
+  adopt is not in the store, before or after: the runtime releases what the
+  job held once the job's command has run, and what the command adopted is
+  the store's and outlives that.
 - A text and a snapshot answer the same questions (`TextQuery`), and a text
   answers as a snapshot taken at that moment would.
 - A *row* begins at the start of the text and after each line feed. So a

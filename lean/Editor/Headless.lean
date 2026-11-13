@@ -38,8 +38,10 @@ operations of the reducer and of the job table.
 
 The collaborators are handed in (`Collaborators`): the elaborator and the
 source of the config session, `emit`, the port every line of output goes
-through, and the services the loop's jobs wait on, which a test makes of a
-fake clock.
+through, the services the loop's jobs wait on, which a test makes of a fake
+clock, and the two tables the host makes before those services: the table of
+snapshots the loop's text binding publishes, of which the loop is the one
+writer, and what the jobs hold.
 
 ## Jobs
 
@@ -56,6 +58,13 @@ cannot start one, and neither can `setup`.
   editor thread meets the wake-up in its turn, takes the result, and, for a
   job that finished, runs the command it finished with exactly as it runs
   any command. So a handler runs on the editor thread, between two events.
+- **A finished job's command is handed what the job held.** A job that
+  loaded a file holds the snapshot the load made. The loop runs the job's
+  command with `Job.finishWith` (`Editor/Job/Real.lean`): the run is handed
+  those snapshots, so the command can take one into the text store
+  (`JobSnapshotId.adopt`, `JobSnapshotId.toText`), and the job is settled
+  once the command has run, which releases what it held. A job that failed
+  or was cancelled settled itself.
 - **A reload that installs cancels the old config's jobs**: the reducer's
   `cancelJobs` effect, performed before the reload's report, takes the
   owner's jobs out of the table and cancels them. A wake-up one of them had
@@ -119,8 +128,8 @@ end of the script and for a loop that did not stop.
 `main` is the executable's headless mode,
 `editor headless <sysroot> <olean dir> <config dir> <script file>`: `run`
 with the real elaborator, a directory as the source, stdout as the output
-and the library's timer service for the jobs, then the quit and the explicit
-exit. Before the loop starts it warms the pool (`Editor/Job/Pool.lean`) and
+and the library's timer service and file service for the jobs, then the quit
+and the explicit exit. Before the loop starts it warms the pool (`Editor/Job/Pool.lean`) and
 starts the completion pump on a dedicated task (`Editor/Job/Real.lean`),
 which the quit ends. Its exit status is 0 when the script ran to its end and
 1 when it could not, and then it says why on stderr: the script cannot be
@@ -162,9 +171,18 @@ structure Collaborators (σ : Type) where
   source : Config.Source
   /-- Where a line of output goes. The editor thread calls it. -/
   emit : String → IO Unit
-  /-- What the host's jobs wait on: the table of waits and the clock. A test
-  hands in a fake clock; the executable the library's timer service. -/
+  /-- What the host's jobs wait on: the table of waits, the clock and the
+  files. A test hands in a fake clock; the executable the library's timer
+  service and its file service. -/
   services : Job.Services
+  /-- The table of snapshots the loop's text binding is over, which the host
+  makes before the services: the loop is its one writer, and a real file
+  service is given its read half. -/
+  published : Snapshots
+  /-- What the host's jobs hold: the snapshots their loads made, which the
+  host makes before the services and hands to a real file service too. The
+  loop hands a finished job's command what the job holds from it. -/
+  held : Job.HeldSnapshots
   /-- The Lean source id the driver's events are posted under. -/
   requests : UInt64
   /-- The Lean source id a finished reload job's wake-up is posted under. -/
@@ -371,7 +389,9 @@ def ended (collaborators : Collaborators σ) (running : Running σ) (id : Nat) :
   let label := s!"job {entry.id} {entry.name}"
   match outcome with
   | .finished command =>
-    let (result, texts) ← command.runReal running.texts
+    -- The command is handed what the job held, and the job is settled once
+    -- it has run.
+    let (result, texts) ← Job.finishWith collaborators.held entry.handle command running.texts
     match result with
     | .ok () =>
       collaborators.emit s!"{label}: ok"
@@ -447,7 +467,8 @@ it publishes in `progress` how many markers it has reached, whether a reload
 is running, and how many jobs are. -/
 def loop {σ : Type} (collaborators : Collaborators σ) (progress : IO.Ref Progress) : IO Unit := do
   let mut running : Running σ :=
-    { texts := ← RealTexts.new, jobs := { services := collaborators.services } }
+    { texts := RealTexts.over collaborators.published
+      jobs := { services := collaborators.services } }
   repeat
     let event ← Ffi.nextEvent .editor
     if event.kind == .quit then
@@ -737,7 +758,8 @@ reload or a job still running, or the editor thread did not answer).
 
 Before the loop starts it warms the pool, so the first burst of jobs finds
 every thread made, and starts the completion pump on a dedicated task. The
-host's jobs wait on the library's timer service.
+host's jobs wait on the library's timer service and its file service, which
+reads the snapshots the loop publishes.
 
 `sysroot` is the Lean toolchain's directory and `oleanDir` the directory
 holding the editor package's `.olean` files. Every path is an argument:
@@ -753,12 +775,18 @@ def main (sysroot oleanDir configDir scriptPath : String) : IO UInt32 := do
   discard <| Job.Pool.warm Job.Pool.size warmPatience
   let completions ← Job.Completions.new
   discard <| IO.asTask (prio := .dedicated) (Job.pump completions)
+  -- The published table and what jobs hold are made before the services:
+  -- the file service reads the one and keeps its loads in the other.
+  let published ← Snapshots.new
+  let held ← Job.HeldSnapshots.new
   let failure ←
     run
         { elaborator := Config.Elaborate.elaborator { sysroot, oleanDir },
           source := Config.Directory.source configDir, emit := IO.println,
-          services := { completions, timers := Job.realTimers completions }, requests := 1,
-          wakeups := 2, jobs := 3 }
+          services :=
+            { completions, timers := Job.realTimers completions,
+              files := Job.realFiles completions published.reader held },
+          published, held, requests := 1, wakeups := 2, jobs := 3 }
         directives settlePatience
   (← IO.getStdout).flush
   if let some failure := failure then
