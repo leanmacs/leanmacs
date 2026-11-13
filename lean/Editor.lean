@@ -1,5 +1,6 @@
 import Editor.Command.Append
 import Editor.Event
+import Editor.Scene
 import Editor.Setup
 import Editor.UndoTree
 
@@ -9,7 +10,8 @@ import Editor.UndoTree
 The root module user config imports: the editor's ports, the commands written
 over them, the pure models that tests and theorems run them against, the undo
 tree over the text port (`Editor/UndoTree.lean`), the events the editor queue
-delivers, as plain data (`Editor/Event.lean`), and what config registers
+delivers, as plain data (`Editor/Event.lean`), the scene Lean publishes to
+the display (`Editor/Scene.lean`), and what config registers
 with (`setup` and stores, `Editor/Setup.lean`). The job port
 (`Editor/Job.lean`) comes with `Editor/Setup.lean`, which registers jobs,
 and with the job port the file requests a job makes (`Editor/File.lean`):

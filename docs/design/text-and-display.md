@@ -790,6 +790,37 @@ demand if the lines are not cached. Lean never keeps its own copy of
 layout. Xi's experience is the reason: an editor core that learned about
 layout through messages spent months on scrolling and resize bugs.
 
+#### As built
+
+The scene is plain Lean data (`lean/Editor/Scene.lean`, `Scene`):
+
+| Field | What it is |
+|---|---|
+| `size` | The frame's size, in physical pixels |
+| `views` | The views, in drawing order |
+| `focused` | The view with the keyboard focus, if any |
+| `echo` | The echo area's text |
+| `pending` | The pending key prefix, rendered by Lean into a string |
+| `preedit` | The input method's preedit text in the focused view, if it is composing |
+
+Each view (`View`):
+
+| Field | What it is |
+|---|---|
+| `id` | The view's number |
+| `rect` | Its rectangle in the frame, in physical pixels |
+| `snapshot` | The text it shows, as a snapshot handle |
+| `scroll` | Its scroll anchor, as an anchor marker of that text |
+| `selections` | Its selections, as selection markers of that text; each carries its ranges and its shape |
+| `cursor` | Its cursor shape (block, bar, underline, hollow) and the name of the face its cursors take |
+| `decorations` | Byte ranges of its snapshot, each naming a face |
+| `status` | Its status line: text fields, each naming a face |
+
+Content is named only by handles, never by copied text, so an unchanged
+view is sent as the same handles. Faces are names; what they look like is
+the display pipeline's. Which cursor and which status fields a view has are
+chosen by the command loop's later phases; the scene only carries them.
+
 ## Layout and rendering
 
 - Only visible lines are laid out, one layout object per buffer line.

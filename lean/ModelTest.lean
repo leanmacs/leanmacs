@@ -7,6 +7,7 @@ import Editor.Job.Fake
 import Editor.Job.Jobs
 import Editor.Job.Model
 import Editor.Job.Pool
+import Editor.Scene
 import Editor.Text.Contract
 import Editor.UndoTree.Cases
 import Editor.WindowCheck
@@ -2628,6 +2629,53 @@ def windowArgumentChecks : List Check :=
         return checked.lines == typedReport && checked.calls[1]? == some "run true" &&
             checked.status == some 0 }]
 
+/-- A scene of two views, with every field of a scene and of a view set: the
+first view focused, with two selections, a decoration and two status fields;
+the second with none of those. Its content is named by handles only. -/
+def twoViews : Scene where
+  size := { width := 1600, height := 1200 }
+  views :=
+    #[{ id := ⟨0⟩, rect := { x := 0, y := 0, width := 800, height := 1160 }, snapshot := ⟨3⟩
+        scroll := { text := ⟨1⟩, index := 0 }
+        selections := #[{ text := ⟨1⟩, index := 1 }, { text := ⟨1⟩, index := 2 }]
+        cursor := { shape := .block, face := ⟨"cursor.normal"⟩ }
+        decorations := #[{ start := 4, stop := 9, face := ⟨"search.match"⟩ }]
+        status :=
+          #[{ text := "notes.txt", face := ⟨"status.name"⟩ },
+            { text := "[+]", face := ⟨"status.modified"⟩ }] },
+      { id := ⟨1⟩, rect := { x := 800, y := 0, width := 800, height := 1160 }, snapshot := ⟨4⟩
+        scroll := { text := ⟨2⟩, index := 0 }, selections := #[]
+        cursor := { shape := .bar, face := ⟨"cursor.insert"⟩ }, decorations := #[], status := #[] }]
+  focused := some ⟨0⟩
+  echo := "2 lines yanked"
+  pending := "d2"
+  preedit := some "´"
+
+/-- The checks of the scene, which is plain data (`Editor/Scene.lean`). -/
+def sceneChecks : List Check :=
+  [{ name := "a scene of two views reads back every field it was built with",
+     run :=
+       pure
+         (twoViews.size == { width := 1600, height := 1200 } && twoViews.views.size == 2 &&
+           (twoViews.views[0]?.map (·.selections.size)) == some 2 &&
+           (twoViews.views[0]?.map (·.decorations)) ==
+             some #[{ start := 4, stop := 9, face := ⟨"search.match"⟩ }] &&
+           (twoViews.views[0]?.map (·.status.map (·.text))) == some #["notes.txt", "[+]"] &&
+           (twoViews.views[1]?.map (·.cursor)) ==
+             some { shape := .bar, face := ⟨"cursor.insert"⟩ } &&
+           (twoViews.views[1]?.map (·.rect.x)) == some 800 &&
+           (twoViews.views[1]?.map (·.snapshot)) == some ⟨4⟩ &&
+           (twoViews.views[1]?.map (·.scroll)) == some { text := ⟨2⟩, index := 0 } &&
+           twoViews.focused == some ⟨0⟩ &&
+           twoViews.echo == "2 lines yanked" &&
+           twoViews.pending == "d2" &&
+           twoViews.preedit == some "´") },
+    { name := "two scenes are equal exactly when their fields are"
+      run :=
+        pure
+          (twoViews == twoViews && twoViews != { twoViews with pending := "" } &&
+            twoViews != { twoViews with views := twoViews.views.pop }) }]
+
 /-- The checks of the undo tree's pure operations alone, which ask nothing of
 a text: being told a revision, and the boundary. What the tree does to a
 text is in `UndoTreeCases.cases`, run against the text model below. -/
@@ -2931,7 +2979,8 @@ def checks : List Check :=
     windowLoopChecks ++
     windowArgumentChecks ++
     undoTreeChecks ++
-    fileModelChecks
+    fileModelChecks ++
+    sceneChecks
 
 /-- Runs `checks` and returns the names of those that failed. A check that
 throws has failed, and its error is reported with its name. -/
