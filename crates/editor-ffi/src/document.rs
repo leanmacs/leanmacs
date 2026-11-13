@@ -10,10 +10,12 @@
 //! takes a snapshot ([`crate::snapshot`]).
 //!
 //! A document's other methods are beside what they carry across the
-//! boundary: applying a transaction in [`crate::transaction`], and the
-//! reads of the edit log and forgetting in [`crate::log`]. A replace made
-//! here is a transaction too, recorded in the log with the text's default
-//! origin.
+//! boundary: applying a transaction in [`crate::transaction`], the reads
+//! of the edit log and forgetting in [`crate::log`], its markers in
+//! [`crate::marker`], and applying the inverse of a run of revisions and
+//! dropping kept inverses in [`crate::inverse`]. A replace made here is a
+//! transaction too, recorded in the log with the text's default origin,
+//! and its inverse is kept like any other's.
 //!
 //! The editor reaches a document only through the text port's real binding
 //! (`lean/Editor/Text/Real.lean`).

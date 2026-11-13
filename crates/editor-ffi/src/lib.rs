@@ -88,19 +88,28 @@
 //! marker out, from [`marker::editor_ffi_document_marker`]; and a selection
 //! in and what it covers out, both as words, in
 //! [`snapshot::editor_ffi_snapshot_extents`]. A refusal with more than one
-//! reason is a status, as a number ([`marker::MarkStatus`]). In words, a
+//! reason is a status, as a number ([`marker::MarkStatus`]). A document's
+//! kept inverses are the example of scalars in and words out with an
+//! option inside them: a run of revisions and an origin in, as three
+//! numbers, and the revision the inverse produced with the selection it
+//! hands back, if there is one, out
+//! ([`inverse::editor_ffi_document_apply_inverse`], with its refusals in
+//! [`inverse::InverseStatus`]); and a run in and a refusal as a `bool`
+//! ([`inverse::editor_ffi_document_drop_inverses`]). In words, a
 //! length or an offset the other side cannot hold is sent as the largest it
 //! can, which no text accepts, so it too is refused and never cut down.
 //! Tests: the unit tests in `text.rs`, `document.rs`, `snapshot.rs`,
-//! `words.rs`, `transaction.rs`, `log.rs` and `marker.rs`; the tag tests in
-//! `events.rs`;
+//! `words.rs`, `transaction.rs`, `log.rs`, `marker.rs` and `inverse.rs`;
+//! the tag tests in `events.rs`;
 //! `find_fills_the_range_it_found_and_reports_whether_it_found_one` and the
 //! document test in `tests/c_api.rs`; the snapshot test in
 //! `tests/snapshot.rs`;
 //! `a_transaction_is_applied_and_the_log_is_read_through_c` in
-//! `tests/log.rs` and
+//! `tests/log.rs`,
 //! `a_document_is_marked_and_a_selections_extents_are_read_through_c` in
-//! `tests/markers.rs`, integration tests of their own for the reason
+//! `tests/markers.rs` and
+//! `the_inverse_of_a_run_is_applied_and_inverses_are_dropped_through_c` in
+//! `tests/inverse.rs`, integration tests of their own for the reason
 //! `tests/snapshot.rs` is one; the `find` and event checks of `ffi-test`
 //! (`dataChecks`), its document checks (`documentChecks`), its snapshot
 //! checks (`snapshotChecks`), its transaction checks (`transactionChecks`)
@@ -273,6 +282,7 @@
 pub mod counter;
 pub mod document;
 pub mod events;
+pub mod inverse;
 pub mod log;
 pub mod main_thread;
 pub mod marker;

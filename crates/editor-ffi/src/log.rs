@@ -55,7 +55,8 @@ pub struct RawWords {
     /// the refusal of the function that filled the record (a
     /// [`LogStatus`] for the log's, a
     /// [`MarkStatus`](crate::marker::MarkStatus) for a marker's and for
-    /// extents).
+    /// extents, an [`InverseStatus`](crate::inverse::InverseStatus) for
+    /// an inverse's).
     pub status: u64,
     /// The words: a buffer of `len` bytes, owned by the caller until it is
     /// handed back with
