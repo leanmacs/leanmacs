@@ -221,7 +221,7 @@ pub unsafe extern "C" fn editor_ffi_document_apply(
 mod tests {
     use std::thread;
 
-    use editor_text::Change;
+    use editor_text::{Change, Source};
 
     use super::*;
     use crate::words::tests::buffer;
@@ -417,17 +417,19 @@ mod tests {
             5, RETAIN, 1, DELETE, 2, INSERT, 1, RETAIN, 10, INSERT, 1, 0, 1, 0, 1, 13, 13,
         ]);
 
-        assert_eq!(document.apply_words(&words, b"e!", 7), applied(1));
+        // Which revision a transaction produces is the text's rule: the
+        // one reported is the one the document is at once it is applied.
+        let first = document.apply_words(&words, b"e!", 7);
+        assert_eq!(first, applied(document.snapshot().revision().get()));
         assert_eq!(document.read(), "hello wörld!");
-        assert_eq!(
-            document.apply_words(&buffer(&[1, RETAIN, 13, 0, 0]), b"", 7),
-            applied(2)
-        );
+        let second = document.apply_words(&buffer(&[1, RETAIN, 13, 0, 0]), b"", 7);
+        assert_eq!(second, applied(document.snapshot().revision().get()));
     }
 
     #[test]
     fn each_refusal_is_reported_as_its_status_and_changes_nothing() {
         let document = Document::new(TEXT);
+        let before = document.snapshot().revision();
         let short = buffer(&[1, RETAIN, 12, 0, 0]);
         let inside = buffer(&[1, RETAIN, 13, 1, 0, 1, 2, 2, 0]);
         let no_range = buffer(&[1, RETAIN, 13, 1, 0, 0, 0]);
@@ -450,7 +452,7 @@ mod tests {
             refused(ApplyStatus::Unreadable)
         );
         assert_eq!(document.read(), TEXT);
-        assert_eq!(document.snapshot().revision().get(), 0);
+        assert_eq!(document.snapshot().revision(), before);
     }
 
     #[test]
@@ -470,16 +472,20 @@ mod tests {
         let document = Document::new(TEXT);
         let words = buffer(&[2, INSERT, 1, RETAIN, 13, 0, 0]);
 
-        assert_eq!(document.apply_words(&words, b"x", u64::MAX), applied(1));
+        let result = document.apply_words(&words, b"x", u64::MAX);
+        assert_eq!(result.status, ApplyStatus::Applied as u64);
 
-        let trace = document.trace(0..1).expect("a range of two positions");
-        assert_eq!(
-            trace[0].source,
-            editor_text::Source::Entry {
-                revision: editor_text::Revision::new(1),
-                origin: Origin::new(u64::MAX),
-            }
-        );
+        // How a trace is cut into pieces is the text's rule: the origin is
+        // only looked for among the pieces of the whole text's.
+        let whole = 0..document.snapshot().len();
+        let trace = document.trace(whole).expect("the whole text");
+        let named = trace.iter().any(|piece| {
+            matches!(
+                piece.source,
+                Source::Entry { origin, .. } if origin == Origin::new(u64::MAX)
+            )
+        });
+        assert!(named, "{trace:?}");
     }
 
     #[test]
@@ -513,9 +519,5 @@ mod tests {
         });
 
         assert_eq!(document.read(), "é".repeat(THREADS * EDITS));
-        assert_eq!(
-            document.snapshot().revision().get(),
-            (THREADS * EDITS) as u64
-        );
     }
 }

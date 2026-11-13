@@ -215,125 +215,186 @@ pub unsafe extern "C" fn editor_ffi_document_forget(
 
 #[cfg(test)]
 mod tests {
-    use editor_text::Origin;
+    use editor_text::{Change, ChangeSet, Edit, Origin, Point, Text, Transaction};
 
     use super::*;
-    use crate::transaction::ApplyStatus;
-    use crate::words::tests::{buffer, words_of};
+    use crate::words::tests::words_of;
 
-    /// A document made as "ab\ncd" and changed twice: "X\n" is inserted at
-    /// the start with the origin 7, and "d" is deleted with the origin 9.
-    /// It holds "X\nab\nc".
-    fn changed_twice() -> Document {
-        let document = Document::new("ab\ncd");
-        let inserted = buffer(&[2, 2, 2, 0, 5, 0, 0]);
-        let deleted = buffer(&[2, 0, 6, 1, 1, 0, 0]);
-        let applied = ApplyStatus::Applied as u64;
-        assert_eq!(document.apply_words(&inserted, b"X\n", 7).status, applied);
-        assert_eq!(document.apply_words(&deleted, b"", 9).status, applied);
-        assert_eq!(document.read(), "X\nab\nc");
-        document
+    /// The span from `start` to `end` whose points are `start_point` and
+    /// `end_point`, each a row and a column.
+    fn span(
+        start: usize,
+        end: usize,
+        start_point: (usize, usize),
+        end_point: (usize, usize),
+    ) -> Span {
+        Span {
+            start,
+            end,
+            start_point: Point::new(start_point.0, start_point.1),
+            end_point: Point::new(end_point.0, end_point.1),
+        }
     }
+
+    // The patches and the traces of the three tests of the layout are
+    // written out here, and are not read from a text: what a text's log
+    // answers is the text's rule. Their numbers are those of no text. Every
+    // one is different, so that a word written in another's place shows.
 
     #[test]
     fn a_patch_is_written_as_its_revisions_and_twelve_words_an_edit() {
-        let document = changed_twice();
+        let patch = Patch {
+            from: Revision::new(3),
+            to: Revision::new(8),
+            edits: vec![
+                Edit {
+                    old: span(11, 12, (13, 14), (15, 16)),
+                    new: span(21, 22, (23, 24), (25, 26)),
+                },
+                Edit {
+                    old: span(31, 32, (33, 34), (35, 36)),
+                    new: span(41, 42, (43, 44), (45, 46)),
+                },
+            ],
+        };
 
-        let patch = document.changes_since(Revision::new(0));
-
-        let patch = patch.expect("a revision the text reached");
+        // From revision 3 to revision 8, two edits. Then each edit: its old
+        // span, then its new one.
+        let head: [u64; 3] = [3, 8, 2];
+        let first = [11, 12, 13, 14, 15, 16, 21, 22, 23, 24, 25, 26];
+        let second = [31, 32, 33, 34, 35, 36, 41, 42, 43, 44, 45, 46];
         assert_eq!(
             words_of(&patch_words(&patch)),
-            [
-                // From revision 0 to revision 2, two edits.
-                0, 2, 2, // Nothing at 0 became "X\n": rows 0 to 1.
-                0, 0, 0, 0, 0, 0, 0, 2, 0, 0, 1, 0,
-                // "d", at 4 on row 1, became nothing, at 6 on row 2.
-                4, 5, 1, 1, 1, 2, 6, 6, 2, 1, 2, 1,
-            ]
+            [&head[..], &first, &second].concat()
         );
     }
 
     #[test]
     fn an_empty_patch_is_its_revisions_and_no_edit() {
-        let document = changed_twice();
+        let patch = Patch {
+            from: Revision::new(4),
+            to: Revision::new(9),
+            edits: Vec::new(),
+        };
 
-        let patch = document.changes_since(Revision::new(2));
-
-        let patch = patch.expect("the current revision");
-        assert_eq!(words_of(&patch_words(&patch)), [2, 2, 0]);
+        assert_eq!(words_of(&patch_words(&patch)), [4, 9, 0]);
     }
 
     #[test]
     fn a_trace_is_written_as_five_words_a_piece() {
-        let document = changed_twice();
+        let trace = [
+            Attribution {
+                range: 11..12,
+                source: Source::Entry {
+                    revision: Revision::new(13),
+                    origin: Origin::new(14),
+                },
+            },
+            Attribution {
+                range: 21..22,
+                source: Source::Earlier(Revision::new(23)),
+            },
+        ];
 
-        let trace = document.trace(0..6).expect("the whole text");
-
+        // Two pieces. After its range, an entry's piece is 1, its revision
+        // and its origin, and an earlier piece is 0, the horizon and 0.
+        let count: [u64; 1] = [2];
+        let written = [11, 12, 1, 13, 14];
+        let earlier = [21, 22, 0, 23, 0];
         assert_eq!(
             words_of(&trace_words(&trace)),
-            [
-                2, // "X\n": written by revision 1 with the origin 7.
-                0, 2, 1, 1, 7, // The rest was there at revision 0.
-                2, 6, 0, 0, 0,
-            ]
+            [&count[..], &written, &earlier].concat()
         );
         assert_eq!(words_of(&trace_words(&[])), [0]);
     }
 
-    #[test]
-    fn the_handle_forwards_what_changed_and_its_refusals() {
-        let document = changed_twice();
-
-        assert_eq!(
-            document.changes_since(Revision::new(3)),
-            Err(LogError::Unknown)
-        );
-        let since_one = document.changes_since(Revision::new(1));
-        assert_eq!(since_one.map(|patch| patch.edits.len()), Ok(1));
+    /// A document, and a text made as it was and changed as it was: by two
+    /// transactions, each with an origin of its own.
+    ///
+    /// What a log answers after them is the text's rule. The tests of the
+    /// handle below state none of it: they ask the document and the text
+    /// the same thing and compare the two answers.
+    fn changed_twice() -> (Document, Text) {
+        let document = Document::new("ab\ncd");
+        let mut text = Text::from("ab\ncd");
+        let transactions = [
+            // "X\n" is inserted at the start.
+            (
+                vec![Change::Insert("X\n".to_owned()), Change::Retain(5)],
+                Origin::new(7),
+            ),
+            // "d", by then the last of 7 bytes, is deleted.
+            (vec![Change::Retain(6), Change::Delete(1)], Origin::new(9)),
+        ];
+        for (changes, origin) in transactions {
+            let changes: ChangeSet = changes.into_iter().collect();
+            let transaction = Transaction::new(changes);
+            let applied = text.apply(&transaction, origin);
+            assert!(applied.is_ok(), "a transaction the text accepts");
+            assert_eq!(document.apply(&transaction, origin), applied);
+        }
+        (document, text)
     }
 
     #[test]
-    fn the_handle_forwards_a_trace_and_its_refusal() {
-        let document = changed_twice();
+    fn the_handle_answers_what_changed_as_the_text_does() {
+        let (document, text) = changed_twice();
 
-        // Backwards, and past the end.
+        // Since the revision the text was made at, since each of the two
+        // that followed, and since one after them.
+        for since in (0..=3).map(Revision::new) {
+            assert_eq!(
+                document.changes_since(since),
+                text.changes_since(since),
+                "since {since:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_handle_traces_a_range_as_the_text_does() {
+        let (document, text) = changed_twice();
+        let len = text.current().len();
+        let past = len + 1;
+
+        // The whole text, a part of it, no byte, a range that is backwards
+        // and one that runs past the end.
         #[expect(clippy::reversed_empty_ranges)]
-        let backwards = document.trace(3..1);
-        assert_eq!(backwards, None);
-        assert_eq!(document.trace(0..7), None);
-        let trace = document.trace(1..3).expect("two positions in order");
-        assert_eq!(
-            trace,
-            [
-                Attribution {
-                    range: 1..2,
-                    source: Source::Entry {
-                        revision: Revision::new(1),
-                        origin: Origin::new(7),
-                    },
-                },
-                Attribution {
-                    range: 2..3,
-                    source: Source::Earlier(Revision::new(0)),
-                },
-            ]
-        );
+        let ranges = [0..len, 1..3, 2..2, 3..1, 0..past];
+        for range in ranges {
+            assert_eq!(
+                document.trace(range.clone()),
+                text.trace(range.clone()),
+                "{range:?}"
+            );
+        }
     }
 
     #[test]
-    fn the_handle_forwards_forgetting_and_its_refusal() {
-        let document = changed_twice();
+    fn the_handle_forgets_as_the_text_does() {
+        let (document, mut text) = changed_twice();
 
-        assert_eq!(document.forget(Revision::new(3)), Err(LogError::Unknown));
-        assert_eq!(document.forget(Revision::new(1)), Ok(()));
+        // Through a revision after the two transactions, then through the
+        // first of them.
+        for through in [3, 1].map(Revision::new) {
+            assert_eq!(
+                document.forget(through),
+                text.forget(through),
+                "through {through:?}"
+            );
+        }
 
-        assert_eq!(
-            document.changes_since(Revision::new(0)),
-            Err(LogError::Forgotten)
-        );
-        assert!(document.changes_since(Revision::new(1)).is_ok());
-        assert_eq!(document.read(), "X\nab\nc");
+        // What each forgot shows in what its log answers afterwards.
+        for since in (0..=2).map(Revision::new) {
+            assert_eq!(
+                document.changes_since(since),
+                text.changes_since(since),
+                "since {since:?}"
+            );
+        }
+        let whole = 0..text.current().len();
+        assert_eq!(document.trace(whole.clone()), text.trace(whole));
+        assert_eq!(document.read(), text.current().to_string());
     }
 
     #[test]
