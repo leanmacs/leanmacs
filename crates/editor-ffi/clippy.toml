@@ -1,0 +1,83 @@
+# What no line of `editor-ffi` may name, its tests included, but for the two
+# places marked below: a real file, a directory of the machine, a process,
+# or the file port's real adapter. The file service (`src/files.rs`) reaches
+# a file system only through the port `editor_text::fs::Fs`, and its unit
+# tests run on the port's published fake.
+#
+# Clippy reads the first `clippy.toml` it finds from a package's manifest
+# directory upwards, so this file governs every target of this crate and no
+# other. `disallowed_methods` and `disallowed_types` are on by default at
+# `warn`, and `mise run lint` denies warnings.
+#
+# There are no clock entries, as `editor-text`'s list has: this crate holds
+# the real clock (`timers::Monotonic`), and its tests wait with a deadline.
+#
+# Two places are marked, each with `#[expect(clippy::disallowed_methods,
+# reason = ..)]`, and they are the whole list of where this crate may reach
+# a real file:
+#
+# - the static `FILES` in `src/files.rs`, the process's file service, which
+#   is over the real file system;
+# - the head of `tests/files.rs`, the wiring test, which writes and reads a
+#   temporary directory it owns with `std::fs`.
+#
+# Each mark is an `expect` and not an `allow`, so a mark that stops being
+# needed is itself an error.
+#
+# Seen to bite once by hand, on 2026-11-13, twice: with a unit test added to
+# `src/files.rs` that builds `Files::new(StdFs::system())`, `mise run lint`
+# fails with "use of a disallowed method `editor_fs_std::StdFs::system`";
+# and with one that calls `std::fs::write`, with "use of a disallowed method
+# `std::fs::write`".
+#
+# What this does not hold is what `crates/editor-text/clippy.toml` says of
+# its own list: it is a list of names.
+
+disallowed-methods = [
+  # The file port's real adapter.
+  { path = "editor_fs_std::StdFs::system", reason = "the real file system is made in one place, the process's file service; everything else here takes an `Fs`, and a test hands it `FakeFs`" },
+  # Every free function of `std::fs`.
+  { path = "std::fs::canonicalize", reason = "files are reached through the `Fs` port" },
+  { path = "std::fs::copy", reason = "files are reached through the `Fs` port" },
+  { path = "std::fs::create_dir", reason = "files are reached through the `Fs` port; a test builds a `FakeFs`" },
+  { path = "std::fs::create_dir_all", reason = "files are reached through the `Fs` port; a test builds a `FakeFs`" },
+  { path = "std::fs::exists", reason = "files are reached through the `Fs` port" },
+  { path = "std::fs::hard_link", reason = "files are reached through the `Fs` port" },
+  { path = "std::fs::metadata", reason = "files are reached through the `Fs` port" },
+  { path = "std::fs::read", reason = "files are reached through the `Fs` port" },
+  { path = "std::fs::read_dir", reason = "files are reached through the `Fs` port" },
+  { path = "std::fs::read_link", reason = "files are reached through the `Fs` port" },
+  { path = "std::fs::read_to_string", reason = "files are reached through the `Fs` port" },
+  { path = "std::fs::remove_dir", reason = "files are reached through the `Fs` port" },
+  { path = "std::fs::remove_dir_all", reason = "files are reached through the `Fs` port" },
+  { path = "std::fs::remove_file", reason = "files are reached through the `Fs` port" },
+  { path = "std::fs::rename", reason = "files are reached through the `Fs` port" },
+  { path = "std::fs::set_permissions", reason = "files are reached through the `Fs` port" },
+  { path = "std::fs::symlink_metadata", reason = "files are reached through the `Fs` port" },
+  { path = "std::fs::write", reason = "files are reached through the `Fs` port; a test builds a `FakeFs`" },
+  # The methods of `Path` that ask the disk.
+  { path = "std::path::Path::canonicalize", reason = "the disk is asked through the `Fs` port" },
+  { path = "std::path::Path::exists", reason = "the disk is asked through the `Fs` port" },
+  { path = "std::path::Path::is_dir", reason = "the disk is asked through the `Fs` port" },
+  { path = "std::path::Path::is_file", reason = "the disk is asked through the `Fs` port" },
+  { path = "std::path::Path::is_symlink", reason = "the disk is asked through the `Fs` port" },
+  { path = "std::path::Path::metadata", reason = "the disk is asked through the `Fs` port" },
+  { path = "std::path::Path::read_dir", reason = "the disk is asked through the `Fs` port" },
+  { path = "std::path::Path::read_link", reason = "the disk is asked through the `Fs` port" },
+  { path = "std::path::Path::symlink_metadata", reason = "the disk is asked through the `Fs` port" },
+  { path = "std::path::Path::try_exists", reason = "the disk is asked through the `Fs` port" },
+  # The directories of the machine.
+  { path = "std::env::current_dir", reason = "the library has no working directory: a path that is not absolute is refused" },
+  { path = "std::env::set_current_dir", reason = "the library has no working directory, and a test leaves the process's as it found it" },
+  { path = "std::env::temp_dir", reason = "a test that needs real files makes a directory of its own with `tempfile`, and only the wiring test does" },
+  # Processes.
+  { path = "std::process::Command::new", reason = "the crate starts no process" },
+]
+
+disallowed-types = [
+  { path = "std::fs::File", reason = "files are reached through the `Fs` port" },
+  { path = "std::fs::OpenOptions", reason = "files are reached through the `Fs` port" },
+  { path = "std::fs::DirBuilder", reason = "files are reached through the `Fs` port" },
+  { path = "std::fs::ReadDir", reason = "files are reached through the `Fs` port" },
+  { path = "std::fs::DirEntry", reason = "files are reached through the `Fs` port" },
+]

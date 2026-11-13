@@ -17,8 +17,21 @@ editor-platform = { path = "../editor-platform" }
 # The real window. This is the crate that wires the library together, so it
 # is the one that links the adapter.
 editor-platform-winit = { path = "../editor-platform-winit" }
-# Text storage: the text behind a document handle, and its snapshots.
+# Text storage: the text behind a document handle, and its snapshots; and
+# the file port, with loading and saving over it.
 editor-text = { path = "../editor-text" }
+# The real file system, for the process's file service. This is the crate
+# that wires the library together, so it is the one that links the adapter;
+# `clippy.toml` here keeps the adapter out of everything but that one static
+# and the wiring test.
+editor-fs-std = { path = "../editor-fs-std" }
+
+[dev-dependencies]
+# The temporary directory the wiring test (`tests/files.rs`) owns: the one
+# test here that touches real files. Pinned exactly, as in `editor-fs-std`,
+# whose manifest says why this library and no other; `deny.toml` lists the
+# two crates that may depend on it.
+tempfile = { version = "=3.27.0", default-features = false }
 
 # No harness: its `main` must be the process's main thread.
 [[test]]

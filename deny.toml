@@ -17,10 +17,17 @@
 # to `editor-text`'s dev-dependencies, it fails as banned; a wrapper that is
 # a dev-dependency edge is matched like any other.
 #
-# The file port's adapter, `editor-fs-std`, has no entry of its own until a
-# crate depends on it: an entry whose wrapper matches no edge fails under
-# `-D unused-wrapper`. Until then it is kept out of `editor-text`'s tests by
-# that crate's `clippy.toml`, which refuses the adapter's constructor.
+# The file port's adapter, `editor-fs-std`, got its entry in the commit in
+# which `editor-ffi` came to depend on it: an entry whose wrapper matches no
+# edge fails under `-D unused-wrapper`. Before that it was kept out of
+# `editor-text`'s tests by that crate's `clippy.toml` alone, which refuses
+# the adapter's constructor; now both hold it. For that entry (2026-11-13):
+# with `editor-fs-std` added to `editor-platform-winit`'s dependencies, it
+# fails; and with it added to `editor-text`'s dev-dependencies, which Cargo
+# allows though it is a cycle, it fails too, so no test of `editor-text` can
+# be handed the real file system by a dependency. For the wrapper
+# `editor-ffi` of `tempfile`'s entry: with it taken out, it fails on the
+# wiring test's edge.
 #
 # One rule has no entry: "no crate depends on `editor-ffi`", the one crate
 # that knows about Lean. No entry for it passes the gate. With
@@ -41,5 +48,6 @@ deny = [
   { crate = "editor-platform", wrappers = ["editor-ffi", "editor-platform-winit"], reason = "the window port has two users today, its adapter and the crate that runs it onto the event queue; a third is a decision, so it is made here" },
   { crate = "ropey", wrappers = ["editor-text"], reason = "the rope stays behind editor-text's own types: only that crate may name the library's" },
   { crate = "editor-text", wrappers = ["editor-ffi", "editor-fs-std"], reason = "text storage has one user, the crate that puts a text behind a handle for Lean, and the file port it defines has one adapter, which implements it; another is a decision, so it is made here" },
-  { crate = "tempfile", wrappers = ["editor-fs-std"], reason = "a temporary directory is for a test that touches real files, which only the file port's adapter has; editor-text's tests run on the fake and make no file" },
+  { crate = "editor-fs-std", wrappers = ["editor-ffi"], reason = "the file adapter is linked only by the crate that wires the library together; everything else reaches a file through the port, and editor-text's tests through its fake" },
+  { crate = "tempfile", wrappers = ["editor-fs-std", "editor-ffi"], reason = "a temporary directory is for a test that touches real files: the file adapter's contract test and editor-ffi's wiring test; editor-text's tests run on the fake and make no file" },
 ]

@@ -12,13 +12,16 @@
 //! asks for "a snapshot handle this library handed out and has not taken
 //! back". The functions that hand one out are:
 //!
-//! - [`editor_ffi_document_snapshot`], a snapshot of a document.
+//! - [`editor_ffi_document_snapshot`], a snapshot of a document;
+//! - [`editor_ffi_files_take`](crate::files::editor_ffi_files_take), the
+//!   text of a file the file service loaded, in the result of the load.
 //!
 //! Each makes its handle with the crate-private `Snapshot::hand_out`, the
 //! one place a handle is made and counted live, and
 //! [`editor_ffi_snapshot_free`] is the one function that takes a handle
 //! back. A function that only reads a handle, such as
-//! [`editor_ffi_document_from_snapshot`](crate::document::editor_ffi_document_from_snapshot),
+//! [`editor_ffi_document_from_snapshot`](crate::document::editor_ffi_document_from_snapshot)
+//! or [`editor_ffi_files_save`](crate::files::editor_ffi_files_save),
 //! leaves it the caller's.
 //!
 //! What a row, a point and a position are is the text's rule, pinned by

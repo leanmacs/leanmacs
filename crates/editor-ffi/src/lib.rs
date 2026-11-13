@@ -140,9 +140,9 @@
 //! ## Services and completions
 //!
 //! A service is work the library does for a Lean job that takes time: a
-//! timer today ([`timers`]), a process or a file later. A job that waits
-//! must not hold a thread, so a request to a service is never a blocking
-//! call. Every service follows these rules:
+//! timer ([`timers`]) and a load or a save of a file ([`files`]) today, a
+//! process later. A job that waits must not hold a thread, so a request to
+//! a service is never a blocking call. Every service follows these rules:
 //!
 //! - **The caller names the request.** `start` takes an id the caller
 //!   chose. It returns at once and never blocks, and it returns false, having
@@ -175,6 +175,32 @@
 //! the Lean side: the timer checks of `ffi-test` (`timerChecks`), and
 //! `contract-test`, which runs the job interface's contract over this
 //! service through the job runner and its completion pump.
+//!
+//! Second example: the file service. Its port is `editor-text`'s
+//! [`editor_text::fs::Fs`], with [`editor_text::fs::FakeFs`] published for
+//! tests and the real adapter in a crate of its own (`editor-fs-std`),
+//! which only the process's instance names; which request is worked when
+//! is the pure [`files::Requests`]; what a load and a save do is
+//! [`editor_text::file`]'s. A request has a result as well as a
+//! completion, which the caller takes by the request's id once the
+//! completion has arrived ([`files::editor_ffi_files_take`]): a record of a
+//! status, a snapshot handle, words and a detail string. Its other C
+//! functions are [`files::editor_ffi_files_load`],
+//! [`files::editor_ffi_files_save`], [`files::editor_ffi_files_cancel`]
+//! and, as a readout for tests, [`files::editor_ffi_files_pending`].
+//!
+//! Tests: the unit tests of `files.rs`, on the fake file system (the
+//! requests alone; the service loop, where the fake holds the service's
+//! thread inside a call so a test sees what is done meanwhile, and a marker
+//! request shows what was not completed). They assert the service's rules
+//! only: where a check needs what a load or a save answers, it asks
+//! [`editor_text::file`] the same thing on a second fake and compares.
+//! `files_are_loaded_and_saved_through_c_and_completed_on_the_completion_queue`
+//! in `tests/files.rs` is the wiring test: the C functions, the process's
+//! service, the logic and the real adapter, in a temporary directory it
+//! owns, asserting bytes in and bytes out. The crate's `clippy.toml`
+//! refuses a real file, and the adapter's constructor, everywhere in the
+//! crate but the process's instance and that test.
 //!
 //! ## The window
 //!
@@ -291,6 +317,7 @@
 pub mod counter;
 pub mod document;
 pub mod events;
+pub mod files;
 pub mod inverse;
 pub mod log;
 pub mod main_thread;
