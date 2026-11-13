@@ -101,10 +101,9 @@ impl Document {
 ///
 /// # Safety
 ///
-/// `document` came from [`editor_ffi_document_new`] and has not been freed,
+/// `document` is a document handle this library handed out and has not
+/// taken back ([`crate::document`] lists what hands one out),
 /// and `out` points to a writable [`RawWords`].
-///
-/// [`editor_ffi_document_new`]: crate::document::editor_ffi_document_new
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn editor_ffi_document_apply_inverse(
     document: *const Document,
@@ -136,9 +135,8 @@ pub unsafe extern "C" fn editor_ffi_document_apply_inverse(
 ///
 /// # Safety
 ///
-/// `document` came from [`editor_ffi_document_new`] and has not been freed.
-///
-/// [`editor_ffi_document_new`]: crate::document::editor_ffi_document_new
+/// `document` is a document handle this library handed out and has not
+/// taken back ([`crate::document`] lists what hands one out).
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn editor_ffi_document_drop_inverses(
     document: *const Document,

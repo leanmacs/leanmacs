@@ -40,13 +40,21 @@
 //! (`editor-text`) behind a lock, which the editor's text interface is
 //! bound to; and [`snapshot`], a document's text as it was at one moment,
 //! made by a call on a document and not by a `new` function, which needs
-//! no lock because it never changes and which outlives its document.
+//! no lock because it never changes and which outlives its document. A
+//! handle may be handed out by more than one function: a document is made
+//! from a string or from a snapshot
+//! ([`document::editor_ffi_document_from_snapshot`]). The module that owns
+//! the handle lists the functions that hand one out, and has one place that
+//! counts a handle live.
 //! Tests: `a_counter_is_live_from_new_until_free` and
 //! `a_document_is_edited_and_read_through_c_and_is_live_from_new_until_free`
 //! in `tests/c_api.rs`;
 //! `a_snapshot_is_taken_and_read_through_c_and_is_live_from_the_call_that_made_it_until_its_free`
 //! in `tests/snapshot.rs`, an integration test of its own because it makes
-//! documents and `tests/c_api.rs` counts its process's; the four counter
+//! documents and `tests/c_api.rs` counts its process's;
+//! `a_document_made_from_a_snapshot_through_c_is_a_live_document_of_its_own`
+//! in `tests/document_from_snapshot.rs`, its own for the same reason; the
+//! four counter
 //! checks of `ffi-test` (`handleChecks`), its check that a document is
 //! freed (`documentChecks`) and its checks that a snapshot is freed and
 //! outlives its document (`snapshotChecks`).

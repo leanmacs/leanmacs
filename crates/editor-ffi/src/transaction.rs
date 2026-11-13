@@ -246,11 +246,10 @@ impl Document {
 ///
 /// # Safety
 ///
-/// `document` came from [`editor_ffi_document_new`] and has not been freed;
+/// `document` is a document handle this library handed out and has not
+/// taken back ([`crate::document`] lists what hands one out);
 /// `words` points to `words_len` readable bytes and `inserted` to
 /// `inserted_len`; and `out` points to a writable [`RawApplied`].
-///
-/// [`editor_ffi_document_new`]: crate::document::editor_ffi_document_new
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn editor_ffi_document_apply(
     document: *const Document,

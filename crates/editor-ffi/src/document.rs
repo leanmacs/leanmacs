@@ -17,6 +17,18 @@
 //! transaction too, recorded in the log with the text's default origin,
 //! and its inverse is kept like any other's.
 //!
+//! **What hands a document handle out.** Every `# Safety` section that
+//! takes a document, here and in the modules above, asks for "a document
+//! handle this library handed out and has not taken back". The functions
+//! that hand one out are:
+//!
+//! - [`editor_ffi_document_new`], a document holding a string;
+//! - [`editor_ffi_document_from_snapshot`], a document holding what a
+//!   snapshot holds.
+//!
+//! Each counts its handle live, and [`editor_ffi_document_free`] is the one
+//! function that takes a handle back.
+//!
 //! The editor reaches a document only through the text port's real binding
 //! (`lean/Editor/Text/Real.lean`).
 
@@ -25,6 +37,7 @@ use std::sync::{Mutex, MutexGuard, PoisonError};
 
 use editor_text::Text;
 
+use crate::snapshot::Snapshot;
 use crate::text;
 
 /// Text that can be edited in place. Lean shares a handle between threads,
@@ -38,8 +51,14 @@ pub struct Document {
 impl Document {
     /// A document holding `text`.
     pub fn new(text: &str) -> Self {
+        Self::over(Text::from(text))
+    }
+
+    /// A document over `text`, as it is: with its revision, its log, its
+    /// markers and its kept inverses.
+    pub(crate) fn over(text: Text) -> Self {
         Self {
-            text: Mutex::new(Text::from(text)),
+            text: Mutex::new(text),
         }
     }
 
@@ -74,8 +93,9 @@ impl Document {
     }
 }
 
-/// How many documents [`editor_ffi_document_new`] has handed out that
-/// [`editor_ffi_document_free`] has not taken back.
+/// How many document handles this library has handed out (the module docs
+/// list the functions that do) that [`editor_ffi_document_free`] has not
+/// taken back.
 static LIVE: AtomicU64 = AtomicU64::new(0);
 
 /// A new document holding the `len` bytes at `text`, owned by the caller,
@@ -97,6 +117,29 @@ pub unsafe extern "C" fn editor_ffi_document_new(text: *const u8, len: usize) ->
     Box::into_raw(Box::new(Document::new(&text)))
 }
 
+/// A new document holding what `snapshot` holds, owned by the caller, who
+/// must hand it to [`editor_ffi_document_free`] exactly once.
+///
+/// It is a text of its own ([`Text::from_snapshot`]): at revision 0, with an
+/// empty log, no markers and no kept inverses, whatever the snapshot's
+/// revision. It copies none of the text. An edit to it changes neither the
+/// snapshot nor the document the snapshot was taken from, and it outlives
+/// both. The snapshot is only read: it is still the caller's to free.
+///
+/// # Safety
+///
+/// `snapshot` is a snapshot handle this library handed out and has not
+/// taken back ([`crate::snapshot`]).
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn editor_ffi_document_from_snapshot(
+    snapshot: *const Snapshot,
+) -> *mut Document {
+    // SAFETY: the caller guarantees `snapshot` points to a live snapshot.
+    let text = Text::from_snapshot(unsafe { &*snapshot }.text());
+    LIVE.fetch_add(1, Ordering::Relaxed);
+    Box::into_raw(Box::new(Document::over(text)))
+}
+
 /// [`Document::replace`] for C: replaces the bytes of `document` from
 /// `start` up to, not including, `end` with the `len` bytes at `text`, and
 /// returns whether it did. False, with nothing changed, is the refusal.
@@ -105,8 +148,8 @@ pub unsafe extern "C" fn editor_ffi_document_new(text: *const u8, len: usize) ->
 ///
 /// # Safety
 ///
-/// `document` came from [`editor_ffi_document_new`] and has not been freed,
-/// and `text` points to `len` readable bytes.
+/// `document` is a document handle this library handed out and has not
+/// taken back, and `text` points to `len` readable bytes.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn editor_ffi_document_replace(
     document: *const Document,
@@ -137,8 +180,8 @@ pub struct RawText {
 ///
 /// # Safety
 ///
-/// `document` came from [`editor_ffi_document_new`] and has not been freed,
-/// and `out` points to a writable [`RawText`].
+/// `document` is a document handle this library handed out and has not
+/// taken back, and `out` points to a writable [`RawText`].
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn editor_ffi_document_read(document: *const Document, out: *mut RawText) {
     // SAFETY: the caller guarantees `document` points to a live document.
@@ -151,19 +194,20 @@ pub unsafe extern "C" fn editor_ffi_document_read(document: *const Document, out
 ///
 /// # Safety
 ///
-/// `document` came from [`editor_ffi_document_new`], has not been freed, and
-/// is not used again.
+/// `document` is a document handle this library handed out and has not
+/// taken back, and it is not used again.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn editor_ffi_document_free(document: *mut Document) {
-    // SAFETY: the caller guarantees `document` is a box
-    // `editor_ffi_document_new` gave up, taken back this once.
+    // SAFETY: the caller guarantees `document` is a box one of the
+    // functions that hand a document out gave up, taken back this once.
     drop(unsafe { Box::from_raw(document) });
     LIVE.fetch_sub(1, Ordering::Relaxed);
 }
 
-/// How many documents [`editor_ffi_document_new`] has made that have not
-/// been freed. This is what makes a handle's finaliser, and the lifetime of
-/// the editor's table of texts, observable to a test.
+/// How many document handles this library has handed out that have not been
+/// freed, whichever function handed each out. This is what makes a handle's
+/// finaliser, and the lifetime of the editor's table of texts, observable
+/// to a test.
 #[unsafe(no_mangle)]
 pub extern "C" fn editor_ffi_document_live() -> u64 {
     LIVE.load(Ordering::Relaxed)

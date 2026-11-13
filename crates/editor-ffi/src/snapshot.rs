@@ -8,6 +8,19 @@
 //! ([`editor_text::Snapshot`]), so it sits behind no lock, and it outlives
 //! its document.
 //!
+//! **What hands a snapshot handle out.** Every `# Safety` section below
+//! asks for "a snapshot handle this library handed out and has not taken
+//! back". The functions that hand one out are:
+//!
+//! - [`editor_ffi_document_snapshot`], a snapshot of a document.
+//!
+//! Each makes its handle with the crate-private `Snapshot::hand_out`, the
+//! one place a handle is made and counted live, and
+//! [`editor_ffi_snapshot_free`] is the one function that takes a handle
+//! back. A function that only reads a handle, such as
+//! [`editor_ffi_document_from_snapshot`](crate::document::editor_ffi_document_from_snapshot),
+//! leaves it the caller's.
+//!
 //! What a row, a point and a position are is the text's rule, pinned by
 //! `editor-text`'s own tests. This module converts numbers and forwards.
 //!
@@ -59,6 +72,20 @@ impl ColumnUnit {
 }
 
 impl Snapshot {
+    /// Hands `snapshot` out as a handle the caller owns, and counts it
+    /// live: the caller must hand it to [`editor_ffi_snapshot_free`]
+    /// exactly once. This is the one place a snapshot handle is made, so it
+    /// is the one place one is counted.
+    pub(crate) fn hand_out(snapshot: editor_text::Snapshot) -> *mut Self {
+        LIVE.fetch_add(1, Ordering::Relaxed);
+        Box::into_raw(Box::new(Self(snapshot)))
+    }
+
+    /// The snapshot behind the handle.
+    pub(crate) fn text(&self) -> &editor_text::Snapshot {
+        &self.0
+    }
+
     /// The row and column of the byte offset `offset`, with the column in
     /// `unit`. `None` when the offset is not a position of the text.
     pub fn point_of(&self, unit: ColumnUnit, offset: usize) -> Option<RawPoint> {
@@ -104,8 +131,9 @@ impl Snapshot {
     }
 }
 
-/// How many snapshots [`editor_ffi_document_snapshot`] has handed out that
-/// [`editor_ffi_snapshot_free`] has not taken back.
+/// How many snapshot handles this library has handed out
+/// ([`Snapshot::hand_out`]) that [`editor_ffi_snapshot_free`] has not taken
+/// back.
 static LIVE: AtomicU64 = AtomicU64::new(0);
 
 /// A snapshot of the text of `document` as it is now, owned by the caller,
@@ -115,15 +143,12 @@ static LIVE: AtomicU64 = AtomicU64::new(0);
 ///
 /// # Safety
 ///
-/// `document` came from
-/// [`editor_ffi_document_new`](crate::document::editor_ffi_document_new) and
-/// has not been freed.
+/// `document` is a document handle this library handed out and has not
+/// taken back ([`crate::document`]).
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn editor_ffi_document_snapshot(document: *const Document) -> *mut Snapshot {
     // SAFETY: the caller guarantees `document` points to a live document.
-    let snapshot = unsafe { &*document }.snapshot();
-    LIVE.fetch_add(1, Ordering::Relaxed);
-    Box::into_raw(Box::new(Snapshot(snapshot)))
+    Snapshot::hand_out(unsafe { &*document }.snapshot())
 }
 
 /// What a snapshot is, as it crosses the boundary: one record, filled in
@@ -145,8 +170,8 @@ pub struct RawSnapshotInfo {
 ///
 /// # Safety
 ///
-/// `snapshot` came from [`editor_ffi_document_snapshot`] and has not been
-/// freed, and `out` points to a writable [`RawSnapshotInfo`].
+/// `snapshot` is a snapshot handle this library handed out and has not
+/// taken back, and `out` points to a writable [`RawSnapshotInfo`].
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn editor_ffi_snapshot_info(
     snapshot: *const Snapshot,
@@ -167,8 +192,8 @@ pub unsafe extern "C" fn editor_ffi_snapshot_info(
 ///
 /// # Safety
 ///
-/// `snapshot` came from [`editor_ffi_document_snapshot`] and has not been
-/// freed, and `out` points to a writable [`RawText`].
+/// `snapshot` is a snapshot handle this library handed out and has not
+/// taken back, and `out` points to a writable [`RawText`].
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn editor_ffi_snapshot_read(snapshot: *const Snapshot, out: *mut RawText) {
     // SAFETY: the caller guarantees `snapshot` points to a live snapshot.
@@ -197,8 +222,8 @@ pub struct RawPoint {
 ///
 /// # Safety
 ///
-/// `snapshot` came from [`editor_ffi_document_snapshot`] and has not been
-/// freed, and `out` points to a writable [`RawPoint`].
+/// `snapshot` is a snapshot handle this library handed out and has not
+/// taken back, and `out` points to a writable [`RawPoint`].
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn editor_ffi_snapshot_point_of(
     snapshot: *const Snapshot,
@@ -227,8 +252,8 @@ pub unsafe extern "C" fn editor_ffi_snapshot_point_of(
 ///
 /// # Safety
 ///
-/// `snapshot` came from [`editor_ffi_document_snapshot`] and has not been
-/// freed, and `out` points to a writable `u64`.
+/// `snapshot` is a snapshot handle this library handed out and has not
+/// taken back, and `out` points to a writable `u64`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn editor_ffi_snapshot_offset_of(
     snapshot: *const Snapshot,
@@ -256,8 +281,8 @@ pub unsafe extern "C" fn editor_ffi_snapshot_offset_of(
 ///
 /// # Safety
 ///
-/// `snapshot` came from [`editor_ffi_document_snapshot`] and has not been
-/// freed; `words` points to `len` readable bytes; and `out` points to a
+/// `snapshot` is a snapshot handle this library handed out and has not
+/// taken back; `words` points to `len` readable bytes; and `out` points to a
 /// writable [`RawWords`].
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn editor_ffi_snapshot_extents(
@@ -281,19 +306,20 @@ pub unsafe extern "C" fn editor_ffi_snapshot_extents(
 ///
 /// # Safety
 ///
-/// `snapshot` came from [`editor_ffi_document_snapshot`], has not been
-/// freed, and is not used again.
+/// `snapshot` is a snapshot handle this library handed out and has not
+/// taken back, and it is not used again.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn editor_ffi_snapshot_free(snapshot: *mut Snapshot) {
     // SAFETY: the caller guarantees `snapshot` is a box
-    // `editor_ffi_document_snapshot` gave up, taken back this once.
+    // `Snapshot::hand_out` gave up, taken back this once.
     drop(unsafe { Box::from_raw(snapshot) });
     LIVE.fetch_sub(1, Ordering::Relaxed);
 }
 
-/// How many snapshots [`editor_ffi_document_snapshot`] has made that have
-/// not been freed. This is what makes a snapshot's finaliser, and the
-/// lifetime of the editor's table of snapshots, observable to a test.
+/// How many snapshot handles this library has handed out that have not been
+/// freed, whichever function handed each out. This is what makes a
+/// snapshot's finaliser, and the lifetime of the editor's table of
+/// snapshots, observable to a test.
 #[unsafe(no_mangle)]
 pub extern "C" fn editor_ffi_snapshot_live() -> u64 {
     LIVE.load(Ordering::Relaxed)

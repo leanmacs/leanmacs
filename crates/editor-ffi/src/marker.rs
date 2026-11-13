@@ -244,11 +244,10 @@ impl Document {
 ///
 /// # Safety
 ///
-/// `document` came from [`editor_ffi_document_new`] and has not been freed;
+/// `document` is a document handle this library handed out and has not
+/// taken back ([`crate::document`] lists what hands one out);
 /// `words` points to `len` readable bytes; and `out` points to a writable
 /// [`RawMarked`].
-///
-/// [`editor_ffi_document_new`]: crate::document::editor_ffi_document_new
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn editor_ffi_document_mark(
     document: *const Document,
@@ -271,10 +270,9 @@ pub unsafe extern "C" fn editor_ffi_document_mark(
 ///
 /// # Safety
 ///
-/// `document` came from [`editor_ffi_document_new`] and has not been freed,
+/// `document` is a document handle this library handed out and has not
+/// taken back ([`crate::document`] lists what hands one out),
 /// and `out` points to a writable [`RawWords`].
-///
-/// [`editor_ffi_document_new`]: crate::document::editor_ffi_document_new
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn editor_ffi_document_marker(
     document: *const Document,
@@ -297,10 +295,9 @@ pub unsafe extern "C" fn editor_ffi_document_marker(
 ///
 /// # Safety
 ///
-/// `document` came from [`editor_ffi_document_new`] and has not been freed,
+/// `document` is a document handle this library handed out and has not
+/// taken back ([`crate::document`] lists what hands one out),
 /// and `words` points to `len` readable bytes.
-///
-/// [`editor_ffi_document_new`]: crate::document::editor_ffi_document_new
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn editor_ffi_document_place(
     document: *const Document,
@@ -319,9 +316,8 @@ pub unsafe extern "C" fn editor_ffi_document_place(
 ///
 /// # Safety
 ///
-/// `document` came from [`editor_ffi_document_new`] and has not been freed.
-///
-/// [`editor_ffi_document_new`]: crate::document::editor_ffi_document_new
+/// `document` is a document handle this library handed out and has not
+/// taken back ([`crate::document`] lists what hands one out).
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn editor_ffi_document_unmark(document: *const Document, id: u64) -> bool {
     // SAFETY: the caller guarantees `document` points to a live document.
