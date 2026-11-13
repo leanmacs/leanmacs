@@ -1778,4 +1778,118 @@ def failures (run : EditorM Bool → IO (Except TextError Bool)) (properties : L
     | .error error =>
       return some s!"{property.name} (the command failed with {repr error})"
 
+/-- One property of taking a job's snapshot into the store
+(`JobSnapshotId.adopt`): what the command's run is handed, and a command
+that observes the property. Whoever runs the list hands each run its
+snapshots: the model is handed the strings, and the real binding snapshots
+the library made of the same strings. So the list needs no job. -/
+structure AdoptProperty where
+  /-- What must hold, as a sentence; printed when it does not. -/
+  name : String
+  /-- What the run is handed: the snapshots a job held, each as the job's
+  name for it and the text it holds. -/
+  arrived : Array (JobSnapshotId × String)
+  /-- Observes the property, from an empty store, in a run that was handed
+  `arrived`; `true` when it holds. A command that fails has not held. -/
+  holds : EditorM Bool
+
+/-- What a job's snapshot holds, in the properties below: "héllo", a
+carriage return and a line feed, "😀", and the escape of the byte `0xFF`.
+Sixteen bytes in two rows: the second starts at 8, and the escape at 12. -/
+def loaded : String :=
+  "héllo\r\n😀".push (Char.ofNat 0x10DCFF)
+
+/-- The properties of taking a job's snapshot into the store. A
+`JobSnapshotId` is handed under a number that a text and a snapshot of the
+store also have, so an id of one kind read as another is seen. -/
+def adoptProperties : List AdoptProperty :=
+  [{  name :=
+        "an adopted snapshot reads what the job's snapshot holds, with its length, its rows and its revision, under the store's next id: with a text and a snapshot of the same number already there, it is not that snapshot, which reads what it did",
+      arrived := #[(⟨0⟩, loaded)]
+      holds := do
+        let text ← createText "other"
+        let taken ← text.snapshot
+        let adopted ← (JobSnapshotId.mk 0).adopt
+        return adopted != taken && adopted.index == taken.index + 1 &&
+            (← adopted.read) == "héllo\r\n😀".push (Char.ofNat 0x10DCFF) &&
+            (← adopted.byteLength) == 16 &&
+            (← adopted.rowCount) == 2 &&
+            (← adopted.revision) == 0 &&
+            (← taken.read) == "other" &&
+            (← text.read) == "other" },
+    { name :=
+        "an adopted snapshot is a snapshot like any other: it answers a question, it is copied into a text that is then edited without changing it, and it is released, after which its id is refused"
+      arrived := #[(⟨3⟩, loaded)]
+      holds := do
+        let adopted ← (JobSnapshotId.mk 3).adopt
+        let point ← adopted.pointOf 12
+        let copy ← adopted.copy
+        copy.insert 0 "x"
+        let unchanged ← adopted.read
+        adopted.release
+        let read ← refusedWith .noSuchSnapshot (discard adopted.read)
+        let again ← refusedWith .noSuchSnapshot adopted.release
+        return point == ⟨1, 4⟩ && (← copy.read) == "xhéllo\r\n😀".push (Char.ofNat 0x10DCFF) &&
+            unchanged == loaded &&
+            read &&
+            again },
+    { name :=
+        "a job's snapshot becomes a text: the text holds it at revision 0, and the store keeps no snapshot of it, since what was adopted on the way is released"
+      arrived := #[(⟨3⟩, loaded)]
+      holds := do
+        let other ← createText "other"
+        let before ← other.snapshot
+        let text ← (JobSnapshotId.mk 3).toText
+        let after ← other.snapshot
+        let between ← refusedWith .noSuchSnapshot (discard (SnapshotId.mk (before.index + 1)).read)
+        return text != other && (← text.read) == loaded && (← text.revision) == 0 &&
+            after.index == before.index + 2 &&
+            between },
+    { name :=
+        "adopting does not use a job's id up, and each id names its own snapshot: one adopted twice gives two ids that both read it, releasing one leaves the other, and a second snapshot handed in the same run reads its own text"
+      arrived := #[(⟨5⟩, "five é"), (⟨9⟩, loaded)]
+      holds := do
+        let first ← (JobSnapshotId.mk 9).adopt
+        let second ← (JobSnapshotId.mk 9).adopt
+        let other ← (JobSnapshotId.mk 5).adopt
+        let firstRead ← first.read
+        first.release
+        let released ← refusedWith .noSuchSnapshot (discard first.read)
+        return first != second && firstRead == loaded && released && (← second.read) == loaded &&
+            (← other.read) == "five é" },
+    { name :=
+        "with nothing handed to the run, a job's id is refused and takes nothing in, though a text and a snapshot of the store have its number: the next snapshot taken has the id it would have had"
+      arrived := #[]
+      holds := do
+        let text ← createText "héllo"
+        let taken ← text.snapshot
+        let refused ← refusedWith .noSuchSnapshot (discard (JobSnapshotId.mk 0).adopt)
+        let next ← text.snapshot
+        return refused && next.index == taken.index + 1 && (← next.read) == "héllo" },
+    { name :=
+        "an id the run was not handed is refused and takes nothing in, whatever else was handed: neither a neighbouring number nor the place of a snapshot among those handed names one"
+      arrived := #[(⟨5⟩, "five"), (⟨9⟩, "nine")]
+      holds := do
+        let text ← createText "héllo"
+        let taken ← text.snapshot
+        let refused ←
+          [0, 1, 4, 6, 8, 10].allM fun number =>
+              refusedWith .noSuchSnapshot (discard (JobSnapshotId.mk number).adopt)
+        let next ← text.snapshot
+        return refused && next.index == taken.index + 1 }]
+
+/-- Runs each of `properties` with `run`, which is given what the run is
+handed and must start the command from an empty store, and returns the names
+of those that did not hold. -/
+def adoptFailures (run : Array (JobSnapshotId × String) → EditorM Bool → IO (Except TextError Bool))
+    (properties : List AdoptProperty) : IO (List String) :=
+  properties.filterMapM fun property => do
+    match ← run property.arrived property.holds with
+    | .ok true =>
+      return none
+    | .ok false =>
+      return some property.name
+    | .error error =>
+      return some s!"{property.name} (the command failed with {repr error})"
+
 end Editor.TextContract

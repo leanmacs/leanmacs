@@ -2385,6 +2385,19 @@ def textFailures : IO (List String) := do
   let failed ← TextContract.failures (fun command => pure (command.runModel {}).1) textProperties
   return failed.map (s!"the text model: {·}")
 
+/-- The names of the properties of taking a job's snapshot into the store
+that do not hold of the text model. Each is run from a model with no texts
+that was handed, as what a job held, the strings the property names. -/
+def adoptFailures : IO (List String) := do
+  let failed ←
+    TextContract.adoptFailures
+        (fun arrived command =>
+          pure
+            (command.runModel
+                { arrived := arrived.map fun (id, text) => (id, { contents := text }) }).1)
+        TextContract.adoptProperties
+  return failed.map (s!"the text model: {·}")
+
 /-- The names of the job port's contract properties that do not hold of the
 job model, each run from a clock at 0 that nothing cancels. -/
 def jobModelFailures : IO (List String) := do
@@ -2404,6 +2417,7 @@ seen once by hand, with a dedicated task in an endless loop. -/
 def main : IO UInt32 := do
   let failed :=
     (← ModelTest.failures ModelTest.checks) ++ (← ModelTest.textFailures) ++
+      (← ModelTest.adoptFailures) ++
       (← ModelTest.jobModelFailures) ++
       (← ModelTest.jobRunnerFailures)
   for name in failed do
@@ -2413,6 +2427,6 @@ def main : IO UInt32 := do
     -- returning from `main` would wait for it for ever.
     IO.Process.exit 1
   IO.println
-      s!"model-test: {ModelTest.checks.length} checks passed, {Editor.TextContract.properties.length + ModelTest.commandProperties.length} properties hold of the text model, {Editor.UndoTreeCases.cases.length} cases of the undo tree hold over it, and {Editor.JobContract.properties.length} properties of the job model and of the job runner over the fake clock"
+      s!"model-test: {ModelTest.checks.length} checks passed, {Editor.TextContract.properties.length + Editor.TextContract.adoptProperties.length + ModelTest.commandProperties.length} properties hold of the text model, {Editor.UndoTreeCases.cases.length} cases of the undo tree hold over it, and {Editor.JobContract.properties.length} properties of the job model and of the job runner over the fake clock"
   (← IO.getStdout).flush
   IO.Process.exit 0

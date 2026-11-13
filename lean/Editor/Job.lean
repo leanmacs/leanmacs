@@ -181,6 +181,20 @@ example : True :=
 example : True :=
   (fun (_ : JobM Unit) => True.intro) (sleep 10)
 
+/-! Taking a job's snapshot into the store (`JobSnapshotId.adopt`) is a
+command, and it is not a job. It is the one request that writes the store
+from what a job made, so a job cannot write the store with it: only the
+job's command can, on the editor thread. Seen to bite once by hand: offered
+at `EditorM SnapshotId` inside the second check, the module stops
+building. -/
+
+example : True :=
+  (fun (_ : EditorM SnapshotId) => True.intro) (⟨0⟩ : JobSnapshotId).adopt
+
+example : True := by
+  fail_if_success exact (fun (_ : JobM SnapshotId) => True.intro) (⟨0⟩ : JobSnapshotId).adopt
+  trivial
+
 /-! A text request is not a job: alone, and inside a `do` block. -/
 
 example : True := by

@@ -27,6 +27,14 @@ snapshot (`Ffi.Document.ofSnapshot`): the snapshot the request names, or one
 taken of the text for the copy and dropped after it. The library shares the
 text between the two and copies none of it.
 
+What a job held when it ended is handed to the run of the job's command
+(`EditorM.runReal`'s `arrived`): the library's snapshots, each under the
+job's name for it. `adopt` finds a name among them and adds the library's
+snapshot to the table, which then holds the object together with whoever
+handed it over. A run that is handed nothing, as every command's is but a
+job's, adopts nothing. What was handed is dropped from the binding's state
+when the run returns.
+
 A transaction, and a question about a text's edit log, go to the text's
 document, since a snapshot has no log. The port's counts, offsets and
 revisions are `Nat` and the library's are machine words. In a transaction,
@@ -71,6 +79,11 @@ structure RealTexts where
   /-- The library's snapshot for each snapshot, in the order they were
   taken. -/
   snapshots : Array (Option Ffi.Snapshot) := #[]
+  /-- The snapshots this run was handed: what a job held when it ended, each
+  under the job's name for it. `EditorM.runReal` sets it for one run and
+  empties it after, so it is never part of the tables a later command
+  finds. -/
+  arrived : Array (JobSnapshotId × Ffi.Snapshot) := #[]
 
 namespace RealTexts
 
@@ -435,14 +448,26 @@ def handle : (request : TextRequest) → StateT RealTexts IO request.Reply
       modifyGet fun table =>
           (.ok ⟨table.documents.size⟩,
             { table with documents := table.documents.push (some document) })
+  | .adopt held => do
+    let some (_, snapshot) := (← get).arrived.find? (·.1 == held) | return .error .noSuchSnapshot
+    modifyGet fun table =>
+        (.ok ⟨table.snapshots.size⟩,
+          { table with snapshots := table.snapshots.push (some snapshot) })
 
 end RealTexts
 
 /-- Runs a command against the Rust library, with `texts` as the texts made
 so far: its result, or the refusal it failed with, and the table after its
-last request. -/
-def EditorM.runReal {α : Type} (command : EditorM α) (texts : RealTexts) :
-    IO (Except TextError α × RealTexts) :=
-  (Program.runM (port := textPort) RealTexts.handle command.run).run texts
+last request.
+
+`arrived` is what the run is handed: the snapshots a job held when it ended,
+for the run of that job's command, and nothing for any other command. The
+table that comes back holds none of it but what the command adopted. -/
+def EditorM.runReal {α : Type} (command : EditorM α) (texts : RealTexts)
+    (arrived : Array (JobSnapshotId × Ffi.Snapshot) := #[]) : IO (Except TextError α × RealTexts) :=
+  do
+  let (result, texts) ←
+    (Program.runM (port := textPort) RealTexts.handle command.run).run { texts with arrived }
+  return (result, { texts with arrived := #[] })
 
 end Editor

@@ -9,8 +9,8 @@ take a snapshot of it, ask a text or a snapshot a question, ask a text's
 edit log what changed and who wrote a range, forget the start of that log,
 mark a text with anchors and selections that every edit moves, apply the
 inverse of a run of its edits, drop the inverses it keeps, make a text of
-what a text or a snapshot holds, and release a text or a snapshot. It is
-deliberately small. The point is the
+what a text or a snapshot holds, take in a snapshot a job made, and release
+a text or a snapshot. It is deliberately small. The point is the
 pattern every later interface follows:
 
 - the port, here: the requests, the reply to each, and the operations a
@@ -190,8 +190,22 @@ same value runs against the model and against the real binding.
 - A *snapshot* is a text as it was when the snapshot was taken, at the
   revision it had then. It never changes: an edit to the text, and releasing
   the text, leave it as it was. It is named by a `SnapshotId`. Only
-  `TextId.snapshot` makes one that names a snapshot; any other is refused
-  with `noSuchSnapshot`.
+  `TextId.snapshot` and `JobSnapshotId.adopt` make one that names a
+  snapshot; any other is refused with `noSuchSnapshot`.
+- A job may hold snapshots too: the text of each file it loaded. Such a
+  snapshot is the job's and not the store's, and is named by a
+  `JobSnapshotId`, another kind of id: a `SnapshotId` of the same number
+  names something else. A job's thread never writes the store. When a job
+  has ended, whoever runs the job's command *hands* that run what the job
+  held, and the command takes a snapshot into the store with
+  `JobSnapshotId.adopt`: it becomes a snapshot of the store under the
+  store's next id, like one `TextId.snapshot` took, and is the store's
+  until a command releases it. Adopting does not use the job's id up:
+  adopted again it gives another id. An id the run was not handed is
+  refused with `noSuchSnapshot` and takes nothing in: an id no job was
+  given, another job's, and any id at all in a command that is not a job's,
+  since such a run is handed nothing. What a run was handed and did not
+  adopt is not in the store, before or after.
 - A text and a snapshot answer the same questions (`TextQuery`), and a text
   answers as a snapshot taken at that moment would.
 - A *row* begins at the start of the text and after each line feed. So a
@@ -310,6 +324,18 @@ moment. It is plain data, so a request can carry it. -/
 structure SnapshotId where
   /-- Which snapshot: the store's index for it. -/
   index : Nat
+  deriving DecidableEq, Repr
+
+/-- The name of a snapshot a job holds: the text of a file the job loaded
+(`Editor/File.lean`). It is not a snapshot of the store, and a `SnapshotId`
+of the same number names something else. It is plain data, so a job's result
+can carry it to the job's command, which takes the snapshot into the store
+with `JobSnapshotId.adopt`. The job runner gives the ids out, and never gives
+one out twice. -/
+structure JobSnapshotId where
+  /-- Which snapshot: the runner's number for it, among everything its jobs
+  hold. -/
+  number : Nat
   deriving DecidableEq, Repr
 
 /-- Why the text store refused a request. -/
@@ -654,6 +680,9 @@ inductive TextRequest where
   | dropInverses (text : TextId) (first last : Nat)
   /-- Make a new text holding what `source` holds. -/
   | copy (source : TextSource)
+  /-- Take the snapshot `snapshot`, which a job held and this run was
+  handed, into the store. -/
+  | adopt (snapshot : JobSnapshotId)
 
 /-- The type of the reply to each request: the new text's id for `create`,
 and for the others a refusal or the result. -/
@@ -675,6 +704,7 @@ def TextRequest.Reply : TextRequest → Type
   | .applyInverse .. => Except TextError Inverted
   | .dropInverses .. => Except TextError Unit
   | .copy _ => Except TextError TextId
+  | .adopt _ => Except TextError SnapshotId
 
 /-- The text port: `TextRequest` and the reply to each request. -/
 abbrev textPort : Port :=
@@ -837,6 +867,28 @@ def TextId.copy (text : TextId) : EditorM TextId :=
 /-- A new text holding what `snapshot` holds (`TextSource.copy`). -/
 def SnapshotId.copy (snapshot : SnapshotId) : EditorM TextId :=
   (TextSource.snapshot snapshot).copy
+
+/-- Takes the snapshot `snapshot`, which a job held and this command's run
+was handed, into the store, and returns the id it has there: the store's
+next, like one `TextId.snapshot` took. From then on it is a snapshot like
+any other, and the store's until a command releases it. Adopting does not
+use the job's id up: adopted again it gives another id.
+
+Refused with `noSuchSnapshot`, taking nothing in, for an id this run was not
+handed: one no job was given, another job's, or any id in a command that is
+not a job's. -/
+def JobSnapshotId.adopt (snapshot : JobSnapshotId) : EditorM SnapshotId :=
+  ExceptT.mk (Program.request (port := textPort) (.adopt snapshot))
+
+/-- A new text holding what the job's snapshot `snapshot` holds: how a file a
+job loaded becomes a text. It adopts the snapshot, copies it, and releases
+what it adopted, so the store gains the text and no snapshot. Refused as
+`JobSnapshotId.adopt` is. -/
+def JobSnapshotId.toText (snapshot : JobSnapshotId) : EditorM TextId := do
+  let adopted ← snapshot.adopt
+  let text ← adopted.copy
+  (TextSource.snapshot adopted).release
+  return text
 
 /-- The revision of `text`: how many edits it has accepted. -/
 def TextId.revision (text : TextId) : EditorM Nat :=

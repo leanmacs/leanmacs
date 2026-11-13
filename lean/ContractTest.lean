@@ -92,14 +92,27 @@ def releaseFrees : IO Bool := do
       table.documents.size == 2 &&
       table.snapshots.size == 2
 
+/-- Runs `command` against the real binding, from a table with no texts, in
+a run that is handed `arrived` as what a job held: for each, a snapshot the
+library made of a document holding the string. The documents, the snapshots
+and the table are dropped with the run. -/
+def runHanded (arrived : Array (JobSnapshotId × String)) (command : EditorM Bool) :
+    IO (Except TextError Bool) := do
+  let handed ← arrived.mapM fun (id, text) => return (id, ← (← Ffi.Document.new text).snapshot)
+  return (← command.runReal {} handed).1
+
 /-- Runs `properties` against the real binding, each from a table with no
-texts, and returns the names of those that did not hold. Each table is dropped
-with its run, so the counts of live documents and of live snapshots must then
-be what they were before: if either is not, `tableName` is among the names.
-`releaseName` is among them if a release did not free its object at once. -/
-def failures (properties : List TextContract.Property) : IO (List String) := do
+texts, and then `adoptProperties`, each in a run handed its snapshots
+(`runHanded`), and returns the names of those that did not hold. Each table
+is dropped with its run, and so is what a run was handed, so the counts of
+live documents and of live snapshots must then be what they were before: if
+either is not, `tableName` is among the names. `releaseName` is among them
+if a release did not free its object at once. -/
+def failures (properties : List TextContract.Property)
+    (adoptProperties : List TextContract.AdoptProperty) : IO (List String) := do
   let before := (← Ffi.Document.live, ← Ffi.Snapshot.live)
-  let failed ← TextContract.failures (fun command => return (← command.runReal {}).1) properties
+  let held ← TextContract.failures (fun command => return (← command.runReal {}).1) properties
+  let failed := held ++ (← TextContract.adoptFailures runHanded adoptProperties)
   let released ← releaseFrees
   let after := (← Ffi.Document.live, ← Ffi.Snapshot.live)
   return failed ++ (if released then [] else [releaseName]) ++
@@ -326,7 +339,8 @@ def main : IO UInt32 := do
   -- The undo tree's cases run through the same binding, so the count of
   -- live documents covers the texts they make too.
   let cases := Editor.UndoTreeCases.cases
-  let textFailed ← ContractTest.failures (properties ++ cases)
+  let adoptProperties := Editor.TextContract.adoptProperties
+  let textFailed ← ContractTest.failures (properties ++ cases) adoptProperties
   let jobFailed ← ContractTest.jobFailures services
   let checks := ContractTest.jobChecks services pool
   let checkFailed ← ContractTest.checkFailures checks
@@ -340,6 +354,6 @@ def main : IO UInt32 := do
   unless failed.isEmpty do
     IO.Process.exit 1
   IO.println
-      s!"contract-test: {properties.length} properties hold of the real text binding, {cases.length} cases of the undo tree hold over it, and its documents and snapshots are freed when released and with its table; {Editor.JobContract.properties.length} properties hold of the job runner over the timer service, {checks.length} checks of it passed, and quit ended the pump"
+      s!"contract-test: {properties.length + adoptProperties.length} properties hold of the real text binding, {cases.length} cases of the undo tree hold over it, and its documents and snapshots are freed when released and with its table; {Editor.JobContract.properties.length} properties hold of the job runner over the timer service, {checks.length} checks of it passed, and quit ended the pump"
   (← IO.getStdout).flush
   IO.Process.exit 0

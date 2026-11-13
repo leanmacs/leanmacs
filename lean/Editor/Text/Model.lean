@@ -14,7 +14,15 @@ construction. A text made of what a text or a snapshot holds
 (`TextModel.copy`) is a new text made of the source's string, exactly as
 `create` makes one of a string (`TextModel.made`), so that it has nothing
 else of its source holds by construction too. The library shares the rope
-and copies no text; the model copies the string. Rows and points are found by walking the string's characters,
+and copies no text; the model copies the string.
+
+What a job held when it ended reaches its command as a value
+(`TextModel.arrived`): each snapshot as the job's name for it and its
+content. It is not part of the store. Whoever plays a job's command fills it
+for that run and empties it after; `adopt` reads it and copies a content
+into the snapshots. So "a run is handed what the job held" is, in the
+model, handing the run that value, and nothing a job made is in the store
+unless a command put it there. Rows and points are found by walking the string's characters,
 which is slow and plainly right: the model is what the library is compared
 with, not what the editor runs on.
 
@@ -146,6 +154,11 @@ structure TextModel where
   the order the texts were made. It is beside the texts for the reason the
   logs are: a snapshot carries none. -/
   histories : Array TextHistory := #[]
+  /-- The snapshots this run was handed: what a job held when it ended, each
+  under the job's name for it. It is empty unless whoever runs a job's
+  command fills it for that run, and it is not part of the store: `adopt`
+  reads it and nothing writes it. -/
+  arrived : Array (JobSnapshotId × TextContent) := #[]
   deriving Repr
 
 namespace TextModel
@@ -967,6 +980,19 @@ def copy (model : TextModel) (source : TextSource) : Except TextError TextId × 
     let (id, model) := model.made content.contents
     (.ok id, model)
 
+/-- The model's answer to taking the job's snapshot `snapshot` into the
+store, and the model after it: what this run was handed under that name
+(`arrived`) becomes a snapshot of the store, under the next id, as one
+`TextId.snapshot` took would. What was handed stays as it was, so adopting
+again gives another id. A name this run was not handed is refused and takes
+nothing in. -/
+def adopt (model : TextModel) (snapshot : JobSnapshotId) :
+    Except TextError SnapshotId × TextModel :=
+  match model.arrived.find? (·.1 == snapshot) with
+  | some (_, content) =>
+    (.ok ⟨model.snapshots.size⟩, { model with snapshots := model.snapshots.push (some content) })
+  | none => (.error .noSuchSnapshot, model)
+
 /-- The model's answer to each request, and the model after it. -/
 def handle : (request : TextRequest) → TextModel → request.Reply × TextModel
   | .create initial, model => model.made initial
@@ -1002,6 +1028,7 @@ def handle : (request : TextRequest) → TextModel → request.Reply × TextMode
   | .applyInverse id first last origin, model => model.applyInverse id first last origin
   | .dropInverses id first last, model => model.dropInverses id first last
   | .copy source, model => model.copy source
+  | .adopt snapshot, model => model.adopt snapshot
 
 end TextModel
 
@@ -1129,6 +1156,11 @@ theorem runModel_dropInverses (id : TextId) (first last : Nat) (model : TextMode
 @[simp]
 theorem runModel_copy (source : TextSource) (model : TextModel) :
     source.copy.runModel model = model.copy source :=
+  rfl
+
+@[simp]
+theorem runModel_adopt (snapshot : JobSnapshotId) (model : TextModel) :
+    snapshot.adopt.runModel model = model.adopt snapshot :=
   rfl
 
 end EditorM
