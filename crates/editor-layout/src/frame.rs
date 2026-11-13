@@ -424,8 +424,8 @@ mod tests {
     use crate::scene::{
         Cursor, CursorShape, Decoration, Rect, Scene, TextKey, TextRef, View, ViewId,
     };
-    use crate::shaper::FontId;
     use crate::shaper::fake::CellShaper;
+    use crate::shaper::{FontId, VisualLine};
 
     /// A layout on cells 10 by 16, with a font 1 of lines 32 tall that the
     /// face `tall` is in.
@@ -630,6 +630,67 @@ mod tests {
         let selected = frame(&mut layout, view(text, 4, 160, 0, &[(1, 3)]));
         assert_ne!(hashes(&selected)[0], hashes(&before)[0]);
         assert_eq!(hashes(&selected)[1..], hashes(&before)[1..]);
+    }
+
+    /// The hash of each row of `frame`.
+    fn hashes(frame: &ViewFrame) -> Vec<u64> {
+        frame.rows.iter().map(|row| row.hash).collect()
+    }
+
+    #[test]
+    fn rows_of_different_glyphs_have_different_hashes() {
+        let mut layout = layout();
+        // Four rows: "abcd" twice (one wrapped row), "abce" and "abcd".
+        let rows = hashes(&frame(
+            &mut layout,
+            view("abcdabcd\nabce\nabcd", 4, 160, 0, &[]),
+        ));
+        assert_ne!(rows[0], rows[2]);
+        // The same glyphs hash the same wherever the row is: further down,
+        // further into the text, or the later part of a wrapped row.
+        assert_eq!(rows[0], rows[1]);
+        assert_eq!(rows[0], rows[3]);
+        // An edit changes the hash of the row it is on, and of no other,
+        // though the rows after it are further into the text.
+        let edited = hashes(&frame(
+            &mut layout,
+            view("abcdabcd\nabcxe\nabcd", 4, 160, 0, &[]),
+        ));
+        assert_ne!(edited[2], rows[2]);
+        assert_eq!((edited[0], edited[1]), (rows[0], rows[1]));
+        assert_eq!(edited[4], rows[3]);
+    }
+
+    #[test]
+    fn the_same_glyphs_at_another_height_or_advance_have_another_hash() {
+        // The first row of "ab" in a layout on cells `advance` by `height`.
+        let row = |advance: f32, height: f32| {
+            let mut layout = Layout::new(CellShaper::new(advance, height));
+            frame(&mut layout, view("ab", 4, 160, 0, &[]))
+                .rows
+                .remove(0)
+        };
+        let (short, tall, wide) = (row(10.0, 16.0), row(10.0, 32.0), row(12.0, 16.0));
+        // Another line height: the same glyphs and runs, lower down.
+        assert_eq!(short.line.glyphs, tall.line.glyphs);
+        assert_eq!(short.runs, tall.runs);
+        assert_ne!(short.hash, tall.hash);
+        // Another advance: the same height, glyphs further across.
+        assert_eq!((short.height, short.baseline), (wide.height, wide.baseline));
+        assert_ne!(short.hash, wide.hash);
+        assert_eq!(short.hash, row(10.0, 16.0).hash);
+        // The fake's baseline follows its height, so each alone is checked
+        // on a line made by hand.
+        let line = |height: f32, baseline: f32| VisualLine {
+            bytes: 0..0,
+            glyphs: vec![],
+            width: 0.0,
+            height,
+            baseline,
+        };
+        let plain = super::hash(&line(16.0, 12.0), &[]);
+        assert_ne!(plain, super::hash(&line(20.0, 12.0), &[]));
+        assert_ne!(plain, super::hash(&line(16.0, 10.0), &[]));
     }
 
     #[test]
