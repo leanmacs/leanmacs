@@ -32,6 +32,10 @@ returns the keys still pending and the binding reached, if one was. An
 unbound key is dropped with the prefix before it; it does not start a new
 sequence.
 
+That an unbound key resets the pending prefix is proved, not only checked
+(`Keymap.walk_unbound`): its hypothesis is about the bindings, that none
+begins with the keys so far, and the kernel checks it on every build.
+
 ## The chord
 
 A key from a window carries where it is on the keyboard and whether the
@@ -143,6 +147,26 @@ def walk (maps : List (Keymap β)) (pending : List Key) (key : Key) : List Key �
   | .bound binding => ([], some binding)
   | .pending => (keys, none)
   | .unbound => ([], none)
+
+/-- An unbound key resets the walk: when no binding of any keymap in `maps`
+begins with the pending keys followed by the chord of `key`, or is that
+sequence, the walk leaves nothing pending and gives nothing. -/
+theorem walk_unbound (maps : List (Keymap β)) (pending : List Key) (key : Key)
+    (unbound : ∀ keymap ∈ maps, ∀ entry ∈ keymap.bindings, ¬(pending ++ [key.chord]) <+: entry.1) :
+    walk maps pending key = ([], none) := by
+  have notBound : maps.findSome? (·.find? (pending ++ [key.chord])) = none := by
+    rw [List.findSome?_eq_none_iff]
+    intro keymap member
+    simp only [find?, Option.map_eq_none_iff, List.find?_eq_none]
+    intro entry present equal
+    have same : entry.1 = pending ++ [key.chord] := by simpa using equal
+    exact unbound keymap member entry present (same ▸ List.prefix_refl _)
+  have notPending : maps.any (·.continues (pending ++ [key.chord])) = false := by
+    rw [List.any_eq_false]
+    intro keymap member
+    simp only [continues, List.any_eq_true, not_exists, not_and, List.isPrefixOf_iff_prefix]
+    exact unbound keymap member
+  simp [walk, resolve, notBound, notPending]
 
 end Keymap
 
