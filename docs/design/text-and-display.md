@@ -922,9 +922,12 @@ facts of each part are in the module docs; these are the decisions.
   properties that leave the breaking policy open.
 - **Decorations.** A source gives the spans of a range of a snapshot and is
   asked only for the rows laid out. Selections and the scene's decorations
-  are the first two; a range with equal ends is a cursor and gives no span,
-  so a cursor move changes no row. A span names its face by an id interned
-  from its name. Merging gives runs that carry every face over them, in
+  are the first two; a range with equal ends of an exclusive, an inclusive
+  or a block selection is a cursor and gives no span, so a cursor move
+  changes no row, while a line-wise range covers its rows whatever its
+  ends, so one with equal ends highlights its row. A span names its face
+  by an id interned from its name. Merging gives runs that carry every
+  face over them, in
   source and then span order; no precedence is decided before phase 2.
   Shaping runs split only where the font changes, and in phase 1 every face
   is in the default font unless a test sets one, so decorations are

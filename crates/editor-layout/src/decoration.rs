@@ -23,7 +23,7 @@
 use std::collections::HashMap;
 use std::ops::Range;
 
-use editor_text::{Selection, Snapshot};
+use editor_text::{Selection, Shape, Snapshot};
 
 use crate::shaper::FontId;
 
@@ -104,8 +104,11 @@ impl FaceTable {
 }
 
 /// The selections of a view as a source: what each covers, drawn in the
-/// selection face. A range with equal ends is a cursor and covers nothing
-/// here: it is drawn as a cursor, so moving it changes no row's content.
+/// selection face. A range with equal ends of an exclusive, an inclusive
+/// or a block selection is a cursor and covers nothing here: it is drawn
+/// as a cursor, so moving it changes no row's content. A range of a
+/// line-wise selection covers its rows whatever its ends, so one with
+/// equal ends is given like any other.
 #[derive(Debug, Clone, Default)]
 pub struct SelectionSource {
     /// What the selections cover, in order.
@@ -121,10 +124,11 @@ impl SelectionSource {
     pub fn new(snapshot: &Snapshot, selections: &[Selection], face: FaceId) -> Self {
         let mut extents = Vec::new();
         for selection in selections {
+            let cursors = equal_ends_are_a_cursor(selection.shape());
             let ranges: Vec<_> = selection
                 .ranges()
                 .iter()
-                .filter(|range| range.anchor != range.head)
+                .filter(|range| !cursors || range.anchor != range.head)
                 .copied()
                 .collect();
             let Some(selection) = Selection::shaped(selection.shape(), ranges, 0) else {
@@ -139,6 +143,14 @@ impl SelectionSource {
             face: Some(face),
         }
     }
+}
+
+/// Whether a range with equal ends of a selection of `shape` is a cursor
+/// and no more: it covers nothing (exclusive) or only the cell its cursor
+/// is drawn on (inclusive, block). In any other shape what such a range
+/// covers is `editor-text`'s to say (`Snapshot::extents`).
+fn equal_ends_are_a_cursor(shape: Shape) -> bool {
+    matches!(shape, Shape::Exclusive | Shape::Inclusive | Shape::Block)
 }
 
 /// `spans` cut to `bytes`, those that cover none of it left out, added to
@@ -329,6 +341,26 @@ mod tests {
             vec![span(2..3, 7), span(7..8, 7)]
         );
         assert_eq!(asked(&source, text, 3..7), vec![]);
+    }
+
+    #[test]
+    fn a_line_wise_range_with_equal_ends_covers_its_row() {
+        let text = "abcdef\nghi";
+        let snapshot = Text::from(text).snapshot();
+        let source = |shape: Shape| {
+            let selections =
+                [Selection::shaped(shape, vec![SelectionRange::new(1, 1)], 0).unwrap()];
+            SelectionSource::new(&snapshot, &selections, FaceId(7))
+        };
+        // Line-wise, a range covers its row whatever its ends.
+        assert_eq!(
+            asked(&source(Shape::Line), text, 0..10),
+            vec![span(0..7, 7)]
+        );
+        // In the other shapes a range with equal ends is a cursor.
+        for shape in [Shape::Exclusive, Shape::Inclusive, Shape::Block] {
+            assert_eq!(asked(&source(shape), text, 0..10), vec![], "{shape:?}");
+        }
     }
 
     #[test]

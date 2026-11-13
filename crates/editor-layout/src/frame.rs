@@ -446,7 +446,7 @@ mod tests {
     use std::hash::{DefaultHasher, Hash, Hasher};
     use std::ops::Range;
 
-    use editor_text::{Selection, SelectionRange, Snapshot, Text};
+    use editor_text::{Selection, SelectionRange, Shape, Snapshot, Text};
 
     use super::{Area, Frame, FrameRow, ViewFrame};
     use crate::Layout;
@@ -809,6 +809,42 @@ mod tests {
         let selected = frame(&mut layout, view(text, 4, 160, 0, &[(1, 3)]));
         assert_ne!(hashes(&selected)[0], hashes(&before)[0]);
         assert_eq!(hashes(&selected)[1..], hashes(&before)[1..]);
+    }
+
+    /// A view of `text` 10 cells wide and 64 pixels tall, with one
+    /// selection of `shape` whose one range has both ends at `at`.
+    fn with_equal_ends(text: &str, shape: Shape, at: usize) -> View {
+        let mut view = view(text, 10, 64, 0, &[]);
+        view.selections =
+            vec![Selection::shaped(shape, vec![SelectionRange::new(at, at)], 0).unwrap()];
+        view
+    }
+
+    #[test]
+    fn a_line_wise_selection_with_equal_ends_is_as_wide_as_its_row() {
+        let mut layout = layout();
+        let text = "abc\ndef";
+        let line = frame(&mut layout, with_equal_ends(text, Shape::Line, 1));
+        assert_eq!(line.selections, vec![area(0.0, 0.0, 30.0, 16.0)]);
+        // Its head is a cursor as well.
+        let cursors: Vec<Area> = line.cursors.iter().map(|cursor| cursor.area).collect();
+        assert_eq!(cursors, vec![area(10.0, 0.0, 10.0, 16.0)]);
+        // Moved to the next row, it is that row's.
+        let moved = frame(&mut layout, with_equal_ends(text, Shape::Line, 5));
+        assert_eq!(moved.selections, vec![area(0.0, 16.0, 30.0, 16.0)]);
+    }
+
+    #[test]
+    fn a_cursor_move_keeps_every_row_hash_in_each_shape_that_is_not_line_wise() {
+        let mut layout = layout();
+        let text = "abc\ndef";
+        for shape in [Shape::Exclusive, Shape::Inclusive, Shape::Block] {
+            let before = frame(&mut layout, with_equal_ends(text, shape, 1));
+            let after = frame(&mut layout, with_equal_ends(text, shape, 5));
+            assert_eq!(hashes(&before), hashes(&after), "{shape:?}");
+            assert_ne!(before.cursors, after.cursors, "{shape:?}");
+            assert_eq!(before.selections, vec![], "{shape:?}");
+        }
     }
 
     #[test]
