@@ -161,6 +161,40 @@ def publish (loop : Loop) : EditorM Loop := do
       was.snapshot.release
   return { state, shown }
 
+/-- The changes that replace each of `extents`, sorted and apart, of a text
+of `length` bytes, with `text`, and the cursor after each insertion. -/
+def replacing (length : Nat) (extents : Array Extent) (text : String) :
+    Array Change × Array SelectionRange :=
+  Id.run do
+    let mut changes := #[]
+    let mut cursors := #[]
+    let mut walked := 0
+    let mut shift : Int := 0
+    for extent in extents do
+      changes :=
+        changes ++
+          #[.retain (extent.start - walked), .delete (extent.stop - extent.start), .insert text]
+      let after := (extent.start + shift + text.utf8ByteSize).toNat
+      cursors := cursors.push ⟨after, after⟩
+      shift := shift + text.utf8ByteSize - (extent.stop - extent.start)
+      walked := extent.stop
+    return (changes.push (.retain (length - walked)), cursors)
+
+/-- Replaces what each range of `target`'s selection covers with `text`, as
+one transaction with the user's origin, which carries the selection before
+and the cursors after, and places the selection at those cursors. Refused
+with `noSuchMarker` when the window's selection marker was given up. -/
+def insert (target : Target) (text : String) : TextM Unit := do
+  let buffer := target.buffer.text
+  let .selection selection ← buffer.marker target.window.selection | throw .noSuchMarker
+  let extents ← buffer.extents selection
+  let (changes, cursors) := replacing (← buffer.byteLength) extents text
+  let after : Selection :=
+    { ranges := cursors, primary := min selection.primary (cursors.size - 1),
+      shape := selection.shape }
+  discard <| buffer.apply { changes, before := some selection, after := some after } Origin.user
+  buffer.place target.window.selection (.selection after)
+
 /-- What `event` does to `state` ("What each event does", in the module
 docs). -/
 def handle (state : EditorState) : Event → EditorM EditorState
@@ -169,6 +203,10 @@ def handle (state : EditorState) : Event → EditorM EditorState
   | .resize resize =>
     return { state with frame := { state.frame with size := ⟨resize.width, resize.height⟩ } }
   | .focus gained => return { state with frame := { state.frame with hasFocus := gained } }
+  | .commit text => do
+    let some target := state.focusedTarget? | return { state with preedit := none }
+    insert target text
+    return { state with preedit := none }
   | _ => return state
 
 /-- Handles `event` and publishes a scene of the state after it, and says

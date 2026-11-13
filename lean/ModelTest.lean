@@ -3479,6 +3479,124 @@ def loopChecks : List Check :=
                   view.status.isEmpty
           | _ => false }]
 
+/-- The focused window's buffer and window in `loop`'s state, or a refusal
+for a state with none. -/
+def focusedOf (loop : Loop) : EditorM Target := do
+  let some target := loop.state.focusedTarget? | throw .noSuchText
+  return target
+
+/-- The ranges of the focused window's selection marker in `loop`'s state. -/
+def cursorsOf (loop : Loop) : EditorM (Array SelectionRange) := do
+  let target ← focusedOf loop
+  let .selection selection ← target.buffer.text.marker target.window.selection | throw .noSuchMarker
+  return selection.ranges
+
+/-- The initial state at 640 by 480, its buffer holding `text`, and the
+focused window's selection placed at `ranges`, exclusive. -/
+def holding (text : String) (ranges : Array SelectionRange) : TextM EditorState := do
+  let state ← EditorState.initial ⟨640, 480⟩
+  let some target := state.focusedTarget? | throw .noSuchText
+  target.buffer.text.insert 0 text
+  target.buffer.text.place target.window.selection (.selection { ranges })
+  return state
+
+/-- The checks of a text commit in the loop, on the editor's models. -/
+def commitChecks : List Check :=
+  [{  name :=
+        "commits of a, b and c publish one scene each, whose focused view shows the text so far, with the window's cursor just after what was committed"
+      run :=
+        pure <|
+          let program : EditorM (Array (SnapshotId × String × Array SelectionRange)) := do
+            let mut loop ← Loop.start ⟨640, 480⟩
+            let mut seen := #[]
+            for text in ["a", "b", "c"] do
+              loop := (← loop.step (.commit text)).1
+              let some shown := loop.shown[0]? | throw .noSuchSnapshot
+              seen := seen.push (shown.snapshot, ← shown.snapshot.read, ← cursorsOf loop)
+            return seen
+          match program.runModel editorModel with
+          | (.ok seen, model) =>
+            let scenes := model.display.scenes
+            seen.map (·.2) == #[("a", #[⟨1, 1⟩]), ("ab", #[⟨2, 2⟩]), ("abc", #[⟨3, 3⟩])] &&
+              scenes.size == 3 &&
+              (scenes.zip seen).all fun (scene, (snapshot, _)) =>
+                scene.focused == some ⟨0⟩ &&
+                  (scene.views.find? (·.id == ⟨0⟩)).map (·.snapshot) == some snapshot
+          | (.error _, _) => false },
+    { name :=
+        "after a commit, one undo of the buffer's history, as the loop left it, restores the text from before the commit, and the commit was the user's"
+      run :=
+        pure <|
+          let program : EditorM (String × String × String × Array Attribution) := do
+            let mut loop ← Loop.start ⟨640, 480⟩
+            loop := (← loop.step (.commit "hello")).1
+            loop := (← loop.step (.commit " world")).1
+            let target ← focusedOf loop
+            let before ← target.buffer.text.read
+            let some moved ← target.buffer.history.undo | throw .noInverse
+            let once ← target.buffer.text.read
+            let trace ← target.buffer.text.trace 0 5
+            let some _ ← moved.tree.undo | throw .noInverse
+            return (before, once, ← target.buffer.text.read, trace)
+          match (program.runModel editorModel).1 with
+          | .ok (before, once, twice, trace) =>
+            before == "hello world" && once == "hello" && twice == "" &&
+              trace == #[{ start := 0, stop := 5, author := .entry 1 Origin.user }]
+          | .error _ => false },
+    { name :=
+        "a commit replaces what each range of the selection covers, and leaves a cursor after each insertion"
+      run :=
+        pure <|
+          let program : EditorM (String × Array SelectionRange) := do
+            let loop : Loop := { state := ← holding "abcd" #[⟨0, 1⟩, ⟨3, 3⟩] }
+            let (loop, _) ← loop.step (.commit "xy")
+            return (← (← focusedOf loop).buffer.text.read, ← cursorsOf loop)
+          match (program.runModel editorModel).1 with
+          | .ok (text, cursors) => text == "xybcxyd" && cursors == #[⟨2, 2⟩, ⟨6, 6⟩]
+          | .error _ => false },
+    { name :=
+        "a commit whose selection marker was given up leaves the state as it was, with the refusal in the echo area"
+      run :=
+        pure <|
+          let program : EditorM (EditorState × Loop × Option String) := do
+            let state ← EditorState.initial ⟨640, 480⟩
+            let some target := state.focusedTarget? | throw .noSuchText
+            target.buffer.text.unmark target.window.selection
+            let (loop, _) ← ({ state } : Loop).step (.commit "x")
+            return (state, loop, ← target.buffer.text.read)
+          match program.runModel editorModel with
+          | (.ok (state, loop, text), model) =>
+            loop.state == { state with echo := "refused: no such marker" } && text == "" &&
+              (model.display.scenes.map (·.echo)) == #["refused: no such marker"]
+          | (.error _, _) => false },
+    { name :=
+        "after a commit the snapshot the previous scene named is released, and asking it is refused with noSuchSnapshot"
+      run :=
+        pure <|
+          let program : EditorM (SnapshotId × SnapshotId × Bool) := do
+            let mut loop ← Loop.start ⟨640, 480⟩
+            loop := (← loop.step (.commit "a")).1
+            let some first := loop.shown[0]? | throw .noSuchSnapshot
+            loop := (← loop.step (.commit "b")).1
+            let some second := loop.shown[0]? | throw .noSuchSnapshot
+            let refused ←
+              try
+                discard first.snapshot.read
+                pure false
+              catch refusal =>
+                pure (refusal == .noSuchSnapshot)
+            return (first.snapshot, second.snapshot, refused)
+          match (program.runModel editorModel).1 with
+          | .ok (first, second, refused) => first != second && refused
+          | .error _ => false },
+    { name := "a commit clears the preedit"
+      run :=
+        pure <|
+          match looped (EditorState.initial ⟨640, 480⟩) [.preedit "k", .commit "か"] with
+          | some ((loop, _), scenes, _) =>
+            scenes.map (·.preedit) == #[some "k", none] && loop.state.preedit == none
+          | none => false }]
+
 /-- Every check, in the order they run.
 
 The order matters where the process's one pool is measured. `poolChecks` run
@@ -3505,7 +3623,8 @@ def checks : List Check :=
     commandPortChecks ++
     originChecks ++
     stateChecks ++
-    loopChecks
+    loopChecks ++
+    commitChecks
 
 /-- Runs `checks` and returns the names of those that failed. A check that
 throws has failed, and its error is reported with its name. -/
