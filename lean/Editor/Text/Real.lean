@@ -11,7 +11,8 @@ linked with the library imports it: the editor, to run commands for real, and
 
 It is a thin adapter. A request is plain data and names a text or a snapshot
 by an id, so the binding keeps the tables from ids to the library's handles:
-an id is an index into one. Each request is one lookup in a table and one or
+an id is an index into one (`RealTexts`; "The table of snapshots is
+published", below, says where each table lives). Each request is one lookup in a table and one or
 two calls of a binding. What an edit means, when it is refused, what a row
 and a point are: these are the library's decisions (`crates/editor-text`),
 and the contract (`Editor/Text/Contract.lean`) is what says they are the same
@@ -65,20 +66,100 @@ A text or a snapshot lives until it is released or its table is dropped,
 whichever is first. Releasing empties its slot, which drops the last
 reference to the library's object, and the finaliser frees it at once.
 Dropping the table does the same for everything still in it.
+
+## The table of snapshots is published
+
+The documents are an array inside `RealTexts`, a value the editor thread
+owns and passes from one command's run to the next. The snapshots are a
+table behind a reference (`Snapshots`), which whoever starts the editor
+makes first and hands to the binding (`RealTexts.over`).
+
+- **Who writes it**: the handler here (`RealTexts.handle`), and nothing
+  else: when a command takes a snapshot, adopts one or releases one. A
+  command runs on the editor thread, so the editor thread is the table's one
+  writer (`docs/design/concurrency.md`).
+- **Who may read it, and through what**: a job, through the read half
+  (`SnapshotReader`, from `Snapshots.reader`), which is all the job
+  runner's file service is given (`Editor/Job/Real.lean`). It finds the
+  library's snapshot for a `SnapshotId`, so a job can save a snapshot a
+  command took. Nothing can be written through it. A read sees the table as
+  it is at that instant: an id a command has released by then names
+  nothing.
+- **Why the snapshots and not the documents**: a snapshot never changes, and
+  the library's object is safe on any thread, so a reader shares nothing
+  that moves. A document has one writer and no reader but a command.
+
+Every operation of the table is one atomic step of its reference, so a
+reader sees the table before a write or after it.
 -/
 
 namespace Editor
 
+/-- The read half of a table of snapshots: from an id, the library's
+snapshot, if the table holds one at that instant. It is all a reader off the
+editor thread is given, and nothing can be written through it. -/
+structure SnapshotReader where
+  /-- The library's snapshot for the snapshot `id`, as the table is now;
+  `none` when the id names no snapshot, or one that was released. -/
+  find? : SnapshotId → BaseIO (Option Ffi.Snapshot)
+
+/-- The real binding's table of snapshots, behind a reference: the library's
+handle for each snapshot taken or adopted so far. An id is an index here,
+and a slot is `none` once its snapshot has been released, so an id is never
+used again.
+
+It is published: the module docs say who writes it and who may read it. Each
+operation is one atomic step of the reference, so a reader on another thread
+sees the table before a write or after it and never between. -/
+structure Snapshots where private mk ::
+  /-- The library's snapshot for each snapshot, in the order they entered. -/
+  private slots : IO.Ref (Array (Option Ffi.Snapshot))
+
+namespace Snapshots
+
+/-- A table with no snapshots. -/
+def new : BaseIO Snapshots :=
+  return ⟨← IO.mkRef #[]⟩
+
+/-- Adds `snapshot` to the table and returns its id: the next index. -/
+def add (table : Snapshots) (snapshot : Ffi.Snapshot) : BaseIO SnapshotId :=
+  table.slots.modifyGet fun slots => (⟨slots.size⟩, slots.push (some snapshot))
+
+/-- The library's snapshot for the snapshot `id`, as the table is now; `none`
+when the id names no snapshot, or one that was released. -/
+def find? (table : Snapshots) (id : SnapshotId) : BaseIO (Option Ffi.Snapshot) :=
+  return ((← table.slots.get)[id.index]?).join
+
+/-- Empties the slot of the snapshot `id`, and returns whether it held one.
+The slot stays, so later ids are what they would have been. -/
+def release (table : Snapshots) (id : SnapshotId) : BaseIO Bool :=
+  table.slots.modifyGet fun slots =>
+    if (slots[id.index]?).join.isSome then (true, slots.setIfInBounds id.index none)
+    else (false, slots)
+
+/-- How many slots the table has: every snapshot that ever entered it, the
+released ones included. A readout for tests. -/
+def size (table : Snapshots) : BaseIO Nat :=
+  return (← table.slots.get).size
+
+/-- The read half of the table: it finds what the table holds when it is
+asked, and nothing can be written through it. -/
+def reader (table : Snapshots) : SnapshotReader where
+  find? := table.find?
+
+end Snapshots
+
 /-- The tables of the real binding: the library's handle for each text and
-for each snapshot made so far. An id is an index here, and a slot is `none`
-once its text or its snapshot has been released, so an id is never used
-again. -/
+for each snapshot made so far. An id is an index into one, and a slot is
+`none` once its text or its snapshot has been released, so an id is never
+used again. The documents are a value the editor thread owns; the snapshots
+are a table it publishes (`Snapshots`). -/
 structure RealTexts where
   /-- The library's document for each text, in the order they were made. -/
   documents : Array (Option Ffi.Document) := #[]
-  /-- The library's snapshot for each snapshot, in the order they were
-  taken. -/
-  snapshots : Array (Option Ffi.Snapshot) := #[]
+  /-- The library's snapshot for each snapshot, in the order they were taken
+  or adopted. -/
+  snapshots : Snapshots
   /-- The snapshots this run was handed: what a job held when it ended, each
   under the job's name for it. `EditorM.runReal` sets it for one run and
   empties it after, so it is never part of the tables a later command
@@ -87,6 +168,15 @@ structure RealTexts where
 
 namespace RealTexts
 
+/-- The tables with no texts, whose snapshots are the table `snapshots`. -/
+def over (snapshots : Snapshots) : RealTexts where
+  snapshots := snapshots
+
+/-- The tables with no texts, over a table of snapshots made here: for a
+caller that publishes its snapshots to nobody. -/
+def new : BaseIO RealTexts :=
+  return over (← Snapshots.new)
+
 /-- The library's document for the text `id`; `none` when the id names no
 text, or one that was released. -/
 def document? (id : TextId) : StateT RealTexts IO (Option Ffi.Document) :=
@@ -94,8 +184,8 @@ def document? (id : TextId) : StateT RealTexts IO (Option Ffi.Document) :=
 
 /-- The library's snapshot for the snapshot `id`; `none` when the id names no
 snapshot, or one that was released. -/
-def snapshot? (id : SnapshotId) : StateT RealTexts IO (Option Ffi.Snapshot) :=
-  return ((← get).snapshots[id.index]?).join
+def snapshot? (id : SnapshotId) : StateT RealTexts IO (Option Ffi.Snapshot) := do
+  (← get).snapshots.find? id
 
 /-- The library's answer to an edit of the text `id`, replacing its bytes
 from `start` up to `stop` by `s`.
@@ -388,17 +478,18 @@ def snapshotOf : TextSource → StateT RealTexts IO (Except TextError Ffi.Snapsh
     let some snapshot ← snapshot? id | return .error .noSuchSnapshot
     return .ok snapshot
 
-/-- The refusal for `source` when it names nothing, or something that was
-released; `none` when the table holds it. -/
-def missing? : TextSource → StateT RealTexts IO (Option TextError)
-  | .text id => return if (← document? id).isSome then none else some .noSuchText
-  | .snapshot id => return if (← snapshot? id).isSome then none else some .noSuchSnapshot
-
-/-- Empties the slot of `source`, which it holds. The slot stays, so later
-ids are what they would have been. -/
-def released (table : RealTexts) : TextSource → RealTexts
-  | .text id => { table with documents := table.documents.setIfInBounds id.index none }
-  | .snapshot id => { table with snapshots := table.snapshots.setIfInBounds id.index none }
+/-- The library's answer to giving `source` up: its slot is emptied and
+stays, so later ids are what they would have been. The refusal when it names
+nothing, or something that was released. -/
+def release : TextSource → StateT RealTexts IO (Except TextError Unit)
+  | .text id => do
+    let some _ ← document? id | return .error .noSuchText
+    modify fun table => { table with documents := table.documents.setIfInBounds id.index none }
+    return .ok ()
+  | .snapshot id => do
+    if ← (← get).snapshots.release id then
+      return .ok ()
+    return .error .noSuchSnapshot
 
 /-- The library's answer to each request. -/
 def handle : (request : TextRequest) → StateT RealTexts IO request.Reply
@@ -413,21 +504,14 @@ def handle : (request : TextRequest) → StateT RealTexts IO request.Reply
     return .ok (← document.read)
   | .snapshot id => do
     let some document ← document? id | return .error .noSuchText
-    let snapshot ← document.snapshot
-    modifyGet fun table =>
-        (.ok ⟨table.snapshots.size⟩,
-          { table with snapshots := table.snapshots.push (some snapshot) })
+    return .ok (← (← get).snapshots.add (← document.snapshot))
   | .ask source query => do
     match ← snapshotOf source with
     | .error refusal =>
       return .error refusal
     | .ok snapshot =>
       answer snapshot query
-  | .release source => do
-    if let some refusal← missing? source then
-      return .error refusal
-    modify (·.released source)
-    return .ok ()
+  | .release source => release source
   | .apply id transaction origin => apply id transaction origin
   | .log id query => do
     let some document ← document? id | return .error .noSuchText
@@ -450,9 +534,7 @@ def handle : (request : TextRequest) → StateT RealTexts IO request.Reply
             { table with documents := table.documents.push (some document) })
   | .adopt held => do
     let some (_, snapshot) := (← get).arrived.find? (·.1 == held) | return .error .noSuchSnapshot
-    modifyGet fun table =>
-        (.ok ⟨table.snapshots.size⟩,
-          { table with snapshots := table.snapshots.push (some snapshot) })
+    return .ok (← (← get).snapshots.add snapshot)
 
 end RealTexts
 

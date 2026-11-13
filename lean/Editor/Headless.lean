@@ -264,7 +264,7 @@ structure Running (σ : Type) where
   /-- The config half of the editor's state. -/
   config : Config.State σ := {}
   /-- The texts and the snapshots made so far. -/
-  texts : RealTexts := {}
+  texts : RealTexts
   /-- The jobs that are running, with their owners. -/
   jobs : Job.Jobs
   /-- Where the reload job that is running will leave its outcome. -/
@@ -446,7 +446,8 @@ end, until the driver ends the loop or the queues are quit. After each event
 it publishes in `progress` how many markers it has reached, whether a reload
 is running, and how many jobs are. -/
 def loop {σ : Type} (collaborators : Collaborators σ) (progress : IO.Ref Progress) : IO Unit := do
-  let mut running : Running σ := { jobs := { services := collaborators.services } }
+  let mut running : Running σ :=
+    { texts := ← RealTexts.new, jobs := { services := collaborators.services } }
   repeat
     let event ← Ffi.nextEvent .editor
     if event.kind == .quit then

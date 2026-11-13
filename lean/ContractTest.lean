@@ -17,10 +17,14 @@ fails one of the two, which is what keeps a model from drifting from the
 library.
 
 - The text port's contract (`Editor/Text/Contract.lean`) against its real
-  binding (`Editor/Text/Real.lean`). Beside it, what only the real binding
-  can show, since it is about the library's objects: that the binding's
-  table is the only holder of its documents and of its snapshots, and that
-  releasing one frees it at once (`failures`, `releaseFrees`).
+  binding (`Editor/Text/Real.lean`), and the properties of taking a job's
+  snapshot into the store, each in a run handed snapshots the library made
+  (`runHanded`). Beside them, what only the real binding can show, since it
+  is about the library's objects and the binding's own table: that the
+  binding's table is the only holder of its documents and of its snapshots,
+  that releasing one frees it at once, and that the read half of its
+  published table of snapshots finds what a command took and nothing a
+  command released (`failures`, `releaseFrees`, `readerFinds`).
 - The cases of the undo tree (`Editor/UndoTree/Cases.lean`), which is plain
   Lean over the text port, through the same binding and in the same run, so
   the count of live documents covers the texts they make. `model-test` runs
@@ -83,14 +87,52 @@ def releaseFrees : IO Bool := do
     let released ← kept.snapshot
     released.release
     dropped.release
-  let (result, table) ← command.runReal {}
+  let (result, table) ← command.runReal (← RealTexts.new)
   let documentsHeld ← Ffi.Document.live
   let snapshotsHeld ← Ffi.Snapshot.live
   -- The table is read here, so it is alive until now. A released slot stays
   -- in it, empty.
   return result.isOk && documentsHeld == documents + 1 && snapshotsHeld == snapshots + 1 &&
       table.documents.size == 2 &&
-      table.snapshots.size == 2
+      (← table.snapshots.size) == 2
+
+/-- What must hold of the read half of the real binding's table of
+snapshots, which is all a reader off the editor thread is given. It is about
+the binding's own table, so the port cannot say it. -/
+def readerName : String :=
+  "a snapshot a command took is found through the read half of the binding's table by its id, and reads what the command read; one taken by a later command is found too; one a command released is not found, and neither is an id never given"
+
+/-- Whether the read half of the table finds what the commands' own
+questions read. One command takes two snapshots of a text with two- and
+four-byte characters and an escape, at two revisions, and releases a third;
+a second command, run on the table the first left, takes another. The reader
+was made before either ran. -/
+def readerFinds : IO Bool := do
+  let snapshots ← Snapshots.new
+  let reader := snapshots.reader
+  let first : EditorM (TextId × SnapshotId × SnapshotId × SnapshotId × String) := do
+    let text ← createText (TextContract.loaded)
+    let early ← text.snapshot
+    text.insert 0 "x"
+    let released ← text.snapshot
+    let late ← text.snapshot
+    released.release
+    return (text, early, late, released, ← late.read)
+  let (.ok (text, early, late, released, read), table) ←
+    first.runReal (.over snapshots) | return false
+  let some foundEarly ← reader.find? early | return false
+  let some foundLate ← reader.find? late | return false
+  let gone ← reader.find? released
+  let never ← reader.find? ⟨7⟩
+  let (.ok later, _) ← text.snapshot.runReal table | return false
+  let some foundLater ← reader.find? later | return false
+  return (← foundEarly.read) == "héllo\r\n😀".push (Char.ofNat 0x10DCFF) &&
+      (← foundLate.read) == read &&
+      read == "xhéllo\r\n😀".push (Char.ofNat 0x10DCFF) &&
+      (← foundLate.info).revision == 1 &&
+      gone.isNone &&
+      never.isNone &&
+      (← foundLater.read) == read
 
 /-- Runs `command` against the real binding, from a table with no texts, in
 a run that is handed `arrived` as what a job held: for each, a snapshot the
@@ -99,7 +141,7 @@ and the table are dropped with the run. -/
 def runHanded (arrived : Array (JobSnapshotId × String)) (command : EditorM Bool) :
     IO (Except TextError Bool) := do
   let handed ← arrived.mapM fun (id, text) => return (id, ← (← Ffi.Document.new text).snapshot)
-  return (← command.runReal {} handed).1
+  return (← command.runReal (← RealTexts.new) handed).1
 
 /-- Runs `properties` against the real binding, each from a table with no
 texts, and then `adoptProperties`, each in a run handed its snapshots
@@ -111,11 +153,14 @@ if a release did not free its object at once. -/
 def failures (properties : List TextContract.Property)
     (adoptProperties : List TextContract.AdoptProperty) : IO (List String) := do
   let before := (← Ffi.Document.live, ← Ffi.Snapshot.live)
-  let held ← TextContract.failures (fun command => return (← command.runReal {}).1) properties
+  let held ←
+    TextContract.failures (fun command => return (← command.runReal (← RealTexts.new)).1) properties
   let failed := held ++ (← TextContract.adoptFailures runHanded adoptProperties)
   let released ← releaseFrees
+  let found ← readerFinds
   let after := (← Ffi.Document.live, ← Ffi.Snapshot.live)
   return failed ++ (if released then [] else [releaseName]) ++
+      (if found then [] else [readerName]) ++
       if after == before then []
       else
         [s!"{tableName} ({before.1} documents and {before.2} snapshots before, {after.1} and {after.2} after)"]
