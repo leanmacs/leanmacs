@@ -82,9 +82,9 @@
 //!
 //! | Addition | Where | Pinned by |
 //! |---|---|---|
-//! | Another read of the text | A method of [`Snapshot`] | The unit tests beside it, and a property in `tests/properties.rs` that compares it with the same read of a `String` |
+//! | Another read of the text | A method of [`Snapshot`] | The unit tests beside it, and a property in `tests/properties/` that compares it with the same read of a `String` |
 //! | Another way to change the text | A method of [`Text`] that takes `&mut self` | The same, and the revision rule above |
-//! | A rule about what bytes a text loads from or saves as | The private module `bytes` | Its unit tests on named byte strings, and the byte properties in `tests/properties.rs` |
+//! | A rule about what bytes a text loads from or saves as | The private module `bytes` | Its unit tests on named byte strings, and the byte properties in `tests/properties/` |
 //! | A bound on what an operation costs | `tests/snapshot_cost.rs`, as a count of bytes allocated | Itself |
 //! | Something more of the rope library | A method of the private `rope::Rope`, in this crate's terms | The tests of the read that needs it |
 

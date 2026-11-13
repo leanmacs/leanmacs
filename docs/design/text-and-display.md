@@ -125,7 +125,7 @@ The first two items are built (decided 2026-11-12), as the crate
 | A snapshot and its reads | `crates/editor-text/src/snapshot.rs` |
 | Rows and points | `crates/editor-text/src/point.rs` |
 | Invalid bytes as escapes | `crates/editor-text/src/bytes.rs` |
-| The properties, against a `String` | `crates/editor-text/tests/properties.rs` |
+| The properties, against a `String` | `crates/editor-text/tests/properties/` |
 | What a snapshot costs, counted in bytes allocated | `crates/editor-text/tests/snapshot_cost.rs` |
 | The text and the snapshot as handles for Lean | `crates/editor-ffi/src/document.rs`, `crates/editor-ffi/src/snapshot.rs` |
 | The Lean text port, its model, real binding and contract | `lean/Editor/Text.lean`, `lean/Editor/Text/` ([lean-runtime.md](lean-runtime.md)) |

@@ -18,7 +18,7 @@ publish = false
 ropey = { version = "=2.0.0-beta.1", default-features = false, features = ["metric_lines_lf", "metric_utf16", "simd"] }
 
 [dev-dependencies]
-# The property tests (`tests/properties.rs`). Pinned exactly; 1.12.0 was the
+# The property tests (`tests/properties/`). Pinned exactly; 1.12.0 was the
 # newest release on 2026-11-12. Without the default features there is no
 # fork, no timeout and no temporary file; the tests' module docs say how
 # they are kept deterministic.
