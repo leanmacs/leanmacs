@@ -67,9 +67,11 @@ pub(crate) struct Walker<'a, S: Shaper> {
     pub shaper: &'a S,
     /// The text's wrap layer.
     pub wrap: &'a mut WrapLayer<S::Shaped>,
-    /// The spans of a segment's bytes (absolute) in another font, by
-    /// absolute bytes, later over earlier; asked only for the segments the
-    /// walker lays out.
+    /// The base font: the font of every byte `fonts` gives no span for.
+    pub base: FontId,
+    /// The spans of a segment's bytes (absolute) in a font other than the
+    /// base, by absolute bytes, later over earlier; asked only for the
+    /// segments the walker lays out.
     pub fonts: &'a dyn Fn(Range<usize>) -> Vec<(Range<usize>, FontId)>,
     /// Told how each segment was got, by row and segment.
     pub outcome: &'a mut dyn FnMut(usize, usize, Outcome),
@@ -90,7 +92,9 @@ impl<S: Shaper> Walker<'_, S> {
             let spans = (self.fonts)(bytes.clone());
             relative_spans(&spans, &bytes)
         };
-        let (entry, outcome) = self.wrap.entry(self.shaper, row, segment, &fonts)?;
+        let (entry, outcome) = self
+            .wrap
+            .entry(self.shaper, row, segment, &fonts, self.base)?;
         (self.outcome)(row, segment, outcome);
         Some(entry)
     }

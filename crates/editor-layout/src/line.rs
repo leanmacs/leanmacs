@@ -61,21 +61,24 @@ pub struct Source<'a> {
     pub expanded: Expanded,
     /// Whether it is its row's last segment.
     pub last: bool,
-    /// The font of each span of the segment that is not in the default
-    /// font, as bytes relative to the segment's start; later spans are
-    /// over earlier ones.
+    /// The font of each span of the segment that is not in the base font,
+    /// as bytes relative to the segment's start; later spans are over
+    /// earlier ones.
     pub fonts: &'a [(Range<usize>, FontId)],
+    /// The base font: the font of every byte no span of `fonts` covers.
+    pub base: FontId,
 }
 
 /// The font runs of a segment `len` bytes long whose text expanded is
 /// `expanded`, under the spans `fonts` (bytes relative to the segment's
-/// start): the default font wherever no span names another, neighbours of
+/// start): the font `base` wherever no span names another, neighbours of
 /// one font made one run. An empty text has one empty run, in the font of
 /// a span at its start.
 pub fn font_runs(
     expanded: &Expanded,
     len: usize,
     fonts: &[(Range<usize>, FontId)],
+    base: FontId,
 ) -> Vec<FontRun> {
     let text_len = expanded.text().len();
     if len == 0 {
@@ -83,7 +86,7 @@ pub fn font_runs(
             .iter()
             .rev()
             .find(|(bytes, _)| bytes.start == 0)
-            .map_or(FontId::default(), |(_, font)| *font);
+            .map_or(base, |(_, font)| *font);
         return vec![FontRun { bytes: 0..0, font }];
     }
     // The spans in the expanded text, clipped to it.
@@ -109,7 +112,7 @@ pub fn font_runs(
             .iter()
             .rev()
             .find(|(bytes, _)| bytes.start <= start && end <= bytes.end)
-            .map_or(FontId::default(), |(_, font)| *font);
+            .map_or(base, |(_, font)| *font);
         match runs.last_mut() {
             Some(last) if last.font == font => last.bytes.end = end,
             _ => runs.push(FontRun {
@@ -157,7 +160,12 @@ pub fn lay_out<S: Shaper>(
     source: Source<'_>,
     width: Option<f32>,
 ) -> LineEntry<S::Shaped> {
-    let runs = font_runs(&source.expanded, source.bytes.len(), source.fonts);
+    let runs = font_runs(
+        &source.expanded,
+        source.bytes.len(),
+        source.fonts,
+        source.base,
+    );
     let shaped = Arc::new(shaper.shape(&ShapeInput {
         text: source.expanded.text().to_owned(),
         runs: runs.clone(),
@@ -203,13 +211,12 @@ impl<L> LineEntry<L> {
     }
 
     /// Whether the spans `fonts` (bytes relative to the segment's start)
-    /// give the font runs it was shaped with.
-    pub fn shaped_with(&self, fonts: &[(Range<usize>, FontId)]) -> bool {
-        let default = |runs: &[FontRun]| runs.iter().all(|run| run.font == FontId::default());
+    /// over the base font `base` give the font runs it was shaped with.
+    pub fn shaped_with(&self, fonts: &[(Range<usize>, FontId)], base: FontId) -> bool {
         if fonts.is_empty() {
-            return default(&self.runs);
+            return self.runs.iter().all(|run| run.font == base);
         }
-        font_runs(&self.expanded, self.bytes.len(), fonts) == self.runs
+        font_runs(&self.expanded, self.bytes.len(), fonts, base) == self.runs
     }
 
     /// The shaper's generation it was shaped under.
@@ -350,19 +357,46 @@ mod tests {
     use editor_text::Text;
 
     use super::{LineEntry, Source, lay_out};
-    use crate::shaper::FontId;
     use crate::shaper::fake::{CellLine, CellShaper};
+    use crate::shaper::{FontId, FontSpec, Shaper};
     use crate::tabs::{TabSnapshot, expand, row_content};
 
+    /// The font of the family `tall` of [`shaper`], whose cells are 20 by
+    /// 32: font 1, the first the shaper is asked for.
+    const TALL: FontId = FontId(1);
+
+    /// A shaper on cells 10 by 16, with [`TALL`].
+    fn shaper() -> CellShaper {
+        let shaper = CellShaper::new(10.0, 16.0).with_family("tall", 20.0, 32.0);
+        let tall = shaper.font(&FontSpec {
+            family: Some("tall".to_owned()),
+            ..FontSpec::default()
+        });
+        assert_eq!(tall, TALL);
+        shaper
+    }
+
     /// Row `row` of `text` laid out with tabs 4 wide on cells 10 by 16,
-    /// with `fonts`, at `width`.
+    /// with `fonts` over font 0, at `width`.
     fn row_with(
         text: &str,
         row: usize,
         fonts: &[(Range<usize>, FontId)],
         width: Option<f32>,
     ) -> LineEntry<CellLine> {
-        let shaper = CellShaper::new(10.0, 16.0).with_font(FontId(1), 20.0, 32.0);
+        row_in(text, row, fonts, FontId(0), width)
+    }
+
+    /// Row `row` of `text` laid out with tabs 4 wide on cells 10 by 16,
+    /// with `fonts` over the base font `base`, at `width`.
+    fn row_in(
+        text: &str,
+        row: usize,
+        fonts: &[(Range<usize>, FontId)],
+        base: FontId,
+        width: Option<f32>,
+    ) -> LineEntry<CellLine> {
+        let shaper = shaper();
         let tabs = TabSnapshot::new(Text::from(text).snapshot(), 4);
         let content = row_content(tabs.buffer(), row).unwrap();
         let (bytes, expanded) = tabs.segment(row, 0).unwrap();
@@ -374,9 +408,19 @@ mod tests {
                 expanded,
                 last: true,
                 fonts,
+                base,
             },
             width,
         )
+    }
+
+    /// The font of each glyph of the first visual line of `entry`.
+    fn glyph_fonts(entry: &LineEntry<CellLine>) -> Vec<FontId> {
+        entry.lines()[0]
+            .glyphs
+            .iter()
+            .map(|glyph| glyph.font)
+            .collect()
     }
 
     /// Row 0 of `text` in the default font at `width`.
@@ -438,26 +482,53 @@ mod tests {
 
     #[test]
     fn an_empty_row_is_as_tall_as_the_font_of_a_span_at_its_start() {
-        let entry = row_with("ab\n\ncd", 1, &[(0..0, FontId(1))], Some(40.0));
+        let entry = row_with("ab\n\ncd", 1, &[(0..0, TALL)], Some(40.0));
         assert_eq!(lines(&entry), vec![0..0]);
         assert_eq!(entry.lines()[0].height, 32.0);
         // A later span is over an earlier one.
-        let spans = [(0..0, FontId(1)), (0..0, FontId(0))];
+        let spans = [(0..0, TALL), (0..0, FontId(0))];
         let entry = row_with("ab\n\ncd", 1, &spans, Some(40.0));
         assert_eq!(entry.lines()[0].height, 16.0);
     }
 
     #[test]
     fn a_span_in_another_font_is_shaped_in_it() {
-        let entry = row_with("abcd", 0, &[(1..3, FontId(1))], None);
-        let fonts: Vec<FontId> = entry.lines()[0]
-            .glyphs
-            .iter()
-            .map(|glyph| glyph.font)
-            .collect();
-        assert_eq!(fonts, vec![FontId(0), FontId(1), FontId(1), FontId(0)]);
+        let entry = row_with("abcd", 0, &[(1..3, TALL)], None);
+        assert_eq!(glyph_fonts(&entry), vec![FontId(0), TALL, TALL, FontId(0)]);
         assert_eq!(entry.lines()[0].height, 32.0);
         assert_eq!(glyph_x(&entry, 3), 50.0);
+    }
+
+    #[test]
+    fn a_segment_under_a_base_that_is_not_font_0_is_shaped_in_it() {
+        // No span: every byte is in the base font.
+        let entry = row_in("abc", 0, &[], TALL, None);
+        assert_eq!(glyph_fonts(&entry), vec![TALL; 3]);
+        assert_eq!(entry.lines()[0].height, 32.0);
+        assert_eq!(glyph_x(&entry, 2), 40.0);
+        // A span of font 0 is in font 0, and the rest in the base.
+        let entry = row_in("abc", 0, &[(1..2, FontId(0))], TALL, None);
+        assert_eq!(glyph_fonts(&entry), vec![TALL, FontId(0), TALL]);
+        // An empty row is as tall as the base font.
+        let entry = row_in("ab\n\ncd", 1, &[], TALL, Some(40.0));
+        assert_eq!(entry.lines()[0].height, 32.0);
+    }
+
+    #[test]
+    fn a_kept_entry_was_shaped_with_the_same_spans_over_the_same_base_only() {
+        let plain = row_in("abc", 0, &[], FontId(0), None);
+        assert!(plain.shaped_with(&[], FontId(0)));
+        assert!(!plain.shaped_with(&[], TALL));
+        // A span that names the base font changes nothing.
+        assert!(plain.shaped_with(&[(1..2, FontId(0))], FontId(0)));
+        let tall = row_in("abc", 0, &[], TALL, None);
+        assert!(tall.shaped_with(&[], TALL));
+        assert!(!tall.shaped_with(&[], FontId(0)));
+        // The same spans over another base are other runs.
+        let spanned = row_in("abc", 0, &[(1..2, TALL)], FontId(0), None);
+        assert!(spanned.shaped_with(&[(1..2, TALL)], FontId(0)));
+        assert!(!spanned.shaped_with(&[(1..2, TALL)], TALL));
+        assert!(tall.shaped_with(&[(1..2, TALL)], TALL));
     }
 
     #[test]
@@ -518,6 +589,7 @@ mod tests {
                 expanded: expand("a\t", 4),
                 last: false,
                 fonts: &[],
+                base: FontId(0),
             },
             Some(20.0),
         );

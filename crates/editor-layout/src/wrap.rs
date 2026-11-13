@@ -109,22 +109,23 @@ impl<L: ShapedLine> WrapLayer<L> {
     }
 
     /// `row`'s `segment` laid out at the layer's width with the spans
-    /// `fonts` (bytes relative to the segment's start), and how it was
-    /// got: the kept entry if it was shaped with the same font runs under
-    /// `shaper`'s generation and broken at this width; broken again if
-    /// only the width differs; shaped otherwise. `None` when the text has
-    /// no such segment.
+    /// `fonts` (bytes relative to the segment's start) over the base font
+    /// `base`, and how it was got: the kept entry if it was shaped with
+    /// the same font runs under `shaper`'s generation and broken at this
+    /// width; broken again if only the width differs; shaped otherwise.
+    /// `None` when the text has no such segment.
     pub fn entry<S: Shaper<Shaped = L>>(
         &mut self,
         shaper: &S,
         row: usize,
         segment: usize,
         fonts: &[(Range<usize>, FontId)],
+        base: FontId,
     ) -> Option<(Arc<LineEntry<L>>, Outcome)> {
         let generation = shaper.generation();
         if let Some(kept) = self.entries.get(&(row, segment))
             && kept.generation() == generation
-            && kept.shaped_with(fonts)
+            && kept.shaped_with(fonts, base)
         {
             if kept.width() == self.width {
                 return Some((Arc::clone(kept), Outcome::Reused));
@@ -144,6 +145,7 @@ impl<L: ShapedLine> WrapLayer<L> {
                 expanded,
                 last,
                 fonts,
+                base,
             },
             self.width,
         ));
@@ -244,13 +246,13 @@ mod tests {
 
     use super::{Outcome, WrapLayer, WrapPoint};
     use crate::layer::{Bias, Layer, LayerEdit};
-    use crate::shaper::FontId;
     use crate::shaper::fake::{CellLine, CellShaper};
+    use crate::shaper::{FontId, FontSpec, Shaper, Weight};
     use crate::tabs::{TabLayer, TabPoint, TabSnapshot};
 
-    /// Cells 10 by 16, and a font 1 twice that.
+    /// Cells 10 by 16.
     fn shaper() -> CellShaper {
-        CellShaper::new(10.0, 16.0).with_font(FontId(1), 20.0, 32.0)
+        CellShaper::new(10.0, 16.0)
     }
 
     /// A wrap layer over `text` with tabs 4 wide, at `width`.
@@ -260,7 +262,7 @@ mod tests {
 
     /// The outcome of asking `layer` for `row`'s first segment.
     fn outcome(layer: &mut WrapLayer<CellLine>, shaper: &CellShaper, row: usize) -> Outcome {
-        layer.entry(shaper, row, 0, &[]).unwrap().1
+        layer.entry(shaper, row, 0, &[], FontId(0)).unwrap().1
     }
 
     #[test]
@@ -270,7 +272,7 @@ mod tests {
         assert_eq!(outcome(&mut layer, &shaper, 0), Outcome::Shaped);
         assert_eq!(outcome(&mut layer, &shaper, 0), Outcome::Reused);
         assert_eq!(outcome(&mut layer, &shaper, 1), Outcome::Shaped);
-        assert!(layer.entry(&shaper, 2, 0, &[]).is_none());
+        assert!(layer.entry(&shaper, 2, 0, &[], FontId(0)).is_none());
     }
 
     #[test]
@@ -289,20 +291,34 @@ mod tests {
         let shaper = shaper();
         let mut layer = layer("abcdef", None);
         outcome(&mut layer, &shaper, 0);
-        let bold = [(0..2, FontId(1))];
-        assert_eq!(
-            layer.entry(&shaper, 0, 0, &bold).unwrap().1,
-            Outcome::Shaped
-        );
-        assert_eq!(
-            layer.entry(&shaper, 0, 0, &bold).unwrap().1,
-            Outcome::Reused
-        );
+        let bold = [(
+            0..2,
+            shaper.font(&FontSpec {
+                weight: Weight::BOLD,
+                ..FontSpec::default()
+            }),
+        )];
+        let mut with_bold =
+            |shaper: &CellShaper| layer.entry(shaper, 0, 0, &bold, FontId(0)).unwrap().1;
+        assert_eq!(with_bold(&shaper), Outcome::Shaped);
+        assert_eq!(with_bold(&shaper), Outcome::Reused);
         shaper.change_fonts();
-        assert_eq!(
-            layer.entry(&shaper, 0, 0, &bold).unwrap().1,
-            Outcome::Shaped
-        );
+        assert_eq!(with_bold(&shaper), Outcome::Shaped);
+    }
+
+    #[test]
+    fn another_base_font_shapes_again() {
+        let shaper = shaper();
+        let bold = shaper.font(&FontSpec {
+            weight: Weight::BOLD,
+            ..FontSpec::default()
+        });
+        let mut layer = layer("abcdef", None);
+        let mut under = |base: FontId| layer.entry(&shaper, 0, 0, &[], base).unwrap().1;
+        assert_eq!(under(FontId(0)), Outcome::Shaped);
+        assert_eq!(under(bold), Outcome::Shaped);
+        assert_eq!(under(bold), Outcome::Reused);
+        assert_eq!(under(FontId(0)), Outcome::Shaped);
     }
 
     #[test]
@@ -321,7 +337,7 @@ mod tests {
             x,
         };
         assert_eq!(layer.to_layer(tab(4), Bias::Before), None);
-        layer.entry(&shaper, 0, 0, &[]);
+        layer.entry(&shaper, 0, 0, &[], FontId(0));
         assert_eq!(layer.to_layer(tab(3), Bias::Before), Some(wrap(0, 30.0)));
         // A position at a wrap is the start of the later line.
         assert_eq!(layer.to_layer(tab(4), Bias::Before), Some(wrap(1, 0.0)));
@@ -338,7 +354,7 @@ mod tests {
         let mut tabs = TabLayer::new(text.snapshot(), 4);
         let mut layer = WrapLayer::new(tabs.snapshot().clone(), None);
         for row in 0..3 {
-            layer.entry(&shaper, row, 0, &[]);
+            layer.entry(&shaper, row, 0, &[], FontId(0));
         }
         let before = text.snapshot().revision();
         // A line feed in row 1: rows 1 and 2 of the new text are its.
@@ -369,7 +385,10 @@ mod tests {
         assert!(layer.kept(1, 0).is_none());
         assert!(layer.kept(2, 0).is_none());
         // Old row 2, "ef", is row 3 now, and was not shaped again.
-        assert_eq!(layer.entry(&shaper, 3, 0, &[]).unwrap().1, Outcome::Reused);
+        assert_eq!(
+            layer.entry(&shaper, 3, 0, &[], FontId(0)).unwrap().1,
+            Outcome::Reused
+        );
         assert_eq!(layer.len(), 2);
     }
 }

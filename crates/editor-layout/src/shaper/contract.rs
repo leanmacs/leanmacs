@@ -8,10 +8,14 @@
 //!
 //! The rules leave the breaking policy open: a shaper may break at
 //! characters, as the fake does, or at words, and may reorder glyphs for
-//! bidirectional text. They use only the default font, [`FontId`] 0, which
-//! every adapter has.
+//! bidirectional text. They shape only in the default font, [`FontId`] 0,
+//! which every adapter has. Of the other fonts they say only how ids stand
+//! for specs ([`FONTS`]): what a spec's glyphs measure is each adapter's.
 
-use super::{FontId, FontRun, ShapeInput, ShapedLine, Shaper, VisualLine};
+use super::{
+    FontId, FontRun, FontSpec, Length, LineHeight, ShapeInput, ShapedLine, Shaper, Slant,
+    VisualLine, Weight,
+};
 
 /// The visual lines cover the input's bytes in order, with no gap and no
 /// overlap.
@@ -28,8 +32,12 @@ pub const CLUSTERS: &str = "every glyph's cluster lies in its visual line";
 /// Every line has a height.
 pub const HEIGHTS: &str = "every visual line, and the default font's line, is taller than nothing";
 
+/// A font's id stands for its spec.
+pub const FONTS: &str =
+    "the default spec is font 0, equal specs are one font, and different specs are different fonts";
+
 /// Every property, by name.
-pub const PROPERTIES: [&str; 6] = [COVER, FIT, UNBROKEN, KEPT, CLUSTERS, HEIGHTS];
+pub const PROPERTIES: [&str; 7] = [COVER, FIT, UNBROKEN, KEPT, CLUSTERS, HEIGHTS, FONTS];
 
 /// The texts the properties are run over: empty, one character, a long
 /// run of one script, characters of two to four bytes, and words with
@@ -60,7 +68,7 @@ pub fn widths() -> Vec<Option<f32>> {
 /// [`PROPERTIES`].
 pub fn check<S: Shaper>(shaper: &S) -> Vec<&'static str> {
     let mut failed = [false; PROPERTIES.len()];
-    let metrics = shaper.metrics();
+    let metrics = shaper.metrics(FontId::default());
     if !(metrics.line_height > 0.0 && metrics.advance > 0.0) {
         failed[5] = true;
     }
@@ -91,11 +99,67 @@ pub fn check<S: Shaper>(shaper: &S) -> Vec<&'static str> {
             }
         }
     }
+    failed[6] = !fonts_are_told_apart(shaper);
     PROPERTIES
         .iter()
         .zip(failed)
         .filter_map(|(name, failed)| failed.then_some(*name))
         .collect()
+}
+
+/// The specs [`FONTS`] is run over: the default, and one that differs from
+/// it in each field alone. The family is one no adapter need have: a
+/// family it cannot find is still another spec.
+pub fn specs() -> Vec<FontSpec> {
+    let default = FontSpec::default();
+    vec![
+        default.clone(),
+        FontSpec {
+            family: Some("a family of the shaper contract".to_owned()),
+            ..default.clone()
+        },
+        FontSpec {
+            size: Length::pixels(24),
+            ..default.clone()
+        },
+        FontSpec {
+            weight: Weight::BOLD,
+            ..default.clone()
+        },
+        FontSpec {
+            slant: Slant::Italic,
+            ..default.clone()
+        },
+        FontSpec {
+            slant: Slant::Oblique,
+            ..default.clone()
+        },
+        FontSpec {
+            line_height: LineHeight::Multiple(96),
+            ..default.clone()
+        },
+        FontSpec {
+            line_height: LineHeight::Pixels(Length::pixels(24)),
+            ..default
+        },
+    ]
+}
+
+/// Whether `shaper` gives the default spec font 0, each of [`specs`] one
+/// id however often and in whatever order it is asked, and no two of them
+/// the same id.
+fn fonts_are_told_apart<S: Shaper>(shaper: &S) -> bool {
+    let specs = specs();
+    let first: Vec<FontId> = specs.iter().map(|spec| shaper.font(spec)).collect();
+    let again: Vec<FontId> = specs.iter().rev().map(|spec| shaper.font(spec)).collect();
+    let distinct = first
+        .iter()
+        .enumerate()
+        .all(|(index, id)| !first[..index].contains(id));
+    shaper.font(&FontSpec::default()) == FontId::default()
+        && first.first() == Some(&FontId::default())
+        && first.iter().eq(again.iter().rev())
+        && distinct
 }
 
 /// Whether `lines` cover `0..len` in order, with no gap and no overlap,
@@ -128,9 +192,9 @@ fn fits(lines: &[VisualLine], width: f32) -> bool {
 mod tests {
     use std::sync::Mutex;
 
-    use super::{CLUSTERS, COVER, FIT, HEIGHTS, KEPT, UNBROKEN, check};
+    use super::{CLUSTERS, COVER, FIT, FONTS, HEIGHTS, KEPT, UNBROKEN, check};
     use crate::shaper::fake::{CellLine, CellShaper};
-    use crate::shaper::{Metrics, ShapeInput, ShapedLine, Shaper, VisualLine};
+    use crate::shaper::{FontId, FontSpec, Metrics, ShapeInput, ShapedLine, Shaper, VisualLine};
 
     /// How a [`Wrong`] shaper breaks the contract.
     #[derive(Debug, Clone, Copy, PartialEq)]
@@ -147,6 +211,8 @@ mod tests {
         ShiftsClusters,
         /// Its lines have no height.
         Flat,
+        /// Every spec is font 0.
+        OneFont,
     }
 
     /// A shaper that is the fake with one fault.
@@ -206,8 +272,15 @@ mod tests {
             0
         }
 
-        fn metrics(&self) -> Metrics {
-            self.fake.metrics()
+        fn font(&self, spec: &FontSpec) -> FontId {
+            match self.fault {
+                Fault::OneFont => FontId::default(),
+                _ => self.fake.font(spec),
+            }
+        }
+
+        fn metrics(&self, font: FontId) -> Metrics {
+            self.fake.metrics(font)
         }
     }
 
@@ -247,5 +320,66 @@ mod tests {
     #[test]
     fn a_shaper_with_flat_lines_has_no_heights() {
         assert_eq!(failures(Fault::Flat), vec![HEIGHTS]);
+    }
+
+    #[test]
+    fn a_shaper_whose_every_spec_is_font_0_does_not_tell_fonts_apart() {
+        assert_eq!(failures(Fault::OneFont), vec![FONTS]);
+    }
+
+    /// A shaper that is the fake with its font ids changed by `id`, which
+    /// is given the spec and the fake's id for it.
+    struct Renumbered<F> {
+        fake: CellShaper,
+        id: F,
+    }
+
+    impl<F: Fn(&FontSpec, FontId) -> FontId> Shaper for Renumbered<F> {
+        type Shaped = CellLine;
+
+        fn shape(&self, input: &ShapeInput) -> CellLine {
+            self.fake.shape(input)
+        }
+
+        fn generation(&self) -> u64 {
+            0
+        }
+
+        fn font(&self, spec: &FontSpec) -> FontId {
+            (self.id)(spec, self.fake.font(spec))
+        }
+
+        fn metrics(&self, _font: FontId) -> Metrics {
+            self.fake.metrics(FontId::default())
+        }
+    }
+
+    #[test]
+    fn a_shaper_that_gives_one_spec_two_ids_does_not_tell_fonts_apart() {
+        // The default spec is font 0, and any other gets a new id each
+        // time it is asked for.
+        let asked = Mutex::new(0);
+        let forgetful = Renumbered {
+            fake: CellShaper::new(10.0, 16.0),
+            id: |spec: &FontSpec, _| {
+                if *spec == FontSpec::default() {
+                    return FontId(0);
+                }
+                let mut asked = asked.lock().unwrap();
+                *asked += 1;
+                FontId(*asked)
+            },
+        };
+        assert_eq!(check(&forgetful), vec![FONTS]);
+    }
+
+    #[test]
+    fn a_shaper_whose_default_spec_is_not_font_0_fails_the_font_rule() {
+        // One id for each spec, each one more than the fake's.
+        let shifted = Renumbered {
+            fake: CellShaper::new(10.0, 16.0),
+            id: |_: &FontSpec, id: FontId| FontId(id.0 + 1),
+        };
+        assert_eq!(check(&shifted), vec![FONTS]);
     }
 }

@@ -14,9 +14,13 @@
 //!
 //! # Where an addition goes
 //!
-//! - **A font attribute** (family, weight, size from a face): the faces of
-//!   phase 2 resolve to a [`FontId`] per [`FontRun`]; what a font id stands
-//!   for is the adapter's table. Nothing here grows.
+//! - **A font attribute** (a family, a size, a weight, a slant, a line
+//!   height; later a stretch or a variation axis): a field of [`FontSpec`],
+//!   the port's term for a font. Layout asks the shaper for the
+//!   [`FontId`] of a spec ([`Shaper::font`]) and names a run's font by
+//!   it; the table from an id to its spec is the adapter's. Only what changes a glyph or a line's height is a font
+//!   attribute: colours, underlines and strike-through are paint, and never
+//!   reach a shaper.
 //! - **A shaping feature** (an OpenType feature, a language): data on
 //!   [`ShapeInput`] or on [`FontRun`], read by the adapter.
 //! - **A metric layout needs** of a font: a field of [`Metrics`].
@@ -32,10 +36,99 @@ use std::ops::Range;
 pub mod contract;
 pub mod fake;
 
-/// Which font: a number the shaper's adapter gives meaning to. Font 0 is
-/// the default font.
+/// Which font: a number the shaper's adapter gives a [`FontSpec`]
+/// ([`Shaper::font`]). Font 0 is the default font, [`FontSpec::default`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
 pub struct FontId(pub u32);
+
+/// A length in 64ths of a physical pixel: a whole number, so it is exact as
+/// an `f32` and can be hashed and compared.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct Length(pub u32);
+
+impl Length {
+    /// `pixels` whole pixels.
+    pub const fn pixels(pixels: u32) -> Self {
+        Self(pixels.saturating_mul(64))
+    }
+
+    /// The length in pixels.
+    pub fn as_pixels(self) -> f32 {
+        self.0 as f32 / 64.0
+    }
+}
+
+/// The size of a font whose face sets none: 16 pixels.
+pub const BASE_SIZE: Length = Length::pixels(16);
+
+/// A font's weight, from 1 to 1000: 400 is normal and 700 bold.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct Weight(pub u16);
+
+impl Weight {
+    /// The normal weight.
+    pub const NORMAL: Self = Self(400);
+    /// The bold weight.
+    pub const BOLD: Self = Self(700);
+}
+
+/// A font's slant.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub enum Slant {
+    /// Upright.
+    #[default]
+    Upright,
+    /// The family's italic design.
+    Italic,
+    /// The upright design, slanted.
+    Oblique,
+}
+
+/// How tall the lines of a font are.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum LineHeight {
+    /// A multiple of the font's own line height at its size, in 64ths: 64
+    /// is the font's own.
+    Multiple(u32),
+    /// A height in pixels, whatever the font's own.
+    Pixels(Length),
+}
+
+impl LineHeight {
+    /// The font's own line height.
+    pub const OWN: Self = Self::Multiple(64);
+}
+
+/// A font, in the port's terms: what a run of text is shaped in. Two runs
+/// are in one font exactly when their specs are equal. The line height is
+/// part of it, since it changes how tall a line of the font is.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct FontSpec {
+    /// The family's name; `None` is the adapter's default family.
+    pub family: Option<String>,
+    /// The size.
+    pub size: Length,
+    /// The weight.
+    pub weight: Weight,
+    /// The slant.
+    pub slant: Slant,
+    /// The line height.
+    pub line_height: LineHeight,
+}
+
+/// The default font, font 0: the default family at [`BASE_SIZE`], of
+/// normal weight, upright, with lines of its own height.
+impl Default for FontSpec {
+    fn default() -> Self {
+        Self {
+            family: None,
+            size: BASE_SIZE,
+            weight: Weight::NORMAL,
+            slant: Slant::Upright,
+            line_height: LineHeight::OWN,
+        }
+    }
+}
 
 /// A run of the input's bytes shaped in one font.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -87,7 +180,7 @@ pub struct VisualLine {
     pub baseline: f32,
 }
 
-/// What layout needs of the default font before any text is shaped: to
+/// What layout needs of a font before any text is shaped in it: to
 /// estimate a row it has not laid out, and to size a cursor where there is
 /// no glyph.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -120,6 +213,11 @@ pub trait Shaper {
     /// shapes again every line it shaped under another generation.
     fn generation(&self) -> u64;
 
-    /// The default font's metrics.
-    fn metrics(&self) -> Metrics;
+    /// The id of the font `spec`: equal specs have one id and different
+    /// specs different ids, for the shaper's life, and
+    /// [`FontSpec::default`] is font 0.
+    fn font(&self, spec: &FontSpec) -> FontId;
+
+    /// The metrics of `font`, an id [`Shaper::font`] gave or font 0.
+    fn metrics(&self, font: FontId) -> Metrics;
 }

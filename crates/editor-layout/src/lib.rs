@@ -55,7 +55,7 @@ use crate::cache::{Counters, Texts, state};
 use crate::decoration::{DecorationSource, FaceTable, SELECTION_FACE, fonts_of};
 use crate::query::{Moved, QueryError, RowRange, Walker};
 use crate::scene::{TextKey, TextRef};
-use crate::shaper::Shaper;
+use crate::shaper::{FontId, Shaper};
 use crate::tabs::{DEFAULT_TAB_WIDTH, row_content, segment_count};
 use crate::wrap::Outcome;
 
@@ -130,7 +130,7 @@ impl<S: Shaper> Layout<S> {
             .texts
             .get(&text.key)
             .filter(|state| state.wrap.tabs().buffer().revision() == snapshot.revision());
-        let line_height = self.shaper.metrics().line_height;
+        let line_height = self.shaper.metrics(FontId::default()).line_height;
         let mut height = 0.0;
         for row in 0..snapshot.row_count() {
             let Some(content) = row_content(snapshot, row) else {
@@ -206,6 +206,7 @@ impl<S: Shaper> Layout<S> {
         let answer = ask(&mut Walker {
             shaper: &self.shaper,
             wrap: &mut state.wrap,
+            base: FontId::default(),
             fonts: &fonts,
             outcome: &mut |row, segment, outcome| {
                 seen.entry((row, segment)).or_insert(outcome);

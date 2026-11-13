@@ -13,6 +13,7 @@
 use std::fmt::Debug;
 
 use editor_layout::layer::{Bias, Layer};
+use editor_layout::shaper::FontId;
 use editor_layout::shaper::fake::CellShaper;
 use editor_layout::tabs::{SEGMENT_BYTES, TabLayer};
 use editor_layout::wrap::WrapLayer;
@@ -135,7 +136,8 @@ fn a_position_converted_through_tabs_and_wrap_and_back_is_the_position() {
             let mut wrap = WrapLayer::new(tabs.snapshot().clone(), width);
             for offset in positions(&snapshot) {
                 let tab = tabs.to_layer(offset, Bias::Before).unwrap();
-                wrap.entry(&shaper, tab.row, tab.segment, &[]).unwrap();
+                wrap.entry(&shaper, tab.row, tab.segment, &[], FontId::default())
+                    .unwrap();
                 let point = wrap
                     .to_layer(tab, Bias::Before)
                     .ok_or_else(|| TestCaseError::fail(format!("no wrap point at {offset}")))?;

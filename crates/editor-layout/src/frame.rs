@@ -45,7 +45,7 @@ use crate::decoration::{
 };
 use crate::query::{Visual, Walker};
 use crate::scene::{CursorShape, Rect, Scene, TextKey, View, ViewId};
-use crate::shaper::{Shaper, VisualLine};
+use crate::shaper::{FontId, Shaper, VisualLine};
 use crate::tabs::boundary_at_or_before;
 use crate::wrap::Outcome;
 
@@ -284,6 +284,7 @@ impl<S: Shaper> Layout<S> {
         let mut walker = Walker {
             shaper: &self.shaper,
             wrap: &mut state.wrap,
+            base: FontId::default(),
             fonts: &fonts,
             outcome: &mut |row, segment, outcome| {
                 seen.entry((row, segment)).or_insert(outcome);
@@ -360,7 +361,7 @@ impl<S: Shaper> Layout<S> {
         let to = snapshot
             .row_range(last.row)
             .map_or(snapshot.len(), |row| row.end);
-        let advance = self.shaper.metrics().advance;
+        let advance = self.shaper.metrics(FontId::default()).advance;
         for range in selections.iter().flat_map(|selection| selection.ranges()) {
             let head = range.head;
             if shown.is_empty() || head < from || head > to {
@@ -446,13 +447,22 @@ mod tests {
         Cursor, CursorShape, Decoration, Rect, Scene, TextKey, TextRef, View, ViewId,
     };
     use crate::shaper::fake::CellShaper;
-    use crate::shaper::{FontId, VisualLine};
+    use crate::shaper::{FontSpec, Shaper, VisualLine};
 
-    /// A layout on cells 10 by 16, with a font 1 of lines 32 tall that the
+    /// The default font in the family `name`.
+    fn family(name: &str) -> FontSpec {
+        FontSpec {
+            family: Some(name.to_owned()),
+            ..FontSpec::default()
+        }
+    }
+
+    /// A layout on cells 10 by 16, with a family of lines 32 tall that the
     /// face `tall` is in.
     fn layout() -> Layout<CellShaper> {
-        let mut layout = Layout::new(CellShaper::new(10.0, 16.0).with_font(FontId(1), 10.0, 32.0));
-        layout.faces_mut().set_font("tall", FontId(1));
+        let mut layout = Layout::new(CellShaper::new(10.0, 16.0).with_family("tall", 10.0, 32.0));
+        let tall = layout.shaper().font(&family("tall"));
+        layout.faces_mut().set_font("tall", tall);
         layout
     }
 
@@ -1047,8 +1057,9 @@ mod tests {
     #[test]
     fn a_cursor_is_as_wide_as_the_glyph_it_is_on() {
         // The face `wide` is in a font whose glyphs are 20 across.
-        let mut layout = Layout::new(CellShaper::new(10.0, 16.0).with_font(FontId(1), 20.0, 16.0));
-        layout.faces_mut().set_font("wide", FontId(1));
+        let mut layout = Layout::new(CellShaper::new(10.0, 16.0).with_family("wide", 20.0, 16.0));
+        let wide = layout.shaper().font(&family("wide"));
+        layout.faces_mut().set_font("wide", wide);
         let mut area = |head: usize| {
             let mut view = view("abc", 10, 16, 0, &[(head, head)]);
             view.decorations = vec![Decoration {
