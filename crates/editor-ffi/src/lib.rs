@@ -81,19 +81,30 @@
 //! [`transaction::RawApplied`]); a patch and a trace out, as words
 //! ([`log::editor_ffi_document_changes_since`],
 //! [`log::editor_ffi_document_trace`]); and a refusal as a `bool`
-//! ([`log::editor_ffi_document_forget`]). In words, a length or an offset
-//! the other side cannot hold is sent as the largest it can, which no text
-//! accepts, so it too is refused and never cut down. Tests: the unit tests
-//! in `text.rs`, `document.rs`, `snapshot.rs`, `words.rs`,
-//! `transaction.rs` and `log.rs`; the tag tests in `events.rs`;
+//! ([`log::editor_ffi_document_forget`]). A document's markers are words in
+//! both directions: a marker in, to
+//! [`marker::editor_ffi_document_mark`], with its id in
+//! [`marker::RawMarked`], and to [`marker::editor_ffi_document_place`]; a
+//! marker out, from [`marker::editor_ffi_document_marker`]; and a selection
+//! in and what it covers out, both as words, in
+//! [`snapshot::editor_ffi_snapshot_extents`]. A refusal with more than one
+//! reason is a status, as a number ([`marker::MarkStatus`]). In words, a
+//! length or an offset the other side cannot hold is sent as the largest it
+//! can, which no text accepts, so it too is refused and never cut down.
+//! Tests: the unit tests in `text.rs`, `document.rs`, `snapshot.rs`,
+//! `words.rs`, `transaction.rs`, `log.rs` and `marker.rs`; the tag tests in
+//! `events.rs`;
 //! `find_fills_the_range_it_found_and_reports_whether_it_found_one` and the
 //! document test in `tests/c_api.rs`; the snapshot test in
 //! `tests/snapshot.rs`;
 //! `a_transaction_is_applied_and_the_log_is_read_through_c` in
-//! `tests/log.rs`, an integration test of its own for the reason
+//! `tests/log.rs` and
+//! `a_document_is_marked_and_a_selections_extents_are_read_through_c` in
+//! `tests/markers.rs`, integration tests of their own for the reason
 //! `tests/snapshot.rs` is one; the `find` and event checks of `ffi-test`
-//! (`dataChecks`), its document checks (`documentChecks`) and its snapshot
-//! checks (`snapshotChecks`).
+//! (`dataChecks`), its document checks (`documentChecks`), its snapshot
+//! checks (`snapshotChecks`), its transaction checks (`transactionChecks`)
+//! and its marker checks (`markerChecks`).
 //!
 //! ## The event queues
 //!
@@ -264,6 +275,7 @@ pub mod document;
 pub mod events;
 pub mod log;
 pub mod main_thread;
+pub mod marker;
 pub mod snapshot;
 pub mod text;
 pub mod timers;

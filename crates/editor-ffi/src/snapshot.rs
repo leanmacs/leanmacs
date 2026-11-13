@@ -16,13 +16,20 @@
 //! Offsets cross as `usize`, as a document's do; rows and columns as `u64`,
 //! in and out. A row or a column that no `usize` holds is refused, never
 //! cut down.
+//!
+//! What a selection covers in the snapshot's text
+//! ([`editor_ffi_snapshot_extents`]) is asked and answered in words; the
+//! module docs of [`crate::marker`] give both layouts.
 
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use editor_text::{Point, PointUtf16};
 
 use crate::document::{Document, RawText};
+use crate::log::RawWords;
+use crate::marker::{self, MarkStatus};
 use crate::text;
+use crate::transaction::Undecoded;
 
 /// A document's text as it was when the snapshot was taken.
 pub struct Snapshot(editor_text::Snapshot);
@@ -82,6 +89,22 @@ impl Snapshot {
             ColumnUnit::Utf16 => self.0.point_utf16_to_offset(PointUtf16::new(row, column))?,
         };
         Some(offset as u64)
+    }
+
+    /// What the selection `words` spell
+    /// ([`marker::decode_selection`]) covers in the text
+    /// ([`editor_text::Snapshot::extents`]), as words
+    /// ([`marker::extent_words`]). Refused as
+    /// [`MarkStatus::Unreadable`] when the words cannot be read, and as
+    /// [`MarkStatus::BadSelection`] when they spell no selection or the
+    /// text has no extents for the one they spell.
+    pub fn extents_words(&self, words: &[u8]) -> Result<Vec<u8>, MarkStatus> {
+        let selection = marker::decode_selection(words).map_err(|undecoded| match undecoded {
+            Undecoded::Unreadable => MarkStatus::Unreadable,
+            Undecoded::NotASelection => MarkStatus::BadSelection,
+        })?;
+        let extents = self.0.extents(&selection).ok_or(MarkStatus::BadSelection)?;
+        Ok(marker::extent_words(&extents))
     }
 }
 
@@ -230,6 +253,34 @@ pub unsafe extern "C" fn editor_ffi_snapshot_offset_of(
     true
 }
 
+/// [`Snapshot::extents_words`] for C: fills `out` with what the selection
+/// the `len` bytes at `words` spell covers in `snapshot`, as words, and the
+/// status [`MarkStatus::Done`]; or with no words and the status that says
+/// why there are none.
+///
+/// # Safety
+///
+/// `snapshot` came from [`editor_ffi_document_snapshot`] and has not been
+/// freed; `words` points to `len` readable bytes; and `out` points to a
+/// writable [`RawWords`].
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn editor_ffi_snapshot_extents(
+    snapshot: *const Snapshot,
+    words: *const u8,
+    len: usize,
+    out: *mut RawWords,
+) {
+    // SAFETY: the caller guarantees the pointer and the length.
+    let words = unsafe { crate::words::borrow(words, len) };
+    // SAFETY: the caller guarantees `snapshot` points to a live snapshot.
+    let raw = match unsafe { &*snapshot }.extents_words(words) {
+        Ok(extents) => RawWords::with_status(MarkStatus::Done as u64, extents),
+        Err(status) => RawWords::with_status(status as u64, Vec::new()),
+    };
+    // SAFETY: the caller guarantees `out` is writable.
+    unsafe { out.write(raw) };
+}
+
 /// Frees `snapshot`.
 ///
 /// # Safety
@@ -255,6 +306,7 @@ pub extern "C" fn editor_ffi_snapshot_live() -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::words::tests::buffer;
 
     /// A snapshot of a document holding `text`.
     fn snapshot(text: &str) -> Snapshot {
@@ -288,6 +340,59 @@ mod tests {
         assert_eq!(snapshot.point_of(ColumnUnit::Utf16, 6), Some(units));
         assert_eq!(snapshot.offset_of(ColumnUnit::Bytes, 1, 4), Some(6));
         assert_eq!(snapshot.offset_of(ColumnUnit::Utf16, 1, 2), Some(6));
+    }
+
+    #[test]
+    fn the_extents_of_a_selection_are_the_texts_written_as_words() {
+        // Characters of one, two and four bytes, and a line break of each
+        // kind.
+        const TEXT: &str = "héllo\r\n😀 wörld\nend";
+        let snapshot = snapshot(TEXT);
+        let text = Document::new(TEXT).snapshot();
+
+        // A selection of each shape: what each covers is the text's rule,
+        // so each answer is compared with what the text itself answers.
+        for words in [
+            &[0, 0, 2, 1, 3, 12, 8][..],
+            &[1, 1, 2, 0, 0, 5, 3],
+            &[2, 0, 1, 4, 13],
+            &[3, 0, 1, 1, 20],
+        ] {
+            let words = buffer(words);
+            let selection = marker::decode_selection(&words).expect("a selection");
+            let extents = text.extents(&selection).expect("a selection that fits");
+
+            assert_eq!(
+                snapshot.extents_words(&words),
+                Ok(marker::extent_words(&extents)),
+                "{selection:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_selection_with_no_extents_is_refused_as_its_status() {
+        let snapshot = snapshot("héllo");
+
+        // Words that cannot be read.
+        assert_eq!(
+            snapshot.extents_words(&buffer(&[4, 0, 1, 0, 0])),
+            Err(MarkStatus::Unreadable)
+        );
+        assert_eq!(snapshot.extents_words(&[]), Err(MarkStatus::Unreadable));
+        // Words that spell no selection.
+        assert_eq!(
+            snapshot.extents_words(&buffer(&[1, 0, 0])),
+            Err(MarkStatus::BadSelection)
+        );
+        // A selection the text has no extents for: an end inside "é".
+        let astray = buffer(&[1, 0, 1, 0, 2]);
+        let selection = marker::decode_selection(&astray).expect("a selection");
+        assert_eq!(Document::new("héllo").snapshot().extents(&selection), None);
+        assert_eq!(
+            snapshot.extents_words(&astray),
+            Err(MarkStatus::BadSelection)
+        );
     }
 
     #[test]

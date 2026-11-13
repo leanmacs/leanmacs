@@ -100,6 +100,18 @@ pub(crate) fn shape_of(word: u64) -> Option<Shape> {
     }
 }
 
+/// The word that stands for `shape`, as [`shape_of`] reads it. Every shape
+/// must cross, so this names every one: a new shape must be given a word
+/// here, and in [`shape_of`], before it can.
+pub(crate) fn shape_word(shape: Shape) -> u64 {
+    match shape {
+        Shape::Exclusive => 0,
+        Shape::Inclusive => 1,
+        Shape::Line => 2,
+        Shape::Block => 3,
+    }
+}
+
 /// The change set and the two selections `words` and `inserted` spell.
 /// `None` when they cannot be read.
 fn read(

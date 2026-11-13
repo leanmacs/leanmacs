@@ -51,12 +51,16 @@ impl LogStatus {
 /// An answer in words: one record, filled in one call.
 #[repr(C)]
 pub struct RawWords {
-    /// A [`LogStatus`], as its number.
+    /// How the question ended, as a number: 0 answered, and anything else
+    /// the refusal of the function that filled the record (a
+    /// [`LogStatus`] for the log's, a
+    /// [`MarkStatus`](crate::marker::MarkStatus) for a marker's and for
+    /// extents).
     pub status: u64,
     /// The words: a buffer of `len` bytes, owned by the caller until it is
     /// handed back with
     /// [`editor_ffi_text_free`](crate::text::editor_ffi_text_free). Empty
-    /// unless the status is [`LogStatus::Answered`].
+    /// unless the status is 0.
     pub words: *mut u8,
     /// The length of `words` in bytes.
     pub len: usize,
@@ -65,12 +69,14 @@ pub struct RawWords {
 impl RawWords {
     /// The record for `status` with `words` as its answer.
     fn new(status: LogStatus, words: Vec<u8>) -> Self {
+        Self::with_status(status as u64, words)
+    }
+
+    /// The record for the status `status`, as its number, with `words` as
+    /// its answer.
+    pub(crate) fn with_status(status: u64, words: Vec<u8>) -> Self {
         let (words, len) = words::lend(words);
-        Self {
-            status: status as u64,
-            words,
-            len,
-        }
+        Self { status, words, len }
     }
 }
 
