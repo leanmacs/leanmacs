@@ -11,6 +11,7 @@ import Editor.Job.Jobs
 import Editor.Job.Model
 import Editor.Job.Pool
 import Editor.Scene
+import Editor.State
 import Editor.Text.Contract
 import Editor.UndoTree.Cases
 import Editor.WindowCheck
@@ -46,6 +47,11 @@ model side by side (`EditorModel`). `commandPortChecks` pin what that runner
 does with each sub-port's requests: a text program lifted into a command
 does what it does alone, the display answers from the text model's
 snapshots, and a display refusal is the text port's of the same name.
+
+The editor state (`Editor/State.lean`) is checked on the text model
+(`stateChecks`): the initial state, that a split tree's views tile the
+frame, and the two layout operations, each refused with the state as it
+was when it would break an invariant.
 
 The undo tree (`Editor/UndoTree.lean`) is plain Lean over the text port, so
 its cases (`Editor/UndoTree/Cases.lean`) are properties of the same kind and
@@ -3161,6 +3167,179 @@ def originChecks : List Check :=
               "bad selection", "unknown revision", "forgotten revision", "no such marker",
               "no inverse", "not in state"]) }]
 
+/-- The rectangle of a frame of `size`, from its top left. -/
+def frameRect (size : Size) : Rect :=
+  { x := 0, y := 0, width := size.width, height := size.height }
+
+/-- The area of `rect`. -/
+def area (rect : Rect) : Nat :=
+  rect.width * rect.height
+
+/-- The area two rectangles share: none when they do not overlap. -/
+def shared (first second : Rect) : Nat :=
+  (min (first.x + first.width) (second.x + second.width) - max first.x second.x) *
+    (min (first.y + first.height) (second.y + second.height) - max first.y second.y)
+
+/-- Whether no two of `rects` share any area. -/
+def disjoint : List Rect → Bool
+  | [] => true
+  | rect :: rest => rest.all (shared rect · == 0) && disjoint rest
+
+/-- Whether `parts` tile `whole`: each is inside it, no two share any area,
+and their areas sum to its area. -/
+def tiles (whole : Rect) (parts : Array Rect) : Bool :=
+  parts.all
+      (fun part =>
+        whole.x ≤ part.x && whole.y ≤ part.y && part.x + part.width ≤ whole.x + whole.width &&
+          part.y + part.height ≤ whole.y + whole.height) &&
+    disjoint parts.toList &&
+    (parts.map area).foldl (· + ·) 0 == area whole
+
+/-- Split trees of one to four windows, with the minibuffer's place and
+without it. -/
+def sampleTrees : List Split :=
+  let window (index : Nat) : Split := .window ⟨index⟩
+  [window 0, .split .rows (window 0) .minibuffer, .split .columns (window 0) (window 1),
+    .split .rows (.split .columns (window 0) (window 1)) .minibuffer,
+    .split .rows (window 0) (.split .columns (window 1) (window 2)),
+    .split .columns (.split .rows (window 0) .minibuffer) (.split .rows (window 1) (window 2)),
+    .split .rows (.split .columns (window 0) (window 1)) (.split .columns (window 2) (window 3)),
+    .split .rows (.split .columns (window 0) (.split .rows (window 1) (window 2)))
+      (.split .rows (window 3) .minibuffer)]
+
+/-- Frame sizes for the tiling checks: even, odd, small and zero. -/
+def sampleSizes : List Size :=
+  [⟨640, 480⟩, ⟨641, 479⟩, ⟨7, 3⟩, ⟨1, 1⟩, ⟨0, 0⟩, ⟨0, 480⟩, ⟨640, 0⟩]
+
+/-- The initial state at 640 by 480 with two more windows over its one
+buffer, each with markers of its own:
+
+```
++---------+---------+
+| view 0  | view 1  |
++---------+---------+
+|      view 2       |
++-------------------+
+   (the minibuffer's place, with no space)
+```
+
+View 0 is focused. -/
+def threeWindows : TextM EditorState := do
+  let state ← EditorState.initial ⟨640, 480⟩
+  let some buffer := state.buffers[0]? | throw .noSuchText
+  let more ←
+    #[1, 2].mapM fun index => do
+        let scroll ← buffer.text.mark (.anchor { offset := 0, bias := .before })
+        let selection ← buffer.text.mark (.selection { ranges := #[⟨0, 0⟩] })
+        return ({ id := ⟨index⟩, buffer := ⟨0⟩, scroll, selection } : Window)
+  return { state with
+      windows := state.windows ++ more
+      frame :=
+        { state.frame with
+          tree :=
+            .split .rows (.split .columns (.window ⟨0⟩) (.window ⟨1⟩))
+              (.split .rows (.window ⟨2⟩) .minibuffer) } }
+
+/-- The value of a program over the text port run on a text model with no
+text; `none` if it was refused. -/
+def onTextModel {α : Type} (program : TextM α) : Option α :=
+  match (program.runModel {}).1 with
+  | .ok value => some value
+  | .error _ => none
+
+/-- The views of `state`'s frame and their rectangles, in drawing order. -/
+def laidOut (state : EditorState) : Array (ViewId × Rect) :=
+  state.frame.tree.rects (frameRect state.frame.size)
+
+/-- The checks of the editor state and its layout invariants
+(`Editor/State.lean`), on the text model. -/
+def stateChecks : List Check :=
+  [{  name :=
+        "the initial state is well formed: one scratch buffer, one window on it, the minibuffer's place, and the focus on view 0"
+      run :=
+        pure <|
+          match onTextModel (EditorState.initial ⟨640, 480⟩) with
+          | none => false
+          | some state =>
+            state.wellFormed && state.buffers.map (·.name) == #["scratch"] &&
+              state.windows.map (·.id) == #[⟨0⟩] &&
+              state.frame.tree == .split .rows (.window ⟨0⟩) .minibuffer &&
+              state.frame.focused == ⟨0⟩ &&
+              state.frame.hasFocus &&
+              state.echo == "" &&
+              state.preedit == none },
+    { name :=
+        "the views of a split tree tile the frame: each inside it, no two overlapping, their areas summing to its, for one to four windows, with and without the minibuffer's place, at even, odd and zero sizes"
+      run :=
+        pure <|
+          sampleTrees.all fun tree =>
+            sampleSizes.all fun size =>
+              let laid := tree.rects (frameRect size)
+              tiles (frameRect size) (laid.map (·.2)) && laid.map (·.1) == tree.windows },
+    { name := "removing the only window is refused with onlyWindow, and the state is as it was"
+      run :=
+        pure <|
+          match onTextModel (EditorState.initial ⟨640, 480⟩) with
+          | none => false
+          | some state =>
+            match state.removeWindow ⟨0⟩ with
+            | (.error .onlyWindow, after) => after == state
+            | _ => false },
+    { name :=
+        "focusing a window that is not in the tree is refused with noSuchWindow, and the state is as it was; so is removing one"
+      run :=
+        pure <|
+          match onTextModel threeWindows with
+          | none => false
+          | some state =>
+            (match state.focusWindow ⟨7⟩ with
+              | (.error (.noSuchWindow id), after) => id == ⟨7⟩ && after == state
+              | _ => false) &&
+              match state.removeWindow ⟨7⟩ with
+              | (.error (.noSuchWindow id), after) => id == ⟨7⟩ && after == state
+              | _ => false },
+    { name :=
+        "removing a window of three keeps the state well formed, gives its space to its sibling and hands back the window; the focus moves to the first window of what took its place, or of the tree"
+      run :=
+        pure <|
+          match onTextModel threeWindows with
+          | none => false
+          | some state =>
+            let top := { x := 0, y := 0, width := 640, height := 240 }
+            let bottom := { x := 0, y := 240, width := 640, height := 240 }
+            let (_, onTwo) := state.focusWindow ⟨2⟩
+            state.wellFormed &&
+              (match state.removeWindow ⟨0⟩ with
+              | (.ok removed, after) =>
+                removed.id == ⟨0⟩ && after.wellFormed && after.frame.focused == ⟨1⟩ &&
+                  after.windows.map (·.id) == #[⟨1⟩, ⟨2⟩] &&
+                  laidOut after == #[(⟨1⟩, top), (⟨2⟩, bottom)]
+              | _ => false) &&
+              (match state.removeWindow ⟨1⟩ with
+              | (.ok _, after) =>
+                after.wellFormed && after.frame.focused == ⟨0⟩ &&
+                  laidOut after == #[(⟨0⟩, top), (⟨2⟩, bottom)]
+              | _ => false) &&
+              onTwo.frame.focused == ⟨2⟩ &&
+              match onTwo.removeWindow ⟨2⟩ with
+              | (.ok _, after) =>
+                after.wellFormed && after.frame.focused == ⟨0⟩ &&
+                  laidOut after ==
+                    #[(⟨0⟩, { x := 0, y := 0, width := 320, height := 480 }),
+                      (⟨1⟩, { x := 320, y := 0, width := 320, height := 480 })]
+              | _ => false },
+    { name := "focusing a window in the tree sets the frame's focus and changes nothing else"
+      run :=
+        pure <|
+          match onTextModel threeWindows with
+          | none => false
+          | some state =>
+            match state.focusWindow ⟨1⟩ with
+            | (.ok (), after) =>
+              after.frame.focused == ⟨1⟩ &&
+                after == { state with frame := { state.frame with focused := ⟨1⟩ } }
+            | _ => false }]
+
 /-- Every check, in the order they run.
 
 The order matters where the process's one pool is measured. `poolChecks` run
@@ -3185,7 +3364,8 @@ def checks : List Check :=
     sceneChecks ++
     displayChecks ++
     commandPortChecks ++
-    originChecks
+    originChecks ++
+    stateChecks
 
 /-- Runs `checks` and returns the names of those that failed. A check that
 throws has failed, and its error is reported with its name. -/
