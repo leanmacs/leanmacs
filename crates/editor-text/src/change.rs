@@ -5,6 +5,8 @@
 
 use std::ops::Range;
 
+use crate::rope::Rope;
+
 /// One step of a change set's walk over the text. Lengths are in bytes of
 /// the text's UTF-8.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -136,6 +138,47 @@ impl ChangeSet {
     pub fn is_identity(&self) -> bool {
         // In the normal form, retains alone are at most one change.
         matches!(self.changes.as_slice(), [] | [Change::Retain(_)])
+    }
+
+    /// Whether the change set fits the text of `rope`: it is for the text's
+    /// length, and every boundary between two of its changes is a character
+    /// boundary of the text.
+    pub(crate) fn fits(&self, rope: &Rope) -> bool {
+        if self.len_before != rope.len() {
+            return false;
+        }
+        let mut at = 0_usize;
+        self.changes.iter().all(|change| match change {
+            Change::Retain(len) | Change::Delete(len) => {
+                at = at.saturating_add(*len);
+                rope.is_char_boundary(at)
+            }
+            Change::Insert(_) => true,
+        })
+    }
+
+    /// Makes the changes to `rope`, and returns whether it made them all.
+    ///
+    /// The caller has checked that the change set [fits](Self::fits) the
+    /// rope, which is all a step below can fail on. So false is not
+    /// expected; it is returned, and not a panic, because the rope reports
+    /// its refusals. The rope may then be changed in part: the caller
+    /// applies to a clone.
+    pub(crate) fn apply_to(&self, rope: &mut Rope) -> bool {
+        // Where the walk is, in the text as changed so far.
+        let mut at = 0_usize;
+        self.changes.iter().all(|change| match change {
+            Change::Retain(len) => {
+                at = at.saturating_add(*len);
+                true
+            }
+            Change::Delete(len) => rope.replace(at, at.saturating_add(*len), ""),
+            Change::Insert(text) => {
+                let inserted = rope.replace(at, at, text);
+                at = at.saturating_add(text.len());
+                inserted
+            }
+        })
     }
 }
 

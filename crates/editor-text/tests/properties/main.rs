@@ -26,11 +26,13 @@
 use std::fmt::Debug;
 use std::ops::Range;
 
-use editor_text::{Point, PointUtf16, Snapshot, Text};
+use editor_text::{Change, ChangeSet, Point, PointUtf16, Snapshot, Text};
 use proptest::collection::vec;
 use proptest::prelude::*;
 use proptest::sample::select;
 use proptest::test_runner::{Config, RngAlgorithm, TestCaseError, TestRng, TestRunner};
+
+mod changes;
 
 /// Runs `property` on `cases` values of `strategy`, from a fixed seed, and
 /// panics with the smallest failing value if one fails.
@@ -159,6 +161,174 @@ fn steps(steps: usize) -> impl Strategy<Value = Vec<Step>> {
 /// accepts: both offsets are character boundaries within it, in order.
 fn accepts(reference: &str, start: usize, end: usize) -> bool {
     start <= end && reference.is_char_boundary(start) && reference.is_char_boundary(end)
+}
+
+/// One generated change set, before it is fitted to a text.
+#[derive(Debug, Clone)]
+struct Walk {
+    /// How far into the text the first change is, as a number to cut down
+    /// to the text.
+    start: usize,
+    /// The changes to make from there on, in order.
+    strides: Vec<Stride>,
+    /// What to insert at the end of the text.
+    tail: String,
+    /// Whether the change set is cut to the text, so that the text accepts
+    /// it, and otherwise how it ends.
+    end: WalkEnd,
+}
+
+/// One change of a [`Walk`] over the next bytes of the text.
+#[derive(Debug, Clone)]
+struct Stride {
+    /// What to do with the bytes.
+    kind: StrideKind,
+    /// One less than how many bytes, before they are cut to the text.
+    len: usize,
+    /// What to insert, for the kinds that insert.
+    insert: String,
+}
+
+/// What a [`Stride`] does with its bytes.
+#[derive(Debug, Clone, Copy)]
+enum StrideKind {
+    /// Keeps them.
+    Retain,
+    /// Removes them.
+    Delete,
+    /// Inserts before them and keeps them.
+    Insert,
+    /// Puts the insert in their place.
+    Replace,
+}
+
+/// How a [`Walk`] ends.
+#[derive(Debug, Clone, Copy)]
+enum WalkEnd {
+    /// Every length is moved onto a character boundary and the rest of the
+    /// text is retained: a change set the text accepts.
+    Fitted,
+    /// The lengths are taken as generated, so one may cut a character or
+    /// run past the end; the rest of the text is retained.
+    Raw,
+    /// As `Raw`, and the last byte of the rest is not retained.
+    Short,
+    /// As `Raw`, and one byte more than the rest is retained.
+    Long,
+}
+
+impl Walk {
+    /// The change set this walk makes over `reference`.
+    fn changes(&self, reference: &str) -> ChangeSet {
+        let fitted = matches!(self.end, WalkEnd::Fitted);
+        let len = reference.len();
+        let mut changes = ChangeSet::new();
+        let mut at = if fitted {
+            floor(reference, self.start % (len + 1))
+        } else {
+            self.start % (len + 3)
+        };
+        changes.retain(at);
+        for stride in &self.strides {
+            if at >= len {
+                break;
+            }
+            let mut end = at + 1 + stride.len;
+            if fitted {
+                end = end.min(len);
+                while !reference.is_char_boundary(end) {
+                    end += 1;
+                }
+            }
+            match stride.kind {
+                StrideKind::Retain => changes.retain(end - at),
+                StrideKind::Delete => changes.delete(end - at),
+                StrideKind::Insert => {
+                    changes.insert(&stride.insert);
+                    changes.retain(end - at);
+                }
+                StrideKind::Replace => {
+                    changes.delete(end - at);
+                    changes.insert(&stride.insert);
+                }
+            }
+            at = end;
+        }
+        let rest = len.saturating_sub(at);
+        changes.retain(match self.end {
+            WalkEnd::Fitted | WalkEnd::Raw => rest,
+            WalkEnd::Short => rest.saturating_sub(1),
+            WalkEnd::Long => rest + 1,
+        });
+        changes.insert(&self.tail);
+        changes
+    }
+}
+
+/// A change set to fit to a text: three in four are fitted.
+fn walk() -> impl Strategy<Value = Walk> {
+    let stride = (
+        select(
+            &[
+                StrideKind::Retain,
+                StrideKind::Retain,
+                StrideKind::Delete,
+                StrideKind::Insert,
+                StrideKind::Replace,
+            ][..],
+        ),
+        0..6_usize,
+        short_text(2),
+    )
+        .prop_map(|(kind, len, insert)| Stride { kind, len, insert });
+    let tail = prop_oneof![
+        2 => Just(String::new()),
+        1 => short_text(2),
+    ];
+    let end = prop_oneof![
+        9 => Just(WalkEnd::Fitted),
+        1 => Just(WalkEnd::Raw),
+        1 => Just(WalkEnd::Short),
+        1 => Just(WalkEnd::Long),
+    ];
+    (any::<usize>(), vec(stride, 0..=6), tail, end).prop_map(|(start, strides, tail, end)| Walk {
+        start,
+        strides,
+        tail,
+        end,
+    })
+}
+
+/// Up to `walks` change sets, three in four of them fitted.
+fn walks(walks: usize) -> impl Strategy<Value = Vec<Walk>> {
+    vec(walk(), 0..=walks)
+}
+
+/// What `changes` makes of `reference`, applied naively: `None` unless the
+/// change set is for the string's length and every boundary between its
+/// changes is a character boundary of the string.
+fn applied(changes: &ChangeSet, reference: &str) -> Option<String> {
+    if changes.len_before() != reference.len() {
+        return None;
+    }
+    let mut made = String::new();
+    let mut at = 0_usize;
+    for change in changes.changes() {
+        match change {
+            Change::Retain(len) => {
+                let end = at.checked_add(*len)?;
+                made.push_str(reference.get(at..end)?);
+                at = end;
+            }
+            Change::Delete(len) => {
+                let end = at.checked_add(*len)?;
+                reference.get(at..end)?;
+                at = end;
+            }
+            Change::Insert(text) => made.push_str(text),
+        }
+    }
+    Some(made)
 }
 
 #[test]

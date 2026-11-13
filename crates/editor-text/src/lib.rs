@@ -51,9 +51,30 @@
 //!   change sets that do the same thing in the same places are equal: no
 //!   change of length zero, no two neighbours of one kind, and where bytes
 //!   are replaced the insert is before the delete.
-//! - **A revision** counts the edits a text has accepted ([`Revision`]). A
-//!   new text is at 0, every accepted edit adds one, one that changes
-//!   nothing included, and a refused edit adds none.
+//! - **A change set fits a text** only when it is for the text's length and
+//!   every boundary between two of its changes is a position. One that
+//!   stops short of the text's end is refused, not padded with a retain,
+//!   so a change set built for another state of the text is caught where
+//!   the lengths differ.
+//! - **A transaction** ([`Transaction`]) is a change set and, optionally,
+//!   the selection before it and the selection after it. Applying one
+//!   ([`Text::apply`]) is the one way a text changes, and it is all or
+//!   nothing: a transaction is refused, changing nothing, unless its change
+//!   set fits the text and every end of each selection is a position of
+//!   its own text, the one before or the one after. [`Text::replace`] is
+//!   the transaction with one change and no selection.
+//! - **A selection**, so far, is plain data ([`Selection`]): one or more
+//!   ranges of two offsets, one of them the primary, kept exactly as given.
+//!   Nothing sorts, merges or moves them yet.
+//! - **An origin** ([`Origin`]) says who made an edit. It is an opaque
+//!   number given when a transaction is applied, not part of the
+//!   transaction. The crate keeps it in the transaction's log entry
+//!   ([`Text::entry`]) and never reads its value; what a number stands for
+//!   is the caller's table. [`Text::replace`] records the default, 0.
+//! - **A revision** counts the transactions a text has accepted
+//!   ([`Revision`]). A new text is at 0, every accepted transaction adds
+//!   one, however many changes it has and one that changes nothing
+//!   included, and a refused one adds none.
 //! - **A snapshot** is the text at one revision ([`Text::snapshot`]). It
 //!   never changes, whatever is done to the text afterwards, and it outlives
 //!   the text. Taking one copies none of the text, and so does cloning one.
@@ -63,7 +84,7 @@
 //! - **Nothing panics on a caller's value.** Every read that takes an
 //!   offset, a row, a point or a range returns an `Option`, and an edit a
 //!   `Result`.
-//! - **A text has one writer.** [`Text::replace`] takes `&mut self`, and the
+//! - **A text has one writer.** [`Text::apply`] takes `&mut self`, and the
 //!   text holds no lock: a caller that shares a text between threads puts it
 //!   behind one.
 //!
@@ -83,7 +104,9 @@
 //! - A second row rule, in which a carriage return alone ends a line, which
 //!   is how a language server counts. The library can count it beside this
 //!   one without the stored text changing.
-//! - Transactions, anchors, selections and undo.
+//! - Composing and inverting change sets, mapping a position through one,
+//!   and what the log records of a transaction beyond its origin.
+//! - Anchors, the selection type and undo.
 //! - Reading and writing a file, detecting a file's line ending, and
 //!   refusing a binary file: this crate takes bytes and gives bytes.
 //!
@@ -99,13 +122,19 @@
 
 mod bytes;
 mod change;
+mod log;
 mod point;
 mod rope;
+mod selection;
 mod snapshot;
 mod text;
+mod transaction;
 
 pub use bytes::ByteChunks;
 pub use change::{Change, ChangeSet};
+pub use log::{LogEntry, Origin};
 pub use point::{Point, PointUtf16};
+pub use selection::{Selection, SelectionRange};
 pub use snapshot::{Chunks, Revision, Snapshot};
 pub use text::{BadRange, Text};
+pub use transaction::{ApplyError, Transaction};
