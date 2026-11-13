@@ -319,6 +319,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "editor-layout"
+version = "0.1.0"
+
+[[package]]
 name = "editor-platform"
 version = "0.1.0"
 

@@ -1,0 +1,7 @@
+[package]
+name = "editor-layout"
+version = "0.1.0"
+description = "Layout: the display layers, per-line layout and its caches, the layout queries and the frame"
+edition.workspace = true
+license.workspace = true
+publish = false

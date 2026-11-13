@@ -1,0 +1,72 @@
+# What no line of `editor-layout` may name, its tests included: a real file,
+# a directory of the machine, a process or a clock. Layout is pure: it reads
+# text through `editor-text`'s snapshots, measures through the `Shaper` port
+# it defines (`src/shaper.rs`), and its tests run on the published fake,
+# `shaper::fake::CellShaper`. A cost is counted (`Counters`, the fake's
+# bytes shaped), never timed.
+#
+# Clippy reads the first `clippy.toml` it finds from a package's manifest
+# directory upwards, and the workspace root has none, so this file governs
+# every target of this crate and no other. `disallowed_methods` and
+# `disallowed_types` are on by default at `warn`, and `mise run lint` denies
+# warnings, so a line that names one of these fails the gate.
+#
+# The list is `crates/editor-text/clippy.toml`'s, whose header says what a
+# list of names does not hold.
+#
+# Seen to bite once by hand, on 2026-11-13: with a test added to
+# `src/shaper/fake.rs` that calls `std::fs::read("/nonexistent")`,
+# `mise run lint` fails with "use of a disallowed method `std::fs::read`".
+# With the test taken out it passes.
+
+disallowed-methods = [
+  # Every free function of `std::fs`.
+  { path = "std::fs::canonicalize", reason = "layout touches no file: text reaches it as a snapshot" },
+  { path = "std::fs::copy", reason = "layout touches no file: text reaches it as a snapshot" },
+  { path = "std::fs::create_dir", reason = "layout touches no file: text reaches it as a snapshot" },
+  { path = "std::fs::create_dir_all", reason = "layout touches no file: text reaches it as a snapshot" },
+  { path = "std::fs::exists", reason = "layout touches no file: text reaches it as a snapshot" },
+  { path = "std::fs::hard_link", reason = "layout touches no file: text reaches it as a snapshot" },
+  { path = "std::fs::metadata", reason = "layout touches no file: text reaches it as a snapshot" },
+  { path = "std::fs::read", reason = "layout touches no file: text reaches it as a snapshot" },
+  { path = "std::fs::read_dir", reason = "layout touches no file: text reaches it as a snapshot" },
+  { path = "std::fs::read_link", reason = "layout touches no file: text reaches it as a snapshot" },
+  { path = "std::fs::read_to_string", reason = "layout touches no file: text reaches it as a snapshot" },
+  { path = "std::fs::remove_dir", reason = "layout touches no file: text reaches it as a snapshot" },
+  { path = "std::fs::remove_dir_all", reason = "layout touches no file: text reaches it as a snapshot" },
+  { path = "std::fs::remove_file", reason = "layout touches no file: text reaches it as a snapshot" },
+  { path = "std::fs::rename", reason = "layout touches no file: text reaches it as a snapshot" },
+  { path = "std::fs::set_permissions", reason = "layout touches no file: text reaches it as a snapshot" },
+  { path = "std::fs::symlink_metadata", reason = "layout touches no file: text reaches it as a snapshot" },
+  { path = "std::fs::write", reason = "layout touches no file: text reaches it as a snapshot" },
+  # The methods of `Path` that ask the disk.
+  { path = "std::path::Path::canonicalize", reason = "layout touches no file: text reaches it as a snapshot" },
+  { path = "std::path::Path::exists", reason = "layout touches no file: text reaches it as a snapshot" },
+  { path = "std::path::Path::is_dir", reason = "layout touches no file: text reaches it as a snapshot" },
+  { path = "std::path::Path::is_file", reason = "layout touches no file: text reaches it as a snapshot" },
+  { path = "std::path::Path::is_symlink", reason = "layout touches no file: text reaches it as a snapshot" },
+  { path = "std::path::Path::metadata", reason = "layout touches no file: text reaches it as a snapshot" },
+  { path = "std::path::Path::read_dir", reason = "layout touches no file: text reaches it as a snapshot" },
+  { path = "std::path::Path::read_link", reason = "layout touches no file: text reaches it as a snapshot" },
+  { path = "std::path::Path::symlink_metadata", reason = "layout touches no file: text reaches it as a snapshot" },
+  { path = "std::path::Path::try_exists", reason = "layout touches no file: text reaches it as a snapshot" },
+  # The directories of the machine.
+  { path = "std::env::current_dir", reason = "layout has no directory of the machine, and a test leaves the process as it found it" },
+  { path = "std::env::set_current_dir", reason = "layout has no directory of the machine, and a test leaves the process as it found it" },
+  { path = "std::env::temp_dir", reason = "layout has no directory of the machine, and a test leaves the process as it found it" },
+  # Processes.
+  { path = "std::process::Command::new", reason = "layout starts no process" },
+  # The clocks.
+  { path = "std::time::SystemTime::now", reason = "layout reads no clock; a cost is counted (`Counters`), never timed" },
+  { path = "std::time::Instant::now", reason = "layout reads no clock; a cost is counted (`Counters`), never timed" },
+  # The file port's real adapter, which this crate does not depend on.
+  { path = "editor_fs_std::StdFs::system", reason = "layout touches no file system, real or fake" },
+]
+
+disallowed-types = [
+  { path = "std::fs::File", reason = "layout touches no file: text reaches it as a snapshot" },
+  { path = "std::fs::OpenOptions", reason = "layout touches no file: text reaches it as a snapshot" },
+  { path = "std::fs::DirBuilder", reason = "layout touches no file: text reaches it as a snapshot" },
+  { path = "std::fs::ReadDir", reason = "layout touches no file: text reaches it as a snapshot" },
+  { path = "std::fs::DirEntry", reason = "layout touches no file: text reaches it as a snapshot" },
+]
