@@ -5,7 +5,8 @@
 a Lean loop: how many keys, what they typed, how long each took from its
 arrival in Rust to its handling in Lean, and whether dead keys and an input
 method's composition arrived at all. A person runs it and reads the report
-(`README.md`, "The keyboard check"). It decides nothing about what a key
+(`docs/dev-practices/on-demand-checks.md`, "The keyboard check"). It
+decides nothing about what a key
 means: that is the display pipeline's.
 
 This module is the check's core, and it does not import the bindings:

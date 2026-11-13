@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# Runs the gate on Linux, in a container (`mise run linux-ci`; README.md,
-# "The gate on Linux"), and the real window there under Xvfb
+# Runs the gate on Linux, in a container (`mise run linux-ci`;
+# docs/dev-practices/on-demand-checks.md, "The gate on Linux"), and the
+# real window there under Xvfb
 # (`mise run linux-window`). Opt-in, never part of `ci`: it needs Docker and,
 # the first time, the network.
 #

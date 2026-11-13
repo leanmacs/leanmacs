@@ -11,7 +11,8 @@
 //! # This is a first cut
 //!
 //! The vocabulary is what the keyboard check needs to tell a key, a dead key
-//! and a composition apart (`editor window-check`, `README.md`). An [`Input`]
+//! and a composition apart (`editor window-check`,
+//! `docs/dev-practices/on-demand-checks.md`). An [`Input`]
 //! carries no key identity: no physical or logical key and no modifiers. The
 //! display pipeline defines those, and may replace [`Input`] when it does.
 //!

@@ -4,7 +4,8 @@ How to work in this repository: the development practices every change
 follows. What is being built, how it is structured and why is in
 `docs/design/` (start at `docs/design/README.md`); read the documents for
 the area you are changing before you change it, and record a new fact
-about the system there, not here.
+about the system there, not here. How to build, run and check the code, and
+what must pass before a change lands, is in `docs/dev-practices/`.
 
 ## Test-driven development
 

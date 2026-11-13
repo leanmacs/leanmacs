@@ -29,7 +29,8 @@ Lake builds the executable. The Rust library is a Lake target that runs
   lean-fmt and the model tests are still built by the bundled compiler.
 
 The build runs on macOS and on Linux, and the gate passes on both
-(`mise run linux-ci` runs it in a container; `README.md`). Four things differ
+(`mise run linux-ci` runs it in a container;
+`docs/dev-practices/on-demand-checks.md`). Four things differ
 by platform, and each has a case for those two and fails the build with a
 reason anywhere else:
 
