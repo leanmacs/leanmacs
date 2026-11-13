@@ -1,5 +1,6 @@
 import Editor.Command.Append
 import Editor.Config.Reload
+import Editor.File.Cases
 import Editor.File.Model
 import Editor.Job.Contract
 import Editor.Job.Fake
@@ -69,6 +70,14 @@ model and against the runner over the fake clock, and its file properties
 against the model of files and against the runner over the fake of the file
 service, in a made-up directory: no file is touched. `contract-test` runs
 the same lists against the runner over the Rust library's services.
+
+The cases that cross the text port and the job port
+(`Editor/File/Cases.lean`) are played here on the two models
+(`playOnModels`), with the snapshots handed across as values: a command, a
+job that reads what the command published, the job's command, which is
+handed what the job held, and a last command, which is handed nothing.
+`contract-test` plays them on the real binding and the library's file
+service.
 
 The config session's decisions are tested here too, with no elaborator:
 
@@ -505,10 +514,10 @@ and for the fake of the file service: an absolute path that is never opened. -/
 def fileRoot : System.FilePath :=
   "/files"
 
-/-- The model of the files a file property starts with: the directory
-`fileRoot`, and in it the property's files. -/
-def fileModelOf (property : JobContract.FileProperty) : FileModel :=
-  property.files.foldl (fun model (name, bytes) => model.withFile (fileRoot / name) bytes)
+/-- The model of the files a file property or a case starts with: the
+directory `fileRoot`, and in it `files`, each a name and its bytes. -/
+def fileModelOf (files : Array (String × ByteArray)) : FileModel :=
+  files.foldl (fun model (name, bytes) => model.withFile (fileRoot / name) bytes)
     (({} : FileModel).withDirectory fileRoot)
 
 /-- The files of `model`, as a file property names them: one in `fileRoot`
@@ -532,7 +541,7 @@ def Rig.withFiles (model : FileModel) : BaseIO (Rig × Job.FakeFiles) := do
 of its files: how the job ended, and the files afterwards. -/
 def runFilesOnModel (property : JobContract.FileProperty) :
     IO (Job.Outcome Bool × Array (String × ByteArray)) :=
-  let (outcome, model) := (property.holds fileRoot).runModel { files := fileModelOf property }
+  let (outcome, model) := (property.holds fileRoot).runModel { files := fileModelOf property.files }
   pure (outcome, filesIn model.files)
 
 /-- Runs a file property's job on the runner over a fake clock and the fake
@@ -540,7 +549,7 @@ of the file service, over the model of its files: how the job ended, and the
 files afterwards. -/
 def runFilesOnFake (property : JobContract.FileProperty) :
     IO (Job.Outcome Bool × Array (String × ByteArray)) := do
-  let (rig, files) ← Rig.withFiles (fileModelOf property)
+  let (rig, files) ← Rig.withFiles (fileModelOf property.files)
   let outcome ← runOnFake (property.holds fileRoot) (some rig)
   return (outcome, filesIn (← files.model))
 
@@ -552,6 +561,48 @@ def fileFailures : IO (List String) := do
   let onFake ← JobContract.fileFailures runFilesOnFake JobContract.fileProperties
   return onModel.map (s!"the job model: {·}") ++
       onFake.map (s!"the job runner over the fake file service: {·}")
+
+/-- What a job's model holds, as what a run of the job's command is handed:
+each snapshot the job's loads made that was not released, under the job's
+name for it. -/
+def heldBy (model : FileModel) : Array (JobSnapshotId × TextContent) :=
+  (Array.range model.held.size).filterMap fun index =>
+    (model.held[index]?).join.map fun content => (⟨index⟩, content)
+
+/-- Plays `case` on the text model and the job model, handing the snapshots
+across as the runtime does, and says what went wrong; `none` when the case
+held.
+
+The values that cross are handed as values. The job's model starts with the
+text model's snapshots as the published ones. The job's command runs against
+the text model with what the job's model held as what arrived. The job is
+then settled, so the last command runs against a text model that was handed
+nothing. Neither side writes what the other owns. -/
+def playOnModels (case : FileCases.Case) : Option String :=
+  match case.first.runModel {} with
+  | (.error refusal, _) => some s!"its first command failed with {repr refusal}"
+  | (.ok start, texts) =>
+    let files := { fileModelOf case.files with snapshots := texts.snapshots }
+    match (case.job fileRoot start).runModel { files } with
+    | (.failed message, _) => some s!"its job failed with `{message}`"
+    | (.cancelled, _) => some "its job was cancelled"
+    | (.finished value, job) =>
+      match (case.handler start value).runModel { texts with arrived := heldBy job.files } with
+      | (.error refusal, _) => some s!"the job's command failed with {repr refusal}"
+      | (.ok (), texts) =>
+        match (case.last start).runModel { texts with arrived := #[] } with
+        | (.error refusal, _) => some s!"its last command failed with {repr refusal}"
+        | (.ok false, _) => some "its last command says it did not hold"
+        | (.ok true, _) =>
+          let after := JobContract.byName (filesIn job.files)
+          if after == JobContract.byName case.after then none
+          else some s!"the files afterwards are {after.map (·.1)}, of {after.map (·.2.size)} bytes"
+
+/-- The names of the cases across the text port and the job port that do not
+hold of the two models, each with what went wrong. -/
+def caseFailures : IO (List String) :=
+  return FileCases.cases.filterMap fun case =>
+      (playOnModels case).map fun reason => s!"the text model and the job model: {case.name} ({reason})"
 
 /-- `value`, once `gate` has been resolved: pure work a check can hold a
 thread in. It is never inlined, so the read of the gate stays where the call
@@ -2946,7 +2997,8 @@ def main : IO UInt32 := do
       (← ModelTest.adoptFailures) ++
       (← ModelTest.jobModelFailures) ++
       (← ModelTest.jobRunnerFailures) ++
-      (← ModelTest.fileFailures)
+      (← ModelTest.fileFailures) ++
+      (← ModelTest.caseFailures)
   for name in failed do
     IO.eprintln s!"FAILED: {name}"
   unless failed.isEmpty do
@@ -2954,6 +3006,6 @@ def main : IO UInt32 := do
     -- returning from `main` would wait for it for ever.
     IO.Process.exit 1
   IO.println
-      s!"model-test: {ModelTest.checks.length} checks passed, {Editor.TextContract.properties.length + Editor.TextContract.adoptProperties.length + ModelTest.commandProperties.length} properties hold of the text model, {Editor.UndoTreeCases.cases.length} cases of the undo tree hold over it, and {Editor.JobContract.properties.length} properties of the job model and of the job runner over the fake clock, and {Editor.JobContract.fileProperties.length} file properties of the job model and of the job runner over the fake file service"
+      s!"model-test: {ModelTest.checks.length} checks passed, {Editor.TextContract.properties.length + Editor.TextContract.adoptProperties.length + ModelTest.commandProperties.length} properties hold of the text model, {Editor.UndoTreeCases.cases.length} cases of the undo tree hold over it, and {Editor.JobContract.properties.length} properties of the job model and of the job runner over the fake clock, and {Editor.JobContract.fileProperties.length} file properties of the job model and of the job runner over the fake file service; {Editor.FileCases.cases.length} cases across the text port and the job port hold of the two models"
   (← IO.getStdout).flush
   IO.Process.exit 0
