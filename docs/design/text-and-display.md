@@ -27,8 +27,10 @@ model, so commands can be tested and reasoned about without the library
 
 ### As built
 
-The first two items are built (decided 2026-11-12), as the crate
-`editor-text`. Transactions, anchors, selections and the undo tree are not.
+The first three items are built, as the crate `editor-text`: the rope and
+the text model (decided 2026-11-12), and transactions with the edit log
+(decided 2026-11-13). Anchors, the selection type and the undo tree are
+not.
 
 **Positions.**
 
@@ -89,9 +91,9 @@ The first two items are built (decided 2026-11-12), as the crate
 
 **Revisions and snapshots.**
 
-- A text has a *revision*. A new text is at 0, and every accepted edit adds
-  one, an edit that changes nothing included. A refused edit adds none, and
-  changes nothing. Transactions may make one transaction the unit.
+- A text has a *revision*. A new text is at 0, and every accepted
+  transaction adds one, however many changes it has and one that changes
+  nothing included. A refused one adds none, and changes nothing.
 - A *snapshot* is the text at one revision. It never changes, it outlives
   its text, and it is `Send + Sync`. Taking one copies none of the text. A
   snapshot is the only thing a worker thread, a job or the renderer reads:
@@ -117,17 +119,86 @@ The first two items are built (decided 2026-11-12), as the crate
 - One private module of `editor-text` names the library. No type of it is
   public, and `deny.toml` lets no other crate depend on it.
 
+**Change sets.**
+
+- A *change set* is an edit as a walk over the whole text: changes that
+  retain the next bytes, delete them, or insert text, with lengths in
+  bytes. This is Helix's model, and the code is ours. No library fits
+  (crates.io, 2026-11-12): `helix-core` is published only as a placeholder;
+  `operational-transform` 0.6.1 counts characters over a string and maps no
+  position; `xi-rope` 0.3.0 is unmaintained and is deltas over its own
+  rope; `diamond-types` and `loro-delta` are CRDTs, which
+  [rendering-prior-art.md](rendering-prior-art.md) sets aside; and Zed's
+  crates are not published. None counts in bytes over our rope, and the log
+  with its points, patches and provenance, which is most of the work, is in
+  none.
+- It is kept in one *normal form*, by the pushes that build it: no change
+  of length zero, no two neighbours of one kind, and where bytes are
+  replaced the insert is before the delete. So two change sets that do the
+  same thing in the same places are equal as values.
+- A change set *fits* a text only when it is for the text's length and
+  every boundary between two of its changes is a position. One that stops
+  short is refused, not padded with a retain, so a change set built for
+  another state of the text is caught where the lengths differ.
+- *Compose* is the change set that does one and then another; text the
+  first inserts and the second deletes is in neither. *Invert* is the one
+  that undoes a change set, given the text before it for the bytes it
+  deleted. Composition is associative and the inverse of an inverse is the
+  change set, as values.
+- A position is *mapped* through a change set with a bias, which says which
+  side of text inserted at it the position stays on:
+
+  | Where the offset is | Bias before | Bias after |
+  |---|---|---|
+  | In retained text, or at its start with nothing inserted there | Moves with the text | The same |
+  | Where text is inserted and nothing deleted | Stays before the insertion | Goes after it |
+  | At the start of, or inside, a range that is replaced | The start of the replacement | The end of the replacement |
+  | At the start of, or inside, a range that is deleted with nothing inserted | The point the range collapsed to | The same |
+  | At the end of a deleted or replaced range | After the replacement | The same |
+
+- Mapping through a composition is not always mapping through each change
+  set in turn, so a position that must survive several edits is mapped at
+  each one. That is what an anchor will be.
+- Nothing calls the mapping yet. Anchors, selections and the display
+  pipeline's cache keys are what it is for.
+
+**Transactions.**
+
+- A *transaction* is a change set and, optionally, the selection before it
+  and the selection after it. Applying one is the one way a text changes,
+  and it is all or nothing: the changes are made to a clone of the rope,
+  which shares the text's nodes, and the clone takes the text's place only
+  once the change set and both selections are accepted.
+- The checks are made in a fixed order: the change set fits; every end of
+  the selection before is a position of the text before; every end of the
+  selection after is a position of the text after.
+- A *replace* (an insert or a delete at the Lean port) is the transaction
+  with that one change and no selection.
+- A *selection*, until the selection type exists, is plain data: one or
+  more ranges of two byte offsets and the index of the primary one, kept
+  exactly as given. Nothing sorts, merges or maps them, and nothing reads a
+  transaction's selections yet; undo will.
+- Because a transaction is applied to a clone, an edit copies the nodes
+  from the root to a leaf whether or not a snapshot is held: 4,761 bytes
+  allocated for one insert into a megabyte of text, where an edit in place
+  with no snapshot held was 1,048.
+
 | Piece | Where |
 |---|---|
 | The text model, and where an addition goes | The crate docs of `crates/editor-text/src/lib.rs` |
 | The rope library, behind a private type | `crates/editor-text/src/rope.rs` |
-| A text, its edits and its revision | `crates/editor-text/src/text.rs` |
+| A text, applying a transaction, and its revision | `crates/editor-text/src/text.rs` |
 | A snapshot and its reads | `crates/editor-text/src/snapshot.rs` |
 | Rows and points | `crates/editor-text/src/point.rs` |
 | Invalid bytes as escapes | `crates/editor-text/src/bytes.rs` |
-| The properties, against a `String` | `crates/editor-text/tests/properties/` |
-| What a snapshot costs, counted in bytes allocated | `crates/editor-text/tests/snapshot_cost.rs` |
+| Change sets: the normal form, compose, invert, map | `crates/editor-text/src/change.rs` |
+| A transaction, and the selection it carries | `crates/editor-text/src/transaction.rs`, `crates/editor-text/src/selection.rs` |
+| The edit log: entries, origins, tracing, forgetting | `crates/editor-text/src/log.rs` |
+| Edits and patches, and composing them | `crates/editor-text/src/patch.rs` |
+| The properties, against a `String` | `crates/editor-text/tests/properties/`: the text in `main.rs`, the laws of change sets in `changes.rs`, the log in `log.rs` |
+| What a snapshot, a transaction and a pull cost, counted in bytes allocated | `crates/editor-text/tests/snapshot_cost.rs` |
 | The text and the snapshot as handles for Lean | `crates/editor-ffi/src/document.rs`, `crates/editor-ffi/src/snapshot.rs` |
+| A transaction and the log across the boundary, as words | `crates/editor-ffi/src/transaction.rs`, `crates/editor-ffi/src/log.rs`, `crates/editor-ffi/src/words.rs` |
 | The Lean text port, its model, real binding and contract | `lean/Editor/Text.lean`, `lean/Editor/Text/` ([lean-runtime.md](lean-runtime.md)) |
 
 ## The edit log
@@ -157,6 +228,90 @@ checkout`) arrive as a reload from disk. The library diffs old against new
 text and records the result as one transaction, so anchors move sensibly
 and the origin can be filled in when the source is known (an ACP tool call
 reports the path it wrote).
+
+### As built
+
+The log is built (decided 2026-11-13), in `editor-text`, and Lean reaches
+it through the text port. Layout and parsing do not exist yet, so Lean is
+its one consumer; nothing produces an origin yet either, and the reload
+from disk above is not built.
+
+**An entry** is one applied transaction: the revision it produced, its
+origin, and its edits.
+
+- An *edit* is one changed range, for each run of deletes and inserts
+  between two retains of the change set: a span of the text before and a
+  span of the text after, each as byte offsets and as points with their
+  columns in bytes. An insertion has an empty old span and a deletion an
+  empty new one. No text is stored.
+- That is four points an edit, not the three tree-sitter takes: in a
+  transaction of several changes, a change starts at different points in
+  the two texts. The three are derived (`Edit::input_edit`), for edits fed
+  to a parser in order: the start is the new start, and the old end is the
+  new start moved on by the extent of the old range. This is checked
+  against the texts, not against tree-sitter, which is not a dependency
+  yet.
+- The old points are read from the rope before the changes and the new ones
+  from the rope after.
+
+**Origin.**
+
+- An origin is an opaque 64-bit number. It is an argument of applying a
+  transaction, not part of the transaction: the inverse of an agent's
+  transaction, applied by a person's undo, is the person's.
+- The library stores it in the entry and returns it, and no function of the
+  library reads it. What a number stands for (which command, which agent
+  session and tool call) is a table Lean keeps, where that data lives. A
+  number costs eight bytes and no allocation for each keystroke.
+- A replace is recorded with 0. The Lean port names that
+  `Origin.unattributed`; to the library it means nothing.
+
+**Pulled patches.**
+
+- A consumer asks what changed since a revision and gets one *patch*: edits
+  whose old spans are ranges of the text then and whose new spans are
+  ranges of the text now, in order, no two overlapping or touching. Changes
+  that came to overlap or touch are one edit, and text inserted and deleted
+  again in between is in none.
+- *A subscriber is a revision* the consumer keeps. Nothing is registered
+  with the text, so a subscriber costs the text nothing, nothing is queued
+  for it, and there is nothing to release.
+- Patches are composed in coordinates, an offset with its point, by a walk
+  over the text between them. Every step is a coordinate plus the extent
+  between two later coordinates of one text, which is exact for points;
+  nothing is moved backwards across a line. Change sets are not composed
+  for this: the log keeps no text, and lengths alone cannot give the points
+  of a text that no longer exists.
+- Many entries are composed pairwise as a balanced tree. A pull across a
+  thousand entries was measured to allocate 957 bytes an entry.
+
+**Provenance.**
+
+- A range of the text as it is now is *traced* to the entries that wrote
+  it: it comes back cut into pieces, each with the revision and the origin
+  of the transaction that inserted its bytes. Text that was deleted is in
+  no piece.
+- The log is walked back from its newest entry, carrying the pieces no
+  entry has claimed yet. No second structure is kept beside the text, so an
+  edit pays nothing for provenance; a trace costs the entries walked times
+  the pieces carried, which is a review's price and not a keystroke's.
+
+**The bound.**
+
+- *Forgetting* drops the entries up to a revision and moves the log's
+  *horizon* there. It is the log's one bound: the library never drops an
+  entry by itself. When to forget is Lean's policy, since Lean knows which
+  consumers it has and whether a review is open.
+- Behind the horizon a patch is refused, so a consumer that far behind
+  reads a snapshot whole and subscribes again. Bytes written at or before
+  the horizon trace to "earlier than the horizon", with its revision, never
+  to nobody.
+- Until Lean forgets, the log grows by one entry a transaction. A thousand
+  one-change transactions on a megabyte of text were measured to allocate
+  3,651 bytes each, the tree's nodes included; an entry itself is its
+  origin and 96 bytes an edit.
+
+Nothing calls forget yet outside tests.
 
 ## Buffers and excerpt buffers
 
@@ -406,6 +561,25 @@ these hunks" is a fact the editor can state.
 - **How a job names a snapshot.** The text port names one by an id in the
   editor thread's table, and the job port has no request for one. The
   first job that reads text, which is saving a file, settles it.
+- **Who forgets the log, and when.** The log is bounded only by Lean
+  forgetting ("The edit log", as built), and nothing does yet. The command
+  loop or review decides, knowing which consumers are behind and whether a
+  review still needs the provenance.
+- **Provenance older than the horizon.** Forgetting loses who wrote the
+  older bytes. Whether that is kept somewhere cheaper, such as a run map
+  beside the text or a record written when a commit is made, is for review
+  to decide.
+- **The table of origins.** An origin is a number whose meaning is Lean's.
+  The table from numbers to commands, agent sessions and tool calls arrives
+  with the command loop and agent hosting.
+- **Rebasing a stale transaction.** A transaction built for an older
+  revision is refused by its length. The log keeps no text, so it cannot
+  supply the change sets to rebase through; the undo history, or the first
+  job that proposes an edit, settles where they come from
+  ([concurrency.md](concurrency.md)).
+- **Points in UTF-16 in an edit.** An edit's points count columns in bytes.
+  A language server client converts with the snapshots of the two
+  revisions, or the log grows a second pair of points.
 - **Tabs**: Parley has no tab stops. Expand before shaping, use inline
   boxes, or split runs.
 - **The other choices the survey left open** are listed in

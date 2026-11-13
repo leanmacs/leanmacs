@@ -37,6 +37,13 @@ No shipping tool was found that maps a plan step to its hunks, or jumps
 from a hunk to the transcript step that wrote it. Both follow from owning
 the edit log.
 
+Of the per-edit origin, the first half is built (2026-11-13,
+[text-and-display.md](text-and-display.md), "The edit log"): a range of a
+text is traced to the log entries that wrote it, and each entry gives back
+the origin its transaction was applied with, a number. The second half is
+not: the table that says which agent session, tool call and transcript step
+a number stands for arrives with the command loop and agent hosting.
+
 ### Anchoring comments
 
 Two models exist and the editor needs both.
@@ -164,7 +171,11 @@ when the code has moved out from under it.
   that alphabetical is bad. Start with plan-step order and measure.
 - **Provenance storage**: the edit log is in memory. How is per-edit origin
   persisted and tied to commits? Agent Trace and git notes are existing
-  formats; neither attributes at edit granularity.
+  formats; neither attributes at edit granularity. As built, the log is
+  dropped only when Lean forgets it up to a revision, and nothing does yet;
+  text older than what was forgotten is reported as older than the log
+  reaches, not attributed to nobody. When review forgets, and what it
+  writes down first, is part of this question.
 - **Agents that write files directly**: their edits arrive as external
   changes. How reliably can origin be recovered from tool-call reports?
 - **Structural diff**: tree-sitter-based diffing and move detection suppress

@@ -221,7 +221,10 @@ The Rust half needs no Lean toolchain: `mise run test` (`cargo test
 (`crates/editor-text`) is tested there in full: its unit tests, and property
 tests that drive a text and a `String` with the same random edits and
 compare them, convert every offset to a point and back, and load and save
-arbitrary bytes. The property tests run from a fixed seed and write no
+arbitrary bytes; that hold the laws of change sets (composing, inverting,
+mapping a position); and that compare what the edit log records, the one
+patch a subscriber gets and the trace of a range with references computed
+from the strings. The property tests run from a fixed seed and write no
 file.
 
 The Lean half's logic needs no Rust library. The editor reaches the library
@@ -253,8 +256,11 @@ read status 1 with a line on stderr that says why. `contract-test` runs the
 text interface's contract, the same list of properties the model tests run,
 against the real binding, so the model cannot drift from the library: edits
 and their refusals, revisions, snapshots that later edits leave alone, rows
-and points in bytes and in UTF-16 against a table written out by hand, and
-releasing a text or a snapshot. It also checks what only the real binding
+and points in bytes and in UTF-16 against a table written out by hand,
+releasing a text or a snapshot, applying a transaction and each way one is
+refused, what changed since a revision and who wrote a range against tables
+written out by hand, and forgetting the start of a text's edit log. It also
+checks what only the real binding
 shows: the binding's table is the only holder of its documents and
 snapshots, and releasing one frees it at once. It
 runs the job interface's contract the same way, against the job runner over
@@ -281,9 +287,11 @@ elaborates; reloads are serialised; and a script that cannot run to its end
 says why. Its config directories are temporary directories of its own.
 
 With no arguments `ffi-test` runs its checks of handles, plain data, the
-event queues, the timer service, the document, the snapshot of a document
-and the window: a snapshot reads what its document held after the document
-is edited, and outlives it; the scripted
+event queues, the timer service, the document, the snapshot of a document,
+a document's transactions and edit log, and the window: a snapshot reads
+what its document held after the document is edited, and outlives it; a
+transaction, a patch and a trace, which are lists, cross as words and come
+back as the values that were sent; the scripted
 platform's inputs arrive on the editor queue, each stamped with the instant
 it was reported, and the keyboard check's loop (below) reports them; a
 scripted platform that cannot open a window gives its reason, which the

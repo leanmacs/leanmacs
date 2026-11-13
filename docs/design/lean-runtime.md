@@ -426,6 +426,11 @@ What it gives up:
   releases it or the table is dropped, not until the last Lean reference
   goes: a snapshot a command takes and does not release stays in the table.
   A released id is refused for good, and an id is never used again.
+- **A subscription as a thing the store holds.** A consumer that follows a
+  text's edits is not registered anywhere: a subscriber is a revision the
+  caller keeps and asks from again. So no request makes or releases one,
+  and a caller that loses its revision has lost its place: it reads the
+  text whole and starts from the revision it has then.
 - **A request that carries a program over its own port** (a key binding
   made from inside a command): the port would refer to itself. Registration
   from a later port type-checks, and that is what the config session does:
@@ -447,9 +452,9 @@ The pattern is built for one deliberately small interface, text:
 | Piece | Where |
 |---|---|
 | Programs, and the two runners | `lean/Editor/Program.lean` |
-| The text port: create, insert, delete, read; `snapshot`, which takes a text as it is now; `ask`, which puts a question to a text or a snapshot (its revision, length, row count or contents, the point of an offset, the offset of a point, in bytes or in UTF-16); `release`, which gives either up. A new question is data, a constructor of the query, not a request | `lean/Editor/Text.lean` |
-| Its pure model: a string and a revision for each text, a snapshot as a copy of that pair, and points found by walking characters | `lean/Editor/Text/Model.lean` |
-| Its real binding, over the text-storage crate (`editor-text`): a table of documents and one of snapshots. A question about a text is answered from a snapshot taken for it | `lean/Editor/Text/Real.lean` |
+| The text port: create, insert, delete, read; `snapshot`, which takes a text as it is now; `ask`, which puts a question to a text or a snapshot (its revision, length, row count or contents, the point of an offset, the offset of a point, in bytes or in UTF-16); `release`, which gives either up; `apply`, which applies a transaction, built by a command as plain data, with an origin, and replies with the revision it produced; `log`, which puts a question to a text's edit log (what changed since a revision, as one patch; who wrote a range); and `forget`, which moves where that log starts. A new question is data, a constructor of the query, not a request | `lean/Editor/Text.lean` |
+| Its pure model: a string and a revision for each text, a snapshot as a copy of that pair, and points found by walking characters. A transaction's changes are applied as the ranges they change. The log is modelled beside the texts, not inside them, as who wrote every byte and the text at every revision, so the model finds a patch and a trace by a different route from the library's | `lean/Editor/Text/Model.lean` |
+| Its real binding, over the text-storage crate (`editor-text`): a table of documents and one of snapshots. A question about a text is answered from a snapshot taken for it; a transaction and a question about the log go to the document. A transaction, a patch and a trace are lists, which cross the boundary as words, a buffer of 64-bit numbers that a codec on each side writes and checks | `lean/Editor/Text/Real.lean`, `lean/Editor/Ffi.lean` |
 | Its contract, run against the model by `lake test` (`mise run lean-test`) and against the real binding by `contract-test` (`mise run ffi-test`) | `lean/Editor/Text/Contract.lean` |
 | A command, `append`, with a theorem about it | `lean/Editor/Command/Append.lean` |
 | `JobM`, and the compile-time checks of the split | `lean/Editor/Job.lean` |

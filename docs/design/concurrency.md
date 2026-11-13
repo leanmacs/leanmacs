@@ -150,7 +150,14 @@ and against the runner over the Rust timer service by `contract-test`.
   it as stale if the text it touched has changed. A formatter, a rename, or
   an agent's edit all take this route.
 
-As built, the message route, and not yet the proposed edit:
+As built, the message route, and not yet the proposed edit. What the
+proposed edit has to build on (2026-11-13,
+[text-and-display.md](text-and-display.md)): a transaction is plain data
+that a job can build and a command can apply; one built for another length
+of text is refused; and the foreground can ask what changed since the
+revision the job read, as one patch of ranges. What it does not have: the
+log keeps no text, so it cannot supply the change sets to map a stale
+transaction through. Where those come from is open.
 
 - **A job finishes with a command.** What is spawned is a `Work`, a job
   whose value is an `EditorM Unit`: the handler applied to the job's

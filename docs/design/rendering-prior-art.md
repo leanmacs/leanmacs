@@ -67,10 +67,14 @@ can query it without the renderer waiting on Lean.
   renderer get a constant-time copy. (Zed, Helix, Lapce)
 - **One edit value that maps positions**: a change set with a bias, used to
   move selections, marks, diagnostics and cache keys instead of recomputing
-  them. Already planned in `text-core`. (Helix, Lapce)
+  them. Built: the change set and its mapping; nothing calls the mapping
+  yet ([text-and-display.md](text-and-display.md), "Change sets"). (Helix,
+  Lapce)
 - **Consumers pull coalesced patches.** Each subscriber asks "what changed
   since I last looked" and gets old and new ranges with no text. There is
-  never a backlog, and it suits Lean pulling from the library. (Zed)
+  never a backlog, and it suits Lean pulling from the library. Built, with
+  a subscriber as a revision the consumer keeps
+  ([text-and-display.md](text-and-display.md), "The edit log"). (Zed)
 - **Revision-tagged background results, dropped on mismatch.** No
   operational transforms and no CRDT. (Lapce, Xi's follow-up)
 
