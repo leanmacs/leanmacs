@@ -223,6 +223,27 @@ fn a_text_whose_changes_are_refused_is_rebuilt_from_its_snapshot() {
 }
 
 #[test]
+fn a_patch_that_goes_past_the_snapshot_shown_rebuilds() {
+    let shared = Shared(Arc::new(Mutex::new(Text::from("aa\nbb\ncc\ndd\nee\nff"))));
+    let changes: Arc<dyn Changes> = Arc::new(shared.clone());
+    let mut layout = layout();
+    layout.frame(&scene(&[text_ref(
+        1,
+        &shared.0.lock().unwrap(),
+        changes.clone(),
+    )]));
+    // The view keeps showing the text as it was between two edits, while
+    // the changes pulled are the text's up to now: a patch through both.
+    // The second edit takes out the first two rows, which the snapshot
+    // shown still has.
+    shared.0.lock().unwrap().replace(16..17, "x").unwrap();
+    let between = text_ref(1, &shared.0.lock().unwrap(), changes);
+    shared.0.lock().unwrap().replace(0..6, "").unwrap();
+    let scene = scene(&[between]);
+    assert_eq!(layout.frame(&scene), self::layout().frame(&scene));
+}
+
+#[test]
 fn an_older_snapshot_is_laid_out_apart_and_leaves_the_cache_as_it_was() {
     let shared = Shared(Arc::new(Mutex::new(Text::from("abcdefgh\nij"))));
     let changes: Arc<dyn Changes> = Arc::new(shared.clone());
