@@ -42,8 +42,9 @@ reset must keep, so the contract speaks of `pending` and of what the scheme
 then yields.
 
 The scheme that ships is not here: it is the Vim scheme
-(`Editor/InputScheme/Vim.lean`). `Editor/InputScheme/Test.lean` is the test
-scheme, published for other modules' tests.
+(`Editor/InputScheme/Vim.lean`), over its default states and bindings
+(`Editor/InputScheme/Vim/Default.lean`). `Editor/InputScheme/Test.lean` is
+the test scheme, published for other modules' tests.
 
 ## Where an addition goes
 

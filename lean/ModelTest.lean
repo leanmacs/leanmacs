@@ -7,7 +7,7 @@ import Editor.File.Cases
 import Editor.File.Model
 import Editor.InputScheme.Contract
 import Editor.InputScheme.Test
-import Editor.InputScheme.Vim
+import Editor.InputScheme.Vim.Default
 import Editor.Job.Contract
 import Editor.Job.Fake
 import Editor.Job.Jobs
@@ -167,8 +167,14 @@ with no model:
 - `vimGrammarChecks`: the grammar: which keymaps a key is looked up in,
   and what a key sequence parses to and yields;
 - `vimStateChecks`: Vim states: which state a view is in, how one is
-  entered, and what the grammar reads of a state's record;
-- `vimContractChecks`: the scheme contract holds of the Vim scheme.
+  entered, what the grammar reads of a state's record (typed text, an
+  operator over the selection), and the last change;
+- `vimDefaultChecks`: the default states and bindings
+  (`Editor/InputScheme/Vim/Default.lean`), observed through the grammar:
+  what each default key parses to. They restate no table and name no
+  vocabulary or command name;
+- `vimContractChecks`: the scheme contract holds of the Vim scheme, over
+  the registry written here and over the default states.
 
 The grammar's checks run on a registry and keymaps written here
 (`vimStates`), so that none of them names a default binding.
@@ -5128,11 +5134,185 @@ def vimStateChecks : List Check :=
         let (inserting, _) := vimParsed "i"
         pure ((vimParsedFrom inserting "a b").1.lastChange == inserting.lastChange) }]
 
+/-- The default Vim scheme's grammar folded from its initial state through
+the keys the key string `text` names, keys for view 0 with no active
+keymaps: the state it is left in, and what each key parsed to. -/
+def vimDefault (text : String) : Vim.State × List Vim.Parsed :=
+  vimParsed text (states := Vim.Default.states)
+
+/-- The edit the last key of `text` completed under the default Vim
+scheme, if it completed one. -/
+def vimDefaultEdit (text : String) : Option Vim.Edit :=
+  match (vimDefault text).2.getLast? with
+  | some (.edit edit) => some edit
+  | _ => none
+
+/-- The command the last key of `text` runs under the default Vim scheme,
+with no count and no register, if it runs one. -/
+def vimDefaultCommand (text : String) : Option Vim.Command :=
+  match vimDefaultEdit text with
+  | some (.run command none none) => some command
+  | _ => none
+
+/-- The record of the default Vim state view 0 is in after the keys `text`
+names. -/
+def vimDefaultRecord (text : String) : Vim.StateRecord :=
+  (vimDefault text).1.record Vim.Default.states ⟨0⟩
+
+/-- Whether each of `texts` runs a command under the default Vim scheme,
+each a command of another name. -/
+def vimDefaultCommands (texts : List String) : Bool :=
+  let names := (texts.filterMap vimDefaultCommand).map (·.name)
+  names.length == texts.length && names.eraseDups.length == texts.length
+
+/-- The subject the scheme contract is run on for the Vim scheme that
+ships: the default scheme, with no active keymaps, for view 0. -/
+def vimDefaultSubject : SchemeContract.Subject :=
+  { scheme := Vim.Default.scheme
+    maps := vimNoMaps
+    view := ⟨0⟩
+    sequences := ["d 2 w", "2 d 3 w", "d d", "g g", "\" + y w", "i"].map keys
+    unbound := vimUnbound }
+
+/-- The checks of the Vim scheme's default states and bindings
+(`Editor/InputScheme/Vim/Default.lean`). They observe the defaults through
+the grammar, by what the default keys parse to, and restate no table: a
+check names a key, and no vocabulary or command name. -/
+def vimDefaultChecks : List Check :=
+  [{  name := "every row of each default table binds its keys, and no table is empty"
+      run :=
+        pure <|
+          [Vim.Default.motions, Vim.Default.operators, Vim.Default.normalCommands,
+                Vim.Default.insertCommands, Vim.Default.visualCommands,
+                Vim.Default.visualLineCommands].all
+            fun table =>
+            !table.isEmpty && (Vim.Default.keymap table).bindings.length == table.length },
+    { name :=
+        "each default motion key yields a move with no count, each by a motion of another name: h j k l w b e W B E 0 ^ $ gg G"
+      run :=
+        let motionKeys :=
+          ["h", "j", "k", "l", "w", "b", "e", "W", "B", "E", "0", "^", "$", "g g", "G"]
+        let names :=
+          motionKeys.filterMap fun text =>
+            match vimDefaultEdit text with
+            | some (.move name none) => some name
+            | _ => none
+        pure (names.length == motionKeys.length && names.eraseDups.length == motionKeys.length) },
+    { name :=
+        "each default operator key followed by a motion operates over that motion, and typed twice over one line, each an operator of another name: d c y"
+      run :=
+        let operatorKeys := ["d", "c", "y"]
+        let operators :=
+          operatorKeys.filterMap fun text =>
+            match vimDefaultEdit s!"{text} w", vimDefaultEdit s!"{text} {text}",
+              vimDefaultEdit "w" with
+            | some (.operate operator (.motion target) none none),
+              some (.operate doubled .lines (some 1) none), some (.move motion none) =>
+              if operator == doubled && target == motion then some operator.name else none
+            | _, _, _ => none
+        pure
+          (operators.length == operatorKeys.length &&
+            operators.eraseDups.length == operatorKeys.length) },
+    { name :=
+        "of the default operators c leaves the view in a state where typing is text and d and y leave it where it was, and d and c change text and y does not"
+      run :=
+        pure
+          ((vimDefaultRecord "c w").insertsText && (vimDefault "d w").1.current == [] &&
+            (vimDefault "y w").1.current == [] &&
+            (vimDefault "d w").1.lastChange == vimDefaultEdit "d w" &&
+            (vimDefault "c w").1.lastChange == vimDefaultEdit "c w" &&
+            (vimDefault "d w").1.lastChange.isSome &&
+            (vimDefault "y w").1.lastChange == none) },
+    { name :=
+        "each of the default keys i a I A o O runs a command of its own that changes text and leaves the view in a state where typing is text"
+      run :=
+        let insertKeys := ["i", "a", "I", "A", "o", "O"]
+        pure
+          (vimDefaultCommands insertKeys &&
+            insertKeys.all fun text =>
+              (vimDefaultRecord text).insertsText && (vimDefault text).1.lastChange.isSome &&
+                (vimDefault text).1.lastChange == vimDefaultEdit text) },
+    { name :=
+        "each of the default keys x p P runs a command of its own that changes text and enters no state"
+      run :=
+        let changeKeys := ["x", "p", "P"]
+        pure
+          (vimDefaultCommands changeKeys &&
+            changeKeys.all fun text =>
+              (vimDefault text).1.current == [] && (vimDefault text).1.lastChange.isSome) },
+    { name :=
+        "each of the default keys u C-r . : runs a command of its own that changes no text and enters no state"
+      run :=
+        let plainKeys := ["u", "C-r", ".", ":"]
+        pure
+          (vimDefaultCommands plainKeys &&
+            plainKeys.all fun text =>
+              (vimDefault text).1.current == [] && (vimDefault text).1.lastChange == none) },
+    { name :=
+        "the default keys v and V enter two different states where operators act on the selection, change no text, and each key typed again, and the other, goes where it should: back to the initial state, or to the other visual state"
+      run :=
+        pure
+          ((vimDefaultRecord "v").operatesOnSelection &&
+            (vimDefaultRecord "V").operatesOnSelection &&
+            (vimDefaultRecord "v").name != (vimDefaultRecord "V").name &&
+            (vimDefault "v").1.lastChange == none &&
+            (vimDefault "V").1.lastChange == none &&
+            (vimDefault "v v").1.current == [] &&
+            (vimDefault "V V").1.current == [] &&
+            (vimDefault "v V").1.current == (vimDefault "V").1.current &&
+            (vimDefault "V v").1.current == (vimDefault "v").1.current) },
+    { name :=
+        "the default <Escape> returns to the initial state from each state another default key enters: from the state i enters, and from the two v and V enter"
+      run :=
+        pure
+          (["i", "v", "V"].all fun text =>
+            !(vimDefault text).1.current.isEmpty &&
+              (vimDefault s!"{text} <Escape>").1.current == []) },
+    { name :=
+        "in the default visual states an operator key operates over the selection at once and a motion key is a move"
+      run :=
+        pure
+          (["v", "V"].all fun text =>
+            (match vimDefaultEdit s!"{text} d" with
+              | some (.operate _ .selection none none) => true
+              | _ => false) &&
+              (vimDefault s!"{text} d").1.current == [] &&
+              vimDefaultEdit s!"{text} w" == vimDefaultEdit "w" &&
+              (vimDefaultEdit "w").isSome) },
+    { name :=
+        "the default register prefix names a register for an operator in normal state and in each visual state"
+      run :=
+        let register (text : String) : Option String :=
+          match vimDefaultEdit text with
+          | some (.operate _ _ _ register) => register
+          | _ => none
+        pure
+          (register "\" + y w" == some "+" && register "v \" a d" == some "a" &&
+            register "V \" a d" == some "a" &&
+            register "y w" == none) },
+    { name :=
+        "in the default state that i enters a key bound to a motion in the initial state is typed text, and after <Escape> it is that motion again"
+      run :=
+        pure
+          ((vimDefault "i h").2.getLast? == some (.text "h") &&
+            (vimDefault "i 0").2.getLast? == some (.text "0") &&
+            vimDefaultEdit "i <Escape> h" == vimDefaultEdit "h" &&
+            (vimDefaultEdit "h").isSome) },
+    { name :=
+        "the cursor of the default initial state is a block, and that of the state i enters a bar"
+      run :=
+        pure
+          ((vimDefaultRecord "").cursor == .block && Vim.Default.states.initial.cursor == .block &&
+            (vimDefaultRecord "i").cursor == .bar &&
+            (vimDefaultRecord "i").name != (vimDefaultRecord "").name) }]
+
 /-- The checks that the Vim scheme keeps the scheme contract
 (`Editor/InputScheme/Contract.lean`). -/
 def vimContractChecks : List Check :=
   [{  name := "the scheme contract holds of the Vim scheme over the registry written for the checks"
       run := pure (SchemeContract.failures vimSubject == []) },
+    { name := "the scheme contract holds of the Vim scheme that ships, over its default states"
+      run := pure (SchemeContract.failures vimDefaultSubject == []) },
     { name :=
         "a key that prints is not unbound after the register prefix, where it names the register: given one as its unbound key, the scheme contract reports that it does not reset"
       run :=
@@ -5176,6 +5356,7 @@ def checks : List Check :=
     vimRegistryChecks ++
     vimGrammarChecks ++
     vimStateChecks ++
+    vimDefaultChecks ++
     vimContractChecks
 
 /-- Runs `checks` and returns the names of those that failed. A check that

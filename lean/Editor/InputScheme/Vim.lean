@@ -6,7 +6,9 @@ import Editor.InputScheme
 Vim's grammar as one input scheme: keys in, an invocation out. It is the
 grammar only. What a motion or an operator does to a text is the
 vocabulary's, and is not here (`docs/design/keymaps-and-modes.md`, "The Vim
-scheme").
+scheme"). Nor are any keys: the grammar is a function of a registry of Vim
+states, and the states and bindings that ship are data in
+`Editor/InputScheme/Vim/Default.lean`.
 
 ## Edits
 
@@ -166,6 +168,7 @@ the text store, and the scheme holds only which Vim state the view is in.
 | A new fact about a Vim state | A field of `StateRecord` |
 | A new part of speech | A variant of `Bound`, and its case in `State.reached` |
 | Something the scheme remembers between keys | A field of `State`, with what a reset does to it (`State.reset`) |
+| A new default key or default Vim state | A row of a table in `Editor/InputScheme/Vim/Default.lean`; nothing here |
 
 Pinned by `ModelTest.vimEditChecks`, `ModelTest.vimRegistryChecks`,
 `ModelTest.vimGrammarChecks` and `ModelTest.vimStateChecks`. The scheme

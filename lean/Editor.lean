@@ -1,6 +1,5 @@
 import Editor.Command.Append
-import Editor.InputScheme
-import Editor.Key.Notation
+import Editor.InputScheme.Vim.Default
 import Editor.Setup
 import Editor.UndoTree
 
@@ -25,7 +24,12 @@ How a key becomes an invocation is here too, so config can come to write
 bindings: input schemes (`Editor/InputScheme.lean`), with the keymaps they
 walk (`Editor/Keymap.lean`) and the invocations they yield
 (`Editor/Invocation.lean`), and key strings (`Editor/Key/Notation.lean`),
-with which a binding's keys are written (`Key.parse "C-x C-s"`). The test
+with which a binding's keys are written (`Key.parse "C-x C-s"`). The Vim
+scheme is the scheme that ships (`Editor/InputScheme/Vim.lean`, with its
+default states and bindings in `Editor/InputScheme/Vim/Default.lean`), and
+config will bind against its parts of speech (`Vim.Bound`). That module
+is the one import here that brings all of these, the scheme interface and
+key strings with it. The test
 scheme and the scheme contract (`Editor/InputScheme/Test.lean`,
 `Editor/InputScheme/Contract.lean`) are for tests, and are not imported.
 
