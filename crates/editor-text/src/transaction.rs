@@ -5,6 +5,7 @@ use std::fmt;
 
 use crate::change::ChangeSet;
 use crate::selection::Selection;
+use crate::snapshot::Snapshot;
 
 /// A change set and, optionally, the selection before it and the selection
 /// after it. It is what [`Text::apply`](crate::Text::apply) takes.
@@ -61,6 +62,18 @@ impl Transaction {
     pub fn after(&self) -> Option<&Selection> {
         self.after.as_ref()
     }
+
+    /// The transaction that undoes this one on the text this one makes of
+    /// `before`: the inverse of its change set
+    /// ([`ChangeSet::invert`]), with the two selections swapped. `None`
+    /// unless the change set fits `before`.
+    pub fn invert(&self, before: &Snapshot) -> Option<Self> {
+        Some(Self {
+            changes: self.changes.invert(before)?,
+            before: self.after.clone(),
+            after: self.before.clone(),
+        })
+    }
 }
 
 impl From<ChangeSet> for Transaction {
@@ -96,6 +109,7 @@ impl Error for ApplyError {}
 mod tests {
     use super::*;
     use crate::selection::SelectionRange;
+    use crate::{Origin, Text};
 
     /// A selection of the one range `anchor..head`.
     fn selection(anchor: usize, head: usize) -> Selection {
@@ -126,5 +140,58 @@ mod tests {
         assert_eq!(transaction.changes(), &changes());
         assert_eq!(transaction.before(), Some(&selection(0, 3)));
         assert_eq!(transaction.after(), Some(&selection(4, 1)));
+    }
+
+    #[test]
+    fn the_inverse_of_a_transaction_inverts_its_changes_and_swaps_its_selections() {
+        let before = Text::from("abc").snapshot();
+        let inverse_changes = changes().invert(&before).expect("it fits");
+
+        let both = Transaction::new(changes())
+            .with_before(selection(0, 3))
+            .with_after(selection(4, 1));
+        assert_eq!(
+            both.invert(&before),
+            Some(
+                Transaction::new(inverse_changes.clone())
+                    .with_before(selection(4, 1))
+                    .with_after(selection(0, 3))
+            )
+        );
+
+        let one = Transaction::new(changes()).with_after(selection(4, 1));
+        assert_eq!(
+            one.invert(&before),
+            Some(Transaction::new(inverse_changes.clone()).with_before(selection(4, 1)))
+        );
+
+        assert_eq!(
+            Transaction::new(changes()).invert(&before),
+            Some(Transaction::new(inverse_changes))
+        );
+    }
+
+    #[test]
+    fn applying_the_inverse_of_a_transaction_puts_the_text_back() {
+        let mut text = Text::from("abc");
+        let before = text.snapshot();
+        let transaction = Transaction::new(changes())
+            .with_before(selection(0, 3))
+            .with_after(selection(4, 1));
+        let inverse = transaction.invert(&before).expect("it fits");
+
+        text.apply(&transaction, Origin::new(1)).expect("it fits");
+        assert_eq!(text.current().to_string(), "xabc");
+        let undone = text.apply(&inverse, Origin::new(2));
+
+        assert_eq!(undone.map(crate::Revision::get), Ok(2));
+        assert_eq!(text.current().to_string(), "abc");
+    }
+
+    #[test]
+    fn a_transaction_has_no_inverse_on_a_snapshot_its_changes_do_not_fit() {
+        let other = Text::from("abcd").snapshot();
+
+        assert_eq!(Transaction::new(changes()).invert(&other), None);
     }
 }

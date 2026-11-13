@@ -56,6 +56,14 @@
 //!   stops short of the text's end is refused, not padded with a retain,
 //!   so a change set built for another state of the text is caught where
 //!   the lengths differ.
+//! - **Change sets compose and invert.** [`ChangeSet::compose`] is the
+//!   change set that does one and then another, and [`ChangeSet::invert`]
+//!   the one that undoes a change set, given the text before it for the
+//!   bytes it deleted. Composition is associative, and the inverse of an
+//!   inverse is the change set, as values.
+//! - **A position is mapped through a change set with a bias**
+//!   ([`ChangeSet::map`], [`Bias`]), which says whether it stays before or
+//!   goes after text inserted at it. The table is on the method.
 //! - **A transaction** ([`Transaction`]) is a change set and, optionally,
 //!   the selection before it and the selection after it. Applying one
 //!   ([`Text::apply`]) is the one way a text changes, and it is all or
@@ -104,8 +112,9 @@
 //! - A second row rule, in which a carriage return alone ends a line, which
 //!   is how a language server counts. The library can count it beside this
 //!   one without the stored text changing.
-//! - Composing and inverting change sets, mapping a position through one,
-//!   and what the log records of a transaction beyond its origin.
+//! - What the log records of a transaction beyond its origin.
+//! - Composing transactions, and mapping many positions or a selection
+//!   through a change set in one pass.
 //! - Anchors, the selection type and undo.
 //! - Reading and writing a file, detecting a file's line ending, and
 //!   refusing a binary file: this crate takes bytes and gives bytes.
@@ -131,7 +140,7 @@ mod text;
 mod transaction;
 
 pub use bytes::ByteChunks;
-pub use change::{Change, ChangeSet};
+pub use change::{Bias, Change, ChangeSet};
 pub use log::{LogEntry, Origin};
 pub use point::{Point, PointUtf16};
 pub use selection::{Selection, SelectionRange};

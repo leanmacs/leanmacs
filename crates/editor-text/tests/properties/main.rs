@@ -267,6 +267,21 @@ impl Walk {
 
 /// A change set to fit to a text: three in four are fitted.
 fn walk() -> impl Strategy<Value = Walk> {
+    walk_ending(prop_oneof![
+        9 => Just(WalkEnd::Fitted),
+        1 => Just(WalkEnd::Raw),
+        1 => Just(WalkEnd::Short),
+        1 => Just(WalkEnd::Long),
+    ])
+}
+
+/// A change set that is fitted to its text, so the text accepts it.
+fn fitted_walk() -> impl Strategy<Value = Walk> {
+    walk_ending(Just(WalkEnd::Fitted))
+}
+
+/// A change set to fit to a text, which ends as `end` says.
+fn walk_ending(end: impl Strategy<Value = WalkEnd>) -> impl Strategy<Value = Walk> {
     let stride = (
         select(
             &[
@@ -285,12 +300,6 @@ fn walk() -> impl Strategy<Value = Walk> {
         2 => Just(String::new()),
         1 => short_text(2),
     ];
-    let end = prop_oneof![
-        9 => Just(WalkEnd::Fitted),
-        1 => Just(WalkEnd::Raw),
-        1 => Just(WalkEnd::Short),
-        1 => Just(WalkEnd::Long),
-    ];
     (any::<usize>(), vec(stride, 0..=6), tail, end).prop_map(|(start, strides, tail, end)| Walk {
         start,
         strides,
@@ -302,6 +311,11 @@ fn walk() -> impl Strategy<Value = Walk> {
 /// Up to `walks` change sets, three in four of them fitted.
 fn walks(walks: usize) -> impl Strategy<Value = Vec<Walk>> {
     vec(walk(), 0..=walks)
+}
+
+/// Up to `walks` change sets, each fitted to its text.
+fn fitted_walks(walks: usize) -> impl Strategy<Value = Vec<Walk>> {
+    vec(fitted_walk(), 0..=walks)
 }
 
 /// What `changes` makes of `reference`, applied naively: `None` unless the

@@ -6,6 +6,17 @@
 use std::ops::Range;
 
 use crate::rope::Rope;
+use crate::snapshot::Snapshot;
+
+/// Which side of text inserted at a position the position stays on when it
+/// is mapped through a change set ([`ChangeSet::map`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Bias {
+    /// The position stays before the inserted text.
+    Before,
+    /// The position goes after the inserted text.
+    After,
+}
 
 /// One step of a change set's walk over the text. Lengths are in bytes of
 /// the text's UTF-8.
@@ -140,6 +151,163 @@ impl ChangeSet {
         matches!(self.changes.as_slice(), [] | [Change::Retain(_)])
     }
 
+    /// The change set that does this one and then `then`: applying it to a
+    /// text this one fits makes what applying this one and then `then`
+    /// makes. Text this one inserts and `then` deletes is in neither.
+    ///
+    /// `None` unless `then` is for the length this one makes, and cuts no
+    /// character this one inserts. Whether `then` cuts a character this one
+    /// retains is not looked at: only a text can say.
+    pub fn compose(&self, then: &ChangeSet) -> Option<ChangeSet> {
+        if self.len_after != then.len_before {
+            return None;
+        }
+        // The walk is over the text between the two: what this one makes
+        // and `then` is for. Each side holds what is left of its change.
+        let mut composed = ChangeSet::new();
+        let mut made = self.changes.iter().map(Rest::of);
+        let mut taken = then.changes.iter().map(Rest::of);
+        let (mut first, mut second) = (made.next(), taken.next());
+        loop {
+            match (first, second) {
+                (None, None) => return Some(composed),
+                // What the first deletes was never in the text between.
+                (Some(Rest::Delete(len)), _) => {
+                    composed.delete(len);
+                    first = made.next();
+                }
+                // What the second inserts is not in it either.
+                (_, Some(Rest::Insert(text))) => {
+                    composed.insert(text);
+                    second = taken.next();
+                }
+                // One ran out before the other: the lengths saturated.
+                (None, Some(_)) | (Some(_), None) => return None,
+                (Some(Rest::Retain(kept)), Some(Rest::Retain(len))) => {
+                    let both = kept.min(len);
+                    composed.retain(both);
+                    first = Rest::Retain(kept - both).or_next(&mut made);
+                    second = Rest::Retain(len - both).or_next(&mut taken);
+                }
+                (Some(Rest::Retain(kept)), Some(Rest::Delete(len))) => {
+                    let both = kept.min(len);
+                    composed.delete(both);
+                    first = Rest::Retain(kept - both).or_next(&mut made);
+                    second = Rest::Delete(len - both).or_next(&mut taken);
+                }
+                (Some(Rest::Insert(text)), Some(Rest::Retain(len))) => {
+                    let both = text.len().min(len);
+                    let (kept, rest) = text.split_at_checked(both)?;
+                    composed.insert(kept);
+                    first = Rest::Insert(rest).or_next(&mut made);
+                    second = Rest::Retain(len - both).or_next(&mut taken);
+                }
+                (Some(Rest::Insert(text)), Some(Rest::Delete(len))) => {
+                    let both = text.len().min(len);
+                    let (_, rest) = text.split_at_checked(both)?;
+                    first = Rest::Insert(rest).or_next(&mut made);
+                    second = Rest::Delete(len - both).or_next(&mut taken);
+                }
+            }
+        }
+    }
+
+    /// The change set that undoes this one on the text this one makes of
+    /// `before`: a retain stays, a delete becomes an insert of the bytes it
+    /// removed, read from `before`, and an insert becomes a delete of its
+    /// length. `None` unless this change set fits `before`.
+    ///
+    /// The inverse fits the text this one makes, and its own inverse on
+    /// that text is this change set.
+    pub fn invert(&self, before: &Snapshot) -> Option<ChangeSet> {
+        if !self.fits(&before.rope) {
+            return None;
+        }
+        let mut inverse = ChangeSet::new();
+        let mut at = 0_usize;
+        for change in &self.changes {
+            match change {
+                Change::Retain(len) => {
+                    inverse.retain(*len);
+                    at = at.saturating_add(*len);
+                }
+                Change::Delete(len) => {
+                    let end = at.saturating_add(*len);
+                    for removed in before.chunks_in(at..end)? {
+                        inverse.insert(removed);
+                    }
+                    at = end;
+                }
+                Change::Insert(text) => inverse.delete(text.len()),
+            }
+        }
+        Some(inverse)
+    }
+
+    /// Where the offset `offset` of the text this change set is for is in
+    /// the text it makes. `None` for an offset past
+    /// [`len_before`](Self::len_before). Whether an offset is a position is
+    /// the text's to say; for a change set that fits its text, a position
+    /// maps to a position.
+    ///
+    /// | Where the offset is | [`Bias::Before`] | [`Bias::After`] |
+    /// |---|---|---|
+    /// | In retained text, or at its start with nothing inserted there | Moves with the text | The same |
+    /// | Where text is inserted and nothing deleted | Stays before the inserted text | Goes after it |
+    /// | At the start of, or inside, a range that is replaced | The start of the replacement | The end of the replacement |
+    /// | At the start of, or inside, a range that is deleted with nothing inserted | The point the range collapsed to | The same |
+    /// | At the end of a deleted or replaced range | After the replacement | The same |
+    ///
+    /// Mapping through a composition is not always mapping through each
+    /// change set in turn: a position that must survive several edits is
+    /// mapped at each one.
+    pub fn map(&self, offset: usize, bias: Bias) -> Option<usize> {
+        if offset > self.len_before {
+            return None;
+        }
+        // Where the walk is, in the text before and in the text after.
+        let (mut old, mut new) = (0_usize, 0_usize);
+        let mut changes = self.changes.iter().peekable();
+        while let Some(change) = changes.next() {
+            match change {
+                Change::Retain(len) => {
+                    let end = old.saturating_add(*len);
+                    if offset < end {
+                        return Some(new.saturating_add(offset - old));
+                    }
+                    old = end;
+                    new = new.saturating_add(*len);
+                }
+                Change::Delete(len) => {
+                    let end = old.saturating_add(*len);
+                    if offset < end {
+                        return Some(new);
+                    }
+                    old = end;
+                }
+                Change::Insert(text) => {
+                    // In the normal form, a delete after an insert is the
+                    // range the insert replaces.
+                    let replaced = match changes.next_if(|next| matches!(next, Change::Delete(_))) {
+                        Some(Change::Delete(len)) => *len,
+                        _ => 0,
+                    };
+                    let end = old.saturating_add(replaced);
+                    let after = new.saturating_add(text.len());
+                    if offset == old || offset < end {
+                        return Some(match bias {
+                            Bias::Before => new,
+                            Bias::After => after,
+                        });
+                    }
+                    old = end;
+                    new = after;
+                }
+            }
+        }
+        Some(new)
+    }
+
     /// Whether the change set fits the text of `rope`: it is for the text's
     /// length, and every boundary between two of its changes is a character
     /// boundary of the text.
@@ -179,6 +347,41 @@ impl ChangeSet {
                 inserted
             }
         })
+    }
+}
+
+/// What is left of one change while two change sets are composed.
+#[derive(Clone, Copy)]
+enum Rest<'a> {
+    /// Bytes still to keep.
+    Retain(usize),
+    /// Bytes still to remove.
+    Delete(usize),
+    /// Text still to put in.
+    Insert(&'a str),
+}
+
+impl<'a> Rest<'a> {
+    /// The whole of `change`.
+    fn of(change: &'a Change) -> Self {
+        match change {
+            Change::Retain(len) => Self::Retain(*len),
+            Change::Delete(len) => Self::Delete(*len),
+            Change::Insert(text) => Self::Insert(text),
+        }
+    }
+
+    /// This, or the next of `changes` when nothing of this is left.
+    fn or_next(self, changes: &mut impl Iterator<Item = Self>) -> Option<Self> {
+        let left = match self {
+            Self::Retain(len) | Self::Delete(len) => len,
+            Self::Insert(text) => text.len(),
+        };
+        if left == 0 {
+            changes.next()
+        } else {
+            Some(self)
+        }
     }
 }
 
@@ -458,6 +661,314 @@ mod tests {
         );
         assert_eq!(changes.len_before(), usize::MAX);
         assert_eq!(changes.len_after(), usize::MAX);
+    }
+
+    /// The change set of `changes`.
+    fn set(changes: &[Change]) -> ChangeSet {
+        changes.iter().cloned().collect()
+    }
+
+    #[test]
+    fn composing_an_insert_with_a_delete_of_it_is_the_identity() {
+        let first = set(&[Change::Retain(1), insert("xy"), Change::Retain(2)]);
+        let then = set(&[Change::Retain(1), Change::Delete(2), Change::Retain(2)]);
+
+        assert_eq!(first.compose(&then), Some(set(&[Change::Retain(3)])));
+    }
+
+    #[test]
+    fn composing_a_delete_with_an_insert_where_it_collapsed_is_a_replacement() {
+        let first = set(&[Change::Retain(1), Change::Delete(2), Change::Retain(1)]);
+        let then = set(&[Change::Retain(1), insert("Z"), Change::Retain(1)]);
+
+        assert_eq!(
+            first.compose(&then),
+            Some(set(&[
+                Change::Retain(1),
+                insert("Z"),
+                Change::Delete(2),
+                Change::Retain(1)
+            ]))
+        );
+    }
+
+    #[test]
+    fn a_composition_does_the_first_and_then_the_second() {
+        // "abcd" becomes "abXYcd", which becomes "bX-Ycd".
+        let first = set(&[Change::Retain(2), insert("XY"), Change::Retain(2)]);
+        let then = set(&[
+            Change::Delete(1),
+            Change::Retain(2),
+            insert("-"),
+            Change::Retain(3),
+        ]);
+
+        let composed = first.compose(&then).expect("the lengths agree");
+
+        assert_eq!(
+            composed,
+            set(&[
+                Change::Delete(1),
+                Change::Retain(1),
+                insert("X-Y"),
+                Change::Retain(2)
+            ])
+        );
+        assert_eq!(composed.len_before(), 4);
+        assert_eq!(composed.len_after(), 6);
+    }
+
+    #[test]
+    fn composing_with_the_identity_changes_nothing() {
+        let changes = set(&[Change::Retain(2), insert("XY"), Change::Delete(2)]);
+
+        assert_eq!(
+            set(&[Change::Retain(4)]).compose(&changes),
+            Some(changes.clone())
+        );
+        assert_eq!(
+            changes.compose(&set(&[Change::Retain(4)])),
+            Some(changes.clone())
+        );
+        assert_eq!(
+            ChangeSet::new().compose(&ChangeSet::new()),
+            Some(ChangeSet::new())
+        );
+    }
+
+    #[test]
+    fn a_composition_is_none_when_the_second_is_for_another_length() {
+        let first = set(&[Change::Retain(1), insert("xy"), Change::Retain(2)]);
+
+        assert_eq!(first.compose(&set(&[Change::Retain(3)])), None);
+        assert_eq!(first.compose(&set(&[Change::Retain(6)])), None);
+        assert_eq!(first.compose(&ChangeSet::new()), None);
+    }
+
+    #[test]
+    fn a_composition_is_none_when_the_second_cuts_a_character_the_first_inserted() {
+        // "é" is two bytes.
+        let first = set(&[insert("é")]);
+
+        assert_eq!(
+            first.compose(&set(&[Change::Retain(1), Change::Delete(1)])),
+            None
+        );
+        assert_eq!(
+            first.compose(&set(&[Change::Delete(1), Change::Retain(1)])),
+            None
+        );
+        assert_eq!(
+            first.compose(&set(&[Change::Retain(1), insert("x"), Change::Retain(1)])),
+            None
+        );
+        assert_eq!(
+            first.compose(&set(&[Change::Delete(2)])),
+            Some(ChangeSet::new())
+        );
+    }
+
+    /// A snapshot of `text`.
+    fn snapshot(text: &str) -> Snapshot {
+        crate::Text::from(text).snapshot()
+    }
+
+    #[test]
+    fn the_inverse_of_a_retain_is_the_retain() {
+        let before = snapshot("héllo");
+
+        assert_eq!(
+            set(&[Change::Retain(6)]).invert(&before),
+            Some(set(&[Change::Retain(6)]))
+        );
+    }
+
+    #[test]
+    fn the_inverse_of_a_delete_inserts_the_bytes_it_removed() {
+        let before = snapshot("héllo");
+        let changes = set(&[Change::Retain(1), Change::Delete(2), Change::Retain(3)]);
+
+        assert_eq!(
+            changes.invert(&before),
+            Some(set(&[Change::Retain(1), insert("é"), Change::Retain(3)]))
+        );
+    }
+
+    #[test]
+    fn the_inverse_of_an_insert_deletes_its_length() {
+        let before = snapshot("héllo");
+        let changes = set(&[Change::Retain(1), insert("😀"), Change::Retain(5)]);
+
+        assert_eq!(
+            changes.invert(&before),
+            Some(set(&[
+                Change::Retain(1),
+                Change::Delete(4),
+                Change::Retain(5)
+            ]))
+        );
+    }
+
+    #[test]
+    fn the_inverse_of_a_replacement_puts_back_what_was_replaced() {
+        let before = snapshot("héllo");
+        let changes = set(&[insert("HE"), Change::Delete(3), Change::Retain(3)]);
+
+        assert_eq!(
+            changes.invert(&before),
+            Some(set(&[insert("hé"), Change::Delete(2), Change::Retain(3)]))
+        );
+    }
+
+    #[test]
+    fn the_inverse_of_a_delete_of_many_pieces_is_one_insert() {
+        let line = "a line with an é in it\n";
+        let string = line.repeat(8_000);
+        let before = snapshot(&string);
+        let middle = line.len() * 4_000;
+        let changes = set(&[
+            Change::Retain(line.len()),
+            Change::Delete(middle),
+            Change::Retain(string.len() - middle - line.len()),
+        ]);
+
+        let inverse = changes.invert(&before).expect("it fits");
+
+        assert_eq!(
+            inverse,
+            set(&[
+                Change::Retain(line.len()),
+                insert(&string[line.len()..line.len() + middle]),
+                Change::Retain(string.len() - middle - line.len()),
+            ])
+        );
+    }
+
+    #[test]
+    fn there_is_no_inverse_for_a_snapshot_the_change_set_does_not_fit() {
+        let before = snapshot("héllo");
+
+        // Short, long, and a boundary inside "é".
+        assert_eq!(set(&[Change::Retain(5)]).invert(&before), None);
+        assert_eq!(set(&[Change::Delete(7)]).invert(&before), None);
+        assert_eq!(
+            set(&[Change::Retain(2), Change::Delete(4)]).invert(&before),
+            None
+        );
+        assert_eq!(
+            set(&[Change::Delete(2), Change::Retain(4)]).invert(&before),
+            None
+        );
+    }
+
+    /// A change set over ten bytes with one of each case of the mapping:
+    /// text inserted at 2, the bytes 4 and 5 replaced by three, and the
+    /// bytes 7 and 8 deleted. It makes eleven bytes.
+    fn mapped() -> ChangeSet {
+        set(&[
+            Change::Retain(2),
+            insert("XY"),
+            Change::Retain(2),
+            insert("PQR"),
+            Change::Delete(2),
+            Change::Retain(1),
+            Change::Delete(2),
+            Change::Retain(1),
+        ])
+    }
+
+    /// Where `changes` maps `offset` to, with each bias: before, then after.
+    fn both(changes: &ChangeSet, offset: usize) -> (Option<usize>, Option<usize>) {
+        (
+            changes.map(offset, Bias::Before),
+            changes.map(offset, Bias::After),
+        )
+    }
+
+    #[test]
+    fn a_position_in_retained_text_moves_with_the_text() {
+        let changes = mapped();
+
+        assert_eq!(both(&changes, 0), (Some(0), Some(0)));
+        assert_eq!(both(&changes, 1), (Some(1), Some(1)));
+        assert_eq!(both(&changes, 3), (Some(5), Some(5)));
+        assert_eq!(both(&changes, 10), (Some(11), Some(11)));
+    }
+
+    #[test]
+    fn a_position_where_text_is_inserted_stays_before_it_or_goes_after_it_by_its_bias() {
+        assert_eq!(both(&mapped(), 2), (Some(2), Some(4)));
+
+        // At the start and at the end of the text.
+        let ends = set(&[insert("A"), Change::Retain(3), insert("BC")]);
+        assert_eq!(both(&ends, 0), (Some(0), Some(1)));
+        assert_eq!(both(&ends, 3), (Some(4), Some(6)));
+    }
+
+    #[test]
+    fn a_position_at_the_start_of_or_inside_a_replaced_range_goes_to_an_end_of_the_replacement() {
+        let changes = mapped();
+
+        assert_eq!(both(&changes, 4), (Some(6), Some(9)));
+        assert_eq!(both(&changes, 5), (Some(6), Some(9)));
+    }
+
+    #[test]
+    fn a_position_at_the_start_of_or_inside_a_deleted_range_goes_where_the_range_collapsed() {
+        let changes = mapped();
+
+        assert_eq!(both(&changes, 7), (Some(10), Some(10)));
+        assert_eq!(both(&changes, 8), (Some(10), Some(10)));
+    }
+
+    #[test]
+    fn a_position_at_the_end_of_a_deleted_or_replaced_range_goes_after_the_replacement() {
+        let changes = mapped();
+
+        assert_eq!(both(&changes, 6), (Some(9), Some(9)));
+        assert_eq!(both(&changes, 9), (Some(10), Some(10)));
+
+        // A range replaced, and one deleted, at the end of the text.
+        let replaced = set(&[Change::Retain(1), insert("xyz"), Change::Delete(2)]);
+        assert_eq!(both(&replaced, 3), (Some(4), Some(4)));
+        let deleted = set(&[Change::Retain(1), Change::Delete(2)]);
+        assert_eq!(both(&deleted, 3), (Some(1), Some(1)));
+    }
+
+    #[test]
+    fn an_offset_past_the_length_the_change_set_is_for_maps_to_nothing() {
+        assert_eq!(both(&mapped(), 11), (None, None));
+        assert_eq!(both(&mapped(), usize::MAX), (None, None));
+        assert_eq!(both(&ChangeSet::new(), 0), (Some(0), Some(0)));
+        assert_eq!(both(&ChangeSet::new(), 1), (None, None));
+    }
+
+    #[test]
+    fn mapping_through_a_composition_is_not_always_mapping_through_each_in_turn() {
+        // On "abc": "ab" is deleted, then "Y" is inserted where it was.
+        let first = set(&[Change::Delete(2), Change::Retain(1)]);
+        let then = set(&[insert("Y"), Change::Retain(1)]);
+        let composed = first.compose(&then).expect("the lengths agree");
+
+        // The end of the deleted range collapses to 0, which is then before
+        // the insertion; in the composition it is the end of a replaced
+        // range, which is after the replacement.
+        let through_first = first.map(2, Bias::Before).expect("within the length");
+        assert_eq!(then.map(through_first, Bias::Before), Some(0));
+        assert_eq!(composed.map(2, Bias::Before), Some(1));
+    }
+
+    #[test]
+    fn mapping_through_a_change_set_whose_lengths_saturated_does_not_panic() {
+        let changes = set(&[
+            Change::Retain(usize::MAX),
+            insert("x"),
+            Change::Delete(usize::MAX),
+            Change::Retain(usize::MAX),
+        ]);
+
+        assert!(changes.map(usize::MAX, Bias::After).is_some());
+        assert!(changes.map(usize::MAX - 1, Bias::Before).is_some());
     }
 
     #[test]
