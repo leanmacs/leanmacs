@@ -7,6 +7,13 @@
 //! geometry of its cursors and of its selections. Geometry is in pixels
 //! from the view's top left.
 //!
+//! A row's runs cover its glyphs from the first to the last and nothing
+//! past them, and a selection's area on a row is as wide as the glyphs it
+//! covers there. A tab whose spaces cross a soft wrap is drawn on both
+//! rows, so each row takes the tab's faces and its selection over the
+//! spaces it holds, though the tab's position is on the earlier row alone
+//! ([`line`](mod@crate::line)).
+//!
 //! A row's hash covers its glyphs, its runs and its height, all relative to
 //! the row's start: never its `y` or an absolute offset. So scrolling, and
 //! an edit on another row, leave it as it was, and a renderer reuses what it
@@ -62,13 +69,16 @@ pub struct FrameRow {
     pub height: f32,
     /// Its baseline, from its top.
     pub baseline: f32,
-    /// Its bytes in the view's snapshot, without its line break.
+    /// Its bytes in the view's snapshot, without its line break. A tab
+    /// whose spaces it starts inside is not among them: the tab is the
+    /// earlier row's.
     pub bytes: Range<usize>,
     /// Its glyphs, as the line store holds them. Their clusters are bytes of
     /// the segment's expanded text; `line.bytes` is the row's part of it.
     pub line: Arc<VisualLine>,
     /// Its styled runs, as bytes of the expanded text from the row's start
-    /// (`line.bytes.start`), with the faces over each.
+    /// (`line.bytes.start`), with the faces over each. They cover
+    /// `line.bytes` from start to end; an empty row has none.
     pub runs: Vec<(Range<usize>, Vec<FaceId>)>,
     /// The content hash.
     pub hash: u64,
@@ -302,10 +312,29 @@ impl<S: Shaper> Layout<S> {
             let range = walker.range(visual);
             let bytes = range.start..range.stop;
             let row_start = snapshot.row_range(visual.row).map_or(0, |row| row.start);
-            let (spans, selected) = spans_of(bytes.clone());
-            for span in &spans[..selected] {
-                let left = entry.x_of(visual.line, span.bytes.start - row_start);
-                let right = entry.x_of(visual.line, span.bytes.end - row_start);
+            // The spans of the characters the row draws any of, which is
+            // more than its bytes when it starts inside a tab's spaces.
+            let drawn = entry.drawn_bytes(visual.line).unwrap_or(0..0);
+            let (spans, selected) = spans_of(row_start + drawn.start..row_start + drawn.end);
+            // Each span as the columns of the row it covers, from the row's
+            // start: a tab's span is cut to the spaces of it the row holds.
+            let columns = line.bytes.clone();
+            let column = |offset: usize| {
+                entry
+                    .column(offset - row_start)
+                    .clamp(columns.start, columns.end)
+                    - columns.start
+            };
+            let on_row = |span: &Span| {
+                let covered = column(span.bytes.start)..column(span.bytes.end);
+                (!covered.is_empty()).then_some(Span {
+                    bytes: covered,
+                    face: span.face,
+                })
+            };
+            for span in spans[..selected].iter().filter_map(on_row) {
+                let left = entry.x_of_column(visual.line, columns.start + span.bytes.start);
+                let right = entry.x_of_column(visual.line, columns.start + span.bytes.end);
                 frame.selections.push(Area {
                     x: left,
                     y,
@@ -313,10 +342,10 @@ impl<S: Shaper> Layout<S> {
                     height: line.height,
                 });
             }
-            let column = |offset: usize| entry.column(offset - row_start) - line.bytes.start;
-            let runs: Vec<(Range<usize>, Vec<FaceId>)> = merge(bytes.clone(), &spans)
+            let spans: Vec<Span> = spans.iter().filter_map(on_row).collect();
+            let runs: Vec<(Range<usize>, Vec<FaceId>)> = merge(0..columns.len(), &spans)
                 .into_iter()
-                .map(|run| (column(run.bytes.start)..column(run.bytes.end), run.faces))
+                .map(|run| (run.bytes, run.faces))
                 .collect();
             frame.rows.push(FrameRow {
                 y,
@@ -420,7 +449,7 @@ mod tests {
 
     use super::{Area, Frame, FrameRow, ViewFrame};
     use crate::Layout;
-    use crate::decoration::{DecorationSource, Span};
+    use crate::decoration::{DecorationSource, SELECTION_FACE, Span};
     use crate::scene::{
         Cursor, CursorShape, Decoration, Rect, Scene, TextKey, TextRef, View, ViewId,
     };
@@ -630,6 +659,110 @@ mod tests {
         let selected = frame(&mut layout, view(text, 4, 160, 0, &[(1, 3)]));
         assert_ne!(hashes(&selected)[0], hashes(&before)[0]);
         assert_eq!(hashes(&selected)[1..], hashes(&before)[1..]);
+    }
+
+    #[test]
+    fn a_tab_that_crosses_a_wrap_is_styled_and_selected_on_both_rows() {
+        let mut layout = layout();
+        // Tabs are 8 columns wide, so the tab is columns 9 to 16, and the
+        // view is 10 columns wide: the tab's first space ends the first
+        // row and its other six start the second, before the x.
+        let mut crossing = view("abcdefghi\tx", 10, 64, 0, &[(8, 11)]);
+        crossing.decorations = vec![Decoration {
+            start: 9,
+            stop: 10,
+            face: "tab".to_owned(),
+        }];
+        let frame = frame(&mut layout, crossing);
+        let selection = layout.faces_mut().intern(SELECTION_FACE);
+        let tab = layout.faces_mut().intern("tab");
+        let glyphs: Vec<usize> = frame.rows.iter().map(|row| row.line.glyphs.len()).collect();
+        assert_eq!(glyphs, vec![10, 7]);
+        // Each row's runs cover its glyphs and no more, and the tab's
+        // spaces take the tab's faces on both rows.
+        assert_eq!(
+            frame.rows[0].runs,
+            vec![
+                (0..8, vec![]),
+                (8..9, vec![selection]),
+                (9..10, vec![selection, tab])
+            ]
+        );
+        assert_eq!(
+            frame.rows[1].runs,
+            vec![(0..6, vec![selection, tab]), (6..7, vec![selection])]
+        );
+        assert_eq!(
+            frame.selections,
+            vec![
+                Area {
+                    x: 80.0,
+                    y: 0.0,
+                    width: 20.0,
+                    height: 16.0
+                },
+                Area {
+                    x: 0.0,
+                    y: 16.0,
+                    width: 70.0,
+                    height: 16.0
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn every_rows_runs_cover_its_glyphs_and_a_selection_of_it_all_is_as_wide() {
+        // Tabs that end a row, start one, cross a wrap and fill whole
+        // rows, at every width from one column to twelve.
+        let texts = [
+            "abcdefghi\tx",
+            "abc\tdef\nzz",
+            "\tgh",
+            "a\tb\tc",
+            "é\t😀\tz",
+            "ab\t",
+            "\t\t\n\t",
+        ];
+        for text in texts {
+            for columns in 1..=12 {
+                let mut layout = layout();
+                // The whole text selected, and each tab in a face.
+                let mut all = view(text, columns, 1600, 0, &[(0, text.len())]);
+                all.decorations = text
+                    .match_indices('\t')
+                    .map(|(at, _)| Decoration {
+                        start: at,
+                        stop: at + 1,
+                        face: "tab".to_owned(),
+                    })
+                    .collect();
+                let frame = frame(&mut layout, all);
+                let mut areas = Vec::new();
+                for row in &frame.rows {
+                    let mut covered = 0;
+                    for (bytes, _) in &row.runs {
+                        assert_eq!(bytes.start, covered, "{text:?} at {columns}: {row:?}");
+                        assert!(bytes.end > bytes.start, "{text:?} at {columns}: {row:?}");
+                        covered = bytes.end;
+                    }
+                    assert_eq!(
+                        covered,
+                        row.line.bytes.len(),
+                        "{text:?} at {columns}: {row:?}"
+                    );
+                    if !row.line.glyphs.is_empty() {
+                        areas.push(Area {
+                            x: 0.0,
+                            y: row.y,
+                            width: row.line.width,
+                            height: row.height,
+                        });
+                    }
+                }
+                assert_eq!(frame.selections, areas, "{text:?} at {columns}");
+            }
+        }
     }
 
     /// The hash of each row of `frame`.

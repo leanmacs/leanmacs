@@ -15,7 +15,9 @@
 //!   at the row's end; the last visual line of an earlier segment ends
 //!   where the next segment starts, which is that segment's.
 //! - A visual line that starts inside a tab's spaces starts after the tab:
-//!   the tab's position is on the visual line its first space is on.
+//!   the tab's position is on the visual line its first space is on. The
+//!   later line still draws the rest of the tab's spaces
+//!   ([`LineEntry::drawn_bytes`]).
 
 use std::ops::Range;
 use std::sync::Arc;
@@ -222,6 +224,17 @@ impl<L> LineEntry<L> {
         Some(self.bytes.start + self.expanded.offset(line.bytes.start, Bias::After))
     }
 
+    /// The bytes, relative to the row's start, of the characters visual
+    /// line `index` draws any of: its own ([`LineEntry::line_bytes`]), and
+    /// before them the tab whose spaces it starts inside, which is on the
+    /// earlier line. `None` past its last.
+    pub fn drawn_bytes(&self, index: usize) -> Option<Range<usize>> {
+        let line = self.lines.get(index)?;
+        let start = self.expanded.offset(line.bytes.start, Bias::Before);
+        let end = self.expanded.offset(line.bytes.end, Bias::After);
+        Some(self.bytes.start + start..self.bytes.start + end)
+    }
+
     /// Whether visual line `index` holds the position at the row's end.
     pub fn holds_the_end(&self, index: usize) -> bool {
         self.last && index + 1 == self.lines.len()
@@ -416,6 +429,20 @@ mod tests {
         assert_eq!(lines(&entry), vec![0..3, 3..4]);
         assert_eq!(entry.line_of(2), 0);
         assert_eq!(entry.line_of(3), 1);
+    }
+
+    #[test]
+    fn a_line_that_starts_inside_a_tabs_spaces_draws_the_tab_too() {
+        // The second of the tab's two spaces starts the second line.
+        let entry = row("ab\tc", Some(30.0));
+        assert_eq!(entry.line_bytes(1), Some(3..4));
+        assert_eq!(entry.drawn_bytes(0), Some(0..3));
+        assert_eq!(entry.drawn_bytes(1), Some(2..4));
+        // A line that starts with a tab's first space draws its own bytes.
+        let entry = row("abc\td", Some(30.0));
+        assert_eq!(entry.line_bytes(1), Some(3..5));
+        assert_eq!(entry.drawn_bytes(1), Some(3..5));
+        assert_eq!(entry.drawn_bytes(2), None);
     }
 
     #[test]

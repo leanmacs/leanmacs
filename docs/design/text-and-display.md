@@ -947,7 +947,10 @@ facts of each part are in the module docs; these are the decisions.
   rows from the anchor's visual line, as many as fit whole, each with its
   glyphs shared with the store, its styled runs and a content hash over
   glyphs, runs and height relative to the row's start; the cursor at the
-  head of every range of every selection; and selection areas. A test
+  head of every range of every selection; and selection areas. A row's
+  runs cover its glyphs exactly and a selection's area is as wide as the
+  glyphs it covers, so a tab whose spaces cross a soft wrap takes its faces
+  and its selection on both rows, over the spaces each holds. A test
   compares a frame as text (`Frame::describe`), and one fixture frame
   (`tests/display/frame.expected`) is compared from Rust and, through the
   real binding, from Lean.
