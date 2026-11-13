@@ -53,8 +53,25 @@ is `parse` with the edit compiled, and `scheme` packages it as an
   the doubled operator counts lines. It is the same operator when it has
   the same name.
 - **A different operator, or a command, while an operator waits resets.**
-- **An unbound key resets the edit begun**: nothing is yielded, no operator
-  waits, no prefix is walked, and the state is the initial state.
+- **An unbound key resets the edit begun**: nothing is yielded, no count is
+  kept, no operator waits, no prefix is walked, and the state is the
+  initial state.
+
+## Counts
+
+- **Two fields hold the count.** `State.digits` is the count being typed,
+  and `State.multiplier` the product of the counts already completed. An
+  operator key folds the digits into the multiplier. The count of the edit
+  (`State.count`) is their product, with an absent one left out, so a count
+  in any position multiplies: `2d3w` is 6.
+- **No count is not a count of 1.** An edit's count is optional, and
+  compiles to 0 when absent. Only the doubled operator fills it in.
+- **A digit is a key whose chord is one digit character with no modifier.**
+  It is read as a count when no keymap prefix is being walked. `0` is a
+  digit only while a count is being typed; otherwise it is looked up like
+  any key, so it can be bound to a motion. Digits are not bound in a
+  keymap: the rule for `0` needs the count typed so far, which a keymap
+  does not see.
 - **`pending` is every key of the edit begun** (`State.typed`), as chords.
 
 ## Vim states
@@ -239,11 +256,45 @@ structure State where
   /-- The chords of every key of the edit begun, in order; none when no
   edit is begun. -/
   typed : List Key := []
+  /-- The product of the counts already completed, if one was. -/
+  multiplier : Option Nat := none
+  /-- The count being typed, if a digit was. -/
+  digits : Option Nat := none
   /-- The operator waiting for its target, if one was typed. -/
   operator : Option Operator := none
   /-- The keymap prefix walked so far, within the edit begun. -/
   walked : List Key := []
   deriving DecidableEq, Repr
+
+/-- The product of two counts, with an absent one left out; none when both
+are absent. -/
+private def times : Option Nat → Option Nat → Option Nat
+  | some first, some second => some (first * second)
+  | some first, none => some first
+  | none, second => second
+
+/-- The count of the edit begun: the product of the counts completed and
+the count being typed, with an absent one left out; none when no digit was
+typed. -/
+def State.count (state : State) : Option Nat :=
+  times state.multiplier state.digits
+
+/-- The digit `key` types, if its chord is one digit character with no
+modifier held. -/
+private def digit? (key : Key) : Option Nat :=
+  match key.chord.logical, key.chord.modifiers == {} with
+  | .character text, true =>
+    match text.toList with
+    | [char] => if char.isDigit then some (char.toNat - '0'.toNat) else none
+    | _ => none
+  | _, _ => none
+
+/-- The digit `key` adds to the count being typed, if it is read as a count
+and not looked up: no keymap prefix is being walked, and it is not a `0`
+with no count being typed. -/
+private def State.countDigit? (state : State) (key : Key) : Option Nat :=
+  if state.walked.isEmpty then (digit? key).filter fun digit => digit != 0 || state.digits.isSome
+  else none
 
 /-- What one key parses to. -/
 inductive Parsed where
@@ -260,31 +311,38 @@ rules in the module docs). The key is walked through the active keymaps of
 def parse (states : States) (maps : ViewId → List (Keymap Bound)) (view : ViewId) (state : State)
     (key : Key) : State × Parsed :=
   let typed := state.typed ++ [key.chord]
-  match Keymap.walk (maps view ++ states.initial.keymaps) state.walked key with
-  | (walked, none) =>
-    if walked.isEmpty then ({}, .nothing)
-    else
-      ({ state with
-          typed, walked },
-        .nothing)
-  | (_, some (.motion name)) =>
-    match state.operator with
-    | some operator => ({}, .edit (.operate operator (.motion name) none none))
-    | none => ({}, .edit (.move name none))
-  | (_, some (.textObject name)) =>
-    match state.operator with
-    | some operator => ({}, .edit (.operate operator (.textObject name) none none))
-    | none => ({}, .nothing)
-  | (_, some (.operator operator)) =>
-    match state.operator with
-    | some waiting =>
-      if waiting.name == operator.name then ({}, .edit (.operate waiting .lines (some 1) none))
-      else ({}, .nothing)
-    | none => ({ typed, operator := some operator }, .nothing)
-  | (_, some (.command command)) =>
-    match state.operator with
-    | some _ => ({}, .nothing)
-    | none => ({}, .edit (.run command none none))
+  match state.countDigit? key with
+  | some digit =>
+    ({ state with
+        typed, digits := some (state.digits.getD 0 * 10 + digit) },
+      .nothing)
+  | none =>
+    match Keymap.walk (maps view ++ states.initial.keymaps) state.walked key with
+    | (walked, none) =>
+      if walked.isEmpty then ({}, .nothing)
+      else
+        ({ state with
+            typed, walked },
+          .nothing)
+    | (_, some (.motion name)) =>
+      match state.operator with
+      | some operator => ({}, .edit (.operate operator (.motion name) state.count none))
+      | none => ({}, .edit (.move name state.count))
+    | (_, some (.textObject name)) =>
+      match state.operator with
+      | some operator => ({}, .edit (.operate operator (.textObject name) state.count none))
+      | none => ({}, .nothing)
+    | (_, some (.operator operator)) =>
+      match state.operator with
+      | some waiting =>
+        if waiting.name == operator.name then
+          ({}, .edit (.operate waiting .lines (some (state.count.getD 1)) none))
+        else ({}, .nothing)
+      | none => ({ typed, multiplier := state.count, operator := some operator }, .nothing)
+    | (_, some (.command command)) =>
+      match state.operator with
+      | some _ => ({}, .nothing)
+      | none => ({}, .edit (.run command state.count none))
 
 /-- One key of the Vim scheme: `parse`, with the edit it completed compiled
 to its invocation. -/

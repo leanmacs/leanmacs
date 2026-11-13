@@ -4601,7 +4601,7 @@ def vimOperate (operator kind name : String) (count : Nat := 0) (register : Stri
 /-- The inputs the Vim checks give the scheme contract as complete, as key
 strings. -/
 def vimSequences : List String :=
-  ["g g", "w", "d w", "d d"]
+  ["g g", "w", "d w", "d d", "d 2 w", "2 d 3 w"]
 
 /-- The key the Vim checks give the scheme contract as unbound. -/
 def vimUnbound : Key :=
@@ -4753,7 +4753,92 @@ def vimGrammarChecks : List Check :=
         pure
           (vimPending "d" == keys "d" && vimPending "d g" == keys "d g" &&
             vimPending "d g g" == [] &&
-            vimPending "d d" == []) }]
+            vimPending "d d" == []) },
+    { name :=
+        "d 2 w yields one invocation, on its last key: operate, delete, over the motion word, with a count of 2"
+      run :=
+        pure
+          ((vimFed "d 2 w").2 ==
+              [none, none,
+                some
+                  { command := "operate"
+                    arguments := [.str "delete", .str "motion", .str "word", .nat 2, .str ""] }] &&
+            (vimParsed "d 2 w").2.getLast? ==
+              some (.edit (.operate vimDelete (.motion "word") (some 2) none))) },
+    { name :=
+        "2 d 3 w yields the invocation of d 2 w with a count of 6: a count before the operator and one before the motion multiply"
+      run :=
+        pure
+          ((vimFed "2 d 3 w").2 ==
+              [none, none, none,
+                some
+                  { command := "operate"
+                    arguments := [.str "delete", .str "motion", .str "word", .nat 6, .str ""] }] &&
+            (vimFed "3 d w").2.getLast? == some (some (vimOperate "delete" "motion" "word" 3))) },
+    { name :=
+        "a count before a doubled operator, and one inside it, count lines: 3 d d is three lines and 2 d 3 d is six"
+      run :=
+        pure
+          ((vimFed "3 d d").2 == [none, none, some (vimOperate "delete" "lines" "" 3)] &&
+            (vimFed "2 d 3 d").2 == [none, none, none, some (vimOperate "delete" "lines" "" 6)]) },
+    { name :=
+        "the digits of a count are read in base ten, and 0 after a digit is a digit: 1 0 w moves by 10"
+      run :=
+        pure
+          ((vimFed "1 0 w").2 == [none, none, some (vimMove "word" 10)] &&
+            (vimFed "1 2 3 w").2.getLast? == some (some (vimMove "word" 123))) },
+    { name :=
+        "0 with no count being typed is looked up like any key, so it yields the motion it is bound to, after an operator too"
+      run :=
+        pure
+          ((vimFed "0").2 == [some (vimMove "line-start")] &&
+            (vimFed "d 0").2 == [none, some (vimOperate "delete" "motion" "line-start")]) },
+    { name :=
+        "a count before a motion of two keys is carried by its move, and a command carries a count"
+      run :=
+        pure
+          ((vimFed "2 g g").2 == [none, none, some (vimMove "first-line" 2)] &&
+            (vimFed "3 u").2 ==
+              [none, some { command := "undo", arguments := [.nat 3, .str ""] }] &&
+            (vimParsed "2 g g").2.getLast? == some (.edit (.move "first-line" (some 2)))) },
+    { name :=
+        "a digit after a keymap prefix is looked up as a key of the sequence, not read as a count"
+      run :=
+        let active (_ : ViewId) : List (Keymap Vim.Bound) := [vimKeymap [("g 2", .motion "second")]]
+        pure
+          ((vimFed "g 2" active).2 == [none, some (vimMove "second")] &&
+            (vimFed "3 g 2" active).2 == [none, none, some (vimMove "second" 3)]) },
+    { name :=
+        "a digit with control held is not a count: unbound, it resets the count typed before it"
+      run := pure ((vimFed "2 C-3 w").2 == [none, none, some (vimMove "word")]) },
+    { name :=
+        "the count of the edit begun is the product of the counts typed so far, and none when no digit was typed"
+      run :=
+        pure
+          ((vimFed "d").1.count == none && (vimFed "2").1.count == some 2 &&
+            (vimFed "2 d").1.count == some 2 &&
+            (vimFed "2 d 3").1.count == some 6 &&
+            (vimFed "d 1 2").1.count == some 12) },
+    { name :=
+        "an unbound key after an operator and a count yields no invocation and leaves no count, no operator and no prefix: the state is the initial state"
+      run :=
+        let (state, yields) := vimFed "d 2 z"
+        let (before, beforeYields) := vimFed "2 d z"
+        pure
+          (yields == [none, none, none] && state.count == none && state.operator == none &&
+            state.walked == [] &&
+            state.typed == [] &&
+            decide (state = vimInit) &&
+            beforeYields == [none, none, none] &&
+            decide (before = vimInit) &&
+            (vimFed "2 z w").2 == [none, none, some (vimMove "word")]) },
+    { name :=
+        "the Vim scheme reports the digits of a count among the pending keys, in the order typed"
+      run :=
+        pure
+          (vimPending "d 2" == keys "d 2" && vimPending "2 d 3" == keys "2 d 3" &&
+            vimPending "1 0" == keys "1 0" &&
+            vimPending "2 d 3 w" == []) }]
 
 /-- The checks that the Vim scheme keeps the scheme contract
 (`Editor/InputScheme/Contract.lean`). -/
