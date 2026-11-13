@@ -46,6 +46,7 @@ use crate::decoration::{
 use crate::query::{Visual, Walker};
 use crate::scene::{CursorShape, Rect, Scene, TextKey, View, ViewId};
 use crate::shaper::{Shaper, VisualLine};
+use crate::tabs::boundary_at_or_before;
 use crate::wrap::Outcome;
 
 /// A rectangle in pixels from a view's top left.
@@ -181,16 +182,6 @@ impl Frame {
 /// dropped, and laid out again if they are reached.
 pub const KEPT_VIEW_HEIGHTS: usize = 4;
 
-/// The nearest position of `snapshot` at or before `offset`; its end for an
-/// offset past it.
-pub fn at_or_before(snapshot: &Snapshot, offset: usize) -> usize {
-    let mut at = offset.min(snapshot.len());
-    while !snapshot.is_char_boundary(at) {
-        at -= 1;
-    }
-    at
-}
-
 impl<S: Shaper> Layout<S> {
     /// Lays `scene` out into a frame. What is kept of every text it does
     /// not name is dropped, and of each text it names, every row farther
@@ -250,9 +241,9 @@ impl<S: Shaper> Layout<S> {
             .decorations
             .iter()
             .map(|decoration| {
-                let start = at_or_before(snapshot, decoration.start);
+                let start = boundary_at_or_before(snapshot, decoration.start);
                 Span {
-                    bytes: start..at_or_before(snapshot, decoration.stop).max(start),
+                    bytes: start..boundary_at_or_before(snapshot, decoration.stop).max(start),
                     face: self.faces.intern(&decoration.face),
                 }
             })
@@ -298,7 +289,7 @@ impl<S: Shaper> Layout<S> {
                 seen.entry((row, segment)).or_insert(outcome);
             },
         };
-        let anchor = at_or_before(snapshot, view.scroll);
+        let anchor = boundary_at_or_before(snapshot, view.scroll);
         let shown = walker
             .rows_shown(view.rect.height as f32, anchor)
             .unwrap_or_default();
@@ -418,8 +409,8 @@ fn moved_back(snapshot: &Snapshot, selection: &Selection) -> Option<Selection> {
         .iter()
         .map(|range| {
             SelectionRange::new(
-                at_or_before(snapshot, range.anchor),
-                at_or_before(snapshot, range.head),
+                boundary_at_or_before(snapshot, range.anchor),
+                boundary_at_or_before(snapshot, range.head),
             )
         })
         .collect();

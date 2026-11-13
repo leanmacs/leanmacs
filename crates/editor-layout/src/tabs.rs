@@ -151,8 +151,12 @@ pub fn row_content(snapshot: &Snapshot, row: usize) -> Option<Range<usize>> {
     Some(range.start..range.end - usize::from(ends_in_a_return))
 }
 
-/// The last character boundary of `snapshot` at or before `offset`.
-fn boundary_at_or_before(snapshot: &Snapshot, offset: usize) -> usize {
+/// The last character boundary of `snapshot` at or before `offset`, and
+/// its end for an offset past it: the nearest position at or before an
+/// offset. It is the one rule for both where a long row is cut and where
+/// the frame moves an offset of a scene that is not a position
+/// ([`frame`](crate::frame)).
+pub(crate) fn boundary_at_or_before(snapshot: &Snapshot, offset: usize) -> usize {
     let mut at = offset.min(snapshot.len());
     while !snapshot.is_char_boundary(at) {
         at -= 1;
