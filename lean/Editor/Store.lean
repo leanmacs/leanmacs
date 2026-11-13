@@ -42,9 +42,11 @@ def setup : SetupM Unit := do
 ```
 
 A command works on one store. There is no request of the editor's port that
-reads or writes a cell: that would make the port a sum of the text port and a
-store port, which is for the phase that grows the editor API to choose. The
-cell, the encoding, the version and the install rule would not change.
+reads or writes a cell. The port is a composite of sub-ports
+(`Editor/Command.lean`), and a store sub-port could be one of them, but
+stores do not use it: a command over a store is handed the value. Adding
+one would not change the cell, the encoding, the version or the install
+rule.
 
 The store never reaches the Rust library, so it has no model and no contract
 check: its one implementation is the pure core, which the model tests and the

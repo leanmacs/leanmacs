@@ -384,8 +384,9 @@ the monad.
 - A **port** is a type of requests and, for each request, the type of its
   reply. A **program** over a port is plain data: it is finished, or it
   makes a request and continues with the reply. `EditorM` is the type of
-  programs over the editor's port and `JobM` the type of programs over the
-  job port. Both are ordinary monads, and a command reads as a `do` block.
+  programs over the editor's port, a composite of the text and display
+  ports ("The editor's port is a composite", below), and `JobM` the type of
+  programs over the job port. Both are ordinary monads, and a command reads as a `do` block.
 - A port has two **handlers**. The model is a pure function from a request
   and the model's state to a reply and a new state. The real binding answers
   each request with a call into the Rust library. One runner for each kind
@@ -486,8 +487,9 @@ the display pipeline's, which holds it to the same contract:
 |---|---|
 | The scene, plain data published after a command: views by handles (a snapshot, markers), faces by name, the echo text, the pending prefix and the preedit | `lean/Editor/Scene.lean` |
 | The display port: `publish` a scene, and two layout queries answered in the same call, the rows a view shows from its anchor (`rowsShown`) and the position some visual lines away with the goal x passed back (`linesFrom`); `DisplayM`; the cell size the contract runs at (`Display.Cells`) | `lean/Editor/Display.lean` |
-| Its pure model: the scenes published, in order, and a layout in fixed-size cells, for tests only | `lean/Editor/Display/Model.lean` |
-| Its contract, imported from the port alone: properties of the two queries at a cell size, run against the model by `lake test` at two sizes, and to be run against the real binding over a fake shaper whose glyphs have that size | `lean/Editor/Display/Contract.lean` |
+| Its pure model: the scenes published, in order, and a layout in fixed-size cells, for tests, and for the recorder below | `lean/Editor/Display/Model.lean` |
+| Its contract, imported from the port alone: properties of the two queries at a cell size, run against the model by `lake test` at two sizes, against the recorder over the library's snapshots by `contract-test` at the same two, and to be run against the real binding over a fake shaper whose glyphs have that size | `lean/Editor/Display/Contract.lean` |
+| The display where there is no window (the headless host): a recorder that keeps the last scene published and how many have been, and answers the two queries with the model's layout rule over the text of the library's snapshot, read through the published table's read half. It is the one place the model's rule runs outside a test, because a host with no window has no layout to ask; an editor with a window asks the real binding every time | `lean/Editor/Display/Recorder.lean` |
 | The events of the editor queue as plain data (a key with its logical and physical identity and modifiers, a pointer, a resize), and the one module that reads and writes their layouts on the queue | `lean/Editor/Event.lean`, `lean/Editor/Event/Queue.lean` |
 
 The runner is the job port's real handler. It is not a function from a
@@ -498,8 +500,8 @@ and chaining the rest of the program on it
 end in one call, with the clock moved by each wait.
 
 That a wait is not a command is checked when `lean/Editor/Job.lean` is
-compiled: a wait offered at `EditorM Unit` is a type error, alone and after
-a text request in a `do` block. So "a command may not block" is pinned
+compiled: a wait offered at `EditorM Unit`, or at `TextM Unit`, is a type
+error, alone and after a text request in a `do` block. So "a command may not block" is pinned
 beyond `IO`. Each of the two checks was seen to bite once by hand: offered
 at `JobM Unit`, where a wait is legal, the module stops building. The same
 module checks that a file request is a job and not a command, and that
@@ -511,6 +513,56 @@ A file request is the first request whose wait has a reply. A completion
 says only that a wait is over, so the runner fetches the reply from the
 service afterwards, on the job's thread, and never for a job that was
 cancelled.
+
+### The editor's port is a composite
+
+Decided 2026-11-13, by the command loop's phase 2. A command reaches the
+text, the display and, later, buffers and windows through one port, whose
+shape is:
+
+- **Its requests are a sum of sub-ports**, one constructor a sub-port:
+  `EditorRequest.text` carries a request of the text port and
+  `EditorRequest.display` one of the display port. The reply to each is its
+  sub-port's reply. `editorPort` is an `abbrev`, as every port is.
+- **A command is `EditorM := ExceptT TextError (Program editorPort)`.** A
+  program over the text port alone is `TextM`, and every text operation and
+  all logic over text alone (the undo tree, the text contract, `append`)
+  stays at it; the display's is `DisplayM`. `TextM.lift` and
+  `DisplayM.lift` embed each in a command, and they are `MonadLift`
+  instances, so an operation of either sub-port is used in a command as it
+  is. That is why every config source and fixture written before the port
+  became a composite elaborates unchanged. There is no lift from `JobM`, so
+  a job is still not a command, which `lean/Editor/Job.lean` checks at
+  `TextM` and at `EditorM`.
+- **A refusal is a `TextError`.** The display's two refusals mean what the
+  text port's of the same names mean (a snapshot that names nothing, an
+  offset that is not a position), so the display's lift maps each to its
+  namesake. Widening the error to a sum now would break every config that
+  throws a text refusal, and nothing needs it yet. The first sub-port whose
+  refusal has no `TextError` counterpart widens it, in its own phase.
+- **A runner's state is the product of its sub-ports' states.** On the
+  models it is the text model and the display model side by side
+  (`EditorModel`); before each display request the display model's texts
+  are filled from the text model's snapshots, so a command that takes a
+  snapshot and asks the display about it is answered from that snapshot's
+  text. For real it is the text binding's table, with a display handler
+  (`DisplayHandler`) passed in: the recorder in a host with no window, the
+  display pipeline's binding in one with a window.
+- **Where it grows.** Requests about buffers and windows (the command
+  loop's phase 8) are a third constructor, `EditorRequest.state`, whose
+  handler is one pure function over the editor state, the same in the model
+  and in the real runner, as a store is: no Rust and no contract check.
+  Both runners' state then gains the editor state. A new sub-port is a
+  constructor and a lift. A new question about text or layout stays inside
+  its own sub-port and changes nothing here.
+
+| Piece | Where |
+|---|---|
+| The composite port, `EditorM`, the two embeddings and lifts, and the mapping of the display's refusals | `lean/Editor/Command.lean` |
+| The composite's model runner, over the two models side by side | `lean/Editor/Command/Model.lean` |
+| The composite's real runner, over the text binding and a display handler | `lean/Editor/Command/Real.lean` |
+| `DisplayHandler`, and running a display program against one | `lean/Editor/Display.lean` |
+| What the model runner does with each sub-port, pinned | `ModelTest.commandPortChecks` |
 
 ## Where state lives
 
@@ -558,12 +610,12 @@ editor's port:
   longer declares is removed. Declaring a store name twice, registering a
   command name or a job name twice, or registering a command over an
   undeclared store rejects the reload.
-- **Why not a request of the editor's port.** A `get` and a `set` would make
-  the editor's port a sum of the text port and a store port, which is the
-  shape the phase that grows the editor API exists to choose.
-  State-passing commands need no change to `EditorM`. They limit a command
-  to one store; `get` and `set` can be added with the composite port
-  without changing the cell, the encoding, the version or the install rule.
+- **Why not a request of the editor's port.** The editor's port is now a
+  composite of sub-ports ("The editor's port is a composite", above), and a
+  `get` and a `set` would be a store sub-port of it. Stores still do not use
+  it: state-passing commands need no change to `EditorM`. They limit a
+  command to one store; a store sub-port can be added later without
+  changing the cell, the encoding, the version or the install rule.
 - **No model and no contract check.** The store never reaches the Rust
   library. Its one implementation is the pure core, which the model tests
   and the real editor both run.

@@ -7,7 +7,10 @@ import Editor.UndoTree
 # The editor
 
 The root module user config imports: the editor's ports, the commands written
-over them, the pure models that tests and theorems run them against, the undo
+over them, the pure models that tests and theorems run them against, the
+editor's composite port, of which a command is a program and whose
+sub-ports' operations are lifted into it (`Editor/Command.lean`, which
+comes with `Editor/Setup.lean` through the stores), the undo
 tree over the text port (`Editor/UndoTree.lean`), the events the editor queue
 delivers, as plain data (`Editor/Event.lean`), the scene Lean publishes to
 the display (`Editor/Scene.lean`) and the display interface it is published

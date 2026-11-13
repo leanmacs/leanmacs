@@ -45,7 +45,7 @@ binding:
 |---|---|---|
 | Another question of layout (the position at a point) | A constructor of `DisplayRequest`, its reply in `DisplayRequest.Reply`, its operation here, and a property in the contract | The display pipeline adds it when something needs it |
 | A field of what is published | A field of `Scene` (`Editor/Scene.lean`) | The command loop |
-| The editor's port | This port combined with the text port | The command loop, phase 2 |
+| A request a command makes of the display | Nothing new: a command reaches this port through the editor's composite port (`Editor/Command.lean`), which lifts every operation here | The command loop |
 -/
 
 namespace Editor
