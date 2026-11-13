@@ -98,9 +98,12 @@ the text port: the undo tree (`lean/Editor/UndoTree.lean`, decided
   file port's: `editor_text::fs::Fs`, which the crate defines, with loading
   and saving over it in `editor_text::file`. A load counts the file's line
   endings (line feeds alone, and line feeds after a carriage return) and
-  changes none; which is the dominant one is Lean's to say from the counts.
+  changes none; which is the dominant one is Lean's to say from the counts
+  (`File.LineEndings.dominant`, `lean/Editor/File.lean`).
   rust-library.md, "Files and watching", has the port, the adapter and the
-  rules as built.
+  rules as built. From Lean a load and a save are requests a job awaits
+  ([concurrency.md](concurrency.md)), and a text is made of what was
+  loaded by the text port's `adopt` and `copy`.
 
 **Revisions and snapshots.**
 
@@ -114,8 +117,17 @@ the text port: the undo tree (`lean/Editor/UndoTree.lean`, decided
 - Every read is a method of a snapshot: its length, rows and points, its
   text in the pieces the rope holds it in (for search, shaping and a
   parser's read callback, with no copy), and its bytes to save.
-- No job, worker or renderer reads a snapshot yet. How a job names one is
-  an open question below.
+- A job reads a snapshot: the job that saves one as a file. It names a
+  snapshot a command took by the command's id for it, which the file
+  service finds in the table of snapshots the editor thread publishes and
+  alone writes; and a job that loads a file holds the snapshot the load
+  made, under an id of another kind, until its command takes it into the
+  store ([concurrency.md](concurrency.md), "Sharing state"). No worker and
+  no renderer reads one yet.
+- A text can be made from a snapshot (`Text::from_snapshot`): it holds what
+  the snapshot holds, at revision 0, with an empty log, no markers and no
+  kept inverses, and it shares the rope, so it copies none of the text.
+  That is how a loaded file becomes a text, and how a text is copied.
 
 **The rope.**
 
@@ -471,7 +483,15 @@ the text port: the undo tree (`lean/Editor/UndoTree.lean`, decided
   boundary came first: a save that takes time keeps the state it wrote and
   marks it when it reports, and if that state was the end of a group
   closed in between, it is the group's node. Saving itself is the file
-  port's.
+  port's, reached from a job. The route a completed save takes to the mark:
+  the command that starts a save keeps the tree's state beside the snapshot
+  it hands the job; the job replies with the saved file's stamp or a
+  refusal; and the job's command marks that kept state saved on a stamp,
+  and keeps the stamp for the next save to expect, or reports the refusal
+  and marks nothing. It is built and played by hand as cases on the models
+  and on the library (`lean/Editor/File/Cases.lean`). Where a buffer keeps
+  its path, stamp, line ending and tree, the save command, and a command
+  that starts a job with arguments are the command loop's.
 - *Other styles* are written over the same two requests: a linear history
   is two lists of runs; Vim's is this tree with moves by the order nodes
   were made and a time on each; Emacs's records the revision an inverse
@@ -509,6 +529,18 @@ the text port: the undo tree (`lean/Editor/UndoTree.lean`, decided
 | Applying an inverse and dropping inverses across the boundary | `crates/editor-ffi/src/inverse.rs` |
 | The Lean text port, its model, real binding and contract | `lean/Editor/Text.lean`, `lean/Editor/Text/` ([lean-runtime.md](lean-runtime.md)) |
 | The undo tree, and its cases | `lean/Editor/UndoTree.lean`, `lean/Editor/UndoTree/Cases.lean` ([lean-runtime.md](lean-runtime.md)) |
+| A text made from a snapshot | `Text::from_snapshot` in `crates/editor-text/src/text.rs` |
+| The file port, and what an adapter's tests are | `crates/editor-text/src/fs.rs` |
+| The file port's fake | `crates/editor-text/src/fs/fake.rs` |
+| The file port's contract, its ground, and the fakes that break it | `crates/editor-text/src/fs/contract.rs` |
+| Loading a file and saving a snapshot over the port, the stamp, the line endings, and the fixtures | `crates/editor-text/src/file.rs`, with its properties in `tests/properties/files.rs` and its costs in `tests/snapshot_cost.rs` |
+| The lists that keep the logic's tests off the disk | `crates/editor-text/clippy.toml`, `crates/editor-ffi/clippy.toml`, `deny.toml` |
+| The file port's adapter over `std::fs`, held to the contract | `crates/editor-fs-std/` |
+| The file service behind the completion queue, and its wiring test on real files | `crates/editor-ffi/src/files.rs`, `crates/editor-ffi/tests/files.rs` |
+| A document made from a snapshot, as a handle | `editor_ffi_document_from_snapshot` in `crates/editor-ffi/src/document.rs` |
+| The file requests as data, and the model of the files a job reaches | `lean/Editor/File.lean`, `lean/Editor/File/Model.lean` |
+| The file requests in the job port, the runner's file port, its fake and its real implementation, and the file properties | `lean/Editor/Job.lean`, `lean/Editor/Job/` ([lean-runtime.md](lean-runtime.md)) |
+| The cases that cross the text port and the job port | `lean/Editor/File/Cases.lean` |
 
 ## The edit log
 
@@ -868,9 +900,12 @@ these hunks" is a fact the editor can state.
   as the end of a line; rows here do not. The rope library can count that
   rule beside this one without the stored text changing. The language
   server client decides whether it is needed.
-- **How a job names a snapshot.** The text port names one by an id in the
-  editor thread's table, and the job port has no request for one. The
-  first job that reads text, which is saving a file, settles it.
+- **Lending a job its snapshots when it is started.** How a job names a
+  snapshot is settled ([concurrency.md](concurrency.md), "Sharing state"):
+  by the id a command got, read through the table the editor thread
+  publishes. A job that was handed its snapshots when it was started would
+  read no table at all. That needs a way to start a job with arguments,
+  which the command loop adds, and can be added beside what is built.
 - **Who forgets the log, and when.** The log is bounded only by Lean
   forgetting ("The edit log", as built), and nothing does yet. The command
   loop or review decides, knowing which consumers are behind and whether a

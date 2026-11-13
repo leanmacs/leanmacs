@@ -22,7 +22,7 @@ process, its runtime is the only one that schedules editor code.
 | **Dedicated job threads** | Lean | Work that blocks in a system call: the reload job today | Mutate editor state |
 | **Completion pump** | Lean, a dedicated task | Pulling the completion queue and ending the wait each completion names | Run a job; mutate editor state |
 | **Render** | Rust | Turning the published scene into frames and drawing them. Shares the layout cache with the editor thread's layout queries | Run Lean code |
-| **Services** | Rust | Timers, child-process pipes, pseudo-terminals, file watches | Hold editor state; call Lean |
+| **Services** | Rust | Timers, loading and saving files, child-process pipes, pseudo-terminals, file watches | Hold editor state; call Lean |
 | **Workers** | Rust | Tree-sitter parsing, diff, fuzzy matching | Hold editor state |
 
 Rust never calls Lean. The main thread and the services push events onto a
@@ -46,11 +46,48 @@ snapshots are cheap; a job or the renderer holds a snapshot handle.
 
 The text snapshot is built: taking one copies none of the text, it never
 changes, and the library's object is safe to read from any thread
-([text-and-display.md](text-and-display.md), "Text", as built). What is not
-built is the hand-off. A command names a snapshot by an id in the text
-port's table, which the editor thread owns, and the job port has no request
-that reads one. So no job reads text yet. The first that must is saving a
-file, and how it names its snapshot is decided there.
+([text-and-display.md](text-and-display.md), "Text", as built). The hand-off
+is built too, in both directions, for the first job that needs it, which
+loads and saves files. The rule of the table above is kept: **only the
+editor thread writes the text port's tables**. Every text and every snapshot
+enters them, and leaves them, in a command.
+
+- **A job reads a snapshot a command took, by the id the command got.** The
+  text port's real binding keeps its snapshots in a table behind a
+  reference, which it *publishes* and which only its handler writes, in a
+  command (`lean/Editor/Text/Real.lean`). What the job runner's file service
+  is given is the read half of that table and nothing else, so nothing off
+  the editor thread holds anything it could write the table with. A read
+  sees the table as it is at that instant: an id a command has released by
+  then names nothing, and a save of it is refused as a value. This is how
+  the scene crosses to the renderer too, and a snapshot never changes, so a
+  reader shares nothing that moves. Documents are not published: a text has
+  one writer and no reader but a command.
+- **What a job makes is the job's until a command takes it.** A load's reply
+  names its snapshot by a second kind of id (`JobSnapshotId`), which is not
+  an id of the store. The runner holds the library's snapshot for the job
+  (`Job.HeldSnapshots`, the runner's own state, as the table of waits is),
+  and the job's handle lists what the job holds. The id names a snapshot
+  for the job that loaded it and for that job's command, and for nothing
+  else: the runner refuses a save of an id the job does not hold, another
+  job's included.
+- **The job's command takes it into the store, on the editor thread**, with
+  a request of the text port, `adopt`. When the editor thread runs a
+  finished job's command it hands that run what the job held; `adopt` is
+  answered from that, and an id the run was not handed is refused. `adopt`
+  is a command and, offered as a job, a type error, checked when
+  `lean/Editor/Job.lean` is compiled: the one request that writes the store
+  from what a job made cannot be written in a job.
+- **The runtime releases what a job held** once the job's command has run,
+  or when the job fails, is cancelled or loses its owner. What the command
+  adopted is the store's and outlives that.
+
+The judgement in this is that a job's thread may *read* the published
+table. The table above forbids a job to mutate editor state, and a job reads
+snapshots "requested later" below; reading a value that never changes is
+not a write. The stricter alternative, in which a job is lent its snapshots
+when it is started and reads no table, needs a way to start a job with
+arguments, which the command loop adds; it can be added beside this.
 
 After each command the editor thread publishes the scene (which views show
 which text snapshots, with which decorations) to the Rust library. Rendering
@@ -120,32 +157,50 @@ A job cannot change editor state. There is no `JobM` operation that does.
 Interpreted jobs run in parallel: in the experiments, 16 CPU-bound
 interpreted jobs finished in 2.3 s where one takes 1.2 s.
 
-As built (`lean/Editor/Job.lean`), a job reaches time and nothing else yet:
+As built (`lean/Editor/Job.lean`), a job reaches time and files:
 
 - **`JobM` is a program over the job port** that may fail with a message,
   so it has `throw`, `try` and `catch`. It is plain data and holds no `IO`.
-- **The port's requests are a clock and a wait**: `now` reads the job
-  clock, in milliseconds, and `waitUntil` returns once the clock reads a
-  deadline or later. `sleep` is written with the two, and so is a `Timer`,
-  which is plain data: the instant of its next tick and its period, so its
-  ticks do not drift with the work between them.
+- **The port's requests are a clock, a wait and a file request**: `now`
+  reads the job clock, in milliseconds, and `waitUntil` returns once the
+  clock reads a deadline or later. `sleep` is written with the two, and so
+  is a `Timer`, which is plain data: the instant of its next tick and its
+  period, so its ticks do not drift with the work between them.
+- **Loading and saving a file are requests a job awaits**
+  (`lean/Editor/File.lean`): `File.load` and `File.save`, each a wait like a
+  timer's, completed by the library's file service. **Errors are values**:
+  a reply is a result or a refusal, which the job matches on, and nothing
+  about a file ends a job or cancels it. A load takes a limit, which is the
+  editor's policy and has no default, and replies with the snapshot the job
+  then holds, the file's stamp and its line endings. A save names a
+  snapshot, one a command took or one the job loaded, and what it expects
+  on disk; one that finds another file is refused with what is there. A
+  path is a Lean string and must be absolute: the editor has no working
+  directory.
 - **No request carries a promise.** A request is plain data; how a wait is
-  completed is the runner's business. A process, a file or a snapshot of
-  editor state arrives as further requests of this port, each with a reply
-  type, a clause in the model, an answer in the runner and a property in
-  the contract.
+  completed is the runner's business. A process or a snapshot of editor
+  state arrives as further requests of this port, each with a reply type, a
+  clause in the model, an answer in the runner and a property in the
+  contract.
 - **Cancellation is not a reply.** No reply says "cancelled" and nothing is
   thrown into a job; see below.
 - **A wait is not a command**, checked when `lean/Editor/Job.lean` is
   compiled: a wait offered at `EditorM Unit` is a type error, alone and
-  after a text request in a `do` block. So "a command may not block" is
-  pinned beyond `IO`.
+  after a text request in a `do` block, and so is a file request. So "a
+  command may not block" is pinned beyond `IO`.
 
-The port has a pure model (`lean/Editor/Job/Model.lean`: a clock, and the
-instant at which the job is cancelled) and a contract
-(`lean/Editor/Job/Contract.lean`), a list of inequalities run three ways:
-against the model and against the runner over a fake clock by `lake test`,
-and against the runner over the Rust timer service by `contract-test`.
+The port has a pure model (`lean/Editor/Job/Model.lean`: a clock, the
+instant at which the job is cancelled, and the files the job reaches,
+`lean/Editor/File/Model.lean`) and a contract
+(`lean/Editor/Job/Contract.lean`). Its list of the clock's properties is
+inequalities, run three ways: against the model and against the runner over
+a fake clock by `lake test`, and against the runner over the Rust timer
+service by `contract-test`. Its list of the file requests' properties is
+run three ways too: against the model, against the runner over a fake of
+the file service, and against the runner over the library's file service on
+real files in a temporary directory. A file loaded and saved without edits
+is byte for byte what it was, in all three, for LF, CRLF and bytes that are
+not UTF-8.
 
 ### Getting results back
 
@@ -249,7 +304,7 @@ test` runs `model-test` (`lean/ModelTest.lean`), with no Rust library;
 
 | Row | Mechanism | Check |
 |---|---|---|
-| Blocked jobs starve the pool | A wait is a promise in the table of waits, completed by the pump, and the rest of the job is chained on it, so a job in a wait holds no thread. The pump is a dedicated task. No request of the job port blocks in a system call yet, so no job runs on a dedicated thread; the reload job is the one piece of work that does | `model-test`: more jobs than the pool has threads (at least 64) all reach their wait on a fake clock, from fewer threads than there are jobs, while a new pool task runs. Written first with `IO.wait`, it failed with one thread a job. `contract-test`: the same with real one-hour timers, and with the pump parked in its pull a warming holds exactly the threads the pool had before the pump was started |
+| Blocked jobs starve the pool | A wait is a promise in the table of waits, completed by the pump, and the rest of the job is chained on it, so a job in a wait holds no thread. The pump is a dedicated task. No request of the job port blocks in a system call yet, so no job runs on a dedicated thread; the reload job is the one piece of work that does | `model-test`: more jobs than the pool has threads (at least 64) all reach their wait on a fake clock, from fewer threads than there are jobs, while a new pool task runs, and the same with every job in a load, on the fake of the file service with its completions held. Written first with `IO.wait`, it failed with one thread a job. `contract-test`: the same with real one-hour timers, and with the pump parked in its pull a warming holds exactly the threads the pool had before the pump was started |
 | `IO.cancel` only sets a flag | A token in each job's handle: whether it is cancelled, and the wait it is in. Cancelling sets it, tells the service to withdraw the wait and ends the wait as cancelled | `model-test`: cancelling a sleeping job ends it with the fake clock never moved and the wait withdrawn; it failed against a cancel that only set the flag. `contract-test`: the timer leaves the library's schedule |
 | A `try`/`catch` can swallow a cancellation | Cancellation is not a reply and nothing is thrown: the runner looks at the token before each request, when each reply arrives and when the program ends, and stops applying the job's continuation, which is where the `catch` handlers are | `model-test`, in the model and in the runner: a job that catches every error around each of five sleeps, cancelled in the first, makes no further request; a job cancelled while a reading of the clock is in flight, or as its wait completes, is not continued |
 | The pool does not grow for a burst | `Pool.warm` at start-up holds one task on every thread of the pool at once. The pool keeps Lean's size, one thread a core | `model-test`: warming holds a task on every thread of the pool at once, all of them different; a second warming, asked for two threads more, holds the same threads; and a burst afterwards lands on exactly those threads. The checks pin no size: they learn the pool's threads by warming it (`Pool.whole`), so they pass whatever `LEAN_NUM_THREADS` says |
@@ -303,6 +358,19 @@ of each runner, when the job system was planned, on Lean 4.35.0:
   its finaliser when the continuation is dropped. The process service will
   need its requests to register what they open with the job, so that the
   runner releases it. That is not designed.
+- **A cancelled job's file requests.** Cancelling a job in a file wait
+  withdraws the request at the file service. A load or a save that was
+  still waiting there is never worked. A save that was being worked does
+  not replace its file: the library reads the cancel before its rename, so
+  a cancelled save has either replaced the file whole or not touched it. A
+  load that was being worked, and any result the service had kept, is
+  dropped. The job is not continued, whichever came first.
+- **What a job loaded is released by the runner**, since it registered each
+  snapshot with the job as its load replied: when a job fails or is
+  cancelled, on the job's own thread after its last request; when a job
+  finished, by the editor thread once the job's command has run; and when
+  an owner is removed or the runtime ends, for a finished job whose command
+  will never run.
 
 ### Completing awaits without Rust calling Lean
 
@@ -326,14 +394,24 @@ As built:
   its real implementation (`lean/Editor/Job/Real.lean`) is the Rust
   library's timer service ([rust-library.md](rust-library.md)). A deadline
   no machine word holds is clamped, never wrapped.
+- **The file port** (`Job.Files`) is beside it: start a file request as a
+  wait, take the request's reply once the wait has completed, withdraw a
+  wait, and release a snapshot a load's reply named. A completion says only
+  that a wait is over, so a wait's reply is fetched afterwards, on the
+  job's thread. Its fake is the pure model of files behind a reference
+  (`Job.FakeFiles`), and its real implementation the library's file
+  service, which works requests on one thread of its own, in order
+  ([rust-library.md](rust-library.md), "Files and watching"). No Lean
+  thread is parked for a load or a save.
 - **The pump** (`Job.pump`) is one dedicated task for the process's one
   table: it pulls the completion queue and finishes the wait each
-  completion names, until quit.
+  completion names, until quit. A completion carries an id whichever
+  service queued it.
 - **Cancelling a job cancels the request**: the timer leaves the library's
-  schedule.
+  schedule, and a file request leaves the file service.
 
-A job reaches time only through its port, and the runner does not use
-`Std.Async`. `Std.Async` works in this process with no extra setup, and
+A job reaches time and files only through its port, and the runner does not
+use `Std.Async`. `Std.Async` works in this process with no extra setup, and
 still offers TCP, UDP and DNS; whether sockets come from it, behind a port,
 is for the work that first needs one. It has no process spawning and no
 file I/O, which is why those go through the Rust service or a dedicated

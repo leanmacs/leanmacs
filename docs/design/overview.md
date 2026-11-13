@@ -69,7 +69,7 @@ can be interpreted and live-reloaded.
 
 | Component | Where | Why |
 |---|---|---|
-| Rope, transactions, anchors, kept inverses, edit log | Rust | Test 1: layout and parsing read them without going through Lean. The inverse of each transaction holds the bytes it removed, which stay in the library |
+| Rope, transactions, anchors, kept inverses, edit log, loading a file into a rope and saving one | Rust | Test 1: layout and parsing read them without going through Lean. The inverse of each transaction holds the bytes it removed, which stay in the library, and a file's bytes go between the disk and the rope without passing through Lean |
 | The undo tree, and every undo policy (groups, branches, reverting, the saved state) | Lean, compiled | Policy: a history is a few numbers a node, moved by two requests of the library (apply the inverse of a run of revisions, drop kept inverses); other undo styles are written over the same primitives |
 | Buffers, windows, views, modes (the editor's state) | Lean, compiled | The editor |
 | The command loop, keymap lookup, self-insert | Lean, compiled | Measured at 6 to 12 µs from key to edit, so there is no reason to split it |
@@ -166,7 +166,7 @@ Rust crates:
 | `editor-shape-parley`, `editor-render-wgpu`, `editor-platform-winit` | Adapters for shaping, drawing and the window. Of these `editor-platform-winit` is built: it opens one window with winit, on the process's main thread, and translates what winit reports about it into the window port's inputs. No winit type is public. |
 | `editor-platform` | The window port, with no dependencies: what a window reports (`Input`), how it is opened (`WindowOptions`), the `Platform` trait, its published fake (`ScriptedPlatform`) and its contract. It is a crate of its own because the fake and the contract belong to the port's owner, and nothing may depend on `editor-ffi`. Its inputs are a first cut with no key identity; the display pipeline defines that. |
 | `editor-proc` | The process and pseudo-terminal service. |
-| `editor-ffi` | The static library Lean links: the C functions Lean calls, handles, the event queues, the timer service, the first service behind the completion queue, the file service, the second, which loads and saves on one thread of its own over the file port (no Lean binding reaches it yet), and the main-thread service, which runs a platform's window onto the editor queue. Two of its handles are text: a document, which is an `editor-text` text behind a lock, made from a string or from a snapshot, and a snapshot, of a document or of a file the file service loaded. A document applies a transaction, answers for its edit log, holds markers, applies the inverse of a run of its revisions and drops kept inverses, and a snapshot says what a selection covers; those are lists, which cross the boundary as words, a buffer of 64-bit numbers. The only crate that knows Lean exists. |
+| `editor-ffi` | The static library Lean links: the C functions Lean calls, handles, the event queues, the timer service, the first service behind the completion queue, the file service, the second, which loads and saves on one thread of its own over the file port and is what the job runner's file port is bound to, and the main-thread service, which runs a platform's window onto the editor queue. Two of its handles are text: a document, which is an `editor-text` text behind a lock, made from a string or from a snapshot, and a snapshot, of a document or of a file the file service loaded. A document applies a transaction, answers for its edit log, holds markers, applies the inverse of a run of its revisions and drops kept inverses, and a snapshot says what a selection covers; those are lists, which cross the boundary as words, a buffer of 64-bit numbers. The only crate that knows Lean exists. |
 | `editor-term-ghostty`, `editor-syntax-treesitter` | Added after the first milestone. |
 
 The Lean package in `lean/` builds the executable with Lake, which runs
@@ -177,6 +177,7 @@ Cargo for the static library:
 | `Editor.Ffi` | Bindings to the library, and a small C glue file. |
 | `Editor` | The interfaces and their models, editor state, the command loop, jobs, the config session. |
 | `Editor.UndoTree` | The undo tree: a text's history as a tree of states, in plain Lean over the text interface. Groups, undo, redo, branches, reverting the open group, and the saved state. |
+| `Editor.File` | Loading and saving as a job asks for them: the two file requests of the job interface, with their data (a stamp, line endings, what a save expects, the refusals), and a pure model of the files a job reaches. The work is the library's; a file's bytes never pass through a Lean string. |
 | Standard library | evil, the minibuffer; later agents, review, version control, the rdm client. |
 | `Main` | Wires the real bindings together and starts the loop. |
 

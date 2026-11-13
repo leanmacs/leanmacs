@@ -110,6 +110,27 @@ it runs in the background, and its result goes to the handler it was
 registered with, which makes a command the editor runs. A job is not a
 command, and a reload's report does not count it as one.
 
+A job can also load a file and save one, which a command cannot: it waits
+for the library to do it. `File.load` takes an absolute path and the longest
+file to load, in bytes, and answers the file's text, as a snapshot the job
+holds, or why it was refused; the refusal is a value the job matches on.
+The job's handler takes what was loaded into the editor's texts:
+
+```lean
+def openNote : Unit → JobM JobSnapshotId := fun _ => do
+  match ← File.load "/home/me/note.txt" 1000000 with
+  | .ok file => return file.snapshot
+  | .error error => throw error.describe
+
+def setup : SetupM Unit := do
+  job "open" openNote fun loaded => discard loaded.toText
+```
+
+`File.save` writes a snapshot as a file, by a temporary file beside it and
+a rename, and is told what to expect on disk: the stamp a load or the last
+save answered, no file, or whatever is there. A save that finds another
+file than it expects is refused, with what is there, and writes nothing.
+
 A `setup` registers each command name and each job name once. One that
 registers a name twice is rejected, like a chunk that does not elaborate.
 
@@ -255,7 +276,12 @@ runner over a fake clock; that jobs in a wait hold no thread, that
 cancelling a sleeping job ends it at once, that a job whose owner is removed
 is cancelled, and that none of a job runs on the thread that spawned it,
 each with the clock or a promise the test holds and no sleeping; and that
-warming Lean's task pool makes all its threads. The task shows by behaviour
+warming Lean's task pool makes all its threads. Loading and saving a file
+from a job are tested there too, with no file: the job interface's file
+properties run against a pure model of files and against the job runner
+over a fake of the file service, in a made-up directory, and cases play a
+command, a job and the job's command together on the models, a file a job
+loads becoming a text among them. The task shows by behaviour
 that they build without the library. It puts a `cargo` that always fails
 (`lean/no-cargo/cargo`) first on the `PATH`, and Lake runs `cargo` on every
 build that reaches the Rust archive, so the task passes only if the test
@@ -285,6 +311,17 @@ runs the job interface's contract the same way, against the job runner over
 the library's timer service, and checks what only the real service shows:
 jobs in real waits hold no thread, cancelling a job takes its timer out of
 the library's schedule, and quitting the queues ends the completion pump.
+It runs the job interface's file properties against the runner over the
+library's file service, on real files: each property has a temporary
+directory of its own, made and removed by the test, and a file loaded and
+saved without edits must be byte for byte what it was, for LF, CRLF and
+bytes that are not UTF-8. It plays the cases that cross the two interfaces
+on the real binding and that service, and checks that a load writes nothing
+to the editor's table of snapshots until the job's command takes it in, and
+that what a job loaded is freed when the job is settled. `ffi-test` checks
+the bindings of the file service, and `config-test` a job from config that
+loads a file through the headless host, each in temporary directories of
+their own.
 
 `config-test` also runs jobs through the headless host, on a fake clock it
 moves: a job's handler runs on the editor thread, a reload that installs

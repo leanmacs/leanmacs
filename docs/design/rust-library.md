@@ -95,11 +95,13 @@ process is a handle plus a stream of events.
 | **Small reads and writes, stat, list, rename, remove** | Lean | Lean's own file functions, called from jobs on a dedicated thread, behind the editor's file interface. |
 | **Watching** | Rust | Watch a path or tree; events debounced and coalesced. |
 
-As built, loading and saving are the library's half only: the port, its
-adapter, the logic and the service behind the completion queue. **Nothing in
-Lean reaches them yet**: the bindings, the job port's file requests and how
-a job names a snapshot are the rest of `phase/text-core/phase-5-file-io`.
-Watching is not built.
+As built, loading and saving are whole: the port, its adapter, the logic and
+the service behind the completion queue, here, and in Lean the bindings and
+the job interface's file requests, which a job awaits
+([lean-runtime.md](lean-runtime.md), "Interfaces and models";
+[concurrency.md](concurrency.md), "Sharing state", says how a job names a
+snapshot). Lean's own interface for small reads and writes, and watching,
+are not built.
 
 - **The port.** `editor_text::fs::Fs`, defined by `editor-text` in its own
   terms, with six methods. `stat` says what is at a path, following links,
@@ -179,6 +181,14 @@ Watching is not built.
   both in `editor-ffi`: the process's file service, and the one wiring test
   over real files, which asserts bytes in and bytes out. What the lists
   cannot hold is said in their headers.
+- **From Lean**, a load and a save are requests of the job interface, and
+  the service is the job runner's file port
+  ([lean-runtime.md](lean-runtime.md)). The same round trip, load and save
+  without edits, runs there three ways: on a pure model of files, on the
+  runner over a fake of the port, and on the runner over this service, on
+  real files in a temporary directory, with a fixture of each kind (LF,
+  CRLF, and bytes that are not UTF-8). A path crosses as the bytes of a Lean
+  string, so a file whose name is not UTF-8 cannot be named from Lean yet.
 
 ## What Lean's runtime provides directly
 
