@@ -10,6 +10,7 @@ import Editor.Job.Fake
 import Editor.Job.Jobs
 import Editor.Job.Model
 import Editor.Job.Pool
+import Editor.Keymap
 import Editor.Loop
 import Editor.Scene
 import Editor.State
@@ -129,6 +130,13 @@ The config session's decisions are tested here too, with no elaborator:
   them again with the real elaborator, queue and text binding. The reducer
   also says when the old config's jobs are cancelled: when a reload
   installs, and only then.
+
+How a key becomes an invocation is pure Lean with no port, so its checks
+need no model and no fake of a collaborator:
+
+- `keymapChecks`: a keymap (`Editor/Keymap.lean`), on keys built in code:
+  what a sequence is bound to, which sequences a binding begins with, and
+  the chord a binding names a key by.
 -/
 
 namespace ModelTest
@@ -3759,6 +3767,81 @@ def commitChecks : List Check :=
             scenes.map (·.preedit) == #[some "k", none] && loop.state.preedit == none
           | none => false }]
 
+/-- The key of the character `text`, with `modifiers` held, as a binding
+names it. -/
+def charKey (text : String) (modifiers : Modifiers := {}) : Key :=
+  { logical := .character text, modifiers }
+
+/-- The named key `key`, with `modifiers` held, as a binding names it. -/
+def namedKey (key : NamedKey) (modifiers : Modifiers := {}) : Key :=
+  { logical := .named key, modifiers }
+
+/-- The character `text` with control held: `C-x` for `"x"`. -/
+def controlKey (text : String) : Key :=
+  charKey text { control := true }
+
+/-- The checks of a keymap (`Editor/Keymap.lean`): what a sequence is bound
+to, which sequences a binding begins with, and the form of a key a binding
+names. -/
+def keymapChecks : List Check :=
+  let save : Keymap Nat := Keymap.empty.bind [controlKey "x", controlKey "s"] 1
+  [{  name := "a key sequence bound in a keymap is found, bound to what it was given"
+      run := pure (save.find? [controlKey "x", controlKey "s"] == some 1) },
+    { name :=
+        "a strict prefix of a bound sequence is not found, and a binding begins with it; a binding begins with the bound sequence too"
+      run :=
+        pure
+          (save.find? [controlKey "x"] == none && save.continues [controlKey "x"] &&
+            save.continues [controlKey "x", controlKey "s"]) },
+    { name :=
+        "a sequence no binding begins with is not found and nothing begins with it: another key, a bound sequence's second key, and a bound sequence with a key after it"
+      run :=
+        pure <|
+          [[charKey "x"], [controlKey "s"], [controlKey "x", controlKey "x"],
+                [controlKey "x", controlKey "s", controlKey "s"]].all
+            fun keys => save.find? keys == none && !save.continues keys },
+    { name := "binding a sequence a second time replaces what it was bound to"
+      run :=
+        let again := save.bind [controlKey "x", controlKey "s"] 2
+        pure
+          (again.find? [controlKey "x", controlKey "s"] == some 2 && again.bindings.length == 1) },
+    { name := "a keymap made from a list binds each sequence, a later entry replacing an earlier"
+      run :=
+        let keymap : Keymap Nat :=
+          Keymap.ofList [([charKey "a"], 1), ([charKey "b"], 2), ([charKey "a"], 3)]
+        pure
+          (keymap.find? [charKey "a"] == some 3 && keymap.find? [charKey "b"] == some 2 &&
+            keymap.bindings.length == 2) },
+    { name := "the empty sequence binds nothing"
+      run :=
+        let keymap : Keymap Nat := Keymap.empty.bind [] 1
+        pure (keymap.bindings.isEmpty && keymap.find? [] == none && !keymap.continues []) },
+    { name :=
+        "a key from a window finds a binding by its chord: its physical code, whether it was repeated, and shift on a character are not part of it"
+      run :=
+        let typed : Key :=
+          { logical := .character "A"
+            physical := .code "KeyA"
+            modifiers := { shift := true }
+            repeated := true }
+        let written : Keymap Nat := Keymap.empty.bind [charKey "A"] 1
+        let fromWindow : Keymap Nat := Keymap.empty.bind [typed] 1
+        pure
+          (typed.chord == charKey "A" && written.find? [typed.chord] == some 1 &&
+            fromWindow.find? [charKey "A"] == some 1 &&
+            (controlKey "x").chord == controlKey "x") },
+    { name :=
+        "shift on a named key is part of its chord: the shifted key does not find the unshifted key's binding"
+      run :=
+        let shifted : Key :=
+          { logical := .named .tab, physical := .code "Tab", modifiers := { shift := true } }
+        let keymap : Keymap Nat := Keymap.empty.bind [namedKey .tab] 1
+        pure
+          (shifted.chord == namedKey .tab { shift := true } &&
+            keymap.find? [shifted.chord] == none &&
+            keymap.find? [namedKey .tab] == some 1 &&
+            (keymap.bind [shifted] 2).find? [shifted.chord] == some 2) }]
+
 /-- Every check, in the order they run.
 
 The order matters where the process's one pool is measured. `poolChecks` run
@@ -3786,7 +3869,8 @@ def checks : List Check :=
     originChecks ++
     stateChecks ++
     loopChecks ++
-    commitChecks
+    commitChecks ++
+    keymapChecks
 
 /-- Runs `checks` and returns the names of those that failed. A check that
 throws has failed, and its error is reported with its name. -/
