@@ -756,6 +756,46 @@ own coordinate type. A position is converted between buffer and display
 coordinates by walking the layers. Milestone 1 needs tabs and wrapping;
 the others are added as layers without changing the ones below.
 
+### As built
+
+The display pipeline's phase 1 built the contract and two layers, in
+`crates/editor-layout` (`src/layer.rs`, `src/tabs.rs`, `src/wrap.rs`):
+
+- **The contract** (`Layer`): `sync` takes the snapshot of the layer below
+  and the edits that made it, and gives the layer's own snapshot and its
+  edits, in its own point type; a point converts down and up, with a bias
+  for a point the layer below has no counterpart of. Its module docs say
+  where a later layer goes: folds and inline text between the buffer and
+  the tab layer, blocks after the wrap layer; none changes a layer below.
+- **The tab layer.** Tabs are expanded before shaping (decided in phase 1,
+  2026-11-13): a tab becomes spaces up to the next multiple of the tab
+  width (8 columns by default), columns counted in characters, so the
+  shaper never sees a tab. On a monospace font the glyph after a tab is at
+  the stop in pixels; on a proportional font it is at the stop counted in
+  spaces, the known limit of the choice. Inline boxes (a relayout pass per
+  tab) and runs split at stops (layout breaking lines itself) were set
+  aside, and stay possible as the align-to-stop primitive ("Text is the
+  only layout engine"). Its points are a row, a segment and a byte column
+  of the segment's expanded text. A row's content is its bytes without its
+  line feed and without a carriage return before it; the position between
+  the two is the row's end.
+- **One very long row** is cut into segments of at most 4096 bytes, at the
+  last character boundary before each multiple. Each is shaped and broken
+  on its own and starts a new visual line, and tab columns restart at it,
+  so the rows around a position of a row of N bytes cost the segments they
+  touch, not N. The forced visual break every 4096 bytes on such a row is
+  the price; an incremental breaker that resumes mid-line needs shaping
+  state Parley does not expose.
+- **The wrap layer** is the per-text line store: each segment laid out on
+  demand, as an immutable entry keyed by row and segment. Its points are a
+  row, a segment, a visual line of it and an x. A position at a wrap is the
+  start of the later visual line, and only a row's last visual line holds
+  the row's end. A visual line that starts inside a tab's spaces starts
+  after the tab, so the tab is on the line its first space is on.
+
+The round trip of every position through both layers is a property test
+(`tests/layers.rs`).
+
 ## Views
 
 A view shows something in a window. There is more than one kind:
@@ -859,6 +899,69 @@ fake shaper whose glyphs all have the cells' size.
 - Rows carry a content hash, and the renderer reuses the geometry of rows
   that did not change, so scrolling and cursor movement rebuild nothing.
 
+### As built
+
+The display pipeline's phase 1 built layout in `crates/editor-layout`, and
+put it behind a handle for Lean in `editor-ffi` (`src/display.rs`). The
+facts of each part are in the module docs; these are the decisions.
+
+- **The `Shaper` port** shapes one segment, with its font runs, into a kept
+  value that breaks into visual lines at a width; measuring and breaking
+  stay one operation behind it, and a width change breaks the kept value
+  again without shaping. Its published fake, `CellShaper`, gives each
+  character one glyph of its font's advance and line height and breaks
+  greedily at characters, the Lean display model's rule, so the real
+  binding passes the display contract by construction; it is also what the
+  display handle runs on until Parley (phase 3), and it is the "cell
+  shaper" of the table below. Its published contract check
+  (`shaper::contract`) holds the fake and every real adapter to six
+  properties that leave the breaking policy open.
+- **Decorations.** A source gives the spans of a range of a snapshot and is
+  asked only for the rows laid out. Selections and the scene's decorations
+  are the first two; a range with equal ends is a cursor and gives no span,
+  so a cursor move changes no row. A span names its face by an id interned
+  from its name. Merging gives runs that carry every face over them, in
+  source and then span order; no precedence is decided before phase 2.
+  Shaping runs split only where the font changes, and in phase 1 every face
+  is in the default font unless a test sets one, so decorations are
+  paint-only.
+- **Caches.** An entry keeps its shaped value, the font runs and the
+  shaper's generation it was shaped under, and its breaks at one width:
+  text and font changes shape again, a width change breaks again, and a
+  paint-only change does neither. Entries are moved through the edit log's
+  patches, pulled through the view's snapshot, and not cleared; when the
+  patch is refused (behind the horizon, or the text is gone) the text's
+  state is rebuilt from the snapshot at hand, and a snapshot older than
+  what is kept is laid out in a scratch state, so the cache never moves
+  backwards. Patches and not the mapper, because entries are keyed by rows,
+  which patches give directly.
+- **Storage is sparse**: a map of the rows laid out, not a summarised tree.
+  A row not laid out counts as one line of the default height until it is;
+  a publish drops entries farther than four view heights from every view of
+  their text, and the state of every text it does not name. A tree waits
+  for a layer that needs sums over a whole text (folds, a scroll bar).
+- **The queries** lay out whatever they reach, in the same call, from the
+  same entries the frame uses, and in the fonts of the last frame that
+  showed the text.
+- **The frame** is a plain immutable value (`Send + Sync`): per view, the
+  rows from the anchor's visual line, as many as fit whole, each with its
+  glyphs shared with the store, its styled runs and a content hash over
+  glyphs, runs and height relative to the row's start; the cursor at the
+  head of every range of every selection; and selection areas. A test
+  compares a frame as text (`Frame::describe`), and one fixture frame
+  (`tests/display/frame.expected`) is compared from Rust and, through the
+  real binding, from Lean.
+- **Counters** count segments shaped, broken and reused, each once per call;
+  every cost claim above is pinned by one.
+- **The binding.** A document has a key and a snapshot carries its
+  document's key and text, held weakly, so layout pulls patches and reads
+  markers through the snapshot handle it is given, and Lean's binding needs
+  only the read half of its table of snapshots. A published scene crosses
+  as words, one string and a list of snapshot handles; markers cross by
+  number and are read in the snapshot's document as it is when the scene
+  arrives, each on its own. Who writes the cache, and when a resize is
+  shown, is open: [concurrency.md](concurrency.md), "Sharing state".
+
 ### The frame is device-independent
 
 The frame carries positioned text runs with resolved faces, rectangles,
@@ -932,7 +1035,9 @@ these hunks" is a fact the editor can state.
 - **A summarised tree for the display layers.** The rope is a library's
   ("Text", as built). Display layers, excerpt buffers and decoration
   interval trees favour a sum tree in the style of Zed's; whether they get
-  one of their own is for the display pipeline to decide.
+  one of their own is for the display pipeline to decide. Phase 1 chose sparse storage of the rows laid out ("Layout
+  and rendering", as built) and left the tree to the first layer that
+  needs sums over a whole text.
 - **How escape characters are displayed.** A raw byte of a file is a
   private-use character in the text. Until the display draws it as its
   byte, it shows as whatever the font has there.
@@ -1018,8 +1123,9 @@ these hunks" is a fact the editor can state.
   with a second request, and the one writer path stays one argument
   simpler. Undo did not need it: applying an inverse hands the selection
   back, and the caller places it.
-- **Tabs**: Parley has no tab stops. Expand before shaping, use inline
-  boxes, or split runs.
+- **Tabs** (answered): expanded before shaping, in the tab layer ("Display
+  layers", as built). Tab stops on a proportional font are counted in
+  spaces, not in pixels, until an align-to-stop primitive exists.
 - **The other choices the survey left open** are listed in
   [rendering-prior-art.md](rendering-prior-art.md).
 - **Embedded terminals**: a fixed row count, or growing with output up to
@@ -1030,8 +1136,17 @@ these hunks" is a fact the editor can state.
 - **Capabilities**: the exact set, and whether a face or block can name a
   fallback for a front end that lacks one.
 - **Viewed-range tracking** granularity and whether it is on by default.
-- **Large files and long lines**: what is the plan when a single line is
-  megabytes?
+- **Large files and long lines** (long lines answered): a row is laid out
+  in segments of at most 4096 bytes ("Display layers", as built). What a
+  file of many megabytes costs beyond the rows shown (the estimate walks
+  every row) is not measured.
+- **Two views of one text at two widths.** Layout keeps one width per
+  text, so two views of one text at different widths break each other's
+  rows again on every frame. Keeping breaks per width is an addition when
+  splits of one buffer arrive.
+- **Where the echo area, the pending prefix and the preedit are drawn.**
+  The scene carries them and phase 1 lays out none of them; no phase of
+  the display pipeline owns drawing them yet.
 - **Accessibility of text not laid out**: only visible lines have layout,
   but a screen reader may want to read past the viewport. Expose the
   viewport and scroll on request, or supply unlaid-out text as well?

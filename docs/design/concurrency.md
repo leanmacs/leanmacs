@@ -21,7 +21,7 @@ process, its runtime is the only one that schedules editor code.
 | **Lean pool** | Lean | Background jobs that compute or await | Mutate editor state; block |
 | **Dedicated job threads** | Lean | Work that blocks in a system call: the reload job today | Mutate editor state |
 | **Completion pump** | Lean, a dedicated task | Pulling the completion queue and ending the wait each completion names | Run a job; mutate editor state |
-| **Render** | Rust | Turning the published scene into frames and drawing them. Shares the layout cache with the editor thread's layout queries | Run Lean code |
+| **Render** | Rust | Turning the published scene into frames and drawing them. Shares the layout cache with the editor thread's layout queries (the design; what is built, and the decision it awaits, are under "Sharing state") | Run Lean code |
 | **Services** | Rust | Timers, loading and saving files, child-process pipes, pseudo-terminals, file watches | Hold editor state; call Lean |
 | **Workers** | Rust | Tree-sitter parsing, diff, fuzzy matching | Hold editor state |
 
@@ -95,6 +95,32 @@ reads the last published scene. Layout queries from a command are
 synchronous calls answered in the same call (see
 [text-and-display.md](text-and-display.md)); the layout cache is the one
 structure both threads touch, so its locking is kept per line.
+
+**Who writes the layout cache is awaiting the owner's decision.** The
+paragraph above, and the Render row of the table, are the design. The
+display pipeline's phase 1 built something else, and the owner has not
+chosen between them (plan review of that phase, 2026-11-13):
+
+- **As built: the editor thread is the cache's one writer.** Every write to
+  layout's state happens in a call Lean makes from a command: a publish,
+  which also builds the frame, and the two queries (`crates/editor-ffi`,
+  `display.rs`). The frame is an `Arc` of plain data whose rows share the
+  cache's entries, which are immutable, so the render thread (phase 4) is
+  to read frames and never write. The display handle keeps its layout
+  behind one lock only because a handle is `Send + Sync`; with one writer it
+  is never contended. The cost: a resize shows nothing new until Lean
+  publishes again, which sits badly with "nothing blocks the window".
+- **The design above: two writers, locked per line.** The render thread
+  turns the last scene into frames itself, laying out on resize, and the
+  editor thread's queries use the same entries.
+- **A middle way, compatible with what is built:** the render thread
+  breaks the latest frame's kept shaped lines again at the new width,
+  writing nothing to the cache, until Lean publishes. An entry keeps its
+  shaped line as an `Arc` of a value that is `Send + Sync` and breaks with
+  `&self` (`ShapedLine::break_lines`), so the frame would carry it as one
+  more field. This is not built.
+
+Phase 4, which builds the render thread, needs the answer first.
 
 ## Foreground: commands
 
