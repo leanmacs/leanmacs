@@ -5,6 +5,7 @@ import Editor.Display.Contract
 import Editor.Display.Model
 import Editor.File.Cases
 import Editor.File.Model
+import Editor.InputScheme.Contract
 import Editor.InputScheme.Test
 import Editor.Job.Contract
 import Editor.Job.Fake
@@ -148,7 +149,11 @@ need no model and no fake of a collaborator:
   test scheme (`Editor/InputScheme/Test.lean`), with keymaps written as key
   strings: what the keys of a bound sequence yield, that an unbound key
   resets the scheme, which of two keymaps wins, the pending keys it
-  reports, and its self-insert.
+  reports, and its self-insert;
+- `schemeContractChecks`: the scheme contract
+  (`Editor/InputScheme/Contract.lean`) holds of the test scheme, and
+  reports schemes written here that each break one property of it, `eager`
+  among them, which emits on a strict prefix.
 -/
 
 namespace ModelTest
@@ -4168,6 +4173,97 @@ def schemeChecks : List Check :=
           (first ++ second == (fed ⟨0⟩ "C-x C-s a").2 && decide (state = (fed ⟨0⟩ "C-x C-s a").1) &&
             fed ⟨0⟩ "" == ({}, [])) }]
 
+/-- A scheme written for the test that breaks the contract: it yields the
+first binding that the keys so far begin, so it emits on a strict prefix. -/
+def eager : InputScheme :=
+  { State := List Key
+    Binding := Invocation
+    init := []
+    step := fun maps view state key =>
+      let typed := state ++ [key.chord]
+      match
+        (maps view).findSome? fun keymap =>
+          keymap.bindings.find? fun binding => typed.isPrefixOf binding.1 with
+      | some binding => ([], some binding.2)
+      | none => ([], none)
+    pending := id }
+
+/-- A scheme written for the test that breaks the contract: the test scheme,
+except that an unbound key leaves the pending keys as they were. -/
+def sticky : InputScheme :=
+  { State := TestScheme.State
+    Binding := Invocation
+    init := {}
+    step := fun maps view state key =>
+      match TestScheme.step maps view state key with
+      | (next, some invocation) => (next, some invocation)
+      | (next, none) => (if next.pending.isEmpty then state else next, none)
+    pending := (·.pending) }
+
+/-- A scheme written for the test that breaks the contract: the test scheme,
+except that it reports no pending keys. -/
+def silent : InputScheme :=
+  { State := TestScheme.State
+    Binding := Invocation
+    init := {}
+    step := TestScheme.step
+    pending := fun _ => [] }
+
+/-- The subject the scheme contract is run on: `scheme` over the scheme
+checks' keymaps for view 0, the sequences those bind, and a key none of
+them goes on with. -/
+def subjectOf (scheme : InputScheme) (maps : ViewId → List (Keymap scheme.Binding)) :
+    SchemeContract.Subject :=
+  { scheme
+    maps
+    view := ⟨0⟩
+    sequences := [keys "C-x C-s", keys "C-x C-f", keys "C-x r t", keys "C-q"]
+    unbound := charKey "z" }
+
+/-- Whether exactly the properties `expected` of the scheme contract do not
+hold of `subject`. -/
+def failsOnly (subject : SchemeContract.Subject) (expected : List SchemeContract.Property) : Bool :=
+  SchemeContract.failures subject == expected.map (·.name) &&
+    SchemeContract.properties.all fun property =>
+      property.holds subject != expected.any (·.name == property.name)
+
+/-- The checks of the scheme contract (`Editor/InputScheme/Contract.lean`):
+it holds of the test scheme, and it reports schemes written here that each
+break it. -/
+def schemeContractChecks : List Check :=
+  [{  name := "the scheme contract has properties, each with a name of its own"
+      run :=
+        let names := SchemeContract.properties.map (·.name)
+        pure (!names.isEmpty && names.eraseDups.length == names.length) },
+    { name := "the scheme contract holds of the test scheme"
+      run := pure (SchemeContract.failures (subjectOf TestScheme.scheme schemeMaps) == []) },
+    { name :=
+        "the scheme contract reports a scheme that emits on a strict prefix of a binding, by the name of the property it breaks"
+      run :=
+        let subject := subjectOf eager schemeMaps
+        pure
+          (!SchemeContract.strictPrefixEmitsNothing.holds subject &&
+            (SchemeContract.failures subject).contains
+              SchemeContract.strictPrefixEmitsNothing.name) },
+    { name :=
+        "the scheme contract reports a subject with no sequence of two keys, of which its other properties would hold with nothing to show"
+      run :=
+        let subject := { subjectOf TestScheme.scheme schemeMaps with sequences := [keys "C-q"] }
+        pure (failsOnly subject [SchemeContract.hasPrefixes]) },
+    { name :=
+        "the scheme contract reports a scheme that keeps its pending keys after an unbound key"
+      run := pure (failsOnly (subjectOf sticky schemeMaps) [SchemeContract.unboundResets]) },
+    { name := "the scheme contract reports a scheme that does not report a pending prefix"
+      run :=
+        pure (failsOnly (subjectOf silent schemeMaps) [SchemeContract.strictPrefixIsPending]) },
+    { name :=
+        "the scheme contract reports a sequence said to be complete that yields nothing: one the keymaps do not bind"
+      run :=
+        let subject :=
+          { subjectOf TestScheme.scheme schemeMaps with
+            sequences := [keys "C-x C-s", keys "C-x <Escape>"] }
+        pure (failsOnly subject [SchemeContract.completeEmits]) }]
+
 /-- Every check, in the order they run.
 
 The order matters where the process's one pool is measured. `poolChecks` run
@@ -4199,7 +4295,8 @@ def checks : List Check :=
     keymapChecks ++
     keyNotationChecks ++
     invocationChecks ++
-    schemeChecks
+    schemeChecks ++
+    schemeContractChecks
 
 /-- Runs `checks` and returns the names of those that failed. A check that
 throws has failed, and its error is reported with its name. -/
