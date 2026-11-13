@@ -294,6 +294,11 @@ def answer (snapshot : Ffi.Snapshot) : (query : TextQuery) → IO (Except TextEr
       snapshot.offsetOf (unit column) point.row.toUInt64
           point.column.toUInt64 | return .error .badPosition
     return .ok offset.toNat
+  | .extents ranges => do
+    -- An offset no word holds goes as the largest word, which the library
+    -- refuses as it would any other that is no position.
+    let some extents ← snapshot.extents (selection ranges) | return .error .badSelection
+    return .ok (extents.map fun extent => ⟨extent.start.toNat, extent.stop.toNat⟩)
 
 /-- The library's snapshot of `source`: the snapshot it names, or a new one
 of the text it names, as the text is now. The refusal when it names nothing,

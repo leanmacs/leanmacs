@@ -39,6 +39,11 @@ spliced by, and not the library's walk of its changes. The form a selection
 is kept in (`TextModel.normal`) is a sort and one pass over the ranges, on
 plain offsets.
 
+What a selection covers (`TextModel.extents`) is read off the string's rows
+(`TextModel.rowsOf`), each with the cells of its content, found in one walk
+of its characters. A block's columns are indexes into a row's cells. The
+library walks its rope a cell at a time and keeps no such table.
+
 The contract (`Editor/Text/Contract.lean`) is what says the model and the real
 binding agree. A clause added to `TextModel.handle`, to `TextModel.answer` or
 to `TextModel.answerLog` needs its property there.
@@ -180,21 +185,6 @@ where
         if c == '\n' then
           if here.row == point.row then none else go rest (offset + c.utf8Size) ⟨here.row + 1, 0⟩
         else go rest (offset + c.utf8Size) ⟨here.row, here.column + width unit c⟩
-
-/-- The model's answer to `query` about `content`. -/
-def answer (content : TextContent) : (query : TextQuery) → Except TextError query.Answer
-  | .revision => .ok content.revision
-  | .byteLength => .ok content.contents.utf8ByteSize
-  | .rowCount => .ok (rowCount content.contents)
-  | .contents => .ok content.contents
-  | .pointOf unit offset =>
-    match pointOf unit content.contents offset with
-    | some point => .ok point
-    | none => .error .badPosition
-  | .offsetOf unit point =>
-    match offsetOf unit content.contents point with
-    | some offset => .ok offset
-    | none => .error .badPosition
 
 /-- One changed range of a transaction: the bytes of the text before from
 `start` up to, not including, `stop` are replaced by `inserted`. -/
@@ -370,6 +360,119 @@ def mapSelection (runs : Array Run) (selection : Selection) : Selection :=
 def mapMarker (runs : Array Run) : Marker → Marker
   | .anchor anchor => .anchor { anchor with offset := mapOffset runs anchor.bias anchor.offset }
   | .selection selection => .selection (mapSelection runs selection)
+
+/-- Where the cell that starts at the position `offset` of `text` ends: after
+the character there, or after the line feed when the character is a carriage
+return with a line feed after it. At the end of the text, where no cell
+starts, it is `offset`. -/
+def cellEnd (text : String) (offset : Nat) : Nat :=
+  go text.toList 0
+where
+  /-- Walks the characters that are left. `here` is the byte offset
+  reached. -/
+  go : List Char → Nat → Nat
+    | [], _ => offset
+    | c :: rest, here =>
+      if here == offset then
+        match c, rest with
+        | '\r', '\n' :: _ => offset + 2
+        | _, _ => offset + c.utf8Size
+      else go rest (here + c.utf8Size)
+
+/-- One row of a text, as what a selection covers is read off it. -/
+structure Row where
+  /-- Where the row starts. -/
+  start : Nat
+  /-- Where its content stops: before its line break. -/
+  content : Nat
+  /-- Where the row stops, its line feed included if it has one. -/
+  stop : Nat
+  /-- The cells of its content, in order. No line break is one of them. -/
+  cells : Array Extent
+  deriving Repr
+
+/-- The rows of `text`: at least one. -/
+def rowsOf (text : String) : Array Row :=
+  go text.toList 0 0 #[] #[]
+where
+  /-- Walks the characters that are left. `here` is the byte offset reached,
+  `start` where the row being walked starts, and `cells` its cells so far. A
+  carriage return with a line feed after it ends the row's content; any
+  other is a cell of it. -/
+  go : List Char → Nat → Nat → Array Extent → Array Row → Array Row
+    | [], here, start, cells, rows => rows.push ⟨start, here, here, cells⟩
+    | '\n' :: rest, here, start, cells, rows =>
+      go rest (here + 1) (here + 1) #[] (rows.push ⟨start, here, here + 1, cells⟩)
+    | '\r' :: '\n' :: rest, here, start, cells, rows =>
+      go rest (here + 2) (here + 2) #[] (rows.push ⟨start, here, here + 2, cells⟩)
+    | c :: rest, here, start, cells, rows =>
+      go rest (here + c.utf8Size) start (cells.push ⟨here, here + c.utf8Size⟩) rows
+
+/-- The row of `rows` the position `offset` is in: the last that starts at
+or before it. -/
+def rowAt (rows : Array Row) (offset : Nat) : Row :=
+  (rows.filter (·.start ≤ offset)).back?.getD ⟨0, 0, 0, #[]⟩
+
+/-- The column of the position `offset` of `row`: how many cells of the row
+start before it. A line break is one more cell after the content. -/
+def column (row : Row) (offset : Nat) : Nat :=
+  (row.cells.filter (·.start < offset)).size + if offset > row.content then 1 else 0
+
+/-- What `selection`, which is one and fits `text`, covers in it: the
+extents of its ranges by its shape, sorted, with those that overlap made
+one. -/
+def extents (text : String) (selection : Selection) : Array Extent :=
+  let rows := rowsOf text
+  let covered : Array Extent :=
+    selection.ranges.flatMap fun range =>
+      let (start, stop) := (lower range, higher range)
+      match selection.shape with
+      | .exclusive => #[⟨start, stop⟩]
+      | .inclusive => #[⟨start, cellEnd text stop⟩]
+      | .line => #[⟨(rowAt rows start).start, (rowAt rows stop).stop⟩]
+      | .block =>
+        let one := column (rowAt rows range.anchor) range.anchor
+        let other := column (rowAt rows range.head) range.head
+        let (low, high) := (min one other, max one other)
+        let between :=
+          rows.filter fun row =>
+            (rowAt rows start).start ≤ row.start && row.start ≤ (rowAt rows stop).start
+        between.map fun row =>
+          match row.cells[low]? with
+          | some first => ⟨first.start, (row.cells[min high (row.cells.size - 1)]?.getD first).stop⟩
+          -- The row is too short for the lower column.
+          | none => ⟨row.content, row.content⟩
+  let sorted :=
+    covered.toList.mergeSort fun one other =>
+      one.start < other.start || (one.start == other.start && one.stop ≤ other.stop)
+  sorted.foldl
+    (fun merged extent =>
+      match merged.back? with
+      | some last =>
+        if extent.start < last.stop || extent.start == last.start then
+          merged.pop.push { last with stop := max last.stop extent.stop }
+        else merged.push extent
+      | none => merged.push extent)
+    #[]
+
+/-- The model's answer to `query` about `content`. -/
+def answer (content : TextContent) : (query : TextQuery) → Except TextError query.Answer
+  | .revision => .ok content.revision
+  | .byteLength => .ok content.contents.utf8ByteSize
+  | .rowCount => .ok (rowCount content.contents)
+  | .contents => .ok content.contents
+  | .pointOf unit offset =>
+    match pointOf unit content.contents offset with
+    | some point => .ok point
+    | none => .error .badPosition
+  | .offsetOf unit point =>
+    match offsetOf unit content.contents point with
+    | some offset => .ok offset
+    | none => .error .badPosition
+  | .extents selection =>
+    if isSelection (some selection) && selectionFits content.contents (some selection) then
+      .ok (extents content.contents (normal selection))
+    else .error .badSelection
 
 end TextModel
 

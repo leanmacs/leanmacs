@@ -1115,6 +1115,186 @@ def markerProperties : List Property :=
         let released ← (requests text).allM (refusedWith .noSuchText)
         return ofOther && placedInOther && unmarkedInOther && unmoved && absent && released }]
 
+/-- What the selection of shape `shape` with `ranges`, each an anchor and a
+head, covers in a new text holding `initial`: each extent as its start and
+its stop. -/
+def covered (initial : String) (shape : Shape) (ranges : Array (Nat × Nat)) :
+    EditorM (Array (Nat × Nat)) := do
+  let text ← createText initial
+  let extents ← text.extents { ranges := ranges.map fun (anchor, head) => ⟨anchor, head⟩, shape }
+  return extents.map fun extent => (extent.start, extent.stop)
+
+/-- What the normal-state cursor on the character at `offset` covers in a new
+text holding `initial`: an inclusive range with equal ends. -/
+def cursorCovers (initial : String) (offset : Nat) : EditorM (Array (Nat × Nat)) :=
+  covered initial .inclusive #[(offset, offset)]
+
+/-- Whether asking `text` what the selection of shape `shape` with `ranges`
+and `primary` covers is refused with `badSelection`. -/
+def extentsRefused (text : TextId) (shape : Shape) (ranges : Array (Nat × Nat))
+    (primary : Nat := 0) : EditorM Bool :=
+  refusedWith .badSelection
+    (discard <|
+      text.extents { ranges := ranges.map fun (anchor, head) => ⟨anchor, head⟩, primary, shape })
+
+/-- The properties of what a selection covers. -/
+def extentProperties : List Property :=
+  [{
+      name :=
+        "a cursor on the last character of a line covers it and not the line break, with a line feed and with a carriage return and a line feed",
+      holds := do
+        let lineFeed ← cursorCovers "ab\ncd" 1
+        let both ← cursorCovers "ab\r\ncd" 1
+        let lastLine ← cursorCovers "ab\ncd" 4
+        return lineFeed == #[(1, 2)] && both == #[(1, 2)] && lastLine == #[(4, 5)] },
+    { name :=
+        "a cursor on an empty line covers its line break, and one on a line break covers all of it"
+      holds := do
+        let empty ← cursorCovers "a\n\nb" 2
+        let emptyBoth ← cursorCovers "a\r\n\r\nb" 3
+        let onLineFeed ← cursorCovers "ab\ncd" 2
+        let onBoth ← cursorCovers "ab\r\ncd" 2
+        return empty == #[(2, 3)] && emptyBoth == #[(3, 5)] && onLineFeed == #[(2, 3)] &&
+            onBoth == #[(2, 4)] },
+    { name :=
+        "a cursor at the end of the text covers nothing: in an empty text, after the last character, and on the empty last row"
+      holds := do
+        let emptyText ← cursorCovers "" 0
+        let afterLast ← cursorCovers "ab" 2
+        let lastRow ← cursorCovers "ab\n" 3
+        let lastRowBoth ← cursorCovers "ab\r\n" 4
+        return emptyText == #[(0, 0)] && afterLast == #[(2, 2)] && lastRow == #[(3, 3)] &&
+            lastRowBoth == #[(4, 4)] },
+    { name := "a cursor on a character of several bytes covers all of them"
+      holds := do
+        let four ← cursorCovers "a😀b" 1
+        let two ← cursorCovers "aéb" 1
+        let escape ← cursorCovers escaped 1
+        return four == #[(1, 5)] && two == #[(1, 3)] && escape == #[(1, 5)] },
+    { name :=
+        "an exclusive range covers from its lower end up to its higher, and an inclusive one through the character at its higher, whichever way each points"
+      holds := do
+        let exclusive ← covered rows .exclusive #[(1, 5)]
+        let exclusiveBackward ← covered rows .exclusive #[(5, 1)]
+        let bar ← covered rows .exclusive #[(3, 3)]
+        let inclusive ← covered rows .inclusive #[(1, 5)]
+        let inclusiveBackward ← covered rows .inclusive #[(5, 1)]
+        -- Through "é", through the carriage return and its line feed,
+        -- through the line feed alone, and through "😀".
+        let throughTwo ← covered rows .inclusive #[(0, 1)]
+        let throughBreak ← covered rows .inclusive #[(0, 6)]
+        let throughLineFeed ← covered rows .inclusive #[(0, 7)]
+        let throughFour ← covered rows .inclusive #[(15, 13)]
+        return exclusive == #[(1, 5)] && exclusiveBackward == #[(1, 5)] && bar == #[(3, 3)] &&
+            inclusive == #[(1, 6)] &&
+            inclusiveBackward == #[(1, 6)] &&
+            throughTwo == #[(0, 3)] &&
+            throughBreak == #[(0, 8)] &&
+            throughLineFeed == #[(0, 8)] &&
+            throughFour == #[(13, 19)] },
+    { name :=
+        "a line-wise range covers its rows and the line feed of the last: one row, several, an empty row, a row that ends in a carriage return and a line feed, and a last row with no line feed"
+      holds := do
+        let one ← covered rows .line #[(9, 9)]
+        let oneWide ← covered rows .line #[(8, 14)]
+        let several ← covered rows .line #[(3, 11)]
+        let severalBackward ← covered rows .line #[(11, 3)]
+        let withBoth ← covered rows .line #[(0, 0)]
+        let last ← covered rows .line #[(19, 19)]
+        let all ← covered rows .line #[(20, 0)]
+        let emptyRow ← covered "a\n\nb" .line #[(2, 2)]
+        let emptyLastRow ← covered "ab\n" .line #[(3, 3)]
+        let emptyText ← covered "" .line #[(0, 0)]
+        return one == #[(8, 15)] && oneWide == #[(8, 15)] && several == #[(0, 15)] &&
+            severalBackward == #[(0, 15)] &&
+            withBoth == #[(0, 8)] &&
+            last == #[(15, 20)] &&
+            all == #[(0, 20)] &&
+            emptyRow == #[(2, 3)] &&
+            emptyLastRow == #[(3, 3)] &&
+            emptyText == #[(0, 0)] },
+    { name :=
+        "a block covers the columns between its corners on each of its rows, counted in cells and cut off at each row's content"
+      holds := do
+        -- Columns 1 and 2 of three rows, the second too short for either.
+        let block ← covered "abcd\nx\nabcd" .block #[(1, 9)]
+        let backward ← covered "abcd\nx\nabcd" .block #[(9, 1)]
+        let otherCorners ← covered "abcd\nx\nabcd" .block #[(2, 8)]
+        -- Columns 1 to 3, and a second row with only columns 0 and 1.
+        let cutOff ← covered "abcde\nxy\nabcde" .block #[(1, 12)]
+        -- Rows that end in a carriage return and a line feed.
+        let withBoth ← covered "abcd\r\nxy\r\nabcd" .block #[(1, 12)]
+        -- "é" is two bytes and one column.
+        let twoBytes ← covered "aéb\nabc" .block #[(1, 7)]
+        -- A corner on a line break is past its row's content.
+        let onBreak ← covered "ab\r\nabcd" .block #[(2, 4)]
+        let emptyRow ← covered "ab\n\nab" .block #[(0, 5)]
+        let oneCell ← covered "abcde" .block #[(2, 2)]
+        let emptyText ← covered "" .block #[(0, 0)]
+        return block == #[(1, 3), (6, 6), (8, 10)] && backward == block && otherCorners == block &&
+            cutOff == #[(1, 4), (7, 8), (10, 13)] &&
+            withBoth == #[(1, 3), (7, 8), (11, 13)] &&
+            twoBytes == #[(1, 4), (6, 8)] &&
+            onBreak == #[(0, 2), (4, 7)] &&
+            emptyRow == #[(0, 2), (3, 3), (4, 6)] &&
+            oneCell == #[(2, 3)] &&
+            emptyText == #[(0, 0)] },
+    { name :=
+        "the extents of several ranges come back in order, those that overlap are one, and those that only touch stay two"
+      holds := do
+        let inOrder ← covered "abcdef" .inclusive #[(4, 4), (0, 1)]
+        let touching ← covered "abcdef" .inclusive #[(0, 1), (2, 3)]
+        let rowsApart ← covered "ab\ncd\nef" .line #[(7, 7), (0, 0)]
+        -- Two line-wise ranges on one row.
+        let oneRow ← covered "abcd\nef" .line #[(0, 0), (2, 3)]
+        -- A second block inside the columns of the first, on its last row.
+        let blocks ← covered "abcdef\nabcdef" .block #[(4, 8), (10, 10)]
+        -- An empty extent that touches another: the empty last row.
+        let emptyTouching ← covered "ab\n" .line #[(0, 0), (3, 3)]
+        return inOrder == #[(0, 2), (4, 5)] && touching == #[(0, 2), (2, 4)] &&
+            rowsApart == #[(0, 3), (6, 8)] &&
+            oneRow == #[(0, 5)] &&
+            blocks == #[(1, 5), (8, 12)] &&
+            emptyTouching == #[(0, 3), (3, 3)] },
+    { name :=
+        "a selection that is none, or has an end that is not a position, covers nothing that can be said, in every shape; an end of a range that merged into another is no end of it"
+      holds := do
+        let text ← createText "héllo"
+        let refused ←
+          [Shape.exclusive, .inclusive, .line, .block].allM fun shape => do
+              let noRange ← extentsRefused text shape #[]
+              let noPrimary ← extentsRefused text shape #[(0, 0)] 1
+              -- 2 is inside "é", and 7 is past the end.
+              let inside ← extentsRefused text shape #[(0, 2)]
+              let cursorInside ← extentsRefused text shape #[(2, 2)]
+              let pastEnd ← extentsRefused text shape #[(0, 1), (4, 7)]
+              let huge ← extentsRefused text shape #[(0, 2 ^ 64 + 1)]
+              return noRange && noPrimary && inside && cursorInside && pastEnd && huge
+        let absent ← refusedWith .noSuchText (discard <| (⟨7⟩ : TextId).extents { ranges := #[] })
+        let merged ← covered "héllo" .exclusive #[(0, 6), (2, 1)]
+        return refused && absent && merged == #[(0, 6)] },
+    { name :=
+        "a text and a snapshot of it answer alike, and a snapshot goes on answering for the text it holds"
+      holds := do
+        let text ← createText rows
+        let before ← text.snapshot
+        let selections : List Selection :=
+          [{ ranges := #[⟨5, 1⟩, ⟨9, 9⟩], primary := 1 },
+            { ranges := #[⟨6, 6⟩, ⟨15, 13⟩], shape := .inclusive },
+            { ranges := #[⟨3, 11⟩], shape := .line }, { ranges := #[⟨1, 19⟩], shape := .block }]
+        let alike ←
+          selections.allM fun selection =>
+              return (← text.extents selection) == (← before.extents selection)
+        -- A row is added before the others.
+        text.insert 0 "x\n"
+        let line : Selection := { ranges := #[⟨0, 0⟩], shape := .line }
+        let extent (start stop : Nat) : Extent := ⟨start, stop⟩
+        return alike && (← before.extents line) == #[extent 0 8] &&
+            (← text.extents line) == #[extent 0 2] &&
+            (← before.extents { ranges := #[⟨1, 19⟩], shape := .block }) ==
+              -- Column 1 of each row: "é", "ö" and "x".
+              #[extent 1 3, extent 9 11, extent 19 20] }]
+
 /-- The properties every implementation of the text port has. -/
 def properties : List Property :=
   editProperties ++ revisionProperties ++ snapshotProperties ++ positionProperties ++
@@ -1122,7 +1302,8 @@ def properties : List Property :=
     transactionProperties ++
     logProperties ++
     forgetProperties ++
-    markerProperties
+    markerProperties ++
+    extentProperties
 
 /-- Runs each of `properties` with `run`, which must start every command from
 an empty store, and returns the names of those that did not hold. A property

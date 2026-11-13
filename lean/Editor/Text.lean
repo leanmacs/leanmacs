@@ -109,6 +109,33 @@ same value runs against the model and against the real binding.
 - Marking, placing and giving a marker up are not edits: the revision and
   the edit log are as they were. A snapshot holds no marker. Releasing a
   text gives up its markers.
+- A *cell* is the unit a cursor is on: one character, or a carriage return
+  and the line feed after it together. A character is a Unicode scalar
+  value, not an extended grapheme cluster. At the end of the text there is
+  no cell. A row's *content* is its bytes without its line break: without
+  its line feed, and without the carriage return before that line feed.
+- The ends of a selection's range say where two cursors are. What the range
+  *covers* is a question of a text or a snapshot (`TextQuery.extents`),
+  answered by the selection's shape, for a range from `start`, its lower
+  end, to `stop`, its higher:
+
+  | Shape | Covers |
+  |---|---|
+  | `exclusive` | From `start` up to, not including, `stop` |
+  | `inclusive` | From `start` through the cell at `stop` |
+  | `line` | From the start of `start`'s row to the end of `stop`'s row, and through its line feed if it has one |
+  | `block` | For each row from `start`'s to `stop`'s, one extent: with the anchor's and the head's columns counted in cells from their rows' starts, from the lower column through the cell at the higher, cut off at the row's content. A row too short for the lower column gives an empty extent at the end of its content |
+
+  So a cursor on a character is an inclusive range with equal ends: on the
+  last character of a line it covers that character and not the line break,
+  on an empty line it covers the line break, and at the end of the text it
+  covers nothing. No end is clamped: keeping a cursor off a line break is
+  the editor's rule.
+- The extents come back sorted by start and then by stop, and two of them
+  are one when the later starts before the earlier stops or both start at
+  one offset. Extents that only touch stay two, and an extent may be empty.
+  The question is refused with `badSelection` for a selection that is none
+  or has an end that is not a position.
 - An *origin* says who made an edit (`Origin`): a number the editor chooses
   and the store never reads. It is given when a transaction is applied, not
   carried in it. An insert and a delete are the transaction with that one
@@ -270,57 +297,6 @@ inductive TextSource where
   | snapshot (id : SnapshotId)
   deriving DecidableEq, Repr
 
-/-- A question about a text or a snapshot. A new question is a constructor
-here, not a request. -/
-inductive TextQuery where
-  /-- Its revision: how many edits the text had accepted. -/
-  | revision
-  /-- Its length in bytes. -/
-  | byteLength
-  /-- How many rows it has: one more than its line feeds. -/
-  | rowCount
-  /-- The whole of it. -/
-  | contents
-  /-- The point of the byte offset `offset`, with its column in `unit`. -/
-  | pointOf (unit : ColumnUnit) (offset : Nat)
-  /-- The byte offset of `point`, whose column is in `unit`. -/
-  | offsetOf (unit : ColumnUnit) (point : Point)
-
-/-- The type of the answer to each question. It is an `abbrev` so that an
-answer's type unfolds where an instance is looked for: with a `def`,
-`(← text.rowCount) == 3` finds no `BEq`. -/
-abbrev TextQuery.Answer : TextQuery → Type
-  | .revision => Nat
-  | .byteLength => Nat
-  | .rowCount => Nat
-  | .contents => String
-  | .pointOf .. => Point
-  | .offsetOf .. => Nat
-
-/-- Who made an edit: a number the editor chooses and the text store keeps
-with the edit and never reads. What a number stands for is the editor's
-table. -/
-structure Origin where
-  /-- The number. -/
-  id : UInt64
-  deriving DecidableEq, Repr
-
-/-- The origin of an edit nobody is named for: what `TextId.insert` and
-`TextId.delete` are recorded with. That 0 means this is the editor's
-convention. -/
-def Origin.unattributed : Origin :=
-  ⟨0⟩
-
-/-- One step of a transaction's walk over a text, with its length in bytes. -/
-inductive Change where
-  /-- Keep the next `count` bytes. -/
-  | retain (count : Nat)
-  /-- Remove the next `count` bytes. -/
-  | delete (count : Nat)
-  /-- Put `text` in at this point. -/
-  | insert (text : String)
-  deriving DecidableEq, Repr
-
 /-- One range of a selection: two byte offsets, in either order. -/
 structure SelectionRange where
   /-- The end that stays when the selection is extended. -/
@@ -354,6 +330,69 @@ structure Selection where
   primary : Nat := 0
   /-- What the ranges cover. -/
   shape : Shape := .exclusive
+  deriving DecidableEq, Repr
+
+/-- A range of bytes a selection covers: from `start` up to, not including,
+`stop`. It may be empty. -/
+structure Extent where
+  /-- The offset of the first byte. -/
+  start : Nat
+  /-- The offset one past the last byte. -/
+  stop : Nat
+  deriving DecidableEq, Repr
+
+/-- A question about a text or a snapshot. A new question is a constructor
+here, not a request. -/
+inductive TextQuery where
+  /-- Its revision: how many edits the text had accepted. -/
+  | revision
+  /-- Its length in bytes. -/
+  | byteLength
+  /-- How many rows it has: one more than its line feeds. -/
+  | rowCount
+  /-- The whole of it. -/
+  | contents
+  /-- The point of the byte offset `offset`, with its column in `unit`. -/
+  | pointOf (unit : ColumnUnit) (offset : Nat)
+  /-- The byte offset of `point`, whose column is in `unit`. -/
+  | offsetOf (unit : ColumnUnit) (point : Point)
+  /-- What `selection` covers, by its shape. -/
+  | extents (selection : Selection)
+
+/-- The type of the answer to each question. It is an `abbrev` so that an
+answer's type unfolds where an instance is looked for: with a `def`,
+`(← text.rowCount) == 3` finds no `BEq`. -/
+abbrev TextQuery.Answer : TextQuery → Type
+  | .revision => Nat
+  | .byteLength => Nat
+  | .rowCount => Nat
+  | .contents => String
+  | .pointOf .. => Point
+  | .offsetOf .. => Nat
+  | .extents _ => Array Extent
+
+/-- Who made an edit: a number the editor chooses and the text store keeps
+with the edit and never reads. What a number stands for is the editor's
+table. -/
+structure Origin where
+  /-- The number. -/
+  id : UInt64
+  deriving DecidableEq, Repr
+
+/-- The origin of an edit nobody is named for: what `TextId.insert` and
+`TextId.delete` are recorded with. That 0 means this is the editor's
+convention. -/
+def Origin.unattributed : Origin :=
+  ⟨0⟩
+
+/-- One step of a transaction's walk over a text, with its length in bytes. -/
+inductive Change where
+  /-- Keep the next `count` bytes. -/
+  | retain (count : Nat)
+  /-- Remove the next `count` bytes. -/
+  | delete (count : Nat)
+  /-- Put `text` in at this point. -/
+  | insert (text : String)
   deriving DecidableEq, Repr
 
 /-- Which side of text inserted at an anchor the anchor stays on. -/
@@ -666,6 +705,12 @@ def TextId.pointOf (text : TextId) (offset : Nat) (unit : ColumnUnit := .bytes) 
 def TextId.offsetOf (text : TextId) (point : Point) (unit : ColumnUnit := .bytes) : EditorM Nat :=
   (TextSource.text text).ask (.offsetOf unit point)
 
+/-- The ranges of bytes `selection` covers in `text`, by its shape: sorted,
+with those that overlap made one. Refused with `badSelection` for a
+selection that is none or has an end that is not a position. -/
+def TextId.extents (text : TextId) (selection : Selection) : EditorM (Array Extent) :=
+  (TextSource.text text).ask (.extents selection)
+
 /-- Gives `text` up. Its id is refused from then on; its snapshots still
 read. -/
 def TextId.release (text : TextId) : EditorM Unit :=
@@ -700,6 +745,13 @@ a position. -/
 def SnapshotId.offsetOf (snapshot : SnapshotId) (point : Point) (unit : ColumnUnit := .bytes) :
     EditorM Nat :=
   (TextSource.snapshot snapshot).ask (.offsetOf unit point)
+
+/-- The ranges of bytes `selection` covers in the text `snapshot` holds, by
+its shape: sorted, with those that overlap made one. Refused with
+`badSelection` for a selection that is none or has an end that is not a
+position. -/
+def SnapshotId.extents (snapshot : SnapshotId) (selection : Selection) : EditorM (Array Extent) :=
+  (TextSource.snapshot snapshot).ask (.extents selection)
 
 /-- Gives `snapshot` up. Its id is refused from then on. -/
 def SnapshotId.release (snapshot : SnapshotId) : EditorM Unit :=
