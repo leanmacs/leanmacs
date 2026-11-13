@@ -3,10 +3,25 @@
 How a key becomes a command, how Vim-style editing is built on that, how
 modes contribute keys and behaviour, and how all of it is tested.
 
-Status: a proposal from a design discussion. Nothing here is built or
-measured. The one settled input is the priority: Vim-style editing is the
-scheme that ships and is polished; other schemes must stay possible without
-being paid for now.
+Status: partly built. The core's keymaps, input schemes and invocations
+are built, in Lean with no port, with the test scheme and the contract
+every scheme runs:
+
+| Built | Where |
+|---|---|
+| Keymaps, a key's chord, the walk and its proof | `lean/Editor/Keymap.lean` |
+| Key strings | `lean/Editor/Key/Notation.lean` |
+| Invocations | `lean/Editor/Invocation.lean` |
+| The scheme interface | `lean/Editor/InputScheme.lean` |
+| The test scheme | `lean/Editor/InputScheme/Test.lean` |
+| The scheme contract | `lean/Editor/InputScheme/Contract.lean` |
+
+Nothing calls a scheme yet: the command loop drops keys, and running an
+invocation is not built. The rest of this document (the vocabulary, the Vim
+scheme, modes, registering from config) is a proposal from a design
+discussion, and nothing is measured. The one settled input is the priority:
+Vim-style editing is the scheme that ships and is polished; other schemes
+must stay possible without being paid for now.
 
 ## Summary
 
@@ -30,11 +45,16 @@ Key ──► step ──► Invocation ──► run : Invocation → EditorM U
 ```
 
 - **`Key`** arrives from the Rust event queue as plain data.
-- **`step`** is a pure function of the active keymaps, the scheme's pending
-  state and the key.
+- **`step`** is a pure function of the active keymaps, the view the key is
+  for, the scheme's state and the key.
 - **`Invocation`** is a command name plus plain arguments. It holds no
   closures, so it can be compared, stored and replayed. A registry maps
-  command names to `EditorM` actions.
+  command names to `EditorM` actions. As built, the name is a `String`, as
+  the registry names a command, and an argument is one of a flat set of
+  kinds (`Argument`: a natural number, an integer, a string, a truth
+  value), so `Invocation` derives decidable equality. A store's `Value` is
+  a nested inductive, for which Lean derives none (the table under
+  Keymaps). Whoever runs invocations may widen `Argument`.
 - **`run`** looks the command up and runs it against the editor API
   ([lean-runtime.md](lean-runtime.md)), real or model.
 
@@ -84,6 +104,42 @@ the toolchain is bumped:
 So a tree of submaps is possible through `List` and not through
 `Std.HashMap`, and it would cost derived equality and structural proofs.
 
+#### A key as a binding names it
+
+A key from a window carries its physical code and whether the platform
+repeated it, and a shifted letter arrives as the character `A` with shift
+held. A binding written `A` or `C-x` must match all of those. `Key.chord`
+is the key as a binding names it: no physical key, not repeated, and no
+shift when the logical key is a character, which already says it. Shift
+stays on a named key, so `S-<Tab>` is a key of its own. `Keymap.bind`
+stores chords, the walk takes the chord of the key it is given, and the
+keymap's constructor is private, so a keymap holds nothing else. There is
+no second key type: a keymap is keyed by `Key`.
+
+#### Lookup through a list of keymaps
+
+The active keymaps are a list in precedence order. For a key sequence
+(`Keymap.resolve`):
+
+1. the first keymap that binds exactly that sequence gives its binding;
+2. otherwise, if a binding in any keymap begins with the sequence, the
+   sequence is pending;
+3. otherwise it is unbound.
+
+- **A bound sequence is never also a prefix.** There is no timeout, so a
+  longer binding under a bound sequence, in the same keymap or another, is
+  not reached. Nothing reports such a binding yet.
+- **Pending prefixes merge across keymaps.** A prefix in one keymap and a
+  longer binding in another are both walked.
+- **An unbound key is dropped with the prefix before it.** It does not
+  start a new sequence.
+
+`Keymap.walk` is one key of this: the keys pending and a key in, the keys
+still pending and the binding reached out. That an unbound key resets the
+pending prefix is proved (`Keymap.walk_unbound`): when no binding of any
+keymap in the list begins with the pending keys followed by the key, the
+walk leaves nothing pending and gives nothing.
+
 ### Input schemes
 
 A scheme is a state machine over keys, packaged with its own state and
@@ -94,10 +150,23 @@ structure InputScheme where
   State   : Type
   Binding : Type
   init    : State
-  step    : (ViewId → List (Keymap Binding)) → State → Key
+  step    : (ViewId → List (Keymap Binding)) → ViewId → State → Key
               → State × Option Invocation
+  pending : State → List Key
 ```
 
+- **`step` is given the view the key is for**, beside the keymaps as a
+  function of the view. A function of the view with no view to apply it to
+  would need an ambient focus.
+- **`pending` reports the keys of a sequence begun and not completed**, for
+  the scene's pending text.
+- **The record carries no equality on `State`.** A scheme's state may hold
+  what a reset must keep, such as the Vim scheme's last edit for
+  dot-repeat. So the scheme contract speaks of a reset through `pending`
+  and through what the scheme yields next, not through states. Lean's
+  instance search does not find a decidable equality through the
+  type-valued field either: a test compares states at the scheme's own
+  concrete type.
 - The core runs a scheme without knowing its `State`. This is an
   existential package: a record with type-valued fields.
 - The state is explicit, not hidden in a closure. A self-referential
@@ -106,6 +175,22 @@ structure InputScheme where
 - The active keymaps are a function of the view, passed in. There is no
   ambient "current buffer" (see the principles in
   [overview.md](overview.md)).
+
+#### The test scheme
+
+The simplest scheme there is, published for other modules' tests
+(`TestScheme.scheme`) and not shipped:
+
+- A binding is an `Invocation`: completing a sequence yields exactly what
+  it is bound to. No `Command` type exists yet, and a command is named by
+  its invocation.
+- Its state is the pending keys and nothing else, so after a reset its
+  state equals its initial state.
+- An unbound key with nothing pending yields a self-insert invocation
+  (`TestScheme.selfInsert`, with the character as its argument) when the
+  key is printable: its logical key is a character, and none of control,
+  alt and super is held. The name of that invocation is the test scheme's
+  own; what the shipped self-insert is is not decided here.
 
 ### Vocabulary
 
@@ -183,8 +268,9 @@ closed set of states, which conflicts with states being open.
 | Selection-first (Kakoune, Helix) | `Command` | Count, prefix |
 | CUA | `Command` | None |
 
-Only the Vim scheme ships. A trivial second scheme lives in the test suite
-to keep the interface honest (see Testing).
+Only the Vim scheme ships. A trivial second scheme, the test scheme, is
+published for tests to keep the interface honest (see "The test scheme"
+and Testing).
 
 ## Modes
 
@@ -261,13 +347,48 @@ version, which survives a reload that changes the type.
   tagged with their owner, as [lean-runtime.md](lean-runtime.md) describes
   for bindings and subscriptions. A reload replaces everything an owner
   registered.
+- A binding's keys are written as a key string, which `Key.parse` reads:
+  an ordinary function, built, that gives the keys or a refusal that names
+  the stroke it could not read. Registering a binding from `setup` is not
+  built.
 - A key-string macro (`kbd "C-x C-s"`) could parse at elaboration time, so
-  a mistyped key is an error in config before it runs. See the open
-  questions for its cost.
+  a mistyped key is an error in config before it runs. It is not built. See
+  the open questions for its cost.
+
+### Key strings
+
+Strokes are separated by spaces. A stroke is modifier prefixes, then a key:
+
+| Written | Is |
+|---|---|
+| `C-`, `M-`, `s-`, `S-` before a key | Control, alt, super and shift held |
+| One character: `x`, `A`, `-`, `<` | The key of that character |
+| `<Name>`: `<Escape>`, `<ArrowLeft>` | The named key of that W3C `key` value, as the event's key names it |
+| `RET`, `ESC`, `TAB` | `<Enter>`, `<Escape>`, `<Tab>` |
+| `SPC` | The space character, the W3C `key` value of the space bar |
+
+- A prefix is one only while something follows its `-`: `-` is the minus
+  key, and `C--` is control with it.
+- `S-` before a character is refused. A shifted character is written as
+  itself, and a chord carries no shift on a character, so the prefix would
+  be dropped without a word.
+- What `Key.parse` gives is in chord form. `Key.notation` and
+  `Key.notations` write chords back, for the scene's pending text: the
+  inverse of `Key.parse` on chords of one character or a named key. A dead
+  key and an unidentified one are written `<Dead>` and `<Unidentified>`,
+  which do not read back as them.
 
 ## Testing
 
 Tests follow the pipeline. Most need no fake.
+
+What is built is checked by the model tests (`lean/ModelTest.lean`, under
+`lake test`, with no Rust library): `keymapChecks`, `keyNotationChecks`,
+`invocationChecks`, `schemeChecks` on the test scheme, and
+`schemeContractChecks`. They are checks that the test driver runs, each
+with a name it prints when it fails and each written to fail first, as the
+rest of the model tests are, and not the `#guard`s sketched below: those
+remain the proposal for a scheme's own grammar and for config.
 
 ### Keys in, invocation out
 
@@ -304,8 +425,20 @@ is what makes the result hold for the real binding.
   item" pins a rule the Vim scheme owns (`AGENTS.md`, crate coupling). The
   mode asserts on the role, using the fake scheme with a fixed role table.
 - **The core publishes two contract checks.**
-  - For schemes: an unbound key resets, a strict prefix of a binding emits
-    nothing, every role has a key.
+  - For schemes, built (`SchemeContract`,
+    `lean/Editor/InputScheme/Contract.lean`). A scheme's author gives it
+    the scheme, keymaps, a view, inputs the author says are complete and a
+    key that goes on with none of them, and it answers the names of the
+    properties that do not hold. There are five: some input has two keys or
+    more, so the others are not vacuous; a strict prefix of a complete
+    input emits nothing; after a strict prefix the scheme reports its keys
+    as pending; the last key emits, and nothing is then pending; an unbound
+    key after a strict prefix emits nothing, leaves nothing pending, and
+    the input typed next yields what it yields from the initial state. It
+    is pure and compares no states. "Every role has a key" joins it with
+    roles.
+  - The model tests run it on the test scheme, and on schemes written
+    there that each break one property and are reported.
   - For modes: `Mode.check : Mode → List Problem` reports unregistered
     roles, duplicate suffixes, and hand-tuned keys that shadow a scheme
     binding.
@@ -318,8 +451,10 @@ and a failing one keeps the old config.
 
 ### Theorems
 
-Stated against the model where they earn their keep: an unbound key always
-resets pending state; `x` then `u` restores the buffer.
+Stated where they earn their keep: an unbound key always resets pending
+state; `x` then `u` restores the buffer. The first is proved for the keymap
+walk, which needs no model (`Keymap.walk_unbound`, checked by the kernel on
+every build); the second is a proposal.
 
 ## Open questions
 
@@ -339,7 +474,17 @@ resets pending state; `x` then `u` restores the buffer.
   entering and leaving a visual state changes the selection's shape.
 - **The `kbd` macro.** Macros need the `Lean` package at elaboration time,
   and importing it at runtime is what the memory figures in
-  [lean-runtime.md](lean-runtime.md) argue against. Not measured.
+  [lean-runtime.md](lean-runtime.md) argue against. Not measured, and not
+  built: `Key.parse` is a function that runs when it is called.
+- **Characters the layout composes with Alt.** On macOS, Option with a
+  letter arrives as another character (`ø`) with alt held, so a binding
+  written `M-o` does not match it. A chord keeps the character the
+  platform reported.
+- **Binding by physical key.** A chord drops the physical key, so a binding
+  cannot say "the key where `h` is on a QWERTY keyboard, whatever the
+  layout".
+- **Unreachable bindings.** A binding under a bound sequence is never
+  reached, and nothing reports it.
 - **Not verified:** that `#guard` in interpreted config is fast enough to
   run on every reload; how well the Plausible property-testing library
   works on the pinned toolchain.

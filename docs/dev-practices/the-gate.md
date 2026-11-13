@@ -62,7 +62,11 @@ from a job are tested there too, with no file: the job interface's file
 properties run against a pure model of files and against the job runner
 over a fake of the file service, in a made-up directory, and cases play a
 command, a job and the job's command together on the models, a file a job
-loads becoming a text among them. The task shows by behaviour
+loads becoming a text among them. How a key becomes an invocation is
+checked there as well, and it has no model and no fake, since it reaches
+nothing: keymaps and the walk through a list of them, key strings, the
+test scheme, and the scheme contract, run on the test scheme and on schemes
+written to break it. The task shows by behaviour
 that they build without the library. It puts a `cargo` that always fails
 (`lean/no-cargo/cargo`) first on the `PATH`, and Lake runs `cargo` on every
 build that reaches the Rust archive, so the task passes only if the test
