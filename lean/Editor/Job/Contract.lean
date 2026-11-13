@@ -353,7 +353,28 @@ def fileProperties : List FileProperty :=
         sleep 1
         return missing == .notFound && taken == .changed (some file.stamp) && caught &&
             made.size == 17
-      after := #[("a.txt", rawFile), ("b.txt", rawFile)] }]
+      after := #[("a.txt", rawFile), ("b.txt", rawFile)] },
+    { name :=
+        "a limit no machine word holds is not cut down: under a limit of 2^64 + 1, which cut down to a 64-bit word is 1, a file of seventeen bytes loads"
+      files := #[("a.txt", rawFile)]
+      holds := fun root => do
+        return (← loaded (root / "a.txt") (2 ^ 64 + 1)).stamp.size == 17
+      after := #[("a.txt", rawFile)] },
+    { name :=
+        "a stamp with a number no machine word holds is no file's stamp: a save that expects the file's stamp with 2^64 added to its size, 2^32 to its nanoseconds or 2^64 to its seconds is refused as changed, with the file's stamp, and the file is as it was"
+      files := #[("a.txt", rawFile), ("b.txt", otherFile)]
+      holds := fun root => do
+        let file ← loaded (root / "a.txt")
+        let other ← loaded (root / "b.txt")
+        let refusedFor (stamp : File.Stamp) : JobM Bool :=
+          saveRefusedAs (.changed (some file.stamp)) (.held other.snapshot) (root / "a.txt")
+            (.unchanged stamp)
+        let size ← refusedFor { file.stamp with size := file.stamp.size + 2 ^ 64 }
+        let nanoseconds ←
+          refusedFor { file.stamp with nanoseconds := file.stamp.nanoseconds + 2 ^ 32 }
+        let seconds ← refusedFor { file.stamp with seconds := file.stamp.seconds + 2 ^ 64 }
+        return size && nanoseconds && seconds
+      after := #[("a.txt", rawFile), ("b.txt", otherFile)] }]
 
 /-- `files` in the order of their names, to compare two sets of files. -/
 def byName (files : Array (String × ByteArray)) : Array (String × ByteArray) :=
