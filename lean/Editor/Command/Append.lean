@@ -18,9 +18,10 @@ returns and what model it leaves, for every model that meets the hypotheses.
 The proof follows one pattern. Unfold the command, and let `simp` take it
 apart with the port's lemmas (`Program.run_bind` under
 `EditorM.runModel_bind`, and one lemma for each operation, in
-`Editor/Text/Model.lean`). What is left is about the model alone: here, that
-the text is there (`live`) and that a splice at the end of a text is an
-append (`TextModel.splice_end`).
+`Editor/Text/Model.lean`). What is left is about the model alone: here, how
+the model finds a text (`TextModel.lookup`), that the text is there (`live`)
+and that a splice at the end of a text is an append
+(`TextModel.splice_end`).
 
 A theorem is symbolic. `rfl` and `decide` do not evaluate a run of the model
 on concrete strings, so a concrete case is a test, in `ModelTest`.
@@ -34,12 +35,18 @@ def append (text : TextId) (s : String) : EditorM Unit := do
   let old ← text.read
   text.insert old.utf8ByteSize s
 
-/-- `append` on a text that holds `contents` succeeds, leaves that text
-holding `contents ++ s`, and changes no other text. -/
-theorem append_spec (model : TextModel) (id : TextId) (contents s : String)
-    (live : model.texts[id.index]? = some contents) :
+/-- `append` on a text that holds `content` succeeds, leaves that text holding
+`content.contents ++ s` at the next revision, and changes no other text and
+no snapshot. -/
+theorem append_spec (model : TextModel) (id : TextId) (content : TextContent) (s : String)
+    (live : model.texts[id.index]? = some (some content)) :
     (append id s).runModel model =
-      (.ok (), { model with texts := model.texts.setIfInBounds id.index (contents ++ s) }) := by
-  simp [append, TextModel.handle, TextModel.edit, live, TextModel.splice_end]
+      (.ok (),
+        { model with
+          texts :=
+            model.texts.setIfInBounds id.index
+              (some
+                { contents := content.contents ++ s, revision := content.revision + 1 }) }) := by
+  simp [append, TextModel.handle, TextModel.edit, TextModel.lookup, live, TextModel.splice_end]
 
 end Editor

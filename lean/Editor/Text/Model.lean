@@ -3,25 +3,61 @@ import Editor.Text
 /-!
 # The pure model of the text port
 
-The text store as a value: the texts made so far, and a pure function that
-answers each request of the port (`Editor/Text.lean`). Editor logic is tested
-against it, with no Rust library, and theorems about commands are stated
-about `EditorM.runModel`.
+The text store as a value: the texts and the snapshots made so far, and a
+pure function that answers each request of the port (`Editor/Text.lean`).
+Editor logic is tested against it, with no Rust library, and theorems about
+commands are stated about `EditorM.runModel`.
+
+A text is a string and a revision. A snapshot is a copy of that pair, so
+that a snapshot is unaffected by later edits holds of the model by
+construction. Rows and points are found by walking the string's characters,
+which is slow and plainly right: the model is what the library is compared
+with, not what the editor runs on.
 
 The contract (`Editor/Text/Contract.lean`) is what says the model and the real
-binding agree. A clause added to `TextModel.handle` needs its property there.
+binding agree. A clause added to `TextModel.handle` or to `TextModel.answer`
+needs its property there.
 -/
 
 namespace Editor
 
-/-- The model of the text store: every text made so far. A text's id is its
-index here. -/
+/-- What a text holds at one revision: the model of a text, and of a
+snapshot. -/
+structure TextContent where
+  /-- The text. -/
+  contents : String
+  /-- How many edits the text had accepted. -/
+  revision : Nat := 0
+  deriving Repr
+
+/-- The model of the text store: every text and every snapshot made so far.
+An id is an index here, and a slot is `none` once its text or its snapshot
+has been released, so an id is never used again. -/
 structure TextModel where
   /-- The texts, in the order they were made. -/
-  texts : Array String := #[]
+  texts : Array (Option TextContent) := #[]
+  /-- The snapshots, in the order they were taken. -/
+  snapshots : Array (Option TextContent) := #[]
   deriving Repr
 
 namespace TextModel
+
+/-- What each text that has not been released holds, in the order they were
+made. This is what a test compares, where the revisions do not matter. -/
+def contents (model : TextModel) : Array String :=
+  model.texts.filterMap (·.map (·.contents))
+
+/-- What `source` names: the text as it is now, or the snapshot. The refusal
+when it names nothing, or something that was released. -/
+def lookup (model : TextModel) : TextSource → Except TextError TextContent
+  | .text id =>
+    match model.texts[id.index]? with
+    | some (some content) => .ok content
+    | _ => .error .noSuchText
+  | .snapshot id =>
+    match model.snapshots[id.index]? with
+    | some (some content) => .ok content
+    | _ => .error .noSuchSnapshot
 
 /-- `text` with its bytes from `start` up to, not including, `stop` replaced by
 `s`. `none` unless both offsets are character boundaries of `text`, within
@@ -35,27 +71,115 @@ def splice (text : String) (start stop : Nat) (s : String) : Option String :=
         (text.sliceFrom (text.pos ⟨stop⟩ valid.2.1)).copy)
   else none
 
+/-- How many rows `text` has: one more than its line feeds. -/
+def rowCount (text : String) : Nat :=
+  (text.toList.filter (· == '\n')).length + 1
+
+/-- How wide `c` is in a column counted in `unit`: its bytes of UTF-8, or its
+UTF-16 code units, which are two for a character outside the Basic
+Multilingual Plane. -/
+def width (unit : ColumnUnit) (c : Char) : Nat :=
+  match unit with
+  | .bytes => c.utf8Size
+  | .utf16 => if c.val < 0x10000 then 1 else 2
+
+/-- The point of the byte offset `offset` in `text`, with its column in
+`unit`. `none` unless the offset is a position: a character boundary of the
+text, within it. -/
+def pointOf (unit : ColumnUnit) (text : String) (offset : Nat) : Option Point :=
+  go text.toList 0 ⟨0, 0⟩
+where
+  /-- Walks the characters that are left. `here` is the byte offset reached
+  and `point` the point of it. -/
+  go : List Char → Nat → Point → Option Point
+    | [], here, point => if here == offset then some point else none
+    | c :: rest, here, point =>
+      if here == offset then some point
+      else
+        if here > offset then none
+        else
+          go rest (here + c.utf8Size)
+            (if c == '\n' then ⟨point.row + 1, 0⟩ else ⟨point.row, point.column + width unit c⟩)
+
+/-- The byte offset of `point` in `text`, where the point's column is in
+`unit`. `none` unless the point names a position: a row the text has, and a
+column within the row that is not inside a character. -/
+def offsetOf (unit : ColumnUnit) (text : String) (point : Point) : Option Nat :=
+  go text.toList 0 ⟨0, 0⟩
+where
+  /-- Walks the characters that are left. `offset` is the byte offset reached
+  and `here` the point of it. At a line feed the walk is at the end of a row:
+  if that is the row asked for, its columns have all been passed. -/
+  go : List Char → Nat → Point → Option Nat
+    | [], offset, here => if here == point then some offset else none
+    | c :: rest, offset, here =>
+      if here == point then some offset
+      else
+        if c == '\n' then
+          if here.row == point.row then none else go rest (offset + c.utf8Size) ⟨here.row + 1, 0⟩
+        else go rest (offset + c.utf8Size) ⟨here.row, here.column + width unit c⟩
+
+/-- The model's answer to `query` about `content`. -/
+def answer (content : TextContent) : (query : TextQuery) → Except TextError query.Answer
+  | .revision => .ok content.revision
+  | .byteLength => .ok content.contents.utf8ByteSize
+  | .rowCount => .ok (rowCount content.contents)
+  | .contents => .ok content.contents
+  | .pointOf unit offset =>
+    match pointOf unit content.contents offset with
+    | some point => .ok point
+    | none => .error .badPosition
+  | .offsetOf unit point =>
+    match offsetOf unit content.contents point with
+    | some offset => .ok offset
+    | none => .error .badPosition
+
 /-- The model's answer to an edit of the text `id`, replacing its bytes from
-`start` up to `stop` by `s`, and the model after it. A refused edit leaves the
-model as it was. -/
+`start` up to `stop` by `s`, and the model after it. An accepted edit adds
+one to the text's revision. A refused edit leaves the model as it was. -/
 def edit (model : TextModel) (id : TextId) (start stop : Nat) (s : String) :
     Except TextError Unit × TextModel :=
-  match model.texts[id.index]? with
-  | none => (.error .noSuchText, model)
-  | some text =>
-    match splice text start stop s with
+  match model.lookup (.text id) with
+  | .error refusal => (.error refusal, model)
+  | .ok content =>
+    match splice content.contents start stop s with
     | none => (.error .badRange, model)
-    | some text => (.ok (), { model with texts := model.texts.setIfInBounds id.index text })
+    | some text =>
+      (.ok (),
+        { model with
+          texts :=
+            model.texts.setIfInBounds id.index
+              (some { contents := text, revision := content.revision + 1 }) })
+
+/-- The model after `source`, which it holds, is released: its slot is
+emptied and stays, so later ids are what they would have been. -/
+def released (model : TextModel) : TextSource → TextModel
+  | .text id => { model with texts := model.texts.setIfInBounds id.index none }
+  | .snapshot id => { model with snapshots := model.snapshots.setIfInBounds id.index none }
 
 /-- The model's answer to each request, and the model after it. -/
 def handle : (request : TextRequest) → TextModel → request.Reply × TextModel
-  | .create initial, model => (⟨model.texts.size⟩, { model with texts := model.texts.push initial })
+  | .create initial, model =>
+    (⟨model.texts.size⟩, { model with texts := model.texts.push (some { contents := initial }) })
   | .insert id offset s, model => model.edit id offset offset s
   | .delete id start stop, model => model.edit id start stop ""
   | .read id, model =>
-    match model.texts[id.index]? with
-    | none => (.error .noSuchText, model)
-    | some text => (.ok text, model)
+    match model.lookup (.text id) with
+    | .error refusal => (.error refusal, model)
+    | .ok content => (.ok content.contents, model)
+  | .snapshot id, model =>
+    match model.lookup (.text id) with
+    | .error refusal => (.error refusal, model)
+    | .ok content =>
+      (.ok ⟨model.snapshots.size⟩, { model with snapshots := model.snapshots.push (some content) })
+  | .ask source query, model =>
+    match model.lookup source with
+    | .error refusal => (.error refusal, model)
+    | .ok content => (answer content query, model)
+  | .release source, model =>
+    match model.lookup source with
+    | .error refusal => (.error refusal, model)
+    | .ok _ => (.ok (), model.released source)
 
 end TextModel
 
@@ -95,7 +219,8 @@ theorem runModel_bind (command : EditorM α) (after : α → EditorM β) (model 
 @[simp]
 theorem runModel_createText (initial : String) (model : TextModel) :
     (createText initial).runModel model =
-      (.ok ⟨model.texts.size⟩, { model with texts := model.texts.push initial }) :=
+      (.ok ⟨model.texts.size⟩,
+        { model with texts := model.texts.push (some { contents := initial }) }) :=
   rfl
 
 @[simp]
@@ -111,6 +236,21 @@ theorem runModel_insert (id : TextId) (offset : Nat) (s : String) (model : TextM
 @[simp]
 theorem runModel_delete (id : TextId) (start stop : Nat) (model : TextModel) :
     (id.delete start stop).runModel model = model.edit id start stop "" :=
+  rfl
+
+@[simp]
+theorem runModel_snapshot (id : TextId) (model : TextModel) :
+    id.snapshot.runModel model = TextModel.handle (.snapshot id) model :=
+  rfl
+
+@[simp]
+theorem runModel_ask (source : TextSource) (query : TextQuery) (model : TextModel) :
+    (source.ask query).runModel model = TextModel.handle (.ask source query) model :=
+  rfl
+
+@[simp]
+theorem runModel_release (source : TextSource) (model : TextModel) :
+    source.release.runModel model = TextModel.handle (.release source) model :=
   rfl
 
 end EditorM

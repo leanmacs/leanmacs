@@ -281,7 +281,7 @@ def makes (text : String) : EditorM Unit :=
 
 /-- The texts `command` leaves when it runs against a text model with none. -/
 def textsOf (command : EditorM Unit) : Array String :=
-  (command.runModel {}).2.texts
+  (command.runModel {}).2.contents
 
 /-- How long a check waits, in milliseconds, for something that should happen
 at once. Only broken code takes this long, and the check then fails instead
@@ -1005,7 +1005,7 @@ def setupChecks : List Check :=
             discard <| createText s!"was {n}"
             return n + 5
         match (step (.nat 2)).runModel {} with
-        | (.ok tree, model) => pure (tree == .nat 7 && model.texts == #["was 2"])
+        | (.ok tree, model) => pure (tree == .nat 7 && model.contents == #["was 2"])
         | (.error _, _) => pure false },
     { name :=
         "a setup that registers jobs collects each with its name, in order, beside its commands, and a job is not a command"
@@ -1494,7 +1494,7 @@ def runs (state : Config.State Elaborated) (name : String) (model : TextModel :=
 
 /-- The texts the command called `name` leaves when the editor runs it. -/
 def runTexts (state : Config.State Elaborated) (name : String) : Option (Array String) :=
-  (runs state name).map (·.2.texts)
+  (runs state name).map (·.2.contents)
 
 /-- The value of the config's store called `name`. -/
 def stored (state : Config.State Elaborated) (name : String) : Option Value :=

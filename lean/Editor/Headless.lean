@@ -89,9 +89,9 @@ text <index>: <quoted text>
 store <name> v<version>: <value>
 ```
 
-The last three answer `show`, which lists commands, not jobs. A text is
-never closed: the loop keeps one table of texts for its life, and `show`
-lists them all. A diagnostic that is about no place in particular has the
+The last three answer `show`, which lists commands, not jobs. The loop keeps
+one table of texts for its life, and `show` lists every text in it that no
+command has released, under the index it was made with. A diagnostic that is about no place in particular has the
 position 0:0. A job's id is its number in this loop's table, from 1. A job
 is `cancelled` when a reload that installs replaces the config that
 registered it; a job that throws is `failed`.
@@ -234,6 +234,8 @@ def severityName : Config.Severity → String
 def refusalName : TextError → String
   | .noSuchText => "no such text"
   | .badRange => "bad range"
+  | .noSuchSnapshot => "no such snapshot"
+  | .badPosition => "bad position"
 
 /-- The lines a reload's report is printed as: what it came to, then its
 diagnostics. -/
@@ -254,8 +256,8 @@ def firstLine (message : String) : String :=
 structure Running (σ : Type) where
   /-- The config half of the editor's state. -/
   config : Config.State σ := {}
-  /-- The texts made so far. -/
-  texts : RealTexts := #[]
+  /-- The texts and the snapshots made so far. -/
+  texts : RealTexts := {}
   /-- The jobs that are running, with their owners. -/
   jobs : Job.Jobs
   /-- Where the reload job that is running will leave its outcome. -/
@@ -379,8 +381,9 @@ def ended (collaborators : Collaborators σ) (running : Running σ) (id : Nat) :
 /-- Prints the commands, the texts and the stores. -/
 def «show» (collaborators : Collaborators σ) (running : Running σ) : IO Unit := do
   collaborators.emit (" ".intercalate ("commands:" :: running.config.registry.names.toList))
-  for index in [0:running.texts.size] do
-    if let some document := running.texts[index]? then
+  for index in [0:running.texts.documents.size] do
+    -- A text a command released has no document, and no line.
+    if let some (some document) := running.texts.documents[index]? then
       collaborators.emit s!"text {index}: {(← document.read).quote}"
   for cell in running.config.cells.cells do
     collaborators.emit s!"store {cell.name} v{cell.version}: {render cell.value}"

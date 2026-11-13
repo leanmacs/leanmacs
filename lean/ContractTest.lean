@@ -16,7 +16,10 @@ fails one of the two, which is what keeps a model from drifting from the
 library.
 
 - The text port's contract (`Editor/Text/Contract.lean`) against its real
-  binding (`Editor/Text/Real.lean`).
+  binding (`Editor/Text/Real.lean`). Beside it, what only the real binding
+  can show, since it is about the library's objects: that the binding's
+  table is the only holder of its documents and of its snapshots, and that
+  releasing one frees it at once (`failures`, `releaseFrees`).
 - The job port's contract (`Editor/Job/Contract.lean`) against the runner
   over the library's timer service, with the completion pump
   (`Editor/Job/Real.lean`). `model-test` runs it against the model and
@@ -50,22 +53,54 @@ namespace ContractTest
 
 open Editor
 
-/-- What must hold of the binding's table of texts once the contract has run.
-It is not a property of the port, which has no way to say it: it is about the
+/-- What must hold of the binding's tables once the contract has run. It is
+not a property of the port, which has no way to say it: it is about the
 library's objects, which only the real binding has. -/
 def tableName : String :=
-  "the real binding's table is the only holder of its documents: they are all freed when it is dropped"
+  "the real binding's table is the only holder of its documents and of its snapshots: they are all freed when it is dropped"
+
+/-- What must hold of a release in the real binding. Like `tableName`, it is
+about the library's objects, so the port cannot say it. -/
+def releaseName : String :=
+  "releasing a text or a snapshot frees the library's object at once, while the table is still held"
+
+/-- Whether a release frees the library's object at once. A command makes two
+texts and two snapshots and releases one of each; then, with the table it
+left still held, the library must hold one document and one snapshot more
+than before. -/
+def releaseFrees : IO Bool := do
+  let documents ← Ffi.Document.live
+  let snapshots ← Ffi.Snapshot.live
+  let command : EditorM Unit := do
+    let kept ← createText "kept"
+    let dropped ← createText "dropped"
+    discard kept.snapshot
+    let released ← kept.snapshot
+    released.release
+    dropped.release
+  let (result, table) ← command.runReal {}
+  let documentsHeld ← Ffi.Document.live
+  let snapshotsHeld ← Ffi.Snapshot.live
+  -- The table is read here, so it is alive until now. A released slot stays
+  -- in it, empty.
+  return result.isOk && documentsHeld == documents + 1 && snapshotsHeld == snapshots + 1 &&
+      table.documents.size == 2 &&
+      table.snapshots.size == 2
 
 /-- Runs `properties` against the real binding, each from a table with no
 texts, and returns the names of those that did not hold. Each table is dropped
-with its run, so the count of live documents must then be what it was before:
-if it is not, `tableName` is among the names. -/
+with its run, so the counts of live documents and of live snapshots must then
+be what they were before: if either is not, `tableName` is among the names.
+`releaseName` is among them if a release did not free its object at once. -/
 def failures (properties : List TextContract.Property) : IO (List String) := do
-  let before ← Ffi.Document.live
-  let failed ← TextContract.failures (fun command => return (← command.runReal #[]).1) properties
-  let after ← Ffi.Document.live
-  return if after == before then failed
-    else failed ++ [s!"{tableName} ({before} before, {after} after)"]
+  let before := (← Ffi.Document.live, ← Ffi.Snapshot.live)
+  let failed ← TextContract.failures (fun command => return (← command.runReal {}).1) properties
+  let released ← releaseFrees
+  let after := (← Ffi.Document.live, ← Ffi.Snapshot.live)
+  return failed ++ (if released then [] else [releaseName]) ++
+      if after == before then []
+      else
+        [s!"{tableName} ({before.1} documents and {before.2} snapshots before, {after.1} and {after.2} after)"]
 
 /-- How long a check waits, in milliseconds, for something that should happen
 at once. Only broken code takes this long, and the check then fails instead
@@ -94,7 +129,7 @@ def hour : Nat :=
 replaced by the texts that command leaves when it runs against the text
 model, since commands cannot be compared. -/
 def texts : Job.Outcome (EditorM Unit) → Job.Outcome (Array String)
-  | .finished command => .finished (command.runModel {}).2.texts
+  | .finished command => .finished (command.runModel {}).2.contents
   | .failed message => .failed message
   | .cancelled => .cancelled
 
@@ -297,6 +332,6 @@ def main : IO UInt32 := do
   unless failed.isEmpty do
     IO.Process.exit 1
   IO.println
-      s!"contract-test: {properties.length} properties hold of the real text binding, and its documents are freed with its table; {Editor.JobContract.properties.length} properties hold of the job runner over the timer service, {checks.length} checks of it passed, and quit ended the pump"
+      s!"contract-test: {properties.length} properties hold of the real text binding, and its documents and snapshots are freed when released and with its table; {Editor.JobContract.properties.length} properties hold of the job runner over the timer service, {checks.length} checks of it passed, and quit ended the pump"
   (← IO.getStdout).flush
   IO.Process.exit 0

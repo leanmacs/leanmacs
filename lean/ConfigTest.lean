@@ -202,10 +202,10 @@ def elaboratorChecks (context : Context) : List Check :=
         let .ok registrations := Config.Registrations.ofSetup program | return false
         let some registration := registrations.commands[0]? | return false
         let .plain run := registration.action | return false
-        let (result, texts) ← run.runReal #[]
-        let some text := texts[0]? | return false
+        let (result, texts) ← run.runReal {}
+        let some (some text) := texts.documents[0]? | return false
         return registrations.commands.size == 1 && registration.name == "greet" && result.isOk &&
-            texts.size == 1 &&
+            texts.documents.size == 1 &&
             (← text.read) == "hello, world" },
     { name := "a chunk that declares an initialised constant is rejected with a diagnostic"
       run := do

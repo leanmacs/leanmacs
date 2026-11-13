@@ -39,7 +39,7 @@ def demo : IO UInt32 := do
   let serviceOnMain ← Editor.Ffi.mainThreadProbe
   IO.println s!"The main-thread service is on the process's main thread: {serviceOnMain}"
   let appended ←
-    match (← greeting.runReal #[]).1 with
+    match (← greeting.runReal {}).1 with
     | .ok text =>
       IO.println s!"A command appended to a text held by Rust: {text}"
       pure (text == "héllo wörld")
