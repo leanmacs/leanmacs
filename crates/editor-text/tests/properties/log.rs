@@ -162,3 +162,84 @@ fn the_logged_edits_agree_with_a_reference_computed_from_the_texts() {
         },
     );
 }
+
+#[test]
+fn a_subscriber_that_skips_edits_gets_one_equivalent_patch() {
+    /// The most transactions in a case.
+    const WALKS: usize = 10;
+    // Whether the subscriber that skips pulls after each transaction.
+    let pulls = vec(prop::bool::weighted(0.3), WALKS);
+
+    check(
+        256,
+        (initial_text_to_walk(), walks(WALKS), pulls),
+        |(initial, walks, pulls)| {
+            let mut reference = initial;
+            let mut text = Text::from(reference.as_str());
+            let mut skipping = text.subscribe();
+            let mut following = text.subscribe();
+            // What the text held when `skipping` last pulled, and the
+            // composition of the change sets accepted since.
+            let mut seen = reference.clone();
+            let mut skipped: Option<ChangeSet> = None;
+
+            // One more round than there are transactions, in which
+            // `skipping` always pulls.
+            for index in 0..=walks.len() {
+                if let Some(walk) = walks.get(index) {
+                    let changes = walk.changes(&reference);
+                    let transaction = Transaction::new(changes.clone());
+                    let before = text.current().revision();
+                    let result = text.apply(&transaction, Origin::default());
+
+                    // The subscriber that pulls every time sees each entry
+                    // alone.
+                    let alone = text.pull(&mut following);
+                    let Ok(alone) = alone else {
+                        return Err(TestCaseError::fail("a subscriber was refused"));
+                    };
+                    prop_assert_eq!(alone.from, before);
+                    prop_assert_eq!(alone.to, text.current().revision());
+                    match (result, applied(&changes, &reference)) {
+                        (Ok(revision), Some(made)) => {
+                            let entry = text.entry(revision).map(|entry| entry.edits());
+                            prop_assert_eq!(Some(alone.edits.as_slice()), entry);
+                            skipped = match skipped {
+                                Some(earlier) => earlier.compose(&changes),
+                                None => Some(changes),
+                            };
+                            prop_assert!(skipped.is_some(), "the change sets compose");
+                            reference = made;
+                        }
+                        (Err(_), None) => prop_assert_eq!(&alone.edits, &[]),
+                        _ => return Err(TestCaseError::fail("the text and the string disagree")),
+                    }
+                }
+                if !pulls.get(index).copied().unwrap_or(true) {
+                    continue;
+                }
+
+                let since = skipping.revision();
+                let patch = text.pull(&mut skipping);
+
+                let Ok(patch) = patch else {
+                    return Err(TestCaseError::fail("a subscriber was refused"));
+                };
+                prop_assert_eq!(patch.from, since);
+                prop_assert_eq!(patch.to, text.current().revision());
+                prop_assert_eq!(skipping.revision(), text.current().revision());
+                // One patch, equal to the edits of everything skipped done
+                // at once, with points from the two strings.
+                let expected = match skipped.take() {
+                    Some(skipped) => edits_of(&skipped, &seen, &reference),
+                    None => Vec::new(),
+                };
+                prop_assert_eq!(&patch.edits, &expected);
+                prop_assert_eq!(&patched(&seen, &reference, &patch.edits), &reference);
+                check_input_edits(&seen, &reference, &patch.edits)?;
+                seen.clone_from(&reference);
+            }
+            Ok(())
+        },
+    );
+}

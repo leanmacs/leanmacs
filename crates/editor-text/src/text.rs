@@ -5,8 +5,8 @@ use std::fmt;
 use std::ops::Range;
 
 use crate::change::ChangeSet;
-use crate::log::{Log, LogEntry, Origin};
-use crate::patch::{Edit, Span};
+use crate::log::{Log, LogEntry, LogError, Origin, Subscription};
+use crate::patch::{Edit, Patch, Span};
 use crate::rope::Rope;
 use crate::snapshot::{Revision, Snapshot};
 use crate::transaction::{ApplyError, Transaction};
@@ -156,6 +156,33 @@ impl Text {
     /// for a log that is whole.
     pub fn horizon(&self) -> Revision {
         self.log.horizon()
+    }
+
+    /// What changed in the text since the revision `since`, as one patch:
+    /// however many transactions were applied, their changes are coalesced
+    /// into one set of edits whose old spans are ranges of the text at
+    /// `since` and whose new spans are ranges of the text now. Empty when
+    /// `since` is the current revision.
+    ///
+    /// [`LogError::Unknown`] for a revision the text has not reached.
+    pub fn changes_since(&self, since: Revision) -> Result<Patch, LogError> {
+        self.log.changes_since(since, self.current.revision)
+    }
+
+    /// A subscription that has seen the text as it is now.
+    pub fn subscribe(&self) -> Subscription {
+        Subscription {
+            seen: self.current.revision,
+        }
+    }
+
+    /// What changed since `subscription` last looked
+    /// ([`changes_since`](Self::changes_since) of its revision), and moves
+    /// it to now. A subscription that is refused stays where it was.
+    pub fn pull(&self, subscription: &mut Subscription) -> Result<Patch, LogError> {
+        let patch = self.changes_since(subscription.seen)?;
+        subscription.seen = patch.to;
+        Ok(patch)
     }
 }
 

@@ -1,9 +1,12 @@
 //! The edit log: what was done to a text, one entry for each transaction
 //! it accepted.
 
+use std::borrow::Cow;
 use std::collections::VecDeque;
+use std::error::Error;
+use std::fmt;
 
-use crate::patch::Edit;
+use crate::patch::{self, Edit, Patch};
 use crate::snapshot::Revision;
 
 /// Who made an edit: an opaque number the caller supplies when it applies a
@@ -70,6 +73,88 @@ impl Log {
         let entry = self.entries.get(index)?;
         Some(LogEntry { revision, entry })
     }
+
+    /// What changed between `since` and `current`, the text's revision, as
+    /// one patch.
+    pub(crate) fn changes_since(
+        &self,
+        since: Revision,
+        current: Revision,
+    ) -> Result<Patch, LogError> {
+        if since > current {
+            return Err(LogError::Unknown);
+        }
+        // The entries of the revisions after `since`.
+        let skipped = since.get() - self.horizon.get();
+        let first = usize::try_from(skipped).map_or(self.entries.len(), |skipped| {
+            skipped.min(self.entries.len())
+        });
+        Ok(Patch {
+            from: since,
+            to: current,
+            edits: self.coalesced(first, self.entries.len()).into_owned(),
+        })
+    }
+
+    /// The edits of the entries from the index `first` up to, not
+    /// including, `end`, as one set.
+    ///
+    /// The entries are composed pairwise as a balanced tree, so an edit is
+    /// walked once for each level of the tree and not once for each entry
+    /// after its own.
+    fn coalesced(&self, first: usize, end: usize) -> Cow<'_, [Edit]> {
+        match end.saturating_sub(first) {
+            0 => Cow::Borrowed(&[]),
+            1 => self
+                .entries
+                .get(first)
+                .map_or(Cow::Borrowed(&[]), |entry| Cow::Borrowed(&*entry.edits)),
+            count => {
+                let middle = first + count / 2;
+                let earlier = self.coalesced(first, middle);
+                let later = self.coalesced(middle, end);
+                Cow::Owned(patch::compose(&earlier, &later))
+            }
+        }
+    }
+}
+
+/// Why the log could not answer for a revision.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LogError {
+    /// The text has not reached the revision.
+    Unknown,
+}
+
+impl fmt::Display for LogError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
+            Self::Unknown => "the text has not reached the revision",
+        })
+    }
+}
+
+impl Error for LogError {}
+
+/// A consumer's place in a text's log: the revision it last saw
+/// ([`Text::subscribe`](crate::Text::subscribe),
+/// [`Text::pull`](crate::Text::pull)).
+///
+/// Nothing is registered with the text: a subscription is a revision the
+/// consumer keeps, so it costs the text nothing and there is nothing to
+/// release.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Subscription {
+    /// The revision the consumer last saw.
+    pub(crate) seen: Revision,
+}
+
+impl Subscription {
+    /// The revision the consumer last saw: the text's when it subscribed
+    /// or last pulled.
+    pub fn revision(&self) -> Revision {
+        self.seen
+    }
 }
 
 /// One entry of a text's log: an applied transaction
@@ -82,7 +167,7 @@ pub struct LogEntry<'a> {
     entry: &'a Entry,
 }
 
-impl LogEntry<'_> {
+impl<'a> LogEntry<'a> {
     /// The revision the transaction produced.
     pub fn revision(&self) -> Revision {
         self.revision
@@ -98,7 +183,7 @@ impl LogEntry<'_> {
     /// span of an edit is a range of the text before the transaction and
     /// the new span a range of the text after it. Empty for a transaction
     /// that changed nothing.
-    pub fn edits(&self) -> &[Edit] {
+    pub fn edits(&self) -> &'a [Edit] {
         &self.entry.edits
     }
 }
@@ -251,6 +336,244 @@ mod tests {
             ])
         );
         assert_eq!(replaced.revision(), Revision(1));
+    }
+
+    /// A text made as "héllo\nwörld" and then changed four times, to
+    /// "\nhXYllo\nwörld!": "A\n" is inserted at the start, "é" is replaced
+    /// by "XY", "!" is added at the end, and the "A" is deleted.
+    fn changed_four_times() -> Text {
+        let mut text = Text::from("héllo\nwörld");
+        text.replace(0..0, "A\n").expect("an insert at the start");
+        let replaced = [
+            Change::Retain(3),
+            Change::Delete(2),
+            insert("XY"),
+            Change::Retain(10),
+        ];
+        text.apply(
+            &Transaction::new(replaced.into_iter().collect()),
+            Origin::new(7),
+        )
+        .expect("it fits");
+        let added = [Change::Retain(15), insert("!")];
+        text.apply(
+            &Transaction::new(added.into_iter().collect()),
+            Origin::new(9),
+        )
+        .expect("it fits");
+        text.replace(0..1, "").expect("a delete at the start");
+        assert_eq!(text.current().to_string(), "\nhXYllo\nwörld!");
+        text
+    }
+
+    #[test]
+    fn what_changed_since_a_revision_is_one_patch_of_ranges_of_the_text_then_and_now() {
+        let text = changed_four_times();
+
+        // The "A" that was inserted and then deleted is in no edit.
+        assert_eq!(
+            text.changes_since(Revision(0)),
+            Ok(Patch {
+                from: Revision(0),
+                to: Revision(4),
+                edits: vec![
+                    Edit {
+                        old: span(0, 0, (0, 0), (0, 0)),
+                        new: span(0, 1, (0, 0), (1, 0)),
+                    },
+                    Edit {
+                        old: span(1, 3, (0, 1), (0, 3)),
+                        new: span(2, 4, (1, 1), (1, 3)),
+                    },
+                    Edit {
+                        old: span(13, 13, (1, 6), (1, 6)),
+                        new: span(14, 15, (2, 6), (2, 7)),
+                    },
+                ],
+            })
+        );
+        // Since "A\nhXYllo\nwörld".
+        assert_eq!(
+            text.changes_since(Revision(2)),
+            Ok(Patch {
+                from: Revision(2),
+                to: Revision(4),
+                edits: vec![
+                    Edit {
+                        old: span(0, 1, (0, 0), (0, 1)),
+                        new: span(0, 0, (0, 0), (0, 0)),
+                    },
+                    Edit {
+                        old: span(15, 15, (2, 6), (2, 6)),
+                        new: span(14, 15, (2, 6), (2, 7)),
+                    },
+                ],
+            })
+        );
+    }
+
+    #[test]
+    fn what_changed_since_the_revision_before_is_the_last_entry() {
+        let text = changed_four_times();
+        let last = text
+            .entry(Revision(4))
+            .expect("the last transaction's entry");
+
+        let patch = text.changes_since(Revision(3)).expect("a revision reached");
+
+        assert_eq!(patch.from, Revision(3));
+        assert_eq!(patch.to, Revision(4));
+        assert_eq!(patch.edits, last.edits());
+    }
+
+    #[test]
+    fn nothing_changed_since_the_current_revision() {
+        let text = changed_four_times();
+
+        assert_eq!(
+            text.changes_since(Revision(4)),
+            Ok(Patch {
+                from: Revision(4),
+                to: Revision(4),
+                edits: Vec::new(),
+            })
+        );
+        assert_eq!(
+            Text::from("héllo").changes_since(Revision(0)),
+            Ok(Patch {
+                from: Revision(0),
+                to: Revision(0),
+                edits: Vec::new(),
+            })
+        );
+    }
+
+    #[test]
+    fn transactions_that_change_nothing_make_an_empty_patch_that_spans_them() {
+        let mut text = Text::from("héllo");
+        text.replace(3..3, "").expect("a position");
+        text.replace(0..0, "").expect("a position");
+
+        assert_eq!(
+            text.changes_since(Revision(0)),
+            Ok(Patch {
+                from: Revision(0),
+                to: Revision(2),
+                edits: Vec::new(),
+            })
+        );
+    }
+
+    #[test]
+    fn what_changed_since_a_revision_the_text_has_not_reached_is_unknown() {
+        let text = changed_four_times();
+
+        assert_eq!(text.changes_since(Revision(5)), Err(LogError::Unknown));
+        assert_eq!(
+            text.changes_since(Revision(u64::MAX)),
+            Err(LogError::Unknown)
+        );
+    }
+
+    #[test]
+    fn a_subscriber_pulls_one_patch_of_what_changed_since_it_last_pulled() {
+        let mut text = Text::from("héllo\nwörld");
+        let mut subscription = text.subscribe();
+        assert_eq!(subscription.revision(), Revision(0));
+
+        // After no edit.
+        let nothing = text.pull(&mut subscription).expect("a revision reached");
+        assert_eq!((nothing.from, nothing.to), (Revision(0), Revision(0)));
+        assert_eq!(nothing.edits, []);
+
+        // After several: one patch.
+        text.replace(0..0, "A\n").expect("an insert at the start");
+        text.replace(15..15, "!").expect("an insert at the end");
+        text.replace(0..1, "").expect("a delete at the start");
+        let several = text.pull(&mut subscription);
+        assert_eq!(several, text.changes_since(Revision(0)));
+        let several = several.expect("a revision reached");
+        assert_eq!((several.from, several.to), (Revision(0), Revision(3)));
+        assert_eq!(
+            several.edits,
+            [
+                Edit {
+                    old: span(0, 0, (0, 0), (0, 0)),
+                    new: span(0, 1, (0, 0), (1, 0)),
+                },
+                Edit {
+                    old: span(13, 13, (1, 6), (1, 6)),
+                    new: span(14, 15, (2, 6), (2, 7)),
+                },
+            ]
+        );
+        assert_eq!(subscription.revision(), Revision(3));
+
+        // A second pull has nothing left.
+        let again = text.pull(&mut subscription).expect("a revision reached");
+        assert_eq!((again.from, again.to), (Revision(3), Revision(3)));
+        assert_eq!(again.edits, []);
+
+        // And the next one starts where the last ended.
+        text.replace(0..1, "").expect("a delete at the start");
+        let next = text.pull(&mut subscription).expect("a revision reached");
+        assert_eq!((next.from, next.to), (Revision(3), Revision(4)));
+        assert_eq!(
+            next.edits,
+            [Edit {
+                old: span(0, 1, (0, 0), (1, 0)),
+                new: span(0, 0, (0, 0), (0, 0)),
+            }]
+        );
+    }
+
+    #[test]
+    fn a_subscriber_sees_only_what_came_after_it_subscribed() {
+        let mut text = Text::from("héllo");
+        text.replace(0..0, "x").expect("an insert at the start");
+        let mut subscription = text.subscribe();
+        assert_eq!(subscription.revision(), Revision(1));
+        text.replace(7..7, "y").expect("an insert at the end");
+
+        let patch = text.pull(&mut subscription).expect("a revision reached");
+
+        assert_eq!((patch.from, patch.to), (Revision(1), Revision(2)));
+        assert_eq!(
+            patch.edits,
+            [Edit {
+                old: span(7, 7, (0, 7), (0, 7)),
+                new: span(7, 8, (0, 7), (0, 8)),
+            }]
+        );
+    }
+
+    #[test]
+    fn many_entries_coalesce_into_one_patch() {
+        // Each transaction inserts one byte at the start, so every one
+        // touches the one before it.
+        let mut text = Text::from("héllo");
+        for _ in 0..37 {
+            text.replace(0..0, "x").expect("an insert at the start");
+        }
+
+        let patch = text.changes_since(Revision(0)).expect("a revision reached");
+
+        assert_eq!(
+            patch.edits,
+            [Edit {
+                old: span(0, 0, (0, 0), (0, 0)),
+                new: span(0, 37, (0, 0), (0, 37)),
+            }]
+        );
+        // From an odd revision, so the halves are uneven.
+        let later = text.changes_since(Revision(8)).expect("a revision reached");
+        assert_eq!(
+            later.edits,
+            [Edit {
+                old: span(0, 0, (0, 0), (0, 0)),
+                new: span(0, 29, (0, 0), (0, 29)),
+            }]
+        );
     }
 
     #[test]

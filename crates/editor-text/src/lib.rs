@@ -88,6 +88,16 @@
 //!   another in one transaction starts at different points in the two
 //!   texts; the three an incremental parser takes are derived from them
 //!   ([`Edit::input_edit`]). The log stores no text.
+//! - **A consumer pulls what changed**; it is not sent each edit.
+//!   [`Text::changes_since`] a revision is one [`Patch`], however many
+//!   transactions were applied since: its edits' old spans are ranges of
+//!   the text at that revision and their new spans ranges of the text now,
+//!   in order, with no two overlapping or touching. Changes that came to
+//!   overlap or touch are one edit, and text inserted and deleted again in
+//!   between is in none. **A subscriber is a revision** the consumer keeps
+//!   ([`Text::subscribe`], [`Text::pull`]): nothing is registered with the
+//!   text, so there is no queue of edits for a consumer and nothing to
+//!   release.
 //! - **A revision** counts the transactions a text has accepted
 //!   ([`Revision`]). A new text is at 0, every accepted transaction adds
 //!   one, however many changes it has and one that changes nothing
@@ -121,8 +131,8 @@
 //! - A second row rule, in which a carriage return alone ends a line, which
 //!   is how a language server counts. The library can count it beside this
 //!   one without the stored text changing.
-//! - Asking the log what changed since a revision, tracing a range of the
-//!   text to the entries that wrote it, and dropping old entries.
+//! - Tracing a range of the text to the entries that wrote it, and dropping
+//!   old entries.
 //! - Composing transactions, and mapping many positions or a selection
 //!   through a change set in one pass.
 //! - Anchors, the selection type and undo.
@@ -152,8 +162,8 @@ mod transaction;
 
 pub use bytes::ByteChunks;
 pub use change::{Bias, Change, ChangeSet};
-pub use log::{LogEntry, Origin};
-pub use patch::{Edit, InputEdit, Span};
+pub use log::{LogEntry, LogError, Origin, Subscription};
+pub use patch::{Edit, InputEdit, Patch, Span};
 pub use point::{Point, PointUtf16};
 pub use selection::{Selection, SelectionRange};
 pub use snapshot::{Chunks, Revision, Snapshot};
