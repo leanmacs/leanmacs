@@ -5,22 +5,26 @@ modes contribute keys and behaviour, and how all of it is tested.
 
 Status: partly built. The core's keymaps, input schemes and invocations
 are built, in Lean with no port, with the test scheme and the contract
-every scheme runs:
+every scheme runs, and so is the Vim scheme's grammar, with its default
+states and bindings:
 
 | Built | Where |
 |---|---|
 | Keymaps, a key's chord, the walk and its proof | `lean/Editor/Keymap.lean` |
 | Key strings | `lean/Editor/Key/Notation.lean` |
 | Invocations | `lean/Editor/Invocation.lean` |
-| The scheme interface | `lean/Editor/InputScheme.lean` |
+| The scheme interface, and what a key prints | `lean/Editor/InputScheme.lean` |
 | The test scheme | `lean/Editor/InputScheme/Test.lean` |
 | The scheme contract | `lean/Editor/InputScheme/Contract.lean` |
+| The Vim scheme's grammar: parts of speech, edits, counts, registers, Vim states, the last change | `lean/Editor/InputScheme/Vim.lean` |
+| The Vim scheme's default states and bindings, and the scheme that ships | `lean/Editor/InputScheme/Vim/Default.lean` |
 
 Nothing calls a scheme yet: the command loop drops keys, and running an
-invocation is not built. The Vim scheme's grammar is decided and not built
-("The Vim scheme"). The rest of this document (the vocabulary, modes,
-registering from config) is a proposal from a design discussion, and
-nothing is measured. The one settled input is the priority:
+invocation is not built. So the Vim scheme parses keys to invocations that
+nothing runs: no motion, operator or command it names is registered. The
+rest of this document (the vocabulary, modes, registering from config) is a
+proposal from a design discussion, and nothing is measured. The one settled
+input is the priority:
 Vim-style editing is the scheme that ships and is polished; other schemes
 must stay possible without being paid for now.
 
@@ -190,8 +194,11 @@ The simplest scheme there is, published for other modules' tests
 - An unbound key with nothing pending yields a self-insert invocation
   (`TestScheme.selfInsert`, with the character as its argument) when the
   key is printable: its logical key is a character, and none of control,
-  alt and super is held. The name of that invocation is the test scheme's
-  own; what the shipped self-insert is is not decided here.
+  alt and super is held. Which keys print is one rule for every scheme
+  (`Key.printed?`, beside the scheme interface). The name of that
+  invocation is the test scheme's own. The shipped self-insert is the Vim
+  scheme's (`Vim.selfInsert`, under "Edits" below): it is yielded only in a
+  Vim state that inserts text.
 
 ### Vocabulary
 
@@ -218,15 +225,19 @@ command.
 
 ## The Vim scheme
 
-Status: decided, not built. This section says what the scheme's grammar is
-and where each thing it remembers is held, so that the code is written to
-it. It is the grammar only: keys in, an invocation out, in pure Lean on the
-scheme interface. What a motion or an operator does to a text is not here.
+Status: the grammar is built (`lean/Editor/InputScheme/Vim.lean`, namespace
+`Editor.Vim`), with the default states and bindings
+(`lean/Editor/InputScheme/Vim/Default.lean`). It is the grammar only: keys
+in, an invocation out, in pure Lean on the scheme interface, checked with
+no editor API. What a motion or an operator does to a text is not built,
+and no name the scheme yields is registered.
 
 Keys are bound to parts of speech, not to opaque commands. The scheme's
 `State` holds the count so far, the operator waiting for a motion, and the
-prefix walked so far. It parses a key sequence into an `Edit` and compiles
-that to an `Invocation`.
+prefix walked so far. One key is `Vim.parse`: the state it leaves, and what
+the key parsed to, which is nothing, an `Edit`, or typed text. `Vim.step`
+compiles that to an `Invocation`, and `Vim.scheme states` packages it as an
+`InputScheme` over a registry of Vim states.
 
 - **Operator-pending needs no separate keymap.** `w` is bound once, as a
   motion. Alone it moves; after `d` it supplies the range. A motion added
@@ -307,10 +318,11 @@ The rules of the grammar:
 - A different operator, a command or the register prefix while an operator
   waits resets the input.
 - An unbound key resets the input: no count, no operator, no register and
-  no prefix are left.
+  no prefix are left. A reset keeps which Vim state each view is in and the
+  last change.
 
-An edit compiles to an invocation, and the layout is the scheme's one rule
-for it:
+An edit compiles to an invocation (`Edit.compile`), and the layout is the
+scheme's one rule for it:
 
 | Edit | Invocation |
 |---|---|
@@ -318,8 +330,21 @@ for it:
 | `operate o over c r` | `operate`, with `[.str o.name, .str kind, .str name, .nat c, .str r]`. Kind and name are `motion` and the motion, `text-object` and the object, `lines` and `""`, `selection` and `""` |
 | `run cmd c r` | `cmd.name`, with `[.nat c, .str r]` |
 
-The commands `move` and `operate` are registered with the vocabulary, not
+The two command names are constants of the scheme (`Vim.moveCommand`,
+`Vim.operateCommand`). The commands are registered with the vocabulary, not
 here.
+
+- **`pending` is every key of the edit begun**, as chords: counts, the
+  register prefix and the operator included, so `d 2` after `d2`. The
+  scheme contract requires a strict prefix to be reported key for key, and
+  it is what Vim shows.
+- **Typed text is a self-insert, and not an edit.** `Vim.selfInsert text`
+  is the invocation `self-insert` with `[.str text]`. It is yielded for a
+  key that is unbound and prints, typed with no edit begun, for a view
+  whose Vim state inserts text; it leaves the scheme's state as it was. In
+  any other state such a key yields nothing. An unbound key after a prefix
+  is dropped with the prefix, in an inserting state too. How typed text
+  joins the last change is not built.
 
 ### Counts
 
@@ -397,8 +422,8 @@ structure States where
 ```
 
 - **The registry always has an initial record**, so looking a state up is
-  total, and registering a record replaces one of the same name, the
-  initial one included.
+  total (`States.get`), and registering a record replaces one of the same
+  name, the initial one included (`States.register`).
 - **What the grammar must know of a state is data on its record**, never a
   match on its name, so a state that a test or config registers is not a
   special case. A digit is text exactly where typing is text, so one field
@@ -429,10 +454,16 @@ state.
   a view: there is one keyboard. A key for another view goes on with the
   pending edit, and is looked up in the keymaps of its own view and that
   view's state.
-- **A name the registry no longer has is read as the initial state**, so a
-  registry that loses a state strands no view.
+- **A name the registry does not have is the initial state**, when it is
+  read and when a command enters it, so a registry that loses a state
+  strands no view.
+- **A record has no equality.** It holds keymaps, and a keymap derives
+  none, so neither `StateRecord` nor `States` does. The scheme's `State`
+  holds names and edits only and has a decidable equality. A check compares
+  two records by their fields.
 - The scene's cursor shape and status field will read the view's state
-  through the scheme's state. That wiring is not built.
+  through the scheme's state (`Vim.State.record`, `Vim.State.stateOf`).
+  That wiring is not built.
 
 ### Which keymaps a key is looked up in
 
@@ -453,11 +484,57 @@ first, in their own order, then the state's.
   keymaps. Limiting a mode's key to some states is not built (open
   questions).
 
+### The last change
+
+`lastChange : Option Edit` in the scheme's state is the last edit that
+changed text, as a value: what dot repeat replays.
+
+- An edit replaces it when it changes text: an `operate` whose operator
+  has `changes`, a `run` whose command has it, and never a move. So `d2w`
+  is the last change, and `w` and `yw` after it leave it as it was.
+- A reset keeps it, and so does entering a state. Typed text is not an
+  edit and does not replace it.
+- It is one for the scheme, not one a view.
+- Replaying it, and the text typed in an insert session as part of it, are
+  not built.
+
+### Default bindings
+
+`Vim.Default` holds the scheme's default keys as data: tables of key string
+and `Bound`, the keymaps made from them, the four state records, and
+`Vim.Default.scheme`, the scheme that ships. The root module imports it, so
+config sees `Vim.Bound`. The grammar's module names no key.
+
+The names in the tables are the vocabulary names and command names that
+the motions, operators and commands will be registered under. A name is
+changed in its row and in its registration together. No grammar check names
+a default, so renaming one breaks none.
+
+| Table | Keys |
+|---|---|
+| `motions` | `h` left, `j` down, `k` up, `l` right, `w` word-forward, `b` word-backward, `e` word-end, `W` bigword-forward, `B` bigword-backward, `E` bigword-end, `0` line-start, `^` line-first-non-blank, `$` line-end, `g g` first-line, `G` last-line |
+| `operators` | `d` delete, `c` change (enters insert), `y` yank (changes no text) |
+| `normalCommands` | `i` insert, `a` append, `I` insert-line-start, `A` append-line-end, `o` open-below, `O` open-above (each enters insert and changes text); `x` delete-char, `p` put-after, `P` put-before (each changes text); `u` undo, `C-r` redo, `.` repeat, `:` ex; `v` visual, `V` visual-line (each enters that state); `"` the register prefix |
+| `insertCommands` | `<Escape>` normal (enters normal) |
+| `visualCommands` | `<Escape>` and `v` normal, `V` visual-line, `"` |
+| `visualLineCommands` | `<Escape>` and `V` normal, `v` visual, `"` |
+
+| State | Keymaps, in precedence order | Cursor | The grammar reads |
+|---|---|---|---|
+| `normal`, the initial state | `normalCommands`, `operators`, `motions` | Block | |
+| `insert` | `insertCommands` | Bar | Typing is text |
+| `visual` | `visualCommands`, `operators`, `motions` | Block | Operators act on the selection |
+| `visual-line` | `visualLineCommands`, `operators`, `motions` | Block | Operators act on the selection |
+
+A key string in a table that `Key.parse` refuses binds nothing, which a
+check catches: each table's keymap has as many bindings as the table has
+rows.
+
 ## Other schemes
 
 | Scheme | `Binding` | `State` |
 |---|---|---|
-| Vim | `Bound` | Count, pending operator, prefix |
+| Vim | `Vim.Bound`: a part of speech, or the register prefix | Each view's Vim state, the keys typed, the count, the register, the pending operator, the prefix, the last change |
 | Emacs-style | `Command` | Prefix, universal argument |
 | Selection-first (Kakoune, Helix) | `Command` | Count, prefix |
 | CUA | `Command` | None |
@@ -581,23 +658,53 @@ What is built is checked by the model tests (`lean/ModelTest.lean`, under
 `invocationChecks`, `schemeChecks` on the test scheme, and
 `schemeContractChecks`. They are checks that the test driver runs, each
 with a name it prints when it fails and each written to fail first, as the
-rest of the model tests are, and not the `#guard`s sketched below: those
-remain the proposal for a scheme's own grammar and for config.
+rest of the model tests are, and not `#guard`s.
+
+The Vim scheme is checked the same way, by six lists:
+
+| List | Checks |
+|---|---|
+| `vimEditChecks` | What an edit compiles to, the layout of each kind of invocation, and what an edit says of itself |
+| `vimRegistryChecks` | The registry of Vim states: looking a state up, and registering one |
+| `vimGrammarChecks` | Which keymaps a key is looked up in; moves, operators and their targets, the doubled operator, counts, registers, resets, and the pending keys |
+| `vimStateChecks` | Which Vim state a view is in and how one is entered; typed text; an operator over the selection; the last change |
+| `vimDefaultChecks` | The default states and bindings, through what each default key parses to |
+| `vimContractChecks` | The scheme contract holds of the Vim scheme, over the checks' registry and over the default states |
+
+- **The grammar's checks run on a registry and keymaps written in the
+  test** (`vimStates`), and name no default binding. The defaults have
+  their own list, which observes them through `Vim.parse` and restates no
+  table.
+- **The contract's unbound key is a named key** (`<F12>`): after the
+  register prefix every key that prints names a register. Given a key that
+  prints, the contract reports that the scheme does not reset, and a check
+  holds it to that.
+- **A state record is compared by its fields**: it holds keymaps and has no
+  equality. The scheme's state is compared whole, at its own type.
 
 ### Keys in, invocation out
 
+The grammar's checks are of this kind: a key string in, and what each key
+yielded out.
+
 ```lean
-#guard parseKeys vim "d2w" == [.operate `delete (.motion `word) 2]
-#guard parseKeys vim "dz"  == []      -- an unbound key resets pending state
+(vimFed "d 2 w").2 ==
+  [none, none,
+    some { command := "operate"
+           arguments := [.str "delete", .str "motion", .str "word", .nat 2, .str ""] }]
+(vimFed "d z").2 == [none, none]      -- an unbound key resets the edit begun
 ```
 
-`#guard` evaluates a `Bool` at elaboration time and fails the build if it
-is false. `by decide` would give a kernel-checked proof, but kernel
-reduction is too slow for strings and maps.
+They replace the `#guard`s this section sketched for the grammar. `#guard`
+evaluates a `Bool` at elaboration time and fails the build if it is false;
+it remains the proposal for config (below). `by decide` would give a
+kernel-checked proof, but kernel reduction is too slow for strings and
+maps.
 
 ### Keys against the model
 
-The cursor is written into the fixture:
+Not built: it waits for the vocabulary. The cursor is written into the
+fixture:
 
 ```lean
 #guard runKeys vim "foo |bar baz" "dw" == "foo |baz"
@@ -610,7 +717,7 @@ is what makes the result hold for the real binding.
 
 | Author | Tests | Against |
 |---|---|---|
-| Scheme | Its grammar, plus the scheme contract check | The model |
+| Scheme | Its grammar, plus the scheme contract check | Nothing, for the grammar: a scheme is pure. The model, for keys against a text, once the vocabulary exists |
 | Mode | Its vocabulary; that each role and leader suffix runs the right command | The fake scheme the core publishes |
 | Mode, hand-tuned keys | Those bindings | The real scheme they were written for |
 | User config | Their own bindings | Whatever they bound against |
@@ -631,8 +738,8 @@ is what makes the result hold for the real binding.
     the input typed next yields what it yields from the initial state. It
     is pure and compares no states. "Every role has a key" joins it with
     roles.
-  - The model tests run it on the test scheme, and on schemes written
-    there that each break one property and are reported.
+  - The model tests run it on the test scheme, on schemes written there
+    that each break one property and are reported, and on the Vim scheme.
   - For modes: `Mode.check : Mode → List Problem` reports unregistered
     roles, duplicate suffixes, and hand-tuned keys that shadow a scheme
     binding.
@@ -663,11 +770,17 @@ every build); the second is a proposal.
   terminal view or the minibuffer takes keys.
 - **The wanted column and the selection's shape** in the Vim scheme. How
   counts, registers and the visual selection appear in the scheme's state
-  and in an edit, and where the current Vim state is held, are decided
-  ("The Vim scheme"), and how a selection is represented is settled
+  and in an edit, and where the current Vim state is held, are built ("The
+  Vim scheme"), and how a selection is represented is settled
   ([text-and-display.md](text-and-display.md)). What is open is where the
   column a vertical motion wants is kept, and how entering and leaving a
-  visual state changes the selection's shape.
+  visual state changes the selection's shape. The shape a state gives a
+  cursor is not yet on its record.
+- **Text objects on `i` and `a`.** Vim's text objects begin with `i` or `a`
+  (`diw`, `da(`). The default normal state binds both keys as commands, and
+  a bound sequence is never also a prefix, so they cannot also begin a text
+  object after an operator. The grammar accepts a text object after an
+  operator; which keys the default ones are on is not decided.
 - **A mode's key in some Vim states only.** An active keymap's binding
   holds in every Vim state. Whether a mode's role key can be limited to
   some states goes with the Vim role table.

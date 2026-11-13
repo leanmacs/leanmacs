@@ -66,7 +66,12 @@ loads becoming a text among them. How a key becomes an invocation is
 checked there as well, and it has no model and no fake, since it reaches
 nothing: keymaps and the walk through a list of them, key strings, the
 test scheme, and the scheme contract, run on the test scheme and on schemes
-written to break it. The task shows by behaviour
+written to break it. The Vim scheme is checked there the same way: what an
+edit compiles to, the registry of Vim states, the grammar (operators and
+their targets, counts, registers, resets) on a registry and keymaps written
+in the test, Vim states and the last change, the default states and
+bindings through what each default key parses to, and the scheme contract
+on the Vim scheme. The task shows by behaviour
 that they build without the library. It puts a `cargo` that always fails
 (`lean/no-cargo/cargo`) first on the `PATH`, and Lake runs `cargo` on every
 build that reaches the Rust archive, so the task passes only if the test
