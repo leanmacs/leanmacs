@@ -10,7 +10,11 @@ commands are stated about `EditorM.runModel`.
 
 A text is a string and a revision. A snapshot is a copy of that pair, so
 that a snapshot is unaffected by later edits holds of the model by
-construction. Rows and points are found by walking the string's characters,
+construction. A text made of what a text or a snapshot holds
+(`TextModel.copy`) is a new text made of the source's string, exactly as
+`create` makes one of a string (`TextModel.made`), so that it has nothing
+else of its source holds by construction too. The library shares the rope
+and copies no text; the model copies the string. Rows and points are found by walking the string's characters,
 which is slow and plainly right: the model is what the library is compared
 with, not what the editor runs on.
 
@@ -940,15 +944,32 @@ def unmark (model : TextModel) (id : TextId) (marker : MarkerId) :
         { model with markers := model.markers.modify id.index (·.setIfInBounds marker.index none) })
     | none => (.error .noSuchMarker, model)
 
+/-- The id of a new text holding `initial`, and the model with it: the text
+is at revision 0, with a log that starts there, no markers and a history
+that holds nothing. Its id is the next index, so no id is used again. This is
+the one way the model gains a text, whether it is made of a string or of what
+another text or a snapshot holds. -/
+def made (model : TextModel) (initial : String) : TextId × TextModel :=
+  (⟨model.texts.size⟩,
+    { model with
+      texts := model.texts.push (some { contents := initial })
+      logs := model.logs.push (.new initial)
+      markers := model.markers.push #[]
+      histories := model.histories.push {} })
+
+/-- The model's answer to making a text of what `source` holds, and the model
+after it: a new text holding the source's string and nothing else of it
+(`made`). A source that names nothing is refused and makes no text. -/
+def copy (model : TextModel) (source : TextSource) : Except TextError TextId × TextModel :=
+  match model.lookup source with
+  | .error refusal => (.error refusal, model)
+  | .ok content =>
+    let (id, model) := model.made content.contents
+    (.ok id, model)
+
 /-- The model's answer to each request, and the model after it. -/
 def handle : (request : TextRequest) → TextModel → request.Reply × TextModel
-  | .create initial, model =>
-    (⟨model.texts.size⟩,
-      { model with
-        texts := model.texts.push (some { contents := initial })
-        logs := model.logs.push (.new initial)
-        markers := model.markers.push #[]
-        histories := model.histories.push {} })
+  | .create initial, model => model.made initial
   | .insert id offset s, model => model.edit id offset offset s
   | .delete id start stop, model => model.edit id start stop ""
   | .read id, model =>
@@ -980,6 +1001,7 @@ def handle : (request : TextRequest) → TextModel → request.Reply × TextMode
   | .unmark id marker, model => model.unmark id marker
   | .applyInverse id first last origin, model => model.applyInverse id first last origin
   | .dropInverses id first last, model => model.dropInverses id first last
+  | .copy source, model => model.copy source
 
 end TextModel
 
@@ -1102,6 +1124,11 @@ theorem runModel_applyInverse (id : TextId) (first last : Nat) (origin : Origin)
 @[simp]
 theorem runModel_dropInverses (id : TextId) (first last : Nat) (model : TextModel) :
     (id.dropInverses first last).runModel model = model.dropInverses id first last :=
+  rfl
+
+@[simp]
+theorem runModel_copy (source : TextSource) (model : TextModel) :
+    source.copy.runModel model = model.copy source :=
   rfl
 
 end EditorM

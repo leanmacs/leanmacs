@@ -22,6 +22,11 @@ question and dropped after it. Taking one copies none of the text, so the
 library needs one set of read functions, on a snapshot, and none on a
 document.
 
+A copy of a text or of a snapshot is a document the library makes from a
+snapshot (`Ffi.Document.ofSnapshot`): the snapshot the request names, or one
+taken of the text for the copy and dropped after it. The library shares the
+text between the two and copies none of it.
+
 A transaction, and a question about a text's edit log, go to the text's
 document, since a snapshot has no log. The port's counts, offsets and
 revisions are `Nat` and the library's are machine words. In a transaction,
@@ -421,6 +426,15 @@ def handle : (request : TextRequest) → StateT RealTexts IO request.Reply
   | .unmark id held => unmark id held
   | .applyInverse id first last origin => applyInverse id first last origin
   | .dropInverses id first last => dropInverses id first last
+  | .copy source => do
+    match ← snapshotOf source with
+    | .error refusal =>
+      return .error refusal
+    | .ok snapshot =>
+      let document ← Ffi.Document.ofSnapshot snapshot
+      modifyGet fun table =>
+          (.ok ⟨table.documents.size⟩,
+            { table with documents := table.documents.push (some document) })
 
 end RealTexts
 

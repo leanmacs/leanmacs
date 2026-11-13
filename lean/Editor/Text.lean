@@ -8,8 +8,9 @@ text, insert into it, delete from it, apply a transaction to it, read it,
 take a snapshot of it, ask a text or a snapshot a question, ask a text's
 edit log what changed and who wrote a range, forget the start of that log,
 mark a text with anchors and selections that every edit moves, apply the
-inverse of a run of its edits, drop the inverses it keeps, and release a
-text or a snapshot. It is deliberately small. The point is the
+inverse of a run of its edits, drop the inverses it keeps, make a text of
+what a text or a snapshot holds, and release a text or a snapshot. It is
+deliberately small. The point is the
 pattern every later interface follows:
 
 - the port, here: the requests, the reply to each, and the operations a
@@ -28,8 +29,17 @@ same value runs against the model and against the real binding.
 
 ## The rules of the port
 
-- A text is named by a `TextId`, which is plain data. Only `createText` makes
-  one that names a text; any other is refused with `noSuchText`.
+- A text is named by a `TextId`, which is plain data. Only `createText` and
+  `TextSource.copy` make one that names a text; any other is refused with
+  `noSuchText`.
+- A *copy* is a new text holding what a text or a snapshot holds
+  (`TextSource.copy`). It takes the source's string and nothing else: it is
+  at revision 0, its edit log starts there and is empty, and it has no
+  marker and no kept inverse, whatever the source's revision and whatever
+  its text holds of those. It is a text of its own, with the next id: an
+  edit to it or to its source leaves the other as it was, and it outlives
+  the release of its source. A copy of a source that names nothing is
+  refused as any request of that source is, and makes no text.
 - Offsets are byte offsets into the text's UTF-8, as `Nat`. A *position* is
   an offset that is a character boundary of the text, within it: its end is
   one.
@@ -642,6 +652,8 @@ inductive TextRequest where
   /-- Drop the inverses `text` keeps for its revisions from `first` to
   `last`. -/
   | dropInverses (text : TextId) (first last : Nat)
+  /-- Make a new text holding what `source` holds. -/
+  | copy (source : TextSource)
 
 /-- The type of the reply to each request: the new text's id for `create`,
 and for the others a refusal or the result. -/
@@ -662,6 +674,7 @@ def TextRequest.Reply : TextRequest → Type
   | .unmark .. => Except TextError Unit
   | .applyInverse .. => Except TextError Inverted
   | .dropInverses .. => Except TextError Unit
+  | .copy _ => Except TextError TextId
 
 /-- The text port: `TextRequest` and the reply to each request. -/
 abbrev textPort : Port :=
@@ -807,6 +820,23 @@ first revision is after its last drops nothing. Refused with
 `unknownRevision` for a `last` the text has not reached. -/
 def TextId.dropInverses (text : TextId) (first last : Nat) : EditorM Unit :=
   ExceptT.mk (Program.request (port := textPort) (.dropInverses text first last))
+
+/-- Makes a new text holding what `source` holds and returns its id: a text
+of its own, at revision 0, with an empty edit log, no markers and no kept
+inverses, whatever the source's revision and whatever its text holds of
+those. An edit to either leaves the other as it was, and the new text
+outlives the release of its source. Refused, making no text, with
+`noSuchText` or `noSuchSnapshot` for a source that names nothing. -/
+def TextSource.copy (source : TextSource) : EditorM TextId :=
+  ExceptT.mk (Program.request (port := textPort) (.copy source))
+
+/-- A new text holding what `text` holds now (`TextSource.copy`). -/
+def TextId.copy (text : TextId) : EditorM TextId :=
+  (TextSource.text text).copy
+
+/-- A new text holding what `snapshot` holds (`TextSource.copy`). -/
+def SnapshotId.copy (snapshot : SnapshotId) : EditorM TextId :=
+  (TextSource.snapshot snapshot).copy
 
 /-- The revision of `text`: how many edits it has accepted. -/
 def TextId.revision (text : TextId) : EditorM Nat :=

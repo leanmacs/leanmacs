@@ -1672,6 +1672,86 @@ def inverseProperties : List Property :=
               #[⟨5, 6, .earlier 0⟩, ⟨6, 7, .entry 1 .unattributed⟩,
                 ⟨7, 8, .entry 2 .unattributed⟩] }]
 
+/-- The properties of making a text from a text or from a snapshot
+(`TextSource.copy`). The texts hold two- and four-byte characters and an
+escape, and every expected value is written out by hand. -/
+def copyProperties : List Property :=
+  [{
+      name :=
+        "a copy of a text at revision 3 holds what the text holds, at revision 0, with an empty log: nothing has changed since 0, and its bytes are earlier than its log",
+      holds := do
+        -- "a", the escape of `0xFF`, "b", "é" and "😀": twelve bytes.
+        let text ← createText (escaped ++ "é😀")
+        text.insert 0 "y"
+        text.insert 0 "x"
+        text.delete 1 2
+        let copy ← text.copy
+        return copy != text && (← text.revision) == 3 &&
+            (← copy.read) == ("xa".push (Char.ofNat 0x10DCFF)) ++ "bé😀" &&
+            (← copy.revision) == 0 &&
+            (← copy.byteLength) == 13 &&
+            (← copy.rowCount) == 1 &&
+            (← copy.changesSince 0) == ⟨0, 0, #[]⟩ &&
+            (← copy.trace 0 13) == #[⟨0, 13, .earlier 0⟩] },
+    { name :=
+        "a copy is a text of its own: an edit to the copy and an edit to its source each leave the other, and the source's snapshot, as they were"
+      holds := do
+        let text ← createText "héllo\n😀"
+        let snapshot ← text.snapshot
+        let copy ← text.copy
+        copy.insert 0 "C"
+        text.insert 11 "T"
+        return (← copy.read) == "Chéllo\n😀" && (← text.read) == "héllo\n😀T" &&
+            (← snapshot.read) == "héllo\n😀" &&
+            (← copy.revision) == 1 &&
+            (← text.revision) == 1 &&
+            (← snapshot.revision) == 0 },
+    { name :=
+        "a copy of a snapshot holds what the snapshot holds though its text has moved on, at revision 0 whatever the snapshot's, and outlives the release of both"
+      holds := do
+        let text ← createText escaped
+        text.insert 0 "é"
+        let snapshot ← text.snapshot
+        text.insert 0 "😀"
+        let copy ← snapshot.copy
+        let made ← copy.revision
+        text.release
+        snapshot.release
+        copy.insert 8 "!"
+        return made == 0 &&
+            (← copy.read) == (("éa".push (Char.ofNat 0x10DCFF)).push 'b').push '!' &&
+            (← copy.revision) == 1 },
+    { name :=
+        "a copy has none of its source's markers and none of its kept inverses: it refuses a marker id of its source though it holds a marker under the same number, and the inverse of its source's revision 1"
+      holds := do
+        let text ← createText "héllo"
+        let marker ← text.mark (anchorAt 1 .before)
+        text.insert 0 "x"
+        let copy ← text.copy
+        let own ← copy.mark (anchorAt 4 .after)
+        let foreign ← refusedWith .noSuchMarker (discard <| copy.marker marker)
+        let inverse ← inverseRefusedWith .unknownRevision copy 1 1
+        return own.index == marker.index && own.text == copy && foreign && inverse &&
+            (← copy.marker own) == anchorAt 4 .after &&
+            (← copy.read) == "xhéllo" &&
+            (← text.marker marker) == anchorAt 2 .before &&
+            (← invertedTo text 1 1) == (2, "héllo") },
+    { name :=
+        "a copy of an id that names nothing is refused and makes no text: a text and a snapshot never made, and a text and a snapshot that were released; the next text made has the id it would have had"
+      holds := do
+        let text ← createText "héllo"
+        let snapshot ← text.snapshot
+        let released ← createText "gone"
+        released.release
+        snapshot.release
+        let never ← refusedWith .noSuchText (discard (TextId.mk 7).copy)
+        let gone ← refusedWith .noSuchText (discard released.copy)
+        let neverTaken ← refusedWith .noSuchSnapshot (discard (SnapshotId.mk 7).copy)
+        let goneSnapshot ← refusedWith .noSuchSnapshot (discard snapshot.copy)
+        let next ← createText "next"
+        return never && gone && neverTaken && goneSnapshot && next.index == released.index + 1 &&
+            (← next.read) == "next" }]
+
 /-- The properties every implementation of the text port has. -/
 def properties : List Property :=
   editProperties ++ revisionProperties ++ snapshotProperties ++ positionProperties ++
@@ -1681,7 +1761,8 @@ def properties : List Property :=
     forgetProperties ++
     markerProperties ++
     extentProperties ++
-    inverseProperties
+    inverseProperties ++
+    copyProperties
 
 /-- Runs each of `properties` with `run`, which must start every command from
 an empty store, and returns the names of those that did not hold. A property
