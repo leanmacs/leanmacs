@@ -683,6 +683,39 @@ mod tests {
         );
     }
 
+    #[test]
+    fn a_cursor_off_the_rows_shown_is_left_out() {
+        let mut layout = layout();
+        // At four columns the visual rows are ab, cdef, gh, ij, klmn, op
+        // and qr. A view two rows tall scrolled to i shows ij and klmn.
+        let text = "ab\ncdefgh\nij\nklmnop\nqr";
+        let mut cursors = |heads: &[usize]| {
+            let ranges: Vec<(usize, usize)> = heads.iter().map(|&head| (head, head)).collect();
+            let shown = frame(&mut layout, view(text, 4, 32, 10, &ranges));
+            let bytes: Vec<Range<usize>> = shown.rows.iter().map(|row| row.bytes.clone()).collect();
+            assert_eq!(bytes, vec![10..12, 13..17]);
+            shown
+                .cursors
+                .iter()
+                .map(|cursor| (cursor.area.x, cursor.area.y))
+                .collect::<Vec<_>>()
+        };
+        // Above the anchor: on the text's first row, and on the visual row
+        // just before the anchor's.
+        assert_eq!(cursors(&[1]), vec![]);
+        assert_eq!(cursors(&[8]), vec![]);
+        // Below the last row shown.
+        assert_eq!(cursors(&[20]), vec![]);
+        // On op, a later visual line of the row whose first line, klmn, is
+        // the last row shown.
+        assert_eq!(cursors(&[18]), vec![]);
+        // Among them, the cursors on j and on m are drawn, and no other.
+        assert_eq!(
+            cursors(&[1, 8, 11, 15, 18, 20]),
+            vec![(10.0, 0.0), (20.0, 16.0)]
+        );
+    }
+
     /// The area at `x` and `y`, `width` across and `height` down.
     fn area(x: f32, y: f32, width: f32, height: f32) -> Area {
         Area {
