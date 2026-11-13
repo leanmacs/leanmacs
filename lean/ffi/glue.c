@@ -849,6 +849,87 @@ lean_obj_res editor_glue_window_post_input(uint8_t kind, uint64_t code,
       byte_array_len(words))));
 }
 
+// ---- The display ----
+//
+// The fourth handle: layout, which lays out the text of snapshots and answers
+// the layout queries about them. A query takes a snapshot handle and whole
+// numbers, and comes back as words, as a document's log does.
+
+// The Rust library's display.
+typedef struct editor_ffi_display editor_ffi_display;
+editor_ffi_display *editor_ffi_display_new_cells(uint64_t advance,
+                                                 uint64_t line_height);
+void editor_ffi_display_rows(const editor_ffi_display *display,
+                             const editor_ffi_snapshot *snapshot,
+                             uint64_t width, uint64_t height, size_t anchor,
+                             editor_ffi_raw_words *out);
+void editor_ffi_display_move(const editor_ffi_display *display,
+                             const editor_ffi_snapshot *snapshot,
+                             uint64_t width, size_t position, int64_t lines,
+                             bool goal_present, uint64_t goal,
+                             editor_ffi_raw_words *out);
+void editor_ffi_display_free(editor_ffi_display *display);
+uint64_t editor_ffi_display_live(void);
+
+static lean_external_class *display_class;
+static pthread_once_t display_class_once = PTHREAD_ONCE_INIT;
+
+// Runs when Lean drops the last reference to a display, on whichever thread
+// dropped it.
+static void display_finalize(void *display) {
+  editor_ffi_display_free(display);
+}
+
+// A display holds no Lean objects, so there is nothing to visit.
+static void display_foreach(void *display, b_lean_obj_arg visitor) {
+  (void)display;
+  (void)visitor;
+}
+
+static void display_class_register(void) {
+  display_class =
+      lean_register_external_class(display_finalize, display_foreach);
+}
+
+// `Editor.Ffi.Display.newCells : UInt64 → UInt64 → IO Display`
+lean_obj_res editor_glue_display_new_cells(uint64_t advance,
+                                           uint64_t line_height) {
+  pthread_once(&display_class_once, display_class_register);
+  return lean_io_result_mk_ok(lean_alloc_external(
+      display_class, editor_ffi_display_new_cells(advance, line_height)));
+}
+
+// `Editor.Ffi.Display.live : IO UInt64`
+lean_obj_res editor_glue_display_live(void) {
+  return lean_io_result_mk_ok(lean_box_uint64(editor_ffi_display_live()));
+}
+
+// `Editor.Ffi.Display.rowsRaw : @& Display → @& Snapshot → UInt64 → UInt64 →
+// USize → IO RawWords`
+lean_obj_res editor_glue_display_rows(b_lean_obj_arg display,
+                                      b_lean_obj_arg snapshot, uint64_t width,
+                                      uint64_t height, size_t anchor) {
+  editor_ffi_raw_words raw;
+  editor_ffi_display_rows(lean_get_external_data(display),
+                          lean_get_external_data(snapshot), width, height,
+                          anchor, &raw);
+  return lean_io_result_mk_ok(raw_words_take(raw));
+}
+
+// `Editor.Ffi.Display.moveRaw : @& Display → @& Snapshot → UInt64 → USize →
+// UInt64 → Bool → UInt64 → IO RawWords`. The lines are a two's complement
+// number in a `UInt64`.
+lean_obj_res editor_glue_display_move(b_lean_obj_arg display,
+                                      b_lean_obj_arg snapshot, uint64_t width,
+                                      size_t position, uint64_t lines,
+                                      uint8_t goal_present, uint64_t goal) {
+  editor_ffi_raw_words raw;
+  editor_ffi_display_move(lean_get_external_data(display),
+                          lean_get_external_data(snapshot), width, position,
+                          (int64_t)lines, goal_present, goal, &raw);
+  return lean_io_result_mk_ok(raw_words_take(raw));
+}
+
 // ---- The process entry point ----
 //
 // Lean's generated `main` runs the Lean `main` on a thread Lean creates, so

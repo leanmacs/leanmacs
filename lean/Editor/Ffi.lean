@@ -33,13 +33,18 @@ Examples: `Counter`; `Document`, the text the text port's real binding holds,
 made from a string or from a snapshot (`Document.ofSnapshot`); and
 `Snapshot`, a text as it was at one moment, which is made by a binding on a
 document and outlives it, or handed over by the file service as the text of
-a file it loaded (`filesTake`). Tests: the four counter checks of `ffi-test`
+a file it loaded (`filesTake`); and `Display`, layout over the library's
+fake shaper, asked about snapshots (`Display.rows`, `Display.move`), whose
+one caller is the display interface's real binding
+(`Editor/Display/Real.lean`). Tests: the four counter checks of `ffi-test`
 (`FfiTest.handleChecks`), its check that a document is freed
 (`FfiTest.documentChecks`), its checks that a snapshot is freed and outlives
 its document (`FfiTest.snapshotChecks`) and its checks that a loaded
 snapshot is counted live and that a document made from a snapshot is freed
-(`FfiTest.fileChecks`); `tests/c_api.rs`, `tests/snapshot.rs`,
-`tests/document_from_snapshot.rs` and `tests/files.rs` in `editor-ffi`.
+(`FfiTest.fileChecks`), and its checks that a display is freed and that its
+answers cross (`FfiTest.displayChecks`); `tests/c_api.rs`,
+`tests/snapshot.rs`, `tests/document_from_snapshot.rs`, `tests/files.rs` and
+`tests/display.rs` in `editor-ffi`.
 
 ### Plain data
 
@@ -93,7 +98,8 @@ in `editor-ffi`.
 
 The editor does not call these bindings. It reaches the library through a
 port it defines (`Editor/Text.lean`), whose real binding
-(`Editor/Text/Real.lean`) is the one caller of `Document` and of `Snapshot`,
+(`Editor/Text/Real.lean`) is the one caller of `Document` and of `Snapshot`
+(beside the display's real binding, which reads snapshots),
 and whose contract (`Editor/Text/Contract.lean`) runs against that binding in
 `contract-test`.
 
@@ -1568,5 +1574,100 @@ it is never 0. The time from an event's stamp to this reading is how long the
 event took to reach whoever reads it. -/
 @[extern "editor_glue_input_clock"]
 opaque inputClock : IO UInt64
+
+/-! ## The display -/
+
+/-- The type behind `Display`. It is opaque, so the only way to get a
+display is `Display.newCells`. -/
+opaque DisplayPointed : NonemptyType
+
+/-- Layout held by the Rust library (`crates/editor-ffi/src/display.rs`,
+over `crates/editor-layout`): a handle that lays out the text of snapshots
+and answers the display interface's two layout queries about them. The
+display interface's real binding runs against it
+(`Editor/Display/Real.lean`). -/
+def Display : Type :=
+  DisplayPointed.type
+
+instance : Nonempty Display :=
+  DisplayPointed.property
+
+/-- A new display over the library's fake shaper, whose every glyph is
+`advance` pixels across and every line `lineHeight` down. -/
+@[extern "editor_glue_display_new_cells"]
+opaque Display.newCells (advance lineHeight : UInt64) : IO Display
+
+/-- How many displays the Rust library holds that have not been freed.
+
+This exists for `FfiTest`, which uses it to see a display's finaliser
+run. -/
+@[extern "editor_glue_display_live"]
+opaque Display.live : IO UInt64
+
+/-- One visual row, as the library answers it: the bytes from `start` up to
+`stop`, without its line break. -/
+structure DisplayRow where
+  /-- The byte offset of its first character. -/
+  start : UInt64
+  /-- Where its characters stop. -/
+  stop : UInt64
+  deriving DecidableEq, Repr
+
+/-- Where a move went, as the library answers it. -/
+structure DisplayMoved where
+  /-- The byte offset it reached. -/
+  position : UInt64
+  /-- The x it aimed for, in whole pixels, to pass to the next move. -/
+  goal : UInt64
+  deriving DecidableEq, Repr
+
+/-- `Display.rows` as it crosses: the answer as words, and its status. -/
+@[extern "editor_glue_display_rows"]
+private opaque Display.rowsRaw (display : @& Display) (snapshot : @& Snapshot)
+    (width height : UInt64) (anchor : USize) : IO RawWords
+
+/-- The rows a view `width` pixels wide and `height` tall shows of
+`snapshot`, from the visual row that holds `anchor`: as many as fit whole,
+fewer at the end of the text. `none` when `anchor` is not a position of the
+text. -/
+def Display.rows (display : Display) (snapshot : Snapshot) (width height : UInt64)
+    (anchor : USize) : IO (Option (Array DisplayRow)) := do
+  let raw ← display.rowsRaw snapshot width height anchor
+  if raw.status != 0 then
+    return none
+  let some words := wordsOf? raw.words
+    | throw (IO.userError "the library's rows are not whole words")
+  let count := (words[0]?.getD 0).toNat
+  unless words.size == 1 + 2 * count do
+    throw (IO.userError "the library's rows do not spell their count")
+  return some <|
+      (Array.range count).map fun row =>
+        { start := words[1 + 2 * row]!, stop := words[2 + 2 * row]! }
+
+/-- `Display.move` as it crosses: the lines as a 64-bit two's complement
+number, the goal as a presence flag and a value, and the answer as words. -/
+@[extern "editor_glue_display_move"]
+private opaque Display.moveRaw (display : @& Display) (snapshot : @& Snapshot) (width : UInt64)
+    (position : USize) (lines : UInt64) (goalPresent : Bool) (goal : UInt64) : IO RawWords
+
+/-- The position of `snapshot` `lines` visual rows below `position` (above
+when negative) in a view `width` pixels wide, aiming for `goal`, or for the
+position's own x when there is none; and the goal to pass on. A count of
+lines past what 64 bits hold is cut to the largest, which is past every
+text's first and last row anyway. `none` when `position` is not a position
+of the text. -/
+def Display.move (display : Display) (snapshot : Snapshot) (width : UInt64) (position : USize)
+    (lines : Int) (goal : Option UInt64) : IO (Option DisplayMoved) := do
+  let bound : Int := 2 ^ 63
+  let clamped := max (-bound) (min lines (bound - 1))
+  let word := if clamped < 0 then (2 ^ 64 + clamped).toNat.toUInt64 else clamped.toNat.toUInt64
+  let raw ← display.moveRaw snapshot width position word goal.isSome (goal.getD 0)
+  if raw.status != 0 then
+    return none
+  match wordsOf? raw.words with
+  | some #[position, goal] =>
+    return some { position, goal }
+  | _ =>
+    throw (IO.userError "the library's words do not spell a move")
 
 end Editor.Ffi

@@ -1,3 +1,5 @@
+import Editor.Display.Contract
+import Editor.Display.Real
 import Editor.File.Cases
 import Editor.Job.Contract
 import Editor.Job.Fake
@@ -60,6 +62,13 @@ snapshots until the job's command adopts it, that what a job loaded is
 freed when the job is settled, that cancelling a job leaves the file
 service with nothing of it, and that a job saves a snapshot a command took
 through the published table and is refused one the command has released.
+
+The display interface's contract (`Editor/Display/Contract.lean`) is run
+against its real binding (`Editor/Display/Real.lean`) over the library's
+fake shaper, at the cell sizes `model-test` runs it against the model at
+(`displayFailures`): each property's texts are made documents and
+snapshots in the library, entered in a table of the text binding, and the
+property runs against a new display over that table.
 
 `main` starts the pump once, on a dedicated task. When the checks are done
 it quits the queues, requires the pump to have ended, and exits explicitly:
@@ -695,6 +704,33 @@ def caseFailures (completions : Job.Completions) : IO (List String) := do
         return (← Ffi.Document.live, ← Ffi.Snapshot.live, ← Ffi.filesPending) == before
   return failed ++ if freed then [] else [caseLeakName]
 
+/-- The cell sizes the display contract is run at: one pixel by one, and
+eight by sixteen, as `model-test` runs it against the model. -/
+def displayCells : List Display.Cells :=
+  [{ advance := 1, lineHeight := 1 }, { advance := 8, lineHeight := 16 }]
+
+/-- Runs `property` against the real display binding over a display of
+`cells`: each of its texts is a document and a snapshot of the library,
+entered in a new table of snapshots, which the display reads. -/
+def runOnRealDisplay (cells : Display.Cells) (property : DisplayContract.Property) :
+    IO (Except DisplayError Bool) := do
+  let table ← Snapshots.new
+  let ids ←
+    property.texts.mapM fun text => do
+        let document ← Ffi.Document.new text
+        table.add (← document.snapshot)
+  let display ← Ffi.Display.newCells cells.advance.toUInt64 cells.lineHeight.toUInt64
+  (property.holds ids).runReal { display, snapshots := table.reader }
+
+/-- The names of the display contract's properties that do not hold of the
+real binding, at each of `displayCells`. -/
+def displayFailures : IO (List String) :=
+  displayCells.flatMapM fun cells => do
+    let failed ←
+      DisplayContract.failures (runOnRealDisplay cells) (DisplayContract.properties cells)
+    return failed.map
+        (s!"the real display binding in cells of {cells.advance} by {cells.lineHeight}: {·}")
+
 end ContractTest
 
 /-- Runs the text port's contract against its real binding, then the job
@@ -733,18 +769,20 @@ def main : IO UInt32 := do
   let fileChecks := ContractTest.fileChecks completions
   let fileCheckFailed ← ContractTest.checkFailures fileChecks
   let caseFailed ← ContractTest.caseFailures completions
+  let displayFailed ← ContractTest.displayFailures
   Editor.Ffi.quit
   let pumpEnded ← ContractTest.eventually (IO.hasFinished pump)
   let failed :=
     textFailed.map (s!"the real text binding: {·}") ++ jobFailed ++ fileFailed ++ checkFailed ++
       fileCheckFailed ++
       caseFailed ++
+      displayFailed ++
       if pumpEnded then [] else ["quit ends the completion pump"]
   for name in failed do
     IO.eprintln s!"FAILED: {name}"
   unless failed.isEmpty do
     IO.Process.exit 1
   IO.println
-      s!"contract-test: {properties.length + adoptProperties.length} properties hold of the real text binding, {cases.length} cases of the undo tree hold over it, and its documents and snapshots are freed when released and with its table; {Editor.JobContract.properties.length} properties hold of the job runner over the timer service, and {Editor.JobContract.fileProperties.length} file properties over the file service, on real files; {checks.length} checks of the timer service passed, {fileChecks.length} of the file service, {Editor.FileCases.cases.length} cases across the text port and the job port hold of the binding and the file service, and quit ended the pump"
+      s!"contract-test: {properties.length + adoptProperties.length} properties hold of the real text binding, {cases.length} cases of the undo tree hold over it, and its documents and snapshots are freed when released and with its table; {Editor.JobContract.properties.length} properties hold of the job runner over the timer service, and {Editor.JobContract.fileProperties.length} file properties over the file service, on real files; {checks.length} checks of the timer service passed, {fileChecks.length} of the file service, {Editor.FileCases.cases.length} cases across the text port and the job port hold of the binding and the file service; {(Editor.DisplayContract.properties { advance := 1, lineHeight := 1 }).length} properties of the display interface hold of its real binding in cells of {ContractTest.displayCells.length} sizes; and quit ended the pump"
   (← IO.getStdout).flush
   IO.Process.exit 0

@@ -24,7 +24,10 @@ binding:
 - the model, `Editor/Display/Model.lean`, records the scenes published and
   answers the queries by laying text out in fixed-size cells. It is for
   tests, not a layout kept at run time;
-- the real binding is the display pipeline's (its phase 1), over its layout;
+- the real binding, `Editor/Display/Real.lean`, is the display pipeline's
+  (its phase 1): the Rust library's layout (`crates/editor-layout`), reached
+  through `Ffi.Display`, which reads the text binding's table of
+  snapshots;
 - the contract, `Editor/Display/Contract.lean`, is the one list of properties
   of the queries that both are held to. It is run here against the model,
   and the display pipeline runs it against the real binding over its fake
