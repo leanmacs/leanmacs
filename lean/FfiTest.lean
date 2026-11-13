@@ -1,3 +1,4 @@
+import Editor.Event.Queue
 import Editor.Ffi
 import Editor.WindowCheck.Real
 import Lean.Environment
@@ -1307,6 +1308,203 @@ def decodeChecks (_ : Unit) : List Check :=
           (decoded .message 1 "a" == .other && decoded .completion 1 == .other &&
             decoded .composition 4 "é" == .other) }]
 
+/-- An event of `kind` from the window number 1, with this code, text and
+words, built by hand. -/
+def windowEvent (kind : Editor.Ffi.EventKind) (code : UInt64) (words : Array UInt64 := #[])
+    (text : String := "") : Editor.Ffi.Event :=
+  { source := { kind := .window, id := 1 }, kind, code, text, stamp := 7, words }
+
+/-- What `Editor.Event.ofFfi` makes of an event built by hand: the event, or
+`none` when it is refused. -/
+def decodedEvent (event : Editor.Ffi.Event) : Option Editor.Received :=
+  (Editor.Event.ofFfi event).toOption
+
+/-- What `Editor.Event.ofFfi` makes of a window event built by hand, without
+its stamp. -/
+def decodedWindow (kind : Editor.Ffi.EventKind) (code : UInt64) (words : Array UInt64 := #[])
+    (text : String := "") : Option Editor.Event :=
+  (decodedEvent (windowEvent kind code words text)).map (·.event)
+
+/-- The words of a pointer at (12.5, 40) with alt held, the button tag and its
+number, and the wheel's delta tag and two floats. -/
+def pointerWords (button other delta : UInt64) (dx dy : Float := 0) : Array UInt64 :=
+  #[(12.5 : Float).toBits, (40.0 : Float).toBits, button, other, 4, delta,
+    if delta == 0 then 0 else dx.toBits, if delta == 0 then 0 else dy.toBits]
+
+/-- A pointer at (12.5, 40) with alt held. -/
+def pointerAt (action : Editor.PointerAction) (button : Option Editor.Button) : Editor.Pointer :=
+  { action, x := 12.5, y := 40.0, button, modifiers := { alt := true } }
+
+/-- The checks of which event of the editor queue is which `Editor.Event`
+(`Editor.Event.ofFfi`, `Editor/Event/Queue.lean`): each kind the queue
+delivers decodes to its own variant, with its fields, and what cannot be read
+is refused. They are on events built by hand: they call no binding and need
+no window. -/
+def eventDecodeChecks (_ : Unit) : List Check :=
+  [{ name := "a message decodes with its source, its code and its text, whatever its words",
+     run :=
+       pure
+         ((decodedEvent { message 5 6 "hi" with words := #[1, 2] }).map (·.event) ==
+           some (.message { kind := .lean, id := 5 } 6 "hi")) },
+    { name := "a completion decodes with its source and its id, and a quit to quit"
+      run :=
+        pure
+          ((decodedEvent
+                    { source := { kind := .library, id := 4 }, kind := .completion, code := 17,
+                      text := "", stamp := 0 }).map
+                (·.event) ==
+              some (.completion { kind := .library, id := 4 } 17) &&
+            (decodedEvent
+                    { source := { kind := .library, id := 0 }, kind := .quit, code := 0, text := ""
+                      stamp := 0 }).map
+                (·.event) ==
+              some .quit) },
+    { name := "a window opened decodes with its platform, and a focus gained and lost"
+      run :=
+        pure
+          (decodedWindow .windowOpened 0 (text := "winit") == some (.windowOpened "winit") &&
+            decodedWindow .windowFocus 1 == some (.focus true) &&
+            decodedWindow .windowFocus 0 == some (.focus false)) },
+    { name :=
+        "a key decodes with its logical key, its physical key, its modifiers, whether it is a repeat, whether it was pressed, and its text"
+      run :=
+        pure
+          (decodedWindow .key 1 #[1, 1, 97, 1, 4, 75, 101, 121, 65, 3] "a" ==
+              some
+                (.key
+                  { logical := .character "a", physical := .code "KeyA"
+                    modifiers := { shift := true, control := true } } true "a") &&
+            decodedWindow .key 2 #[2, 6, 69, 115, 99, 97, 112, 101, 0, 0, 15] ==
+              some
+                (.key
+                  { logical := .named .escape
+                    modifiers := { shift := true, control := true, alt := true, superKey := true }
+                    repeated := true } false "") &&
+            decodedWindow .key 5 #[3, 1, 180, 0, 0, 0] ==
+              some (.key { logical := .dead (some '´') } true "") &&
+            decodedWindow .key 4 #[3, 0, 0, 0, 0] ==
+              some (.key { logical := .dead none } false "") &&
+            decodedWindow .key 0 #[0, 0, 0, 0, 0] ==
+              some (.key { logical := .unidentified } false "")) },
+    { name :=
+        "a composition decodes by its code: 0 to enabled, 1 to a preedit of its text, 2 to a commit of its text and 3 to disabled"
+      run :=
+        pure
+          (decodedWindow .composition 0 == some .compositionEnabled &&
+            decodedWindow .composition 1 (text := "´") == some (.preedit "´") &&
+            decodedWindow .composition 2 (text := "é") == some (.commit "é") &&
+            decodedWindow .composition 3 == some .compositionDisabled) },
+    { name :=
+        "a pointer decodes with its action, its position, its button and its modifiers: each action, each button, and each wheel delta"
+      run :=
+        pure
+          (decodedWindow .pointer 0 (pointerWords 1 0 0) ==
+              some (.pointer (pointerAt .press (some .primary))) &&
+            decodedWindow .pointer 1 (pointerWords 2 0 0) ==
+              some (.pointer (pointerAt .drag (some .secondary))) &&
+            decodedWindow .pointer 2 (pointerWords 3 0 0) ==
+              some (.pointer (pointerAt .release (some .middle))) &&
+            decodedWindow .pointer 0 (pointerWords 4 0 0) ==
+              some (.pointer (pointerAt .press (some .back))) &&
+            decodedWindow .pointer 0 (pointerWords 5 0 0) ==
+              some (.pointer (pointerAt .press (some .forward))) &&
+            decodedWindow .pointer 0 (pointerWords 6 9 0) ==
+              some (.pointer (pointerAt .press (some (.other 9)))) &&
+            decodedWindow .pointer 3 (pointerWords 0 0 1 0 (-1.5)) ==
+              some (.pointer (pointerAt (.wheel (.lines 0 (-1.5))) none)) &&
+            decodedWindow .pointer 3 (pointerWords 0 0 2 7 0.5) ==
+              some (.pointer (pointerAt (.wheel (.pixels 7 0.5)) none))) },
+    { name := "a resize decodes with its size and its scale, and a request to close to itself"
+      run :=
+        pure
+          (decodedWindow .resize 0 #[800, 600, (2.0 : Float).toBits] ==
+              some (.resize { width := 800, height := 600, scale := 2.0 }) &&
+            decodedWindow .closeRequested 0 == some .closeRequested) },
+    { name := "the stamp of an event is kept beside it"
+      run := pure ((decodedEvent (windowEvent .closeRequested 0)).map (·.stamp) == some 7) },
+    { name :=
+        "a code the table does not have is refused: a focus of 2, a composition of 4, a key with a bit past the dead bit, a pointer of 4, a resize of 1"
+      run :=
+        pure
+          ((decodedWindow .windowFocus 2).isNone && (decodedWindow .composition 4).isNone &&
+            (decodedWindow .key 8 #[0, 0, 0, 0, 0]).isNone &&
+            (decodedWindow .pointer 4 (pointerWords 1 0 0)).isNone &&
+            (decodedWindow .resize 1 #[1, 1, 0]).isNone) },
+    { name :=
+        "malformed words are refused: too few, left over, an unknown tag, a scalar that is not a character, modifier bits past super, a dead bit with no dead key"
+      run :=
+        pure
+          ((decodedWindow .key 1 #[1, 1]).isNone &&
+            (decodedWindow .key 1 #[0, 0, 0, 0, 0, 0]).isNone &&
+            (decodedWindow .key 1 #[4, 0, 0, 0, 0]).isNone &&
+            (decodedWindow .key 1 #[0, 0, 2, 0, 0]).isNone &&
+            (decodedWindow .key 1 #[1, 1, 0xD800, 0, 0, 0]).isNone &&
+            (decodedWindow .key 1 #[1, 1, 0x110000, 0, 0, 0]).isNone &&
+            (decodedWindow .key 1 #[0, 0, 0, 0, 16]).isNone &&
+            (decodedWindow .key 5 #[0, 0, 0, 0, 0]).isNone &&
+            (decodedWindow .pointer 0 (pointerWords 7 0 0)).isNone &&
+            (decodedWindow .pointer 3 (pointerWords 0 0 0)).isNone &&
+            (decodedWindow .resize 0 #[800, 600]).isNone &&
+            (decodedWindow .closeRequested 0 #[1]).isNone) }]
+
+/-- The events of a run of the scripted platform's window, decoded. -/
+def scriptedEvents : IO (List Editor.Event) := do
+  let ran ← runScripted true
+  ran.events.mapM fun event => (·.event) <$> IO.ofExcept (Editor.Event.ofFfi event)
+
+/-- Posts `event` as a window would report it, pulls it back from the editor
+queue and decodes it. -/
+def roundTrip (event : Editor.Event) : IO (Option Editor.Event) := do
+  unless ← Editor.Event.post event do
+    return none
+  let some pulled ← pull .editor | return none
+  return (Editor.Event.ofFfi pulled).toOption.map (·.event)
+
+/-- The checks of `Editor.Event` against the real library: what Rust posts
+arrives in Lean with the same values. -/
+def eventChecks (_ : Unit) : List Check :=
+  [{  name :=
+        "the scripted window's key arrives as a key with its logical key a, its physical key KeyA, and shift and control"
+      run := do
+        let events ← scriptedEvents
+        return events.contains
+            (.key
+              { logical := .character "a", physical := .code "KeyA"
+                modifiers := { shift := true, control := true } } true "a") },
+    { name :=
+        "the scripted window's pointer arrives as a press of the secondary button at (12.5, 40) with alt, and its resize as 800 by 600 at scale 2"
+      run := do
+        let events ← scriptedEvents
+        return events.contains (.pointer (pointerAt .press (some .secondary))) &&
+            events.contains (.resize { width := 800, height := 600, scale := 2.0 }) },
+    { name := "every event of the scripted window decodes, each to its own variant, in order"
+      run := do
+        let events ← scriptedEvents
+        return events.length == (windowSample true).length &&
+            events.head? == some (.windowOpened "scripted") &&
+            events.getLast? == some .closeRequested },
+    { name :=
+        "a key, each pointer action and a resize posted as a window would come back from the library equal"
+      run := do
+        let events : List Editor.Event :=
+          [.key {
+                logical := .named .escape, physical := .code "Escape"
+                modifiers := { superKey := true } } true "",
+            .key { logical := .character "é", repeated := true } true "é",
+            .pointer (pointerAt .press (some .primary)), .pointer (pointerAt .drag (some .middle)),
+            .pointer (pointerAt .release (some (.other 12))),
+            .pointer (pointerAt (.wheel (.lines 1 (-2))) none),
+            .pointer (pointerAt (.wheel (.pixels 0.25 8)) none),
+            .resize { width := 1920, height := 1080, scale := 1.25 }]
+        events.allM fun event => return (← roundTrip event) == some event },
+    { name := "an event no window reports is not posted: a message, a completion and a quit"
+      run := do
+        let posted ←
+          [Editor.Event.message { kind := .lean, id := 1 } 0 "",
+                  .completion { kind := .library, id := 1 } 0, .quit].mapM
+              Editor.Event.post
+        return posted.all (!·) }]
+
 /-- Every check, in the order they run. -/
 def checks (_ : Unit) : List Check :=
   entryChecks () ++ handleChecks () ++ dataChecks () ++ queueChecks () ++ timerChecks () ++
@@ -1317,7 +1515,9 @@ def checks (_ : Unit) : List Check :=
     markerChecks () ++
     inverseChecks () ++
     windowChecks () ++
-    decodeChecks ()
+    decodeChecks () ++
+    eventDecodeChecks () ++
+    eventChecks ()
 
 /-- Runs `checks` and returns the names of those that failed. A check that
 throws has failed, and its error is reported with its name. -/
