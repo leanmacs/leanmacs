@@ -25,15 +25,19 @@
 //! leaves it the caller's.
 //!
 //! **A snapshot knows where it came from.** One taken of a document carries
-//! the document's key and its text, held weakly ([`Snapshot::of`]), so the
-//! display reaches the document's edit log and markers through the snapshot
-//! handle it is given ([`Snapshot::changes_since`], [`Snapshot::marker`])
-//! and Lean's display binding needs nothing but its table of snapshots. It
-//! does not keep the document alive: once the document is freed it answers
-//! as one with no source. One no document holds, a file's text as it was
-//! loaded, has a key of its own and no source ([`Snapshot::loaded`]). Keys
-//! are given out once in the process, to documents and to such snapshots
-//! alike.
+//! the document's key and its [`Source`]: the document's text, held weakly
+//! ([`Snapshot::of`]). So the display reaches the document's markers and
+//! edit log through the snapshot handle it is given, and Lean's display
+//! binding needs nothing but its table of snapshots: a published scene's
+//! markers are read with [`Snapshot::marker`], and layout pulls patches
+//! with [`Source::changes_since`], on a clone of the snapshot's source
+//! that the display hands it as its changes port (`impl Changes for
+//! Source`, in [`crate::display`]). That is the one path to the log from a
+//! snapshot. A source does not keep the document alive: once the document
+//! is freed it answers as a snapshot with none does. One no document holds,
+//! a file's text as it was loaded, has a key of its own and no source
+//! ([`Snapshot::loaded`]). Keys are given out once in the process, to
+//! documents and to such snapshots alike.
 //!
 //! What a row, a point and a position are is the text's rule, pinned by
 //! `editor-text`'s own tests. This module converts numbers and forwards.
@@ -66,9 +70,34 @@ pub struct Snapshot {
     /// The key of the text it is of: its document's, or, for one no
     /// document holds, a key of its own ([`next_key`]).
     key: u64,
-    /// The text of the document it was taken of, held weakly so it does not
-    /// keep the document alive; `None` for one no document holds.
-    source: Option<Weak<Mutex<Text>>>,
+    /// Where it came from.
+    source: Source,
+}
+
+/// Where a snapshot's text came from: the text of the document it was taken
+/// of, held weakly so it does not keep the document alive, or nothing for a
+/// snapshot no document holds. It is cloned out of its snapshot by whatever
+/// must reach the document after the call that was handed the snapshot: the
+/// display's layout keeps one to pull patches through.
+#[derive(Clone, Default)]
+pub struct Source(Option<Weak<Mutex<Text>>>);
+
+impl Source {
+    /// What changed in the document's text since `revision`, up to the
+    /// document's revision now; `None` when there is no document, the
+    /// document is gone, or its log refuses
+    /// ([`editor_text::Text::changes_since`]).
+    pub fn changes_since(&self, revision: Revision) -> Option<Patch> {
+        self.read(|text| text.changes_since(revision).ok())
+    }
+
+    /// `read` of the document's text, locked, if there is a document and it
+    /// is still alive. A poisoned lock is used as it is, as a document does.
+    fn read<T>(&self, read: impl FnOnce(&Text) -> Option<T>) -> Option<T> {
+        let text = self.0.as_ref()?.upgrade()?;
+        let text = text.lock().unwrap_or_else(PoisonError::into_inner);
+        read(&text)
+    }
 }
 
 /// The unit a point's column is counted in.
@@ -103,7 +132,7 @@ impl Snapshot {
         Self {
             text: document.snapshot(),
             key: document.key(),
-            source: Some(document.shared()),
+            source: Source(Some(document.shared())),
         }
     }
 
@@ -113,7 +142,7 @@ impl Snapshot {
         Self {
             text,
             key: next_key(),
-            source: None,
+            source: Source::default(),
         }
     }
 
@@ -123,41 +152,19 @@ impl Snapshot {
         self.key
     }
 
-    /// What changed in its document's text since `revision`, up to the
-    /// document's revision now; `None` when it has no document, the
-    /// document is gone, or its log refuses ([`editor_text::Text::changes_since`]).
-    pub fn changes_since(&self, revision: Revision) -> Option<Patch> {
-        self.read_source(|text| text.changes_since(revision).ok())
-    }
-
     /// The marker numbered `id` in its document's text as it is now; `None`
     /// when it has no document, the document is gone, or it holds no such
     /// marker.
     pub fn marker(&self, id: u64) -> Option<Marker> {
-        self.read_source(|text| text.marker(MarkerId::new(id)).cloned())
+        self.source
+            .read(|text| text.marker(MarkerId::new(id)).cloned())
     }
 
-    /// `read` of its document's text, locked, if it has a document that is
-    /// still alive.
-    fn read_source<T>(&self, read: impl FnOnce(&Text) -> Option<T>) -> Option<T> {
-        read_text(self.source.as_ref(), read)
+    /// Where it came from, through which its document's edit log is
+    /// reached ([`Source::changes_since`]).
+    pub fn source(&self) -> &Source {
+        &self.source
     }
-
-    /// Its document's text, held weakly; `None` when no document holds it.
-    pub(crate) fn source(&self) -> Option<&Weak<Mutex<Text>>> {
-        self.source.as_ref()
-    }
-}
-
-/// `read` of the text `source` holds, locked, if there is one and it is
-/// still alive. A poisoned lock is used as it is, as a document does.
-pub(crate) fn read_text<T>(
-    source: Option<&Weak<Mutex<Text>>>,
-    read: impl FnOnce(&Text) -> Option<T>,
-) -> Option<T> {
-    let text = source?.upgrade()?;
-    let text = text.lock().unwrap_or_else(PoisonError::into_inner);
-    read(&text)
 }
 
 impl Snapshot {
@@ -442,7 +449,9 @@ mod tests {
             }))
             .unwrap();
         assert!(document.replace(0, 0, "x"));
-        let patch = snapshot.changes_since(snapshot.text().revision()).unwrap();
+        // A clone of its source answers as it does, after the snapshot too.
+        let source = snapshot.source().clone();
+        let patch = source.changes_since(snapshot.text().revision()).unwrap();
         assert_eq!(patch.edits.len(), 1);
         // The marker as the document holds it now, moved by the edit.
         assert_eq!(
@@ -455,7 +464,7 @@ mod tests {
         assert_eq!(snapshot.marker(id.get() + 1), None);
         // The snapshot does not keep its document alive.
         drop(document);
-        assert_eq!(snapshot.changes_since(Revision::new(0)), None);
+        assert_eq!(source.changes_since(Revision::new(0)), None);
         assert_eq!(snapshot.marker(id.get()), None);
     }
 
@@ -466,7 +475,7 @@ mod tests {
         let second = Snapshot::loaded(document.snapshot());
         assert_ne!(first.key(), document.key());
         assert_ne!(first.key(), second.key());
-        assert_eq!(first.changes_since(Revision::new(0)), None);
+        assert_eq!(first.source().changes_since(Revision::new(0)), None);
         assert_eq!(first.marker(0), None);
     }
 

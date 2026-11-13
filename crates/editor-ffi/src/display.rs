@@ -13,7 +13,8 @@
 //! is about by its handle, and layout keeps what it laid out per key of the
 //! text ([`crate::snapshot`]): a document's snapshots share their
 //! document's key, and layout pulls the document's patches through the
-//! snapshot's source ([`SourceChanges`]) to move what it kept. A snapshot
+//! snapshot's source, which is its changes port
+//! ([`Source`](crate::snapshot::Source)), to move what it kept. A snapshot
 //! with no source is never moved, only laid out again.
 //!
 //! **The queries** answer in words ([`crate::log::RawWords`]), with a status
@@ -46,18 +47,18 @@
 //! handle is `Send + Sync` with `&self` methods (the crate's conventions).
 
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex, MutexGuard, PoisonError, Weak};
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 use editor_layout::Layout;
 use editor_layout::frame::Frame;
 use editor_layout::query::{Moved, QueryError, RowRange};
 use editor_layout::scene::{Changes, TextKey, TextRef};
 use editor_layout::shaper::fake::CellShaper;
-use editor_text::{Patch, Revision, Text};
+use editor_text::{Patch, Revision};
 
 use crate::document::RawText;
 use crate::log::RawWords;
-use crate::snapshot::{Snapshot, read_text};
+use crate::snapshot::{Snapshot, Source};
 use crate::text;
 use crate::words::Writer;
 
@@ -74,13 +75,11 @@ pub enum DisplayStatus {
     BadPosition = 1,
 }
 
-/// The [`Changes`] of a text, pulled from its document through a snapshot's
-/// source.
-pub struct SourceChanges(Option<Weak<Mutex<Text>>>);
-
-impl Changes for SourceChanges {
+/// A snapshot's source is the [`Changes`] of its text: what its document's
+/// log says changed ([`Source::changes_since`]).
+impl Changes for Source {
     fn since(&self, revision: Revision) -> Option<Patch> {
-        read_text(self.0.as_ref(), |text| text.changes_since(revision).ok())
+        self.changes_since(revision)
     }
 }
 
@@ -89,7 +88,7 @@ pub fn text_ref(snapshot: &Snapshot) -> TextRef {
     TextRef {
         key: TextKey(snapshot.key()),
         snapshot: snapshot.text().clone(),
-        changes: Arc::new(SourceChanges(snapshot.source().cloned())),
+        changes: Arc::new(snapshot.source().clone()),
     }
 }
 
