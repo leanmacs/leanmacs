@@ -17,7 +17,7 @@
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::cell::Cell;
 
-use editor_text::{ChangeSet, Origin, Revision, Text, Transaction};
+use editor_text::{Anchor, Bias, ChangeSet, Marker, Origin, Revision, Text, Transaction};
 
 /// The system allocator, counting the bytes each thread asks it for.
 struct Counting;
@@ -175,6 +175,57 @@ fn a_transaction_copies_neither_the_text_nor_the_log() {
     assert!(
         counted / TRANSACTIONS < LENGTH / 64,
         "{counted} bytes allocated by {TRANSACTIONS} transactions"
+    );
+}
+
+/// How many anchors the cost of moving markers is counted over.
+const ANCHORS: usize = 10_000;
+
+#[test]
+fn a_transaction_on_a_text_that_holds_anchors_allocates_a_bounded_amount_for_each() {
+    let string = megabyte();
+    // One byte inserted at the start of the line in the middle.
+    let middle = LINE.len() * (string.len() / LINE.len() / 2);
+    let transaction = Transaction::new(
+        ChangeSet::replacing(string.len(), middle..middle, "x").expect("a range in the text"),
+    );
+    let mut bare = Text::from(string.as_str());
+    let mut marked = Text::from(string.as_str());
+    // An anchor at the start of each of the first lines, made in falling
+    // order, so the text does not hold them sorted by offset.
+    let lines = string.len() / LINE.len();
+    let ids: Vec<_> = (0..ANCHORS)
+        .rev()
+        .map(|index| {
+            let offset = LINE.len() * (index * lines / ANCHORS);
+            let anchor = Anchor::new(offset, Bias::After);
+            (
+                offset,
+                marked.mark(Marker::Anchor(anchor)).expect("a position"),
+            )
+        })
+        .collect();
+
+    let (without, bare_counted) = allocated_by(|| bare.apply(&transaction, Origin::new(1)));
+    let (with, counted) = allocated_by(|| marked.apply(&transaction, Origin::new(1)));
+
+    assert!(without.is_ok() && with.is_ok());
+    for (offset, id) in ids {
+        let moved = offset + usize::from(offset >= middle);
+        assert_eq!(
+            marked.marker(id),
+            Some(&Marker::Anchor(Anchor::new(moved, Bias::After)))
+        );
+    }
+    // Measured: 320,000 bytes more than the same transaction on a text
+    // that holds none, 32 an anchor: the ends gathered to be sorted by
+    // offset (an offset, a bias and a place, 24 bytes) and where each went
+    // (8 bytes). Nothing is allocated for each change of the transaction
+    // or for each byte of the text. The bound is 64 bytes an anchor.
+    let for_the_anchors = counted - bare_counted;
+    assert!(
+        for_the_anchors <= ANCHORS * 64,
+        "{for_the_anchors} bytes allocated for {ANCHORS} anchors"
     );
 }
 

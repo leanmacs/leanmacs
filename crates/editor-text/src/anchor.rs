@@ -5,7 +5,8 @@ use crate::change::{Bias, ChangeSet};
 /// A position in a text and the side of text inserted at it that it stays
 /// on. It is a value: mapping it through each change set the text is
 /// edited by ([`Anchor::map`]) keeps it where it was in the text, as an
-/// Emacs marker is moved by each edit.
+/// Emacs marker is moved by each edit. An anchor a text holds
+/// ([`Text::mark`](crate::Text::mark)) is mapped by the text.
 ///
 /// Two anchors of one bias never pass each other, and one with
 /// [`Bias::Before`] never passes one with [`Bias::After`] that was at the

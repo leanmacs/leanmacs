@@ -75,6 +75,18 @@
 //!   by mapping each end as an anchor, with a bias that follows from the
 //!   shape (the table is on the method), and putting the result in the
 //!   selection's form again, so ranges an edit brought together are one.
+//! - **A marker** ([`Marker`]) is an anchor or a selection that a text
+//!   holds ([`Text::mark`]) under an id ([`MarkerId`]) the text gives out
+//!   and never uses again. Every transaction the text accepts moves every
+//!   marker, [`Text::replace`] included, and a refused one moves none, so
+//!   a marker read back ([`Text::marker`]) is always at positions of the
+//!   text as it is. A marker is checked against the text when it is made
+//!   or put somewhere else ([`Text::place`]): an anchor that is at no
+//!   position, or a selection with an end at none, is refused
+//!   ([`MarkError`]). Marking, placing and giving a marker up
+//!   ([`Text::unmark`]) are not edits: they change neither the revision
+//!   nor the log, and no snapshot holds a marker. Moving the markers costs
+//!   one walk of the transaction's changes and a sort of the ends held.
 //! - **A transaction** ([`Transaction`]) is a change set and, optionally,
 //!   the selection before it and the selection after it. Applying one
 //!   ([`Text::apply`]) is the one way a text changes, and it is all or
@@ -167,8 +179,9 @@
 //!   is how a language server counts. The library can count it beside this
 //!   one without the stored text changing.
 //! - Composing transactions.
-//! - Anchors a text holds and moves with each transaction, what a
-//!   selection covers, and undo.
+//! - What a selection covers, and undo.
+//! - A bound on how many markers a text holds, and a marker that a
+//!   transaction sets to its selection after.
 //! - Rebasing a transaction built for an older revision: the log keeps no
 //!   text, so it cannot supply the change sets to rebase through.
 //! - Points in UTF-16 in an edit. A client that speaks them converts with
@@ -194,6 +207,7 @@ mod anchor;
 mod bytes;
 mod change;
 mod log;
+mod marker;
 mod patch;
 mod point;
 mod rope;
@@ -206,6 +220,7 @@ pub use anchor::Anchor;
 pub use bytes::ByteChunks;
 pub use change::{Bias, Change, ChangeSet, Mapper};
 pub use log::{Attribution, LogEntry, LogError, Origin, Source, Subscription};
+pub use marker::{MarkError, Marker, MarkerId};
 pub use patch::{Edit, InputEdit, Patch, Span};
 pub use point::{Point, PointUtf16};
 pub use selection::{Selection, SelectionRange, Shape};

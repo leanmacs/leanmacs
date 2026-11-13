@@ -216,11 +216,20 @@ impl Selection {
         self.moved(|offset, bias| mapper.map(offset, bias))
     }
 
+    /// The ends of the ranges, in rising order, each with the bias it is
+    /// mapped with ([`map`](Self::map)): the start and then the end of
+    /// each range.
+    pub(crate) fn ends(&self) -> impl Iterator<Item = (usize, Bias)> + '_ {
+        self.ranges.iter().flat_map(|range| {
+            let (start, end) = self.shape.biases(range);
+            [(range.start(), start), (range.end(), end)]
+        })
+    }
+
     /// This selection with each end where `map` puts it. `map` is asked
-    /// for the start and then the end of each range, in the order of the
-    /// ranges, each with its bias. `None` when `map` answers nothing for
-    /// an end.
-    fn moved(&self, mut map: impl FnMut(usize, Bias) -> Option<usize>) -> Option<Self> {
+    /// for the ends in the order of [`ends`](Self::ends), with the same
+    /// biases. `None` when `map` answers nothing for an end.
+    pub(crate) fn moved(&self, mut map: impl FnMut(usize, Bias) -> Option<usize>) -> Option<Self> {
         let mut ranges = Vec::with_capacity(self.ranges.len());
         for range in &self.ranges {
             let (start_bias, end_bias) = self.shape.biases(range);

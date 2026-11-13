@@ -6,6 +6,7 @@ use std::ops::Range;
 
 use crate::change::ChangeSet;
 use crate::log::{Attribution, Log, LogEntry, LogError, Origin, Subscription};
+use crate::marker::{MarkError, Marker, MarkerId, Markers};
 use crate::patch::{Edit, Patch, Span};
 use crate::rope::Rope;
 use crate::snapshot::{Revision, Snapshot};
@@ -18,6 +19,9 @@ pub struct Text {
     current: Snapshot,
     /// What was done to the text to make it what it is now.
     log: Log,
+    /// The anchors and selections the text holds, each where it is in the
+    /// text as it is now.
+    markers: Markers,
 }
 
 /// Why an edit was refused: its range is not two positions of the text in
@@ -87,7 +91,8 @@ impl Text {
     /// changes it has, one that changes nothing included.
     ///
     /// A refused transaction changes nothing: the text, its revision and
-    /// its log are as they were. The checks are made in this order:
+    /// its log are as they were, and no marker has moved. The checks are
+    /// made in this order:
     ///
     /// 1. the change set fits the text, or it is [`ApplyError::BadChange`]:
     ///    it is for the text's length, and every boundary between two of
@@ -97,6 +102,13 @@ impl Text {
     /// 3. every end of the selection after, if there is one, is a position
     ///    of the text the changes make, or it is
     ///    [`ApplyError::BadSelection`].
+    ///
+    /// An accepted transaction moves every marker the text holds
+    /// ([`mark`](Self::mark)) to where it is in the text the changes make:
+    /// an anchor by its bias ([`Anchor::map`](crate::Anchor::map)) and a
+    /// selection as [`Selection::map`](crate::Selection::map) says. The
+    /// selections of the transaction itself are carried, not held: the
+    /// text marks neither.
     pub fn apply(
         &mut self,
         transaction: &Transaction,
@@ -139,7 +151,14 @@ impl Text {
             };
             edits.push(Edit { old, new });
         }
+        // Every end a marker holds is a position of the text as it is, so
+        // it is within the length the change set is for and none is
+        // expected to map to nothing. Nothing has been changed yet.
+        let Some(marked) = self.markers.mapped(changes) else {
+            return Err(ApplyError::BadChange);
+        };
         self.log.record(origin, edits.into_boxed_slice());
+        self.markers.place_all(&marked);
         self.current = next;
         Ok(self.current.revision)
     }
@@ -224,6 +243,67 @@ impl Text {
     pub fn forget(&mut self, through: Revision) -> Result<(), LogError> {
         self.log.forget(through, self.current.revision)
     }
+
+    /// Holds `marker`, and returns the id it is read back by. From now on
+    /// every transaction the text accepts moves it
+    /// ([`apply`](Self::apply)), until it is given up
+    /// ([`unmark`](Self::unmark)).
+    ///
+    /// Refused, holding nothing, unless the marker is in the text as it is
+    /// now: an anchor's offset is a position, or it is
+    /// [`MarkError::BadPosition`]; every end of every range of a selection
+    /// is a position, or it is [`MarkError::BadSelection`].
+    ///
+    /// Marking is not an edit: the revision and the log are as they were,
+    /// and no snapshot holds a marker.
+    pub fn mark(&mut self, marker: Marker) -> Result<MarkerId, MarkError> {
+        self.check(&marker)?;
+        Ok(self.markers.add(marker))
+    }
+
+    /// The marker with the id `id`, where it is in the text as it is now.
+    /// `None` when the text holds no such marker.
+    pub fn marker(&self, id: MarkerId) -> Option<&Marker> {
+        self.markers.get(id)
+    }
+
+    /// Puts `marker` in place of the marker with the id `id`, which keeps
+    /// its id: the marker is somewhere else, or of the other kind.
+    ///
+    /// Refused, changing nothing, in this order: the text holds no marker
+    /// with that id ([`MarkError::NoSuchMarker`]); `marker` is not in the
+    /// text as it is now, as [`mark`](Self::mark) says.
+    pub fn place(&mut self, id: MarkerId, marker: Marker) -> Result<(), MarkError> {
+        if self.markers.get(id).is_none() {
+            return Err(MarkError::NoSuchMarker);
+        }
+        // Checked before the marker is touched, and nothing below fails.
+        self.check(&marker)?;
+        if let Some(held) = self.markers.get_mut(id) {
+            *held = marker;
+        }
+        Ok(())
+    }
+
+    /// Gives up the marker with the id `id`, and returns whether the text
+    /// held one. The id names nothing from then on: the text gives no
+    /// marker that id again.
+    pub fn unmark(&mut self, id: MarkerId) -> bool {
+        self.markers.remove(id)
+    }
+
+    /// Whether `marker` is in the text as it is now.
+    fn check(&self, marker: &Marker) -> Result<(), MarkError> {
+        match marker {
+            Marker::Anchor(anchor) if !self.current.is_char_boundary(anchor.offset) => {
+                Err(MarkError::BadPosition)
+            }
+            Marker::Selection(selection) if !selection.fits(&self.current) => {
+                Err(MarkError::BadSelection)
+            }
+            Marker::Anchor(_) | Marker::Selection(_) => Ok(()),
+        }
+    }
 }
 
 impl From<&str> for Text {
@@ -234,6 +314,7 @@ impl From<&str> for Text {
                 revision: Revision::default(),
             },
             log: Log::default(),
+            markers: Markers::default(),
         }
     }
 }
@@ -241,8 +322,9 @@ impl From<&str> for Text {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::change::Change;
-    use crate::selection::{Selection, SelectionRange};
+    use crate::anchor::Anchor;
+    use crate::change::{Bias, Change};
+    use crate::selection::{Selection, SelectionRange, Shape};
     use crate::snapshot::Revision;
 
     /// "é" and "ö" are two bytes each, so byte offsets and character counts
@@ -687,6 +769,290 @@ mod tests {
         assert_eq!(before.revision().get(), 0);
         assert_eq!(text.snapshot().to_string(), "hello\r\nWörld\nx");
         assert_eq!(text.snapshot().revision().get(), 1);
+    }
+
+    /// An anchor marker at `offset` with the bias `bias`.
+    fn anchor(offset: usize, bias: Bias) -> Marker {
+        Marker::Anchor(Anchor::new(offset, bias))
+    }
+
+    /// A selection marker of shape `shape` with `ranges`, given as anchor
+    /// and head, whose primary is the first of them.
+    fn selected(shape: Shape, ranges: &[(usize, usize)]) -> Marker {
+        let ranges = ranges
+            .iter()
+            .map(|&(anchor, head)| SelectionRange::new(anchor, head))
+            .collect();
+        Marker::Selection(Selection::shaped(shape, ranges, 0).expect("at least one range"))
+    }
+
+    #[test]
+    fn a_marker_reads_back_by_the_id_marking_gave() {
+        let mut text = Text::from(TEXT);
+
+        let first = text.mark(anchor(3, Bias::After)).expect("a position");
+        let second = text
+            .mark(selected(Shape::Line, &[(0, 3), (13, 10)]))
+            .expect("positions");
+
+        assert_ne!(first, second);
+        assert_eq!(text.marker(first), Some(&anchor(3, Bias::After)));
+        assert_eq!(
+            text.marker(second),
+            Some(&selected(Shape::Line, &[(0, 3), (13, 10)]))
+        );
+    }
+
+    #[test]
+    fn a_text_holds_no_marker_with_an_id_it_never_gave() {
+        let mut text = Text::from(TEXT);
+        let given = text.mark(anchor(0, Bias::Before)).expect("a position");
+
+        assert_eq!(text.marker(MarkerId::new(given.get() + 1)), None);
+        assert_eq!(text.marker(MarkerId::new(u64::MAX)), None);
+        assert_eq!(Text::new().marker(given), None);
+    }
+
+    #[test]
+    fn an_anchor_that_is_at_no_position_is_refused_and_nothing_is_held() {
+        // In "héllo wörld", 2 is inside "é" and 13 is the end.
+        let mut text = Text::from(TEXT);
+
+        for offset in [2, 14, usize::MAX] {
+            assert_eq!(
+                text.mark(anchor(offset, Bias::Before)),
+                Err(MarkError::BadPosition),
+                "{offset}"
+            );
+        }
+        let end = text.mark(anchor(13, Bias::Before)).expect("the end");
+        // The refusals held nothing: the one marker is the only one.
+        assert!(text.unmark(end));
+        assert!((0..8).all(|id| text.marker(MarkerId::new(id)).is_none()));
+    }
+
+    #[test]
+    fn a_selection_with_an_end_at_no_position_is_refused() {
+        let mut text = Text::from(TEXT);
+
+        for ranges in [&[(0, 1), (3, 2)][..], &[(2, 6)], &[(0, 14)], &[(14, 14)]] {
+            assert_eq!(
+                text.mark(selected(Shape::Exclusive, ranges)),
+                Err(MarkError::BadSelection),
+                "{ranges:?}"
+            );
+        }
+        assert!(text.mark(selected(Shape::Block, &[(13, 0)])).is_ok());
+    }
+
+    #[test]
+    fn place_puts_a_marker_somewhere_else_and_can_make_it_the_other_kind() {
+        let mut text = Text::from(TEXT);
+        let id = text.mark(anchor(3, Bias::After)).expect("a position");
+        let other = text.mark(anchor(0, Bias::Before)).expect("a position");
+
+        assert_eq!(text.place(id, anchor(6, Bias::Before)), Ok(()));
+        assert_eq!(text.marker(id), Some(&anchor(6, Bias::Before)));
+
+        assert_eq!(
+            text.place(id, selected(Shape::Inclusive, &[(4, 1)])),
+            Ok(())
+        );
+        assert_eq!(
+            text.marker(id),
+            Some(&selected(Shape::Inclusive, &[(4, 1)]))
+        );
+
+        assert_eq!(text.place(id, anchor(0, Bias::After)), Ok(()));
+        assert_eq!(text.marker(id), Some(&anchor(0, Bias::After)));
+        // The other marker is where it was.
+        assert_eq!(text.marker(other), Some(&anchor(0, Bias::Before)));
+    }
+
+    #[test]
+    fn a_refused_place_changes_nothing_and_an_unknown_id_is_refused_first() {
+        let mut text = Text::from(TEXT);
+        let id = text.mark(anchor(3, Bias::After)).expect("a position");
+        let unknown = MarkerId::new(id.get() + 1);
+
+        // An unknown id, whatever the marker.
+        assert_eq!(
+            text.place(unknown, anchor(0, Bias::Before)),
+            Err(MarkError::NoSuchMarker)
+        );
+        assert_eq!(
+            text.place(unknown, anchor(2, Bias::Before)),
+            Err(MarkError::NoSuchMarker)
+        );
+        assert_eq!(
+            text.place(unknown, selected(Shape::Exclusive, &[(2, 2)])),
+            Err(MarkError::NoSuchMarker)
+        );
+        assert_eq!(text.marker(unknown), None);
+        // A known id, and a marker that is not in the text.
+        assert_eq!(
+            text.place(id, anchor(2, Bias::Before)),
+            Err(MarkError::BadPosition)
+        );
+        assert_eq!(
+            text.place(id, selected(Shape::Exclusive, &[(0, 14)])),
+            Err(MarkError::BadSelection)
+        );
+        assert_eq!(text.marker(id), Some(&anchor(3, Bias::After)));
+    }
+
+    #[test]
+    fn unmark_gives_a_marker_up_and_its_id_is_never_given_again() {
+        let mut text = Text::from(TEXT);
+        let first = text.mark(anchor(3, Bias::After)).expect("a position");
+        let second = text.mark(anchor(4, Bias::After)).expect("a position");
+
+        assert!(text.unmark(first));
+
+        assert_eq!(text.marker(first), None);
+        assert!(!text.unmark(first));
+        assert_eq!(
+            text.place(first, anchor(0, Bias::After)),
+            Err(MarkError::NoSuchMarker)
+        );
+        assert_eq!(text.marker(second), Some(&anchor(4, Bias::After)));
+        // Later markers get other ids, the last one given up included.
+        assert!(text.unmark(second));
+        let later: Vec<_> = (0..4)
+            .map(|_| text.mark(anchor(0, Bias::After)).expect("a position"))
+            .collect();
+        for (index, id) in later.iter().enumerate() {
+            assert!(*id != first && *id != second, "{id:?}");
+            assert!(!later[..index].contains(id), "{id:?}");
+        }
+        assert!(!text.unmark(MarkerId::new(u64::MAX)));
+    }
+
+    #[test]
+    fn an_accepted_transaction_moves_every_marker() {
+        // "XY" is inserted at 3, after "hé".
+        let mut text = Text::from(TEXT);
+        let stays = text.mark(anchor(3, Bias::Before)).expect("a position");
+        let goes = text.mark(anchor(3, Bias::After)).expect("a position");
+        let range = text
+            .mark(selected(Shape::Exclusive, &[(1, 3), (6, 3)]))
+            .expect("positions");
+        let last = text.mark(anchor(13, Bias::Before)).expect("a position");
+
+        let result = text.apply(
+            &transaction(&[Change::Retain(3), insert("XY"), Change::Retain(10)]),
+            Origin::new(1),
+        );
+
+        assert!(result.is_ok());
+        assert_eq!(text.marker(stays), Some(&anchor(3, Bias::Before)));
+        assert_eq!(text.marker(goes), Some(&anchor(5, Bias::After)));
+        // The insertion is between the two ranges, and in neither.
+        assert_eq!(
+            text.marker(range),
+            Some(&selected(Shape::Exclusive, &[(1, 3), (8, 5)]))
+        );
+        assert_eq!(text.marker(last), Some(&anchor(15, Bias::Before)));
+    }
+
+    #[test]
+    fn a_transaction_that_brings_marked_ranges_together_leaves_one_range() {
+        // " w" is deleted from "héllo wörld": the cursors at 6 and at 8 meet.
+        let mut text = Text::from(TEXT);
+        let cursors = text
+            .mark(selected(Shape::Exclusive, &[(6, 6), (8, 8), (0, 0)]))
+            .expect("positions");
+
+        let result = text.apply(
+            &transaction(&[Change::Retain(6), Change::Delete(2), Change::Retain(5)]),
+            Origin::new(1),
+        );
+
+        assert!(result.is_ok());
+        let Some(Marker::Selection(selection)) = text.marker(cursors) else {
+            panic!("the marker is a selection");
+        };
+        assert_eq!(
+            selection.ranges(),
+            [SelectionRange::new(0, 0), SelectionRange::new(6, 6)]
+        );
+        // The primary was the cursor at 6.
+        assert_eq!(selection.primary(), 1);
+    }
+
+    #[test]
+    fn replace_moves_every_marker_as_the_transaction_it_is() {
+        let mut text = Text::from(TEXT);
+        let before = text.mark(anchor(1, Bias::After)).expect("a position");
+        let inside = text.mark(anchor(4, Bias::After)).expect("a position");
+        let cursor = text
+            .mark(selected(Shape::Inclusive, &[(6, 6)]))
+            .expect("a position");
+
+        assert_eq!(text.replace(3..5, "L"), Ok(()));
+
+        assert_eq!(text.marker(before), Some(&anchor(1, Bias::After)));
+        assert_eq!(text.marker(inside), Some(&anchor(4, Bias::After)));
+        assert_eq!(
+            text.marker(cursor),
+            Some(&selected(Shape::Inclusive, &[(5, 5)]))
+        );
+    }
+
+    #[test]
+    fn a_refused_transaction_moves_no_marker() {
+        let mut text = Text::from(TEXT);
+        let point = text.mark(anchor(3, Bias::After)).expect("a position");
+        let range = text
+            .mark(selected(Shape::Exclusive, &[(1, 6)]))
+            .expect("positions");
+
+        // For another length; and one that fits, with a selection after
+        // that does not.
+        let short = transaction(&[insert("XY"), Change::Retain(3)]);
+        let unselectable = transaction(&[insert("XY"), Change::Retain(13)])
+            .with_after(Selection::new(vec![SelectionRange::new(0, 99)], 0).expect("one range"));
+        assert_eq!(
+            text.apply(&short, Origin::new(1)),
+            Err(ApplyError::BadChange)
+        );
+        assert_eq!(
+            text.apply(&unselectable, Origin::new(1)),
+            Err(ApplyError::BadSelection)
+        );
+        assert_eq!(text.replace(2..3, "x"), Err(BadRange));
+
+        assert_eq!(text.marker(point), Some(&anchor(3, Bias::After)));
+        assert_eq!(
+            text.marker(range),
+            Some(&selected(Shape::Exclusive, &[(1, 6)]))
+        );
+    }
+
+    #[test]
+    fn marking_placing_and_unmarking_are_not_edits() {
+        let mut text = Text::from(TEXT);
+        text.replace(0..0, "x").expect("a position");
+        let snapshot = text.snapshot();
+        let since = text.changes_since(Revision::new(0));
+
+        let id = text.mark(anchor(4, Bias::After)).expect("a position");
+        text.place(id, selected(Shape::Line, &[(0, 14)]))
+            .expect("positions");
+        let other = text.mark(anchor(0, Bias::Before)).expect("a position");
+        assert!(text.unmark(other));
+
+        assert_eq!(text.current().revision(), Revision::new(1));
+        assert_eq!(text.changes_since(Revision::new(0)), since);
+        assert_eq!(
+            text.changes_since(Revision::new(1))
+                .map(|patch| patch.edits),
+            Ok(Vec::new())
+        );
+        assert!(text.entry(Revision::new(2)).is_none());
+        assert_eq!(text.horizon(), Revision::new(0));
+        assert_eq!(snapshot.revision(), Revision::new(1));
+        assert_eq!(snapshot.to_string(), read(&text));
     }
 
     #[test]
