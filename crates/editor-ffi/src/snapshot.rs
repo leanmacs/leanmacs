@@ -29,7 +29,6 @@ use crate::document::{Document, RawText};
 use crate::log::RawWords;
 use crate::marker::{self, MarkStatus};
 use crate::text;
-use crate::transaction::Undecoded;
 
 /// A document's text as it was when the snapshot was taken.
 pub struct Snapshot(editor_text::Snapshot);
@@ -99,10 +98,7 @@ impl Snapshot {
     /// [`MarkStatus::BadSelection`] when they spell no selection or the
     /// text has no extents for the one they spell.
     pub fn extents_words(&self, words: &[u8]) -> Result<Vec<u8>, MarkStatus> {
-        let selection = marker::decode_selection(words).map_err(|undecoded| match undecoded {
-            Undecoded::Unreadable => MarkStatus::Unreadable,
-            Undecoded::NotASelection => MarkStatus::BadSelection,
-        })?;
+        let selection = marker::decode_selection(words).map_err(MarkStatus::undecoded)?;
         let extents = self.0.extents(&selection).ok_or(MarkStatus::BadSelection)?;
         Ok(marker::extent_words(&extents))
     }

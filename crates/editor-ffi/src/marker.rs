@@ -65,8 +65,9 @@ impl MarkStatus {
     }
 
     /// The status that reports why words did not spell a marker or a
-    /// selection.
-    const fn undecoded(undecoded: Undecoded) -> Self {
+    /// selection. It is the one place that says so, for a marker and for
+    /// the selection whose extents are asked for alike.
+    pub(crate) const fn undecoded(undecoded: Undecoded) -> Self {
         match undecoded {
             Undecoded::Unreadable => Self::Unreadable,
             Undecoded::NotASelection => Self::BadSelection,
