@@ -502,7 +502,21 @@ def queueChecks (_ : Unit) : List Check :=
             event.source == { kind := .script, id := 9 } && event.kind == .message &&
               event.code == code do
             return false
-        return true }]
+        return true },
+    { name :=
+        "an event's words cross whole and in order: each scripted event carries its code and the largest word less its code"
+      run := do
+        unless ← Editor.Ffi.feedScript .completion 9 2 do
+          return false
+        let first ← pull .completion
+        let second ← pull .completion
+        return (first.map (·.words)) == some #[0, 0xFFFFFFFFFFFFFFFF] &&
+            (second.map (·.words)) == some #[1, 0xFFFFFFFFFFFFFFFE] },
+    { name := "an event posted from Lean has no words"
+      run := do
+        unless ← Editor.Ffi.postEvent .editor 12 1 "" do
+          return false
+        return ((← pull .editor).map (·.words)) == some #[] }]
 
 /-- Makes a document holding `text`, appends "!" to it and drops it. Only
 plain data leaves: the text it then held. -/

@@ -601,6 +601,8 @@ typedef struct {
   uint64_t stamp;
   uint8_t *text;
   size_t text_len;
+  uint8_t *words;
+  size_t words_len;
 } editor_ffi_raw_event;
 bool editor_ffi_events_post(uint8_t queue, uint64_t source_id, uint64_t code,
                             const uint8_t *text, size_t text_len);
@@ -628,15 +630,18 @@ lean_obj_res editor_glue_events_next(uint8_t queue) {
   lean_object *text =
       lean_mk_string_from_bytes((const char *)raw.text, raw.text_len);
   editor_ffi_text_free(raw.text, raw.text_len);
-  // `RawEvent`: `text`, then `sourceKind`, `sourceId`, `kind`, `code` and
-  // `stamp`.
-  lean_object *event = lean_alloc_ctor(0, 1, 5 * sizeof(uint64_t));
+  lean_object *words = byte_array_copy(raw.words, raw.words_len);
+  editor_ffi_text_free(raw.words, raw.words_len);
+  // `RawEvent`: `text` and `words`, then `sourceKind`, `sourceId`, `kind`,
+  // `code` and `stamp`.
+  lean_object *event = lean_alloc_ctor(0, 2, 5 * sizeof(uint64_t));
   lean_ctor_set(event, 0, text);
-  lean_ctor_set_uint64(event, uint64_field(1, 0), raw.source_kind);
-  lean_ctor_set_uint64(event, uint64_field(1, 1), raw.source_id);
-  lean_ctor_set_uint64(event, uint64_field(1, 2), raw.kind);
-  lean_ctor_set_uint64(event, uint64_field(1, 3), raw.code);
-  lean_ctor_set_uint64(event, uint64_field(1, 4), raw.stamp);
+  lean_ctor_set(event, 1, words);
+  lean_ctor_set_uint64(event, uint64_field(2, 0), raw.source_kind);
+  lean_ctor_set_uint64(event, uint64_field(2, 1), raw.source_id);
+  lean_ctor_set_uint64(event, uint64_field(2, 2), raw.kind);
+  lean_ctor_set_uint64(event, uint64_field(2, 3), raw.code);
+  lean_ctor_set_uint64(event, uint64_field(2, 4), raw.stamp);
   return lean_io_result_mk_ok(event);
 }
 

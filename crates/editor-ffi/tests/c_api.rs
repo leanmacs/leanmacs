@@ -75,6 +75,13 @@ fn next_blocking(queue: u8) -> Option<Event> {
     // SAFETY: the buffer came from the library in this record, and is handed
     // back once.
     unsafe { editor_ffi_text_free(raw.text, raw.text_len) };
+    // SAFETY: the record's buffer of words is `words_len` bytes, owned by
+    // this caller until it is handed back.
+    let words = unsafe { slice::from_raw_parts(raw.words, raw.words_len) }.to_vec();
+    // SAFETY: as for the text.
+    unsafe { editor_ffi_text_free(raw.words, raw.words_len) };
+    let (words, rest) = words.as_chunks::<8>();
+    assert!(rest.is_empty(), "an event's words are whole words");
     Some(Event {
         source: Source {
             kind: SourceKind::from_tag(raw.source_kind).expect("a known source kind"),
@@ -83,6 +90,7 @@ fn next_blocking(queue: u8) -> Option<Event> {
         kind: EventKind::from_tag(raw.kind).expect("a known event kind"),
         code: raw.code,
         text: String::from_utf8(text).expect("an event's text is UTF-8"),
+        words: words.iter().copied().map(u64::from_le_bytes).collect(),
         stamp: raw.stamp,
     })
 }
@@ -336,6 +344,12 @@ fn the_process_wide_queues_carry_events_until_they_are_quit() {
     assert!(QueueId::Editor.queue().push(stamped.clone()));
     assert_eq!(next(EDITOR), Some(stamped));
 
+    // An event crosses with its words, in order, the largest among them;
+    // one with none, as every event above, crosses with none.
+    let worded = message(SourceKind::Window, 1, 5, "worded").with_words(vec![0, 1 << 40, u64::MAX]);
+    assert!(QueueId::Editor.queue().push(worded.clone()));
+    assert_eq!(next(EDITOR), Some(worded));
+
     // A pull parks on its own queue, and a post to that queue wakes it.
     let (done, parked) = mpsc::channel();
     thread::spawn(move || {
@@ -361,6 +375,7 @@ fn the_process_wide_queues_carry_events_until_they_are_quit() {
         };
         assert_eq!((event.source, event.kind), (source, EventKind::Message));
         assert_eq!(event.code, code);
+        assert_eq!(event.words, [code, u64::MAX - code]);
     }
 
     // A tag that names no queue is refused, not acted on.

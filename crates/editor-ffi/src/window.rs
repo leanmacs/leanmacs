@@ -172,6 +172,7 @@ pub fn event(input: Input, stamp: u64) -> Event {
         kind,
         code,
         text,
+        words: Vec::new(),
         stamp,
     }
 }
@@ -381,6 +382,7 @@ mod tests {
             kind,
             code,
             text: text.into(),
+            words: Vec::new(),
             stamp,
         }
     }

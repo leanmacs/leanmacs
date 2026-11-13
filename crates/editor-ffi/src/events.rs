@@ -43,6 +43,7 @@ use std::sync::{Condvar, Mutex, MutexGuard, PoisonError};
 use std::thread::{self, JoinHandle};
 
 use crate::text;
+use crate::words::{self, Writer};
 
 /// What an [`Event`] says happened.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -150,6 +151,9 @@ pub struct Event {
     pub code: u64,
     /// Text whose meaning the kind sets.
     pub text: String,
+    /// The event's detail, as words whose meaning the kind sets; empty for a
+    /// kind that has none. They cross as words do ([`crate::words`]).
+    pub words: Vec<u64>,
     /// The instant the source says the event happened, in nanoseconds on
     /// the library's input clock ([`crate::window::InputClock`]), or 0 when
     /// the source does not say. Only a window says.
@@ -167,6 +171,7 @@ impl Event {
             kind: EventKind::Quit,
             code: 0,
             text: String::new(),
+            words: Vec::new(),
             stamp: 0,
         }
     }
@@ -178,6 +183,7 @@ impl Event {
             kind: EventKind::Message,
             code,
             text: text.into(),
+            words: Vec::new(),
             stamp: 0,
         }
     }
@@ -190,6 +196,7 @@ impl Event {
             kind: EventKind::Completion,
             code: request,
             text: String::new(),
+            words: Vec::new(),
             stamp: 0,
         }
     }
@@ -197,6 +204,11 @@ impl Event {
     /// This event, said to have happened at `stamp`.
     pub fn stamped(self, stamp: u64) -> Self {
         Self { stamp, ..self }
+    }
+
+    /// This event, with `words` as its detail.
+    pub fn with_words(self, words: Vec<u64>) -> Self {
+        Self { words, ..self }
     }
 }
 
@@ -325,17 +337,19 @@ impl ScriptedSource {
     }
 
     /// A source that will feed `count` messages from the script source
-    /// `source_id`, with the codes 0, 1, 2 and so on.
+    /// `source_id`, with the codes 0, 1, 2 and so on. Each carries two words,
+    /// its code and the largest word less its code, so a test sees words
+    /// cross, the largest among them.
     pub fn numbered(source_id: u64, count: u64) -> Self {
         let source = Source {
             kind: SourceKind::Script,
             id: source_id,
         };
         Self {
-            script: Box::new(
-                (0..count)
-                    .map(move |code| Event::message(source, code, format!("scripted {code}"))),
-            ),
+            script: Box::new((0..count).map(move |code| {
+                Event::message(source, code, format!("scripted {code}"))
+                    .with_words(vec![code, u64::MAX - code])
+            })),
         }
     }
 
@@ -425,6 +439,36 @@ pub struct RawEvent {
     pub text: *mut u8,
     /// The length of `text` in bytes.
     pub text_len: usize,
+    /// The event's words ([`crate::words`]): a buffer of `words_len` bytes,
+    /// owned by the caller until it is handed back, as the text is.
+    pub words: *mut u8,
+    /// The length of `words` in bytes: eight a word.
+    pub words_len: usize,
+}
+
+impl RawEvent {
+    /// `event` as it crosses: its tags and numbers, with its text and its
+    /// words lent to the caller, who hands each back with
+    /// [`editor_ffi_text_free`](crate::text::editor_ffi_text_free).
+    pub(crate) fn lend(event: Event) -> Self {
+        let (text, text_len) = text::lend(event.text);
+        let mut writer = Writer::with_capacity(event.words.len());
+        for word in event.words {
+            writer.word(word);
+        }
+        let (words, words_len) = words::lend(writer.finish());
+        Self {
+            source_kind: event.source.kind.tag(),
+            source_id: event.source.id,
+            kind: event.kind.tag(),
+            code: event.code,
+            stamp: event.stamp,
+            text,
+            text_len,
+            words,
+            words_len,
+        }
+    }
 }
 
 /// Posts a message from the Lean source `source_id` to the queue `queue`,
@@ -472,17 +516,7 @@ pub unsafe extern "C" fn editor_ffi_events_next(queue: u8, out: *mut RawEvent) -
     let Some(queue) = self::queue(queue) else {
         return false;
     };
-    let event = queue.next();
-    let (text, text_len) = text::lend(event.text);
-    let raw = RawEvent {
-        source_kind: event.source.kind.tag(),
-        source_id: event.source.id,
-        kind: event.kind.tag(),
-        code: event.code,
-        stamp: event.stamp,
-        text,
-        text_len,
-    };
+    let raw = RawEvent::lend(queue.next());
     // SAFETY: the caller guarantees `out` is writable.
     unsafe { out.write(raw) };
     true
@@ -731,7 +765,57 @@ mod tests {
             let event = pull(&queue);
             assert_eq!((event.source, event.kind), (source, EventKind::Message));
             assert_eq!(event.code, code);
+            assert_eq!(event.words, [code, u64::MAX - code]);
         }
+    }
+
+    #[test]
+    fn an_event_has_no_words_until_it_is_given_some() {
+        let source = Source {
+            kind: SourceKind::Lean,
+            id: 1,
+        };
+
+        assert!(Event::quit().words.is_empty());
+        assert!(Event::message(source, 1, "").words.is_empty());
+        assert!(Event::completion(source, 1).words.is_empty());
+        assert_eq!(
+            Event::message(source, 1, "a").with_words(vec![3, 4]).words,
+            [3, 4]
+        );
+    }
+
+    #[test]
+    fn a_raw_event_lends_its_text_and_its_words_as_buffers_that_read_back_whole() {
+        let source = Source {
+            kind: SourceKind::Window,
+            id: 1,
+        };
+        let event = Event::message(source, 6, "é")
+            .with_words(vec![u64::MAX, 0, 7])
+            .stamped(9);
+
+        let raw = RawEvent::lend(event);
+
+        assert_eq!(
+            (
+                raw.source_kind,
+                raw.source_id,
+                raw.kind,
+                raw.code,
+                raw.stamp
+            ),
+            (3, 1, 1, 6, 9)
+        );
+        // SAFETY: `lend` gave these buffers up, and each is taken back once.
+        let (text, words) = unsafe {
+            (
+                Box::from_raw(std::ptr::slice_from_raw_parts_mut(raw.text, raw.text_len)),
+                Box::from_raw(std::ptr::slice_from_raw_parts_mut(raw.words, raw.words_len)),
+            )
+        };
+        assert_eq!(*text, *"é".as_bytes());
+        assert_eq!(crate::words::tests::words_of(&words), [u64::MAX, 0, 7]);
     }
 
     #[test]
@@ -821,6 +905,7 @@ mod tests {
                 kind: EventKind::Message,
                 code: 1,
                 text: "a".into(),
+                words: Vec::new(),
                 stamp: 77,
             }
         );
@@ -842,6 +927,7 @@ mod tests {
                 kind: EventKind::Completion,
                 code: 17,
                 text: String::new(),
+                words: Vec::new(),
                 stamp: 0,
             }
         );

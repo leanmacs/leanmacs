@@ -102,7 +102,8 @@ and whose contract (`Editor/Text/Contract.lean`) runs against that binding in
 Rust never calls a Lean function. Rust threads push events onto a queue, and
 Lean pulls them with `nextEvent`, which blocks in Rust: call it from a
 dedicated task, never from the thread pool. An event is plain data tagged with
-its source. There are two queues (`Queue`): the editor queue, for input and
+its source: a kind, a code, a text, a stamp, and its detail as words (`words`),
+which the glue copies like the text, and whose meaning the kind sets. There are two queues (`Queue`): the editor queue, for input and
 events for the editor thread, and the completion queue, for the results of
 service requests, pulled by a dedicated task (the completion pump,
 `Editor/Job/Real.lean`). `feedScript` drives the library's fake event source,
@@ -1186,14 +1187,19 @@ structure Event where
   library's input clock, or 0 when the source does not say. Only a window
   says. -/
   stamp : UInt64
+  /-- The event's detail, as words whose meaning the kind sets; empty for a
+  kind that has none. -/
+  words : Array UInt64 := #[]
   deriving DecidableEq, Repr
 
-/-- An event as the glue builds it, in one call: the object field first, then
+/-- An event as the glue builds it, in one call: the object fields first, then
 `UInt64` fields only, so the order here is the layout the glue writes. The
 kinds are still the library's numbers. -/
 private structure RawEvent where
   /-- The event's text. -/
   text : String
+  /-- The event's words, copied from the library's buffer. -/
+  words : ByteArray
   /-- The source kind's number. -/
   sourceKind : UInt64
   /-- The source's id. -/
@@ -1219,15 +1225,18 @@ private opaque nextRaw (queue : Queue) : IO RawEvent
 is one. One call returns one whole event.
 
 It blocks in Rust, so call it from a dedicated task, never from the thread
-pool. It throws if the library sends a kind these bindings do not know. -/
+pool. It throws if the library sends a kind these bindings do not know, or
+words that are not whole words. -/
 def nextEvent (queue : Queue) : IO Event := do
   let raw ← nextRaw queue
   let some sourceKind := SourceKind.ofTag? raw.sourceKind
     | throw <| IO.userError s!"the library sent an event from the unknown source kind {raw.sourceKind}"
   let some kind := EventKind.ofTag? raw.kind
     | throw <| IO.userError s!"the library sent an event of the unknown kind {raw.kind}"
+  let some words := wordsOf? raw.words
+    | throw <| IO.userError s!"the library sent an event whose {raw.words.size} bytes of words are not whole words"
   return { source := { kind := sourceKind, id := raw.sourceId }, kind, code := raw.code,
-           text := raw.text, stamp := raw.stamp }
+           text := raw.text, stamp := raw.stamp, words }
 
 /-- Quits both queues, for good. Events already queued are still delivered;
 after them every `nextEvent`, parked or later, returns a `quit` event at once,
