@@ -19,6 +19,12 @@ the completion carries it back, and a completion for an id that is no longer
 waiting is dropped. An id is a counter from 1 and is never used again in a
 process. A promise that is dropped unresolved reads as `cancelled`.
 
+A completion says only that a wait is over. What the wait came to, if it
+came to anything, is fetched afterwards: an answer that waits carries the
+action that gives the reply (`Answer.later`), and the runner runs it on the
+job's thread once the wait has completed, and never for a job that was
+cancelled. A timer's wait comes to nothing, so its action is `pure ()`.
+
 ## Where a job runs
 
 `spawn` starts a pool task and returns. What it is given is a `Work`, a
@@ -204,8 +210,11 @@ ended. -/
 inductive Answer (α : Type) where
   /-- The reply. -/
   | now (reply : α)
-  /-- The reply, once the wait `id`, whose promise is `wait`, has ended. -/
-  | later (id : UInt64) (wait : IO.Promise Completion) (reply : α)
+  /-- The reply, once the wait `id`, whose promise is `wait`, has ended:
+  `reply` fetches it then. It is run on the job's thread, once, and only for
+  a wait the service completed in a job that is not cancelled; a wait with
+  nothing to fetch, a timer's, answers `pure ()`. -/
+  | later (id : UInt64) (wait : IO.Promise Completion) (reply : BaseIO α)
 
 /-- Answers a request. A request that waits is registered in the table of
 waits and handed to its service, and nothing here waits for it. -/
@@ -214,7 +223,7 @@ def answer (services : Services) : (request : JobRequest) → BaseIO (Answer req
   | .waitUntil deadline => do
     let (id, wait) ← services.completions.register
     services.timers.start id deadline
-    return .later id wait ()
+    return .later id wait (pure ())
 
 /-- Runs `program` to its end, a request at a time. A request that is
 answered at once is a direct call, and the loop goes on on the same thread.
@@ -258,7 +267,7 @@ partial def drive (handle : Handle) (finished : BaseIO Unit) :
           -- A wait the service completed just as the job was cancelled reads
           -- as completed: the token still says the job is over.
           if completion == some .completed && !cancelled then
-            drive handle finished (next reply)
+            drive handle finished (next (← reply))
           else
             handle.conclude finished .cancelled
 
