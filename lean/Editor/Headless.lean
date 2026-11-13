@@ -238,6 +238,8 @@ def refusalName : TextError → String
   | .badPosition => "bad position"
   | .badChange => "bad change"
   | .badSelection => "bad selection"
+  | .unknownRevision => "unknown revision"
+  | .forgotten => "forgotten revision"
 
 /-- The lines a reload's report is printed as: what it came to, then its
 diagnostics. -/

@@ -514,6 +514,26 @@ def setup : SetupM Unit := do
   command \"astray\" astray
 "
 
+/-- A chunk with two commands, each of which asks a text's log about a
+revision the library refuses: `ahead`, which asks what changed since a
+revision its text has not reached, and `behind`, which forgets its text's
+first edit and then asks what changed since before it. -/
+def logChunk : String :=
+  "def ahead : EditorM Unit := do
+  let text ← createText \"héllo\"
+  discard <| text.changesSince 1
+
+def behind : EditorM Unit := do
+  let text ← createText \"héllo\"
+  text.insert 0 \"x\"
+  text.forget 1
+  discard <| text.changesSince 0
+
+def setup : SetupM Unit := do
+  command \"ahead\" ahead
+  command \"behind\" behind
+"
+
 /-- The store of `counterChunk` with its type changed and its version raised
 to 2: the number gets a label, and a number written at version 1 is migrated
 with the label \"migrated\". -/
@@ -693,6 +713,15 @@ def hostChecks (context : Context) : List Check :=
           return (← session.lines) ==
               #["reload 1: installed, 1 chunks, 2 commands", "run short: refused: bad change",
                 "run astray: refused: bad selection"] },
+    { name :=
+        "a command that asks a text's log about a revision it has not reached, and one that asks about a revision it has forgotten, are each reported with that refusal's name"
+      run :=
+        withHost context [("config.lean", logChunk)] fun session => do
+          session.ask [.reload]
+          session.ask [.run "ahead", .run "behind"]
+          return (← session.lines) ==
+              #["reload 1: installed, 1 chunks, 2 commands", "run ahead: refused: unknown revision",
+                "run behind: refused: forgotten revision"] },
     { name :=
         "a config directory that does not exist is a rejected reload whose one diagnostic line names the directory"
       run :=

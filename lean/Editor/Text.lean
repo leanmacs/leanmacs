@@ -5,9 +5,10 @@ import Editor.Program
 
 The editor's interface to text storage, in the editor's own terms: make a
 text, insert into it, delete from it, apply a transaction to it, read it,
-take a snapshot of it, ask a text or a snapshot a question, and release
-either. It is deliberately small.
-The point is the pattern every later interface follows:
+take a snapshot of it, ask a text or a snapshot a question, ask a text's
+edit log what changed and who wrote a range, forget the start of that log,
+and release a text or a snapshot. It is deliberately small. The point is the
+pattern every later interface follows:
 
 - the port, here: the requests, the reply to each, and the operations a
   command is written with;
@@ -55,7 +56,37 @@ same value runs against the model and against the real binding.
   the text after.
 - An *origin* says who made an edit (`Origin`): a number the editor chooses
   and the store never reads. It is given when a transaction is applied, not
-  carried in it.
+  carried in it. An insert and a delete are the transaction with that one
+  change and no selection, made by `Origin.unattributed`.
+- A text has an *edit log*: what each accepted edit changed, and its origin.
+  It holds no text. A snapshot has none.
+- An *edit* is one changed range (`Edit`): a span of the text before and a
+  span of the text after, each as byte offsets and as points with their
+  columns in bytes. An insertion has an empty old span and a deletion an
+  empty new one.
+- What changed since a revision is one *patch* (`Patch`), however many edits
+  were made since. Its old spans are ranges of the text at that revision and
+  its new spans ranges of the text now; they are in order, and no two
+  overlap or touch, because changes that came to overlap or touch are one
+  edit. Text inserted and deleted again in between is in none. It is refused
+  with `unknownRevision` for a revision the text has not reached.
+- A *subscriber* is a revision the asker keeps: it asks what changed since
+  the revision of the last patch it got. Nothing is registered with the
+  store, so nothing is queued for a subscriber and there is nothing to
+  release.
+- A *trace* of a range of the text as it is now cuts it into pieces, in
+  order, each with its author (`Author`): the edit that inserted its bytes,
+  by the revision it produced and its origin, or `earlier`, for bytes that
+  were in the text where its log starts. Neighbours with one author are one
+  piece. A range that is not two positions in order is refused with
+  `badRange`.
+- `forget` moves where a text's log starts to a revision; it starts at 0,
+  the text as it was made. From then on what changed since an earlier
+  revision is refused with `forgotten`, and a trace names bytes written at
+  or before that revision as `earlier` than it. Forgetting to a revision at
+  or before where the log starts changes nothing, and to one the text has
+  not reached is refused with `unknownRevision`. The text is untouched.
+  Nothing else shortens a log: when to forget is the editor's to decide.
 - A text has a *revision*, a number. A new text is at 0, and every accepted
   edit adds one, an edit that changes nothing included: an insert, a delete,
   or a transaction, however many changes it has. A refused edit adds none.
@@ -100,6 +131,12 @@ snapshot. It needs a clause in the model (`TextModel.answer`) and in the real
 binding (`RealTexts.answer`), and a property in the contract. It is not a
 new request: `ask` carries every question.
 
+A new question about a text's edit log is a constructor of `LogQuery` with
+its case in `LogQuery.Answer`, and an operation here that asks it. It needs
+a clause in the model (`TextModel.answerLog`) and in the real binding
+(`RealTexts.answerLog`), and a property in the contract. It is not a new
+request either: `log` carries every one.
+
 Anything else is a constructor of `TextRequest` with its case in
 `TextRequest.Reply`, and an operation here that makes the request. It then
 needs a clause in the model (`TextModel.handle`), a clause in the real binding
@@ -143,6 +180,11 @@ inductive TextError where
   /-- A transaction's selection has no range, its primary names none, or an
   end of one of its ranges is not a position of its text. -/
   | badSelection
+  /-- The text has not reached the revision. -/
+  | unknownRevision
+  /-- The revision is before where the text's edit log starts: the log was
+  forgotten up to a later one. -/
+  | forgotten
   deriving DecidableEq, Repr
 
 /-- The unit a point's column is counted in. -/
@@ -258,6 +300,79 @@ text. -/
 def Transaction.replacing (length start stop : Nat) (s : String) : Transaction where
   changes := #[.retain start, .insert s, .delete (stop - start), .retain (length - stop)]
 
+/-- A range of one text: its byte offsets, and their points with the columns
+in bytes. -/
+structure Span where
+  /-- The offset the range starts at. -/
+  start : Nat
+  /-- The offset the range stops at, not included. -/
+  stop : Nat
+  /-- The point of `start`. -/
+  startPoint : Point
+  /-- The point of `stop`. -/
+  stopPoint : Point
+  deriving DecidableEq, Repr
+
+/-- One changed range: the bytes of `old`, a range of the text before, were
+replaced by the bytes of `new`, a range of the text after. An insertion has
+an empty `old` and a deletion an empty `new`. It carries no text. -/
+structure Edit where
+  /-- The range that was replaced, in the text before. -/
+  old : Span
+  /-- The range that replaced it, in the text after. -/
+  new : Span
+  deriving DecidableEq, Repr
+
+/-- What changed in a text between two of its revisions, as one set of edits
+in order, no two of which overlap or touch. -/
+structure Patch where
+  /-- The revision the patch starts from: the old spans are ranges of the
+  text then. -/
+  since : Nat
+  /-- The revision the patch reaches, which is the text's when it was asked:
+  the new spans are ranges of the text then. -/
+  revision : Nat
+  /-- What changed. -/
+  edits : Array Edit
+  deriving DecidableEq, Repr
+
+/-- Who wrote a piece of a text. -/
+inductive Author where
+  /-- The edit that produced `revision`, made by `origin`, inserted the
+  bytes. -/
+  | entry (revision : Nat) (origin : Origin)
+  /-- The bytes were already in the text at `revision`, which is as far back
+  as its log reaches: 0, the text as it was made, until some of the log is
+  forgotten. -/
+  | earlier (revision : Nat)
+  deriving DecidableEq, Repr
+
+/-- One piece of a traced range: the bytes of the text as it is now from
+`start` up to, not including, `stop`, and who wrote them. -/
+structure Attribution where
+  /-- The offset the piece starts at. -/
+  start : Nat
+  /-- The offset the piece stops at, not included. -/
+  stop : Nat
+  /-- Who wrote its bytes. -/
+  author : Author
+  deriving DecidableEq, Repr
+
+/-- A question about a text's edit log. A new question is a constructor here,
+not a request. It is not a `TextQuery`: a snapshot answers every one of
+those, and a snapshot has no log. -/
+inductive LogQuery where
+  /-- What changed since `revision`, as one patch. -/
+  | since (revision : Nat)
+  /-- Who wrote the bytes from `start` up to, not including, `stop`. -/
+  | trace (start stop : Nat)
+
+/-- The type of the answer to each question about a log. It is an `abbrev`
+for the reason `TextQuery.Answer` is. -/
+abbrev LogQuery.Answer : LogQuery → Type
+  | .since _ => Patch
+  | .trace .. => Array Attribution
+
 /-- What a command may ask of the text store. -/
 inductive TextRequest where
   /-- Make a new text holding `initial`. -/
@@ -276,6 +391,10 @@ inductive TextRequest where
   | release (source : TextSource)
   /-- Apply `transaction` to `text`, with `origin` as who made the edit. -/
   | apply (text : TextId) (transaction : Transaction) (origin : Origin)
+  /-- Ask `query` of the edit log of `text`. -/
+  | log (text : TextId) (query : LogQuery)
+  /-- Forget the edit log of `text` up to `revision`. -/
+  | forget (text : TextId) (revision : Nat)
 
 /-- The type of the reply to each request: the new text's id for `create`,
 and for the others a refusal or the result. -/
@@ -288,6 +407,8 @@ def TextRequest.Reply : TextRequest → Type
   | .ask _ query => Except TextError query.Answer
   | .release _ => Except TextError Unit
   | .apply .. => Except TextError Nat
+  | .log _ query => Except TextError query.Answer
+  | .forget .. => Except TextError Unit
 
 /-- The text port: `TextRequest` and the reply to each request. -/
 abbrev textPort : Port :=
@@ -344,6 +465,36 @@ after. That is the order the refusals are looked for in. -/
 def TextId.apply (text : TextId) (transaction : Transaction) (origin : Origin := .unattributed) :
     EditorM Nat :=
   ExceptT.mk (Program.request (port := textPort) (.apply text transaction origin))
+
+/-- The answer of the edit log of `text` to `query`. The operations below ask
+each question by name. -/
+def TextId.askLog (text : TextId) (query : LogQuery) : EditorM query.Answer :=
+  ExceptT.mk (Program.request (port := textPort) (.log text query))
+
+/-- What changed in `text` since `revision`, as one patch, however many edits
+were made since. Empty when `revision` is the text's revision now.
+
+Refused with `unknownRevision` for a revision the text has not reached, and
+with `forgotten` for one before where its log starts.
+
+A consumer that follows a text keeps the `revision` of the last patch it got
+and asks again from there. -/
+def TextId.changesSince (text : TextId) (revision : Nat) : EditorM Patch :=
+  text.askLog (.since revision)
+
+/-- Who wrote the bytes of `text` from `start` up to, not including, `stop`:
+the range cut into pieces, in order, each with its author. Empty for an empty
+range. Refused with `badRange` unless both offsets are positions and
+`start ≤ stop`. -/
+def TextId.trace (text : TextId) (start stop : Nat) : EditorM (Array Attribution) :=
+  text.askLog (.trace start stop)
+
+/-- Forgets the edit log of `text` up to `revision`: the log starts there
+from then on. The text and its revision are untouched. A revision at or
+before where the log starts already changes nothing. Refused with
+`unknownRevision` for a revision the text has not reached. -/
+def TextId.forget (text : TextId) (revision : Nat) : EditorM Unit :=
+  ExceptT.mk (Program.request (port := textPort) (.forget text revision))
 
 /-- The revision of `text`: how many edits it has accepted. -/
 def TextId.revision (text : TextId) : EditorM Nat :=

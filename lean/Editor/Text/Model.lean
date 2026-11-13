@@ -20,9 +20,20 @@ between two retains, each spliced into the string as an insert or a delete
 is. The library keeps its changes in a normal form and walks them; the model
 never builds that form, so the two reach the same text by different routes.
 
+A text's edit log is modelled beside the texts (`TextModel.logs`), not
+inside them, so a snapshot carries none. The model of a log (`TextLog`) is
+not a log at all: it keeps who wrote every byte of the text as it is now,
+each byte with an identity no other byte ever had, and the whole text at
+every revision it has had. What changed since a revision is then the gaps
+between the bytes the two states share, and who wrote a range is read off
+its bytes. The library keeps neither: it composes the ranges each edit
+recorded, and walks its entries back. That two such different routes give
+the same patch and the same trace is what the contract checks. The model is
+quadratic and forgets nothing; it runs on texts of tens of bytes.
+
 The contract (`Editor/Text/Contract.lean`) is what says the model and the real
-binding agree. A clause added to `TextModel.handle` or to `TextModel.answer`
-needs its property there.
+binding agree. A clause added to `TextModel.handle`, to `TextModel.answer` or
+to `TextModel.answerLog` needs its property there.
 -/
 
 namespace Editor
@@ -36,6 +47,34 @@ structure TextContent where
   revision : Nat := 0
   deriving Repr
 
+/-- One byte of a text, as the model of its edit log knows it. -/
+structure Cell where
+  /-- The byte's identity: a number no other byte of the text ever had. -/
+  id : Nat
+  /-- The revision whose edit inserted the byte: 0 for a byte the text was
+  made with. -/
+  revision : Nat
+  deriving Repr
+
+/-- The model of a text's edit log. It keeps far more than a log would, and
+is plainly right for it: who wrote every byte of the text, and the whole text
+at every revision it has had. -/
+structure TextLog where
+  /-- One cell for each byte of the text as it is now, in order. -/
+  cells : Array Cell := #[]
+  /-- The identity the next byte inserted gets. -/
+  nextId : Nat := 0
+  /-- The origin of each edit: the one that produced the revision `r` is at
+  `r - 1`. -/
+  origins : Array Origin := #[]
+  /-- The text at every revision before the one it is at: what it held, and
+  the identities of its bytes. The revision `r` is at `r`. -/
+  past : Array (String × Array Nat) := #[]
+  /-- Where the log starts: the revision it was last forgotten up to, and 0
+  until then. -/
+  horizon : Nat := 0
+  deriving Repr
+
 /-- The model of the text store: every text and every snapshot made so far.
 An id is an index here, and a slot is `none` once its text or its snapshot
 has been released, so an id is never used again. -/
@@ -44,6 +83,10 @@ structure TextModel where
   texts : Array (Option TextContent) := #[]
   /-- The snapshots, in the order they were taken. -/
   snapshots : Array (Option TextContent) := #[]
+  /-- The edit log of each text, in the order the texts were made. It is
+  beside the texts and not inside them, so that a snapshot, which is a copy
+  of a text's content, carries none. -/
+  logs : Array TextLog := #[]
   deriving Repr
 
 namespace TextModel
@@ -140,23 +183,6 @@ def answer (content : TextContent) : (query : TextQuery) → Except TextError qu
     | some offset => .ok offset
     | none => .error .badPosition
 
-/-- The model's answer to an edit of the text `id`, replacing its bytes from
-`start` up to `stop` by `s`, and the model after it. An accepted edit adds
-one to the text's revision. A refused edit leaves the model as it was. -/
-def edit (model : TextModel) (id : TextId) (start stop : Nat) (s : String) :
-    Except TextError Unit × TextModel :=
-  match model.lookup (.text id) with
-  | .error refusal => (.error refusal, model)
-  | .ok content =>
-    match splice content.contents start stop s with
-    | none => (.error .badRange, model)
-    | some text =>
-      (.ok (),
-        { model with
-          texts :=
-            model.texts.setIfInBounds id.index
-              (some { contents := text, revision := content.revision + 1 }) })
-
 /-- One changed range of a transaction: the bytes of the text before from
 `start` up to, not including, `stop` are replaced by `inserted`. -/
 structure Run where
@@ -222,10 +248,165 @@ def selectionFits (text : String) : Option Selection → Bool
       decide ((String.Pos.Raw.mk range.anchor).IsValid text) &&
         decide ((String.Pos.Raw.mk range.head).IsValid text)
 
-/-- The model's answer to applying `transaction` to the text `id`, and the
-model after it. An accepted transaction adds one to the text's revision,
-however many changes it has. A refused one leaves the model as it was. -/
-def apply (model : TextModel) (id : TextId) (transaction : Transaction) :
+end TextModel
+
+namespace TextLog
+
+/-- `count` cells for bytes inserted by the edit that produced `revision`,
+with the identities from `first` on. -/
+def fresh (first count revision : Nat) : Array Cell :=
+  (Array.range count).map fun index => ⟨first + index, revision⟩
+
+/-- The log of a text just made holding `initial`. -/
+def new (initial : String) : TextLog :=
+  { cells := fresh 0 initial.utf8ByteSize 0, nextId := initial.utf8ByteSize }
+
+/-- The log after an edit by `origin` changed the ranges `runs` of the text,
+which held `before`, and so produced `revision`. A byte that is kept keeps
+its cell, and a byte that is inserted gets a new one. -/
+def record (log : TextLog) (before : String) (revision : Nat) (runs : Array TextModel.Run)
+    (origin : Origin) : TextLog :=
+  -- From the last run back, as the text is spliced, so that the offsets of
+  -- the runs still to make are offsets of the cells as they are.
+  let (cells, nextId) :=
+    runs.foldr
+      (fun run (cells, next) =>
+        (cells.extract 0 run.start ++ fresh next run.inserted.utf8ByteSize revision ++
+            cells.extract run.stop cells.size,
+          next + run.inserted.utf8ByteSize))
+      (log.cells, log.nextId)
+  { log with
+    cells
+    nextId
+    origins := log.origins.push origin
+    past := log.past.push (before, log.cells.map (·.id)) }
+
+/-- The span of `text` from `start` to `stop`, with its points counted from
+the string. -/
+def span (text : String) (start stop : Nat) : Span where
+  start := start
+  stop := stop
+  startPoint := (TextModel.pointOf .bytes text start).getD ⟨0, 0⟩
+  stopPoint := (TextModel.pointOf .bytes text stop).getD ⟨0, 0⟩
+
+/-- What changed between a text that held `old`, whose bytes had the
+identities `oldIds`, and the same text now, holding `new` with the cells
+`cells`.
+
+The bytes the two share are the cells that were written at or before
+`revision`, the revision of the old text: they are in both, in the same
+order. Each stretch between two of them that is not empty in both texts is
+one edit. This is not how the library finds a patch, which composes what
+each edit recorded: that the two agree is what the contract checks. -/
+def editsBetween (revision : Nat) (old new : String) (oldIds : Array Nat) (cells : Array Cell) :
+    Array Edit :=
+  go (oldIds.size + cells.size + 1) 0 0 #[]
+where
+  /-- Finds the edits from the offsets `oldHere` and `newHere` on. `fuel` is
+  more than the bytes left, so it does not run out. -/
+  go : Nat → Nat → Nat → Array Edit → Array Edit
+    | 0, _, _, edits => edits
+    | fuel + 1, oldHere, newHere, edits =>
+      -- What only the new text holds, up to the next byte both hold.
+      let newStop := skipNew newHere (cells.size - newHere)
+      let shared := cells[newStop]?.map (·.id)
+      -- What only the old text holds, up to that byte.
+      let oldStop := skipOld shared oldHere (oldIds.size - oldHere)
+      let edits :=
+        if oldStop > oldHere ∨ newStop > newHere then
+          edits.push ⟨span old oldHere oldStop, span new newHere newStop⟩
+        else edits
+      if shared.isNone then edits else go fuel (oldStop + 1) (newStop + 1) edits
+  /-- The offset of the first byte of the new text at or after `here` that the
+  old text held too, or the new text's length. -/
+  skipNew (here : Nat) : Nat → Nat
+    | 0 => here
+    | fuel + 1 =>
+      match cells[here]? with
+      | some cell => if cell.revision > revision then skipNew (here + 1) fuel else here
+      | none => here
+  /-- The offset of the byte `shared` of the old text at or after `here`, or
+  the old text's length when there is none. -/
+  skipOld (shared : Option Nat) (here : Nat) : Nat → Nat
+    | 0 => here
+    | fuel + 1 =>
+      match oldIds[here]? with
+      | some id => if some id == shared then here else skipOld shared (here + 1) fuel
+      | none => here
+
+/-- The log's answer to what changed since `revision` in its text, which
+holds `content` now. -/
+def since (log : TextLog) (content : TextContent) (revision : Nat) : Except TextError Patch :=
+  if revision > content.revision then .error .unknownRevision
+  else
+    if revision < log.horizon then .error .forgotten
+    else
+      match log.past[revision]? with
+      -- Only the revision the text is at has no past state.
+      | none => .ok ⟨revision, content.revision, #[]⟩
+      | some (old, oldIds) =>
+        .ok
+          ⟨revision, content.revision, editsBetween revision old content.contents oldIds log.cells⟩
+
+/-- Who wrote the byte `cell`: the edit that inserted it, or nobody the log
+still knows when that edit is at or before where the log starts. -/
+def author (log : TextLog) (cell : Cell) : Author :=
+  if cell.revision ≤ log.horizon then .earlier log.horizon
+  else .entry cell.revision (log.origins[cell.revision - 1]?.getD .unattributed)
+
+/-- The log's answer to who wrote the bytes from `start` up to `stop` of its
+text, which holds `content` now: the author of each byte, with neighbours
+that have one author as one piece. -/
+def trace (log : TextLog) (content : TextContent) (start stop : Nat) :
+    Except TextError (Array Attribution) :=
+  if
+      (String.Pos.Raw.mk start).IsValid content.contents ∧
+        (String.Pos.Raw.mk stop).IsValid content.contents ∧ start ≤ stop then
+    .ok <|
+      (log.cells.extract start stop).foldl (init := #[]) fun pieces cell =>
+        let author := log.author cell
+        match pieces.back? with
+        | some last =>
+          if last.author == author then pieces.pop.push { last with stop := last.stop + 1 }
+          else pieces.push ⟨last.stop, last.stop + 1, author⟩
+        | none => pieces.push ⟨start, start + 1, author⟩
+  else .error .badRange
+
+end TextLog
+
+namespace TextModel
+
+/-- The model after an edit by `origin` to the text `id`, which held
+`content`: it holds `text`, made by changing the ranges `runs`, at the next
+revision, and its log has recorded the edit. -/
+def changed (model : TextModel) (id : TextId) (content : TextContent) (text : String)
+    (runs : Array Run) (origin : Origin) : TextModel :=
+  { model with
+    texts :=
+      model.texts.setIfInBounds id.index
+        (some { contents := text, revision := content.revision + 1 })
+    logs :=
+      model.logs.modify id.index (·.record content.contents (content.revision + 1) runs origin) }
+
+/-- The model's answer to an edit of the text `id`, replacing its bytes from
+`start` up to `stop` by `s`, and the model after it. An accepted edit adds
+one to the text's revision, and is recorded in its log as the transaction
+with that one change is, made by nobody. A refused edit leaves the model as
+it was. -/
+def edit (model : TextModel) (id : TextId) (start stop : Nat) (s : String) :
+    Except TextError Unit × TextModel :=
+  match model.lookup (.text id) with
+  | .error refusal => (.error refusal, model)
+  | .ok content =>
+    match splice content.contents start stop s with
+    | none => (.error .badRange, model)
+    | some text => (.ok (), model.changed id content text #[⟨start, stop, s⟩] .unattributed)
+
+/-- The model's answer to applying `transaction` to the text `id`, with
+`origin` as who made the edit, and the model after it. An accepted
+transaction adds one to the text's revision, however many changes it has,
+and is recorded in its log. A refused one leaves the model as it was. -/
+def apply (model : TextModel) (id : TextId) (transaction : Transaction) (origin : Origin) :
     Except TextError Nat × TextModel :=
   match model.lookup (.text id) with
   | .error refusal => (.error refusal, model)
@@ -240,11 +421,30 @@ def apply (model : TextModel) (id : TextId) (transaction : Transaction) :
             selectionFits content.contents transaction.before &&
               selectionFits text transaction.after then
           (.ok (content.revision + 1),
-            { model with
-              texts :=
-                model.texts.setIfInBounds id.index
-                  (some { contents := text, revision := content.revision + 1 }) })
+            model.changed id content text (runsOf transaction.changes).1 origin)
         else (.error .badSelection, model)
+
+/-- The model's answer to `query` about the log `log` of a text that holds
+`content`. -/
+def answerLog (log : TextLog) (content : TextContent) :
+    (query : LogQuery) → Except TextError query.Answer
+  | .since revision => log.since content revision
+  | .trace start stop => log.trace content start stop
+
+/-- The model's answer to forgetting the log of the text `id` up to
+`revision`, and the model after it: the log starts there, unless it starts
+later already. The text is untouched. -/
+def forget (model : TextModel) (id : TextId) (revision : Nat) : Except TextError Unit × TextModel :=
+  match model.lookup (.text id) with
+  | .error refusal => (.error refusal, model)
+  | .ok content =>
+    if revision > content.revision then (.error .unknownRevision, model)
+    else
+      (.ok (),
+        { model with
+          logs :=
+            model.logs.modify id.index fun log =>
+              { log with horizon := max log.horizon revision } })
 
 /-- The model after `source`, which it holds, is released: its slot is
 emptied and stays, so later ids are what they would have been. -/
@@ -255,7 +455,10 @@ def released (model : TextModel) : TextSource → TextModel
 /-- The model's answer to each request, and the model after it. -/
 def handle : (request : TextRequest) → TextModel → request.Reply × TextModel
   | .create initial, model =>
-    (⟨model.texts.size⟩, { model with texts := model.texts.push (some { contents := initial }) })
+    (⟨model.texts.size⟩,
+      { model with
+        texts := model.texts.push (some { contents := initial })
+        logs := model.logs.push (.new initial) })
   | .insert id offset s, model => model.edit id offset offset s
   | .delete id start stop, model => model.edit id start stop ""
   | .read id, model =>
@@ -275,8 +478,12 @@ def handle : (request : TextRequest) → TextModel → request.Reply × TextMode
     match model.lookup source with
     | .error refusal => (.error refusal, model)
     | .ok _ => (.ok (), model.released source)
-  -- The model keeps no log yet, so who made the edit changes nothing in it.
-  | .apply id transaction _, model => model.apply id transaction
+  | .apply id transaction origin, model => model.apply id transaction origin
+  | .log id query, model =>
+    match model.lookup (.text id) with
+    | .error refusal => (.error refusal, model)
+    | .ok content => (answerLog (model.logs[id.index]?.getD {}) content query, model)
+  | .forget id revision, model => model.forget id revision
 
 end TextModel
 
@@ -317,7 +524,9 @@ theorem runModel_bind (command : EditorM α) (after : α → EditorM β) (model 
 theorem runModel_createText (initial : String) (model : TextModel) :
     (createText initial).runModel model =
       (.ok ⟨model.texts.size⟩,
-        { model with texts := model.texts.push (some { contents := initial }) }) :=
+        { model with
+          texts := model.texts.push (some { contents := initial })
+          logs := model.logs.push (.new initial) }) :=
   rfl
 
 @[simp]
@@ -353,7 +562,17 @@ theorem runModel_release (source : TextSource) (model : TextModel) :
 @[simp]
 theorem runModel_apply (id : TextId) (transaction : Transaction) (origin : Origin)
     (model : TextModel) :
-    (id.apply transaction origin).runModel model = model.apply id transaction :=
+    (id.apply transaction origin).runModel model = model.apply id transaction origin :=
+  rfl
+
+@[simp]
+theorem runModel_askLog (id : TextId) (query : LogQuery) (model : TextModel) :
+    (id.askLog query).runModel model = TextModel.handle (.log id query) model :=
+  rfl
+
+@[simp]
+theorem runModel_forget (id : TextId) (revision : Nat) (model : TextModel) :
+    (id.forget revision).runModel model = model.forget id revision :=
   rfl
 
 end EditorM

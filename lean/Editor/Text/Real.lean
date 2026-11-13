@@ -22,6 +22,14 @@ question and dropped after it. Taking one copies none of the text, so the
 library needs one set of read functions, on a snapshot, and none on a
 document.
 
+A transaction, and a question about a text's edit log, go to the text's
+document, since a snapshot has no log. The port's counts, offsets and
+revisions are `Nat` and the library's are machine words. In a transaction,
+one that no word holds is sent as the largest word, which no text accepts,
+so the library refuses it in its own order (`RealTexts.word`); everywhere
+else it is refused here, as what the library would have said of a number
+that large.
+
 A text or a snapshot lives until it is released or its table is dropped,
 whichever is first. Releasing empties its slot, which drops the last
 reference to the library's object, and the finaliser frees it at once.
@@ -108,6 +116,58 @@ def apply (id : TextId) (changes : Transaction) (origin : Origin) :
   | .error .badSelection =>
     return .error .badSelection
 
+/-- The port's form of a span of the library. -/
+def span (span : Ffi.Span) : Span where
+  start := span.start.toNat
+  stop := span.stop.toNat
+  startPoint := ⟨span.startPoint.row.toNat, span.startPoint.column.toNat⟩
+  stopPoint := ⟨span.stopPoint.row.toNat, span.stopPoint.column.toNat⟩
+
+/-- The port's form of a piece of a trace of the library. -/
+def attribution (piece : Ffi.Attribution) : Attribution where
+  start := piece.start.toNat
+  stop := piece.stop.toNat
+  author :=
+    match piece.author with
+    | .entry revision origin => .entry revision.toNat ⟨origin⟩
+    | .earlier revision => .earlier revision.toNat
+
+/-- The library's answer to `query` about the log of `document`.
+
+The port's revisions and offsets are `Nat` and the library's are machine
+words. A revision no word holds is one no text has reached, and an offset no
+word holds is past the end of any text, so each is refused here as that:
+converted, it would wrap round to one the library might answer. -/
+def answerLog (document : Ffi.Document) : (query : LogQuery) → IO (Except TextError query.Answer)
+  | .since revision => do
+    unless revision < UInt64.size do
+      return .error .unknownRevision
+    match ← document.changesSince revision.toUInt64 with
+    | .ok patch =>
+      return .ok
+          { since := patch.since.toNat
+            revision := patch.revision.toNat
+            edits := patch.edits.map fun edit => ⟨span edit.old, span edit.new⟩ }
+    | .error .unknownRevision =>
+      return .error .unknownRevision
+    | .error .forgotten =>
+      return .error .forgotten
+  | .trace start stop => do
+    unless start < USize.size ∧ stop < USize.size do
+      return .error .badRange
+    let some trace ← document.trace start.toUSize stop.toUSize | return .error .badRange
+    return .ok (trace.map attribution)
+
+/-- The library's answer to forgetting the log of the text `id` up to
+`revision`. A revision no word holds is one no text has reached. -/
+def forget (id : TextId) (revision : Nat) : StateT RealTexts IO (Except TextError Unit) := do
+  let some document ← document? id | return .error .noSuchText
+  unless revision < UInt64.size do
+    return .error .unknownRevision
+  if ← document.forget revision.toUInt64 then
+    return .ok ()
+  return .error .unknownRevision
+
 /-- The library's name for a column unit of the port. -/
 def unit : ColumnUnit → Ffi.ColumnUnit
   | .bytes => .bytes
@@ -189,6 +249,10 @@ def handle : (request : TextRequest) → StateT RealTexts IO request.Reply
     modify (·.released source)
     return .ok ()
   | .apply id transaction origin => apply id transaction origin
+  | .log id query => do
+    let some document ← document? id | return .error .noSuchText
+    answerLog document query
+  | .forget id revision => forget id revision
 
 end RealTexts
 

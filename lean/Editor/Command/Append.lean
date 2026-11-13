@@ -37,16 +37,20 @@ def append (text : TextId) (s : String) : EditorM Unit := do
 
 /-- `append` on a text that holds `content` succeeds, leaves that text holding
 `content.contents ++ s` at the next revision, and changes no other text and
-no snapshot. -/
+no snapshot.
+
+It is three facts, about the result, the texts and the snapshots, and not
+one equation between models: the model also holds each text's edit log,
+which the append adds an entry to, and what that entry is is the log's
+business and not this command's. -/
 theorem append_spec (model : TextModel) (id : TextId) (content : TextContent) (s : String)
     (live : model.texts[id.index]? = some (some content)) :
-    (append id s).runModel model =
-      (.ok (),
-        { model with
-          texts :=
-            model.texts.setIfInBounds id.index
-              (some
-                { contents := content.contents ++ s, revision := content.revision + 1 }) }) := by
-  simp [append, TextModel.handle, TextModel.edit, TextModel.lookup, live, TextModel.splice_end]
+    ((append id s).runModel model).1 = .ok () ∧
+      ((append id s).runModel model).2.texts =
+        model.texts.setIfInBounds id.index
+          (some { contents := content.contents ++ s, revision := content.revision + 1 }) ∧
+      ((append id s).runModel model).2.snapshots = model.snapshots := by
+  simp [append, TextModel.handle, TextModel.edit, TextModel.changed, TextModel.lookup, live,
+    TextModel.splice_end]
 
 end Editor

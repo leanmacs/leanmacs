@@ -433,7 +433,7 @@ def transactionProperties : List Property :=
       holds := do
         let text ← createText rows
         let short ← applyRefusedWith .badChange text { changes := #[.retain 19] }
-        let none ← applyRefusedWith .badChange text { changes := #[] }
+        let noChanges ← applyRefusedWith .badChange text { changes := #[] }
         let shortAfterAChange ←
           applyRefusedWith .badChange text { changes := #[.insert "x", .delete 1, .retain 18] }
         let long ← applyRefusedWith .badChange text { changes := #[.retain 21] }
@@ -447,11 +447,14 @@ def transactionProperties : List Property :=
         let laterInside ←
           applyRefusedWith .badChange text
               { changes := #[.insert "H", .delete 1, .retain 14, .delete 2, .retain 3] }
-        return short && none && shortAfterAChange && long && longDelete && startsInside &&
+        return short && noChanges && shortAfterAChange && long && longDelete && startsInside &&
             stopsInside &&
             laterInside &&
             (← text.read) == rows &&
-            (← text.revision) == 0 },
+            (← text.revision) == 0 &&
+            -- The log is as it was: nothing changed, and nobody wrote a byte.
+            (← text.changesSince 0) == ⟨0, 0, #[]⟩ &&
+            (← text.trace 0 20) == #[⟨0, 20, .earlier 0⟩] },
     -- Cut down to a 64-bit word, `2 ^ 64 + 1` is 1, the length of the text:
     -- an implementation that converted without looking would accept each.
     { name := "a count in a change that no machine word holds is refused"
@@ -566,7 +569,17 @@ def transactionProperties : List Property :=
         let releasedAndWrong ←
           applyRefusedWith .noSuchText text
               { changes := #[.retain 5], after := some { ranges := #[] } }
-        return never && released && releasedAndWrong },
+        -- The same of the requests about its log, whatever they ask.
+        let mut log := true
+        for id in [(⟨7⟩ : TextId), text] do
+          let since ← refusedWith .noSuchText (discard <| id.changesSince 0)
+          let ahead ← refusedWith .noSuchText (discard <| id.changesSince 9)
+          let trace ← refusedWith .noSuchText (discard <| id.trace 0 0)
+          let backwards ← refusedWith .noSuchText (discard <| id.trace 3 1)
+          let forget ← refusedWith .noSuchText (id.forget 0)
+          let forgetAhead ← refusedWith .noSuchText (id.forget 9)
+          log := log && since && ahead && trace && backwards && forget && forgetAhead
+        return never && released && releasedAndWrong && log },
     { name := "a snapshot taken before a transaction reads what it read"
       holds := do
         let text ← createText rows
@@ -577,11 +590,189 @@ def transactionProperties : List Property :=
             (← after.read) == "hello\r\nWörld\nx" &&
             (← after.revision) == 1 }]
 
+/-- The span from `start` to `stop` whose points, with their columns in
+bytes, are the two (row, column) pairs. -/
+def span (start stop : Nat) (startPoint stopPoint : Nat × Nat) : Span where
+  start := start
+  stop := stop
+  startPoint := ⟨startPoint.1, startPoint.2⟩
+  stopPoint := ⟨stopPoint.1, stopPoint.2⟩
+
+/-- Makes a text holding "héllo\nwörld" and changes it four times, to
+"\nhXYllo\nwörld!": "A\n" is inserted at the start, by nobody; "é" is
+replaced by "XY", by the origin 7; "!" is added at the end, by the origin 9;
+and the "A" is deleted, by nobody. Returns the text and the revisions the
+two transactions produced. -/
+def changedFourTimes : EditorM (TextId × Nat × Nat) := do
+  let text ← createText "héllo\nwörld"
+  text.insert 0 "A\n"
+  let second ← text.apply { changes := #[.retain 3, .delete 2, .insert "XY", .retain 10] } ⟨7⟩
+  let third ←
+    text.apply { changes := #[.retain 15, .insert "!"], after := some { ranges := #[⟨16, 16⟩] } }
+        ⟨9⟩
+  text.delete 0 1
+  return (text, second, third)
+
+/-- What changed in the text of `changedFourTimes` since it was made, written
+out by hand. The "A" that was inserted and then deleted is in no edit. -/
+def editsSinceMade : Array Edit :=
+  #[⟨span 0 0 (0, 0) (0, 0), span 0 1 (0, 0) (1, 0)⟩,
+    ⟨span 1 3 (0, 1) (0, 3), span 2 4 (1, 1) (1, 3)⟩,
+    ⟨span 13 13 (1, 6) (1, 6), span 14 15 (2, 6) (2, 7)⟩]
+
+/-- What changed in the text of `changedFourTimes` since its second revision,
+when it held "A\nhXYllo\nwörld", written out by hand. -/
+def editsSinceSecond : Array Edit :=
+  #[⟨span 0 1 (0, 0) (0, 1), span 0 0 (0, 0) (0, 0)⟩,
+    ⟨span 15 15 (2, 6) (2, 6), span 14 15 (2, 6) (2, 7)⟩]
+
+/-- The properties of a text's edit log: what changed since a revision, and
+who wrote a range. -/
+def logProperties : List Property :=
+  [{
+      name :=
+        "what one transaction changed is its changed ranges, each with its offsets and its points in the text before and in the text after",
+      holds := do
+        let text ← createText rows
+        discard <| text.apply { changes := #[.retain 20] }
+        -- An insertion with a line feed in it, a deletion across a line
+        -- feed, and a replacement inside a row: "héa\nbllöRLXd\n😀x".
+        discard <|
+            text.apply
+              {
+                changes :=
+                  #[.retain 3, .insert "a\nb", .retain 2, .delete 4, .retain 2, .insert "RLX",
+                    .delete 2, .retain 7] }
+        return (← text.changesSince 1) ==
+            ⟨1, 2,
+              #[⟨span 3 3 (0, 3) (0, 3), span 3 6 (0, 3) (1, 1)⟩,
+                ⟨span 5 9 (0, 5) (1, 1), span 8 8 (1, 3) (1, 3)⟩,
+                ⟨span 11 13 (1, 3) (1, 5), span 10 13 (1, 5) (1, 8)⟩]⟩ },
+    { name :=
+        "an insert and a delete are recorded as the transaction with that one change is, by nobody"
+      holds := do
+        let edited ← createText "héllo"
+        let applied ← createText "héllo"
+        edited.insert 3 "XY"
+        discard <| applied.apply (.replacing 6 3 3 "XY")
+        let inserted : Patch := ⟨0, 1, #[⟨span 3 3 (0, 3) (0, 3), span 3 5 (0, 3) (0, 5)⟩]⟩
+        let insertedAlike :=
+          (← edited.changesSince 0) == inserted && (← applied.changesSince 0) == inserted
+        edited.delete 0 1
+        discard <| applied.apply (.replacing 8 0 1 "")
+        let deleted : Patch := ⟨1, 2, #[⟨span 0 1 (0, 0) (0, 1), span 0 0 (0, 0) (0, 0)⟩]⟩
+        let trace : Array Attribution :=
+          #[⟨0, 2, .earlier 0⟩, ⟨2, 4, .entry 1 .unattributed⟩, ⟨4, 7, .earlier 0⟩]
+        return insertedAlike && (← edited.changesSince 1) == deleted &&
+            (← applied.changesSince 1) == deleted &&
+            (← edited.trace 0 7) == trace &&
+            (← applied.trace 0 7) == trace },
+    { name :=
+        "a subscriber that skips several transactions gets one patch that says which revisions it spans, and asked again from the revision it reached it gets an empty one"
+      holds := do
+        let (text, second, third) ← changedFourTimes
+        let patch ← text.changesSince 0
+        let later ← text.changesSince second
+        let again ← text.changesSince patch.revision
+        return second == 2 && third == 3 && (← text.read) == "\nhXYllo\nwörld!" &&
+            patch == ⟨0, 4, editsSinceMade⟩ &&
+            later == ⟨2, 4, editsSinceSecond⟩ &&
+            again == ⟨4, 4, #[]⟩ },
+    { name :=
+        "text one transaction inserts and a later one deletes is in no edit of the patch that spans both, and two edits that come to touch are one"
+      holds := do
+        let cancelled ← createText "abcdef"
+        discard <| cancelled.apply { changes := #[.retain 2, .insert "XYZ", .retain 4] }
+        discard <| cancelled.apply { changes := #[.retain 2, .delete 3, .retain 4] }
+        let touching ← createText "abcdef"
+        discard <| touching.apply { changes := #[.retain 1, .insert "X", .retain 5] }
+        discard <| touching.apply { changes := #[.retain 2, .delete 1, .retain 4] }
+        return (← cancelled.read) == "abcdef" && (← cancelled.changesSince 0) == ⟨0, 2, #[]⟩ &&
+            (← touching.read) == "aXcdef" &&
+            (← touching.changesSince 0) ==
+              ⟨0, 2, #[⟨span 1 2 (0, 1) (0, 2), span 1 2 (0, 1) (0, 2)⟩]⟩ },
+    -- Cut down to a 64-bit word, `2 ^ 64` is 0, a revision the text reached.
+    { name :=
+        "what changed since a revision the text has not reached, and since one no machine word holds, is refused"
+      holds := do
+        let text ← createText "héllo"
+        text.insert 0 "x"
+        let ahead ← refusedWith .unknownRevision (discard <| text.changesSince 2)
+        let huge ← refusedWith .unknownRevision (discard <| text.changesSince (2 ^ 64))
+        return ahead && huge && (← text.changesSince 1) == ⟨1, 1, #[]⟩ },
+    { name :=
+        "a trace names, for each piece of the text, the revision and the origin of the transaction that wrote it, and the bytes the text was made with as earlier than its first revision"
+      holds := do
+        let (text, _, _) ← changedFourTimes
+        return (← text.trace 0 15) ==
+              #[⟨0, 1, .entry 1 .unattributed⟩, ⟨1, 2, .earlier 0⟩, ⟨2, 4, .entry 2 ⟨7⟩⟩,
+                ⟨4, 14, .earlier 0⟩, ⟨14, 15, .entry 3 ⟨9⟩⟩] &&
+            (← text.trace 3 9) == #[⟨3, 4, .entry 2 ⟨7⟩⟩, ⟨4, 9, .earlier 0⟩] },
+    -- In "\nhXYllo\nwörld!" the "ö" is the bytes 9 and 10. Cut down to a
+    -- word, `2 ^ 64` is 0 and `2 ^ 64 + 4` is 4: both positions.
+    { name :=
+        "a trace of an empty range is empty, and of a range that is backwards, inside a character, past the end, or that no machine word holds is refused"
+      holds := do
+        let (text, _, _) ← changedFourTimes
+        let backwards ← refusedWith .badRange (discard <| text.trace 4 2)
+        let stopsInside ← refusedWith .badRange (discard <| text.trace 0 10)
+        let startsInside ← refusedWith .badRange (discard <| text.trace 10 15)
+        let pastEnd ← refusedWith .badRange (discard <| text.trace 0 16)
+        let hugeStart ← refusedWith .badRange (discard <| text.trace (2 ^ 64) 4)
+        let hugeStop ← refusedWith .badRange (discard <| text.trace 0 (2 ^ 64 + 4))
+        return (← text.trace 0 0) == #[] && (← text.trace 3 3) == #[] &&
+            (← text.trace 15 15) == #[] &&
+            backwards &&
+            stopsInside &&
+            startsInside &&
+            pastEnd &&
+            hugeStart &&
+            hugeStop }]
+
+/-- The properties of forgetting the start of a text's edit log. -/
+def forgetProperties : List Property :=
+  [{
+      name :=
+        "after forgetting up to a revision, what changed since an earlier one is refused, what changed since it answers as before, and a trace names the bytes written by then as earlier than it",
+      holds := do
+        let (text, _, _) ← changedFourTimes
+        text.forget 2
+        let sinceMade ← refusedWith .forgotten (discard <| text.changesSince 0)
+        let sinceFirst ← refusedWith .forgotten (discard <| text.changesSince 1)
+        return sinceMade && sinceFirst && (← text.changesSince 2) == ⟨2, 4, editsSinceSecond⟩ &&
+            (← text.changesSince 4) == ⟨4, 4, #[]⟩ &&
+            (← text.trace 0 15) == #[⟨0, 14, .earlier 2⟩, ⟨14, 15, .entry 3 ⟨9⟩⟩] },
+    -- Cut down to a 64-bit word, `2 ^ 64` is 0, which changes nothing.
+    { name :=
+        "forgetting a revision the text has not reached is refused, forgetting at or below where the log starts changes nothing, and none of it touches the text or its revision"
+      holds := do
+        let (text, _, _) ← changedFourTimes
+        let ahead ← refusedWith .unknownRevision (text.forget 5)
+        let huge ← refusedWith .unknownRevision (text.forget (2 ^ 64))
+        let whole := (← text.changesSince 0) == ⟨0, 4, editsSinceMade⟩
+        text.forget 0
+        let stillWhole := (← text.changesSince 0) == ⟨0, 4, editsSinceMade⟩
+        text.forget 2
+        text.forget 2
+        text.forget 1
+        text.forget 0
+        let sinceFirst ← refusedWith .forgotten (discard <| text.changesSince 1)
+        -- The log goes on from where it starts now.
+        text.insert 0 "z"
+        return ahead && huge && whole && stillWhole && sinceFirst &&
+            (← text.changesSince 2).revision == 5 &&
+            (← text.changesSince 4) ==
+              ⟨4, 5, #[⟨span 0 0 (0, 0) (0, 0), span 0 1 (0, 0) (0, 1)⟩]⟩ &&
+            (← text.read) == "z\nhXYllo\nwörld!" &&
+            (← text.revision) == 5 }]
+
 /-- The properties every implementation of the text port has. -/
 def properties : List Property :=
   editProperties ++ revisionProperties ++ snapshotProperties ++ positionProperties ++
     releaseProperties ++
-    transactionProperties
+    transactionProperties ++
+    logProperties ++
+    forgetProperties
 
 /-- Runs each of `properties` with `run`, which must start every command from
 an empty store, and returns the names of those that did not hold. A property
