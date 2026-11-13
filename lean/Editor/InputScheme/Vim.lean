@@ -28,14 +28,30 @@ A key sequence parses to an `Edit`, and an edit compiles to an invocation
   whether an edit with it changes text (`Edit.changes`) and which Vim state
   the view is in afterwards (`Edit.enters`).
 
+## Vim states
+
+A Vim state (normal, insert, a visual state) is a record in a registry
+(`StateRecord`, `States`), an open set.
+
+- **The registry always has an initial record**, so looking a state up is
+  total (`States.get`): a name it does not have is read as the initial
+  state. `States.register` replaces the record of the same name, the
+  initial one included.
+- **What the grammar must know of a state is a field of its record**, never
+  a match on its name, so a state that a test or config registers is not a
+  special case.
+- **A record has no equality.** It holds keymaps, and `Keymap` derives
+  none. Compare two records by their fields.
+
 ## Where an addition goes
 
 | Addition | Where |
 |---|---|
 | A new target of an operator | A variant of `Over`, and its row in `Edit.compile` |
 | A new fact about an operator or a command that the grammar needs | A field of `Operator` or of `Command` |
+| A new fact about a Vim state | A field of `StateRecord` |
 
-Pinned by `ModelTest.vimEditChecks`.
+Pinned by `ModelTest.vimEditChecks` and `ModelTest.vimRegistryChecks`.
 -/
 
 namespace Editor.Vim
@@ -60,6 +76,19 @@ structure Command where
   changes : Bool := false
   /-- The Vim state the view is in after it runs, if it names one. -/
   enters : Option String := none
+  deriving DecidableEq, Repr
+
+/-- What a key sequence is bound to in the Vim scheme's keymaps: a part of
+speech, named by its vocabulary name. -/
+inductive Bound where
+  /-- The motion of this vocabulary name. -/
+  | motion (name : String)
+  /-- An operator. -/
+  | operator (operator : Operator)
+  /-- The text object of this vocabulary name. -/
+  | textObject (name : String)
+  /-- A command. -/
+  | command (command : Command)
   deriving DecidableEq, Repr
 
 /-- What an operator acts on. -/
@@ -127,5 +156,49 @@ def compile : Edit → Invocation
     { command := command.name, arguments := [.nat (count.getD 0), .str (register.getD "")] }
 
 end Edit
+
+/-- A Vim state, such as normal or insert: its name, its keymaps, and what
+the grammar and the scene must know of it. No keymap equality is derived,
+so a record has none: compare two by their fields. -/
+structure StateRecord where
+  /-- The state's name, by which a command enters it. -/
+  name : String
+  /-- The state's keymaps, in precedence order. -/
+  keymaps : List (Keymap Bound) := []
+  /-- The shape a cursor is drawn as in the state. -/
+  cursor : CursorShape := .block
+  /-- Whether typing is text in the state: an unbound printable key is
+  text, and a digit is not a count. -/
+  insertsText : Bool := false
+  /-- Whether an operator acts on the view's selection at once, and waits
+  for no motion. -/
+  operatesOnSelection : Bool := false
+  deriving Repr
+
+/-- The registry of Vim states the scheme is built over: an open set, with
+one state that a view is in before any key. -/
+structure States where
+  /-- The state a view is in before any key, and the one a name the
+  registry does not have is read as. -/
+  initial : StateRecord
+  /-- Every other state, in the order each was last registered. -/
+  others : List StateRecord := []
+  deriving Repr
+
+namespace States
+
+/-- The record of the state `name`; the initial record when the registry
+has no state of that name, so the lookup is total. -/
+def get (states : States) (name : String) : StateRecord :=
+  if name == states.initial.name then states.initial
+  else (states.others.find? (·.name == name)).getD states.initial
+
+/-- `states` with `record` registered, in place of the record of the same
+name if there is one, the initial record included. -/
+def register (states : States) (record : StateRecord) : States :=
+  if record.name == states.initial.name then { states with initial := record }
+  else { states with others := states.others.filter (·.name != record.name) ++ [record] }
+
+end States
 
 end Editor.Vim

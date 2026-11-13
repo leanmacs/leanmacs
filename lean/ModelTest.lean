@@ -160,7 +160,13 @@ The Vim scheme (`Editor/InputScheme/Vim.lean`) is checked the same way,
 with no model:
 
 - `vimEditChecks`: what an edit compiles to, the layout of each kind of
-  invocation, and what an edit says of itself.
+  invocation, and what an edit says of itself;
+- `vimRegistryChecks`: the registry of Vim states: looking a state up by
+  its name, and registering one. A record holds keymaps and so has no
+  equality: the checks compare records by their fields (`vimSeen`).
+
+The grammar's checks run on a registry and keymaps written here
+(`vimStates`), so that none of them names a default binding.
 -/
 
 namespace ModelTest
@@ -4445,6 +4451,91 @@ def vimEditChecks : List Check :=
             (Vim.Edit.run undo none none).enters == none &&
             (Vim.Edit.move "word" none).enters == none) }]
 
+/-- The keymap that binds each key string of `table` to what is beside it.
+A string that names no keys binds nothing. -/
+def vimKeymap (table : List (String × Vim.Bound)) : Keymap Vim.Bound :=
+  Keymap.ofList (table.map fun (text, bound) => (keys text, bound))
+
+/-- What the Vim checks' normal state binds: three operators, the motion
+`word` on `w`, a motion on two keys and one on `0`, a text object, and
+commands: one that enters `insert` and changes text, one that enters
+`visual`, one that does neither, and one that changes text and enters no
+state. The names are the checks' own, and are no default's. -/
+def vimNormalTable : List (String × Vim.Bound) :=
+  [("d", .operator vimDelete), ("c", .operator vimChange), ("y", .operator vimYank),
+    ("w", .motion "word"), ("g g", .motion "first-line"), ("0", .motion "line-start"),
+    ("t", .textObject "thing"), ("i", .command vimInsert),
+    ("v", .command { name := "visual", enters := some "visual" }),
+    ("u", .command { name := "undo" }), ("x", .command { name := "delete-char", changes := true })]
+
+/-- What the Vim checks' insert and visual states bind first: a command
+that enters `normal`. -/
+def vimEscapeTable : List (String × Vim.Bound) :=
+  [("<Escape>", .command { name := "normal", enters := some "normal" })]
+
+/-- The registry of Vim states the grammar's checks run on, written here so
+that no check of the grammar names a default binding: `normal`, the initial
+state; `insert`, where typing is text; and `visual`, where an operator acts
+on the selection and normal's keys are bound too. -/
+def vimStates : Vim.States :=
+  { initial := { name := "normal", keymaps := [vimKeymap vimNormalTable] }
+    others :=
+      [{  name := "insert"
+          keymaps := [vimKeymap vimEscapeTable]
+          cursor := .bar
+          insertsText := true },
+        { name := "visual"
+          keymaps := [vimKeymap vimEscapeTable, vimKeymap vimNormalTable]
+          operatesOnSelection := true }] }
+
+/-- A state record as the checks compare it: its name, its cursor, its two
+flags and how many keymaps it has. A record has no equality of its own,
+since a keymap has none. -/
+def vimSeen (record : Vim.StateRecord) : String × CursorShape × Bool × Bool × Nat :=
+  (record.name, record.cursor, record.insertsText, record.operatesOnSelection,
+    record.keymaps.length)
+
+/-- The checks of the registry of Vim states (`Editor/InputScheme/Vim.lean`):
+looking a state up by name, and registering one. -/
+def vimRegistryChecks : List Check :=
+  [{  name :=
+        "the record of a registered Vim state is found by its name, with the cursor, the flags and the keymaps it was registered with"
+      run :=
+        pure
+          (vimSeen (vimStates.get "insert") == ("insert", .bar, true, false, 1) &&
+            vimSeen (vimStates.get "visual") == ("visual", .block, false, true, 2) &&
+            vimSeen (vimStates.get "normal") == ("normal", .block, false, false, 1)) },
+    { name := "a name the registry of Vim states does not have is read as the initial state"
+      run :=
+        pure
+          (vimSeen (vimStates.get "replace") == vimSeen vimStates.initial &&
+            (vimStates.get "").name == "normal") },
+    { name := "registering a Vim state adds its record, found by its name, and leaves the others"
+      run :=
+        let added :=
+          vimStates.register { name := "replace", cursor := .underline, insertsText := true }
+        pure
+          (vimSeen (added.get "replace") == ("replace", .underline, true, false, 0) &&
+            vimSeen (added.get "insert") == vimSeen (vimStates.get "insert") &&
+            added.others.map (·.name) == ["insert", "visual", "replace"] &&
+            added.initial.name == "normal") },
+    { name := "registering a Vim state of a name already registered replaces that record"
+      run :=
+        let replaced := vimStates.register { name := "insert", cursor := .hollow }
+        pure
+          (vimSeen (replaced.get "insert") == ("insert", .hollow, false, false, 0) &&
+            (replaced.others.filter (·.name == "insert")).length == 1 &&
+            replaced.others.length == 2 &&
+            vimSeen replaced.initial == vimSeen vimStates.initial) },
+    { name :=
+        "registering a Vim state of the initial state's name replaces the initial record, and adds none"
+      run :=
+        let replaced := vimStates.register { name := "normal", cursor := .underline }
+        pure
+          (vimSeen replaced.initial == ("normal", .underline, false, false, 0) &&
+            vimSeen (replaced.get "normal") == ("normal", .underline, false, false, 0) &&
+            replaced.others.map (·.name) == ["insert", "visual"]) }]
+
 /-- Every check, in the order they run.
 
 The order matters where the process's one pool is measured. `poolChecks` run
@@ -4478,7 +4569,8 @@ def checks : List Check :=
     invocationChecks ++
     schemeChecks ++
     schemeContractChecks ++
-    vimEditChecks
+    vimEditChecks ++
+    vimRegistryChecks
 
 /-- Runs `checks` and returns the names of those that failed. A check that
 throws has failed, and its error is reported with its name. -/
