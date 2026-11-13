@@ -1,5 +1,6 @@
 import Editor.Command.Append
 import Editor.Config.Reload
+import Editor.Display.Model
 import Editor.File.Cases
 import Editor.File.Model
 import Editor.Job.Contract
@@ -2676,6 +2677,36 @@ def sceneChecks : List Check :=
           (twoViews == twoViews && twoViews != { twoViews with pending := "" } &&
             twoViews != { twoViews with views := twoViews.views.pop }) }]
 
+/-- A display model whose cells are one pixel each way, holding `texts` as
+the snapshots 0, 1, 2 and so on, with nothing published. -/
+def displayOver (texts : List String) (cells : Display.Cells := { advance := 1, lineHeight := 1 }) :
+    DisplayModel :=
+  { cells, texts := (texts.toArray.mapIdx fun index text => (⟨index⟩, text)) }
+
+/-- The checks of the display model that only it shows: what it recorded of
+the scenes published to it. What it answers to the queries is the display
+interface's contract (`displayFailures`). -/
+def displayChecks : List Check :=
+  [{
+      name :=
+        "the scenes published to the display model read back equal, in the order they were published",
+      run := do
+        let first := twoViews
+        let second :=
+          { twoViews with
+            pending := "", echo := "" }
+        let third :=
+          { twoViews with
+            views := #[], focused := none }
+        let program : DisplayM Unit := do
+          Display.publish first
+          Display.publish second
+          Display.publish third
+        let (result, model) := program.runModel (displayOver [])
+        return result matches .ok () && model.scenes == #[first, second, third] },
+    { name := "a display model that nothing was published to has no scene"
+      run := pure ((displayOver ["a"]).scenes == #[]) }]
+
 /-- The checks of the undo tree's pure operations alone, which ask nothing of
 a text: being told a revision, and the boundary. What the tree does to a
 text is in `UndoTreeCases.cases`, run against the text model below. -/
@@ -2980,7 +3011,8 @@ def checks : List Check :=
     windowArgumentChecks ++
     undoTreeChecks ++
     fileModelChecks ++
-    sceneChecks
+    sceneChecks ++
+    displayChecks
 
 /-- Runs `checks` and returns the names of those that failed. A check that
 throws has failed, and its error is reported with its name. -/
