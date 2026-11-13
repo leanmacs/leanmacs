@@ -78,6 +78,17 @@ impl Inverses {
         self.state = after;
     }
 
+    /// Drops the kept inverse of every revision from `first` to `last`
+    /// that has one. A run whose first revision is after its last has
+    /// none.
+    pub(crate) fn drop_run(&mut self, first: Revision, last: Revision) {
+        if first <= last {
+            self.kept
+                .extract_if(first..=last, |_, _| true)
+                .for_each(drop);
+        }
+    }
+
     /// The transaction that takes back the run of revisions from `first`
     /// to `last`, for a text at the revision `current`. The refusals, and
     /// their order, are those of
@@ -178,8 +189,9 @@ pub enum InverseError {
     /// The text has not reached a revision the run names.
     UnknownRevision,
     /// The text keeps no inverse for a revision of the run: the run starts
-    /// at revision 0, which no transaction produced, or its first revision
-    /// is after its last.
+    /// at revision 0, which no transaction produced, its first revision
+    /// is after its last, or one of its inverses was dropped
+    /// ([`Text::drop_inverses`](crate::Text::drop_inverses)).
     NotKept,
     /// The text is not in the state the run ended in.
     NotInState,
@@ -791,6 +803,164 @@ mod tests {
         // inverses in turn it would be at 1: at the point "E" collapsed
         // to, and then before the "é" inserted there.
         assert_eq!(text.marker(past), Some(&anchor(3, Bias::Before)));
+    }
+
+    /// A text holding "héllo" with "1" to "5" added at its end, one edit
+    /// each: "héllo12345", at revision 5.
+    fn edited_five_times() -> Text {
+        let mut text = Text::from("héllo");
+        for added in ["1", "2", "3", "4", "5"] {
+            append(&mut text, added);
+        }
+        text
+    }
+
+    /// Drops the kept inverses of the run from `first` to `last` of
+    /// `text`.
+    fn dropped(text: &mut Text, first: u64, last: u64) -> Result<(), InverseError> {
+        text.drop_inverses(Revision::new(first), Revision::new(last))
+    }
+
+    #[test]
+    fn a_run_with_a_dropped_inverse_is_refused_and_the_others_still_apply() {
+        let mut text = edited_five_times();
+
+        assert_eq!(dropped(&mut text, 2, 3), Ok(()));
+
+        // Every run that touches 2 or 3, the one that ends where the text
+        // is included.
+        for (first, last) in [
+            (1, 5),
+            (2, 5),
+            (3, 5),
+            (2, 2),
+            (3, 3),
+            (2, 3),
+            (1, 2),
+            (3, 4),
+        ] {
+            assert_eq!(
+                invert(&mut text, first, last),
+                Err(InverseError::NotKept),
+                "{first}..={last}"
+            );
+        }
+        assert_eq!(read(&text), "héllo12345");
+        assert_eq!(revision(&text), 5);
+        // The others are kept, and apply.
+        assert_eq!(inverted(&mut text, 4, 5), Ok(6));
+        assert_eq!(read(&text), "héllo123");
+        assert_eq!(inverted(&mut text, 6, 6), Ok(7));
+        assert_eq!(read(&text), "héllo12345");
+    }
+
+    #[test]
+    fn dropping_changes_neither_the_text_nor_its_revision_nor_its_log() {
+        let mut text = edited_five_times();
+        let since = text.changes_since(Revision::new(0));
+        let entries = |text: &Text| -> Vec<(Origin, Vec<Edit>)> {
+            (0..=6)
+                .filter_map(|revision| text.entry(Revision::new(revision)))
+                .map(|entry| (entry.origin(), entry.edits().to_vec()))
+                .collect()
+        };
+        let logged = entries(&text);
+        assert_eq!(logged.len(), 5);
+
+        assert_eq!(dropped(&mut text, 1, 5), Ok(()));
+
+        assert_eq!(read(&text), "héllo12345");
+        assert_eq!(revision(&text), 5);
+        assert_eq!(text.changes_since(Revision::new(0)), since);
+        assert_eq!(entries(&text), logged);
+        assert_eq!(text.horizon(), Revision::new(0));
+    }
+
+    #[test]
+    fn dropping_what_is_not_kept_changes_nothing() {
+        let mut text = edited_five_times();
+
+        // Revision 0, which no transaction produced; a run whose first is
+        // after its last, whichever of them the text has reached.
+        assert_eq!(dropped(&mut text, 0, 0), Ok(()));
+        assert_eq!(dropped(&mut text, 4, 2), Ok(()));
+        assert_eq!(dropped(&mut text, 9, 5), Ok(()));
+        // Every inverse is still kept.
+        assert_eq!(inverted(&mut text, 1, 5), Ok(6));
+        assert_eq!(read(&text), "héllo");
+
+        // What was dropped already.
+        let mut text = edited_five_times();
+        assert_eq!(dropped(&mut text, 4, 4), Ok(()));
+        assert_eq!(dropped(&mut text, 4, 4), Ok(()));
+        assert_eq!(invert(&mut text, 4, 5), Err(InverseError::NotKept));
+        assert_eq!(inverted(&mut text, 5, 5), Ok(6));
+        assert_eq!(read(&text), "héllo1234");
+        assert_eq!(revision(&text), 6);
+    }
+
+    #[test]
+    fn a_drop_past_the_texts_revision_is_refused_as_unknown_and_drops_nothing() {
+        let mut text = edited_five_times();
+
+        assert_eq!(dropped(&mut text, 1, 6), Err(InverseError::UnknownRevision));
+        assert_eq!(dropped(&mut text, 6, 6), Err(InverseError::UnknownRevision));
+        assert_eq!(
+            dropped(&mut text, 0, u64::MAX),
+            Err(InverseError::UnknownRevision)
+        );
+
+        assert_eq!(inverted(&mut text, 1, 5), Ok(6));
+        assert_eq!(read(&text), "héllo");
+    }
+
+    #[test]
+    fn a_dropped_run_is_refused_as_not_kept_before_the_state_is_looked_at() {
+        let mut text = edited_five_times();
+        assert_eq!(dropped(&mut text, 1, 1), Ok(()));
+
+        // The text is not where the first edit left it: with the inverse
+        // kept this is refused as not in the state.
+        assert_eq!(invert(&mut text, 1, 1), Err(InverseError::NotKept));
+        assert_eq!(
+            invert(&mut edited_five_times(), 1, 1),
+            Err(InverseError::NotInState)
+        );
+        assert_eq!(read(&text), "héllo12345");
+        assert_eq!(revision(&text), 5);
+    }
+
+    #[test]
+    fn forgetting_the_log_leaves_the_inverses_and_dropping_inverses_leaves_the_log() {
+        // The whole log forgotten: the inverse of the run still applies,
+        // and is the one entry after the horizon.
+        let mut text = edited_five_times();
+        assert_eq!(text.forget(Revision::new(5)), Ok(()));
+        assert_eq!(inverted(&mut text, 1, 5), Ok(6));
+        assert_eq!(read(&text), "héllo");
+        assert_eq!(text.horizon(), Revision::new(5));
+        let entry = text.entry(Revision::new(6)).expect("the inverse's entry");
+        assert_eq!(
+            entry.edits(),
+            [Edit {
+                old: span(6, 11, (0, 6), (0, 11)),
+                new: span(6, 6, (0, 6), (0, 6)),
+            }]
+        );
+
+        // Every inverse dropped: the log still answers.
+        let mut text = edited_five_times();
+        let since = text.changes_since(Revision::new(0));
+        assert_eq!(dropped(&mut text, 1, 5), Ok(()));
+        assert_eq!(text.changes_since(Revision::new(0)), since);
+        assert_eq!(
+            since.map(|patch| patch.edits),
+            Ok(vec![Edit {
+                old: span(6, 6, (0, 6), (0, 6)),
+                new: span(6, 11, (0, 6), (0, 11)),
+            }])
+        );
+        assert_eq!(text.trace(0..11).map(|pieces| pieces.len()), Some(6));
     }
 
     #[test]

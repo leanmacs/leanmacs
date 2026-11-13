@@ -137,6 +137,20 @@
 //!   current selection, so placing it is the caller's. The inverse of an
 //!   inverse hands back the selection after that the run's last
 //!   transaction carried.
+//! - **The kept inverses are bounded only by [`Text::drop_inverses`]**,
+//!   which drops those of a run of revisions; a run, and not everything
+//!   up to a revision, because what a history no longer needs is not a
+//!   prefix. The inverse of a run that names a dropped revision is refused
+//!   ([`InverseError::NotKept`]), whatever state the text is in. The crate
+//!   never drops an inverse by itself, not even those of a run it has just
+//!   inverted: whether they are still wanted is the history's to say. So
+//!   what grows without bound is one kept inverse for each accepted
+//!   transaction until the caller drops it, each holding the bytes its
+//!   transaction removed, its two selections and two state names; a text
+//!   nobody undoes keeps them all the same. Dropping inverses and
+//!   [`Text::forget`] are independent: one leaves the log and the other
+//!   every kept inverse, and an inverse of a run whose entries the log
+//!   has forgotten still applies.
 //! - **A selection** ([`Selection`]) is one or more ranges of two offsets,
 //!   an anchor and a head ([`SelectionRange`]), one of them the primary,
 //!   with one [`Shape`] for them all. It is kept in one form whatever it
@@ -254,6 +268,15 @@
 //!   the snapshots of the two revisions.
 //! - A policy for forgetting, and anywhere cheaper to keep provenance
 //!   older than the horizon.
+//! - The undo tree, groups of revisions, and whether a text is modified:
+//!   they are in Lean, over [`Text::apply_inverse`] and
+//!   [`Text::drop_inverses`], as any other undo style would be.
+//! - A bound on the kept inverses that the crate keeps by itself, and a
+//!   text that keeps none.
+//! - A trace that names text an inverse put back as written by whoever
+//!   first wrote it: it is the inverse's.
+//! - Handing back a selection that a later transaction of a run carried,
+//!   when the run's first carried none.
 //! - Reading and writing a file, detecting a file's line ending, and
 //!   refusing a binary file: this crate takes bytes and gives bytes.
 //!
@@ -266,7 +289,9 @@
 //! | Another kind of change | A variant of [`Change`], with its push on [`ChangeSet`] that keeps the normal form, and its case in apply, compose, invert, map and the log's edits | The unit tests of `change`, and the laws in `tests/properties/changes.rs`, whose generator gains the kind |
 //! | Another read of the log | A method of [`Text`] over the private `log::Log` | Its unit tests on literal edits, and a property in `tests/properties/log.rs` that compares it with a reference computed from the strings |
 //! | A rule about what bytes a text loads from or saves as | The private module `bytes` | Its unit tests on named byte strings, and the byte properties in `tests/properties/` |
-//! | A bound on what an operation costs, the log's growth included | `tests/snapshot_cost.rs`, as a count of bytes allocated | Itself |
+//! | A bound on what an operation costs, the log's growth and what a kept inverse holds included | `tests/snapshot_cost.rs`, as a count of bytes allocated | Itself |
+//! | Another fact kept with a transaction's inverse | A field of the private `inverse::Kept`, set where [`Text::apply`] and [`Text::apply_inverse`] keep one | The unit tests of `inverse`, and a property in `tests/properties/inverses.rs`, whose history beside the text gains the fact |
+//! | Another bound on the kept inverses | A method of [`Text`] over the private `inverse::Inverses`, beside [`Text::drop_inverses`] | The unit tests of `inverse`, and the driver of `tests/properties/inverses.rs`, which gains the step |
 //! | Something more of the rope library | A method of the private `rope::Rope`, in this crate's terms | The tests of the read that needs it |
 //! | Another shape of selection | A variant of [`Shape`], with its overlap rule and its biases in `selection`, and what it covers in `extent` | The unit tests of both, and the properties in `tests/properties/selections.rs`, whose generator and reference gain the shape |
 //! | Another kind of marker | A variant of [`Marker`], with its check in [`Text::mark`] and its ends in the private `marker::Markers` | The unit tests of `text`, and a property in `tests/properties/anchors.rs` that compares it with mapping it by hand |

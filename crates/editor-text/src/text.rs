@@ -227,7 +227,8 @@ impl Text {
     ///    [`InverseError::UnknownRevision`];
     /// 2. the text does not keep an inverse for every revision of the run,
     ///    because the run starts at revision 0, which no transaction
-    ///    produced, or its first revision is after its last:
+    ///    produced, its first revision is after its last, or one of its
+    ///    inverses was dropped ([`drop_inverses`](Self::drop_inverses)):
     ///    [`InverseError::NotKept`];
     /// 3. the text is not in the state the run ended in:
     ///    [`InverseError::NotInState`].
@@ -277,6 +278,36 @@ impl Text {
             revision,
             selection,
         })
+    }
+
+    /// Drops the kept inverse of every revision from `first` to `last`,
+    /// both included. Afterwards the inverse of a run that names one of
+    /// them is refused ([`InverseError::NotKept`]), whatever state the
+    /// text is in, and the inverse of any other run is as it was.
+    ///
+    /// [`InverseError::UnknownRevision`], dropping nothing, for a `last`
+    /// the text has not reached. A revision of the run with nothing kept
+    /// (revision 0, or one dropped already) is passed over, and a run
+    /// whose first revision is after its last drops nothing.
+    ///
+    /// Dropping is not an edit: the text, its revision and its log are as
+    /// they were. It is independent of [`forget`](Self::forget), which
+    /// drops log entries and leaves every kept inverse: the log's readers
+    /// are consumers that pull patches, and an inverse's is the history.
+    /// An inverse of a run whose entries the log has forgotten still
+    /// applies.
+    ///
+    /// This is the one bound on what is kept. The text never drops an
+    /// inverse by itself, not even those of a run it has just inverted:
+    /// it keeps one for each accepted transaction, each holding the bytes
+    /// its transaction removed, until the caller, which knows what its
+    /// history still needs, drops it.
+    pub fn drop_inverses(&mut self, first: Revision, last: Revision) -> Result<(), InverseError> {
+        if last > self.current.revision {
+            return Err(InverseError::UnknownRevision);
+        }
+        self.inverses.drop_run(first, last);
+        Ok(())
     }
 
     /// The log's entry for the transaction that produced `revision`: who

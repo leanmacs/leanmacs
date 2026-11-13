@@ -30,6 +30,8 @@ enum Step {
     },
     /// The inverse of a run.
     Inverse(Run),
+    /// A drop of the kept inverses of a run.
+    Drop(Run),
 }
 
 /// A generated run of revisions, before it is fitted to a text.
@@ -83,17 +85,19 @@ fn run() -> impl Strategy<Value = Run> {
         })
 }
 
-/// Up to `steps` steps: as many inverses as transactions, and two
-/// transactions in three carry each selection.
+/// Up to `steps` steps: as many inverses as transactions, one drop for
+/// every four of each, and two transactions in three carry each
+/// selection.
 fn steps(steps: usize) -> impl Strategy<Value = Vec<Step>> {
     let selection = || option::weighted(0.67, parts(3, usize::MAX));
     let step = prop_oneof![
-        (walk(), selection(), selection()).prop_map(|(walk, before, after)| Step::Edit {
+        4 => (walk(), selection(), selection()).prop_map(|(walk, before, after)| Step::Edit {
             walk,
             before,
             after
         }),
-        run().prop_map(Step::Inverse),
+        4 => run().prop_map(Step::Inverse),
+        1 => run().prop_map(Step::Drop),
     ];
     vec(step, 0..=steps)
 }
@@ -124,6 +128,8 @@ struct History {
     /// that produced the revision carried. For an inverse, what the run's
     /// last transaction carried after and its first before.
     carried: Vec<(Option<Selection>, Option<Selection>)>,
+    /// Whether the revision's kept inverse was dropped.
+    dropped: Vec<bool>,
 }
 
 impl History {
@@ -133,7 +139,26 @@ impl History {
             strings: vec![initial],
             names: vec![0],
             carried: vec![(None, None)],
+            dropped: vec![false],
         }
+    }
+
+    /// Whether the run from `first` to `last`, which the text has reached,
+    /// has a revision whose kept inverse was dropped.
+    fn touches_a_drop(&self, first: usize, last: usize) -> bool {
+        (first..=last).any(|revision| self.dropped[revision])
+    }
+
+    /// Whether a drop of the run from `first` to `last` is to be accepted,
+    /// and records it if so.
+    fn drop_run(&mut self, first: usize, last: usize) -> Result<(), InverseError> {
+        if last > self.current() {
+            return Err(InverseError::UnknownRevision);
+        }
+        for revision in first..=last {
+            self.dropped[revision] = true;
+        }
+        Ok(())
     }
 
     /// The revision the text is at.
@@ -147,12 +172,12 @@ impl History {
     }
 
     /// Whether the inverse of the run from `first` to `last` is to be
-    /// accepted, by the names of the states.
+    /// accepted, by what was dropped and the names of the states.
     fn expected(&self, first: usize, last: usize) -> Result<(), InverseError> {
         let current = self.current();
         if first > current || last > current {
             Err(InverseError::UnknownRevision)
-        } else if first == 0 || first > last {
+        } else if first == 0 || first > last || self.touches_a_drop(first, last) {
             Err(InverseError::NotKept)
         } else if self.names[current] != self.names[last] {
             Err(InverseError::NotInState)
@@ -166,6 +191,7 @@ impl History {
         self.names.push(self.strings.len());
         self.strings.push(string);
         self.carried.push(carried);
+        self.dropped.push(false);
     }
 
     /// Records the inverse of the run from `first` to `last`, which the
@@ -175,6 +201,7 @@ impl History {
         self.names.push(self.names[first - 1]);
         let carried = (self.carried[last].1.clone(), self.carried[first].0.clone());
         self.carried.push(carried);
+        self.dropped.push(false);
     }
 }
 
@@ -262,6 +289,20 @@ fn along(
                     history.inverted(first, last);
                 }
             }
+            Step::Drop(run) => {
+                let (first, last) = run.ends(history.current());
+
+                let result =
+                    text.drop_inverses(Revision::new(first as u64), Revision::new(last as u64));
+
+                prop_assert_eq!(
+                    result,
+                    history.drop_run(first, last),
+                    "a drop of {}..={}",
+                    first,
+                    last
+                );
+            }
         }
         prop_assert_eq!(&text.current().to_string(), history.string());
         prop_assert_eq!(text.current().revision().get(), history.current() as u64);
@@ -306,9 +347,12 @@ fn an_inverse_is_accepted_only_where_its_run_ended_and_restores_the_text_before_
                     prop_assert_eq!(&now.to_string(), history.string());
                     prop_assert_eq!(now.revision().get(), current as u64);
                     // A run that ends at the text's revision ended where
-                    // the text is, so its inverse is never refused.
+                    // the text is, so its inverse is never refused while
+                    // all of it is kept.
+                    let ends_now =
+                        asked.last == current && 1 <= asked.first && asked.first <= asked.last;
                     prop_assert!(
-                        !(asked.last == current && 1 <= asked.first && asked.first <= asked.last),
+                        !(ends_now && !history.touches_a_drop(asked.first, asked.last)),
                         "the inverse of {}..={} was refused at revision {}",
                         asked.first,
                         asked.last,
@@ -334,6 +378,29 @@ fn an_inverse_is_accepted_wherever_the_text_is_back_where_its_run_ended() {
                 asked.last,
                 asked.history.current()
             );
+            Ok(())
+        })
+    });
+}
+
+#[test]
+fn a_run_that_touches_a_dropped_revision_is_refused_as_not_kept() {
+    check(512, text_and_steps(), |case| {
+        along_inverses(case, |asked| {
+            let (first, last) = (asked.first, asked.last);
+            // Of the runs the text has reached, whatever state it is in.
+            if last <= asked.history.current()
+                && first <= last
+                && asked.history.touches_a_drop(first, last)
+            {
+                prop_assert_eq!(
+                    asked.result.as_ref().err(),
+                    Some(&InverseError::NotKept),
+                    "the inverse of {}..={}",
+                    first,
+                    last
+                );
+            }
             Ok(())
         })
     });
