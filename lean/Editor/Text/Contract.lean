@@ -691,6 +691,31 @@ def logProperties : List Property :=
             (← touching.read) == "aXcdef" &&
             (← touching.changesSince 0) ==
               ⟨0, 2, #[⟨span 1 2 (0, 1) (0, 2), span 1 2 (0, 1) (0, 2)⟩]⟩ },
+    -- "é😀" is two characters and six bytes: "é" is the bytes 1 and 2 of
+    -- "aé😀bc\nd", "😀" the bytes 3 to 6, and "c" the byte 8. A log that
+    -- counted the insert in characters would have everything after it four
+    -- bytes early.
+    { name :=
+        "inserted text of characters of several bytes is counted in bytes: it is as long in an edit and in a trace as its bytes are, and a later change after it is at its byte offsets and columns"
+      holds := do
+        let text ← createText "abc\nd"
+        let first ← text.apply { changes := #[.retain 1, .insert "é😀", .retain 4] } ⟨7⟩
+        -- After the insert, on its row, "c" goes; on the next, "!" is added.
+        let second ← text.apply { changes := #[.retain 8, .delete 1, .retain 2, .insert "!"] } ⟨9⟩
+        return first == 1 && second == 2 && (← text.read) == "aé😀b\nd!" &&
+            (← text.changesSince 0) ==
+              ⟨0, 2,
+                #[⟨span 1 1 (0, 1) (0, 1), span 1 7 (0, 1) (0, 7)⟩,
+                  ⟨span 2 3 (0, 2) (0, 3), span 8 8 (0, 8) (0, 8)⟩,
+                  ⟨span 5 5 (1, 1) (1, 1), span 10 11 (1, 1) (1, 2)⟩]⟩ &&
+            (← text.changesSince 1) ==
+              ⟨1, 2,
+                #[⟨span 8 9 (0, 8) (0, 9), span 8 8 (0, 8) (0, 8)⟩,
+                  ⟨span 11 11 (1, 1) (1, 1), span 10 11 (1, 1) (1, 2)⟩]⟩ &&
+            (← text.trace 0 11) ==
+              #[⟨0, 1, .earlier 0⟩, ⟨1, 7, .entry 1 ⟨7⟩⟩, ⟨7, 10, .earlier 0⟩,
+                ⟨10, 11, .entry 2 ⟨9⟩⟩] &&
+            (← text.trace 3 8) == #[⟨3, 7, .entry 1 ⟨7⟩⟩, ⟨7, 8, .earlier 0⟩] },
     -- Cut down to a 64-bit word, `2 ^ 64` is 0, a revision the text reached.
     { name :=
         "what changed since a revision the text has not reached, and since one no machine word holds, is refused"
