@@ -7,7 +7,17 @@
 //!
 //! # The text model
 //!
-//! - **A text is UTF-8**, always valid.
+//! - **A text is UTF-8**, always valid. The rope, shaping, a parser and a
+//!   Lean string all want that.
+//! - **A byte of a file that is not part of valid UTF-8 is kept as one
+//!   reserved character**, `U+10DC00` plus the byte, and saved as that one
+//!   byte. So the bytes of a file loaded ([`Text::from_bytes`]) and saved
+//!   unchanged ([`Snapshot::to_bytes`]) are identical, for every file. The
+//!   private module `bytes` has the mapping, why it is an escape and not a
+//!   table beside the text, and what it costs.
+//! - **Line endings are kept as they are.** Nothing is normalised on the
+//!   way in or out, so LF, CRLF and mixed files come back byte for byte.
+//!   Which ending a new line gets is the editor's policy, not this crate's.
 //! - **An offset** is a byte offset into that UTF-8. **A position** is an
 //!   offset that is a character boundary within the text, its end included
 //!   ([`Snapshot::is_char_boundary`]). Offsets are the unit the Lean editor
@@ -65,6 +75,8 @@
 //!   is how a language server counts. The library can count it beside this
 //!   one without the stored text changing.
 //! - Transactions, anchors, selections and undo.
+//! - Reading and writing a file, detecting a file's line ending, and
+//!   refusing a binary file: this crate takes bytes and gives bytes.
 //!
 //! # Where an addition goes
 //!
@@ -72,14 +84,17 @@
 //! |---|---|---|
 //! | Another read of the text | A method of [`Snapshot`] | The unit tests beside it, and a property in `tests/properties.rs` that compares it with the same read of a `String` |
 //! | Another way to change the text | A method of [`Text`] that takes `&mut self` | The same, and the revision rule above |
+//! | A rule about what bytes a text loads from or saves as | The private module `bytes` | Its unit tests on named byte strings, and the byte properties in `tests/properties.rs` |
 //! | A bound on what an operation costs | `tests/snapshot_cost.rs`, as a count of bytes allocated | Itself |
 //! | Something more of the rope library | A method of the private `rope::Rope`, in this crate's terms | The tests of the read that needs it |
 
+mod bytes;
 mod point;
 mod rope;
 mod snapshot;
 mod text;
 
+pub use bytes::ByteChunks;
 pub use point::{Point, PointUtf16};
 pub use snapshot::{Chunks, Revision, Snapshot};
 pub use text::{BadRange, Text};

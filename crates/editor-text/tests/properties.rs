@@ -500,3 +500,115 @@ fn chunks_and_slices_agree_with_the_string() {
         },
     );
 }
+
+/// The pieces a generated file is made of: valid text, bytes that are
+/// never valid, sequences cut short, an overlong form, an encoded
+/// surrogate, reserved code points validly encoded, and every line ending.
+const BYTE_FRAGMENTS: &[&[u8]] = &[
+    b"",
+    b"a",
+    b"hello ",
+    b"\n",
+    b"\r\n",
+    b"\r",
+    b"\0",
+    "é".as_bytes(),
+    "€".as_bytes(),
+    "😀".as_bytes(),
+    "\u{FFFD}".as_bytes(),
+    b"\xFF",
+    b"\xFE",
+    b"\x80",
+    b"\xE9",
+    // "€" and "😀" without their last byte.
+    b"\xE2\x82",
+    b"\xF0\x9F\x98",
+    b"\xC0\xAF",
+    b"\xED\xA0\x80",
+    "\u{10DC80}".as_bytes(),
+    "\u{10DCFF}".as_bytes(),
+    // The first three bytes of a reserved code point.
+    b"\xF4\x8D\xB2",
+];
+
+/// The bytes of a file: any bytes at all; or pieces of [`BYTE_FRAGMENTS`];
+/// or, one time in eight, such pieces repeated until the rope holds the
+/// text in many pieces.
+fn file_bytes() -> impl Strategy<Value = Vec<u8>> {
+    let pieces = || vec(select(BYTE_FRAGMENTS), 0..=24).prop_map(|pieces| pieces.concat());
+    prop_oneof![
+        3 => vec(any::<u8>(), 0..=64),
+        4 => pieces(),
+        1 => (pieces(), 20_usize..400).prop_map(|(bytes, times)| bytes.repeat(times)),
+    ]
+}
+
+/// The bytes a string is saved as, character by character: the reference
+/// [`Snapshot::to_bytes`] is compared with. A character in
+/// `U+10DC80..=U+10DCFF` is the one byte it stands for, and any other is
+/// its UTF-8.
+fn saved(text: &str) -> Vec<u8> {
+    let mut bytes = Vec::new();
+    for character in text.chars() {
+        match u32::from(character) {
+            escape @ 0x10_DC80..=0x10_DCFF => bytes.push((escape - 0x10_DC00) as u8),
+            _ => bytes.extend_from_slice(character.encode_utf8(&mut [0; 4]).as_bytes()),
+        }
+    }
+    bytes
+}
+
+#[test]
+fn any_bytes_loaded_and_saved_unchanged_are_identical() {
+    check(1_024, file_bytes(), |bytes| {
+        let text = Text::from_bytes(&bytes);
+        let snapshot = text.snapshot();
+
+        prop_assert_eq!(&snapshot.to_bytes(), &bytes);
+        prop_assert_eq!(&snapshot.byte_chunks().collect::<Vec<_>>().concat(), &bytes);
+        // The text is what the reference saves as the same bytes, so the
+        // two directions are not merely each other's inverse.
+        prop_assert_eq!(&saved(&snapshot.to_string()), &bytes);
+        Ok(())
+    });
+}
+
+#[test]
+fn bytes_that_are_valid_utf8_with_no_reserved_code_point_load_as_that_text() {
+    check(256, initial_text_to_walk(), |string| {
+        // The generated text holds escapes, which are reserved code points;
+        // without them it must load as itself.
+        let string: String = string
+            .chars()
+            .filter(|character| !(0x10_DC80..=0x10_DCFF).contains(&u32::from(*character)))
+            .collect();
+
+        let snapshot = Text::from_bytes(string.as_bytes()).snapshot();
+
+        prop_assert_eq!(&snapshot.to_string(), &string);
+        prop_assert_eq!(&snapshot.to_bytes(), string.as_bytes());
+        Ok(())
+    });
+}
+
+#[test]
+fn an_insert_into_loaded_bytes_saves_as_the_bytes_before_it_the_string_and_the_bytes_after() {
+    check(
+        512,
+        (file_bytes(), any::<usize>(), short_text(6)),
+        |(bytes, position, insert)| {
+            let mut text = Text::from_bytes(&bytes);
+            let string = text.current().to_string();
+            let position = floor(&string, position % (string.len() + 1));
+            let (before, after) = (saved(&string[..position]), saved(&string[position..]));
+            // The position falls between two bytes of the file.
+            prop_assert_eq!([before.as_slice(), after.as_slice()].concat(), bytes);
+
+            prop_assert_eq!(text.replace(position..position, &insert), Ok(()));
+
+            let expected = [before, saved(&insert), after].concat();
+            prop_assert_eq!(text.current().to_bytes(), expected);
+            Ok(())
+        },
+    );
+}
