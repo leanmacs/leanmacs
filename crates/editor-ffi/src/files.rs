@@ -287,6 +287,12 @@ impl Encoded {
 impl FileResult {
     /// The result as it crosses the boundary: its status, its words and its
     /// detail, by the table in the module docs.
+    ///
+    /// The matches on `editor-text`'s [`LoadError`] and [`SaveError`] are
+    /// exhaustive on purpose. This crate must act on every variant of
+    /// both: a refusal with no status and no words of its own would not
+    /// reach Lean as what it is, so a new variant has to be given its row
+    /// of the table here before the crate builds.
     pub fn encoded(&self) -> Encoded {
         match self {
             Self::Loaded { stamp, endings, .. } => {
@@ -351,6 +357,11 @@ fn stamp_words(stamp: Stamp) -> [u64; 3] {
 
 /// A refusal by the file system as it crosses: its kind as a status, and
 /// for the kinds that are not a status of their own, what it says.
+///
+/// The match on `editor-text`'s [`FsErrorKind`] is exhaustive on purpose.
+/// This crate must act on every kind: each crosses as a status this
+/// function chooses, so a new kind has to be given its status here before
+/// the crate builds, and is not sent as a failure without anyone deciding.
 fn refused(error: &FsError) -> Encoded {
     match error.kind {
         FsErrorKind::NotFound => Encoded::bare(FileStatus::NotFound),
