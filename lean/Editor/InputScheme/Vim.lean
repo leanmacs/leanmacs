@@ -55,9 +55,10 @@ is `parse` with the edit compiled, and `scheme` packages it as an
 - **A different operator, a command, or the register prefix, while an
   operator waits resets.**
 - **An unbound key resets the edit begun**: nothing is yielded, and no
-  count, no operator and no prefix are left. A reset keeps which Vim state
-  each view is in, so in a view that entered no state the state is then the
-  scheme's initial state.
+  count, no register, no operator and no prefix are left. A reset keeps
+  which Vim state each view is in and the last change, so where no view
+  entered a state and no edit changed text the state is then the scheme's
+  initial state.
 - **`pending` is every key of the edit begun** (`State.typed`), as chords.
 - **Typed text is a self-insert** (`selfInsert`, the invocation
   `self-insert` with the text as its argument). It is yielded for a key
@@ -132,6 +133,15 @@ A Vim state (normal, insert, a visual state) is a record in a registry
 - **The edit begun is one for the scheme**, not one a view: there is one
   keyboard. A key for another view goes on with it, and is looked up in the
   keymaps of its own view and that view's state.
+
+## The last change
+
+`State.lastChange` is the last edit that changed text, as a value: what dot
+repeat replays. An edit replaces it when it changes text (`Edit.changes`):
+one with an operator that does, or one that runs a command that does, and
+never a move. A reset keeps it, and so does entering a state. Typed text is
+not an edit and does not replace it. It is one for the scheme, not one a
+view. Replaying it is not here.
 
 ## The visual selection
 
@@ -334,6 +344,9 @@ structure State where
   operator : Option Operator := none
   /-- The keymap prefix walked so far, within the edit begun. -/
   walked : List Key := []
+  /-- The last edit that changed text, if one did: what dot repeat
+  replays. -/
+  lastChange : Option Edit := none
   deriving DecidableEq, Repr
 
 /-- The record of the Vim state `view` is in: the registry's record of the
@@ -390,9 +403,9 @@ inductive Parsed where
   deriving DecidableEq, Repr
 
 /-- The state with the edit begun dropped. A reset keeps which Vim state
-each view is in, and nothing else. -/
+each view is in and the last change, and nothing else. -/
 private def State.reset (state : State) : State :=
-  { current := state.current }
+  { current := state.current, lastChange := state.lastChange }
 
 /-- The state with `view` in the Vim state `name`. The initial state has no
 entry, and a name the registry does not have is the initial state's, so
@@ -404,11 +417,13 @@ private def State.enter (states : States) (state : State) (view : ViewId) (name 
     current := if entered == states.initial.name then others else others ++ [(view, entered)] }
 
 /-- The edit begun, completed as `edit` by a key for `view`: the edit begun
-is dropped, and the view enters the Vim state `enters`, if it is one: the
-state the edit names, unless the caller says another. -/
+is dropped, the edit is the last change if it changes text, and the view
+enters the Vim state `enters`, if it is one: the state the edit names,
+unless the caller says another. -/
 private def State.finish (states : States) (view : ViewId) (state : State) (edit : Edit)
     (enters : Option String := edit.enters) : State × Parsed :=
   let next := state.reset
+  let next := if edit.changes then { next with lastChange := some edit } else next
   match enters with
   | some name => (next.enter states view name, .edit edit)
   | none => (next, .edit edit)

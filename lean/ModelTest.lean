@@ -4962,7 +4962,7 @@ def vimStateChecks : List Check :=
         let (both, _) := vimFedFrom (vimFed "i").1 "v" (view := ⟨1⟩)
         pure
           ((vimFed "i").1.current == [(⟨0⟩, "insert")] && (vimFed "i <Escape>").1.current == [] &&
-            decide ((vimFed "i <Escape>").1 = vimInit) &&
+            decide ((vimFed "v <Escape>").1 = vimInit) &&
             (vimFed "v i").1.current == [(⟨0⟩, "insert")] &&
             both.current == [(⟨0⟩, "insert"), (⟨1⟩, "visual")] &&
             (vimFedFrom both "<Escape>").1.current == [(⟨1⟩, "visual")]) },
@@ -5053,7 +5053,7 @@ def vimStateChecks : List Check :=
           (yields == [some (vimRun "visual"), some (vimOperate "delete" "selection" "")] &&
             (vimParsed "v d").2.getLast? ==
               some (.edit (.operate vimDelete .selection none none)) &&
-            decide (state = vimInit) &&
+            decide ({ state with lastChange := none } = vimInit) &&
             (vimFed "v d w").2.getLast? == some (some (vimMove "word"))) },
     { name :=
         "an operator over the selection that names a state leaves the view in that state, and one that names none in the initial state"
@@ -5076,7 +5076,57 @@ def vimStateChecks : List Check :=
         let (state, yields) := vimFed "v 2 w"
         pure
           (yields == [some (vimRun "visual"), none, some (vimMove "word" 2)] &&
-            state.current == [(⟨0⟩, "visual")]) }]
+            state.current == [(⟨0⟩, "visual")]) },
+    { name :=
+        "after d 2 w the scheme's last change is the edit d 2 w parsed to, and a move typed after it leaves the last change as it was"
+      run :=
+        let (state, parsed) := vimParsed "d 2 w"
+        let (moved, _) := vimParsedFrom state "w 3 g g"
+        pure
+          (parsed.getLast? == some (.edit (.operate vimDelete (.motion "word") (some 2) none)) &&
+            state.lastChange.map Vim.Parsed.edit == parsed.getLast? &&
+            moved.lastChange == state.lastChange &&
+            vimInit.lastChange == none &&
+            (vimParsed "w").1.lastChange == none) },
+    { name :=
+        "an edit with an operator that changes no text does not replace the last change, and one with an operator that changes text does"
+      run :=
+        let (state, _) := vimParsed "d 2 w"
+        pure
+          ((vimParsedFrom state "y w").1.lastChange == state.lastChange &&
+            (vimParsed "y w").1.lastChange == none &&
+            (vimParsedFrom state "\" a c c").1.lastChange ==
+              some (.operate vimChange .lines (some 1) (some "a"))) },
+    { name :=
+        "a command that changes text replaces the last change, with its count and register, and one that does not leaves it"
+      run :=
+        let (state, _) := vimParsed "d 2 w"
+        pure
+          ((vimParsedFrom state "3 \" a x").1.lastChange ==
+              some (.run { name := "delete-char", changes := true } (some 3) (some "a")) &&
+            (vimParsedFrom state "u").1.lastChange == state.lastChange &&
+            (vimParsed "i").1.lastChange == some (.run vimInsert none none)) },
+    { name := "an unbound key, a reset edit and entering a state keep the last change"
+      run :=
+        let (state, _) := vimParsed "d 2 w"
+        pure
+          (state.lastChange.isSome && (vimParsedFrom state "z").1.lastChange == state.lastChange &&
+            (vimParsedFrom state "2 d z").1.lastChange == state.lastChange &&
+            (vimParsedFrom state "d u").1.lastChange == state.lastChange &&
+            (vimParsedFrom state "v").1.lastChange == state.lastChange &&
+            (vimParsedFrom state "v <Escape>").1.lastChange == state.lastChange) },
+    { name :=
+        "an operator over the selection is the last change when it changes text, and is not when it changes none"
+      run :=
+        let (state, _) := vimParsed "d 2 w"
+        pure
+          ((vimParsedFrom state "v d").1.lastChange ==
+              some (.operate vimDelete .selection none none) &&
+            (vimParsedFrom state "v y").1.lastChange == state.lastChange) },
+    { name := "typed text does not replace the last change"
+      run :=
+        let (inserting, _) := vimParsed "i"
+        pure ((vimParsedFrom inserting "a b").1.lastChange == inserting.lastChange) }]
 
 /-- The checks that the Vim scheme keeps the scheme contract
 (`Editor/InputScheme/Contract.lean`). -/
