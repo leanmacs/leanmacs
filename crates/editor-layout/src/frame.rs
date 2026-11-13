@@ -517,7 +517,12 @@ mod tests {
         // The rows that fit are counted by their heights: 63 pixels hold
         // the first two.
         tall.rect.height = 63;
-        assert_eq!(frame(&mut layout, tall).rows.len(), 2);
+        assert_eq!(frame(&mut layout, tall.clone()).rows.len(), 2);
+        // The rows query fits them by their heights too, in the fonts of
+        // the last frame that showed the text.
+        let text = tall.text.unwrap();
+        assert_eq!(layout.rows_shown(&text, 40.0, 63.0, 0).unwrap().len(), 2);
+        assert_eq!(layout.rows_shown(&text, 40.0, 64.0, 0).unwrap().len(), 3);
     }
 
     #[test]
