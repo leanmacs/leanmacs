@@ -13,7 +13,9 @@
 use std::fmt::Debug;
 
 use editor_layout::layer::{Bias, Layer};
+use editor_layout::shaper::fake::CellShaper;
 use editor_layout::tabs::{SEGMENT_BYTES, TabLayer};
+use editor_layout::wrap::WrapLayer;
 use editor_text::{Snapshot, Text};
 use proptest::collection::vec;
 use proptest::prelude::*;
@@ -118,4 +120,36 @@ fn a_column_inside_a_tabs_spaces_goes_back_to_the_tab() {
         }
         Ok(())
     });
+}
+
+#[test]
+fn a_position_converted_through_tabs_and_wrap_and_back_is_the_position() {
+    let widths = select(vec![None, Some(1.0), Some(30.0), Some(55.0), Some(400.0)]);
+    check(
+        64,
+        (texts(), 1usize..9, widths),
+        |(text, tab_width, width)| {
+            let shaper = CellShaper::new(10.0, 16.0);
+            let snapshot = Text::from(text.as_str()).snapshot();
+            let tabs = TabLayer::new(snapshot.clone(), tab_width);
+            let mut wrap = WrapLayer::new(tabs.snapshot().clone(), width);
+            for offset in positions(&snapshot) {
+                let tab = tabs.to_layer(offset, Bias::Before).unwrap();
+                wrap.entry(&shaper, tab.row, tab.segment, &[]).unwrap();
+                let point = wrap
+                    .to_layer(tab, Bias::Before)
+                    .ok_or_else(|| TestCaseError::fail(format!("no wrap point at {offset}")))?;
+                let back = wrap
+                    .to_below(point, Bias::Before)
+                    .and_then(|tab| tabs.to_below(tab, Bias::Before));
+                let expected = if inside_a_line_break(&text, offset) {
+                    offset - 1
+                } else {
+                    offset
+                };
+                prop_assert_eq!(back, Some(expected), "at {} ({:?})", offset, point);
+            }
+            Ok(())
+        },
+    );
 }

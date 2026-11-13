@@ -13,8 +13,10 @@
 //!    spaces up to the next tab stop, each row cut into segments of at most
 //!    [`tabs::SEGMENT_BYTES`](crate::tabs::SEGMENT_BYTES); points are
 //!    [`tabs::TabPoint`](crate::tabs::TabPoint).
-//! 2. The wrap layer (next): each segment shaped and broken into visual
-//!    lines at the view's width; its snapshot is the per-text line cache.
+//! 2. [`wrap::WrapLayer`](crate::wrap::WrapLayer): each segment shaped and
+//!    broken into visual lines at the view's width; its snapshot is the
+//!    per-text line store; points are
+//!    [`wrap::WrapPoint`](crate::wrap::WrapPoint).
 //!
 //! # Adding a layer
 //!

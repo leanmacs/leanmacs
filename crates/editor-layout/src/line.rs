@@ -58,16 +58,19 @@ pub struct Source<'a> {
     pub fonts: &'a [(Range<usize>, FontId)],
 }
 
-/// The font runs of `source` in its expanded text: the default font
-/// wherever no span names another, neighbours of one font made one run.
-/// An empty text has one empty run, in the font of a span at its start.
-pub fn font_runs(source: &Source<'_>) -> Vec<FontRun> {
-    let len = source.bytes.len();
-    let expanded = &source.expanded;
+/// The font runs of a segment `len` bytes long whose text expanded is
+/// `expanded`, under the spans `fonts` (bytes relative to the segment's
+/// start): the default font wherever no span names another, neighbours of
+/// one font made one run. An empty text has one empty run, in the font of
+/// a span at its start.
+pub fn font_runs(
+    expanded: &Expanded,
+    len: usize,
+    fonts: &[(Range<usize>, FontId)],
+) -> Vec<FontRun> {
     let text_len = expanded.text().len();
     if len == 0 {
-        let font = source
-            .fonts
+        let font = fonts
             .iter()
             .rev()
             .find(|(bytes, _)| bytes.start == 0)
@@ -75,8 +78,7 @@ pub fn font_runs(source: &Source<'_>) -> Vec<FontRun> {
         return vec![FontRun { bytes: 0..0, font }];
     }
     // The spans in the expanded text, clipped to it.
-    let spans: Vec<(Range<usize>, FontId)> = source
-        .fonts
+    let spans: Vec<(Range<usize>, FontId)> = fonts
         .iter()
         .filter(|(bytes, _)| bytes.start < len && bytes.start < bytes.end)
         .map(|(bytes, font)| {
@@ -116,7 +118,7 @@ pub fn lay_out<S: Shaper>(
     source: Source<'_>,
     width: Option<f32>,
 ) -> LineEntry<S::Shaped> {
-    let runs = font_runs(&source);
+    let runs = font_runs(&source.expanded, source.bytes.len(), source.fonts);
     let shaped = Arc::new(shaper.shape(&ShapeInput {
         text: source.expanded.text().to_owned(),
         runs: runs.clone(),
@@ -170,6 +172,16 @@ impl<L> LineEntry<L> {
         &self.runs
     }
 
+    /// Whether the spans `fonts` (bytes relative to the segment's start)
+    /// give the font runs it was shaped with.
+    pub fn shaped_with(&self, fonts: &[(Range<usize>, FontId)]) -> bool {
+        let default = |runs: &[FontRun]| runs.iter().all(|run| run.font == FontId::default());
+        if fonts.is_empty() {
+            return default(&self.runs);
+        }
+        font_runs(&self.expanded, self.bytes.len(), fonts) == self.runs
+    }
+
     /// The shaper's generation it was shaped under.
     pub fn generation(&self) -> u64 {
         self.generation
@@ -218,7 +230,11 @@ impl<L> LineEntry<L> {
     /// The visual line that holds `offset`, relative to the row's start: a
     /// position at a wrap is in the later line.
     pub fn line_of(&self, offset: usize) -> usize {
-        let column = self.column(offset);
+        self.line_of_column(self.column(offset))
+    }
+
+    /// The visual line that holds the expanded column `column`.
+    pub fn line_of_column(&self, column: usize) -> usize {
         self.lines
             .partition_point(|line| line.bytes.start <= column)
             .saturating_sub(1)
@@ -226,7 +242,7 @@ impl<L> LineEntry<L> {
 
     /// The expanded column of `offset`, relative to the row's start, kept
     /// within the segment.
-    fn column(&self, offset: usize) -> usize {
+    pub fn column(&self, offset: usize) -> usize {
         let offset = offset.clamp(self.bytes.start, self.bytes.end);
         self.expanded.column(offset - self.bytes.start)
     }
@@ -235,10 +251,14 @@ impl<L> LineEntry<L> {
     /// `index`: the left edge of the glyph that draws it, or the line's
     /// width past its last glyph.
     pub fn x_of(&self, index: usize, offset: usize) -> f32 {
+        self.x_of_column(index, self.column(offset))
+    }
+
+    /// The x of the expanded column `column` on visual line `index`.
+    pub fn x_of_column(&self, index: usize, column: usize) -> f32 {
         let Some(line) = self.lines.get(index) else {
             return 0.0;
         };
-        let column = self.column(offset);
         if column >= line.bytes.end {
             return line.width;
         }
@@ -247,6 +267,18 @@ impl<L> LineEntry<L> {
             .rev()
             .find(|glyph| glyph.cluster <= column)
             .map_or(0.0, |glyph| glyph.x)
+    }
+
+    /// The expanded column on visual line `index` at `x`: the cluster of
+    /// the glyph `x` is in, or the line's end past its last glyph.
+    pub fn column_at(&self, index: usize, x: f32) -> Option<usize> {
+        let line = self.lines.get(index)?;
+        Some(
+            line.glyphs
+                .iter()
+                .find(|glyph| x < glyph.x + glyph.advance)
+                .map_or(line.bytes.end, |glyph| glyph.cluster),
+        )
     }
 
     /// The offset, relative to the row's start, on visual line `index`
