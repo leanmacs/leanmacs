@@ -104,16 +104,19 @@ snapshot). Lean's own interface for small reads and writes, and watching,
 are not built.
 
 - **The port.** `editor_text::fs::Fs`, defined by `editor-text` in its own
-  terms, with six methods. `stat` says what is at a path, following links,
+  terms, with seven methods. `stat` says what is at a path, following links,
   and is none for nothing; it is the one way time and metadata reach the
   core, which reads no clock. `read` gives a file's bytes whole. `write`
   makes a *new* file from pieces, with exactly the permissions given
   whatever the process's mask, or the platform's default, has it on disk
   before it returns, and is refused where anything is, a link included.
   `rename` puts a file in place of another in one step. `remove` removes a
-  file. `resolve` follows every link in a path. An error is a kind the core
-  decides on (not found, denied, exists, not a file, other) and the
-  platform's words.
+  file. `resolve` follows every link in a path, and is refused as not found
+  for nothing and for a link that names nothing alike. `read_link` gives
+  the path a link holds, as the link holds it and following nothing, and
+  none for what is no link: it is how the core tells a link to nothing from
+  nothing. An error is a kind the core decides on (not found, denied,
+  exists, not a file, other) and the platform's words.
 - **The fake.** `editor_text::fs::FakeFs`, published and not test-only: a
   file system in memory whose time only a test moves, which records every
   call, fails when a test says so, and runs a test's closure between two
@@ -124,8 +127,10 @@ are not built.
   method for (a link made, a modification time and permissions set and
   read), so its caller supplies them as a `Ground`: the truth the port's
   answers are compared with. An implementation whose `write` and `stat`
-  agree on permissions the file does not have is refused. The check is
-  shown to bite by ten fakes written to break one rule each.
+  agree on permissions the file does not have is refused. What the port
+  says of a link to nothing is among the rules: its stat is none, resolving
+  it is refused as not found, and it is read as the path it holds. The
+  check is shown to bite by fourteen fakes written to break one rule each.
 - **The adapter.** `editor-fs-std`, a crate of its own: `StdFs` over
   `std::fs`, Unix only, made by the one constructor `StdFs::system()`. A
   write is `create_new` with the permissions set on the open file, then
@@ -144,7 +149,9 @@ are not built.
   stat made before the read.
 - **Save** (`editor_text::file::save`) saves a snapshot, a rope piece at a
   time, in eight steps: refuse a path that is not absolute; resolve it, so a
-  link's file is the one replaced; stat the target, refuse what is not a
+  link's file is the one replaced, and where it resolves to nothing read
+  the link it holds, so the file a link to nothing names is the one made
+  and the link stays; stat the target, refuse what is not a
   file, check it against what the caller expects, and keep its permissions;
   write a temporary file beside it, `.<name>.<n>.tmp`, passing over a name
   that is taken, for at most 32 names; stop if the caller cancelled; stat
@@ -154,7 +161,11 @@ are not built.
   bits, and every byte. **Not kept**, since the file is replaced by a
   rename: other hard links, a foreign owner, the special mode bits, extended
   attributes. A directory that cannot be written refuses the save; there is
-  no fallback to writing in place.
+  no fallback to writing in place. **A link to nothing** is followed to the
+  file it names, which is made in its own directory, with the link left as
+  it was: a path that is not absolute is read from the link's directory,
+  and links to nothing are followed one after another for at most eight,
+  after which the save is refused as not a file.
 - **Noticing a change on disk.** A stamp is compared for equality, not for
   "newer". A save is told what to expect (the stamp a load or a save
   returned, no file, or whatever, which is the override), and one that

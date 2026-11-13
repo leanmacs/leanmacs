@@ -5,7 +5,8 @@
 //! stopping at the first that is broken:
 //!
 //! - **Nothing.** The stat of nothing is none; reading, removing and
-//!   resolving nothing are refused as [`FsErrorKind::NotFound`].
+//!   resolving nothing are refused as [`FsErrorKind::NotFound`]; and
+//!   nothing is read as no link.
 //! - **A file reads as what it was written from.** A file reads as the
 //!   pieces it was written from, joined (an empty piece, a CRLF, bytes that
 //!   are not UTF-8 and a four-byte character among them), and its stat says
@@ -28,9 +29,15 @@
 //! - **A directory.** Its stat says it is one, and reading it is refused as
 //!   [`FsErrorKind::NotAFile`].
 //! - **Links.** A link resolves to the file it names and a file to itself;
-//!   a link stats and reads as its file; writing where a link is is refused
-//!   as [`FsErrorKind::Exists`] and makes nothing, whether the link names a
-//!   file or names nothing.
+//!   a link stats and reads as its file; writing where a link to a file is
+//!   is refused as [`FsErrorKind::Exists`] and leaves the file; the link is
+//!   read as the path it holds, and the file as no link.
+//! - **A link to nothing.** Its stat is none and resolving it is refused as
+//!   [`FsErrorKind::NotFound`], as for nothing; it is read as the path it
+//!   holds, which is how a caller tells it from nothing; writing where it
+//!   is is refused as [`FsErrorKind::Exists`] and does not make what it
+//!   names. And a link that holds a path that is not absolute is read as
+//!   it holds it.
 //! - **A file is removed**, and its stat is then none.
 //!
 //! # The ground
@@ -147,6 +154,16 @@ pub enum Violation {
     /// Writing where a link to nothing is was not refused as existing, or
     /// made what the link names.
     MadeWhatALinkNames,
+    /// A link was not read as the path it holds: one that names a file,
+    /// one that names nothing, or one that holds a path that is not
+    /// absolute.
+    LinkNotRead,
+    /// What is no link, nothing or a file, was not read as no link.
+    NoLinkReadAsOne,
+    /// The stat of a link to nothing was not none.
+    StatOfALinkToNothing,
+    /// Resolving a link to nothing was not refused as not found.
+    ResolvedALinkToNothing,
     /// A removed file was still there.
     NotRemoved,
 }
@@ -202,6 +219,12 @@ impl fmt::Display for Violation {
             Self::MadeWhatALinkNames => {
                 "writing where a link to nothing is was not refused as existing, or made what the link names"
             }
+            Self::LinkNotRead => "a link was not read as the path it holds",
+            Self::NoLinkReadAsOne => "what is no link was not read as no link",
+            Self::StatOfALinkToNothing => "the stat of a link to nothing was not none",
+            Self::ResolvedALinkToNothing => {
+                "resolving a link to nothing was not refused as not found"
+            }
             Self::NotRemoved => "a removed file was still there",
         })
     }
@@ -237,6 +260,7 @@ pub fn check(fs: &dyn Fs, ground: &dyn Ground) -> Result<(), Violation> {
     a_rename_replaces(fs, ground, root)?;
     a_directory(fs, root)?;
     links(fs, ground, root, &file, &joined)?;
+    a_link_to_nothing(fs, ground, root)?;
 
     must("removing a file", fs.remove(&file))?;
     if must("the stat of a removed file", fs.stat(&file))?.is_some() {
@@ -293,6 +317,9 @@ fn nothing(fs: &dyn Fs, root: &Path) -> Result<(), Violation> {
     }
     if !refused_as(&fs.resolve(&missing), FsErrorKind::NotFound) {
         return Err(Violation::ResolveOfNothing);
+    }
+    if fs.read_link(&missing) != Ok(None) {
+        return Err(Violation::NoLinkReadAsOne);
     }
     Ok(())
 }
@@ -424,8 +451,9 @@ fn a_directory(fs: &dyn Fs, root: &Path) -> Result<(), Violation> {
 }
 
 /// A link resolves to its file and a file to itself; a link stats and
-/// reads as its file; a write where a link is is refused and makes
-/// nothing, whether the link names a file or nothing.
+/// reads as its file; a write where a link to a file is is refused and
+/// leaves the file; the link is read as the path it holds, and the file as
+/// no link.
 fn links(
     fs: &dyn Fs,
     ground: &dyn Ground,
@@ -450,8 +478,30 @@ fn links(
     if !refused_as(&over, FsErrorKind::Exists) || !reads(fs, file, joined)? {
         return Err(Violation::WroteThroughALink);
     }
+    if fs.read_link(&link).ok().flatten().as_deref() != Some(file) {
+        return Err(Violation::LinkNotRead);
+    }
+    if fs.read_link(file) != Ok(None) {
+        return Err(Violation::NoLinkReadAsOne);
+    }
+    Ok(())
+}
+
+/// A link to nothing stats as nothing, is not resolved, and is read as the
+/// path it holds; a write where it is is refused and makes nothing. And a
+/// link is read as it is held, when what it holds is not absolute.
+fn a_link_to_nothing(fs: &dyn Fs, ground: &dyn Ground, root: &Path) -> Result<(), Violation> {
     let (dangling, nowhere) = (root.join("dangling"), root.join("nowhere"));
     grounded(ground.link(&dangling, &nowhere))?;
+    if !matches!(fs.stat(&dangling), Ok(None)) {
+        return Err(Violation::StatOfALinkToNothing);
+    }
+    if !refused_as(&fs.resolve(&dangling), FsErrorKind::NotFound) {
+        return Err(Violation::ResolvedALinkToNothing);
+    }
+    if fs.read_link(&dangling).ok().flatten().as_deref() != Some(nowhere.as_path()) {
+        return Err(Violation::LinkNotRead);
+    }
     let over = write(fs, &dangling, &[b"through"], None);
     let made = must(
         "the stat of what a link to nothing names",
@@ -459,6 +509,12 @@ fn links(
     )?;
     if !refused_as(&over, FsErrorKind::Exists) || made.is_some() {
         return Err(Violation::MadeWhatALinkNames);
+    }
+    // As the link holds it: a path that is not absolute is not made so.
+    let (relative, held) = (root.join("relative"), Path::new("nowhere"));
+    grounded(ground.link(&relative, held))?;
+    if fs.read_link(&relative).ok().flatten().as_deref() != Some(held) {
+        return Err(Violation::LinkNotRead);
     }
     Ok(())
 }
@@ -497,6 +553,22 @@ mod tests {
         RenameLeavesTheOldName,
         /// A resolve answers the path it was given.
         ResolveIgnoresLinks,
+        /// A link that names nothing is read as no link.
+        ReadsALinkToNothingAsNoLink,
+        /// What is no link is read as a link to itself.
+        ReadsWhatIsNoLinkAsALink,
+        /// The stat of a link to nothing says something is there.
+        StatsALinkToNothing,
+        /// A resolve of a link to nothing answers the path the link names.
+        ResolvesALinkToNothing,
+    }
+
+    impl Broken {
+        /// The path the link at `path` names, when it names nothing.
+        fn names_nothing(&self, path: &Path) -> Option<PathBuf> {
+            let named = self.inner.link_target(path)?;
+            matches!(self.inner.stat(&named), Ok(None)).then_some(named)
+        }
     }
 
     /// The fake with one fault.
@@ -512,6 +584,14 @@ mod tests {
 
     impl Fs for Broken {
         fn stat(&self, path: &Path) -> Result<Option<Stat>, FsError> {
+            if self.fault == Fault::StatsALinkToNothing && self.names_nothing(path).is_some() {
+                return Ok(Some(Stat {
+                    kind: Kind::Other,
+                    size: 0,
+                    modified: Modified::default(),
+                    permissions: FakeFs::DEFAULT_PERMISSIONS,
+                }));
+            }
             let mut stat = self.inner.stat(path)?;
             if let Some(stat) = &mut stat {
                 if self.fault == Fault::StatsTheWrongSize && stat.kind == Kind::File {
@@ -598,7 +678,21 @@ mod tests {
             if self.fault == Fault::ResolveIgnoresLinks && self.inner.stat(path)?.is_some() {
                 return Ok(path.to_path_buf());
             }
+            if self.fault == Fault::ResolvesALinkToNothing
+                && let Some(named) = self.names_nothing(path)
+            {
+                return Ok(named);
+            }
             self.inner.resolve(path)
+        }
+
+        fn read_link(&self, path: &Path) -> Result<Option<PathBuf>, FsError> {
+            let held = self.inner.read_link(path)?;
+            Ok(match self.fault {
+                Fault::ReadsALinkToNothingAsNoLink if self.names_nothing(path).is_some() => None,
+                Fault::ReadsWhatIsNoLinkAsALink => held.or_else(|| Some(path.to_path_buf())),
+                _ => held,
+            })
         }
     }
 
@@ -711,6 +805,38 @@ mod tests {
         assert_eq!(
             verdict_on(Fault::ResolveIgnoresLinks),
             Err(Violation::LinkNotResolved)
+        );
+    }
+
+    #[test]
+    fn a_read_of_a_link_to_nothing_that_says_no_link_is_there_is_refused() {
+        assert_eq!(
+            verdict_on(Fault::ReadsALinkToNothingAsNoLink),
+            Err(Violation::LinkNotRead)
+        );
+    }
+
+    #[test]
+    fn a_read_of_what_is_no_link_that_says_a_link_is_there_is_refused() {
+        assert_eq!(
+            verdict_on(Fault::ReadsWhatIsNoLinkAsALink),
+            Err(Violation::NoLinkReadAsOne)
+        );
+    }
+
+    #[test]
+    fn a_stat_of_a_link_to_nothing_that_says_something_is_there_is_refused() {
+        assert_eq!(
+            verdict_on(Fault::StatsALinkToNothing),
+            Err(Violation::StatOfALinkToNothing)
+        );
+    }
+
+    #[test]
+    fn a_resolve_of_a_link_to_nothing_that_is_not_refused_is_refused() {
+        assert_eq!(
+            verdict_on(Fault::ResolvesALinkToNothing),
+            Err(Violation::ResolvedALinkToNothing)
         );
     }
 
@@ -870,6 +996,22 @@ mod tests {
             (
                 Violation::MadeWhatALinkNames,
                 "writing where a link to nothing is was not refused as existing, or made what the link names",
+            ),
+            (
+                Violation::LinkNotRead,
+                "a link was not read as the path it holds",
+            ),
+            (
+                Violation::NoLinkReadAsOne,
+                "what is no link was not read as no link",
+            ),
+            (
+                Violation::StatOfALinkToNothing,
+                "the stat of a link to nothing was not none",
+            ),
+            (
+                Violation::ResolvedALinkToNothing,
+                "resolving a link to nothing was not refused as not found",
             ),
             (Violation::NotRemoved, "a removed file was still there"),
         ];

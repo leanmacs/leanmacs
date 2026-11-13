@@ -51,7 +51,7 @@ disallowed-methods = [
   { path = "std::fs::metadata", reason = "files are reached through the `Fs` port (`Fs::stat`)" },
   { path = "std::fs::read", reason = "files are reached through the `Fs` port (`Fs::read`)" },
   { path = "std::fs::read_dir", reason = "files are reached through the `Fs` port" },
-  { path = "std::fs::read_link", reason = "files are reached through the `Fs` port (`Fs::resolve`)" },
+  { path = "std::fs::read_link", reason = "files are reached through the `Fs` port (`Fs::read_link`)" },
   { path = "std::fs::read_to_string", reason = "files are reached through the `Fs` port (`Fs::read`)" },
   { path = "std::fs::remove_dir", reason = "files are reached through the `Fs` port" },
   { path = "std::fs::remove_dir_all", reason = "files are reached through the `Fs` port" },
@@ -68,7 +68,7 @@ disallowed-methods = [
   { path = "std::path::Path::is_symlink", reason = "the disk is asked through the `Fs` port" },
   { path = "std::path::Path::metadata", reason = "the disk is asked through the `Fs` port (`Fs::stat`)" },
   { path = "std::path::Path::read_dir", reason = "the disk is asked through the `Fs` port" },
-  { path = "std::path::Path::read_link", reason = "a path is resolved through the `Fs` port (`Fs::resolve`)" },
+  { path = "std::path::Path::read_link", reason = "a link is read through the `Fs` port (`Fs::read_link`)" },
   { path = "std::path::Path::symlink_metadata", reason = "the disk is asked through the `Fs` port (`Fs::stat`)" },
   { path = "std::path::Path::try_exists", reason = "the disk is asked through the `Fs` port (`Fs::stat`)" },
   # The directories of the machine.

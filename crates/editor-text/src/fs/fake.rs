@@ -23,9 +23,11 @@
 //!   held, so it may change files, or block the thread that is asking.
 //!
 //! What it does not model: a link in the middle of a path (a link is
-//! followed only where it is the whole path), permissions that refuse
-//! anything (a test injects the refusal), and directories that are removed.
-//! Paths are compared as they are written; nothing is normalised.
+//! followed only where it is the whole path), a link that holds a path
+//! that is not absolute (it is read as it is held, and followed as if the
+//! path were absolute, so to nothing), permissions that refuse anything (a
+//! test injects the refusal), and directories that are removed. Paths are
+//! compared as they are written; nothing is normalised.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -50,6 +52,8 @@ pub enum Op {
     Remove,
     /// [`Fs::resolve`].
     Resolve,
+    /// [`Fs::read_link`].
+    ReadLink,
 }
 
 /// A call the fake received ([`FakeFs::calls`]), with what it was asked.
@@ -67,6 +71,8 @@ pub enum Call {
     Remove(PathBuf),
     /// [`Fs::resolve`] of this path.
     Resolve(PathBuf),
+    /// [`Fs::read_link`] of this path.
+    ReadLink(PathBuf),
 }
 
 impl Call {
@@ -79,6 +85,7 @@ impl Call {
             Self::Rename(..) => Op::Rename,
             Self::Remove(_) => Op::Remove,
             Self::Resolve(_) => Op::Resolve,
+            Self::ReadLink(_) => Op::ReadLink,
         }
     }
 }
@@ -551,6 +558,14 @@ impl State {
             Err(refused(FsErrorKind::NotFound, path))
         }
     }
+
+    /// [`Fs::read_link`].
+    fn read_link(&self, path: &Path) -> Option<PathBuf> {
+        match self.nodes.get(path) {
+            Some(Node::Link(to)) => Some(to.clone()),
+            _ => None,
+        }
+    }
 }
 
 /// A refusal of `kind` that names `path`, in the fake's own words.
@@ -592,6 +607,12 @@ impl Fs for FakeFs {
     fn resolve(&self, path: &Path) -> Result<PathBuf, FsError> {
         self.call(Call::Resolve(path.to_path_buf()), |state| {
             state.resolve(path)
+        })
+    }
+
+    fn read_link(&self, path: &Path) -> Result<Option<PathBuf>, FsError> {
+        self.call(Call::ReadLink(path.to_path_buf()), |state| {
+            Ok(state.read_link(path))
         })
     }
 }
@@ -931,6 +952,32 @@ mod tests {
             Err(FsErrorKind::Exists)
         );
         assert_eq!(fs.stat(Path::new("/dir/nothing")), Ok(None));
+    }
+
+    #[test]
+    fn a_link_is_read_as_the_path_it_holds_and_what_is_no_link_as_none() {
+        let fs = FakeFs::new();
+        fs.file("/dir/file", b"a");
+        fs.link("/dir/link", "/dir/file");
+        fs.link("/dir/dangling", "/dir/nothing");
+        fs.link("/dir/relative", "file");
+        fs.link("/dir/first", "/dir/link");
+        let held = |path: &str| fs.read_link(Path::new(path));
+
+        assert_eq!(held("/dir/link"), Ok(Some("/dir/file".into())));
+        assert_eq!(held("/dir/dangling"), Ok(Some("/dir/nothing".into())));
+        // As the link holds it: it is not made absolute.
+        assert_eq!(held("/dir/relative"), Ok(Some("file".into())));
+        // One link, and not the links after it.
+        assert_eq!(held("/dir/first"), Ok(Some("/dir/link".into())));
+        // What is no link: a file, a directory, nothing, the root.
+        assert_eq!(held("/dir/file"), Ok(None));
+        assert_eq!(held("/dir"), Ok(None));
+        assert_eq!(held("/dir/nothing"), Ok(None));
+        assert_eq!(held("/nowhere/nothing"), Ok(None));
+        assert_eq!(held("/"), Ok(None));
+        assert_eq!(fs.calls().last(), Some(&Call::ReadLink("/".into())));
+        assert_eq!(Call::ReadLink("/".into()).op(), Op::ReadLink);
     }
 
     #[test]

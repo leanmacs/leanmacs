@@ -28,7 +28,12 @@
 //! - **[`Fs::remove`]** removes the file at a path.
 //! - **[`Fs::resolve`]** gives the path of what a path names once every
 //!   link in it is followed, and is refused as [`FsErrorKind::NotFound`]
-//!   when nothing is there.
+//!   when nothing is there, which a link that names nothing is.
+//! - **[`Fs::read_link`]** gives the path the link at a path holds, as the
+//!   link holds it and following nothing, whether the link names something
+//!   or nothing; and none for what is no link, nothing included. It is how
+//!   a caller finds the file a link to nothing names, which `resolve`
+//!   cannot say.
 //! - **An error is a kind and a detail** ([`FsError`]). The kind is what
 //!   the crate decides on; the detail is the platform's words, for a
 //!   person.
@@ -124,8 +129,15 @@ pub trait Fs: Send + Sync {
     /// The path of what `path` names once every link in it is followed. A
     /// file that is no link resolves to itself, when the directory it is in
     /// is reached through no link. Refused as [`FsErrorKind::NotFound`]
-    /// when nothing is there.
+    /// when nothing is there, a link that names nothing included.
     fn resolve(&self, path: &Path) -> Result<PathBuf, FsError>;
+
+    /// The path the link at `path` holds: what the link names, as it is
+    /// written in the link, so a path that is not absolute is to be read
+    /// from the directory the link is in. Nothing is followed: the link may
+    /// name a file, another link, or nothing. `None` when what is at `path`
+    /// is not a link, and when nothing is there.
+    fn read_link(&self, path: &Path) -> Result<Option<PathBuf>, FsError>;
 }
 
 /// What is at a path ([`Fs::stat`]).

@@ -60,8 +60,12 @@
 //!
 //! 1. A path that is not absolute is refused ([`SaveError::Relative`]).
 //! 2. The path is resolved: the file a link names is the one replaced, and
-//!    the link stays. Nothing there is not an error: the path is then its
-//!    own target.
+//!    the link stays. A path that resolves to nothing is asked what link
+//!    it holds. With none, nothing is there, which is not an error: the
+//!    path is then its own target. With one, the link names a file that is
+//!    not there yet, and the path it holds is the one looked at next, so
+//!    **the file the link names is the one made, and the link stays**
+//!    (below).
 //! 3. The target's stat is taken. Something that is not a file is refused
 //!    ([`SaveError::NotAFile`]); the file is checked against what the
 //!    caller expects (below); its permissions are kept for the next step.
@@ -95,6 +99,18 @@
 //!   set-group-id and sticky bits, extended attributes and access-control
 //!   lists. A file whose permissions deny writing is replaced like any
 //!   other, since a rename needs only the directory.
+//! - **A link to nothing.** A save through a link whose file is not there
+//!   makes the file the link names, in that file's directory, and leaves
+//!   the link: it never puts a file where the link was. The port's
+//!   `resolve` says the same of nothing and of a link to nothing, so the
+//!   save asks the port what the path holds (`read_link`), and reads a
+//!   path that is not absolute from the link's own directory. Links to
+//!   nothing are followed one after another, for at most [`LINKS`]: a path
+//!   that is still a link to nothing then is refused
+//!   ([`SaveError::NotAFile`]), and nothing is written. What the save
+//!   expects is checked against the file the link names, so a link to
+//!   nothing meets "no file". A link into a directory that is not there is
+//!   refused as any save into one is, and the link stays.
 //! - **A directory that cannot be written refuses the save**, with the file
 //!   system's error. There is no fallback to writing the file in place:
 //!   that is the half-written file this is for avoiding.
@@ -381,13 +397,20 @@ impl Expect {
 /// ([`SaveError::NoTemporaryName`]).
 pub const TEMPORARY_NAMES: u32 = 32;
 
+/// How many links to nothing a save follows, one after another, to find the
+/// file to make. A path that is still a link to nothing after that many is
+/// refused ([`SaveError::NotAFile`]).
+pub const LINKS: u32 = 8;
+
 /// Why a file was not saved. Unless it says otherwise, the file is as it
 /// was and no temporary file is left.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SaveError {
     /// The path is not absolute. The file system was not asked.
     Relative,
-    /// What is at the path is not a file.
+    /// What is at the path is not a file: a directory, something that is
+    /// neither, or a link that is followed through more than [`LINKS`]
+    /// links without reaching a file or a place for one.
     NotAFile,
     /// The file is not as the caller expected ([`Expect`]): it changed on
     /// disk, appeared, or is gone. Nothing was written over it. It is also
@@ -450,13 +473,7 @@ pub fn save(
     if !path.is_absolute() {
         return Err(SaveError::Relative);
     }
-    // The file a link names is the one replaced, and the link stays.
-    // Nothing there is not an error: the path is then its own target.
-    let target = match fs.resolve(path) {
-        Ok(target) => target,
-        Err(error) if error.kind == FsErrorKind::NotFound => path.to_path_buf(),
-        Err(error) => return Err(SaveError::Fs(error)),
-    };
+    let target = target_of(fs, path)?;
     let (Some(directory), Some(name)) = (target.parent(), target.file_name()) else {
         // The root, or a path that ends in `..`: no file can be there.
         return Err(SaveError::NotAFile);
@@ -475,6 +492,40 @@ pub fn save(
         Ok(Some(stat)) => Ok(Stamp::of(&stat)),
         Ok(None) => Err(SaveError::Changed { found: None }),
         Err(error) => Err(SaveError::Fs(error)),
+    }
+}
+
+/// The path of the file a save to `path` replaces, or makes: the file a
+/// link names, so that the link stays.
+///
+/// A path that resolves is the file it resolves to. One that resolves to
+/// nothing is asked what link it holds: with none, nothing is there and the
+/// path is its own target; with one, the path the link holds, read from
+/// the link's directory, is looked at the same way, for [`LINKS`] links.
+fn target_of(fs: &dyn Fs, path: &Path) -> Result<PathBuf, SaveError> {
+    let mut at = path.to_path_buf();
+    let mut followed = 0;
+    loop {
+        match fs.resolve(&at) {
+            Ok(target) => return Ok(target),
+            Err(error) if error.kind == FsErrorKind::NotFound => {}
+            Err(error) => return Err(SaveError::Fs(error)),
+        }
+        // The port's `resolve` says the same of nothing and of a link that
+        // names nothing; what the path holds tells them apart.
+        let Some(held) = fs.read_link(&at).map_err(SaveError::Fs)? else {
+            return Ok(at);
+        };
+        if followed == LINKS {
+            return Err(SaveError::NotAFile);
+        }
+        followed += 1;
+        // A path that is not absolute is read from the link's directory;
+        // joining an absolute one gives it back.
+        at = match at.parent() {
+            Some(directory) => directory.join(held),
+            None => held,
+        };
     }
 }
 
@@ -1113,12 +1164,14 @@ mod tests {
             assert_eq!(saved, Err(SaveError::Changed { found }), "{name}");
             assert_eq!(fs.bytes(PATH), held, "{name}");
             assert_eq!(left_over(&fs), Vec::<std::path::PathBuf>::new(), "{name}");
-            // A refusal costs one stat: nothing was written.
-            assert_eq!(
-                fs.calls()[calls_before..],
-                [Call::Resolve(PATH.into()), Call::Stat(PATH.into())],
-                "{name}"
-            );
+            // A refusal costs one stat: nothing was written. Where no file
+            // is, the save has first asked whether a link is there.
+            let mut calls = vec![Call::Resolve(PATH.into())];
+            if held.is_none() {
+                calls.push(Call::ReadLink(PATH.into()));
+            }
+            calls.push(Call::Stat(PATH.into()));
+            assert_eq!(fs.calls()[calls_before..], calls, "{name}");
         }
     }
 
@@ -1199,6 +1252,199 @@ mod tests {
         assert_eq!(
             fs.paths(),
             ["/dir", PATH, "/elsewhere", "/elsewhere/link.txt"].map(std::path::PathBuf::from)
+        );
+    }
+
+    /// Where the tests' link is.
+    const LINK: &str = "/elsewhere/link.txt";
+
+    /// A fake with the directory of [`PATH`] and no file in it, and a link
+    /// at [`LINK`] that names [`PATH`]: a link to nothing.
+    fn fake_with_a_link_to_nothing() -> FakeFs {
+        let fs = FakeFs::new();
+        fs.set_now(THEN);
+        fs.directory("/dir");
+        fs.link(LINK, PATH);
+        fs
+    }
+
+    #[test]
+    fn a_save_through_a_link_to_nothing_makes_the_file_the_link_names_and_keeps_the_link() {
+        for expect in [Expect::Absent, Expect::Whatever] {
+            let fs = fake_with_a_link_to_nothing();
+
+            let saved = save_new(&fs, LINK, expect);
+
+            assert_eq!(
+                saved,
+                Ok(Stamp {
+                    modified: THEN,
+                    size: size(NEW_BYTES)
+                }),
+                "{expect:?}"
+            );
+            assert_eq!(fs.bytes(PATH).as_deref(), Some(NEW_BYTES), "{expect:?}");
+            assert_eq!(fs.link_target(LINK), Some(PATH.into()), "{expect:?}");
+            // The temporary file was beside the file the link names, not
+            // beside the link, and was written as a new file's is.
+            assert!(
+                fs.calls().contains(&Call::Write(TEMPORARY.into(), None)),
+                "{expect:?}"
+            );
+            assert!(
+                fs.calls()
+                    .contains(&Call::Rename(TEMPORARY.into(), PATH.into())),
+                "{expect:?}"
+            );
+            // The link, the file it names and nothing else: no temporary
+            // file is left.
+            assert_eq!(
+                fs.paths(),
+                ["/dir", PATH, "/elsewhere", LINK].map(std::path::PathBuf::from),
+                "{expect:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_save_asks_what_a_link_holds_only_where_the_path_resolves_to_nothing() {
+        let fs = fake_with_a_link_to_nothing();
+
+        let saved = save_new(&fs, LINK, Expect::Absent);
+
+        assert!(saved.is_ok(), "{saved:?}");
+        // The link resolves to nothing and is read; so is the path it
+        // holds, which is no link, and so is the file to make.
+        assert_eq!(
+            fs.calls()[..5],
+            [
+                Call::Resolve(LINK.into()),
+                Call::ReadLink(LINK.into()),
+                Call::Resolve(PATH.into()),
+                Call::ReadLink(PATH.into()),
+                Call::Stat(PATH.into()),
+            ]
+        );
+        // A path that resolves is not asked about: the next save finds the
+        // file through the link.
+        let calls_before = fs.calls().len();
+        let again = save_new(&fs, LINK, Expect::Whatever);
+        assert!(again.is_ok(), "{again:?}");
+        assert_eq!(
+            fs.calls()[calls_before..calls_before + 2],
+            [Call::Resolve(LINK.into()), Call::Stat(PATH.into())]
+        );
+    }
+
+    /// A fake with the directory of [`PATH`] and no file in it, and
+    /// `links` links, `/links/0` to `/links/1` and so on, the last of which
+    /// names [`PATH`].
+    fn fake_with_links_to_nothing(links: u32) -> FakeFs {
+        let fs = FakeFs::new();
+        fs.directory("/dir");
+        for n in 0..links {
+            let named = if n + 1 == links {
+                String::from(PATH)
+            } else {
+                format!("/links/{}", n + 1)
+            };
+            fs.link(format!("/links/{n}"), named);
+        }
+        fs
+    }
+
+    #[test]
+    fn links_to_nothing_are_followed_one_after_another_for_at_most_eight() {
+        let fs = fake_with_links_to_nothing(LINKS);
+        let before = fs.paths();
+
+        let saved = save_new(&fs, "/links/0", Expect::Absent);
+
+        // Every link is still there, and the file the last one names is
+        // the one thing made.
+        assert!(saved.is_ok(), "{saved:?}");
+        assert_eq!(fs.bytes(PATH).as_deref(), Some(NEW_BYTES));
+        assert_eq!(fs.paths().len(), before.len() + 1);
+        assert_eq!(fs.link_target("/links/0"), Some("/links/1".into()));
+        assert_eq!(LINKS, 8);
+
+        // One link more is one too many.
+        let fs = fake_with_links_to_nothing(LINKS + 1);
+        let before = fs.paths();
+
+        let saved = save_new(&fs, "/links/0", Expect::Absent);
+
+        assert_eq!(saved, Err(SaveError::NotAFile));
+        assert!(fs.calls().iter().all(|call| call.op() != Op::Write));
+        assert_eq!(fs.paths(), before);
+    }
+
+    #[test]
+    fn a_refusal_to_read_a_link_is_handed_on_and_nothing_is_written() {
+        for kind in [FsErrorKind::Denied, FsErrorKind::Other] {
+            let fs = fake_with_a_link_to_nothing();
+            let before = fs.paths();
+            let error = FsError::new(kind, "injected");
+            fs.fail(Op::ReadLink, error.clone());
+
+            let saved = save_new(&fs, LINK, Expect::Whatever);
+
+            assert_eq!(saved, Err(SaveError::Fs(error)), "{kind:?}");
+            assert!(fs.calls().iter().all(|call| call.op() != Op::Write));
+            assert_eq!(fs.paths(), before, "{kind:?}");
+        }
+    }
+
+    #[test]
+    fn a_save_through_a_link_to_nothing_that_expects_a_file_is_refused_and_makes_nothing() {
+        let fs = fake_with_a_link_to_nothing();
+        let stamp = Stamp {
+            modified: THEN,
+            size: size(OLD),
+        };
+
+        let saved = save_new(&fs, LINK, Expect::Unchanged(stamp));
+
+        assert_eq!(saved, Err(SaveError::Changed { found: None }));
+        assert!(fs.calls().iter().all(|call| call.op() != Op::Write));
+        assert_eq!(
+            fs.paths(),
+            ["/dir", "/elsewhere", LINK].map(std::path::PathBuf::from)
+        );
+    }
+
+    #[test]
+    fn a_save_through_a_link_into_a_directory_that_is_not_there_is_refused_and_keeps_the_link() {
+        let fs = FakeFs::new();
+        fs.link(LINK, "/nowhere/file.txt");
+
+        let saved = save_new(&fs, LINK, Expect::Whatever);
+
+        assert!(
+            matches!(&saved, Err(SaveError::Fs(error)) if error.kind == FsErrorKind::NotFound),
+            "{saved:?}"
+        );
+        assert_eq!(fs.link_target(LINK), Some("/nowhere/file.txt".into()));
+        assert_eq!(
+            fs.paths(),
+            ["/elsewhere", LINK].map(std::path::PathBuf::from)
+        );
+    }
+
+    #[test]
+    fn a_link_that_holds_a_path_that_is_not_absolute_names_a_file_from_its_own_directory() {
+        let fs = FakeFs::new();
+        fs.directory("/dir");
+        fs.link("/dir/link.txt", "file.txt");
+
+        let saved = save_new(&fs, "/dir/link.txt", Expect::Absent);
+
+        assert!(saved.is_ok(), "{saved:?}");
+        assert_eq!(fs.bytes(PATH).as_deref(), Some(NEW_BYTES));
+        assert_eq!(fs.link_target("/dir/link.txt"), Some("file.txt".into()));
+        assert_eq!(
+            fs.paths(),
+            ["/dir", PATH, "/dir/link.txt"].map(std::path::PathBuf::from)
         );
     }
 

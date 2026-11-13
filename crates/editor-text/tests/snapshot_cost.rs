@@ -511,6 +511,10 @@ impl Fs for Discard {
     fn resolve(&self, _: &Path) -> Result<PathBuf, FsError> {
         Err(FsError::new(FsErrorKind::NotFound, "nothing is kept"))
     }
+
+    fn read_link(&self, _: &Path) -> Result<Option<PathBuf>, FsError> {
+        Ok(None)
+    }
 }
 
 #[test]

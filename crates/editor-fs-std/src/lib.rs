@@ -28,6 +28,10 @@
 //!   the file is whole either way.
 //! - **`remove`** is `fs::remove_file`.
 //! - **`resolve`** is `fs::canonicalize`.
+//! - **`read_link`** is `fs::read_link`, which follows nothing and gives
+//!   the path as the link holds it. The system refuses a path that is no
+//!   link as an invalid argument, and one where nothing is as not found:
+//!   both are `None`.
 //!
 //! [`StdFs::system`] is the one way to make one, so that the real file
 //! system has a name a lint can refuse where it does not belong
@@ -175,6 +179,23 @@ impl Fs for StdFs {
 
     fn resolve(&self, path: &Path) -> Result<PathBuf, FsError> {
         fs::canonicalize(path).map_err(|error| refusal(&error))
+    }
+
+    fn read_link(&self, path: &Path) -> Result<Option<PathBuf>, FsError> {
+        match fs::read_link(path) {
+            Ok(held) => Ok(Some(held)),
+            // The system refuses what is no link as an invalid argument
+            // (`EINVAL`), and nothing as not found: neither is a link.
+            Err(error)
+                if matches!(
+                    error.kind(),
+                    io::ErrorKind::InvalidInput | io::ErrorKind::NotFound
+                ) =>
+            {
+                Ok(None)
+            }
+            Err(error) => Err(refusal(&error)),
+        }
     }
 }
 

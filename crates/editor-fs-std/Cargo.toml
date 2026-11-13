@@ -31,6 +31,6 @@ editor-text = { path = "../editor-text" }
 #   but its files have no modification time a test can set, no permissions
 #   and no failure a test can inject; and the port is the core's own.
 # - `filetime` 0.2.29: `File::set_modified` is in the standard library.
-# - `cap-std` 4.0.3 and `rustix` 1.1.6 offer nothing the port's six methods
-#   need beyond `std`.
+# - `cap-std` 4.0.3 and `rustix` 1.1.6 offer nothing the port's methods need
+#   beyond `std`.
 tempfile = { version = "=3.27.0", default-features = false }
