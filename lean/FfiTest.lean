@@ -297,6 +297,96 @@ def documentChecks (_ : Unit) : List Check :=
         -- `held` is used here, so it is alive until now.
         return whileHeld == before + 1 && afterDrop == before + 1 && (← held.read) == "held" }]
 
+/-- Text of three rows. "é" and "ö" are two bytes and one UTF-16 unit each,
+and "😀" is four bytes and two units. The first row ends in a carriage return
+and a line feed, at the bytes 6 and 7; the second starts at 8; the third
+starts at 15 with "😀", and its "x" is at 19. The text is 20 bytes long. -/
+def rows : String :=
+  "héllo\r\nwörld\n😀x"
+
+/-- A snapshot of a document made here holding `text`. The document is
+dropped on the way out, so the snapshot is all that is left of it. -/
+def snapshotOf (text : String) : IO Editor.Ffi.Snapshot := do
+  let document ← Editor.Ffi.Document.new text
+  document.snapshot
+
+/-- Takes a snapshot of `document`, reads it and drops it. Only plain data
+leaves: the text the snapshot held. -/
+def useSnapshot (document : Editor.Ffi.Document) : IO String := do
+  let snapshot ← document.snapshot
+  snapshot.read
+
+/-- The checks of a snapshot (`Editor.Ffi.Snapshot`): a handle made by a call
+on another handle, whose bindings hand back a structure of numbers and take
+an enumeration. What a row and a point are is the library's rule; these pin
+that the values cross. -/
+def snapshotChecks (_ : Unit) : List Check :=
+  [{
+      name :=
+        "a snapshot reads what its document held when it was taken, after the document is edited",
+      run := do
+        let document ← Editor.Ffi.Document.new rows
+        let snapshot ← document.snapshot
+        let edited ← document.replace 0 1 "J"
+        return edited && (← snapshot.read) == rows && (← document.read) == "Jéllo\r\nwörld\n😀x" },
+    { name := "a snapshot's info is its revision, its length in bytes and its row count"
+      run := do
+        let document ← Editor.Ffi.Document.new rows
+        let first ← document.snapshot
+        -- Two edits, which leave 15 bytes: three different numbers, so a
+        -- field read from another's place is seen.
+        discard <| document.replace 0 1 "J"
+        discard <| document.replace 15 20 ""
+        let second ← document.snapshot
+        return (← first.info) == { revision := 0, byteLength := 20, rowCount := 3 } &&
+            (← second.info) == { revision := 2, byteLength := 15, rowCount := 3 } },
+    { name := "the point of an offset and the offset of a point cross in both units"
+      run := do
+        let snapshot ← snapshotOf rows
+        -- The "x" after "😀": four bytes into its row, and two units.
+        let inBytes ← snapshot.pointOf .bytes 19
+        let inUnits ← snapshot.pointOf .utf16 19
+        let fromBytes ← snapshot.offsetOf .bytes 2 4
+        let fromUnits ← snapshot.offsetOf .utf16 2 2
+        -- Row 1, column 3 is the "r" of "wörld". Were the row and the column
+        -- swapped it would be refused: the text has no row 3.
+        let unswapped ← snapshot.offsetOf .bytes 1 3
+        return inBytes == some { row := 2, column := 4 } &&
+            inUnits == some { row := 2, column := 2 } &&
+            fromBytes == some 19 &&
+            fromUnits == some 19 &&
+            unswapped == some 11 },
+    { name := "an offset or a point that is not a position of the text has no point and no offset"
+      run := do
+        let snapshot ← snapshotOf rows
+        let insideCharacter ← snapshot.pointOf .bytes 2
+        let pastEnd ← snapshot.pointOf .utf16 21
+        let noSuchRow ← snapshot.offsetOf .bytes 3 0
+        let pastRowEnd ← snapshot.offsetOf .bytes 0 8
+        let betweenUnits ← snapshot.offsetOf .utf16 2 1
+        return insideCharacter == none && pastEnd == none && noSuchRow == none &&
+            pastRowEnd == none &&
+            betweenUnits == none },
+    { name := "a snapshot is freed when Lean drops the last reference"
+      run := do
+        let document ← Editor.Ffi.Document.new "held"
+        let before ← Editor.Ffi.Snapshot.live
+        let held ← document.snapshot
+        let whileHeld ← Editor.Ffi.Snapshot.live
+        let dropped ← useSnapshot document
+        let afterDrop ← Editor.Ffi.Snapshot.live
+        -- `held` is used here, so it is alive until now.
+        return whileHeld == before + 1 && dropped == "held" && afterDrop == before + 1 &&
+            (← held.read) == "held" },
+    { name := "a snapshot outlives its document"
+      run := do
+        let before ← Editor.Ffi.Document.live
+        let snapshot ← snapshotOf rows
+        -- The document was dropped inside `snapshotOf`.
+        let documents ← Editor.Ffi.Document.live
+        return documents == before && (← snapshot.read) == rows &&
+            (← snapshot.info).byteLength == 20 }]
+
 /-- What the library's scripted platform reports of its window, as the kind,
 the code and the text of each event: that it opened, with the platform's
 name; the focus gained; `a` pressed and released; a dead key pressed; `é`
@@ -563,6 +653,7 @@ def decodeChecks (_ : Unit) : List Check :=
 def checks (_ : Unit) : List Check :=
   entryChecks () ++ handleChecks () ++ dataChecks () ++ queueChecks () ++ timerChecks () ++
     documentChecks () ++
+    snapshotChecks () ++
     windowChecks () ++
     decodeChecks ()
 

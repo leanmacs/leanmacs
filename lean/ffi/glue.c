@@ -124,6 +124,13 @@ static size_t string_len(b_lean_obj_arg string) {
   return lean_string_size(string) - 1;
 }
 
+// `some value`, for an `Option` built here; `none` is `lean_box(0)`.
+static lean_object *option_some(lean_object *value) {
+  lean_object *some = lean_alloc_ctor(1, 1, 0);
+  lean_ctor_set(some, 0, value);
+  return some;
+}
+
 void editor_ffi_text_free(uint8_t *text, size_t len);
 
 // The library's `ByteRange`.
@@ -151,16 +158,13 @@ lean_obj_res editor_glue_text_find(b_lean_obj_arg haystack,
   lean_object *range = lean_alloc_ctor(0, 0, 2 * sizeof(uint64_t));
   lean_ctor_set_uint64(range, uint64_field(0, 0), found.start);
   lean_ctor_set_uint64(range, uint64_field(0, 1), found.end);
-  lean_object *some = lean_alloc_ctor(1, 1, 0);
-  lean_ctor_set(some, 0, range);
-  return some;
+  return option_some(range);
 }
 
 // ---- The document ----
 //
 // A second handle, whose functions take a string and hand one back. It is
-// the placeholder text the editor's text port is bound to
-// (`Editor/Text/Real.lean`).
+// the text the editor's text port is bound to (`Editor/Text/Real.lean`).
 
 // The Rust library's document.
 typedef struct editor_ffi_document editor_ffi_document;
@@ -228,6 +232,126 @@ lean_obj_res editor_glue_document_read(b_lean_obj_arg document) {
 // `Editor.Ffi.Document.live : IO UInt64`
 lean_obj_res editor_glue_document_live(void) {
   return lean_io_result_mk_ok(lean_box_uint64(editor_ffi_document_live()));
+}
+
+// ---- The snapshot ----
+//
+// A third handle: a document's text as it was at one moment. It is made by
+// a call on a document, not by a `new` function, and it outlives the
+// document. Its functions hand back a record of numbers and take the tag of
+// Lean's `Editor.Ffi.ColumnUnit`, which the library checks.
+
+// The Rust library's snapshot.
+typedef struct editor_ffi_snapshot editor_ffi_snapshot;
+// The library's `RawSnapshotInfo`.
+typedef struct {
+  uint64_t revision;
+  uint64_t byte_len;
+  uint64_t row_count;
+} editor_ffi_raw_snapshot_info;
+// The library's `RawPoint`.
+typedef struct {
+  uint64_t row;
+  uint64_t column;
+} editor_ffi_raw_point;
+editor_ffi_snapshot *
+editor_ffi_document_snapshot(const editor_ffi_document *document);
+void editor_ffi_snapshot_info(const editor_ffi_snapshot *snapshot,
+                              editor_ffi_raw_snapshot_info *out);
+void editor_ffi_snapshot_read(const editor_ffi_snapshot *snapshot,
+                              editor_ffi_raw_text *out);
+bool editor_ffi_snapshot_point_of(const editor_ffi_snapshot *snapshot,
+                                  uint8_t unit, size_t offset,
+                                  editor_ffi_raw_point *out);
+bool editor_ffi_snapshot_offset_of(const editor_ffi_snapshot *snapshot,
+                                   uint8_t unit, uint64_t row, uint64_t column,
+                                   uint64_t *out);
+void editor_ffi_snapshot_free(editor_ffi_snapshot *snapshot);
+uint64_t editor_ffi_snapshot_live(void);
+
+static lean_external_class *snapshot_class;
+static pthread_once_t snapshot_class_once = PTHREAD_ONCE_INIT;
+
+// Runs when Lean drops the last reference to a snapshot, on whichever thread
+// dropped it. The only caller of the library's `free`.
+static void snapshot_finalize(void *snapshot) {
+  editor_ffi_snapshot_free(snapshot);
+}
+
+// A snapshot holds no Lean objects, so there is nothing to visit.
+static void snapshot_foreach(void *snapshot, b_lean_obj_arg visitor) {
+  (void)snapshot;
+  (void)visitor;
+}
+
+static void snapshot_class_register(void) {
+  snapshot_class =
+      lean_register_external_class(snapshot_finalize, snapshot_foreach);
+}
+
+// `Editor.Ffi.Document.snapshot : @& Document → IO Snapshot`
+lean_obj_res editor_glue_document_snapshot(b_lean_obj_arg document) {
+  pthread_once(&snapshot_class_once, snapshot_class_register);
+  return lean_io_result_mk_ok(lean_alloc_external(
+      snapshot_class,
+      editor_ffi_document_snapshot(lean_get_external_data(document))));
+}
+
+// `Editor.Ffi.Snapshot.info : @& Snapshot → IO SnapshotInfo`
+lean_obj_res editor_glue_snapshot_info(b_lean_obj_arg snapshot) {
+  editor_ffi_raw_snapshot_info raw;
+  editor_ffi_snapshot_info(lean_get_external_data(snapshot), &raw);
+  // `SnapshotInfo`: no object fields, then `revision`, `byteLength` and
+  // `rowCount`.
+  lean_object *info = lean_alloc_ctor(0, 0, 3 * sizeof(uint64_t));
+  lean_ctor_set_uint64(info, uint64_field(0, 0), raw.revision);
+  lean_ctor_set_uint64(info, uint64_field(0, 1), raw.byte_len);
+  lean_ctor_set_uint64(info, uint64_field(0, 2), raw.row_count);
+  return lean_io_result_mk_ok(info);
+}
+
+// `Editor.Ffi.Snapshot.read : @& Snapshot → IO String`
+lean_obj_res editor_glue_snapshot_read(b_lean_obj_arg snapshot) {
+  editor_ffi_raw_text raw;
+  editor_ffi_snapshot_read(lean_get_external_data(snapshot), &raw);
+  lean_object *text =
+      lean_mk_string_from_bytes((const char *)raw.text, raw.text_len);
+  editor_ffi_text_free(raw.text, raw.text_len);
+  return lean_io_result_mk_ok(text);
+}
+
+// `Editor.Ffi.Snapshot.pointOf : @& Snapshot → ColumnUnit → USize → IO
+// (Option Point)`
+lean_obj_res editor_glue_snapshot_point_of(b_lean_obj_arg snapshot,
+                                           uint8_t unit, size_t offset) {
+  editor_ffi_raw_point raw;
+  if (!editor_ffi_snapshot_point_of(lean_get_external_data(snapshot), unit,
+                                    offset, &raw)) {
+    return lean_io_result_mk_ok(lean_box(0)); // `none`
+  }
+  // `Point`: no object fields, then `row` and `column`.
+  lean_object *point = lean_alloc_ctor(0, 0, 2 * sizeof(uint64_t));
+  lean_ctor_set_uint64(point, uint64_field(0, 0), raw.row);
+  lean_ctor_set_uint64(point, uint64_field(0, 1), raw.column);
+  return lean_io_result_mk_ok(option_some(point));
+}
+
+// `Editor.Ffi.Snapshot.offsetOf : @& Snapshot → ColumnUnit → UInt64 → UInt64
+// → IO (Option UInt64)`
+lean_obj_res editor_glue_snapshot_offset_of(b_lean_obj_arg snapshot,
+                                            uint8_t unit, uint64_t row,
+                                            uint64_t column) {
+  uint64_t offset;
+  if (!editor_ffi_snapshot_offset_of(lean_get_external_data(snapshot), unit,
+                                     row, column, &offset)) {
+    return lean_io_result_mk_ok(lean_box(0)); // `none`
+  }
+  return lean_io_result_mk_ok(option_some(lean_box_uint64(offset)));
+}
+
+// `Editor.Ffi.Snapshot.live : IO UInt64`
+lean_obj_res editor_glue_snapshot_live(void) {
+  return lean_io_result_mk_ok(lean_box_uint64(editor_ffi_snapshot_live()));
 }
 
 // ---- The event queues ----

@@ -29,10 +29,13 @@ reference exists, on any thread, the object is alive.
 
 Pass a handle to a binding as `@&`, so the call does not take a reference.
 
-Examples: `Counter`, and `Document`, the placeholder text the text port's real
-binding holds. Tests: the four counter checks of `ffi-test`
-(`FfiTest.handleChecks`) and its check that a document is freed
-(`FfiTest.documentChecks`); `tests/c_api.rs` in `editor-ffi`.
+Examples: `Counter`; `Document`, the text the text port's real binding holds;
+and `Snapshot`, a document's text as it was at one moment, which is made by a
+binding on a document and outlives it. Tests: the four counter checks of
+`ffi-test` (`FfiTest.handleChecks`), its check that a document is freed
+(`FfiTest.documentChecks`) and its checks that a snapshot is freed and
+outlives its document (`FfiTest.snapshotChecks`); `tests/c_api.rs` and
+`tests/snapshot.rs` in `editor-ffi`.
 
 ### Plain data
 
@@ -50,17 +53,22 @@ private to this module; what a caller sees is the typed value.
 
 Examples: `find` (an option in, an option of a byte range out), `Event` with
 `postEvent` and `nextEvent` (a string, enums and a structure, in both
-directions) and `Document` (a string in, to `Document.new` and
+directions), `Document` (a string in, to `Document.new` and
 `Document.replace`; a string out, from `Document.read`; byte offsets as
-`USize`; a refusal as a `Bool`). Tests: the `find` and event checks of
-`ffi-test` (`FfiTest.dataChecks`) and its document checks
-(`FfiTest.documentChecks`); the unit tests of `text.rs` and `document.rs` and
-the tag tests of `events.rs` in `editor-ffi`.
+`USize`; a refusal as a `Bool`) and `Snapshot` (a structure of three numbers
+out, `SnapshotInfo`; an enumeration in, `ColumnUnit`; an option of a
+structure out, from `Snapshot.pointOf`, and an option of a number, from
+`Snapshot.offsetOf`; rows and columns as `UInt64`). Tests: the `find` and
+event checks of `ffi-test` (`FfiTest.dataChecks`), its document checks
+(`FfiTest.documentChecks`) and its snapshot checks
+(`FfiTest.snapshotChecks`); the unit tests of `text.rs`, `document.rs` and
+`snapshot.rs` and the tag tests of `events.rs` in `editor-ffi`.
 
 The editor does not call these bindings. It reaches the library through a
 port it defines (`Editor/Text.lean`), whose real binding
-(`Editor/Text/Real.lean`) is the one caller of `Document`, and whose contract
-(`Editor/Text/Contract.lean`) runs against that binding in `contract-test`.
+(`Editor/Text/Real.lean`) is the one caller of `Document` and of `Snapshot`,
+and whose contract (`Editor/Text/Contract.lean`) runs against that binding in
+`contract-test`.
 
 ### The event queues
 
@@ -272,9 +280,10 @@ document is `Document.new`. -/
 opaque DocumentPointed : NonemptyType
 
 /-- Text held by the Rust library, edited in place: a second handle, and the
-example of a string going in and one coming back. It is the placeholder the
-text port's real binding runs against (`Editor/Text/Real.lean`), and the
-editor reaches it only through that port. -/
+example of a string going in and one coming back. It is the text of the
+library's text storage (`crates/editor-text`) behind a lock. The text port's
+real binding runs against it (`Editor/Text/Real.lean`), and the editor
+reaches it only through that port. -/
 def Document : Type :=
   DocumentPointed.type
 
@@ -305,6 +314,86 @@ and `ContractTest` to see that the text port's table is the only holder of
 its documents. -/
 @[extern "editor_glue_document_live"]
 opaque Document.live : IO UInt64
+
+/-- The type behind `Snapshot`. It is opaque, so the only way to get a
+snapshot is `Document.snapshot`. -/
+opaque SnapshotPointed : NonemptyType
+
+/-- A document's text as it was at one moment, held by the Rust library: a
+third handle. It never changes, whatever is done to the document afterwards,
+and it stays alive after the document is freed. The editor reaches it only
+through the text port (`Editor/Text/Real.lean`). -/
+def Snapshot : Type :=
+  SnapshotPointed.type
+
+instance : Nonempty Snapshot :=
+  SnapshotPointed.property
+
+/-- A snapshot of the document's text as it is now. It copies none of the
+text. -/
+@[extern "editor_glue_document_snapshot"]
+opaque Document.snapshot (document : @& Document) : IO Snapshot
+
+/-- What a snapshot is, as the glue builds it in one call: `UInt64` fields
+only, so the order here is the layout the glue writes. -/
+structure SnapshotInfo where
+  /-- The revision of its document the snapshot holds: how many edits the
+  document had accepted when the snapshot was taken. -/
+  revision : UInt64
+  /-- The length of the text in bytes. -/
+  byteLength : UInt64
+  /-- How many rows the text has: one more than its line feeds. -/
+  rowCount : UInt64
+  deriving DecidableEq, Repr, Inhabited
+
+/-- The revision, the length in bytes and the row count of the snapshot. -/
+@[extern "editor_glue_snapshot_info"]
+opaque Snapshot.info (snapshot : @& Snapshot) : IO SnapshotInfo
+
+/-- A copy of the whole text of the snapshot. -/
+@[extern "editor_glue_snapshot_read"]
+opaque Snapshot.read (snapshot : @& Snapshot) : IO String
+
+/-- The unit a point's column is counted in. -/
+inductive ColumnUnit where
+  /-- Bytes of UTF-8. -/
+  | bytes
+  /-- UTF-16 code units. -/
+  | utf16
+  deriving DecidableEq, Repr
+
+/-- A row and a column of a text, as the glue builds it: `UInt64` fields
+only, so the order here is the layout the glue writes. The unit of the column
+is the one the binding that returned the point was asked for. -/
+structure Point where
+  /-- Which row, from 0. A row begins after each line feed. -/
+  row : UInt64
+  /-- How far into the row. -/
+  column : UInt64
+  deriving DecidableEq, Repr
+
+/-- The row and the column of the byte offset `offset` of the snapshot, with
+the column counted in `unit`. `none` unless the offset is a position of the
+text: within it, and not inside a character. -/
+@[extern "editor_glue_snapshot_point_of"]
+opaque Snapshot.pointOf (snapshot : @& Snapshot) (unit : ColumnUnit) (offset : USize) :
+    IO (Option Point)
+
+/-- The byte offset of the point `row`, `column` of the snapshot, with the
+column counted in `unit`. `none` unless the point names a position of the
+text: a row the text has, and a column within the row that is not inside a
+character. -/
+@[extern "editor_glue_snapshot_offset_of"]
+opaque Snapshot.offsetOf (snapshot : @& Snapshot) (unit : ColumnUnit) (row column : UInt64) :
+    IO (Option UInt64)
+
+/-- How many snapshots the Rust library holds that have not been freed.
+
+This exists for tests: `FfiTest` uses it to see a snapshot's finaliser run,
+and `ContractTest` to see that the text port's table is the only holder of
+its snapshots. -/
+@[extern "editor_glue_snapshot_live"]
+opaque Snapshot.live : IO UInt64
 
 /-- A range of byte offsets into text: from `start` up to, not including,
 `stop`. -/
