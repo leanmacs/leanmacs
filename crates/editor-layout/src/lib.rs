@@ -19,6 +19,9 @@
 //! - where a position is in a laid-out row: at a wrap, at a row's end,
 //!   inside a tab's spaces ([`line`](mod@line)), and how entries are kept, broken
 //!   again and moved through edits ([`wrap`]);
+//! - which spans each decoration source gives, that a cursor covers
+//!   nothing, how spans merge into styled runs and which font a run is in
+//!   ([`decoration`]);
 //! - the rows a view shows and where a move goes, with its goal x
 //!   ([`query`]);
 //! - the round trip of a position through the layers (`tests/layers.rs`).
@@ -26,6 +29,7 @@
 //! The adapter-neutral rules of shaping are [`shaper::contract`]'s, which
 //! every real adapter runs. No crate downstream pins the fake's geometry.
 
+pub mod decoration;
 pub mod layer;
 pub mod line;
 pub mod query;
