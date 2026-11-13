@@ -240,4 +240,26 @@ mod tests {
         layout.frame(&scene(&text, 10, start(500)));
         assert_eq!(layout.entries_kept(TextKey(1)), 10);
     }
+
+    #[test]
+    fn rows_near_any_view_of_a_text_are_kept() {
+        let rows: Vec<String> = (0..1000).map(|row| format!("r{row}")).collect();
+        let text = TextRef::fixed(TextKey(1), Text::from(rows.join("\n").as_str()).snapshot());
+        let start = |row: usize| text.snapshot.row_range(row).unwrap().start;
+        // Two views of the one text, far more than four view heights
+        // apart: rows 0 to 9 and rows 500 to 509.
+        let mut two = scene(&text, 10, 0);
+        let mut second = scene(&text, 10, start(500)).views.remove(0);
+        second.id = ViewId(2);
+        two.views.push(second);
+        let mut layout = Layout::new(CellShaper::new(10.0, 16.0));
+        layout.frame(&two);
+        assert_eq!(layout.entries_kept(TextKey(1)), 20);
+        // So the next frame shapes nothing.
+        let before = layout.counters();
+        layout.frame(&two);
+        let after = layout.counters();
+        assert_eq!(after.shaped, before.shaped);
+        assert_eq!(after.reused - before.reused, 20);
+    }
 }
