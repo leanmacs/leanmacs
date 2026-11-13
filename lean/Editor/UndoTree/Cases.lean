@@ -429,9 +429,52 @@ def stateCases : List Property :=
         return inside && further && again && never && closedAfter && reported && stay && returned &&
             whole }]
 
+/-- The case of who the tree's own edits are made by: every operation that
+edits the text hands the origin it was given to the inverse it applies. A
+trace names who wrote text an inverse put back, so each operation here puts
+text back, under an origin no other is given. -/
+def originCases : List Property :=
+  [{
+      name :=
+        "the undo tree: the edit a move makes is made by the origin the move was given: text an undo, a redo, a move up, a move down, a revert to a state inside the open group and a revert of the whole group put back is traced to that operation's revision and to its own origin",
+      holds := do
+        -- "héllo" is 6 bytes and "h😀llo" 8: "é" is the bytes 1 and 2, and
+        -- "😀" the bytes 1 to 4.
+        let text ← createText "héllo"
+        let tree ← UndoTree.over text
+        let tree ← edit tree { changes := #[.retain 1, .delete 2, .insert "😀", .retain 3] }
+        let tree := tree.close
+        let made := tree.current
+        -- Each crossing puts back what the one before it took out.
+        let some undone ← tree.undo ⟨11⟩ | return false
+        let byUndo := (← text.trace 1 3) == #[⟨1, 3, .entry 2 ⟨11⟩⟩]
+        let some redone ← undone.tree.redo ⟨12⟩ | return false
+        let byRedo := (← text.trace 1 5) == #[⟨1, 5, .entry 3 ⟨12⟩⟩]
+        let some up ← redone.tree.goTo UndoTree.root ⟨13⟩ | return false
+        let byUp := (← text.trace 1 3) == #[⟨1, 3, .entry 4 ⟨13⟩⟩]
+        let some down ← up.tree.goTo made ⟨14⟩ | return false
+        let byDown := (← text.trace 1 5) == #[⟨1, 5, .entry 5 ⟨14⟩⟩]
+        -- An open group: "!" is added, and "😀" deleted after the state
+        -- that is kept, so a revert to that state puts "😀" back.
+        let tree ← addAtEnd down.tree "!"
+        let kept := tree.state
+        text.delete 1 5
+        let tree ← tree.sync
+        let some inside ← tree.revertTo kept ⟨15⟩ | return false
+        let byRevertTo :=
+          (← reads tree) == ("h😀llo!", 8) && (← text.trace 1 5) == #[⟨1, 5, .entry 8 ⟨15⟩⟩]
+        -- "h" is deleted, which only a revert of the whole group puts back.
+        text.delete 0 1
+        let tree ← inside.tree.sync
+        let some whole ← tree.revert ⟨16⟩ | return false
+        let byRevert :=
+          (← reads tree) == ("h😀llo", 10) && (← text.trace 0 1) == #[⟨0, 1, .entry 10 ⟨16⟩⟩]
+        return byUndo && byRedo && byUp && byDown && byRevertTo && byRevert &&
+            whole.tree.current == made }]
+
 /-- The cases of the undo tree, which hold of it over every implementation
 of the text port. -/
 def cases : List Property :=
-  moveCases ++ stateCases
+  moveCases ++ stateCases ++ originCases
 
 end Editor.UndoTreeCases
