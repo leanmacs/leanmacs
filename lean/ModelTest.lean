@@ -4591,9 +4591,15 @@ def vimParsed (text : String) (maps : ViewId → List (Keymap Vim.Bound) := vimN
   vimParsedFrom (Vim.scheme states).init text maps view states
 
 /-- The keys the Vim scheme over `vimStates` reports as pending after the
-keys `text` names. -/
-def vimPending (text : String) : List Key :=
-  (Vim.scheme vimStates).pending (vimFed text).1
+keys `text` names, with `maps` the active keymaps. -/
+def vimPending (text : String) (maps : ViewId → List (Keymap Vim.Bound) := vimNoMaps) : List Key :=
+  (Vim.scheme vimStates).pending (vimFed text maps).1
+
+/-- Active keymaps, for every view, that bind an operator and the register
+prefix to two keys each, `g u` and `g r`: both under `g`, the prefix the
+checks' normal state binds a motion under. -/
+def vimTwoKeyMaps (_ : ViewId) : List (Keymap Vim.Bound) :=
+  [vimKeymap [("g u", .operator { name := "lowercase" }), ("g r", .register)]]
 
 /-- The invocation a move by `motion` compiles to, with `count`, 0 for
 none. -/
@@ -4905,7 +4911,69 @@ def vimGrammarChecks : List Check :=
         pure
           (vimPending "\"" == keys "\"" && vimPending "\" a" == keys "\" a" &&
             vimPending "\" a d" == keys "\" a d" &&
-            vimPending "\" a d d" == []) }]
+            vimPending "\" a d d" == []) },
+    { name :=
+        "an operator bound to two keys waits with no prefix left: the motion typed next, of one key or of two, is its target"
+      run :=
+        pure
+          ((vimFed "g u w" vimTwoKeyMaps).2 ==
+              [none, none, some (vimOperate "lowercase" "motion" "word")] &&
+            (vimFed "g u g g" vimTwoKeyMaps).2 ==
+              [none, none, none, some (vimOperate "lowercase" "motion" "first-line")] &&
+            (vimParsed "g u w" vimTwoKeyMaps).2.getLast? ==
+              some (.edit (.operate { name := "lowercase" } (.motion "word") none none))) },
+    { name :=
+        "a digit after an operator bound to two keys is read as a count, and multiplies with one typed before the operator"
+      run :=
+        pure
+          ((vimFed "g u 2 w" vimTwoKeyMaps).2 ==
+              [none, none, none, some (vimOperate "lowercase" "motion" "word" 2)] &&
+            (vimFed "3 g u 2 w" vimTwoKeyMaps).2.getLast? ==
+              some (some (vimOperate "lowercase" "motion" "word" 6))) },
+    { name :=
+        "an operator bound to two keys, typed twice, yields that operator over lines, and a different operator after it resets"
+      run :=
+        let (other, otherYields) := vimFed "g u d" vimTwoKeyMaps
+        pure
+          ((vimFed "g u g u" vimTwoKeyMaps).2 ==
+              [none, none, none, some (vimOperate "lowercase" "lines" "" 1)] &&
+            (vimFed "g u 3 g u" vimTwoKeyMaps).2.getLast? ==
+              some (some (vimOperate "lowercase" "lines" "" 3)) &&
+            otherYields == [none, none, none] &&
+            decide (other = vimInit)) },
+    { name :=
+        "the Vim scheme reports both keys of an operator bound to two keys as pending, with the keys typed after it, and none after the edit"
+      run :=
+        pure
+          (vimPending "g u" vimTwoKeyMaps == keys "g u" &&
+            vimPending "g u g" vimTwoKeyMaps == keys "g u g" &&
+            vimPending "g u 2" vimTwoKeyMaps == keys "g u 2" &&
+            vimPending "g u w" vimTwoKeyMaps == [] &&
+            vimPending "g u g u" vimTwoKeyMaps == []) },
+    { name :=
+        "a register prefix bound to two keys leaves no prefix: the key after it names the register, and the keys after that are looked up from the start"
+      run :=
+        let (twice, twiceYields) := vimFed "g r a g r" vimTwoKeyMaps
+        pure
+          ((vimFed "g r a y w" vimTwoKeyMaps).2 ==
+              [none, none, none, none, some (vimOperate "yank" "motion" "word" 0 "a")] &&
+            (vimFed "g r a g u g u" vimTwoKeyMaps).2.getLast? ==
+              some (some (vimOperate "lowercase" "lines" "" 1 "a")) &&
+            (vimFed "g r 2 x" vimTwoKeyMaps).2 ==
+              [none, none, none,
+                some { command := "delete-char", arguments := [.nat 0, .str "2"] }] &&
+            (vimFed "2 g r a 3 d d" vimTwoKeyMaps).2.getLast? ==
+              some (some (vimOperate "delete" "lines" "" 6 "a")) &&
+            twiceYields == [none, none, none, none, none] &&
+            decide (twice = vimInit)) },
+    { name :=
+        "the Vim scheme reports both keys of a register prefix bound to two keys as pending, with the key that names the register"
+      run :=
+        pure
+          (vimPending "g r" vimTwoKeyMaps == keys "g r" &&
+            vimPending "g r a" vimTwoKeyMaps == keys "g r a" &&
+            vimPending "g r a d" vimTwoKeyMaps == keys "g r a d" &&
+            vimPending "g r a d d" vimTwoKeyMaps == []) }]
 
 /-- `vimStates` with a state the checks register, `test`, whose keymap
 binds `m` to a motion and whose cursor is an underline, and with `q` bound
