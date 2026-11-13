@@ -236,6 +236,8 @@ def refusalName : TextError → String
   | .badRange => "bad range"
   | .noSuchSnapshot => "no such snapshot"
   | .badPosition => "bad position"
+  | .badChange => "bad change"
+  | .badSelection => "bad selection"
 
 /-- The lines a reload's report is printed as: what it came to, then its
 diagnostics. -/

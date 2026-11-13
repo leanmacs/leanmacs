@@ -496,6 +496,24 @@ def setup : SetupM Unit := do
   command \"stale\" stale
 "
 
+/-- A chunk with two commands, each of which applies a transaction the
+library refuses: `short`, whose changes stop one byte short of its text, and
+`astray`, whose selection after the changes has an end inside the text's
+two-byte character. -/
+def transactionChunk : String :=
+  "def short : EditorM Unit := do
+  let text ← createText \"héllo\"
+  discard <| text.apply { changes := #[.retain 5] }
+
+def astray : EditorM Unit := do
+  let text ← createText \"héllo\"
+  discard <| text.apply { changes := #[.retain 6], after := some { ranges := #[⟨2, 2⟩] } }
+
+def setup : SetupM Unit := do
+  command \"short\" short
+  command \"astray\" astray
+"
+
 /-- The store of `counterChunk` with its type changed and its version raised
 to 2: the number gets a label, and a number written at version 1 is migrated
 with the label \"migrated\". -/
@@ -666,6 +684,15 @@ def hostChecks (context : Context) : List Check :=
           return (← session.lines) ==
               #["reload 1: installed, 1 chunks, 3 commands", "run inside: refused: bad position",
                 "run stale: refused: no such snapshot"] },
+    { name :=
+        "a command whose transaction's changes do not fit, and one whose transaction's selection does not, are each reported with that refusal's name"
+      run :=
+        withHost context [("config.lean", transactionChunk)] fun session => do
+          session.ask [.reload]
+          session.ask [.run "short", .run "astray"]
+          return (← session.lines) ==
+              #["reload 1: installed, 1 chunks, 2 commands", "run short: refused: bad change",
+                "run astray: refused: bad selection"] },
     { name :=
         "a config directory that does not exist is a rejected reload whose one diagnostic line names the directory"
       run :=

@@ -396,10 +396,192 @@ def releaseProperties : List Property :=
             made != other &&
             (← made.read) == "new" }]
 
+/-- Changes over `rows` in which "é" becomes "e", "w" becomes "W" and "😀"
+goes: they make "hello\r\nWörld\nx", 15 bytes long. -/
+def severalChanges : Array Change :=
+  #[.retain 1, .delete 2, .insert "e", .retain 5, .insert "W", .delete 1, .retain 6, .delete 4,
+    .retain 1]
+
+/-- Whether applying `transaction` to `text` is refused with `error`. -/
+def applyRefusedWith (error : TextError) (text : TextId) (transaction : Transaction) :
+    EditorM Bool :=
+  refusedWith error (discard <| text.apply transaction)
+
+/-- The properties of applying a transaction. -/
+def transactionProperties : List Property :=
+  [{
+      name :=
+        "a transaction's changes are applied in order, and applying returns the revision it produced: one more than before, however many changes it has and when it changes nothing",
+      holds := do
+        let text ← createText rows
+        let several ← text.apply { changes := severalChanges }
+        let afterSeveral ← text.read
+        let nothing ← text.apply { changes := #[.retain 15] }
+        let afterNothing ← text.read
+        let replaced ← text.apply (.replacing 15 0 1 "J")
+        let empty ← createText ""
+        let noChange ← empty.apply { changes := #[] }
+        return several == 1 && afterSeveral == "hello\r\nWörld\nx" && nothing == 2 &&
+            afterNothing == afterSeveral &&
+            replaced == 3 &&
+            (← text.read) == "Jello\r\nWörld\nx" &&
+            (← text.revision) == 3 &&
+            noChange == 1 &&
+            (← empty.revision) == 1 },
+    { name :=
+        "changes that stop short of the text, run past it, or change a range that starts or stops inside a character are refused, and the text and its revision are as they were"
+      holds := do
+        let text ← createText rows
+        let short ← applyRefusedWith .badChange text { changes := #[.retain 19] }
+        let none ← applyRefusedWith .badChange text { changes := #[] }
+        let shortAfterAChange ←
+          applyRefusedWith .badChange text { changes := #[.insert "x", .delete 1, .retain 18] }
+        let long ← applyRefusedWith .badChange text { changes := #[.retain 21] }
+        let longDelete ← applyRefusedWith .badChange text { changes := #[.retain 19, .delete 2] }
+        -- An insert inside "é", a delete that stops inside it, and one that
+        -- stops inside "😀" after changes that fit.
+        let startsInside ←
+          applyRefusedWith .badChange text { changes := #[.retain 2, .insert "x", .retain 18] }
+        let stopsInside ←
+          applyRefusedWith .badChange text { changes := #[.retain 1, .delete 1, .retain 18] }
+        let laterInside ←
+          applyRefusedWith .badChange text
+              { changes := #[.insert "H", .delete 1, .retain 14, .delete 2, .retain 3] }
+        return short && none && shortAfterAChange && long && longDelete && startsInside &&
+            stopsInside &&
+            laterInside &&
+            (← text.read) == rows &&
+            (← text.revision) == 0 },
+    -- Cut down to a 64-bit word, `2 ^ 64 + 1` is 1, the length of the text:
+    -- an implementation that converted without looking would accept each.
+    { name := "a count in a change that no machine word holds is refused"
+      holds := do
+        let text ← createText "a"
+        let huge := 2 ^ 64 + 1
+        let retained ← applyRefusedWith .badChange text { changes := #[.retain huge] }
+        let deleted ← applyRefusedWith .badChange text { changes := #[.delete huge] }
+        let afterAnInsert ←
+          applyRefusedWith .badChange text { changes := #[.insert "x", .retain huge] }
+        return retained && deleted && afterAnInsert && (← text.read) == "a" &&
+            (← text.revision) == 0 &&
+            (← text.apply { changes := #[.retain 1] }) == 1 },
+    { name :=
+        "changes that do nothing are ignored, neighbours of one kind are one change, and a delete and an insert at one place are one replaced range in either order"
+      holds := do
+        let text ← createText "héllo"
+        -- The two retains meet inside "é": together they keep the text.
+        let emptyInsert ← text.apply { changes := #[.retain 2, .insert "", .retain 4] }
+        let twoRetains ← text.apply { changes := #[.retain 1, .retain 1, .delete 0, .retain 4] }
+        let kept ← text.read
+        -- The two deletes meet inside "é": together they remove "hé".
+        let deleteFirst ← text.apply { changes := #[.delete 2, .insert "HE", .delete 1, .retain 3] }
+        let replaced ← text.read
+        let other ← createText "abc"
+        let insertsAround ←
+          other.apply { changes := #[.insert "x", .delete 1, .insert "y", .retain 2] }
+        return emptyInsert == 1 && twoRetains == 2 && kept == "héllo" && deleteFirst == 3 &&
+            replaced == "HEllo" &&
+            insertsAround == 1 &&
+            (← other.read) == "xybc" },
+    -- With "h" deleted from "héllo" the text is "éllo": 1 and 6 are positions
+    -- of the text before only, and 2 is a position of the text after only.
+    { name :=
+        "a selection whose ends are positions of its own text is accepted, and one with an end inside a character, past the end, a position of the other text only, or that no machine word holds is refused"
+      holds := do
+        let text ← createText "héllo"
+        let deleteH : Array Change := #[.delete 1, .retain 5]
+        let inside ←
+          applyRefusedWith .badSelection text
+              { changes := #[.retain 6], before := some { ranges := #[⟨0, 2⟩] } }
+        let pastEnd ←
+          applyRefusedWith .badSelection text
+              { changes := #[.retain 6], after := some { ranges := #[⟨7, 0⟩] } }
+        let secondRange ←
+          applyRefusedWith .badSelection text
+              { changes := #[.retain 6], before := some { ranges := #[⟨0, 1⟩, ⟨3, 2⟩] } }
+        let afterOnly ←
+          applyRefusedWith .badSelection text
+              { changes := deleteH, before := some { ranges := #[⟨2, 2⟩] } }
+        let beforeOnly ←
+          applyRefusedWith .badSelection text
+              { changes := deleteH, after := some { ranges := #[⟨1, 1⟩] } }
+        let oldEnd ←
+          applyRefusedWith .badSelection text
+              { changes := deleteH, after := some { ranges := #[⟨0, 6⟩] } }
+        -- Cut down to a word these are 1 and 2: positions of their texts.
+        let hugeBefore ←
+          applyRefusedWith .badSelection text
+              { changes := deleteH, before := some { ranges := #[⟨2 ^ 64 + 1, 0⟩] } }
+        let hugeAfter ←
+          applyRefusedWith .badSelection text
+              { changes := deleteH, after := some { ranges := #[⟨0, 2 ^ 64 + 2⟩] } }
+        let unchanged := (← text.read) == "héllo" && (← text.revision) == 0
+        let accepted ←
+          text.apply
+              { changes := deleteH
+                before := some { ranges := #[⟨1, 6⟩, ⟨0, 0⟩], primary := 1 }
+                after := some { ranges := #[⟨2, 5⟩] } }
+        return inside && pastEnd && secondRange && afterOnly && beforeOnly && oldEnd &&
+            hugeBefore &&
+            hugeAfter &&
+            unchanged &&
+            accepted == 1 &&
+            (← text.read) == "éllo" },
+    { name :=
+        "a selection with no range, or whose primary names none, is refused as a selection even when the changes do not fit, and changes that do not fit are refused as that even when a selection's end is no position"
+      holds := do
+        let text ← createText "héllo"
+        let noRange ←
+          applyRefusedWith .badSelection text
+              { changes := #[.retain 6], before := some { ranges := #[] } }
+        let noPrimary ←
+          applyRefusedWith .badSelection text
+              { changes := #[.retain 6], after := some { ranges := #[⟨0, 0⟩], primary := 1 } }
+        -- Cut down to a word, `2 ^ 64` is 0, which names the one range.
+        let hugePrimary ←
+          applyRefusedWith .badSelection text
+              { changes := #[.retain 6], after := some { ranges := #[⟨0, 0⟩], primary := 2 ^ 64 } }
+        let noRangeAndShort ←
+          applyRefusedWith .badSelection text
+              { changes := #[.retain 5], after := some { ranges := #[] } }
+        let noPrimaryAndShort ←
+          applyRefusedWith .badSelection text
+              { changes := #[.retain 5], before := some { ranges := #[⟨0, 0⟩], primary := 1 } }
+        let shortAndAstray ←
+          applyRefusedWith .badChange text
+              { changes := #[.retain 5]
+                before := some { ranges := #[⟨2, 2⟩] }
+                after := some { ranges := #[⟨99, 99⟩] } }
+        return noRange && noPrimary && hugePrimary && noRangeAndShort && noPrimaryAndShort &&
+            shortAndAstray &&
+            (← text.read) == "héllo" &&
+            (← text.revision) == 0 },
+    { name :=
+        "applying a transaction to an id no create returned, and to a released text, is refused with no such text, whatever else is wrong with it"
+      holds := do
+        let text ← createText "héllo"
+        text.release
+        let never ← applyRefusedWith .noSuchText ⟨7⟩ { changes := #[] }
+        let released ← applyRefusedWith .noSuchText text { changes := #[.retain 6] }
+        let releasedAndWrong ←
+          applyRefusedWith .noSuchText text
+              { changes := #[.retain 5], after := some { ranges := #[] } }
+        return never && released && releasedAndWrong },
+    { name := "a snapshot taken before a transaction reads what it read"
+      holds := do
+        let text ← createText rows
+        let before ← text.snapshot
+        discard <| text.apply { changes := severalChanges }
+        let after ← text.snapshot
+        return (← before.read) == rows && (← before.revision) == 0 && (← before.byteLength) == 20 &&
+            (← after.read) == "hello\r\nWörld\nx" &&
+            (← after.revision) == 1 }]
+
 /-- The properties every implementation of the text port has. -/
 def properties : List Property :=
   editProperties ++ revisionProperties ++ snapshotProperties ++ positionProperties ++
-    releaseProperties
+    releaseProperties ++
+    transactionProperties
 
 /-- Runs each of `properties` with `run`, which must start every command from
 an empty store, and returns the names of those that did not hold. A property

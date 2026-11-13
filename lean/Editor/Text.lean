@@ -4,8 +4,9 @@ import Editor.Program
 # The text port
 
 The editor's interface to text storage, in the editor's own terms: make a
-text, insert into it, delete from it, read it, take a snapshot of it, ask a
-text or a snapshot a question, and release either. It is deliberately small.
+text, insert into it, delete from it, apply a transaction to it, read it,
+take a snapshot of it, ask a text or a snapshot a question, and release
+either. It is deliberately small.
 The point is the pattern every later interface follows:
 
 - the port, here: the requests, the reply to each, and the operations a
@@ -31,9 +32,33 @@ same value runs against the model and against the real binding.
   one.
 - An edit is refused with `badRange` unless both of its offsets are
   positions and the start is not after the stop.
+- A *transaction* is the changes to make to a text and, optionally, the
+  selection before them and the selection after them (`Transaction`). It is
+  plain data, applied by one request, all or nothing.
+- The *changes* walk the text from its start to its end: each keeps the next
+  bytes, removes them, or puts text in (`Change`). Changes that do nothing
+  (an empty insert, a retain or a delete of no bytes) are ignored, and a run
+  of deletes and inserts between two retains is one changed range, whatever
+  order its changes are given in. The changes *fit* a text only when they
+  end exactly at its length and every changed range starts and stops at a
+  position. Changes that stop short are refused, not padded, so a
+  transaction built for another state of the text is caught where the
+  lengths differ.
+- A *selection* is one or more ranges of two offsets and the index of the
+  primary one (`Selection`), kept as given. One with no range, or whose
+  primary names none, is not a selection.
+- A transaction is refused, in this order: with `noSuchText`; with
+  `badSelection` when a selection it carries is not one; with `badChange`
+  when its changes do not fit; with `badSelection` when an end of the
+  selection before is not a position of the text before; and with
+  `badSelection` when an end of the selection after is not a position of
+  the text after.
+- An *origin* says who made an edit (`Origin`): a number the editor chooses
+  and the store never reads. It is given when a transaction is applied, not
+  carried in it.
 - A text has a *revision*, a number. A new text is at 0, and every accepted
-  edit adds one, an edit that changes nothing included. A refused edit adds
-  none.
+  edit adds one, an edit that changes nothing included: an insert, a delete,
+  or a transaction, however many changes it has. A refused edit adds none.
 - A *snapshot* is a text as it was when the snapshot was taken, at the
   revision it had then. It never changes: an edit to the text, and releasing
   the text, leave it as it was. It is named by a `SnapshotId`. Only
@@ -112,6 +137,12 @@ inductive TextError where
   | noSuchSnapshot
   /-- An offset, or a point, is not a position of the text. -/
   | badPosition
+  /-- A transaction's changes do not fit the text: they do not end at its
+  length, or a range they change starts or stops inside a character. -/
+  | badChange
+  /-- A transaction's selection has no range, its primary names none, or an
+  end of one of its ranges is not a position of its text. -/
+  | badSelection
   deriving DecidableEq, Repr
 
 /-- The unit a point's column is counted in. -/
@@ -166,6 +197,67 @@ abbrev TextQuery.Answer : TextQuery → Type
   | .pointOf .. => Point
   | .offsetOf .. => Nat
 
+/-- Who made an edit: a number the editor chooses and the text store keeps
+with the edit and never reads. What a number stands for is the editor's
+table. -/
+structure Origin where
+  /-- The number. -/
+  id : UInt64
+  deriving DecidableEq, Repr
+
+/-- The origin of an edit nobody is named for: what `TextId.insert` and
+`TextId.delete` are recorded with. That 0 means this is the editor's
+convention. -/
+def Origin.unattributed : Origin :=
+  ⟨0⟩
+
+/-- One step of a transaction's walk over a text, with its length in bytes. -/
+inductive Change where
+  /-- Keep the next `count` bytes. -/
+  | retain (count : Nat)
+  /-- Remove the next `count` bytes. -/
+  | delete (count : Nat)
+  /-- Put `text` in at this point. -/
+  | insert (text : String)
+  deriving DecidableEq, Repr
+
+/-- One range of a selection: two byte offsets, in either order. -/
+structure SelectionRange where
+  /-- The end that stays when the selection is extended. -/
+  anchor : Nat
+  /-- The end that moves. -/
+  head : Nat
+  deriving DecidableEq, Repr
+
+/-- A selection, as a transaction carries one: ranges, kept as given, and
+which of them is the primary one. It is one only if it has a range and
+`primary` names one. -/
+structure Selection where
+  /-- The ranges. -/
+  ranges : Array SelectionRange
+  /-- The index in `ranges` of the primary range. -/
+  primary : Nat := 0
+  deriving DecidableEq, Repr
+
+/-- A transaction: the changes to make to a text, and optionally the
+selection before them and the selection after them. It is plain data, built
+by a command and applied by one request. -/
+structure Transaction where
+  /-- The changes, which walk the text from its start to its end. -/
+  changes : Array Change
+  /-- The selection in the text before the changes. -/
+  before : Option Selection := none
+  /-- The selection in the text after the changes. -/
+  after : Option Selection := none
+  deriving DecidableEq, Repr
+
+/-- The transaction for a text of `length` bytes that replaces its bytes from
+`start` up to, not including, `stop` with `s` and keeps the rest. It is what
+`TextId.insert` and `TextId.delete` do, for a range in order within the
+text. -/
+def Transaction.replacing (length start stop : Nat) (s : String) : Transaction where
+  changes := #[.retain start, .insert s, .delete (stop - start), .retain (length - stop)]
+
 /-- What a command may ask of the text store. -/
 inductive TextRequest where
   /-- Make a new text holding `initial`. -/
@@ -182,6 +274,8 @@ inductive TextRequest where
   | ask (source : TextSource) (query : TextQuery)
   /-- Give `source` up: its id is refused from then on. -/
   | release (source : TextSource)
+  /-- Apply `transaction` to `text`, with `origin` as who made the edit. -/
+  | apply (text : TextId) (transaction : Transaction) (origin : Origin)
 
 /-- The type of the reply to each request: the new text's id for `create`,
 and for the others a refusal or the result. -/
@@ -193,6 +287,7 @@ def TextRequest.Reply : TextRequest → Type
   | .snapshot _ => Except TextError SnapshotId
   | .ask _ query => Except TextError query.Answer
   | .release _ => Except TextError Unit
+  | .apply .. => Except TextError Nat
 
 /-- The text port: `TextRequest` and the reply to each request. -/
 abbrev textPort : Port :=
@@ -236,6 +331,19 @@ def TextSource.ask (source : TextSource) (query : TextQuery) : EditorM query.Ans
 /-- Gives `source` up. Its id is refused from then on. -/
 def TextSource.release (source : TextSource) : EditorM Unit :=
   ExceptT.mk (Program.request (port := textPort) (.release source))
+
+/-- Applies `transaction` to `text`, with `origin` as who made the edit, and
+returns the revision it produced: one more than before, however many changes
+it has.
+
+Refused, changing nothing, with `badSelection` when a selection is none,
+with `badChange` when the changes do not fit the text, and with
+`badSelection` when an end of the selection before is not a position of the
+text before, or one of the selection after is not a position of the text
+after. That is the order the refusals are looked for in. -/
+def TextId.apply (text : TextId) (transaction : Transaction) (origin : Origin := .unattributed) :
+    EditorM Nat :=
+  ExceptT.mk (Program.request (port := textPort) (.apply text transaction origin))
 
 /-- The revision of `text`: how many edits it has accepted. -/
 def TextId.revision (text : TextId) : EditorM Nat :=

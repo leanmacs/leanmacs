@@ -14,6 +14,12 @@ construction. Rows and points are found by walking the string's characters,
 which is slow and plainly right: the model is what the library is compared
 with, not what the editor runs on.
 
+A transaction's changes are applied as the ranges they change
+(`TextModel.runsOf`): one range for each stretch of deletes and inserts
+between two retains, each spliced into the string as an insert or a delete
+is. The library keeps its changes in a normal form and walks them; the model
+never builds that form, so the two reach the same text by different routes.
+
 The contract (`Editor/Text/Contract.lean`) is what says the model and the real
 binding agree. A clause added to `TextModel.handle` or to `TextModel.answer`
 needs its property there.
@@ -151,6 +157,95 @@ def edit (model : TextModel) (id : TextId) (start stop : Nat) (s : String) :
             model.texts.setIfInBounds id.index
               (some { contents := text, revision := content.revision + 1 }) })
 
+/-- One changed range of a transaction: the bytes of the text before from
+`start` up to, not including, `stop` are replaced by `inserted`. -/
+structure Run where
+  /-- Where the range starts, in the text before. -/
+  start : Nat
+  /-- Where the range stops, in the text before. -/
+  stop : Nat
+  /-- What takes its place. -/
+  inserted : String
+  deriving Repr
+
+/-- What `changes` change, and how far into the text they reach: one run for
+each stretch of deletes and inserts between two retains, in order. Changes
+that do nothing are passed over, so they neither start a run nor end one. -/
+def runsOf (changes : Array Change) : Array Run × Nat :=
+  go changes.toList 0 #[] false
+where
+  /-- Walks the changes that are left. `offset` is how far into the text
+  before the walk is, and `inRun` says whether the last run is still being
+  added to. -/
+  go : List Change → Nat → Array Run → Bool → Array Run × Nat
+    | [], offset, runs, _ => (runs, offset)
+    | .retain count :: rest, offset, runs, inRun =>
+      go rest (offset + count) runs (inRun && count == 0)
+    | .delete count :: rest, offset, runs, inRun =>
+      if count == 0 then go rest offset runs inRun
+      else
+        match inRun, runs.back? with
+        | true, some run =>
+          go rest (offset + count) (runs.pop.push { run with stop := offset + count }) true
+        | _, _ => go rest (offset + count) (runs.push ⟨offset, offset + count, ""⟩) true
+    | .insert s :: rest, offset, runs, inRun =>
+      if s.isEmpty then go rest offset runs inRun
+      else
+        match inRun, runs.back? with
+        | true, some run =>
+          go rest offset (runs.pop.push { run with inserted := run.inserted ++ s }) true
+        | _, _ => go rest offset (runs.push ⟨offset, offset, s⟩) true
+
+/-- What `changes` make of `text`. `none` when they do not fit it: unless
+they end exactly at its length, and every range they change starts and stops
+at a character boundary. -/
+def applyChanges (text : String) (changes : Array Change) : Option String :=
+  let (runs, reached) := runsOf changes
+  if reached == text.utf8ByteSize then
+    -- From the last run back, so that the offsets of the runs still to
+    -- splice are offsets of the text as it is.
+    runs.foldrM (fun run made => splice made run.start run.stop run.inserted) text
+  else none
+
+/-- Whether `selection`, if there is one, is a selection: it has a range, and
+its primary names one. -/
+def isSelection : Option Selection → Bool
+  | none => true
+  | some selection => selection.primary < selection.ranges.size
+
+/-- Whether every end of every range of `selection`, if there is one, is a
+position of `text`. -/
+def selectionFits (text : String) : Option Selection → Bool
+  | none => true
+  | some selection =>
+    selection.ranges.all fun range =>
+      decide ((String.Pos.Raw.mk range.anchor).IsValid text) &&
+        decide ((String.Pos.Raw.mk range.head).IsValid text)
+
+/-- The model's answer to applying `transaction` to the text `id`, and the
+model after it. An accepted transaction adds one to the text's revision,
+however many changes it has. A refused one leaves the model as it was. -/
+def apply (model : TextModel) (id : TextId) (transaction : Transaction) :
+    Except TextError Nat × TextModel :=
+  match model.lookup (.text id) with
+  | .error refusal => (.error refusal, model)
+  | .ok content =>
+    if !(isSelection transaction.before && isSelection transaction.after) then
+      (.error .badSelection, model)
+    else
+      match applyChanges content.contents transaction.changes with
+      | none => (.error .badChange, model)
+      | some text =>
+        if
+            selectionFits content.contents transaction.before &&
+              selectionFits text transaction.after then
+          (.ok (content.revision + 1),
+            { model with
+              texts :=
+                model.texts.setIfInBounds id.index
+                  (some { contents := text, revision := content.revision + 1 }) })
+        else (.error .badSelection, model)
+
 /-- The model after `source`, which it holds, is released: its slot is
 emptied and stays, so later ids are what they would have been. -/
 def released (model : TextModel) : TextSource → TextModel
@@ -180,6 +275,8 @@ def handle : (request : TextRequest) → TextModel → request.Reply × TextMode
     match model.lookup source with
     | .error refusal => (.error refusal, model)
     | .ok _ => (.ok (), model.released source)
+  -- The model keeps no log yet, so who made the edit changes nothing in it.
+  | .apply id transaction _, model => model.apply id transaction
 
 end TextModel
 
@@ -251,6 +348,12 @@ theorem runModel_ask (source : TextSource) (query : TextQuery) (model : TextMode
 @[simp]
 theorem runModel_release (source : TextSource) (model : TextModel) :
     source.release.runModel model = TextModel.handle (.release source) model :=
+  rfl
+
+@[simp]
+theorem runModel_apply (id : TextId) (transaction : Transaction) (origin : Origin)
+    (model : TextModel) :
+    (id.apply transaction origin).runModel model = model.apply id transaction :=
   rfl
 
 end EditorM

@@ -68,6 +68,46 @@ def edit (id : TextId) (start stop : Nat) (s : String) :
     return .ok ()
   return .error .badRange
 
+/-- The library's word for a count, an offset or an index of the port.
+
+The port's are `Nat` and a word is 64 bits. One that no word holds is sent
+as the largest word, which no text is long enough to accept, so the library
+refuses it where it would refuse any other number that is too large:
+converted, it would wrap round to one the library might accept. -/
+def word (number : Nat) : UInt64 :=
+  if number < UInt64.size then number.toUInt64 else 0xFFFF_FFFF_FFFF_FFFF
+
+/-- The library's form of a change of the port. -/
+def change : Change → Ffi.Change
+  | .retain count => .retain (word count)
+  | .delete count => .delete (word count)
+  | .insert text => .insert text
+
+/-- The library's form of a selection of the port. -/
+def selection (selection : Selection) : Ffi.Selection where
+  ranges := selection.ranges.map fun range => ⟨word range.anchor, word range.head⟩
+  primary := word selection.primary
+
+/-- The library's form of a transaction of the port. -/
+def transaction (transaction : Transaction) : Ffi.Transaction where
+  changes := transaction.changes.map change
+  before := transaction.before.map selection
+  after := transaction.after.map selection
+
+/-- The library's answer to applying `changes` to the text `id`, with
+`origin` as who made the edit. When a transaction fits and in what order it
+is refused are the library's decisions. -/
+def apply (id : TextId) (changes : Transaction) (origin : Origin) :
+    StateT RealTexts IO (Except TextError Nat) := do
+  let some document ← document? id | return .error .noSuchText
+  match ← document.apply (transaction changes) origin.id with
+  | .ok revision =>
+    return .ok revision.toNat
+  | .error .badChange =>
+    return .error .badChange
+  | .error .badSelection =>
+    return .error .badSelection
+
 /-- The library's name for a column unit of the port. -/
 def unit : ColumnUnit → Ffi.ColumnUnit
   | .bytes => .bytes
@@ -148,6 +188,7 @@ def handle : (request : TextRequest) → StateT RealTexts IO request.Reply
       return .error refusal
     modify (·.released source)
     return .ok ()
+  | .apply id transaction origin => apply id transaction origin
 
 end RealTexts
 
