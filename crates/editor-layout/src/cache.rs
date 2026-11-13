@@ -227,6 +227,23 @@ mod tests {
     }
 
     #[test]
+    fn a_text_edited_since_it_was_laid_out_is_estimated_from_no_kept_row() {
+        // Four rows; row 2 wraps into three lines at 4 cells.
+        let mut edited = Text::from("a\nb\nabcdefghij\nc");
+        let before = TextRef::fixed(TextKey(1), edited.snapshot());
+        let mut layout = Layout::new(CellShaper::new(10.0, 16.0));
+        layout.frame(&scene(&before, 3, 0));
+        assert_eq!(layout.height_estimate(&before, 40.0), 6.0 * 16.0);
+        // A row is put before them, so row 2 is "b". What is kept is of
+        // the older revision, where row 2 was the wrapped row: until a
+        // frame or a query moves it, no row of the edited text is counted
+        // by it, and each counts one line.
+        edited.replace(0..0, "x\n").unwrap();
+        let after = TextRef::fixed(TextKey(1), edited.snapshot());
+        assert_eq!(layout.height_estimate(&after, 40.0), 5.0 * 16.0);
+    }
+
+    #[test]
     fn rows_farther_than_four_view_heights_from_every_view_are_dropped() {
         let rows: Vec<String> = (0..1000).map(|row| format!("r{row}")).collect();
         let text = TextRef::fixed(TextKey(1), Text::from(rows.join("\n").as_str()).snapshot());

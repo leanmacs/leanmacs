@@ -1738,7 +1738,11 @@ def sceneChecks (_ : Unit) : List Check :=
             second != third &&
             mixed == plain &&
             mixed != whole &&
-            held == "ab\ncd\nef" }]
+            held == "ab\ncd\nef" },
+    { name := "a display nothing was published to has no scene to write back"
+      run := do
+        let display ← Editor.Ffi.Display.newCells 8 16
+        return (← display.scene).isNone }]
 
 /-- Publishes the display fixture through the real binding and checks it
 against the frame checked in at `fixture` (`tests/display/frame.expected`),

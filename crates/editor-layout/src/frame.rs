@@ -1032,6 +1032,19 @@ mod tests {
     }
 
     #[test]
+    fn a_decoration_that_stops_before_it_starts_gives_no_run() {
+        let mut layout = layout();
+        let mut reversed = view("abcdef", 10, 16, 0, &[]);
+        reversed.decorations = vec![Decoration {
+            start: 4,
+            stop: 2,
+            face: "face".to_owned(),
+        }];
+        let row = frame(&mut layout, reversed).rows.remove(0);
+        assert_eq!(row.runs, vec![(0..6, vec![])]);
+    }
+
+    #[test]
     fn a_cursor_is_as_wide_as_the_glyph_it_is_on() {
         // The face `wide` is in a font whose glyphs are 20 across.
         let mut layout = Layout::new(CellShaper::new(10.0, 16.0).with_font(FontId(1), 20.0, 16.0));

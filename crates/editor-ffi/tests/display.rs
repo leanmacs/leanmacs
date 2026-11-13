@@ -420,6 +420,23 @@ fn a_scene_published_through_c_is_laid_out_as_layout_lays_it_out() {
     }
 }
 
+#[test]
+fn a_display_nothing_was_published_to_has_no_scene() {
+    let _alone = alone();
+    let display = editor_ffi_display_new_cells(8, 16);
+    let (mut words, mut text) = (MaybeUninit::uninit(), MaybeUninit::uninit());
+    // SAFETY: `display` is live, and both records are writable and filled
+    // before they are read.
+    let (status, words, text) = unsafe {
+        editor_ffi_display_scene(display, words.as_mut_ptr(), text.as_mut_ptr());
+        let (status, words) = take(words.assume_init());
+        (status, words, take_text(text.assume_init()))
+    };
+    assert_eq!((status, words, text), (1, vec![], String::new()));
+    // SAFETY: `display` is live and freed once.
+    unsafe { editor_ffi_display_free(display) };
+}
+
 /// The scene of one view, numbered 1, of `text` from its start, `width`
 /// pixels across and `height` down, and nothing else: what a `WireScene` of
 /// one `WireView` with only its id, its rectangle and its snapshot set
