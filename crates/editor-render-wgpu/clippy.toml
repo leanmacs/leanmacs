@@ -45,6 +45,21 @@
 #   as given. Seen to bite once by hand, on 2026-11-14: with the `expect`
 #   taken off, `mise run lint` fails with "use of a disallowed method
 #   `std::fs::write`".
+# - `examples/gpu.rs`, `editor_render_wgpu::WgpuRenderer::on_this_machine`,
+#   at one call site: it is the one place this machine's adapter is asked
+#   for, the adapter's check run on demand (`mise run render-gpu`,
+#   `mise run linux-render`).
+# - `examples/gpu.rs`, `std::time::Instant::now`, at one call site, inside
+#   a helper that runs a closure and says how long it took: the one place
+#   a draw on a real adapter is timed. The times are printed for a person
+#   and never asserted; `editor-render` publishes no real clock. The
+#   reference image it compares with and the fonts are compiled in, so it
+#   reads and writes no file.
+#
+#   Both seen to bite once by hand, on 2026-11-14: with each `expect`
+#   taken off, `mise run lint` fails with "use of a disallowed method
+#   `editor_render_wgpu::WgpuRenderer::on_this_machine`" and "use of a
+#   disallowed method `std::time::Instant::now`".
 
 disallowed-methods = [
   # Every free function of `std::fs`.

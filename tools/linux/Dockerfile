@@ -21,11 +21,17 @@ FROM debian@sha256:a72b4433de1cf7d6bae0c4cee74d0547f58601a643b3375f070c51600d63b
 # The second line is for `linux-window` alone: a display that needs no
 # screen (Xvfb), a way to type into it (xdotool), and the libraries the
 # window library loads at run time under X11.
+#
+# The third line is for `linux-render` alone: Mesa's Vulkan drivers, of
+# which llvmpipe draws on the CPU, and the Vulkan loader wgpu opens at run
+# time. The gate asks for no adapter (`crates/editor-render-wgpu/
+# clippy.toml` forbids it to tests), so it runs the same with them there.
 RUN apt-get update \
     && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
         ca-certificates curl git build-essential zstd pkg-config pipx python3-venv \
         xvfb xdotool libx11-6 libx11-xcb1 libxcursor1 libxi6 libxrandr2 \
         libxkbcommon0 libxkbcommon-x11-0 libxcb1 \
+        mesa-vulkan-drivers libvulkan1 \
     && rm -rf /var/lib/apt/lists/*
 
 # mise and elan, each at an exact version, each download checked against the

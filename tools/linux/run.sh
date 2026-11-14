@@ -2,11 +2,13 @@
 # Runs the gate on Linux, in a container (`mise run linux-ci`;
 # docs/dev-practices/on-demand-checks.md, "The gate on Linux"), and the
 # real window there under Xvfb
-# (`mise run linux-window`). Opt-in, never part of `ci`: it needs Docker and,
-# the first time, the network.
+# (`mise run linux-window`), and the wgpu renderer there on a software
+# Vulkan driver (`mise run linux-render`). Opt-in, never part of `ci`: it
+# needs Docker and, the first time, the network.
 #
 #   tools/linux/run.sh ci [--clean]
 #   tools/linux/run.sh window
+#   tools/linux/run.sh render
 #
 # It builds the image from the Dockerfile beside it and copies the checkout
 # into a work directory. `ci` runs `mise run ci` there, and its exit status is
@@ -15,7 +17,11 @@
 # the winit adapter's example, which holds the real window to the window
 # port's contract; `editor window-check`, with xdotool giving the window the
 # focus and typing into it; and the same with composition not allowed. Its
-# keys are synthetic, and its output says so.
+# keys are synthetic, and its output says so. `render` runs the renderer's
+# example there (`crates/editor-render-wgpu/examples/gpu.rs`): the wgpu
+# adapter on Mesa's software Vulkan driver, llvmpipe, held to the renderer
+# port's contract and compared with the reference image; its exit status is
+# the example's.
 #
 # The source is copied, never mounted in place: the tracked files and the
 # untracked files git does not ignore, so uncommitted work is tested and the
@@ -56,7 +62,7 @@ die() {
 }
 
 usage() {
-  die "usage: tools/linux/run.sh ci [--clean] | window"
+  die "usage: tools/linux/run.sh ci [--clean] | window | render"
 }
 
 # ---- Inside the container ----
@@ -172,6 +178,17 @@ inside_window() {
   echo "linux-window: all three passed"
 }
 
+# The wgpu renderer on a real adapter with no GPU: Mesa's software Vulkan
+# driver, llvmpipe, which the image installs. The example opens no window;
+# it draws to a texture and reads it back.
+inside_render() {
+  [ $# -eq 0 ] || usage
+  inside_prepare
+  inside_versions
+  echo "linux-render: the wgpu renderer on Mesa's software Vulkan driver"
+  mise exec -- cargo run --locked --package editor-render-wgpu --example gpu
+}
+
 # ---- On the host ----
 
 # Makes `$cache/work` a copy of the checkout: the tracked files and the
@@ -226,7 +243,7 @@ on_host() {
 
 [ $# -ge 1 ] || usage
 case "$1" in
-ci | window)
+ci | window | render)
   on_host "$@"
   ;;
 inside)
@@ -237,6 +254,7 @@ inside)
   case "$mode" in
   ci) inside_ci "$@" ;;
   window) inside_window "$@" ;;
+  render) inside_render "$@" ;;
   *) usage ;;
   esac
   ;;

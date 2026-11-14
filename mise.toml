@@ -326,6 +326,28 @@ run = "cargo run --locked --package editor-shape-parley --example system"
 description = "Opt-in, never part of ci: draw the renderer's fixture frame with the headless adapter and write it to tests/render/frame.png, the reference image. Look at the file before committing it"
 run = "cargo run --locked --package editor-render-wgpu --example reference -- tests/render/frame.png"
 
+# Opt-in: run it by hand, and do not add it to `ci` or to hk.pkl. What it
+# finds depends on this machine's GPU and its driver, so it is no part of
+# a gate that must give the same answer everywhere, and a machine with no
+# GPU has nothing to run it on. It opens no window.
+#
+# It runs the renderer's example (`crates/editor-render-wgpu/examples/
+# gpu.rs`): the wgpu adapter on this machine's adapter, held to the
+# renderer port's contract; then the fixture frame drawn on the GPU, read
+# back, and compared with the reference image (within 3 of 255 a channel);
+# then how long a first frame, an edited frame and a cursor-only frame
+# took, which nothing is asserted of. Its exit status is whether the
+# contract and the comparison held.
+#
+# The gate runs the wgpu adapter on wgpu's no-op back end only, which
+# checks its calls and draws nothing. This is where its picture is
+# checked. Run it after a change to the shader, the device, the painter or
+# `blend`, and when the pin of wgpu moves; `linux-render` runs the same in
+# the container, on Mesa's software Vulkan.
+[tasks.render-gpu]
+description = "Opt-in, never part of ci: hold the wgpu renderer on this machine's GPU to the renderer port's contract, and compare the frame it draws with the reference image. Opens no window; needs a GPU"
+run = "cargo run --locked --package editor-render-wgpu --example gpu"
+
 # Opt-in: run it by hand, and do not add it to `ci` or to hk.pkl. It needs
 # Docker and, the first time, the network.
 #
@@ -359,6 +381,18 @@ run = "tools/linux/run.sh ci"
 [tasks.linux-window]
 description = "Opt-in, never part of ci: in the Linux container, under Xvfb, hold the winit window to the window port's contract and run the keyboard check on keys typed by xdotool (tools/linux/run.sh). Needs Docker"
 run = "tools/linux/run.sh window"
+
+# Opt-in: run it by hand, and do not add it to `ci` or to hk.pkl. It needs
+# Docker, like `linux-ci`, whose image, cache and volume it shares.
+#
+# This is where the wgpu renderer draws on Linux without a GPU: in the
+# container it runs the renderer's example (`render-gpu`'s) on Mesa's
+# software Vulkan driver, llvmpipe, which the image installs for this task
+# alone. The gate in that image asks for no adapter and is not changed by
+# the driver being there.
+[tasks.linux-render]
+description = "Opt-in, never part of ci: in the Linux container, on Mesa's software Vulkan, hold the wgpu renderer to the renderer port's contract and compare the frame it draws with the reference image (tools/linux/run.sh). Needs Docker"
+run = "tools/linux/run.sh render"
 
 [tasks.ci]
 description = "The whole gate; `hk check` runs this, and it gates review and landing (rdm's dispatch.verify)"
