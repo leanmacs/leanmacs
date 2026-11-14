@@ -917,7 +917,10 @@ it was kept at.**
   Vim ([text-and-display.md](text-and-display.md), "Vim's `curswant` is a
   display column"). Display columns need the display pipeline's tab stops
   and character widths. The unit is evil's choice, so one evil check pins
-  it, named as a departure.
+  it, named as a departure. That the unit is cells and not bytes is
+  pinned apart from it, by rows of `j` and `k` with characters of two
+  bytes and one display column before the cursor, on which Vim's column
+  is the same ("Motions as built").
 - **Set aside: in the scheme's state.** `step` is pure and never sees what
   a command did, so the scheme cannot know the column.
 - **Set aside: in the selection marker.** The store's selection has no
@@ -1134,7 +1137,9 @@ test runs Vim.**
   line feed; an empty text, and a text that is one line feed; for the word
   motions a run of punctuation beside a word (`foo.bar`, `foo(bar)`), a run
   of blanks, a line break between words, and leading blanks on the next
-  line; and a carriage return and line feed as the line break.
+  line; a carriage return and line feed as the line break; and for `j`
+  and `k` characters of two bytes before the cursor, where the cursor's
+  column in cells is not its column in bytes.
 - **A key string separates strokes with spaces** ("Key strings"), so a
   count and a two-key motion are written `2 w`, `9 9 G` and `g g`.
 
@@ -1206,6 +1211,9 @@ rows of the same kinds than are listed here.
 | `2 j` | `a\|b⏎cd⏎ef⏎gh⏎ij⏎` | `ab⏎cd⏎e\|f⏎gh⏎ij⏎` |
 | `1 k`, `2 k` | `ab⏎cd⏎ef⏎g\|h⏎ij` | `ab⏎cd⏎e\|f⏎gh⏎ij`, `ab⏎c\|d⏎ef⏎gh⏎ij` |
 | `3 k` | `ab⏎cd⏎ef⏎gh⏎i\|j` | `ab⏎c\|d⏎ef⏎gh⏎ij` |
+| `j`, `2 j` | `hé\|llo⏎world`, `é\|bc⏎def⏎ghi` | `héllo⏎wo\|rld`, `ébc⏎def⏎g\|hi` (a character of two bytes before the cursor is one column) |
+| `k` | `abcdef⏎éö\|x` | `ab\|cdef⏎éöx` |
+| `j k`, `j j` | `hé\|llo⏎x⏎héllo`, `hé\|llo⏎x⏎world` | `hé\|llo⏎x⏎héllo`, `héllo⏎x⏎wo\|rld` (the kept column is in cells too) |
 | `j j` | `abc\|d⏎x⏎abcd` | `abcd⏎x⏎abc\|d` |
 | `j k` | the same | `abc\|d⏎x⏎abcd` (the acceptance criterion) |
 | `j j` | `abc\|d⏎⏎abcd` | `abcd⏎⏎abc\|d` (across an empty line) |
