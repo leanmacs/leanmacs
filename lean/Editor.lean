@@ -1,5 +1,6 @@
 import Editor.Api.Theorems
 import Editor.Command.Append
+import Editor.Evil
 import Editor.Files
 import Editor.InputScheme.Vim.Default
 import Editor.Minibuffer
@@ -52,6 +53,10 @@ them (`defineMode`): the mode record (`Editor/Mode.lean`) and the roles a
 mode fills (`Editor/Role.lean`). The test
 scheme and the scheme contract (`Editor/InputScheme/Test.lean`,
 `Editor/InputScheme/Contract.lean`) are for tests, and are not imported.
+
+What the Vim scheme's invocations run is here as well: evil
+(`Editor/Evil.lean`), Vim's states, motions and commands written on the
+editor API, so a command of config's can call them.
 
 It never imports `Editor.Ffi` or a port's real binding (`Editor/Text/Real.lean`).
 Those reach the Rust library, and only an executable linked with it imports

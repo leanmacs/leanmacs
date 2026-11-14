@@ -5,6 +5,7 @@ import Editor.Command.Model
 import Editor.Config.Reload
 import Editor.Display.Contract
 import Editor.Display.Model
+import Editor.Evil
 import Editor.File.Cases
 import Editor.File.Model
 import Editor.Files.Compiled
@@ -11540,6 +11541,64 @@ def fileCommandChecks : List Check :=
               bytesOf saved path == some (FileModel.encode text) &&
               echoOf saved == some (Files.wrote path) }]
 
+/-- Texts of the resting rule's checks, each with every position it has, in
+order, and where each rests under `onCell` and under `offLineBreak`,
+written out by hand: the empty text; one line feed; a line with no line
+break; a line and its line feed; two lines around an empty one; a carriage
+return and line feed, with the position between the two; and a character
+of four bytes. -/
+def restings : List (String × List Nat × List Nat × List Nat) :=
+  [("", [0], [0], [0]), ("\n", [0, 1], [0, 0], [0, 0]), ("ab", [0, 1, 2], [0, 1, 1], [0, 1, 1]),
+    ("ab\n", [0, 1, 2, 3], [0, 1, 2, 2], [0, 1, 1, 1]),
+    ("ab\n\ncd", [0, 1, 2, 3, 4, 5, 6], [0, 1, 2, 3, 4, 5, 5], [0, 1, 1, 3, 4, 5, 5]),
+    ("ab\r\ncd", [0, 1, 2, 3, 4, 5, 6], [0, 1, 2, 2, 4, 5, 5], [0, 1, 1, 1, 4, 5, 5]),
+    ("a😀", [0, 1, 5], [0, 1, 1], [0, 1, 1])]
+
+/-- Where each of `offsets` rests in a text holding `contents` under the
+rule `rest` (`Evil.rested`), on the text model; none when one was
+refused. -/
+def restedIn (rest : Evil.Rest) (contents : String) (offsets : List Nat) : Option (List Nat) :=
+  onTextModel do
+    let text ← createText contents
+    offsets.mapM (Evil.rested rest text)
+
+/-- The checks of where a cursor rests in a state (`Editor/Evil.lean`), on
+the text model, from every position of a few small texts. -/
+def evilRestChecks : List Check :=
+  [{  name :=
+        "where a cursor may rest anywhere, every position rests where it is, the text's end among them"
+      run :=
+        pure
+          (restings.all fun (contents, positions, _, _) =>
+            restedIn .anywhere contents positions == some positions) },
+    { name :=
+        "where a cursor rests on a cell, every position rests where it is, a line break among them, but for the text's end, which rests at the start of the last cell, and the position inside a carriage return and line feed, which rests at the carriage return"
+      run :=
+        pure
+          (restings.all fun (contents, positions, onCell, _) =>
+            restedIn .onCell contents positions == some onCell) },
+    { name :=
+        "where a cursor rests off the line break, it rests as on a cell, and one cell back from the line break of a row that has content; the line break of an empty line is kept, and the text's end after a final line feed rests on the last character of the row before"
+      run :=
+        pure
+          (restings.all fun (contents, positions, _, offLineBreak) =>
+            restedIn .offLineBreak contents positions == some offLineBreak) },
+    { name := "in the empty text every rule rests a cursor at 0"
+      run :=
+        pure
+          ([Evil.Rest.anywhere, .onCell, .offLineBreak].all fun rest =>
+            restedIn rest "" [0] == some [0]) },
+    { name :=
+        "the resting rule of a view is read off what the scheme reports of it: anywhere for an exclusive selection, on a cell where a motion extends the selection, and off the line break otherwise"
+      run :=
+        pure
+          (Evil.restOf { shape := .exclusive } == .anywhere &&
+            Evil.restOf { shape := .exclusive, selecting := true } == .anywhere &&
+            Evil.restOf { shape := .inclusive, selecting := true } == .onCell &&
+            Evil.restOf { shape := .line, selecting := true } == .onCell &&
+            Evil.restOf { shape := .inclusive } == .offLineBreak &&
+            Evil.restOf { shape := .line } == .offLineBreak) }]
+
 /-- Every check, in the order they run.
 
 The order matters where the process's one pool is measured. `poolChecks` run
@@ -11590,7 +11649,8 @@ def checks : List Check :=
     apiStateChecks ++
     driverChecks ++
     promptChecks ++
-    fileCommandChecks
+    fileCommandChecks ++
+    evilRestChecks
 
 /-- Runs `checks` and returns the names of those that failed. A check that
 throws has failed, and its error is reported with its name. -/
