@@ -4223,6 +4223,19 @@ def stateChecks : List Check :=
           | none => false
           | some state => (state.window? ⟨0⟩).map (·.wanted) == some none },
     { name :=
+        "the initial state's selection is one cursor at 0, of the shape the state is made with, and exclusive when it is made with none"
+      run :=
+        pure <|
+          let cursor (start : TextM EditorState) : Option Marker :=
+            onTextModel do
+              let some target := (← start).focusedTarget? | throw .noSuchText
+              target.buffer.text.marker target.window.selection
+          let one (shape : Shape) : Option Marker :=
+            some (.selection { ranges := #[⟨0, 0⟩], shape })
+          cursor (EditorState.initial ⟨640, 480⟩) == one .exclusive &&
+            cursor (EditorState.initial ⟨640, 480⟩ .inclusive) == one .inclusive &&
+            cursor (EditorState.initial ⟨640, 480⟩ .line) == one .line },
+    { name :=
         "setting a window's wanted column keeps the column with the head it was kept at, and leaves the other windows and the rest of the state; setting none keeps none again"
       run :=
         pure <|
@@ -5534,7 +5547,22 @@ def loopChecks : List Check :=
                 #[markedReport.status ++ #[{ text := "scratch", face := Loop.nameFace }],
                   #[{ text := "Name: ", face := Loop.promptFace }]] &&
               !askedReport.status.isEmpty
-          | _ => false }]
+          | _ => false },
+    { name :=
+        "a loop is started with its first window's selection of the shape its scheme reports of the first view before any key: an inclusive cursor under a scheme that reports one, and an exclusive one under a scheme that says nothing"
+      run :=
+        pure <|
+          let inclusive : InputScheme :=
+            { TestScheme.scheme with
+              report := fun _ view => if view == ⟨0⟩ then { shape := .inclusive } else {} }
+          let cursor (scheme : InputScheme) : Option Marker :=
+            onTextModel do
+              let loop ← Loop.start scheme ⟨640, 480⟩
+              let some target := loop.state.focusedTarget? | throw .noSuchText
+              target.buffer.text.marker target.window.selection
+          cursor inclusive == some (.selection { ranges := #[⟨0, 0⟩], shape := .inclusive }) &&
+            cursor TestScheme.scheme ==
+              some (.selection { ranges := #[⟨0, 0⟩], shape := .exclusive }) }]
 
 /-- The focused window's buffer and window in `loop`'s state, or a refusal
 for a state with none. -/

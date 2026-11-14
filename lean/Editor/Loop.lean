@@ -24,7 +24,9 @@ the events and hands each to it.
 A loop runs one input scheme (`Editor/InputScheme.lean`), which it is given
 when it starts and keeps for its life: `Loop scheme`
 (`docs/design/keymaps-and-modes.md`, "The loop runs one scheme"). It holds
-the scheme's state. A step is also handed `Loop.Keys`: the active keymaps
+the scheme's state. It starts over the initial state, with the first
+window's selection of the shape the scheme reports of the first view
+before any key (`Loop.start`). A step is also handed `Loop.Keys`: the active keymaps
 of each view, as a function of the editor state and the view, which the
 caller makes for each step. The loop applies it to its own state
 (`Loop.key`): the active keymaps depend on the buffers' modes, which only
@@ -631,9 +633,11 @@ namespace Loop
 variable {scheme : InputScheme}
 
 /-- A loop that runs `scheme`, over the initial state, in a frame of `size`,
-with nothing shown yet and no key typed. -/
+with nothing shown yet and no key typed. The first window's selection has
+the shape the scheme reports of the first view before any key
+(`InputScheme.report`). -/
 def start (scheme : InputScheme) (size : Size) : TextM (Loop scheme) :=
-  return { state := ← EditorState.initial size }
+  return { state := ← EditorState.initial size (scheme.report scheme.init ⟨0⟩).shape }
 
 /-- The face of the buffer's name in a status line. -/
 def nameFace : FaceName :=

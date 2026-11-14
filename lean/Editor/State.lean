@@ -278,7 +278,12 @@ registered is the loop's to ask, which also runs the mode's `onEnter`
 
 - A new state's frame is focused, on view 0, with one window over a buffer
   called `scratch` of an empty text, whose scroll anchor is at 0 and whose
-  selection is one exclusive cursor at 0 (`EditorState.initial`).
+  selection is one cursor at 0 (`EditorState.initial`). The cursor's shape
+  is the caller's to say, and exclusive when it says none: the loop gives
+  it the shape its input scheme reports of the first view
+  (`Editor/Loop.lean`). A window made later takes its shape from a window
+  that exists (`ViewId.show`, `ViewId.split`, `Editor/Api.lean`), and the
+  minibuffer's cursor is exclusive (`prompt`).
 - The frame's `hasFocus` is the platform window's keyboard focus. While the
   frame does not have it, the scene names no focused view.
 - The preedit is the text an input method is composing in the focused
@@ -744,12 +749,12 @@ def wellFormed (state : EditorState) : Bool :=
 
 /-- A buffer called `scratch` over a new empty text, and one window on it,
 focused, in a frame of `size` with the minibuffer's place below it. The
-window's scroll anchor is at 0, and its selection one exclusive cursor at
-0. -/
-def initial (size : Size) : TextM EditorState := do
+window's scroll anchor is at 0, and its selection one cursor at 0 of the
+shape `shape`, exclusive unless the caller says another. -/
+def initial (size : Size) (shape : Shape := .exclusive) : TextM EditorState := do
   let text ← createText ""
   let scroll ← text.mark (.anchor { offset := 0, bias := .before })
-  let selection ← text.mark (.selection { ranges := #[⟨0, 0⟩], shape := .exclusive })
+  let selection ← text.mark (.selection { ranges := #[⟨0, 0⟩], shape })
   let history ← UndoTree.over text
   return {
       buffers := #[some { name := "scratch", text, history }]
