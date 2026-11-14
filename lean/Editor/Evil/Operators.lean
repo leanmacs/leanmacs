@@ -29,7 +29,18 @@ one (`Editor/Evil.lean`), so the caller supplies the vocabulary.
 - **It works the stretch out and hands it to the operator**: for the kind
   `motion`, from where the motion leads (`stretch`); for the kind `lines`,
   which is the doubled key, the head's line and `count - 1` lines below,
-  stopped at the last line. The window then keeps no wanted column.
+  stopped at the last line; for the kind `selection`, which an operator's
+  key in a visual state compiles to, what the selection covers. A
+  selection of the line shape is the lines of its two ends. Any other is
+  what the text port says its primary range covers by its shape
+  (`TextId.extents`), stopped where the last line's content ends; the two
+  rules below for a stretch that stops at a line's start and for a
+  deletion over lines are a motion's and are not applied, as Vim applies
+  neither in Visual mode. A count is ignored. The window then keeps no
+  wanted column.
+- **The operator's key left the visual state**, so the command is told
+  normal state's report, or insert state's for a change, and what it
+  leaves is one cursor of that shape.
 - **A call that cannot be made gives up** (`giveUp`, `Editor/Api.lean`),
   each with a sentence a function here makes: an operator no entry has
   (`noSuchOperator`), a motion no entry has (`noSuchMotion`), a text
@@ -358,6 +369,32 @@ def operate (operators : Array Vocabulary.Operator) (motions : Array Vocabulary.
       pure
           { stretch := .lines first (max first (min (first + count - 1) (← lastLine text))), head,
             rest := head, register, before }
+    | "selection" =>
+      if before.shape == .line then
+        -- The lines of the selection's two ends. A yank leaves the cursor
+        -- at the start of the anchor's line, or on the head when the head
+        -- is before the anchor.
+        let rest ←
+          if range.head < range.anchor then
+            pure head
+          else
+            text.motion .lineStart range.anchor
+        pure {
+              stretch :=
+                .lines (← rowOf text (min range.anchor head)) (← rowOf text (max range.anchor head))
+              head, rest, register, before }
+      else
+        -- What the text says the range covers, by the selection's shape,
+        -- and nothing past where the last line's content ends.
+        let covered ←
+          text.extents
+              { before with
+                ranges := #[range], primary := 0 }
+        let some extent := covered[0]? | throw .badSelection
+        let limit ← text.motion .lineEnd (← text.offsetOf ⟨← lastLine text, 0⟩)
+        let stop := min extent.stop limit
+        let start := min extent.start stop
+        pure { stretch := .cells ⟨start, stop⟩ .exclusive, head, rest := start, register, before }
     | "text-object" =>
       giveUp noTextObject
     | _ =>

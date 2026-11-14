@@ -333,7 +333,11 @@ registers for evil (`Editor/Evil/Compiled.lean`), on the loop's driver:
   and whether the command gave up. `operatorTable` is every operator over
   every motion in five situations; beside it are the special cases, the
   calls of the operate command that give up, and that an operator is one
-  step of the history.
+  step of the history. `operatorSweep` presses every default operator key
+  with every default motion key from every resting position of a few
+  texts;
+- `evilSelectionChecks`: the operators over a `v` and a `V` selection, by
+  the same rows, and that the operator's key leaves one cursor.
 
 Each expected text of a row is written by hand from Vim's documented
 behaviour (`docs/design/keymaps-and-modes.md`, "Motions as built"). No
@@ -14862,6 +14866,53 @@ def evilOperatorChecks : List Check :=
               evilText deleted == some "ac" &&
               evilText (evilUndone deleted) == some "abc" }]
 
+/-- The oracle table's rows for the operators over a visual selection: a
+`v` selection is acted on through the cell under its head, and a `V`
+selection as whole lines. -/
+def selectionRows : List OperatorRow :=
+  [.rests "foo |bar baz" "v w d" "foo |az" (charwise "bar b"),
+    .rests "foo |bar baz" "v w y" "foo |bar baz" (charwise "bar b"),
+    .inserts "foo |bar baz" "v w c" "foo |az" (charwise "bar b"),
+    .rests "foo bar |baz" "v b y" "foo |bar baz" (charwise "bar b"),
+    .rests "a|bc\ndef" "v $ d" "a|def" (charwise "bc\n"),
+    .rests "a|bc\ndef\nghi" "v j d" "a|f\nghi" (charwise "bc\nde"),
+    .rests "ab\n|\ncd" "v d" "ab\n|cd" (charwise "\n"),
+    .rests "ab\nc|d\n" "v $ d" "ab\n|c\n" (charwise "d"), .rests "ab\n|\n" "v d" "ab\n|\n" asItWas,
+    .rests "abc\nd|ef\nghi" "V d" "abc\n|ghi" (linewise "def\n"),
+    .rests "abc\nd|ef\nghi" "V y" "abc\n|def\nghi" (linewise "def\n"),
+    .rests "abc\nd|ef\nghi" "V j y" "abc\n|def\nghi" (linewise "def\nghi\n"),
+    .rests "abc\nd|ef\nghi" "V k y" "a|bc\ndef\nghi" (linewise "abc\ndef\n"),
+    .rests "abc\nd|ef\nghi" "V j d" "|abc" (linewise "def\nghi\n"),
+    .rests "abc\n  d|ef\nghi\n  jkl" "V j d" "abc\n  |jkl" (linewise "  def\nghi\n"),
+    .inserts "abc\nd|ef\nghi" "V c" "abc\n|\nghi" (linewise "def\n"),
+    .inserts "abc\nd|ef\nghi" "V j c" "abc\n|" (linewise "def\nghi\n")]
+
+/-- The checks of evil's operators over a visual selection
+(`Editor/Evil/Operators.lean`), by key, as `evilOperatorChecks` are. -/
+def evilSelectionChecks : List Check :=
+  [{  name :=
+        "d, c and y on a v selection act on the inclusive range, and on a V selection on whole lines: the text, the cursor and the unnamed register are Vim's, and the view is left in normal state, or in insert state for c"
+      run := operatorRows selectionRows },
+    { name :=
+        "an operator's key leaves the visual state with one cursor: after it the selection is one range with both ends on the cursor, of normal state's shape, and a motion moves the cursor alone"
+      run :=
+        pure <|
+          let normal := (vimDefaultReport "").shape
+          let cursor (fixture typed : String) (head : Nat) : Bool :=
+            (evilSelected fixture typed).map (fun (ranges, shape, _) => (ranges, shape)) ==
+              some ([(head, head)], normal)
+          cursor "foo |bar baz qux" "v w d" 4 && cursor "foo |bar baz qux" "v w y" 4 &&
+            cursor "abc\nd|ef\nghi" "V j y" 4 &&
+            cursor "abc\nd|ef\nghi" "V d" 4 &&
+            cursor "foo |bar baz qux" "v w y w" 8 &&
+            cursor "foo |bar baz qux" "v w c <Escape>" 3 },
+    { name :=
+        "a count typed before the operator of a visual selection changes nothing: the selection is what is acted on"
+      run :=
+        operatorRows
+          [.rests "foo |bar baz" "v w 3 d" "foo |az" (charwise "bar b"),
+            .rests "abc\nd|ef\nghi" "V 2 y" "abc\n|def\nghi" (linewise "def\n")] }]
+
 /-- Every check, in the order they run.
 
 The order matters where the process's one pool is measured. `poolChecks` run
@@ -14921,7 +14972,8 @@ def checks : List Check :=
     evilMotionChecks ++
     evilStateChecks ++
     evilInsertChecks ++
-    evilOperatorChecks
+    evilOperatorChecks ++
+    evilSelectionChecks
 
 /-- Runs `checks` and returns the names of those that failed. A check that
 throws has failed, and its error is reported with its name. -/
