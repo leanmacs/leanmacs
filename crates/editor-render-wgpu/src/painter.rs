@@ -70,12 +70,13 @@ use editor_layout::shaper::ResolvedFont;
 use editor_render::port::{Drawn, Target};
 use editor_render::rows::{RowCache, RowRef};
 
-use crate::SubpixelOrder;
 use crate::atlas::Atlas;
+use crate::blend::stripes;
 use crate::glyphs::{
     GlyphCache, GlyphImage, GlyphKey, GlyphRequest, Kind, Rasterize, Stats, bin_of,
 };
 use crate::quads::{Clip, Quad, QuadKind, pixel};
+use crate::{Antialiasing, Settings, SubpixelOrder};
 
 /// How many pixels thick a line the painter sizes is at `scale`: the
 /// scale rounded, and never less than one.
@@ -138,9 +139,11 @@ pub struct Painter<Z> {
     rasterizer: Z,
     /// Whether outlines are fitted to the pixel grid.
     hint: bool,
-    /// The stripe order subpixel masks are asked in; `None` asks for
-    /// plain masks.
-    subpixel: Option<SubpixelOrder>,
+    /// How glyphs are antialiased.
+    antialiasing: Antialiasing,
+    /// Whether the device behind the painter blends by a coverage for
+    /// each channel.
+    per_channel: bool,
     /// The glyph images.
     glyphs: GlyphCache,
     /// The quads of each row of the frame last painted.
@@ -154,23 +157,19 @@ pub struct Painter<Z> {
 }
 
 impl<Z: Rasterize> Painter<Z> {
-    /// A painter that has painted nothing. Glyph images are made by
-    /// `rasterizer`, hinted when `hint` says so, as subpixel masks in the
-    /// stripe order `subpixel` or as plain masks when it is `None`. The
-    /// atlas's pages are `page_size` pixels across and down and may come
-    /// to `budget` bytes.
-    pub fn new(
-        rasterizer: Z,
-        hint: bool,
-        subpixel: Option<SubpixelOrder>,
-        page_size: u32,
-        budget: u64,
-    ) -> Self {
+    /// A painter that has painted nothing, for a device that blends by a
+    /// coverage for each channel (`per_channel`) or one that cannot.
+    /// Glyph images are made by `rasterizer`, hinted and antialiased as
+    /// `settings` says: as subpixel masks or as plain ones by the scale
+    /// of each target ([`stripes`]). The atlas's pages are `page_size`
+    /// pixels across and down and may come to the settings' budget.
+    pub fn new(rasterizer: Z, settings: &Settings, per_channel: bool, page_size: u32) -> Self {
         Self {
             rasterizer,
-            hint,
-            subpixel,
-            glyphs: GlyphCache::new(page_size, budget),
+            hint: settings.hinting,
+            antialiasing: settings.antialiasing,
+            per_channel,
+            glyphs: GlyphCache::new(page_size, settings.atlas_budget),
             rows: RowCache::new(),
             generation: None,
             unknown: 0,
@@ -197,11 +196,15 @@ impl<Z: Rasterize> Painter<Z> {
 
         let (rasterizer, glyphs, unknown) =
             (&mut self.rasterizer, &mut self.glyphs, &mut self.unknown);
+        // The kind of mask asked for is fixed for a scale, and rows are
+        // built again at another scale: a kept row never holds the other
+        // kind.
+        let order = stripes(self.antialiasing, target.scale, self.per_channel);
         let mut ordered = Ordered {
             inner: rasterizer,
-            order: self.subpixel,
+            order,
         };
-        let (hint, subpixel) = (self.hint, self.subpixel.is_some());
+        let (hint, subpixel) = (self.hint, order.is_some());
         let line = thickness(target.scale);
         let reuse = self.rows.update(frame, target.scale, |row| {
             build_row(

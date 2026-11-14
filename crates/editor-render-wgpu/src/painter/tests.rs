@@ -19,10 +19,10 @@ use editor_layout::shaper::{Glyph, ResolvedFontId, VisualLine};
 use editor_render::port::Target;
 
 use super::{Painter, thickness};
-use crate::SubpixelOrder;
 use crate::glyphs::fake::{FakeRasterizer, font};
 use crate::glyphs::{GlyphKey, bin_of};
 use crate::quads::{Quad, QuadKind};
+use crate::{Antialiasing, Settings, SubpixelOrder};
 
 /// The page size of the painters here.
 const PAGE: u32 = 64;
@@ -38,10 +38,50 @@ const GREY: Color = Color::rgb(0x80, 0x80, 0x80);
 /// The width and the height of every image of the fake rasteriser.
 const GLYPH: (u32, u32) = (FakeRasterizer::WIDTH, FakeRasterizer::HEIGHT);
 
+/// Settings that hint, antialias as `antialiasing` says, and give the
+/// atlas `budget` bytes.
+fn settings(antialiasing: Antialiasing, budget: u64) -> Settings {
+    Settings {
+        antialiasing,
+        hinting: true,
+        atlas_budget: budget,
+    }
+}
+
+/// A painter over the fake rasteriser, antialiasing as `antialiasing`
+/// says for a device that blends by a coverage for each channel, with an
+/// atlas that never fills.
+fn painter_with(antialiasing: Antialiasing) -> Painter<FakeRasterizer> {
+    Painter::new(
+        FakeRasterizer::new(),
+        &settings(antialiasing, u64::MAX),
+        true,
+        PAGE,
+    )
+}
+
+/// A painter over the fake rasteriser that asks for plain masks, with an
+/// atlas of pages `page` pixels across and down and one page of masks
+/// for its budget.
+fn tight(page: u32) -> Painter<FakeRasterizer> {
+    let budget = u64::from(page * page);
+    Painter::new(
+        FakeRasterizer::new(),
+        &settings(Antialiasing::Grayscale, budget),
+        true,
+        page,
+    )
+}
+
 /// A painter over `rasterizer` that asks for plain masks, with an atlas
 /// that never fills.
 fn painter_over(rasterizer: FakeRasterizer) -> Painter<FakeRasterizer> {
-    Painter::new(rasterizer, true, None, PAGE, u64::MAX)
+    Painter::new(
+        rasterizer,
+        &settings(Antialiasing::Grayscale, u64::MAX),
+        true,
+        PAGE,
+    )
 }
 
 /// A painter over the fake rasteriser as it comes.
@@ -683,7 +723,7 @@ fn a_dropped_row_lets_its_glyphs_go_so_the_atlas_stays_within_its_budget() {
     // every row of three glyphs no other has.
     let page = 32;
     let budget = u64::from(page * page);
-    let mut painter = Painter::new(FakeRasterizer::new(), true, None, page, budget);
+    let mut painter = tight(page);
     let mut evicted = 0;
     for step in 0..40_u32 {
         let ids = [step * 3, step * 3 + 1, step * 3 + 2];
@@ -719,9 +759,7 @@ fn mask_key(glyph: u32) -> GlyphKey {
 
 #[test]
 fn a_frame_of_another_generation_is_rasterised_afresh_and_keeps_its_glyphs_in_use() {
-    let page = 32;
-    let budget = u64::from(page * page);
-    let mut painter = Painter::new(FakeRasterizer::new(), true, None, page, budget);
+    let mut painter = tight(32);
     let kept = plain_row(0.0, &[1, 2, 3], 1);
     let first = painter.paint(&frame_of(vec![kept.clone()]), target(1.0));
     assert_eq!(first.glyphs_rasterised, 3);
@@ -856,8 +894,8 @@ fn each_kind_of_image_is_drawn_as_its_kind_of_quad() {
 
     let mut rasterizer = FakeRasterizer::new();
     rasterizer.colour.insert(2);
-    let order = Some(SubpixelOrder::Rgb);
-    let mut subpixel = Painter::new(rasterizer, true, order, PAGE, u64::MAX);
+    let stripes = Antialiasing::Subpixel(SubpixelOrder::Rgb);
+    let mut subpixel = Painter::new(rasterizer, &settings(stripes, u64::MAX), true, PAGE);
     subpixel.paint(&shown, target(1.0));
     assert_eq!(kinds(&subpixel), vec![QuadKind::Subpixel, QuadKind::Color]);
     // Each reads a page of its own.
@@ -882,7 +920,7 @@ fn a_subpixel_mask_is_kept_in_the_order_of_the_displays_stripes() {
         ..mask_key(1)
     };
     let kept = |order: SubpixelOrder| {
-        let mut painter = Painter::new(FakeRasterizer::new(), true, Some(order), PAGE, u64::MAX);
+        let mut painter = painter_with(Antialiasing::Subpixel(order));
         painter.paint(&shown, target(1.0));
         let made = painter.rasterizer().image(key).expect("an image").data;
         (read(&painter, &painter.quads()[1]), made)
@@ -901,4 +939,36 @@ fn a_subpixel_mask_is_kept_in_the_order_of_the_displays_stripes() {
         .collect();
     assert_eq!(held, swapped);
     assert_ne!(held, made);
+}
+
+#[test]
+fn the_kind_of_mask_asked_for_follows_the_scale_and_the_device() {
+    let shown = frame_of(vec![plain_row(0.0, &[1, 2], 1)]);
+    let kinds = |painter: &Painter<FakeRasterizer>| -> Vec<QuadKind> {
+        painter.quads()[1..].iter().map(|quad| quad.kind).collect()
+    };
+    // Left to the display: subpixel masks at scale 1.
+    let mut painter = painter_with(Antialiasing::Auto);
+    painter.paint(&shown, target(1.0));
+    assert_eq!(kinds(&painter), vec![QuadKind::Subpixel; 2]);
+    // And plain masks at scale 2: the rows are built again, from images
+    // of the other kind.
+    let drawn = painter.paint(&shown, target(2.0));
+    assert_eq!(kinds(&painter), vec![QuadKind::Mask; 2]);
+    assert_eq!((drawn.rows_rebuilt, drawn.glyphs_rasterised), (1, 2));
+    // Back at scale 1 the subpixel masks are still held.
+    let drawn = painter.paint(&shown, target(1.0));
+    assert_eq!(kinds(&painter), vec![QuadKind::Subpixel; 2]);
+    assert_eq!((drawn.glyphs_rasterised, drawn.glyphs_reused), (0, 2));
+    // A device that cannot blend by a coverage for each channel is given
+    // plain masks whatever the setting.
+    let stripes = Antialiasing::Subpixel(SubpixelOrder::Rgb);
+    let mut plain = Painter::new(
+        FakeRasterizer::new(),
+        &settings(stripes, u64::MAX),
+        false,
+        PAGE,
+    );
+    plain.paint(&shown, target(1.0));
+    assert_eq!(kinds(&plain), vec![QuadKind::Mask; 2]);
 }
