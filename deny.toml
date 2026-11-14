@@ -51,6 +51,12 @@
 # Its entry comes in the commit in which its first user comes to depend on
 # it, as `editor-fs-std`'s did.
 #
+# For the renderer (2026-11-13, the display pipeline's phase 4). The
+# `Renderer` port's crate, `editor-render`, takes layout's frames, so it is
+# a wrapper of `editor-layout`'s entry from the commit that added it: with
+# the wrapper not yet there, it fails on the new crate's edge ("crate
+# 'editor-layout = 0.1.0' is explicitly banned").
+#
 # One rule has no entry: "no crate depends on `editor-ffi`", the one crate
 # that knows about Lean. No entry for it passes the gate. With
 # `wrappers = ["editor-ffi"]` the wrapper matches nothing and
@@ -70,7 +76,7 @@ deny = [
   { crate = "editor-platform", wrappers = ["editor-ffi", "editor-platform-winit"], reason = "the window port has two users today, its adapter and the crate that runs it onto the event queue; a third is a decision, so it is made here" },
   { crate = "ropey", wrappers = ["editor-text"], reason = "the rope stays behind editor-text's own types: only that crate may name the library's" },
   { crate = "editor-text", wrappers = ["editor-ffi", "editor-fs-std", "editor-layout"], reason = "text storage has two users, the crate that puts a text behind a handle for Lean and layout, which reads its snapshots, patches and selections as plain values; and the file port it defines has one adapter, which implements it; another is a decision, so it is made here" },
-  { crate = "editor-layout", wrappers = ["editor-ffi", "editor-shape-parley"], reason = "layout is reached by the crate that puts it behind a handle for Lean and wires it to text, and the Shaper port it defines has one real adapter, which implements it; the renderer takes its frames as plain data (the display pipeline's phase 4 decides where its port goes), so another user is a decision, made here" },
+  { crate = "editor-layout", wrappers = ["editor-ffi", "editor-shape-parley", "editor-render"], reason = "layout is reached by the crate that puts it behind a handle for Lean and wires it to text; the Shaper port it defines has one real adapter, which implements it; and the Renderer port's crate takes its frames as plain data; another user is a decision, so it is made here" },
   { crate = "parley", wrappers = ["editor-shape-parley"], reason = "Parley stays behind the Shaper port: only its adapter crate may name its types" },
   { crate = "fontique", wrappers = ["editor-shape-parley", "parley", "parley_engine"], reason = "fontique is Parley's font library and stays behind the Shaper port with it: beside Parley's own crates, only the adapter may name its types" },
   { crate = "editor-fs-std", wrappers = ["editor-ffi"], reason = "the file adapter is linked only by the crate that wires the library together; everything else reaches a file through the port, and editor-text's tests through its fake" },

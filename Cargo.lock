@@ -365,6 +365,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "editor-render"
+version = "0.1.0"
+dependencies = [
+ "editor-layout",
+]
+
+[[package]]
 name = "editor-shape-parley"
 version = "0.1.0"
 dependencies = [

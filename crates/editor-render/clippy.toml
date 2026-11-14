@@ -1,0 +1,73 @@
+# What no line of `editor-render` may name, its tests included: a real
+# file, a directory of the machine, a process or a clock. The render loop
+# takes frames as values, tells the time through the `Clock` port it
+# defines (`src/clock.rs`) and waits through its `Park` port
+# (`src/render_loop.rs`); its tests run on the published `FakeClock`, which
+# a test sets. The crate has no real clock: the one that stamps input is
+# `editor-ffi`'s, and its adapter is written there.
+#
+# Clippy reads the first `clippy.toml` it finds from a package's manifest
+# directory upwards, and the workspace root has none, so this file governs
+# every target of this crate and no other. `disallowed_methods` and
+# `disallowed_types` are on by default at `warn`, and `mise run lint` denies
+# warnings, so a line that names one of these fails the gate.
+#
+# The list is `crates/editor-layout/clippy.toml`'s; `crates/editor-text/
+# clippy.toml`'s header says what a list of names does not hold.
+#
+# Seen to bite once by hand, on 2026-11-13: with a test added to
+# `src/mailbox.rs` that calls `std::time::Instant::now()`, `mise run lint`
+# fails with "use of a disallowed method `std::time::Instant::now`". With
+# the test taken out it passes.
+
+disallowed-methods = [
+  # Every free function of `std::fs`.
+  { path = "std::fs::canonicalize", reason = "the render loop touches no file: a frame reaches it as a value" },
+  { path = "std::fs::copy", reason = "the render loop touches no file: a frame reaches it as a value" },
+  { path = "std::fs::create_dir", reason = "the render loop touches no file: a frame reaches it as a value" },
+  { path = "std::fs::create_dir_all", reason = "the render loop touches no file: a frame reaches it as a value" },
+  { path = "std::fs::exists", reason = "the render loop touches no file: a frame reaches it as a value" },
+  { path = "std::fs::hard_link", reason = "the render loop touches no file: a frame reaches it as a value" },
+  { path = "std::fs::metadata", reason = "the render loop touches no file: a frame reaches it as a value" },
+  { path = "std::fs::read", reason = "the render loop touches no file: a frame reaches it as a value" },
+  { path = "std::fs::read_dir", reason = "the render loop touches no file: a frame reaches it as a value" },
+  { path = "std::fs::read_link", reason = "the render loop touches no file: a frame reaches it as a value" },
+  { path = "std::fs::read_to_string", reason = "the render loop touches no file: a frame reaches it as a value" },
+  { path = "std::fs::remove_dir", reason = "the render loop touches no file: a frame reaches it as a value" },
+  { path = "std::fs::remove_dir_all", reason = "the render loop touches no file: a frame reaches it as a value" },
+  { path = "std::fs::remove_file", reason = "the render loop touches no file: a frame reaches it as a value" },
+  { path = "std::fs::rename", reason = "the render loop touches no file: a frame reaches it as a value" },
+  { path = "std::fs::set_permissions", reason = "the render loop touches no file: a frame reaches it as a value" },
+  { path = "std::fs::symlink_metadata", reason = "the render loop touches no file: a frame reaches it as a value" },
+  { path = "std::fs::write", reason = "the render loop touches no file: a frame reaches it as a value" },
+  # The methods of `Path` that ask the disk.
+  { path = "std::path::Path::canonicalize", reason = "the render loop touches no file: a frame reaches it as a value" },
+  { path = "std::path::Path::exists", reason = "the render loop touches no file: a frame reaches it as a value" },
+  { path = "std::path::Path::is_dir", reason = "the render loop touches no file: a frame reaches it as a value" },
+  { path = "std::path::Path::is_file", reason = "the render loop touches no file: a frame reaches it as a value" },
+  { path = "std::path::Path::is_symlink", reason = "the render loop touches no file: a frame reaches it as a value" },
+  { path = "std::path::Path::metadata", reason = "the render loop touches no file: a frame reaches it as a value" },
+  { path = "std::path::Path::read_dir", reason = "the render loop touches no file: a frame reaches it as a value" },
+  { path = "std::path::Path::read_link", reason = "the render loop touches no file: a frame reaches it as a value" },
+  { path = "std::path::Path::symlink_metadata", reason = "the render loop touches no file: a frame reaches it as a value" },
+  { path = "std::path::Path::try_exists", reason = "the render loop touches no file: a frame reaches it as a value" },
+  # The directories of the machine.
+  { path = "std::env::current_dir", reason = "the render loop has no directory of the machine, and a test leaves the process as it found it" },
+  { path = "std::env::set_current_dir", reason = "the render loop has no directory of the machine, and a test leaves the process as it found it" },
+  { path = "std::env::temp_dir", reason = "the render loop has no directory of the machine, and a test leaves the process as it found it" },
+  # Processes.
+  { path = "std::process::Command::new", reason = "the render loop starts no process" },
+  # The clocks.
+  { path = "std::time::SystemTime::now", reason = "time reaches the render loop through its `Clock` port, and a test sets a `FakeClock`" },
+  { path = "std::time::Instant::now", reason = "time reaches the render loop through its `Clock` port, and a test sets a `FakeClock`" },
+  # The file port's real adapter, which this crate does not depend on.
+  { path = "editor_fs_std::StdFs::system", reason = "the render loop touches no file system, real or fake" },
+]
+
+disallowed-types = [
+  { path = "std::fs::File", reason = "the render loop touches no file: a frame reaches it as a value" },
+  { path = "std::fs::OpenOptions", reason = "the render loop touches no file: a frame reaches it as a value" },
+  { path = "std::fs::DirBuilder", reason = "the render loop touches no file: a frame reaches it as a value" },
+  { path = "std::fs::ReadDir", reason = "the render loop touches no file: a frame reaches it as a value" },
+  { path = "std::fs::DirEntry", reason = "the render loop touches no file: a frame reaches it as a value" },
+]
