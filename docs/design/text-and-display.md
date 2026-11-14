@@ -1472,7 +1472,8 @@ window is still run with nothing drawing in it. The threads are in
   What is left is the calls themselves, and they run on demand:
   under Xvfb in a container, where the real window keeps the port's
   contract, a fixture frame of real text is drawn in it and read back
-  from its surface within 3 of 255 of the CPU's picture, nothing is
+  from its surface within 3 of 255 of the CPU's picture (the run fails
+  unless every frame's picture was compared), nothing is
   drawn over an idle second, input given by xdotool arrives on the queue
   as documented, and the clipboard keeps its contract in one process and
   across two ([on-demand-checks.md](../dev-practices/on-demand-checks.md),

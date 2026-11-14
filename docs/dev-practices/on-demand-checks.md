@@ -138,7 +138,8 @@ from the render thread, is read and compiled, never run. These are the
 steps for the owner.
 
 It opens two windows on this desktop, one after the other, so it is not
-part of the gate, which only builds both programs.
+part of the gate, which builds both programs and runs neither. Of the
+second it runs the unit tests, which open no window.
 
 **The first** holds the real window to the window port's contract
 (`crates/editor-platform`, `contract`): it opens, it tells whatever draws
@@ -177,9 +178,14 @@ The steps:
    - `window: <n> frames presented, each with a journal entry; …`;
    - for each frame, `window: frame <n>: read back from the surface, <d>
      of <p> pixels differ from the headless renderer's, the worst by <w>
-     of 255`, with `<w>` at most 3; or, where the surface's texture cannot
-     be copied from, the sentence `the surface cannot be copied from, so
-     its picture is not compared`;
+     of 255`, with `<w>` at most 3; or, on a surface that says it does
+     not let its texture be copied from, `window: frame <n>: the surface
+     does not let its texture be copied from, so its picture is not
+     compared`. That second line is not a failure here, and it means the
+     picture was not checked on this machine: write it down as that. A
+     picture that could not be read back for any other reason is a
+     failure (`window: FAILED: frame <n>'s picture could not be read
+     back: …`);
    - `window: idle: over 1 s in which nothing was published, 0 frames
      were drawn and the window asked for 0` (a system that uncovers the
      window in that second may ask for a frame or two, and as many are
@@ -196,6 +202,15 @@ status is then 1. Do not loosen the 3 to make it pass: a difference past
 it is a finding. To keep the window longer or shorter, run the example by
 hand: `cargo run --locked --package editor-ffi --example window --
 --seconds <n>`.
+
+| Option of the example | Does |
+|---|---|
+| `--seconds <n>` | Closes the window that many seconds after it is ready, if nobody has (20 by default). |
+| `--require-picture` | Fails the run unless every frame's picture was read back and compared: a surface that does not let its texture be copied from is then a failure too. `linux-window` gives it; this task does not, since a desktop's surface may be such a one. |
+
+What the example makes of what it saw (how these options are read, and
+which findings of a picture fail which run) is tested in the gate, by the
+example's own unit tests, which open no window.
 
 What to write down here when it has been run on a desktop: the machine,
 its GPU and the back end; the lines of step 6; and, on macOS, what the
@@ -276,12 +291,15 @@ fails:
 3. the same with `--no-ime`;
 4. the window that draws, as `window-contract` runs it second
    (`crates/editor-ffi/examples/window.rs`), on Mesa's software Vulkan
-   driver, llvmpipe. Once it says it is ready, xdotool gives it `a`,
-   Escape, Control-Shift-A, a press, a drag, a release, a turn of the
-   wheel and a resize. The part fails if the example fails (no frame
-   presented; a picture more than 3 of 255 from the headless renderer's;
-   a frame drawn that nothing asked for; no input), and if any of those
-   eight inputs did not come off the queue as the port documents it;
+   driver, llvmpipe, and with `--require-picture`, which that task does
+   not give. Once it says it is ready, xdotool gives it `a`, Escape,
+   Control-Shift-A, a press, a drag, a release, a turn of the wheel and
+   a resize. The part fails if the example fails (no frame presented; a
+   frame whose picture was not read back from the surface and compared,
+   whatever the reason; a picture more than 3 of 255 from the headless
+   renderer's; a frame drawn that nothing asked for; no input), and if
+   any of those eight inputs did not come off the queue as the port
+   documents it;
 5. the clipboard adapter's example, as `clipboard-contract` runs it: that
    display's clipboard held to the clipboard port's contract, in one
    process;
@@ -309,11 +327,21 @@ A change that touches the window, the surface or the clipboard is not done
 until both `mise run ci` and this task exit 0, every part, on the tree that
 is to land. Each of its checks was seen to fail once by hand, in the
 container: the picture, with the surface drawn through a view that is not
-sRGB (every pixel off, by 74 of 255); the idle second, with a render loop
+sRGB (every pixel off, by 74 of 255); that a picture is compared at all,
+with the surface configured without the use that lets its texture be
+copied out, so that wgpu refuses the copy (`frame 1's picture could not
+be read back: Validation Error`, for each frame), and with the surface
+made to say its texture is not copied from (`frame 1's picture was not
+compared, and this run requires it (--require-picture)`, for each
+frame); the idle second, with a render loop
 that marks its frame dirty after every draw (10 frames drawn, 0 asked for)
 and with a window that asks for a redraw whenever it is asked for one
 (270139 asked for); an input's line, with Escape named `Esc`; and the
-input itself, with nothing sent.
+input itself, with nothing sent. Before the example failed a picture
+that could not be read back, the first of those two mutations left this
+task at exit 0 with three frames presented and no picture compared: a
+journal entry shows that a present call returned, and only the
+comparison shows that what was presented is the fixture.
 
 Under Xvfb there is no clipboard manager, so a text is gone from the
 clipboard when the process that wrote it ends. That is X11's rule and not

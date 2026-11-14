@@ -282,6 +282,14 @@ fn the_target_read_back_is_the_size_last_drawn_at() {
 }
 
 #[test]
+fn a_renderer_with_a_target_of_its_own_says_its_picture_can_be_kept() {
+    // It draws on no window: its target is always read back.
+    let mut renderer =
+        WgpuRenderer::over(&noop(), Settings::default(), true).expect("the no-op adapter");
+    assert!(renderer.keep_picture());
+}
+
+#[test]
 fn a_target_of_no_size_is_drawn_on_and_not_refused() {
     // A window made as small as it goes has a side of no pixels, and wgpu
     // makes no texture of none: the device draws on one pixel in its

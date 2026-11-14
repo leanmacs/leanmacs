@@ -295,9 +295,15 @@ run = ".lake/build/bin/editor window-check"
 # closed (`-- --seconds <n>` does not reach it: run the example by hand for
 # another time). Its exit status is the result.
 #
-# The gate builds both examples and never runs them; `linux-window` runs
-# both under Xvfb, with no desktop, and gives the second its input with
-# xdotool.
+# It is run here without `--require-picture`. A picture that could not be
+# read back fails it, but a surface that says it does not let its texture
+# be copied from does not: the example says so for each frame, and the
+# picture was then not checked on this machine.
+#
+# The gate builds both examples and runs neither, though it does run the
+# second's unit tests, which open no window; `linux-window` runs both
+# under Xvfb, with no desktop, gives the second its input with xdotool,
+# and requires its picture.
 [tasks.window-contract]
 description = "Opt-in, never part of ci: hold the winit window to the window port's contract, then draw a fixture frame in a window and check the picture, that nothing is drawn while idle, and that input arrives. Opens two windows on this desktop; the second waits for a person"
 run = [
@@ -398,8 +404,10 @@ run = "tools/linux/run.sh ci"
 # `editor window-check` with xdotool giving the window the focus and typing
 # into it, then the same with `--no-ime`; then the window that draws
 # (`editor-ffi`'s example `window`) on Mesa's software Vulkan driver, with
-# xdotool giving it a key, a named key, a key with modifiers, a press, a
-# drag, a release, a turn of the wheel and a resize; then the clipboard
+# `--require-picture`, so that a frame whose picture was not read back and
+# compared fails it, and with xdotool giving it a key, a named key, a key
+# with modifiers, a press, a drag, a release, a turn of the wheel and a
+# resize; then the clipboard
 # adapter's example on that display's clipboard, and a text written to it
 # by one process and read by another. It fails if any of the six fails.
 # The input is synthetic: this is not the check a person makes at the

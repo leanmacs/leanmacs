@@ -196,8 +196,15 @@ impl WgpuRenderer {
     /// drew out of the surface before presenting it. That is for checking
     /// a window's picture, and the editor never asks for it. A renderer
     /// with a target of its own is always read back, and is not changed.
-    pub fn keep_picture(&mut self) {
-        self.device.keep_picture();
+    ///
+    /// It answers whether there is a picture to keep: `false` on a window
+    /// whose surface does not let its texture be copied from. That is
+    /// what the surface offers and nothing went wrong, so a check may let
+    /// it pass where it must not let a read that failed: any other reason
+    /// a picture cannot be read back comes from
+    /// [`WgpuRenderer::read_back`], through [`WgpuRenderer::refused`].
+    pub fn keep_picture(&mut self) -> bool {
+        self.device.keep_picture()
     }
 
     /// A renderer on an adapter of `instance` that presents to `window`.

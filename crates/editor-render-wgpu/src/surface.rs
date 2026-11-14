@@ -336,13 +336,18 @@ impl State {
 
     /// Keeps the picture of each draw from here on: the surface is
     /// configured again before the next draw, so that its texture can be
-    /// copied from, where the surface offers that.
-    pub(crate) fn keep_picture(&mut self) {
+    /// copied from, where the surface offers that. It answers whether the
+    /// surface does. Where it does not there is no picture, and that is
+    /// what the surface is, not a read that failed: whoever asked can tell
+    /// the two apart by this answer, since [`State::picture`]'s error is
+    /// words for a person.
+    pub(crate) fn keep_picture(&mut self) -> bool {
         self.keep = true;
         if self.copies {
             self.config.usage |= wgpu::TextureUsages::COPY_SRC;
             self.configured = false;
         }
+        self.copies
     }
 
     /// How the picture of a draw is taken: by copying the texture out and
@@ -787,6 +792,24 @@ mod tests {
                 "the window's surface does not let its texture be copied from".to_owned()
             ))
         );
+    }
+
+    #[test]
+    fn keeping_the_picture_says_whether_the_surface_lets_its_texture_be_copied_from() {
+        let mut copied_from = State::new(&llvmpipe()).expect("an offer with a format and a mode");
+        assert!(copied_from.keep_picture());
+        let offered = offer(&[Bgra8UnormSrgb], &[wgpu::PresentMode::Fifo], false);
+        let mut not_copied_from = State::new(&offered).expect("an offer with a format and a mode");
+        assert!(!not_copied_from.keep_picture());
+        // Asked again, the same.
+        assert!(copied_from.keep_picture());
+        assert!(!not_copied_from.keep_picture());
+        // It says nothing of the format: a surface that is copied from and
+        // is of a format that is not read back answers yes, and it is its
+        // picture that says why there is none.
+        let mut not_read_back = state_of(&[Rgba16Float]);
+        assert!(not_read_back.keep_picture());
+        assert!(matches!(not_read_back.picture(), Some(Err(_))));
     }
 
     #[test]

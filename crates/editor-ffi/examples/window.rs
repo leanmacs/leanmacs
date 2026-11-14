@@ -20,8 +20,11 @@
 //! is used.
 //!
 //! ```text
-//! window [--seconds <n>]    how long the window stays once it is ready, if
-//!                           nobody closes it (20 by default)
+//! window [--seconds <n>] [--require-picture]
+//!
+//! --seconds <n>        how long the window stays once it is ready, if
+//!                      nobody closes it (20 by default)
+//! --require-picture    fail unless every frame's picture was compared
 //! ```
 //!
 //! What it checks, and its exit status is 0 only when all four hold:
@@ -30,9 +33,15 @@
 //! 2. **The picture is the frame's.** Each frame presented is read back
 //!    from the surface before it is presented and compared with what the
 //!    headless renderer draws of the same frame on the same target: no
-//!    channel of any pixel may differ by more than 3 of 255. A surface
-//!    whose texture cannot be copied from is said so, and is not a
-//!    failure: there is then nothing to compare.
+//!    channel of any pixel may differ by more than 3 of 255. A picture
+//!    that could not be read back is a failure, always. One thing is not,
+//!    unless `--require-picture` is given: a surface that says it does not
+//!    let its texture be copied from (the renderer's answer to being asked
+//!    to keep its pictures). There is then nothing to compare, the run
+//!    says so for each frame, and that this check held is not known. A
+//!    desktop's surface may be such a one. The container's is not, so
+//!    `mise run linux-window` gives `--require-picture`: there, a frame
+//!    whose picture was not compared fails the run, whatever the reason.
 //! 3. **Nothing is drawn that nothing asked for.** Over a second in which
 //!    it publishes nothing, no more frames are drawn than the window asked
 //!    for by being resized or damaged, which is none when the window is
@@ -44,6 +53,12 @@
 //! It prints `window: ready for input` once the idle second is over: that
 //! is when to type, click, drag, scroll and resize. Each input is printed
 //! on a line beginning `input:`.
+//!
+//! What it makes of what it saw is tested in the gate, by the unit tests
+//! at the foot of this file, which open no window: how the command line
+//! is read, and what is made of each thing found of a picture
+//! (`cargo test` runs them: the manifest says `test = true` of this
+//! example).
 
 use std::process::ExitCode;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -120,8 +135,114 @@ enum Picture {
     },
     /// It is not the size of its target.
     WrongSize(u32, u32),
-    /// It could not be read back: why.
+    /// There is none: the window's surface does not let its texture be
+    /// copied from.
+    NotCopied,
+    /// It could not be read back, from a surface that lets its texture be
+    /// copied from: why.
     Unread(String),
+}
+
+/// What the command line asks for.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct Options {
+    /// How long the window stays once it is ready, if nobody closes it.
+    stay: Duration,
+    /// Whether every frame's picture must be compared for the run to pass.
+    require_picture: bool,
+}
+
+/// The options `arguments` ask for; `None` when they are not understood.
+fn options(arguments: &[&str]) -> Option<Options> {
+    let mut options = Options {
+        stay: Duration::from_secs(20),
+        require_picture: false,
+    };
+    let mut rest = arguments;
+    loop {
+        rest = match rest {
+            [] => return Some(options),
+            ["--seconds", seconds, rest @ ..] => {
+                options.stay = Duration::from_secs(seconds.parse().ok()?);
+                rest
+            }
+            ["--require-picture", rest @ ..] => {
+                options.require_picture = true;
+                rest
+            }
+            _ => return None,
+        };
+    }
+}
+
+/// What is found of a frame's picture without comparing it, when it cannot
+/// be compared: a surface that is not copied from (`copies` says which it
+/// is) has no picture, and one that is, and whose picture the renderer
+/// then refused to read (`refused` says why), could not be read. `None`
+/// when there is a picture to compare.
+fn uncompared(copies: bool, refused: Option<&str>) -> Option<Picture> {
+    if !copies {
+        return Some(Picture::NotCopied);
+    }
+    refused.map(|reason| Picture::Unread(reason.to_owned()))
+}
+
+/// What is made of one frame's picture.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct Verdict {
+    /// What is printed of it, when anything is.
+    line: Option<String>,
+    /// Why the run fails by it, when it does.
+    failure: Option<String>,
+}
+
+/// What is made of `picture`, the picture of the frame presented
+/// `number`th, in a run that requires a comparison when `require_picture`
+/// says so.
+fn judged(number: usize, picture: &Picture, require_picture: bool) -> Verdict {
+    match picture {
+        Picture::Compared {
+            pixels,
+            differing,
+            worst,
+        } => Verdict {
+            line: Some(format!(
+                "frame {number}: read back from the surface, {differing} of {pixels} pixels differ from the headless renderer's, the worst by {worst} of 255"
+            )),
+            failure: (*worst > TOLERANCE).then(|| {
+                format!(
+                    "frame {number}'s picture differs by {worst} of 255, past the tolerance of {TOLERANCE}"
+                )
+            }),
+        },
+        Picture::WrongSize(width, height) => Verdict {
+            line: None,
+            failure: Some(format!(
+                "frame {number}'s picture is {width} by {height}, not the size of its target"
+            )),
+        },
+        // What a surface offers is not a failure of the window, unless the
+        // run is one that must compare: in the container the surface is
+        // known to let its texture be copied from.
+        Picture::NotCopied => Verdict {
+            line: Some(format!(
+                "frame {number}: the surface does not let its texture be copied from, so its picture is not compared"
+            )),
+            failure: require_picture.then(|| {
+                format!(
+                    "frame {number}'s picture was not compared, and this run requires it (--require-picture): the surface does not let its texture be copied from"
+                )
+            }),
+        },
+        // A read that failed is a failure wherever it happens: the surface
+        // said its texture could be copied from.
+        Picture::Unread(reason) => Verdict {
+            line: None,
+            failure: Some(format!(
+                "frame {number}'s picture could not be read back: {reason}"
+            )),
+        },
+    }
 }
 
 /// What the example's threads share.
@@ -156,6 +277,9 @@ fn locked<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
 struct Checked {
     /// The renderer on the window.
     gpu: WgpuRenderer,
+    /// Whether the window's surface lets its texture be copied from: what
+    /// the renderer answered when it was asked to keep its pictures.
+    copies: bool,
     /// The renderer it is compared with.
     headless: HeadlessRenderer,
     /// Where what it finds goes.
@@ -171,12 +295,10 @@ impl Renderer for Checked {
             return drawn;
         }
         let picture = self.gpu.read_back();
-        let found = if let Some(reason) = self.gpu.refused() {
-            Picture::Unread(reason.to_owned())
-        } else {
+        let found = uncompared(self.copies, self.gpu.refused()).unwrap_or_else(|| {
             self.headless.draw(request);
             compare(&picture, self.headless.image(), request.target)
-        };
+        });
         locked(&self.shared.pictures).push(found);
         drawn
     }
@@ -227,7 +349,7 @@ fn renderer(window: Option<&NativeWindow>, shared: &Arc<Shared>) -> Result<Check
     )]
     let made = unsafe { WgpuRenderer::on_window(window, Settings::default()) };
     let mut gpu = made.map_err(|error| error.to_string())?;
-    gpu.keep_picture();
+    let copies = gpu.keep_picture();
     *locked(&shared.adapter) = Some(format!(
         "{}, blending by a coverage for each channel: {}",
         gpu.adapter(),
@@ -245,6 +367,7 @@ fn renderer(window: Option<&NativeWindow>, shared: &Arc<Shared>) -> Result<Check
     };
     Ok(Checked {
         gpu,
+        copies,
         headless: HeadlessRenderer::new(settings),
         shared: Arc::clone(shared),
     })
@@ -482,8 +605,10 @@ fn counting(session: &Session<Checked>, shared: &Arc<Shared>) -> Drawer {
     })
 }
 
-/// What was found, printed; and why the check fails, when it does.
-fn report(session: &Session<Checked>, shared: &Shared) -> Vec<String> {
+/// What was found, printed; and why the check fails, when it does, in a
+/// run that requires every frame's picture to be compared when
+/// `require_picture` says so.
+fn report(session: &Session<Checked>, shared: &Shared, require_picture: bool) -> Vec<String> {
     let mut failures = Vec::new();
     match locked(&shared.adapter).as_deref() {
         Some(adapter) => println!("window: the renderer is on {adapter}"),
@@ -519,29 +644,11 @@ fn report(session: &Session<Checked>, shared: &Shared) -> Vec<String> {
     // 2. The picture is the frame's.
     let pictures = locked(&shared.pictures);
     for (number, picture) in pictures.iter().enumerate() {
-        let number = number + 1;
-        match picture {
-            Picture::Compared {
-                pixels,
-                differing,
-                worst,
-            } => {
-                println!(
-                    "window: frame {number}: read back from the surface, {differing} of {pixels} pixels differ from the headless renderer's, the worst by {worst} of 255"
-                );
-                if *worst > TOLERANCE {
-                    failures.push(format!(
-                        "frame {number}'s picture differs by {worst} of 255, past the tolerance of {TOLERANCE}"
-                    ));
-                }
-            }
-            Picture::WrongSize(width, height) => failures.push(format!(
-                "frame {number}'s picture is {width} by {height}, not the size of its target"
-            )),
-            Picture::Unread(reason) => println!(
-                "window: frame {number}: the surface cannot be copied from, so its picture is not compared: {reason}"
-            ),
+        let verdict = judged(number + 1, picture, require_picture);
+        if let Some(line) = verdict.line {
+            println!("window: {line}");
         }
+        failures.extend(verdict.failure);
     }
     drop(pictures);
 
@@ -589,20 +696,15 @@ fn report(session: &Session<Checked>, shared: &Shared) -> Vec<String> {
     failures
 }
 
-/// How long the window stays once it is ready, from the command line.
-fn stay() -> Option<Duration> {
+fn main() -> ExitCode {
     let arguments: Vec<String> = std::env::args().skip(1).collect();
     let arguments: Vec<&str> = arguments.iter().map(String::as_str).collect();
-    match arguments.as_slice() {
-        [] => Some(Duration::from_secs(20)),
-        ["--seconds", seconds] => seconds.parse().ok().map(Duration::from_secs),
-        _ => None,
-    }
-}
-
-fn main() -> ExitCode {
-    let Some(stay) = stay() else {
-        eprintln!("usage: window [--seconds <n>]");
+    let Some(Options {
+        stay,
+        require_picture,
+    }) = options(&arguments)
+    else {
+        eprintln!("usage: window [--seconds <n>] [--require-picture]");
         return ExitCode::from(2);
     };
     let shared = Arc::new(Shared::default());
@@ -639,7 +741,7 @@ fn main() -> ExitCode {
         .join()
         .unwrap_or_else(|_| Err("the editor's thread panicked".to_owned()));
 
-    let mut failures = report(&session, &shared);
+    let mut failures = report(&session, &shared, require_picture);
     if let Err(cannot_open) = ran {
         failures.push(format!("the window could not be opened: {cannot_open}"));
     }
@@ -656,5 +758,142 @@ fn main() -> ExitCode {
             println!("window: FAILED: {failure}");
         }
         ExitCode::FAILURE
+    }
+}
+
+/// What the example decides of what it saw, with no window: these run in
+/// the gate.
+#[cfg(test)]
+mod tests {
+    use std::time::Duration;
+
+    use super::{Options, Picture, TOLERANCE, Verdict, judged, options, uncompared};
+
+    #[test]
+    fn the_command_line_says_how_long_the_window_stays_and_whether_a_picture_is_required() {
+        let asked = |stay, require_picture| {
+            Some(Options {
+                stay: Duration::from_secs(stay),
+                require_picture,
+            })
+        };
+        assert_eq!(options(&[]), asked(20, false));
+        assert_eq!(options(&["--seconds", "6"]), asked(6, false));
+        assert_eq!(options(&["--require-picture"]), asked(20, true));
+        // In either order.
+        assert_eq!(
+            options(&["--seconds", "6", "--require-picture"]),
+            asked(6, true)
+        );
+        assert_eq!(
+            options(&["--require-picture", "--seconds", "6"]),
+            asked(6, true)
+        );
+    }
+
+    #[test]
+    fn a_command_line_that_is_not_understood_gives_no_options() {
+        for arguments in [
+            &["--seconds"][..],
+            &["--seconds", "soon"],
+            &["--seconds", "--require-picture"],
+            &["--require-pictures"],
+            &["6"],
+        ] {
+            assert_eq!(options(arguments), None, "{arguments:?}");
+        }
+    }
+
+    #[test]
+    fn a_surface_that_is_not_copied_from_has_no_picture_and_a_read_that_was_refused_is_unread() {
+        // Whatever the renderer then said of reading it.
+        assert_eq!(uncompared(false, None), Some(Picture::NotCopied));
+        assert_eq!(
+            uncompared(false, Some("not copied from")),
+            Some(Picture::NotCopied)
+        );
+        assert_eq!(
+            uncompared(true, Some("the copy was refused")),
+            Some(Picture::Unread("the copy was refused".to_owned()))
+        );
+        // Read: there is a picture to compare.
+        assert_eq!(uncompared(true, None), None);
+    }
+
+    #[test]
+    fn a_picture_within_the_tolerance_passes_and_one_past_it_fails() {
+        let compared = |worst| Picture::Compared {
+            pixels: 100,
+            differing: 7,
+            worst,
+        };
+        for require_picture in [false, true] {
+            let within = judged(2, &compared(TOLERANCE), require_picture);
+            assert_eq!(
+                within,
+                Verdict {
+                    line: Some(format!(
+                        "frame 2: read back from the surface, 7 of 100 pixels differ from the headless renderer's, the worst by {TOLERANCE} of 255"
+                    )),
+                    failure: None,
+                }
+            );
+            let past = judged(2, &compared(TOLERANCE + 1), require_picture);
+            assert!(past.line.is_some(), "{past:?}");
+            assert_eq!(
+                past.failure,
+                Some(format!(
+                    "frame 2's picture differs by {} of 255, past the tolerance of {TOLERANCE}",
+                    TOLERANCE + 1
+                ))
+            );
+        }
+    }
+
+    #[test]
+    fn a_picture_of_the_wrong_size_fails() {
+        for require_picture in [false, true] {
+            assert_eq!(
+                judged(1, &Picture::WrongSize(0, 0), require_picture).failure,
+                Some("frame 1's picture is 0 by 0, not the size of its target".to_owned())
+            );
+        }
+    }
+
+    #[test]
+    fn a_picture_that_could_not_be_read_back_fails_whether_or_not_one_is_required() {
+        let unread = Picture::Unread("the copy was refused".to_owned());
+        for require_picture in [false, true] {
+            assert_eq!(
+                judged(3, &unread, require_picture).failure,
+                Some("frame 3's picture could not be read back: the copy was refused".to_owned()),
+                "required: {require_picture}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_surface_that_is_not_copied_from_fails_only_a_run_that_requires_the_picture() {
+        let said = Some(
+            "frame 1: the surface does not let its texture be copied from, so its picture is not compared"
+                .to_owned(),
+        );
+        assert_eq!(
+            judged(1, &Picture::NotCopied, false),
+            Verdict {
+                line: said.clone(),
+                failure: None,
+            }
+        );
+        assert_eq!(
+            judged(1, &Picture::NotCopied, true),
+            Verdict {
+                line: said,
+                failure: Some(
+                    "frame 1's picture was not compared, and this run requires it (--require-picture): the surface does not let its texture be copied from"
+                        .to_owned()
+                ),
+            }
+        );
     }
 }

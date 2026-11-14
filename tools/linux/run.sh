@@ -182,9 +182,15 @@ inside_clipboard_across() {
 # (no frame presented, a picture that is not the frame's, a frame drawn
 # that nothing asked for, no input), or if any of those inputs did not
 # come off the queue as the port documents it.
+#
+# `--require-picture`: every frame's picture must have been read back from
+# the surface and compared, or the example fails. Without it the example
+# lets a surface pass that does not let its texture be copied from, which
+# a desktop's may be. This one does (llvmpipe's, seen), so here a picture
+# that was not compared is a read-back that broke.
 inside_drawing_window() {
   local log=/tmp/window.log pid window status=0 waited=0 wanted
-  /work/target/debug/examples/window --seconds 6 >"$log" 2>&1 &
+  /work/target/debug/examples/window --seconds 6 --require-picture >"$log" 2>&1 &
   pid=$!
   # The example says so once it has drawn its frame and left the window
   # alone for a second: nothing is sent before, so that second is idle.

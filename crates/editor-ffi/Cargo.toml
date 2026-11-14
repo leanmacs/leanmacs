@@ -51,6 +51,15 @@ tempfile = { version = "=3.27.0", default-features = false }
 editor-render-wgpu = { path = "../editor-render-wgpu" }
 editor-shape-parley = { path = "../editor-shape-parley" }
 
+# The window that draws is an example, run on demand. What it makes of
+# what it saw is tested in the gate all the same: `cargo test` runs the
+# example's own unit tests, which read a command line and judge what was
+# found of a picture. They open no window and make no renderer: their
+# binary links what the example links, and they name none of it.
+[[example]]
+name = "window"
+test = true
+
 # No harness: its `main` must be the process's main thread.
 [[test]]
 name = "main_thread"

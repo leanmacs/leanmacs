@@ -61,6 +61,13 @@ What the gate does check of the window, with none open:
   its picture is read back, and in what order of bytes. On wgpu's no-op
   back end: that a window no adapter can present to gives no renderer,
   and that a surface that offers its adapter nothing is refused.
+- **What the window that draws makes of what it saw**, in
+  `crates/editor-ffi` (`examples/window.rs`, whose unit tests `cargo
+  test` runs, and which open no window): how its command line is read,
+  and which findings of a frame's picture fail the run. A picture past
+  the tolerance, of the wrong size, or that could not be read back
+  fails; a surface that does not let its texture be copied from fails
+  only a run given `--require-picture`.
 - **How the clipboard library's answers become the port's**, in
   `crates/editor-platform-arboard`, on values built in the tests.
 
@@ -167,7 +174,10 @@ draws is compared with the reference image by tasks of their own, outside
 the gate ([`on-demand-checks.md`](on-demand-checks.md)), and so is what
 is drawn in a window: a frame presented to a window's surface is read
 back and compared with the CPU's picture by `mise run linux-window`, in
-the container, and by `mise run window-contract` on a desktop.
+the container, which fails unless every frame's was, and by
+`mise run window-contract` on a desktop, which lets one thing pass
+uncompared and says so: a surface that does not let its texture be
+copied from.
 
 The Lean half's logic needs no Rust library. The editor reaches the library
 through interfaces it defines, each with a pure Lean model, and

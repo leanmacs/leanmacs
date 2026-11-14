@@ -460,10 +460,14 @@ impl Device {
     /// [`Device::read_back`]: the surface's texture is copied out before
     /// it is presented. Nothing changes for a device that draws on a
     /// target of its own, which is always read back.
-    pub fn keep_picture(&mut self) {
-        if let Some(window) = &mut self.window {
-            window.state.keep_picture();
-        }
+    ///
+    /// It answers whether there is a texture to copy from: `false` for a
+    /// window whose surface does not let its texture be copied from
+    /// (`surface::State::keep_picture`), which then has no picture.
+    pub fn keep_picture(&mut self) -> bool {
+        self.window
+            .as_mut()
+            .is_none_or(|window| window.state.keep_picture())
     }
 
     /// Whether the device blends by a coverage for each channel, so that
