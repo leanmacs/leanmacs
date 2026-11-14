@@ -30,9 +30,26 @@
 //! the press of Control does not carry `control`, and its release still
 //! does. No command binds a bare modifier, and the order on macOS has not
 //! been seen.
+//!
+//! # The pointer
+//!
+//! winit says where the pointer is as it moves, and that a button went down
+//! or came up with no position. So:
+//!
+//! - **A press and a release are where the pointer last was**, the origin
+//!   before winit has said where that is.
+//! - **A move with a button held is a drag**, carrying the button held
+//!   longest. A move with none held is remembered and not reported: the
+//!   port has no input for it.
+//! - **A wheel carries winit's delta as it is**, in lines or in pixels, with
+//!   no button. Positive is the content moving right and down.
+//!
+//! Touch is not mapped.
 
-use editor_platform::{Composition, Input, Key, Modifiers, Pointer, PointerAction};
-use winit::event::{ElementState, Ime, WindowEvent};
+use editor_platform::{
+    Button, Composition, Input, Key, Modifiers, Pointer, PointerAction, WheelDelta,
+};
+use winit::event::{ElementState, Ime, MouseButton, MouseScrollDelta, WindowEvent};
 use winit::keyboard;
 
 use crate::names;
@@ -59,6 +76,11 @@ pub(crate) struct KeyParts<'a> {
 pub(crate) struct Seen {
     /// The modifiers held, as winit last reported them.
     modifiers: Modifiers,
+    /// Where the pointer last was, in physical pixels from the window's top
+    /// left; the origin until winit says.
+    position: (f64, f64),
+    /// The buttons held, in the order they went down.
+    held: Vec<Button>,
 }
 
 impl Seen {
@@ -96,19 +118,64 @@ impl Seen {
                 Ime::Commit(text) => Composition::Commit(text.clone()),
                 Ime::Disabled => Composition::Disabled,
             })),
-            WindowEvent::MouseInput {
-                state: ElementState::Pressed,
-                ..
-            } => Some(Input::Pointer(Pointer {
-                action: PointerAction::Press,
-                x: 0.0,
-                y: 0.0,
-                button: None,
-                modifiers: Modifiers::default(),
-            })),
+            WindowEvent::CursorMoved { position, .. } => {
+                self.position = (position.x, position.y);
+                let dragged = self.held.first().copied()?;
+                Some(self.pointer(PointerAction::Drag, Some(dragged)))
+            }
+            WindowEvent::MouseInput { state, button, .. } => {
+                let button = button_of(*button);
+                self.held.retain(|held| *held != button);
+                let action = match state {
+                    ElementState::Pressed => {
+                        self.held.push(button);
+                        PointerAction::Press
+                    }
+                    ElementState::Released => PointerAction::Release,
+                };
+                Some(self.pointer(action, Some(button)))
+            }
+            WindowEvent::MouseWheel { delta, .. } => {
+                let delta = match delta {
+                    MouseScrollDelta::LineDelta(x, y) => WheelDelta::Lines {
+                        x: f64::from(*x),
+                        y: f64::from(*y),
+                    },
+                    MouseScrollDelta::PixelDelta(by) => WheelDelta::Pixels { x: by.x, y: by.y },
+                };
+                Some(self.pointer(PointerAction::Wheel(delta), None))
+            }
             WindowEvent::CloseRequested => Some(Input::CloseRequested),
             _ => None,
         }
+    }
+
+    /// The pointer input of `action` with `button`, where the pointer last
+    /// was and with the modifiers last reported.
+    fn pointer(&self, action: PointerAction, button: Option<Button>) -> Input {
+        Input::Pointer(Pointer {
+            action,
+            x: self.position.0,
+            y: self.position.1,
+            button,
+            modifiers: self.modifiers,
+        })
+    }
+}
+
+/// winit's button as the port's.
+///
+/// The match is exhaustive on purpose: the adapter must give every button
+/// winit names a [`Button`], so one winit adds has to be given its own here
+/// before the crate builds.
+fn button_of(button: MouseButton) -> Button {
+    match button {
+        MouseButton::Left => Button::Primary,
+        MouseButton::Right => Button::Secondary,
+        MouseButton::Middle => Button::Middle,
+        MouseButton::Back => Button::Back,
+        MouseButton::Forward => Button::Forward,
+        MouseButton::Other(number) => Button::Other(number),
     }
 }
 
@@ -125,10 +192,12 @@ fn text(pressed: bool, given: Option<&str>) -> String {
 #[cfg(test)]
 mod tests {
     use super::{KeyParts, Seen};
-    use editor_platform::{Composition, Input, Key, LogicalKey, Modifiers, PhysicalKey};
-    use editor_platform::{Pointer, PointerAction};
-    use winit::dpi::PhysicalSize;
-    use winit::event::{DeviceId, ElementState, Ime, MouseButton, WindowEvent};
+    use editor_platform::{Button, Composition, Input, Key, LogicalKey, Modifiers, PhysicalKey};
+    use editor_platform::{Pointer, PointerAction, WheelDelta};
+    use winit::dpi::{PhysicalPosition, PhysicalSize};
+    use winit::event::{
+        DeviceId, ElementState, Ime, MouseButton, MouseScrollDelta, TouchPhase, WindowEvent,
+    };
     use winit::keyboard::{
         Key as WinitKey, KeyCode, ModifiersState, NamedKey, NativeKeyCode, PhysicalKey as Physical,
     };
@@ -148,6 +217,35 @@ mod tests {
     /// else.
     fn translate(event: &WindowEvent) -> Option<Input> {
         Seen::default().window_event(event)
+    }
+
+    /// winit's word that `button` went down or came up.
+    fn button(state: ElementState, button: MouseButton) -> WindowEvent {
+        WindowEvent::MouseInput {
+            device_id: DeviceId::dummy(),
+            state,
+            button,
+        }
+    }
+
+    /// winit's word that the pointer is now at (`x`, `y`).
+    fn moved(x: f64, y: f64) -> WindowEvent {
+        WindowEvent::CursorMoved {
+            device_id: DeviceId::dummy(),
+            position: PhysicalPosition::new(x, y),
+        }
+    }
+
+    /// The pointer input of `action` at `at` with `button`, with no
+    /// modifier held, as the port reports it.
+    fn pointer(action: PointerAction, at: (f64, f64), button: Option<Button>) -> Option<Input> {
+        Some(Input::Pointer(Pointer {
+            action,
+            x: at.0,
+            y: at.1,
+            button,
+            modifiers: Modifiers::default(),
+        }))
     }
 
     /// winit's word that the modifiers held are now `state`.
@@ -262,25 +360,163 @@ mod tests {
     }
 
     #[test]
-    fn a_pressed_pointer_button_is_reported_as_a_press_at_the_origin_with_no_button_and_its_release_is_not()
-     {
-        let button = |state| WindowEvent::MouseInput {
-            device_id: DeviceId::dummy(),
-            state,
-            button: MouseButton::Left,
-        };
-
+    fn a_button_press_is_a_press_where_the_pointer_is_with_its_button_and_modifiers() {
+        let mut seen = Seen::default();
+        // A press before the pointer has been anywhere is at the origin.
         assert_eq!(
-            translate(&button(ElementState::Pressed)),
+            seen.window_event(&button(ElementState::Pressed, MouseButton::Left)),
+            pointer(PointerAction::Press, (0.0, 0.0), Some(Button::Primary))
+        );
+        seen.window_event(&button(ElementState::Released, MouseButton::Left));
+
+        // The pointer moves, with no button held, and then a button goes
+        // down with alt held: the press is where the pointer last was.
+        assert_eq!(seen.window_event(&moved(12.5, 40.0)), None);
+        seen.window_event(&modifiers_changed(ModifiersState::ALT));
+        assert_eq!(
+            seen.window_event(&button(ElementState::Pressed, MouseButton::Right)),
             Some(Input::Pointer(Pointer {
                 action: PointerAction::Press,
-                x: 0.0,
-                y: 0.0,
-                button: None,
-                modifiers: Modifiers::default(),
+                x: 12.5,
+                y: 40.0,
+                button: Some(Button::Secondary),
+                modifiers: held(false, false, true, false),
             }))
         );
-        assert_eq!(translate(&button(ElementState::Released)), None);
+    }
+
+    #[test]
+    fn each_button_winit_names_is_the_ports_own() {
+        for (given, button_of_the_port) in [
+            (MouseButton::Left, Button::Primary),
+            (MouseButton::Right, Button::Secondary),
+            (MouseButton::Middle, Button::Middle),
+            (MouseButton::Back, Button::Back),
+            (MouseButton::Forward, Button::Forward),
+            (MouseButton::Other(9), Button::Other(9)),
+        ] {
+            assert_eq!(
+                translate(&button(ElementState::Pressed, given)),
+                pointer(PointerAction::Press, (0.0, 0.0), Some(button_of_the_port)),
+                "{given:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_move_with_a_button_held_is_a_drag_and_one_with_none_is_not_reported() {
+        let mut seen = Seen::default();
+        assert_eq!(seen.window_event(&moved(1.0, 2.0)), None);
+
+        seen.window_event(&button(ElementState::Pressed, MouseButton::Left));
+        assert_eq!(
+            seen.window_event(&moved(30.0, 40.5)),
+            pointer(PointerAction::Drag, (30.0, 40.5), Some(Button::Primary))
+        );
+        // A drag carries the modifiers held as it moves.
+        seen.window_event(&modifiers_changed(ModifiersState::SHIFT));
+        assert_eq!(
+            seen.window_event(&moved(31.0, 41.0)),
+            Some(Input::Pointer(Pointer {
+                action: PointerAction::Drag,
+                x: 31.0,
+                y: 41.0,
+                button: Some(Button::Primary),
+                modifiers: held(true, false, false, false),
+            }))
+        );
+        seen.window_event(&modifiers_changed(ModifiersState::empty()));
+
+        // With the button up again a move is not reported, and is still
+        // where the next press is.
+        seen.window_event(&button(ElementState::Released, MouseButton::Left));
+        assert_eq!(seen.window_event(&moved(50.0, 60.0)), None);
+        assert_eq!(
+            seen.window_event(&button(ElementState::Pressed, MouseButton::Middle)),
+            pointer(PointerAction::Press, (50.0, 60.0), Some(Button::Middle))
+        );
+    }
+
+    #[test]
+    fn a_drag_carries_the_button_held_longest() {
+        let mut seen = Seen::default();
+        seen.window_event(&button(ElementState::Pressed, MouseButton::Right));
+        seen.window_event(&button(ElementState::Pressed, MouseButton::Left));
+        assert_eq!(
+            seen.window_event(&moved(5.0, 5.0)),
+            pointer(PointerAction::Drag, (5.0, 5.0), Some(Button::Secondary))
+        );
+        // The first comes up: the other is now the one held longest.
+        seen.window_event(&button(ElementState::Released, MouseButton::Right));
+        assert_eq!(
+            seen.window_event(&moved(6.0, 6.0)),
+            pointer(PointerAction::Drag, (6.0, 6.0), Some(Button::Primary))
+        );
+        seen.window_event(&button(ElementState::Released, MouseButton::Left));
+        assert_eq!(seen.window_event(&moved(7.0, 7.0)), None);
+    }
+
+    #[test]
+    fn a_button_release_is_a_release() {
+        let mut seen = Seen::default();
+        seen.window_event(&moved(10.0, 20.0));
+        seen.window_event(&button(ElementState::Pressed, MouseButton::Left));
+        seen.window_event(&moved(30.0, 40.0));
+        assert_eq!(
+            seen.window_event(&button(ElementState::Released, MouseButton::Left)),
+            pointer(PointerAction::Release, (30.0, 40.0), Some(Button::Primary))
+        );
+        // A button that went down outside the window comes up in it: the
+        // release is reported all the same.
+        assert_eq!(
+            seen.window_event(&button(ElementState::Released, MouseButton::Back)),
+            pointer(PointerAction::Release, (30.0, 40.0), Some(Button::Back))
+        );
+    }
+
+    #[test]
+    fn a_wheel_turn_is_a_wheel_in_lines_or_in_pixels() {
+        let mut seen = Seen::default();
+        seen.window_event(&moved(10.0, 20.0));
+        seen.window_event(&modifiers_changed(ModifiersState::CONTROL));
+        let wheel = |delta| WindowEvent::MouseWheel {
+            device_id: DeviceId::dummy(),
+            delta,
+            phase: TouchPhase::Moved,
+        };
+        let turned = |delta| {
+            Some(Input::Pointer(Pointer {
+                action: PointerAction::Wheel(delta),
+                x: 10.0,
+                y: 20.0,
+                button: None,
+                modifiers: held(false, true, false, false),
+            }))
+        };
+
+        // winit's delta as it is, sign and all: a notch of a wheel, and a
+        // trackpad's pixels.
+        assert_eq!(
+            seen.window_event(&wheel(MouseScrollDelta::LineDelta(0.0, -1.0))),
+            turned(WheelDelta::Lines { x: 0.0, y: -1.0 })
+        );
+        assert_eq!(
+            seen.window_event(&wheel(MouseScrollDelta::LineDelta(1.0, 0.0))),
+            turned(WheelDelta::Lines { x: 1.0, y: 0.0 })
+        );
+        assert_eq!(
+            seen.window_event(&wheel(MouseScrollDelta::PixelDelta(PhysicalPosition::new(
+                -3.5, 12.25
+            )))),
+            turned(WheelDelta::Pixels { x: -3.5, y: 12.25 })
+        );
+
+        // A wheel turned with a button held has no button of its own.
+        seen.window_event(&button(ElementState::Pressed, MouseButton::Left));
+        assert_eq!(
+            seen.window_event(&wheel(MouseScrollDelta::LineDelta(0.0, 2.0))),
+            turned(WheelDelta::Lines { x: 0.0, y: 2.0 })
+        );
     }
 
     #[test]
