@@ -166,6 +166,16 @@ impl Length {
     pub fn as_pixels(self) -> f32 {
         self.0 as f32 / 64.0
     }
+
+    /// This length times `scale`, to the nearest 64th, and no longer than
+    /// a length holds: what a length stated at scale 1 is at `scale`. At 1
+    /// it is itself. The caller gives a finite scale above 0.
+    #[must_use]
+    pub fn scaled(self, scale: f32) -> Self {
+        let scaled = (f64::from(self.0) * f64::from(scale)).round();
+        // A float cast to a whole number stops at the number's ends.
+        Self(scaled as u32)
+    }
 }
 
 /// The size of a font whose face sets none: 16 pixels.
@@ -224,6 +234,25 @@ pub struct FontSpec {
     pub slant: Slant,
     /// The line height.
     pub line_height: LineHeight,
+}
+
+impl FontSpec {
+    /// This font at `scale`: its size and a line height stated as a length
+    /// are each at the scale ([`Length::scaled`]). A line height that is a
+    /// multiple of the font's own stays that multiple, since it follows
+    /// the size; the family, the weight and the slant are what they were.
+    /// At 1 a spec is itself.
+    #[must_use]
+    pub fn scaled(&self, scale: f32) -> Self {
+        Self {
+            size: self.size.scaled(scale),
+            line_height: match self.line_height {
+                LineHeight::Multiple(multiple) => LineHeight::Multiple(multiple),
+                LineHeight::Pixels(pixels) => LineHeight::Pixels(pixels.scaled(scale)),
+            },
+            ..self.clone()
+        }
+    }
 }
 
 /// The default font, font 0: the default family at [`BASE_SIZE`], of
@@ -359,7 +388,67 @@ pub trait Shaper {
 mod tests {
     use std::sync::Arc;
 
-    use super::ResolvedFont;
+    use super::{FontSpec, Length, LineHeight, ResolvedFont, Slant, Weight};
+
+    #[test]
+    fn a_length_at_a_scale_is_to_the_nearest_64th_and_no_longer_than_a_length_holds() {
+        let fourteen = Length::pixels(14);
+        assert_eq!(fourteen.scaled(2.0), Length::pixels(28));
+        // 17.5 pixels.
+        assert_eq!(fourteen.scaled(1.25), Length(1120));
+        // 896 64ths times 1.3333 are 1194.6: the nearest 64th, not the one
+        // below.
+        assert_eq!(fourteen.scaled(1.3333), Length(1195));
+        // At 1 a length is itself, whatever it is.
+        for length in [
+            Length(0),
+            Length(1),
+            fourteen,
+            Length(1195),
+            Length(u32::MAX),
+        ] {
+            assert_eq!(length.scaled(1.0), length);
+        }
+        assert_eq!(Length(0).scaled(2.0), Length(0));
+        // A length holds no more than this, at any scale.
+        assert_eq!(Length(u32::MAX).scaled(2.0), Length(u32::MAX));
+    }
+
+    #[test]
+    fn a_font_at_a_scale_has_its_size_and_a_line_height_in_points_at_it_and_nothing_else_changed() {
+        let stated = FontSpec {
+            family: Some("serif".to_owned()),
+            size: Length::pixels(14),
+            weight: Weight(300),
+            slant: Slant::Italic,
+            line_height: LineHeight::Pixels(Length::pixels(20)),
+        };
+        assert_eq!(
+            stated.scaled(2.0),
+            FontSpec {
+                size: Length::pixels(28),
+                line_height: LineHeight::Pixels(Length::pixels(40)),
+                ..stated.clone()
+            }
+        );
+        // A multiple of the font's own follows the size: it stays the
+        // multiple it was.
+        let multiple = FontSpec {
+            line_height: LineHeight::Multiple(96),
+            ..stated.clone()
+        };
+        assert_eq!(
+            multiple.scaled(1.5),
+            FontSpec {
+                size: Length::pixels(21),
+                ..multiple.clone()
+            }
+        );
+        // At 1 a spec is itself.
+        for spec in [stated, multiple, FontSpec::default()] {
+            assert_eq!(spec.scaled(1.0), spec);
+        }
+    }
 
     /// A resolved font of the file numbered `file`, whose bytes are
     /// `bytes`, at 16 pixels.
