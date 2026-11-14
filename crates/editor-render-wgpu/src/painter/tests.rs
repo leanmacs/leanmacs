@@ -343,9 +343,9 @@ fn theme() -> Vec<FaceDef> {
     ]
 }
 
-/// One view of `ab cd` and `ef`: `ab` marked, `cd` selected with a block
-/// cursor on the `c`, and a status row.
-fn dressed() -> Frame {
+/// The scene of one view of `ab cd` and `ef`: `ab` marked, `cd` selected
+/// with a block cursor on the `c`, and a status row.
+fn dressed_scene() -> Scene {
     let rect = Rect {
         x: 0,
         y: 0,
@@ -371,7 +371,12 @@ fn dressed() -> Frame {
         text: "st".to_owned(),
         face: "mode-line".to_owned(),
     }];
-    Layout::new(CellShaper::new(10.0, 16.0)).frame(&scene)
+    scene
+}
+
+/// The frame of [`dressed_scene`], laid out on the fake shaper.
+fn dressed() -> Frame {
+    Layout::new(CellShaper::new(10.0, 16.0)).frame(&dressed_scene())
 }
 
 #[test]
@@ -427,6 +432,81 @@ fn a_view_is_drawn_back_to_front() {
     let glyphs: usize = shown.rows.iter().map(|row| row.line.glyphs.len()).sum();
     let drawn = quads_of(&painter, QuadKind::Mask, BLACK).len();
     assert_eq!(drawn, glyphs + status.line.glyphs.len());
+}
+
+/// Where the second view of [`side_by_side`] is.
+const SECOND: (i32, i32) = (150, 90);
+
+/// Two views of the dressed scene's one, with a marked field more in its
+/// status row, each cut to 45 pixels across so that its last glyph, its
+/// selection and its status row reach past its right edge: the first at
+/// the target's top left, the second at [`SECOND`].
+fn side_by_side() -> Frame {
+    let mut scene = dressed_scene();
+    scene.views[0].status.push(StatusField {
+        text: "!".to_owned(),
+        face: "mark".to_owned(),
+    });
+    let laid = Layout::new(CellShaper::new(10.0, 16.0)).frame(&scene);
+    let mut first = laid.views[0].clone();
+    first.rect.width = 45;
+    let mut second = first.clone();
+    second.id = ViewId(2);
+    second.rect.x = SECOND.0 as u32;
+    second.rect.y = SECOND.1 as u32;
+    Frame {
+        views: vec![first, second],
+        ..laid
+    }
+}
+
+#[test]
+fn every_view_of_a_frame_is_drawn_from_its_own_top_left() {
+    let both = side_by_side();
+    // The first view alone: what a view at the target's top left comes
+    // to, which the tests of one view pin.
+    let alone = Frame {
+        views: vec![both.views[0].clone()],
+        ..both.clone()
+    };
+    let mut one = painter();
+    one.paint(&alone, target(1.0));
+    let mut two = painter();
+    two.paint(&both, target(1.0));
+    // Each thing a view draws is drawn twice: as the first view draws it,
+    // and then the same moved to where the second view is.
+    let twice = |quads: &[Quad]| -> Vec<Quad> {
+        let moved = quads.iter().map(|quad| quad.moved(SECOND.0, SECOND.1));
+        quads.iter().copied().chain(moved).collect()
+    };
+    // The marked runs are one of the text and one of the status row, so
+    // each of their parts is two quads a view.
+    let parts = [
+        ("the view's background", QuadKind::Fill, WHITE, 1),
+        ("the marked runs' backgrounds", QuadKind::Fill, YELLOW, 2),
+        (
+            "the selected run's background and the selection's area",
+            QuadKind::Fill,
+            BLUE,
+            2,
+        ),
+        ("the underlines", QuadKind::Fill, RED, 2),
+        ("the strike-throughs", QuadKind::Fill, BLACK, 2),
+        ("the status row's background", QuadKind::Fill, GREY, 1),
+        ("the cursor's cell", QuadKind::Fill, GREEN, 1),
+        ("the glyph under the cursor", QuadKind::Mask, WHITE, 1),
+    ];
+    for (part, kind, color, count) in parts {
+        let first = quads_of(&one, kind, color);
+        assert_eq!(first.len(), count, "{part}");
+        assert_eq!(quads_of(&two, kind, color), twice(&first), "{part}");
+    }
+    // The glyphs of the text rows, and those of the status row.
+    let glyphs = quads_of(&one, QuadKind::Mask, BLACK);
+    assert!(glyphs.len() > 3);
+    assert_eq!(quads_of(&two, QuadKind::Mask, BLACK), twice(&glyphs));
+    // And the views are drawn one after the other, each whole.
+    assert_eq!(two.quads(), twice(one.quads()));
 }
 
 #[test]
@@ -857,6 +937,46 @@ fn nothing_is_drawn_outside_a_view_or_outside_the_target() {
         boxes(&quads_of(&painter, QuadKind::Mask, BLACK)),
         vec![(0, 2, GLYPH.0, 6), (10, 2, 2, 6)]
     );
+}
+
+#[test]
+fn a_view_away_from_the_targets_top_left_is_clipped_to_its_own_rectangle() {
+    // Two views 45 pixels across and 40 down, the second at 150, 90. In
+    // each, a row of five glyphs, the fifth's image from 40 to 46, and a
+    // selection that reaches past the view on every side, as far as the
+    // other view.
+    let beyond = Area {
+        x: -200.0,
+        y: -200.0,
+        width: 500.0,
+        height: 500.0,
+    };
+    let shown = |x: u32, y: u32| {
+        let mut shown = view(vec![plain_row(0.0, &[1, 2, 3, 4, 5], 1)]);
+        shown.rect = Rect {
+            x,
+            y,
+            width: 45,
+            height: 40,
+        };
+        shown.selections = vec![beyond];
+        shown
+    };
+    let mut painter = painter();
+    painter.paint(&frame(vec![shown(0, 0), shown(150, 90)]), target(1.0));
+    // Each selection is cut to its own view on all four sides: neither
+    // view draws in the other's rectangle.
+    assert_eq!(
+        fills(&painter, BLUE),
+        vec![(0, 0, 45, 40), (150, 90, 45, 40)]
+    );
+    // And the fifth glyph is cut at its view's right edge, wherever that
+    // is.
+    let glyphs = boxes(&quads_of(&painter, QuadKind::Mask, BLACK));
+    let top = 12 - GLYPH.1 as i32;
+    assert_eq!(glyphs.len(), 10);
+    assert_eq!(glyphs[4], (40, top, 5, GLYPH.1));
+    assert_eq!(glyphs[9], (150 + 40, 90 + top, 5, GLYPH.1));
 }
 
 #[test]
