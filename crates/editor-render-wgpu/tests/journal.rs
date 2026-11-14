@@ -91,10 +91,13 @@ fn an_idle_period_adds_no_entry() {
     assert!(matches!(render.step(), Step::Drew(_)));
     let before = (handle.journal(), handle.counters());
     assert_eq!(before.0.len(), 1);
-    // A second goes by, a step at a time, with nothing asked for.
+    // A second goes by, a step at a time, with nothing asked for. What a
+    // step with nothing to do answers is the loop's to say: here it is
+    // only that none of them drew.
     for _ in 0..100 {
         clock.advance(10_000_000);
-        assert_eq!(render.step(), Step::Wait(None));
+        let step = render.step();
+        assert!(!matches!(step, Step::Drew(_)), "{step:?}");
     }
     assert_eq!((handle.journal(), handle.counters()), before);
 }

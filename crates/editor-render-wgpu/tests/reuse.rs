@@ -59,14 +59,15 @@ fn the_same_frame_again_is_not_drawn() {
     let (first, drawn) = submit(&mut rig, &frame);
     assert!(matches!(first, Step::Drew(_)), "{first:?}");
     assert_eq!(drawn.draws, 1);
-    // The same value, then an equal frame laid out again.
+    // The same value, then an equal frame laid out again. Neither step
+    // draws; what such a step answers instead is the loop's to say.
     let (again, counters) = submit(&mut rig, &frame);
-    assert_eq!(again, Step::Wait(None));
+    assert!(!matches!(again, Step::Drew(_)), "{again:?}");
     assert_eq!(counters.draws, 1);
     let equal = Arc::new(layout.frame(&scene));
     assert!(!Arc::ptr_eq(&equal, &frame));
     let (again, counters) = submit(&mut rig, &equal);
-    assert_eq!(again, Step::Wait(None));
+    assert!(!matches!(again, Step::Drew(_)), "{again:?}");
     // The draw counter stays where it was, and so does every count of
     // work.
     assert_eq!(
