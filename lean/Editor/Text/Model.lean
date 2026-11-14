@@ -1280,6 +1280,14 @@ theorem runModel_ask (source : TextSource) (query : TextQuery) (model : TextMode
     (source.ask query).runModel model = TextModel.handle (.ask source query) model :=
   rfl
 
+/-- The length of a text is asked like any question. It is a lemma of its
+own because `simp` does not see `runModel_ask` in a question written at its
+answer's type, here `Nat`. -/
+@[simp]
+theorem runModel_byteLength (id : TextId) (model : TextModel) :
+    id.byteLength.runModel model = TextModel.handle (.ask (.text id) .byteLength) model :=
+  rfl
+
 @[simp]
 theorem runModel_release (source : TextSource) (model : TextModel) :
     source.release.runModel model = TextModel.handle (.release source) model :=
@@ -1352,6 +1360,109 @@ theorem TextModel.splice_end (text s : String) :
     String.Pos.Raw.isValid_rawEndPos
   have atEnd : text.pos ⟨text.utf8ByteSize⟩ valid = text.endPos := String.Pos.ext rfl
   simp [TextModel.splice, valid, atEnd, String.sliceTo_endPos]
+
+/-- A splice of a text written as three parts, over the middle one, replaces
+that part: the ends of the first part and of the first two are character
+boundaries of the whole, and what is before the one and after the other are
+the first part and the last. Every fact about a splice below comes from
+this one. -/
+theorem TextModel.splice_append (before between after s : String) :
+    TextModel.splice (before ++ between ++ after) before.utf8ByteSize
+        (before.utf8ByteSize + between.utf8ByteSize) s =
+      some (before ++ s ++ after) := by
+  have startValid : (String.Pos.Raw.mk before.utf8ByteSize).IsValid (before ++ between ++ after) :=
+    String.Pos.Raw.isValid_iff_exists_append.2
+      ⟨before, between ++ after, by simp [String.append_assoc], rfl⟩
+  have stopValid :
+    (String.Pos.Raw.mk (before.utf8ByteSize + between.utf8ByteSize)).IsValid
+      (before ++ between ++ after) :=
+    String.Pos.Raw.isValid_iff_exists_append.2
+      ⟨before ++ between, after, rfl, by
+        ext; simp⟩
+  have left :
+    ((before ++ between ++ after).sliceTo
+          ((before ++ between ++ after).pos ⟨before.utf8ByteSize⟩ startValid)).copy =
+      before :=
+    String.copy_sliceTo_eq_iff_exists_splits.2
+      ⟨between ++ after, ⟨by simp [String.append_assoc], rfl⟩⟩
+  have right :
+    ((before ++ between ++ after).sliceFrom
+          ((before ++ between ++ after).pos ⟨before.utf8ByteSize + between.utf8ByteSize⟩
+            stopValid)).copy =
+      after :=
+    String.copy_sliceFrom_eq_iff_exists_splits.2
+      ⟨before ++ between,
+        ⟨rfl, by
+          ext; simp⟩⟩
+  simp [TextModel.splice, startValid, stopValid, left, right]
+
+/-- A splice that replaces nothing with nothing, at a character boundary,
+leaves the text. -/
+theorem TextModel.splice_nothing (text : String) (position : Nat)
+    (boundary : (String.Pos.Raw.mk position).IsValid text) :
+    TextModel.splice text position position "" = some text := by
+  obtain ⟨before, after, rfl, atEnd⟩ := String.Pos.Raw.isValid_iff_exists_append.1 boundary
+  have positionEq : position = before.utf8ByteSize := congrArg String.Pos.Raw.byteIdx atEnd
+  subst positionEq
+  simpa using TextModel.splice_append before "" after ""
+
+/-- Inserting a string at a character boundary of a text and then deleting
+the range it occupies, from that boundary for the string's length in bytes,
+gives back the text. Both splices are accepted. -/
+theorem TextModel.splice_insert_delete (text s : String) (position : Nat)
+    (boundary : (String.Pos.Raw.mk position).IsValid text) :
+    (TextModel.splice text position position s).bind
+        (TextModel.splice · position (position + s.utf8ByteSize) "") =
+      some text := by
+  obtain ⟨before, after, rfl, atEnd⟩ := String.Pos.Raw.isValid_iff_exists_append.1 boundary
+  have positionEq : position = before.utf8ByteSize := congrArg String.Pos.Raw.byteIdx atEnd
+  subst positionEq
+  have inserted := TextModel.splice_append before "" after s
+  have deleted := TextModel.splice_append before s after ""
+  simp only [String.append_empty, String.utf8ByteSize_empty, Nat.add_zero] at inserted deleted
+  simp [inserted, deleted]
+
+/-- A splice that is accepted was over a range in order whose ends are
+character boundaries of the text. -/
+theorem TextModel.splice_boundaries {text s made : String} {start stop : Nat}
+    (spliced : TextModel.splice text start stop s = some made) :
+    (String.Pos.Raw.mk start).IsValid text ∧
+      (String.Pos.Raw.mk stop).IsValid text ∧ start ≤ stop := by
+  unfold TextModel.splice at spliced
+  split at spliced
+  · assumption
+  · cases spliced
+
+/-- What `Transaction.replacing` makes of a text is the splice of its range,
+for a range in order within the text that starts at a character boundary.
+
+The boundary is needed for one corner: a transaction that replaces nothing
+with nothing changes no range, so it fits any text wherever it was aimed,
+while a splice is refused at an offset inside a character. -/
+theorem TextModel.applyChanges_replacing (text s : String) (start stop : Nat)
+    (boundary : (String.Pos.Raw.mk start).IsValid text) (ordered : start ≤ stop)
+    (within : stop ≤ text.utf8ByteSize) :
+    TextModel.applyChanges text (Transaction.replacing text.utf8ByteSize start stop s).changes =
+      TextModel.splice text start stop s := by
+  have whole : stop + (text.utf8ByteSize - stop) = text.utf8ByteSize := by omega
+  have stopEq : start + (stop - start) = stop := by omega
+  by_cases empty : s.isEmpty <;> by_cases same : stop = start
+  · subst same
+    have nothing : s = "" := String.isEmpty_iff.1 empty
+    subst nothing
+    simp [TextModel.applyChanges, Transaction.replacing, TextModel.runsOf, TextModel.runsOf.go,
+      whole, TextModel.splice_nothing text stop boundary]
+  · have nothing : s = "" := String.isEmpty_iff.1 empty
+    subst nothing
+    have some : ¬stop - start = 0 := by omega
+    simp [TextModel.applyChanges, Transaction.replacing, TextModel.runsOf, TextModel.runsOf.go,
+      some, whole, stopEq]
+  · subst same
+    simp [TextModel.applyChanges, Transaction.replacing, TextModel.runsOf, TextModel.runsOf.go,
+      empty, whole]
+  · have some : ¬stop - start = 0 := by omega
+    simp [TextModel.applyChanges, Transaction.replacing, TextModel.runsOf, TextModel.runsOf.go,
+      empty, some, whole, stopEq]
 
 /-- The walk of `offsetOf` never answers an offset before the one it is at:
 it answers where it is, or walks on, and a character is at least a byte. -/

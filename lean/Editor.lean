@@ -1,4 +1,4 @@
-import Editor.Api
+import Editor.Api.Theorems
 import Editor.Command.Append
 import Editor.InputScheme.Vim.Default
 import Editor.Setup
@@ -13,7 +13,9 @@ sub-ports' operations are lifted into it (`Editor/Command.lean`, which
 comes with `Editor/Setup.lean` through the stores), the editor API a
 command is written with (`Editor/Api.lean`: the editor state's buffers and
 windows, undo, modes, messages and jobs, over the state requests of
-`Editor/State/Request.lean`), the undo
+`Editor/State/Request.lean`; it comes with `Editor/Api/Theorems.lean`,
+which holds what is proved of it on the text model, so that the build
+checks those proofs), the undo
 tree over the text port (`Editor/UndoTree.lean`, which comes with the
 editor state a buffer's history is part of), the events the editor queue
 delivers, as plain data (`Editor/Event.lean`), the scene Lean publishes to

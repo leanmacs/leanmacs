@@ -57,6 +57,10 @@ edit log, and one step for the buffer's history to be told of.
 - `BufferId.insertAt` and `BufferId.deleteRange` are that on the buffer's
   text: an insertion replaces an empty range, and a deletion replaces a
   range with nothing.
+- Proved on the text model (`replaceRange_insert_delete`,
+  `Editor/Api/Theorems.lean`): inserting a string at a character boundary
+  and deleting the range it occupies leaves the text's contents as they
+  were.
 
 Each operation that makes a text request has a case in
 `Editor/Api/Cases.lean`, played on the editor's models and on the real
@@ -80,7 +84,8 @@ with `badChange` unless both offsets are character boundaries within the
 text and `start ≤ stop`. -/
 def TextId.replaceRange (text : TextId) (start stop : Nat) (s : String) : TextM Unit := do
   let length ← text.byteLength
-  discard <| text.apply (Transaction.replacing length start stop s) Origin.user
+  let _ ← text.apply (Transaction.replacing length start stop s) Origin.user
+  return ()
 
 /-- The buffer called `name`, if there is one. -/
 def findBuffer (name : String) : EditorM (Option BufferId) :=
