@@ -89,6 +89,33 @@ and the cursors after, so undoing it hands the selection back
 cursors. The heads of a kept selection are in order, since its ranges are
 sorted and apart, so they are the extents an insertion replaces.
 
+## Undo
+
+The undo operations work over the buffer's own undo tree
+(`Buffer.history`, `Editor/UndoTree.lean`), with no new request of the
+text store: each reads the buffer, tells the tree the revision its text is
+at, does its part, and records the tree that comes back as the buffer's
+(`StateRequest.setHistory`).
+
+- `BufferId.closeGroup` sets the boundary: the edits since the last one
+  become one step. With nothing pending it makes no node.
+- `BufferId.undo` and `BufferId.redo` move one step, with the user's
+  origin, and hand back the selection to place (`Undone`): the selection
+  before the step's first edit for an undo, and the one after its last for
+  a redo. `none` is the tree's "there is nothing to do": an undo at the
+  root, a redo with no step to go to or with an edit pending.
+- **The selection is handed back, not placed.** Placing it is the
+  caller's: which view it belongs to, and what its cursor's shape becomes,
+  are the input scheme's to say. The store hands back a selection only for
+  an edit that carried one, which the selection edits above do.
+- **The loop's boundary still follows.** The loop closes each buffer's
+  group after every event (`Editor/Loop.lean`, "After each event"). After a
+  command that moved, that tells the moved tree nothing new and makes no
+  node, so a move is not itself a step.
+- **A command that moves and then fails** is rolled back from the tree it
+  recorded: the edits it made after the move are taken back, and the move
+  is not (`Editor/Loop.lean`, "Rollback").
+
 Each operation that makes a text request has a case in
 `Editor/Api/Cases.lean`, played on the editor's models and on the real
 binding.
@@ -175,6 +202,69 @@ of; the store refuses, with `badChange`, offsets that are not character
 boundaries within the text and a range that ends before it starts. -/
 def deleteRange (id : BufferId) (start stop : Nat) : EditorM (Except BufferRefusal Unit) :=
   id.replaceRange start stop ""
+
+end BufferId
+
+/-- What an undo or a redo hands back. -/
+structure Undone where
+  /-- The selection to place: the one before the step's first edit for an
+  undo, and the one after its last for a redo. `none` when the step's edits
+  carried none. -/
+  selection : Option Selection
+  deriving DecidableEq, Repr
+
+namespace BufferId
+
+/-- The buffer `id` with its undo tree told the revision its text is at.
+Refused with `noSuchBuffer` for a buffer there is none of. -/
+def synced (id : BufferId) : EditorM (Except BufferRefusal Buffer) := do
+  match (← editorState).buffer? id with
+  | some buffer =>
+    return .ok { buffer with history := ← buffer.history.sync }
+  | none =>
+    return .error (.noSuchBuffer id)
+
+/-- Sets the boundary in the buffer `id`'s history: the edits since the last
+one become one step. With nothing pending it makes no node. Refused with
+`noSuchBuffer` for a buffer there is none of. -/
+def closeGroup (id : BufferId) : EditorM (Except BufferRefusal Unit) := do
+  match ← id.synced with
+  | .ok buffer =>
+    EditorState.ask (.setHistory id buffer.history.close)
+  | .error refusal =>
+    return .error refusal
+
+/-- Makes `move` in the buffer `id`'s history, on its tree once told the
+revision its text is at, and records the tree the move returns as the
+buffer's: what the move handed back, or `none` when the tree had nothing
+to do. Refused with `noSuchBuffer` for a buffer there is none of. -/
+def moved (id : BufferId) (move : UndoTree → TextM (Option UndoTree.Moved)) :
+    EditorM (Except BufferRefusal (Option Undone)) := do
+  match ← id.synced with
+  | .error refusal =>
+    return .error refusal
+  | .ok buffer =>
+    let some moved ← move buffer.history | return .ok none
+    match ← EditorState.ask (.setHistory id moved.tree) with
+    | .ok () =>
+      return .ok (some ⟨moved.selection⟩)
+    | .error refusal =>
+      return .error refusal
+
+/-- Undoes one step of the buffer `id`'s history, with the user's origin,
+and hands back the selection from before the step's first edit. The open
+group is a step: it is closed first. `none`, with nothing done, when there
+is no step to undo. Refused with `noSuchBuffer` for a buffer there is none
+of. -/
+def undo (id : BufferId) : EditorM (Except BufferRefusal (Option Undone)) :=
+  id.moved (·.undo Origin.user)
+
+/-- Redoes one step of the buffer `id`'s history, with the user's origin,
+and hands back the selection from after the step's last edit. `none`, with
+nothing done, when there is no step to redo, and whenever an edit is
+pending. Refused with `noSuchBuffer` for a buffer there is none of. -/
+def redo (id : BufferId) : EditorM (Except BufferRefusal (Option Undone)) :=
+  id.moved (·.redo Origin.user)
 
 end BufferId
 

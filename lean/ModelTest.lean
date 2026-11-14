@@ -6001,16 +6001,54 @@ def dispatchCloseViewChecks : List Check :=
           ((program "C-c f").runModel editorModel).1.toOption ==
             some (([⟨0⟩, ⟨1⟩], [⟨0⟩, ⟨1⟩]), #[⟨0⟩, ⟨1⟩, ⟨2⟩]) }]
 
+/-- The checks of undo from a command in the loop (`Editor/Api.lean`,
+`Editor/Loop.lean`), on the editor's models: a move in the history a key's
+command made is the loop's after the step. -/
+def dispatchUndoChecks : List Check :=
+  let undo : Dispatched := fun call => do
+    discard <| call.target.window.buffer.undo
+    return none
+  let redo : Dispatched := fun call => do
+    discard <| call.target.window.buffer.redo
+    return none
+  let keys :=
+    dispatchKeys [("C-c s", invoke "stamp"), ("C-c u", invoke "undo"), ("C-c r", invoke "redo")]
+      [("stamp", stamp), ("undo", undo), ("redo", redo)]
+  [{  name :=
+        "a key's command that undoes keeps the move after the step: the text is the one before the last key's edit, the buffer's tree has nothing pending and no node made for the move, and the next key's redo gives the edit back"
+      run :=
+        pure <|
+          let program : EditorM (List String × List Nat × Bool) := do
+            let loop : TestLoop := { state := ← holding "abcd" #[⟨1, 3⟩] }
+            -- The first step records what the buffer was made holding as a
+            -- step of the history, and the second the stamp.
+            let (loop, _) ← stepsWith keys loop ([pressF5] ++ presses "C-c s")
+            let stamped ← focusedOf loop
+            let (loop, _) ← stepsWith keys loop (presses "C-c u")
+            let undone ← focusedOf loop
+            let afterUndo ← undone.buffer.text.read
+            let (again, _) ← stepsWith keys loop (presses "C-c r")
+            let redone ← focusedOf again
+            return ([afterUndo, ← redone.buffer.text.read],
+                [stamped.buffer.history.nodes.size, undone.buffer.history.nodes.size,
+                  redone.buffer.history.nodes.size],
+                !undone.buffer.history.pending && loop.state.echo == "" &&
+                  undone.buffer.history.current != stamped.buffer.history.current &&
+                  redone.buffer.history.current == stamped.buffer.history.current)
+          (program.runModel editorModel).1.toOption ==
+            some (["abcd", "aC-c sd"], [3, 3, 3], true) }]
+
 /-- The checks of key dispatch in the loop (`Editor/Loop.lean`), on the
 editor's models: keys through the scheme and the commands they run,
 rollback, the interrupt, the slow-command log, a command's state requests,
-what the loop gives up after a command, and the scheme's notice of a closed
-view. -/
+what the loop gives up after a command, the scheme's notice of a closed
+view, and undo from a command. -/
 def dispatchChecks : List Check :=
   dispatchKeyChecks ++ dispatchRollbackChecks ++ dispatchInterruptChecks ++ dispatchSlowChecks ++
     dispatchStateChecks ++
     dispatchGiveUpChecks ++
-    dispatchCloseViewChecks
+    dispatchCloseViewChecks ++
+    dispatchUndoChecks
 
 /-- A scheme written for the test that breaks the contract: it yields the
 first binding that the keys so far begin, so it emits on a strict prefix. -/

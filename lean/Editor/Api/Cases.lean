@@ -274,9 +274,81 @@ def selectionCases : List Case :=
             after.index == before.index + 1 &&
             (← scratch.revision) == 0 }]
 
+/-- The cases of undo from a command: closing the group, undoing and
+redoing over the buffer's own tree. -/
+def undoCases : List Case :=
+  [{  name :=
+        "two groups undone and redone: after an edit, a boundary, a second edit and two undos, the text after each undo is the text before the edit it took back and the selection handed back is the selection before that edit; two redos give back both texts, each with the selection from after its edit"
+      start := holding "ab" (selection #[(2, 2)])
+      run := do
+        let view : ViewId := ⟨0⟩
+        let buffer : BufferId := ⟨0⟩
+        -- What the buffer was made holding is a step of its own.
+        let .ok () ← buffer.closeGroup | return false
+        let .ok () ← view.insertAtSelections "c" | return false
+        let .ok firstSelection ← view.selection | return false
+        let first ← scratch.read
+        let .ok () ← buffer.closeGroup | return false
+        let .ok () ← view.select (selection #[(0, 0)]) | return false
+        let .ok () ← view.insertAtSelections "X" | return false
+        let .ok secondSelection ← view.selection | return false
+        let second ← scratch.read
+        -- The second edit's group is still open: the undo closes it.
+        let .ok (some undoneSecond) ← buffer.undo | return false
+        let afterSecond ← scratch.read
+        let .ok (some undoneFirst) ← buffer.undo | return false
+        let afterFirst ← scratch.read
+        let .ok (some redoneFirst) ← buffer.redo | return false
+        let againFirst ← scratch.read
+        let .ok (some redoneSecond) ← buffer.redo | return false
+        let againSecond ← scratch.read
+        return first == "abc" && firstSelection == selection #[(3, 3)] && second == "Xabc" &&
+            secondSelection == selection #[(1, 1)] &&
+            afterSecond == "abc" &&
+            undoneSecond == ⟨some (selection #[(0, 0)])⟩ &&
+            afterFirst == "ab" &&
+            undoneFirst == ⟨some (selection #[(2, 2)])⟩ &&
+            againFirst == "abc" &&
+            redoneFirst == ⟨some (selection #[(3, 3)])⟩ &&
+            againSecond == "Xabc" &&
+            redoneSecond == ⟨some (selection #[(1, 1)])⟩ },
+    { name :=
+        "an undo or a redo records the moved tree as the buffer's: the next undo goes on from where the last left the text, a redo after an undo and an edit finds nothing to redo, and the edit made after the undo is undone alone"
+      start := holding "ab" (selection #[(2, 2)])
+      run := do
+        let view : ViewId := ⟨0⟩
+        let buffer : BufferId := ⟨0⟩
+        let .ok () ← buffer.closeGroup | return false
+        let .ok () ← view.insertAtSelections "c" | return false
+        let .ok (some _) ← buffer.undo | return false
+        let .ok () ← view.insertAtSelections "d" | return false
+        let edited ← scratch.read
+        let .ok nothing ← buffer.redo | return false
+        let .ok (some _) ← buffer.undo | return false
+        let undone ← scratch.read
+        let some held := (← editorState).buffer? buffer | return false
+        return edited == "abd" && nothing == none && undone == "ab" && !held.history.pending &&
+            held.history.nodes.size == 4 },
+    { name :=
+        "an undo and a redo of a buffer with no step to take find nothing and change nothing; closing a group with nothing in it makes no node; and each is refused with noSuchBuffer for a buffer there is none of"
+      run := do
+        let .ok buffer ← createBuffer "fresh" "text" | return false
+        let .ok text ← buffer.text | return false
+        let .ok undone ← buffer.undo | return false
+        let .ok redone ← buffer.redo | return false
+        let .ok () ← buffer.closeGroup | return false
+        let some held := (← editorState).buffer? buffer | return false
+        let absent : BufferId := ⟨9⟩
+        return undone == none && redone == none && (← text.read) == "text" &&
+            (← text.revision) == 0 &&
+            held.history.nodes.size == 1 &&
+            refusedAs (← absent.undo) (.noSuchBuffer absent) &&
+            refusedAs (← absent.redo) (.noSuchBuffer absent) &&
+            refusedAs (← absent.closeGroup) (.noSuchBuffer absent) }]
+
 /-- Every case of the editor API, in the order they run. -/
 def cases : List Case :=
-  bufferCases ++ selectionCases
+  bufferCases ++ selectionCases ++ undoCases
 
 /-- Plays `cases` with `run`, each from a store with no text, and returns
 the names of those that did not hold: one that returned `false`, and one
