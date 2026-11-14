@@ -127,7 +127,44 @@ operations `prompt`, `acceptPrompt` and `cancelPrompt` with the cases of
 the API. The editor state's side of a
 save in flight, the snapshot the loop releases once a save has ended and
 the saved mark a rollback takes back are checked with the state requests
-and the loop's dispatch. The build checks the theorem that inserting at a
+and the loop's dispatch.
+
+Evil, Vim's states and motions on the editor API (`lean/Editor/Evil.lean`),
+is checked there in three layers, so that a change to one breaks no other's
+checks:
+
+- **What a scheme reports of a view, and what the loop does with it**, with
+  no Vim key. The scheme interface's report on the test scheme, and the
+  contract's property that a key which yields nothing leaves it as it was,
+  on schemes written to break it. Then, with a scheme written in the test
+  whose report a key's invocation switches, and commands written there:
+  the scene's cursor and status field (`loopChecks`), the report a command
+  is called with (`dispatchReportChecks`), that what is edited while a
+  view is in an insert session is one step of the history
+  (`dispatchUndoChecks`), and that a committed text is inserted only where
+  the view takes text (`commitChecks`). The window's wanted column and the
+  first window's shape are checked with the state's operations.
+- **The Vim scheme's side**: a state's selection shape and the scheme's
+  report of each view's state, on a registry written in the test and on
+  the defaults by key (`vimRegistryChecks`, `vimStateChecks`,
+  `vimDefaultChecks`).
+- **Evil itself**, where Vim keys are pressed against a text, on the loop's
+  driver over the editor's models, under the Vim scheme that ships with
+  the commands compiled code registers (`evilRestChecks`,
+  `evilMotionChecks`, `evilStateChecks`, `evilInsertChecks`). A check is a
+  row: keys, a text with the cursor written into it as a bar, and the text
+  after, written by hand from Vim's documented behaviour
+  (`docs/design/keymaps-and-modes.md`, "Motions as built", has the table).
+  Each of `h j k l w b e W B E ^ $ gg G` has rows with no count, a count
+  of 1, a count inside the text and a count past it, and `0` its own; a
+  sweep runs every motion from every position a cursor may rest at in the
+  sample texts and holds the cursor to a cell that is not the line break
+  of a line with content; `j` then `k` across a shorter line returns to
+  its column; `i`, typed text and `<Escape>` are one step of the history,
+  by an undo request; `a`, `I` and `A`; and the selection the scene shows
+  after `v` and `V` and a motion. **No test runs Vim**, and nothing about
+  Vim is in the build or the gate: the rows were compared with a local Vim
+  by hand, outside the repository. The build checks the theorem that inserting at a
 position and deleting what was inserted leaves the text
 (`lean/Editor/Api/Theorems.lean`). The task
 shows by behaviour
@@ -139,14 +176,14 @@ whatever `LEAN_NUM_THREADS` says: a bare `lake test` is enough.
 
 `mise run ffi-test` runs `lean/.lake/build/bin/ffi-test`, the test executable
 linked against the real library, then `contract-test`, `config-test`, and
-then the editor: once with no arguments, and six times in its headless
+then the editor: once with no arguments, and seven times in its headless
 mode on the fixtures under `tests/headless`: with `script`, whose output must
 be exactly `expected`; with `keys-script`, which sends keys with their
 identity through the library's window input and whose output must be exactly
-`keys-expected`; with `scene-script`, which commits text through the
-window input, prints the scene the editor loop published, and reloads and
-runs a job once the frame exists, and whose output must be exactly
-`scene-expected`; and with `dispatch/script` on the config in
+`keys-expected`; with `scene-script`, which enters insert state, commits
+text through the window input, prints the scene the editor loop published,
+and reloads and runs a job once the frame exists, and whose output must be
+exactly `scene-expected`; and with `dispatch/script` on the config in
 `dispatch/config`, which sends the keys of a command that loops and the
 interrupt key, then the keys of a command that ends, then the keys of a
 command that starts a job with an argument, whose result the job's command
@@ -158,12 +195,18 @@ command of config's opens a path that is not absolute, which starts the
 compiled load job and is refused by the library before it asks the file
 system, and whose output must be exactly `files/expected`; and with
 `prompt/script` on the config in `prompt/config`, under the Vim scheme the
-executable runs: a command of config's asks for a prompt, a committed
-text goes into the minibuffer, whose view the scene prints with the prompt
-text as its status line, `<Enter>` accepts and config's command receives
-the answer, `<Escape>` cancels, and the compiled `open-file`, run with no
-path, asks for one and opens the answer, a path the library refuses, so
-the run touches no file; its output must be exactly `prompt/expected`.
+executable runs: a command of config's asks for a prompt, a key that
+prints is typed into the minibuffer, whose view the scene prints with the
+prompt text as its status line, `<Enter>` accepts and config's command
+receives the answer, `<Escape>` cancels, and the compiled `open-file`, run
+with no path, asks for one and opens the answer, a committed path the
+library refuses, so the run touches no file; its output must be exactly
+`prompt/expected`; and with `evil-script`, which has no `reload` and so
+loads no config: it sends `i`, the keys of `hello`, `<Escape>` and `0`,
+and its scenes must show the text, the cursor after each, and the state's
+name in the status line, exactly as `evil-expected` has them. That run is
+evil's wiring on the real library: every command its keys run is one the
+editor ships.
 Two more runs
 pin its failure statuses: a command
 line it does not understand must give status 2, and a script that cannot be

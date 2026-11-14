@@ -4,9 +4,11 @@ import Editor.InputScheme
 # The Vim scheme
 
 Vim's grammar as one input scheme: keys in, an invocation out. It is the
-grammar only. What a motion or an operator does to a text is the
-vocabulary's, and is not here (`docs/design/keymaps-and-modes.md`, "The Vim
-scheme"). Nor are any keys: the grammar is a function of a registry of Vim
+grammar only. What a motion or an operator does to a text is not here
+(`docs/design/keymaps-and-modes.md`, "The Vim scheme"): a motion is a
+vocabulary entry (`Editor/Vocabulary.lean`), and the commands this
+scheme's invocations name are evil's (`Editor/Evil.lean`), written on the
+editor API. Nor are any keys: the grammar is a function of a registry of Vim
 states, and the states and bindings that ship are data in
 `Editor/InputScheme/Vim/Default.lean`.
 

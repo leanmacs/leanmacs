@@ -358,7 +358,10 @@ the text port: the undo tree (`lean/Editor/UndoTree.lean`, decided
   break, what each operator does with an extent (whether `dd` on a last row
   takes the line feed before it), `curswant`, and evil's motions. The
   motion primitives are the library's and move by the same cell ("Motions,
-  words and WORDs", below); evil's motions compose them.
+  words and WORDs", below); evil's motions compose them. Of these the
+  resting rule, the wanted column and the motions are built
+  ([keymaps-and-modes.md](keymaps-and-modes.md), "Where a cursor rests",
+  "The wanted column", "Motions as built"); the operators are not.
 - Block-wise here is the shape, its two corners and its extent with columns
   counted in cells. On text with no tab and no wide character that is Vim's
   block. What is left is in the open questions.
@@ -465,7 +468,9 @@ the text port: the undo tree (`lean/Editor/UndoTree.lean`, decided
     that ends in a line feed is a row like any other.
   - Vim's `curswant` is a display column. Tab stops and wide characters are
     the display pipeline's; the open question on a block's columns covers
-    both.
+    both. Evil's wanted column counts cells, as built: a recorded
+    departure ([keymaps-and-modes.md](keymaps-and-modes.md), "The wanted
+    column").
 - At the ends of the text: where there is no such cell or word the answer
   is the end of the text going forward and 0 going back. An operator wants
   the end itself (`dw` on the last word); putting a normal-state cursor
@@ -504,8 +509,11 @@ the text port: the undo tree (`lean/Editor/UndoTree.lean`, decided
   a conversion between an offset and a point that answers is undone by the
   other, and so the line start of a line start is itself
   (`TextModel.offsetOf_pointOf`, `TextModel.lineStart_idempotent`).
-- What the command loop registers under each of the Vim scheme's motion
-  names is a composition of these: `left` and `right` are the previous and
+- What the command loop has under each of the Vim scheme's motion names
+  is a composition of these, built by its phase 11 as entries of the
+  vocabulary (`lean/Editor/Evil/Motions.lean`;
+  [keymaps-and-modes.md](keymaps-and-modes.md), "Motions as built"):
+  `left` and `right` are the previous and
   the next cell kept on the line by the line's start and end; `down` and
   `up` the row motions with the wanted column from a point in cells;
   `word-forward`, `word-backward` and `word-end` the next start, the
@@ -1039,6 +1047,16 @@ echo area, the preedit, and the prompt that is open, if one is.
   every scene. Its scroll position is an anchor marker of the buffer's text,
   and its selections one selection marker of that text, whose ranges are its
   cursors.
+- **A window keeps its wanted column** (`Window.wanted`, built by the
+  command loop's phase 11): the column its vertical motions aim for,
+  counted in cells or the line's end, with the offset the cursor was left
+  at when it was kept. It holds only while the cursor is still there, so
+  nothing has to clear it. One state request sets it; showing another
+  buffer in the window clears it, and a window a split makes has none
+  ([keymaps-and-modes.md](keymaps-and-modes.md), "The wanted column").
+- **The first window's selection has the shape the input scheme reports**
+  of the first view before any key: inclusive under the Vim scheme, whose
+  first state is normal state.
 - The **split tree** is binary: a leaf is a window or the minibuffer's
   place, and a split divides its rectangle between two children along an
   axis, rows (stacked) or columns (side by side), the first taking half,
@@ -1143,9 +1161,9 @@ Each view (`View`):
 
 Content is named only by handles, never by copied text, so an unchanged
 view is sent as the same handles. Faces are names; what they look like is
-the display pipeline's. Which cursor a view has is chosen by the command
-loop's later phases, and which status fields by `Loop.statusOf` (below);
-the scene only carries them.
+the display pipeline's. Which cursor a view has is the input scheme's to
+say, and which status fields is `Loop.statusOf`'s (below); the scene only
+carries them.
 
 Lean publishes the scene and asks layout's two questions through the
 display interface (`lean/Editor/Display.lean`): the rows a view shows from
@@ -1173,7 +1191,11 @@ decided 2026-11-13 by its phase 2):
   and publish nothing.
 - Before the scene is made, each buffer's undo tree is told its text's
   revision and its group is closed, so what one event edited is one step of
-  the history.
+  the history. **But for a buffer in an insert session** (built by the
+  command loop's phase 11): while a view of the buffer is one the input
+  scheme reports as in a session, its group is left open, so what is
+  edited in the session is one step
+  ([keymaps-and-modes.md](keymaps-and-modes.md), "Insert sessions").
 - A view whose buffer's text is at the revision it was last shown at keeps
   the same snapshot; otherwise a new one is taken, and views of one buffer
   share it.
@@ -1192,18 +1214,28 @@ decided 2026-11-13 by its phase 2):
   area reaches a scene even when its cause refuses the publish too, and a
   host is not left with a refusal to drop. The state's layout is not
   touched: a well-formed state stays well formed.
-- Until later phases choose them, every view's cursor is a bar in the face
-  `cursor`, with no decorations. The focused view is named only while the
-  frame has the keyboard focus, and the preedit is the input method's text
-  for it.
-- A view's status line is two fields at most (`Loop.status`, built by the
-  command loop's phase 9): its buffer's name in the face `status.name`,
+- **A view's cursor is the one the input scheme reports of the view**
+  (`InputScheme.report`, built by the command loop's phase 11), in the
+  scheme's state after the last key: under the Vim scheme the cursor shape
+  of the view's Vim state, in the face `cursor.` followed by the state's
+  name (a block in `cursor.normal`, a bar in `cursor.insert`). A scheme
+  that says nothing of a view gives it a bar in the face `cursor`. A view
+  has no decorations until later phases choose them. The focused view is
+  named only while the frame has the keyboard focus, and the preedit is
+  the input method's text for it.
+- A view's status line (`Loop.statusOf`) is the fields the input scheme
+  reports of the view and then its buffer's (`Loop.status`, built by the
+  command loop's phase 9): the buffer's name in the face `status.name`,
   and, while the buffer is modified, the text `[+]` in the face
-  `status.modified`. "Modified" is the presence of the second field: a
-  buffer that is not modified has no such field, not one with an empty
-  text. Whether a buffer is modified is its undo tree's answer, and it is
-  right in a scene because every tree is told its text's revision before
-  the scene is made. The scene's shape did not change.
+  `status.modified`. Under the Vim scheme the scheme's is one field, the
+  name of the view's Vim state in the face `status.state`, so the line
+  reads `normal`, `scratch`. "Modified" is the presence of the field in
+  the face `status.modified`: a buffer that is not modified has no such
+  field, not one with an empty text. Whether a buffer is modified is its
+  undo tree's answer, and it is right in a scene because every tree is
+  told its text's revision before the scene is made; a buffer is modified
+  while its group is open, so during an insert session. The scene's shape
+  did not change.
 - **While a prompt is open the minibuffer's view is a view of the scene**
   like any other (built by the command loop's phase 10), where the
   minibuffer's place is in drawing order: its snapshot is the input typed
@@ -1211,7 +1243,8 @@ decided 2026-11-13 by its phase 2):
   it has the focus.
   - **The prompt text is its status line**: one field, the prompt's label,
     in the face `minibuffer.prompt` (`Loop.statusOf`, `Loop.promptFace`),
-    with no name and no modified field. A view's status line is the
+    with no name, no modified field and none of the scheme's fields. Its
+    cursor is the one the scheme reports of it. A view's status line is the
     loop's to fill, so the scene's shape did not change, and neither did
     the Rust scene on the display pipeline's branch, which lays a view's
     status out as one row at the bottom of its rectangle.
@@ -1427,7 +1460,11 @@ these hunks" is a fact the editor can state.
   it in Vim, which the word motions show after punctuation (`!` and a mark
   are two words here). `×` and `÷` are word characters in both. A fix is
   one table, in the library's private module for a character's class and in
-  the Lean model, and nothing else changes.
+  the Lean model, and nothing else changes. Evil's word motions (`w b e`
+  and `W B E`) are where a user meets this: they are the primitives taken
+  a count of times ([keymaps-and-modes.md](keymaps-and-modes.md), "Motions
+  as built"). Their checks use ASCII text and one text with `é` and `ö`,
+  and restate no class, so a fix to the table breaks none of them.
 - **A block's columns by display width, and a block to every line's end.**
   A block's columns are counted in cells. Vim counts them in display
   columns, which needs tab stops (a view's setting) and character widths

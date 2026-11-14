@@ -189,6 +189,15 @@ time, in order, on the editor thread.
   command and reverts to it if the command fails, by one inverse of the run
   of revisions the command made. That state may be a point inside an insert
   session's open group, so a command's edits need no group of their own.
+  Since the command loop's phase 11 that is the common case for a typed
+  key: the loop leaves a buffer's group open while a view of it is in an
+  insert session ([keymaps-and-modes.md](keymaps-and-modes.md), "Insert
+  sessions"), so a command that fails inside one is rolled back to the
+  point of the open group it began at, the session's earlier text stays
+  pending, and it is one step with what follows (pinned by
+  `ModelTest.dispatchUndoChecks`, with a scheme written in the test whose
+  keys begin and end a session). A view's wanted column is editor state,
+  so it is rolled back with everything else.
   What the loop does with it is built (`lean/Editor/Loop.lean`, "Rollback":
   `Loop.keep` and `Loop.Kept.restore`), as follows.
   - **Before a command** the loop keeps, for each buffer, the state of its

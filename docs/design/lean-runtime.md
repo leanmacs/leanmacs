@@ -694,6 +694,7 @@ made of state requests and text requests. Config sees it through
 | Close the undo group, undo and redo, each move handing back the selection to place | `BufferId.closeGroup`, `undo`, `redo`, over the buffer's undo tree | Yes: `applyInverse` and `dropInverses`, the undo tree's own; no new library call |
 | Split, close and focus a window, and show another buffer in one | `ViewId.split`, `close`, `focus`, `show` | To mark the new window's markers |
 | Set and read a buffer-local value; set the major mode, add and remove a minor mode | `BufferId.setValue`, `value?`, `ViewId.setMajorMode`, `BufferId.addMinorMode`, `removeMinorMode` | No |
+| Keep a view's wanted column, the column its vertical motions aim for, with the offset the cursor was left at; read it from the view's window | `ViewId.setWanted`; `Window.wanted` | No |
 | Say something in the echo area | `message` | No |
 | Start a job, with arguments | `startJob`, for a job registered with `jobWith` or `job` | No: the host starts it once the command has ended |
 | Break a line with the buffer's line ending, and ask whether a buffer is modified | `ViewId.insertLineBreak`, `Target.insertLineBreak`; `BufferId.isModified` | Yes: `apply`, and the text's revision |
@@ -747,6 +748,17 @@ made of state requests and text requests. Config sees it through
   and the minibuffer's mode are compiled (`lean/Editor/Minibuffer.lean`),
   registered by `lean/Editor/Minibuffer/Compiled.lean`, the one module of
   the two that names the registry.
+- **Evil is commands over the API** (`lean/Editor/Evil.lean`, built by the
+  command loop's phase 11; [keymaps-and-modes.md](keymaps-and-modes.md),
+  "The Vim scheme"): the move command, the commands that enter a Vim state
+  and begin an insert, and the one typed text runs. Each is given its
+  call, which carries what the input scheme reports of its view
+  (`Call.report`), since a command cannot ask the scheme. They add no
+  request to a port, so there is no new model and no new contract. Config
+  sees them through `Editor.lean`; their registrations
+  (`lean/Editor/Evil/Compiled.lean`) name the registry and are not
+  imported. A motion is a vocabulary entry (`lean/Editor/Vocabulary.lean`),
+  a program over the text port alone.
 - **Out of the API still**: commands that ask layout a question (phase
   15).
 
@@ -759,6 +771,10 @@ made of state requests and text requests. Config sees it through
 | The file commands and their jobs as compiled code registers them | `lean/Editor/Files/Compiled.lean` |
 | The commands that accept and cancel a prompt, and the minibuffer's mode | `lean/Editor/Minibuffer.lean` |
 | The minibuffer's commands and its mode as compiled code registers them | `lean/Editor/Minibuffer/Compiled.lean` |
+| The vocabulary: the motion record | `lean/Editor/Vocabulary.lean` |
+| Evil: where a cursor rests, and the commands the Vim scheme's invocations run | `lean/Editor/Evil.lean` |
+| Evil's motions, as vocabulary entries, and their table | `lean/Editor/Evil/Motions.lean` |
+| Evil's commands as compiled code registers them | `lean/Editor/Evil/Compiled.lean` |
 | The loop on the models with jobs, for tests of a command that starts a job: a job reads the snapshots commands took, and its command is handed what the job loaded | `lean/Editor/Loop/Driver.lean` |
 
 ## Where state lives
@@ -768,9 +784,10 @@ made of state requests and text requests. Config sees it through
 | Buffers, windows, keymaps, registers, the agent table | Compiled Lean, on the editor thread. Buffers, windows, the frame's split tree, the echo area and the preedit are the editor state (`lean/Editor/State.lean`), which the command loop (`lean/Editor/Loop.lean`) holds and is the one writer of: a command changes it by requests the loop answers. Buffers are kept in slots, so a buffer's id is never used again, and neither is a view's | Untouched | Lost unless its owner persists it |
 | A buffer's local values: plain trees by name (`Value`), as a store's cell holds | Compiled Lean, a field of the buffer in the editor state, set and read by a command (`BufferId.setValue`, `BufferId.value?`) | Untouched: a tree names no type of config's | Lost |
 | The input scheme's state: the pending keys and what the scheme keeps for each view (the Vim scheme's states, its last change) | Compiled Lean, in the command loop, which runs one scheme for its life | Untouched | Lost |
-| Compiled commands, jobs, key bindings and modes | Compiled Lean, in the registry, for the owner `compiled`. The executable ships the file commands, `open-file` and `save-buffer`, and their jobs, `load-file` and `save-file` (`lean/Editor/Files/Compiled.lean`), and the minibuffer's commands, `minibuffer-accept` and `minibuffer-cancel`, and its mode, `minibuffer` (`lean/Editor/Minibuffer/Compiled.lean`) | Untouched: a reload replaces config's, and cancels config's jobs only, so a compiled job that is running goes on | Registered again when the host starts |
+| Compiled commands, jobs, key bindings and modes | Compiled Lean, in the registry, for the owner `compiled`. The executable ships the file commands, `open-file` and `save-buffer`, and their jobs, `load-file` and `save-file` (`lean/Editor/Files/Compiled.lean`), the minibuffer's commands, `minibuffer-accept` and `minibuffer-cancel`, and its mode, `minibuffer` (`lean/Editor/Minibuffer/Compiled.lean`), and evil's nine commands, `move`, `normal`, `visual`, `visual-line`, `insert`, `append`, `insert-line-start`, `append-line-end` and `self-insert`, over its compiled table of motions (`lean/Editor/Evil/Compiled.lean`) | Untouched: a reload replaces config's, and cancels config's jobs only, so a compiled job that is running goes on | Registered again when the host starts |
 | An open prompt: its label, the minibuffer's view, the asking view and the continuation, with the minibuffer's buffer and window | Compiled Lean, a field of the editor state (`EditorState.prompt`, `lean/Editor/State.lean`) and a buffer and a window of it, from the command that asks until the one that accepts or cancels | Untouched: the prompt stays open, and its continuation is a name, looked up in the registry as it is when the answer arrives | Lost |
 | A save in flight: the snapshot a save writes and the state its text was in | Compiled Lean, with the buffer's file in the editor state, from the save command until the save's result is delivered | Untouched | Lost with the buffer |
+| A view's wanted column: the column its vertical motions aim for, with the offset the cursor was left at | Compiled Lean, a field of the view's window in the editor state (`Window.wanted`), set by a command (`ViewId.setWanted`) | Untouched | Lost |
 | A buffer's modes: its major mode and its minor modes, by name | Compiled Lean, a field of the buffer in the editor state | Untouched: a name whose mode a reload drops contributes nothing | Lost |
 | A mode's own state | A compiled mode's, a typed field where the editor state's table puts it (the one mode that ships, the minibuffer's, keeps none); a config mode's, a store its `setup` declares, whose commands fill its roles and suffixes, with per-buffer state in the buffer's local values, or inside the store's value | As for compiled state, and as for a store | As for compiled state, and as for a store |
 | Text, kept inverses, anchors | Rust, behind handles | Untouched | Files on disk; the kept inverses are lost |

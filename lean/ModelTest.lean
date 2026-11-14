@@ -111,7 +111,18 @@ registered command:
   command that ran to its end opened the minibuffer's view, in both states
   of the scheme it keeps, after the views the command closed, and tells it
   nothing after a later command, a key's or a job's, that ran with the
-  prompt open.
+  prompt open;
+- `dispatchUndoChecks`: undo from a command, and that what is edited while
+  a view is in an insert session is one step of the history;
+- `dispatchReportChecks`: a command is called with what the scheme reports
+  of its view, in the scheme's state after its key.
+
+What the loop does with a scheme's report of a view is checked with a
+scheme written here, `switching`: the test scheme, with a report of each
+view that an invocation it yields switches. So the checks of the scene's
+cursor and status field (`loopChecks`), of the report a command is told,
+of insert sessions and of where a committed text is inserted
+(`commitChecks`) name no Vim state and no Vim key.
 
 Jobs started from commands are checked on the loop's driver over the
 editor's models and the job model (`Editor/Loop/Driver.lean`):
@@ -242,19 +253,45 @@ with no model:
 - `vimGrammarChecks`: the grammar: which keymaps a key is looked up in,
   and what a key sequence parses to and yields;
 - `vimStateChecks`: Vim states: which state a view is in, how one is
-  entered, what the grammar reads of a state's record (typed text, an
-  operator over the selection), the last change, and a mode's keys under
-  the Vim scheme: a hand-tuned key is typed text in insert state, and
-  `Mode.check` reads every state's keymaps;
+  entered, what the scheme reports of a view in a state, what the grammar
+  reads of a state's record (typed text, an operator over the selection),
+  the last change, and a mode's keys under the Vim scheme: a hand-tuned
+  key is typed text in insert state, and `Mode.check` reads every state's
+  keymaps;
 - `vimDefaultChecks`: the default states and bindings
   (`Editor/InputScheme/Vim/Default.lean`), observed through the grammar:
-  what each default key parses to. They restate no table and name no
-  vocabulary or command name;
+  what each default key parses to, and what the scheme reports of the view
+  after it. They restate no table and name no vocabulary or command name;
 - `vimContractChecks`: the scheme contract holds of the Vim scheme, over
   the registry written here and over the default states.
 
 The grammar's checks run on a registry and keymaps written here
 (`vimStates`), so that none of them names a default binding.
+
+Evil (`Editor/Evil.lean`), what the Vim scheme's invocations run, is
+checked on the editor's models. This is where Vim keys are pressed against
+a text, under the Vim scheme that ships with the commands compiled code
+registers for evil (`Editor/Evil/Compiled.lean`), on the loop's driver:
+
+- `evilRestChecks`: where a cursor rests under each rule, from every
+  position of a few small texts, on the text model alone;
+- `evilMotionChecks`: each motion's key in a text with the cursor written
+  into it as a bar (`evilKeys`, `evilRows`), with no count, a count of 1, a
+  count inside the text and a count past it; the wanted column; a sweep of
+  every motion of the vocabulary from every position a cursor may rest at;
+  and that every default motion key has a motion of its name;
+- `evilStateChecks`: `v`, `V` and `<Escape>`: the selection the scene
+  shows, its shape and what it covers, and the scene's cursor and status
+  field in each state;
+- `evilInsertChecks`: `i a I A`, typed text and `<Escape>`; that an insert
+  session is one step of the history, by an undo request; a key typed into
+  a prompt; and a committed text in normal state and inside a session.
+
+Each expected text of a row is written by hand from Vim's documented
+behaviour (`docs/design/keymaps-and-modes.md`, "Motions as built"). No
+check runs Vim. The word rule outside ASCII is the text port's and is not
+restated here: the word motions' rows are ASCII, and one text with letters
+Vim and the editor agree on.
 
 Modes are checked on the test scheme, by the roles and the leader it reports
 (`InputScheme.roleKey`, `InputScheme.leader`), so that no check of a mode

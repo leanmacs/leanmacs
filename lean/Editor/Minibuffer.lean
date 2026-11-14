@@ -34,7 +34,10 @@ fails to load, and a reload does not replace them.
   names here and in that table are changed together.
 
 Nothing here inserts typed text: the command a key that prints runs is the
-scheme's self-insert, which goes with insert state.
+scheme's self-insert. Under the Vim scheme that is evil's
+(`Evil.selfInsert`, `Editor/Evil.lean`), the same command as in insert
+state: the minibuffer's view is in a state where typing is text, and the
+loop runs the command with the focused window, which is the minibuffer's.
 
 ## Where an addition goes
 
