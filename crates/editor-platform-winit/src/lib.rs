@@ -32,17 +32,21 @@
 //! `mise run window-contract`, on the desktop it is started from. Run the
 //! first after a change to this crate.
 
+mod names;
+mod translate;
+
 use std::sync::{Mutex, MutexGuard, PoisonError};
 
 use editor_platform::{
-    CannotOpen, Composition, Input, Key, LogicalKey, Modifiers, Platform, Pointer, PointerAction,
-    Report, WindowOptions,
+    CannotOpen, Composition, Input, Modifiers, Platform, Pointer, PointerAction, Report,
+    WindowOptions,
 };
 use winit::application::ApplicationHandler;
 use winit::event::{ElementState, Ime, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, EventLoop, EventLoopProxy};
-use winit::keyboard;
 use winit::window::{Window, WindowId};
+
+use crate::translate::KeyParts;
 
 /// The window port over winit. It opens one window, on the process's main
 /// thread, once in a process.
@@ -114,38 +118,11 @@ impl Platform for WinitPlatform {
     }
 }
 
-/// The key event winit reports with these parts, as the port's input. It
-/// takes the parts and not winit's whole key event, which cannot be built
-/// outside winit.
-///
-/// The mapping is minimal: a dead key is a dead logical key, with its
-/// character, and every other key is unidentified, with no physical key
-/// and no modifiers. Giving a key its full identity, and a pointer its
-/// position, button and modifiers, and reporting a resize, are the display
-/// pipeline's (its phase 5).
-fn key(
-    state: ElementState,
-    repeat: bool,
-    logical_key: &keyboard::Key,
-    text: Option<&str>,
-) -> Input {
-    let logical = match logical_key {
-        keyboard::Key::Dead(character) => LogicalKey::Dead(*character),
-        _ => LogicalKey::Unidentified,
-    };
-    Input::Key(Key {
-        pressed: state == ElementState::Pressed,
-        repeat,
-        logical,
-        text: text.unwrap_or_default().to_owned(),
-        ..Key::unidentified()
-    })
-}
-
 /// What the port reports for `event`, if it reports anything for it. A key
-/// event goes through [`key`]. A pressed button is a press at the origin
-/// with no button and no modifiers, and a resize is not reported: the
-/// minimal mapping [`key`] describes.
+/// event goes through [`translate::key`]. A pressed button is a press at the
+/// origin with no button and no modifiers, and a resize is not reported:
+/// giving a pointer its position, button and modifiers, and reporting a
+/// resize, are still to come.
 fn translate(event: &WindowEvent) -> Option<Input> {
     match event {
         WindowEvent::Focused(gained) => Some(Input::Focus(*gained)),
@@ -211,12 +188,15 @@ impl ApplicationHandler for App {
 
     fn window_event(&mut self, _: &ActiveEventLoop, _: WindowId, event: WindowEvent) {
         let input = match &event {
-            WindowEvent::KeyboardInput { event, .. } => Some(key(
-                event.state,
-                event.repeat,
-                &event.logical_key,
-                event.text.as_deref(),
-            )),
+            // winit's key event cannot be built in a test, so it is taken
+            // apart here and translated from its parts.
+            WindowEvent::KeyboardInput { event, .. } => Some(translate::key(&KeyParts {
+                state: event.state,
+                repeat: event.repeat,
+                logical: &event.logical_key,
+                physical: event.physical_key,
+                text: event.text.as_deref(),
+            })),
             other => translate(other),
         };
         if let Some(input) = input {
@@ -243,81 +223,6 @@ mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
     use winit::dpi::PhysicalSize;
     use winit::event::{DeviceId, MouseButton};
-    use winit::keyboard::{Key as WinitKey, NamedKey};
-
-    /// A key event of the port, with no identity but whether it is dead.
-    fn input_key(pressed: bool, repeat: bool, logical: LogicalKey, text: &str) -> Input {
-        Input::Key(Key {
-            pressed,
-            repeat,
-            logical,
-            text: text.into(),
-            ..Key::unidentified()
-        })
-    }
-
-    /// The logical key for the character `text`.
-    fn character(text: &str) -> WinitKey {
-        WinitKey::Character(text.into())
-    }
-
-    #[test]
-    fn a_pressed_key_carries_the_text_it_produced() {
-        assert_eq!(
-            key(ElementState::Pressed, false, &character("a"), Some("a")),
-            input_key(true, false, LogicalKey::Unidentified, "a")
-        );
-        assert_eq!(
-            key(ElementState::Pressed, false, &character("é"), Some("é")),
-            input_key(true, false, LogicalKey::Unidentified, "é")
-        );
-    }
-
-    #[test]
-    fn a_key_that_produced_no_text_has_empty_text() {
-        assert_eq!(
-            key(
-                ElementState::Pressed,
-                false,
-                &WinitKey::Named(NamedKey::Shift),
-                None
-            ),
-            input_key(true, false, LogicalKey::Unidentified, "")
-        );
-    }
-
-    #[test]
-    fn a_released_key_is_not_pressed() {
-        assert_eq!(
-            key(ElementState::Released, false, &character("a"), None),
-            input_key(false, false, LogicalKey::Unidentified, "")
-        );
-    }
-
-    #[test]
-    fn a_repeated_press_is_marked_a_repeat() {
-        assert_eq!(
-            key(ElementState::Pressed, true, &character("a"), Some("a")),
-            input_key(true, true, LogicalKey::Unidentified, "a")
-        );
-    }
-
-    #[test]
-    fn a_dead_key_is_a_dead_logical_key_with_its_character_and_has_no_text() {
-        assert_eq!(
-            key(
-                ElementState::Pressed,
-                false,
-                &WinitKey::Dead(Some('´')),
-                None
-            ),
-            input_key(true, false, LogicalKey::Dead(Some('´')), "")
-        );
-        assert_eq!(
-            key(ElementState::Released, false, &WinitKey::Dead(None), None),
-            input_key(false, false, LogicalKey::Dead(None), "")
-        );
-    }
 
     #[test]
     fn each_step_of_a_composition_is_reported() {
