@@ -6077,7 +6077,53 @@ def dispatchGiveUpChecks : List Check :=
             loop.state.echo == "refused: no such text" && loop.state.buffer? ⟨2⟩ == none &&
               loop.state.wellFormed &&
               scenes.back?.map (·.echo) == some "refused: no such text"
-          | none => false }]
+          | none => false },
+    { name :=
+        "the text of a buffer a command removed is not released while a buffer that is left is over the same text: the text still reads, the view of the buffer that is left shows it, and nothing is in the echo"
+      run :=
+        pure <|
+          -- `alias`, which no window shows, is over the text of `other`,
+          -- which view 1 shows.
+          let shared : TextM EditorState := do
+            let state ← twoBuffers
+            let text : TextId := ⟨1⟩
+            return { state with
+                buffers :=
+                  state.buffers.push
+                    (some { name := "alias", text, history := ← UndoTree.over text }) }
+          let program : EditorM (Option TextError × Array (Option String) × String × Bool) := do
+            let (loop, _) ←
+              stepsWith (ran (asks [.removeBuffer ⟨2⟩])) ({ state := ← shared } : TestLoop)
+                  (presses "C-c g")
+            return (← refusalOf (⟨1⟩ : TextId).read, loop.state.buffers.map (·.map (·.name)),
+                loop.state.echo, loop.state.wellFormed)
+          match program.runModel editorModel with
+          | (.ok result, model) =>
+            result == (none, #[some "scratch", some "other", none], "", true) &&
+              (model.display.scenes.back?.map fun scene =>
+                  (scene.echo, scene.views.map (shownText model))) ==
+                some ("", #[some "", some "other"])
+          | (.error _, _) => false },
+    { name :=
+        "a marker the store refuses to give up, the selection marker of a window the command gave up itself before it closed the window, is in the echo area of the scene: the window is still closed, and its other marker is still given up"
+      run :=
+        pure <|
+          let program : EditorM (List (Option TextError) × String × Array ViewId × Bool) := do
+            let state ← threeWindows
+            let some closed := state.window? ⟨1⟩ | throw .noSuchMarker
+            let twice : EditorM Unit := do
+              closed.selection.text.unmark closed.selection
+              asks [.removeWindow ⟨1⟩]
+            let (loop, _) ← stepsWith (ran twice) ({ state } : TestLoop) (presses "C-c g")
+            return (← markerRefusals closed, loop.state.echo, loop.state.windows.map (·.id),
+                loop.state.wellFormed)
+          match program.runModel editorModel with
+          | (.ok result, model) =>
+            result ==
+                ([some .noSuchMarker, some .noSuchMarker], "refused: no such marker", #[⟨0⟩, ⟨2⟩],
+                  true) &&
+              model.display.scenes.back?.map (·.echo) == some "refused: no such marker"
+          | (.error _, _) => false }]
 
 /-- A scheme written for the closed-view checks: the test scheme, with the
 views it was stepped for kept beside its state, in the order they first
