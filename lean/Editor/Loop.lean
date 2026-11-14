@@ -40,6 +40,11 @@ the loop's state holds, so a mode set by one key holds from the next.
   reports as pending, as a key string. It is empty once a sequence
   completes and after a key that goes on with no binding, since the scheme
   then reports none.
+- **The scheme is told of a view that is closed** (`Loop.forgetViews`,
+  `InputScheme.closeView`). After a command that ran to its end, each view
+  the state before it had a window of and the state it left has none of is
+  told to both states of the scheme the loop keeps. A command that did not
+  run to its end closed nothing, and the scheme is told nothing.
 
 ## Running an invocation
 
@@ -665,12 +670,25 @@ def gaveUp (before after : EditorState) : TextM (Option TextError) := do
       refusal := refusal <|> some error
   return refusal
 
+/-- The views `before` has a window of and `after` has none of: the views a
+command that took the one to the other closed. -/
+def closedViews (before after : EditorState) : Array ViewId :=
+  before.windows.filterMap fun window =>
+    if (after.window? window.id).isNone then some window.id else none
+
+/-- `state`, a state of the loop's scheme, once it is told that each of
+`views` is closed (`InputScheme.closeView`). -/
+def forgetViews (views : Array ViewId) (state : scheme.State) : scheme.State :=
+  views.foldl (fun state view => scheme.closeView view state) state
+
 /-- What running an invocation came to. -/
 structure Ran where
   /-- The editor state after it, with what it left in the echo area. -/
   state : EditorState
   /-- Whether the command ran to its end. -/
   finished : Bool
+  /-- The views the command closed, when it ran to its end. -/
+  closed : Array ViewId := #[]
   /-- What the command asked to be written, when it ran to its end. -/
   write : Option Config.Write := none
   /-- The log entry of a command that took longer than the threshold. -/
@@ -725,7 +743,9 @@ def run (keys : Keys scheme) (state : EditorState) (invocation : Invocation) (ty
   match outcome with
   | .finished write =>
     let ungiven ← gaveUp state left
-    return { state := left.refusedBy ungiven, finished := true, write, log }
+    return {
+        state := left.refusedBy ungiven, finished := true, closed := closedViews state left, write
+        log }
   | .refused refusal =>
     failed s!"refused: {refusal.describe}"
   | .interrupted =>
@@ -752,6 +772,7 @@ def key (keys : Keys scheme) (loop : Loop scheme) (key : Key) :
         none, #[])
   let ran ← run keys loop.state invocation (before ++ [key.chord])
   if ran.finished then
+    let input := forgetViews ran.closed input
     return ({ loop with
           state := ran.state, input, atRest := input },
         ran.write, ran.log)

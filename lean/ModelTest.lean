@@ -5092,7 +5092,13 @@ def schemeChecks : List Check :=
         let (state, second) := typedFrom ⟨0⟩ afterPrefix (keys "C-s a")
         pure
           (first ++ second == (fed ⟨0⟩ "C-x C-s a").2 && decide (state = (fed ⟨0⟩ "C-x C-s a").1) &&
-            fed ⟨0⟩ "" == ({}, [])) }]
+            fed ⟨0⟩ "" == ({}, [])) },
+    { name :=
+        "a scheme that says nothing of a closed view keeps its state as it was: the notice defaults to changing nothing"
+      run :=
+        let (pending, _) := fed ⟨0⟩ "C-x"
+        let closed : TestScheme.State := TestScheme.scheme.closeView ⟨0⟩ pending
+        pure (decide (closed = pending) && TestScheme.scheme.pending closed == keys "C-x") }]
 
 /-- A press of `key` with no text, as a window reports one. -/
 def press (key : Key) : Event :=
@@ -5932,14 +5938,79 @@ def dispatchGiveUpChecks : List Check :=
               scenes.back?.map (·.echo) == some "refused: no such text"
           | none => false }]
 
+/-- A scheme written for the closed-view checks: the test scheme, with the
+views it was stepped for kept beside its state, in the order they first
+had a key, and a view it is told is closed dropped from them. -/
+def remembering : InputScheme :=
+  { State := TestScheme.State × List ViewId
+    Binding := Invocation
+    init := ({}, [])
+    step := fun maps view state key =>
+      let (next, yielded) := TestScheme.step maps view state.1 key
+      ((next, if state.2.contains view then state.2 else state.2 ++ [view]), yielded)
+    pending := (·.1.pending)
+    command := fun name => { command := name }
+    closeView := fun view state => (state.1, state.2.filter (· != view)) }
+
+/-- The views `remembering` keeps in a loop's two states of the scheme: the
+one after the last key, and the one at rest. -/
+def remembered (loop : Loop remembering) : List ViewId × List ViewId :=
+  let input : TestScheme.State × List ViewId := loop.input
+  let atRest : TestScheme.State × List ViewId := loop.atRest
+  (input.2, atRest.2)
+
+/-- The checks of the scheme's notice of a closed view in the loop
+(`Editor/Loop.lean`), on the editor's models. -/
+def dispatchCloseViewChecks : List Check :=
+  let focus : Dispatched := fun _ => do
+    discard <| EditorState.ask (.focus ⟨1⟩)
+    return none
+  let close (call : Call) : EditorM Unit :=
+    discard <| EditorState.ask (.removeWindow call.target.window.id)
+  let keys : Loop.Keys remembering :=
+    { maps := fun _ _ =>
+        [Keymap.ofList
+            [(ModelTest.keys "C-c 1", invoke "focus"), (ModelTest.keys "C-c x", invoke "close"),
+              (ModelTest.keys "C-c f", invoke "fail")]]
+      command? := fun name =>
+        ([("focus", focus),
+                  ("close", fun call => do
+                    close call
+                    return none),
+                  ("fail", failingAfter close)].find?
+              (·.1 == name)).map
+          (·.2) }
+  let program (last : String) : EditorM ((List ViewId × List ViewId) × Array ViewId) := do
+    let loop : Loop remembering := { state := ← threeWindows }
+    -- The key after the focus moved is view 1's, yields nothing and leaves
+    -- nothing pending: the scheme then keeps view 1 in both its states.
+    let (loop, _) ← stepsWith keys loop (presses "C-c 1" ++ [pressF5] ++ presses last)
+    return (remembered loop, loop.state.windows.map (·.id))
+  [{  name :=
+        "after a command closed a view, the loop has told its scheme: neither state of the scheme it keeps holds anything for the view, and what they hold for the other views is kept"
+      run :=
+        pure <|
+          ((program "C-c").runModel editorModel).1.toOption ==
+              some (([⟨0⟩, ⟨1⟩], [⟨0⟩, ⟨1⟩]), #[⟨0⟩, ⟨1⟩, ⟨2⟩]) &&
+            ((program "C-c x").runModel editorModel).1.toOption ==
+              some (([⟨0⟩], [⟨0⟩]), #[⟨0⟩, ⟨2⟩]) },
+    { name :=
+        "a command that closed a view and was then refused closed nothing: the scheme is told of no closed view"
+      run :=
+        pure <|
+          ((program "C-c f").runModel editorModel).1.toOption ==
+            some (([⟨0⟩, ⟨1⟩], [⟨0⟩, ⟨1⟩]), #[⟨0⟩, ⟨1⟩, ⟨2⟩]) }]
+
 /-- The checks of key dispatch in the loop (`Editor/Loop.lean`), on the
 editor's models: keys through the scheme and the commands they run,
 rollback, the interrupt, the slow-command log, a command's state requests,
-and what the loop gives up after a command. -/
+what the loop gives up after a command, and the scheme's notice of a closed
+view. -/
 def dispatchChecks : List Check :=
   dispatchKeyChecks ++ dispatchRollbackChecks ++ dispatchInterruptChecks ++ dispatchSlowChecks ++
     dispatchStateChecks ++
-    dispatchGiveUpChecks
+    dispatchGiveUpChecks ++
+    dispatchCloseViewChecks
 
 /-- A scheme written for the test that breaks the contract: it yields the
 first binding that the keys so far begin, so it emits on a strict prefix. -/
@@ -7066,7 +7137,22 @@ def vimStateChecks : List Check :=
                 [("tuning", keys "<Escape>", .command { name := "tuned-escape" }),
                   ("tuning", keys "z", .command { name := "tuned-z" })] }
         let tuning : Mode := { name := "tuning" }
-        pure (tuning.check scheme == [.shadowsScheme (keys "<Escape>")]) }]
+        pure (tuning.check scheme == [.shadowsScheme (keys "<Escape>")]) },
+    { name :=
+        "told that a view is closed, the Vim scheme drops the Vim state it kept for it and keeps everything else: the other views' states, the edit begun and the last change; a view it kept nothing for changes nothing"
+      run :=
+        let scheme := Vim.scheme vimWithTest
+        let (one, _) := vimFed "d w q" (states := vimWithTest)
+        let (both, _) := vimFedFrom one "q 2" (view := ⟨1⟩) (states := vimWithTest)
+        let closed : Vim.State := scheme.closeView ⟨0⟩ both
+        let other : Vim.State := scheme.closeView ⟨7⟩ both
+        pure
+          (both.current == [(⟨0⟩, "test"), (⟨1⟩, "test")] && both.lastChange.isSome &&
+            !both.typed.isEmpty &&
+            closed == { both with current := [(⟨1⟩, "test")] } &&
+            closed.stateOf vimWithTest ⟨0⟩ == "normal" &&
+            closed.stateOf vimWithTest ⟨1⟩ == "test" &&
+            other == both) }]
 
 /-- The default Vim scheme's grammar folded from its initial state through
 the keys the key string `text` names, keys for view 0 with no active

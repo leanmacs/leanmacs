@@ -41,6 +41,14 @@ holds key sequences bound to command names, as the registry does for config
 (`Editor/Config/Registry.lean`), makes a keymap for any scheme without
 naming its binding type.
 
+A scheme is told when a view is closed (`closeView`): the state without
+what it kept for that view. It defaults to the state as it was, for a
+scheme that keeps nothing by view. Whoever runs the scheme tells it once
+for each view that is gone (the command loop, `Editor/Loop.lean`). A view's
+id is never used again (`Editor/State.lean`), so what a scheme kept for a
+closed view could never come to mean another view: the notice is so that it
+does not keep it for ever.
+
 ## What a scheme reports for modes
 
 A mode names roles and suffixes, never keys (`Editor/Role.lean`,
@@ -125,6 +133,9 @@ structure InputScheme where
   every state's): what a mode's hand-tuned key is checked against for
   shadowing. -/
   defaults : List (Keymap Binding) := []
+  /-- The state once the view is closed: without what the scheme kept for
+  that view. A scheme that keeps nothing by view leaves it as it was. -/
+  closeView : ViewId → State → State := fun _ state => state
   /-- The scheme's hand-tuned keys: each a mode's name, a key sequence as
   chords, and its binding, consulted with that mode ahead of its roles and
   suffixes. -/

@@ -129,7 +129,9 @@ A Vim state (normal, insert, a visual state) is a record in a registry
   that enters a state, so the next key is looked up in the new state's
   keymaps with no editor API. A view with no entry is in the initial state
   (`State.record`, `State.stateOf`), and entering the initial state removes
-  the entry.
+  the entry. So does the view being closed (`State.closeView`, which the
+  scheme reports as `InputScheme.closeView`): the entry of a view that is
+  gone is dropped, and nothing else of the state changes.
 - **A state is entered by an edit that names it** (`Edit.enters`): a
   command bound in a keymap, or an operator. The view that enters is the
   one the completing key is for.
@@ -444,6 +446,12 @@ each view is in and the last change, and nothing else. -/
 private def State.reset (state : State) : State :=
   { current := state.current, lastChange := state.lastChange }
 
+/-- The state once `view` is closed: without the Vim state kept for it. The
+edit begun and the last change are the scheme's, not the view's, and
+stay. -/
+def State.closeView (view : ViewId) (state : State) : State :=
+  { state with current := state.current.filter (·.1 != view) }
+
 /-- The state with `view` in the Vim state `name`. The initial state has no
 entry, and a name the registry does not have is the initial state's, so
 entering either removes the view's entry. -/
@@ -577,7 +585,7 @@ reports every key of the edit begun as pending. A key bound to a command
 name is bound to the command of that name, which changes no text and enters
 no state: the grammar cannot look either up. A key a mode binds, and a
 hand-tuned key, is marked as a mode's (`Bound.mode`). Its own keymaps are
-every state's. -/
+every state's. A view that is closed has its Vim state forgotten. -/
 def scheme (states : States) (modes : ModeKeys := {}) : InputScheme :=
   { State, Binding := Bound, init := {}, step := step states, pending := (·.typed)
     command := fun name => .command { name }
@@ -585,6 +593,7 @@ def scheme (states : States) (modes : ModeKeys := {}) : InputScheme :=
     leader := modes.leader
     modeCommand := fun name => .mode (.command { name })
     defaults := states.initial.keymaps ++ states.others.flatMap (·.keymaps)
-    tuned := modes.tuned.map fun (name, keys, bound) => (name, keys, .mode bound) }
+    tuned := modes.tuned.map fun (name, keys, bound) => (name, keys, .mode bound)
+    closeView := State.closeView }
 
 end Editor.Vim

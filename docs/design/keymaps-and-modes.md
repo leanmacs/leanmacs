@@ -237,6 +237,17 @@ scheme.
   scheme's state. One view differs from another by its active keymaps,
   which are already a function of the view in `step`, and by what the
   scheme keeps for each view (the Vim scheme's `current`).
+- **A scheme is told when a view is closed.** The scheme interface has a
+  notice, `closeView`: the scheme's state without what it kept for that
+  view. It defaults to changing nothing. After a command that ran to its
+  end, the loop tells both states of the scheme it keeps of each view the
+  command closed, and the Vim scheme drops the view's entry from `current`
+  (pinned by `ModelTest.schemeChecks`, `vimStateChecks` and
+  `dispatchChecks`). A view's id is never used again
+  (`lean/Editor/State.lean`), so an entry left behind could never have
+  come to mean another view; the notice is so that the state does not
+  grow with every view that was ever opened. A command that did not run to
+  its end closed nothing, and the scheme is told nothing.
 - **Why not one a view.** There is one keyboard, and a sequence begun in
   one view is one pending input ("Vim states": the pending edit is one for
   the scheme). A scheme for each view would need a table of states of
@@ -1112,9 +1123,6 @@ every build); the second is a proposal.
   a bound sequence is never also a prefix, so they cannot also begin a text
   object after an operator. The grammar accepts a text object after an
   operator; which keys the default ones are on is not decided.
-- **The Vim state of a view that is closed.** The scheme's state keeps an
-  entry for each view that is not in the initial state, and the scheme
-  interface gives no notice that a view is gone.
 - **The `kbd` macro.** Macros need the `Lean` package at elaboration time,
   and importing it at runtime is what the memory figures in
   [lean-runtime.md](lean-runtime.md) argue against. Not measured, and not
