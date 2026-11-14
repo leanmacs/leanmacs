@@ -8,11 +8,12 @@ settle
 
 # `ask-name` is config's: it asks `Name: ` with `Ada` in the minibuffer and
 # returns at once. The minibuffer is a view of its own, view 1, which has
-# the focus, so the text an input method commits is inserted there. The
-# scene shows the input typed so far as that view's text and the prompt
-# text as its status line.
+# the focus, and under the Vim scheme it is in a state where typing is
+# text: a key that prints is inserted there, by the compiled command
+# `self-insert`. The scene shows the input typed so far as that view's text
+# and the prompt text as its status line.
 run ask-name
-commit !
+key ! Digit1 shift
 scene
 
 # `<Enter>` accepts: under the Vim scheme the minibuffer's view is in a Vim
@@ -31,7 +32,8 @@ scene
 
 # `open-file` is a compiled command. Run with no path it asks for one, and
 # the answer is opened by `open-file` again, as the command the prompt
-# names. The path committed here is not absolute, so the compiled job
+# names. A text an input method commits is inserted in the minibuffer too.
+# The path committed here is not absolute, so the compiled job
 # `load-file` is started and the library refuses the path before it asks
 # the file system: the run touches no file. `join` waits for the job, whose
 # command says the refusal in the echo area.

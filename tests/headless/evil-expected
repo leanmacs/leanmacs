@@ -1,0 +1,17 @@
+key arrived: i KeyI -
+key arrived: h KeyH -
+key arrived: e KeyE -
+key arrived: l KeyL -
+key arrived: l KeyL -
+key arrived: o KeyO -
+scene 0x0, focused 0, echo "", preedit -, published 6
+view 0 0,0 0x0: "hello", scroll 0, selections 5..5
+status 0: status.state "insert", status.name "scratch", status.modified "[+]"
+key arrived: <Escape> Escape -
+scene 0x0, focused 0, echo "", preedit -, published 8
+view 0 0,0 0x0: "hello", scroll 0, selections 4..4
+status 0: status.state "normal", status.name "scratch", status.modified "[+]"
+key arrived: 0 Digit0 -
+scene 0x0, focused 0, echo "", preedit -, published 10
+view 0 0,0 0x0: "hello", scroll 0, selections 0..0
+status 0: status.state "normal", status.name "scratch", status.modified "[+]"

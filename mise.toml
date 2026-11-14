@@ -173,15 +173,23 @@ run = [
   "out=$(.lake/build/bin/editor headless \"$(lean --print-prefix)\" .lake/build/lib/lean ../tests/headless/files/config ../tests/headless/files/script) && printf '%s\\n' \"$out\" | diff ../tests/headless/files/expected -",
   # A prompt, on a config of its own (tests/headless/prompt), under the
   # editor's input scheme: a command of config's asks for a prompt, a
-  # committed text is inserted in the minibuffer, whose view the scene
+  # key that prints is typed into the minibuffer, whose view the scene
   # shows with the prompt text as its status line; `<Enter>` accepts with
   # the compiled command `minibuffer-accept`, and config's command that
   # receives the answer says it in the echo area; `<Escape>` cancels with
   # `minibuffer-cancel`, and that command does not run; and the compiled
-  # `open-file`, run with no path, asks for one and opens the answer, a
-  # path that is not absolute, which the library refuses before it asks
-  # the file system, so the run touches no file (`prompt/expected`).
+  # `open-file`, run with no path, asks for one and opens the answer, here
+  # a committed text, a path that is not absolute, which the library
+  # refuses before it asks the file system, so the run touches no file
+  # (`prompt/expected`).
   "out=$(.lake/build/bin/editor headless \"$(lean --print-prefix)\" .lake/build/lib/lean ../tests/headless/prompt/config ../tests/headless/prompt/script) && printf '%s\\n' \"$out\" | diff ../tests/headless/prompt/expected -",
+  # Evil, with no config: the script has no `reload`, so nothing of the
+  # config directory is loaded, and every command its keys run is one the
+  # editor ships. `i` begins an insert and the keys that print are typed
+  # text, `<Escape>` returns to normal state, and `0` moves to the line's
+  # start: the scenes show the text, the cursor and the state's name in the
+  # status line (`evil-expected`).
+  "out=$(.lake/build/bin/editor headless \"$(lean --print-prefix)\" .lake/build/lib/lean ../tests/headless/config ../tests/headless/evil-script) && printf '%s\\n' \"$out\" | diff ../tests/headless/evil-expected -",
   # The editor's failure statuses. A command line it does not understand is
   # status 2, with the usage on stderr.
   "status=0; .lake/build/bin/editor bogus || status=$?; test \"$status\" -eq 2",

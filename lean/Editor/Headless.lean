@@ -3,6 +3,7 @@ import Editor.Config.Elaborate
 import Editor.Config.Reload
 import Editor.Display.Recorder
 import Editor.Event.Queue
+import Editor.Evil.Compiled
 import Editor.Files.Compiled
 import Editor.InputScheme.Vim.Default
 import Editor.Job.Jobs
@@ -115,9 +116,15 @@ as before, so reload and job completion work as they did.
   `Editor/Minibuffer/Compiled.lean`): `minibuffer-accept` and
   `minibuffer-cancel`, which the Vim scheme's minibuffer state binds to
   `<Enter>` and `<Escape>`, and the mode `minibuffer`, the first mode it
-  ships. It is handed no binding: the other commands its scheme's keys name
-  are not built yet, so such a key says `<name>: no such command` in the
-  echo area, a key that prints in the minibuffer among them.
+  ships. And it is handed evil's commands (`Evil.commands`,
+  `Editor/Evil/Compiled.lean`), which the Vim scheme's keys name: `move`,
+  the three that enter normal state and the visual states, the four that
+  begin an insert, and `self-insert`, which a key that prints runs in
+  insert state and in the minibuffer. So with no config the editor moves
+  and inserts. It is handed no binding: the Vim scheme's keys are its
+  states' own keymaps. A default key whose command is not built yet (an
+  operator, `x`, `p`, `u`, `:`, `o`) says `<name>: no such command` in the
+  echo area.
 - **The interrupt key.** When the loop starts the host tells the library
   which key raises the interrupt flag (`Collaborators.interruptKey`, `C-g`),
   and leaves it with none when the loop ends. The loop's programs are run
@@ -236,10 +243,12 @@ published, with how many scenes have been, then each view in drawing order,
 its snapshot's text read from the library, and the offsets of its scroll
 anchor and of each range of its selection, as the markers are when it is
 asked. After each view's line comes its status line (`statusLine`), one
-entry a field: the buffer's name, and the modified field while the buffer
-is modified (`Loop.status`). It is a line of its own, so the view's line
-keeps its form. It is how a script sees a buffer's name and whether it is
-modified.
+entry a field: the fields the input scheme reports of the view, which
+under the Vim scheme is one, the name of the view's Vim state in the face
+`status.state`, then the buffer's name, and the modified field while the
+buffer is modified (`Loop.statusOf`). It is a line of its own, so the
+view's line keeps its form. It is how a script sees a view's state, its
+buffer's name and whether the buffer is modified.
 
 A command a key runs prints nothing: what became of it is in the echo area
 of the scene, `<name>: no such command`, `<name>: refused: <error>` or
@@ -1368,7 +1377,8 @@ def main (sysroot oleanDir configDir scriptPath : String) : IO UInt32 := do
             { completions, timers := Job.realTimers completions,
               files := Job.realFiles completions published.reader held },
           published, held, requests := 1, wakeups := 2, jobs := 3
-          commands := Files.commands ++ Minibuffer.commands, compiledJobs := Files.jobs
+          commands := Files.commands ++ Minibuffer.commands ++ Evil.commands
+          compiledJobs := Files.jobs
           modes := Minibuffer.modes, log := IO.eprintln } directives settlePatience
   (← IO.getStdout).flush
   if let some failure := failure then

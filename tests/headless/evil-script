@@ -1,0 +1,24 @@
+# The script `mise run ffi-test` has the editor's headless mode run against
+# the config in `config/`, of which it loads nothing: there is no `reload`.
+# So every command it runs is one the editor ships, compiled in. What it
+# prints must be exactly `evil-expected`.
+
+# `i` begins an insert, and each key that prints is typed text. The scene
+# shows the text, the bar after it, and the state's name first in the
+# status line. The buffer is modified.
+key i KeyI -
+key h KeyH -
+key e KeyE -
+key l KeyL -
+key l KeyL -
+key o KeyO -
+scene
+
+# `<Escape>` returns to normal state: the cursor is on the last character
+# typed, one cell back from the bar.
+key <Escape> Escape -
+scene
+
+# `0` is a motion in normal state: the cursor goes to the line's start.
+key 0 Digit0 -
+scene
