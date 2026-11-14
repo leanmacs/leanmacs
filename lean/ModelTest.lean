@@ -14131,13 +14131,13 @@ structure EvilEdited where
   deriving DecidableEq, Repr
 
 /-- A driver of the evil checks over the state the fixture `fixture` says,
-with the unnamed register holding `evilSentinel`. -/
-def evilRegistered (fixture : String) : Option EvilDriver :=
+with the unnamed register holding `evilSentinel`, on the models `model`. -/
+def evilRegistered (fixture : String) (model : EditorModel := editorModel) : Option EvilDriver :=
   let (contents, head) := barred fixture
   (Loop.Driver.over evilHanded (fun _ => none)
       (do
         return (← evilState contents head).setRegister Evil.unnamed evilSentinel)
-      editorModel).toOption
+      model).toOption
 
 /-- What `driver`, made by `evilRegistered`, shows after its keys. -/
 def evilLeft (driver : EvilDriver) : EvilEdited :=
@@ -14914,6 +14914,16 @@ def evilSelectionChecks : List Check :=
           [.rests "foo |bar baz" "v w 3 d" "foo |az" (charwise "bar b"),
             .rests "abc\nd|ef\nghi" "V 2 y" "abc\n|def\nghi" (linewise "def\n")] }]
 
+/-- The keys the key string `typed` names, pressed from the text and the
+cursor `fixture` says with the unnamed register holding a sentinel, on the
+editor's models with the clipboard model `clipboard`: what they left, and
+the text the clipboard model then holds. -/
+def evilClipped (fixture typed : String) (clipboard : ClipboardModel := {}) :
+    Option (EvilEdited × Option String) :=
+  (evilRegistered fixture { editorModel with clipboard }).map fun driver =>
+    let after := evilFed driver typed
+    (evilLeft after, after.model.clipboard.held)
+
 /-- The checks of evil's registers and of the commands that read and set
 them without an operator's key (`Editor/Evil/Registers.lean`,
 `Editor/Evil/Operators.lean`), by key, as `evilOperatorChecks` are. -/
@@ -14937,7 +14947,50 @@ def evilRegisterChecks : List Check :=
                   evilEdited fixture "x" == evilEdited fixture "d l" &&
                   evilEdited fixture "3 x" == evilEdited fixture "d 3 l") &&
             ((evilDriver "a|bc").map fun driver => evilHistory (evilFed driver "x")) ==
-              some (some (2, false)) }]
+              some (some (2, false)) },
+    { name :=
+        "a yank or a deletion that names the clipboard register writes the clipboard and sets the unnamed register too: \" + y w leaves the clipboard model holding the word, \" + d d the line with its line break, and \" + x the cell"
+      run :=
+        pure <|
+          evilClipped "foo |bar baz" "\" + y w" ==
+              some (⟨"foo |bar baz", charwise "bar ", false, ""⟩, some "bar ") &&
+            evilClipped "ab\n|cd\nef" "\" + d d" ==
+              some (⟨"ab\n|ef", linewise "cd\n", false, ""⟩, some "cd\n") &&
+            evilClipped "a|bc" "\" + x" == some (⟨"a|c", charwise "b", false, ""⟩, some "b") },
+    { name :=
+        "naming the unnamed register is naming none: \" \" y w and y w leave the same, and the clipboard model holds what it held"
+      run :=
+        pure <|
+          evilClipped "foo |bar baz" "\" \" y w" { held := some "before" } ==
+              some (⟨"foo |bar baz", charwise "bar ", false, ""⟩, some "before") &&
+            evilClipped "foo |bar baz" "y w" { held := some "before" } ==
+              some (⟨"foo |bar baz", charwise "bar ", false, ""⟩, some "before") },
+    { name :=
+        "a register evil has none of gives the command up, with the sentence its function makes: nothing is yanked or deleted, a change begins no insert, and nothing is written to the clipboard"
+      run :=
+        pure <|
+          !(Evil.noRegister "a").isEmpty &&
+            evilGaveUp (evilEdited "foo |bar baz" "\" a y w") "foo |bar baz"
+              (Evil.noRegister "a") &&
+            evilGaveUp (evilEdited "foo |bar baz" "\" a c w") "foo |bar baz"
+              (Evil.noRegister "a") &&
+            evilGaveUp (evilEdited "foo |bar baz" "\" a d d") "foo |bar baz"
+              (Evil.noRegister "a") &&
+            evilGaveUp (evilEdited "foo |bar baz" "\" a x") "foo |bar baz" (Evil.noRegister "a") &&
+            (evilClipped "foo |bar baz" "\" a y w").map (·.2) == some none },
+    { name :=
+        "with a clipboard that is not available, a yank that names it says so in the echo area, with the sentence its function makes, and the unnamed register holds the word"
+      run :=
+        pure <|
+          !Evil.clipboardUnavailable.isEmpty &&
+            evilClipped "foo |bar baz" "\" + y w" { available := false } ==
+              some (⟨"foo |bar baz", charwise "bar ", false, Evil.clipboardUnavailable⟩, none) },
+    { name :=
+        "a yank that names the clipboard and takes no cell empties the unnamed register and writes nothing: the clipboard model holds what it held"
+      run :=
+        pure <|
+          evilClipped "|abc" "\" + y h" { held := some "before" } ==
+            some (⟨"|abc", charwise "", false, ""⟩, some "before") }]
 
 /-- Every check, in the order they run.
 

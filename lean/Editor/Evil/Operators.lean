@@ -346,6 +346,8 @@ def operate (operators : Array Vocabulary.Operator) (motions : Array Vocabulary.
   let [.str operator, .str kind, .str name, .nat count, .str register] :=
     call.arguments | giveUp noOperatorNamed
   let some operator := operators.find? (·.name == operator) | giveUp (noSuchOperator operator)
+  -- Before anything is taken: an operator may never reach its store.
+  discard <| registerNamed register
   let text := call.target.buffer.text
   let before ← call.target.selection
   let some range := before.ranges[before.primary]? | throw .badSelection
