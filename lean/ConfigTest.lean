@@ -2392,7 +2392,7 @@ def promptChecks (context : Context) : List Check :=
                 !(← session.output.get).any (·.startsWith "loop: refused"))
           promptCompiled },
     { name :=
-        "the cancel key in place of the accept key: the continuation's command does not run, the echo area is empty, there is one view, the window's, as it was and with the focus, and the minibuffer's text is listed no more"
+        "the cancel key in place of the accept key: the continuation's command does not run, the echo area is empty, there is one view, the window's, as it was and with the focus, and the minibuffer's text is listed no more; the scene published after that one has an empty echo area too, so the library refused neither the release of the minibuffer's text nor, after it, that of the snapshot the last scene named"
       run :=
         withHost context []
           (fun session => do
@@ -2401,11 +2401,17 @@ def promptChecks (context : Context) : List Check :=
               return false
             session.pressKeys cancelKeys
             let cancelled ← session.sceneLines
+            -- The scene request was followed by a scene of its own: a
+            -- release the cancel's publish was refused would be in its
+            -- echo area.
+            let later ← session.sceneLines
             let after ← session.shown
+            let quiet (line : String) : Bool :=
+              focuses line 0 && (line.splitOn s!", echo {"".quote}, ").length == 2
             return !cancelKeys.isEmpty && cancelKeys != acceptKeys &&
-                (cancelled[0]?.map fun line =>
-                    focuses line 0 && (line.splitOn s!", echo {"".quote}, ").length == 2) ==
-                  some true &&
+                cancelled[0]?.map quiet == some true &&
+                later[0]?.map quiet == some true &&
+                later.extract 1 == cancelled.extract 1 &&
                 cancelled.extract 1 == #[viewLine "" 0, statusOf] &&
                 !after.any (·.startsWith "text 1: ") &&
                 !(← session.output.get).any (·.startsWith "loop: refused"))
