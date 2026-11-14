@@ -41,6 +41,15 @@ editor-fs-std = { path = "../editor-fs-std" }
 # whose manifest says why this library and no other; `deny.toml` lists the
 # two crates that may depend on it.
 tempfile = { version = "=3.27.0", default-features = false }
+# The real renderer and the real shaper, for one thing: the example
+# `window`, which draws a fixture frame in a real window on demand
+# (`examples/window.rs`). They are dev-dependencies, so the static library
+# Lean links holds neither wgpu nor Parley: frames published from Lean
+# reaching a window is the display pipeline's phase 6. No test here names
+# either; `clippy.toml` forbids the renderer's window constructor to them.
+# `deny.toml` lists this crate among the wrappers of each.
+editor-render-wgpu = { path = "../editor-render-wgpu" }
+editor-shape-parley = { path = "../editor-shape-parley" }
 
 # No harness: its `main` must be the process's main thread.
 [[test]]

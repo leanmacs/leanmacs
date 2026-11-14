@@ -458,6 +458,8 @@ dependencies = [
  "editor-platform",
  "editor-platform-winit",
  "editor-render",
+ "editor-render-wgpu",
+ "editor-shape-parley",
  "editor-text",
  "tempfile",
 ]

@@ -275,18 +275,35 @@ depends = ["lean"]
 dir = "lean"
 run = ".lake/build/bin/editor window-check"
 
-# Opt-in: run it by hand, and do not add it to `ci` or to hk.pkl. It opens a
-# window on this desktop, for about a second, so it needs a display.
+# Opt-in: run it by hand, at the keyboard, and do not add it to `ci` or to
+# hk.pkl. It opens two windows on this desktop, one after the other, so it
+# needs a display and, for the second, a person.
 #
-# It runs the winit adapter's example (`crates/editor-platform-winit/
+# First it runs the winit adapter's example (`crates/editor-platform-winit/
 # examples/contract.rs`): the real window held to the window port's contract
 # (`editor_platform::contract`). The window opens, is asked to close from
 # another thread, and the run must return. It prints one line, and its exit
-# status is the result. The gate builds the example and never runs it;
-# `linux-window` runs the same example under Xvfb, with no desktop.
+# status is the result.
+#
+# Then it runs `editor-ffi`'s example (`crates/editor-ffi/examples/
+# window.rs`): the window that draws. The wgpu renderer draws a fixture
+# frame in the real window, on this machine's GPU; the example checks that a
+# frame was presented, that its picture is the frame's, that nothing is
+# drawn that nothing asked for, and that input arrives on the queue. Once
+# it prints `window: ready for input`, type, click, drag, scroll and resize
+# in the window: each input is printed. It stays 20 seconds or until it is
+# closed (`-- --seconds <n>` does not reach it: run the example by hand for
+# another time). Its exit status is the result.
+#
+# The gate builds both examples and never runs them; `linux-window` runs
+# both under Xvfb, with no desktop, and gives the second its input with
+# xdotool.
 [tasks.window-contract]
-description = "Opt-in, never part of ci: hold the winit window to the window port's contract. Opens a window on this desktop for about a second"
-run = "cargo run --locked --package editor-platform-winit --example contract"
+description = "Opt-in, never part of ci: hold the winit window to the window port's contract, then draw a fixture frame in a window and check the picture, that nothing is drawn while idle, and that input arrives. Opens two windows on this desktop; the second waits for a person"
+run = [
+  "cargo run --locked --package editor-platform-winit --example contract",
+  "cargo run --locked --package editor-ffi --example window",
+]
 
 # Opt-in: run it by hand, and do not add it to `ci` or to hk.pkl. What it
 # finds depends on the fonts this machine has, so it is no part of a gate
@@ -372,18 +389,27 @@ run = "tools/linux/run.sh ci"
 # Docker, like `linux-ci`, whose image, cache and volume it shares.
 #
 # This is where the winit adapter is held to the window port's contract
-# without a desktop, and the arboard adapter to the clipboard port's: run it
-# after a change to `crates/editor-platform-winit`, to
-# `crates/editor-platform-arboard`, or to a contract in
-# `crates/editor-platform`. In the container, under Xvfb, it runs the window
-# adapter's example, then `editor window-check` with xdotool giving the
-# window the focus and typing into it, then the same with `--no-ime`; then
-# the clipboard adapter's example on that display's clipboard, and a text
-# written to it by one process and read by another. It fails if any of the
-# five fails. The keys are synthetic: this is not the check a person makes
-# at the keyboard (`window-check`). The clipboard is the container's own.
+# without a desktop, the window draws, and the arboard adapter is held to
+# the clipboard port's: run it after a change to
+# `crates/editor-platform-winit`, to `crates/editor-platform-arboard`, to a
+# contract in `crates/editor-platform`, to the surface code of
+# `crates/editor-render-wgpu`, or to `crates/editor-ffi`'s `render`. In the
+# container, under Xvfb, it runs the window adapter's example; then
+# `editor window-check` with xdotool giving the window the focus and typing
+# into it, then the same with `--no-ime`; then the window that draws
+# (`editor-ffi`'s example `window`) on Mesa's software Vulkan driver, with
+# xdotool giving it a key, a named key, a key with modifiers, a press, a
+# drag, a release, a turn of the wheel and a resize; then the clipboard
+# adapter's example on that display's clipboard, and a text written to it
+# by one process and read by another. It fails if any of the six fails.
+# The input is synthetic: this is not the check a person makes at the
+# keyboard (`window-check`). The clipboard is the container's own.
+#
+# It is the confirmation of what the gate cannot hold: a change that
+# touches a window, a surface or the clipboard is not done until this exits
+# 0, every part (docs/dev-practices/on-demand-checks.md).
 [tasks.linux-window]
-description = "Opt-in, never part of ci: in the Linux container, under Xvfb, hold the winit window to the window port's contract, run the keyboard check on keys typed by xdotool, and hold that display's clipboard to the clipboard port's contract (tools/linux/run.sh). Needs Docker"
+description = "Opt-in, never part of ci: in the Linux container, under Xvfb, hold the winit window to the window port's contract, run the keyboard check on keys typed by xdotool, draw a fixture frame in the window and give it input, and hold that display's clipboard to the clipboard port's contract (tools/linux/run.sh). Needs Docker"
 run = "tools/linux/run.sh window"
 
 # Opt-in: run it by hand, and do not add it to `ci` or to hk.pkl. It reads

@@ -20,12 +20,15 @@ FROM debian@sha256:a72b4433de1cf7d6bae0c4cee74d0547f58601a643b3375f070c51600d63b
 #
 # The second line is for `linux-window` alone: a display that needs no
 # screen (Xvfb), a way to type into it (xdotool), and the libraries the
-# window library loads at run time under X11.
+# window library loads at run time under X11. The clipboard adapter needs
+# no library of the system: it speaks X11 through a connection of its own.
 #
-# The third line is for `linux-render` alone: Mesa's Vulkan drivers, of
-# which llvmpipe draws on the CPU, and the Vulkan loader wgpu opens at run
-# time. The gate asks for no adapter (`crates/editor-render-wgpu/
-# clippy.toml` forbids it to tests), so it runs the same with them there.
+# The third line is for `linux-render` and for the window that draws in
+# `linux-window`: Mesa's Vulkan drivers, of which llvmpipe draws on the
+# CPU, and the Vulkan loader wgpu opens at run time. They are enough for a
+# surface on an X11 window as they are. The gate asks for no adapter
+# (`crates/editor-render-wgpu/clippy.toml` forbids it to tests), so it
+# runs the same with them there.
 RUN apt-get update \
     && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
         ca-certificates curl git build-essential zstd pkg-config pipx python3-venv \

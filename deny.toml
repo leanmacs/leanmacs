@@ -72,6 +72,18 @@
 # came to start the render thread: with the wrapper not yet there, it fails
 # on that edge ("crate 'editor-render = 0.1.0' is explicitly banned").
 #
+# For the window that draws (2026-11-14, the same phase): `editor-ffi`'s
+# example `window` runs the real renderer over the real shaper in a real
+# window, so `editor-ffi` came to depend on both, by dev-dependencies, in
+# one commit. `editor-render-wgpu` got its first entry then, as
+# `editor-fs-std` did when it got its first user: with the entry's wrapper
+# naming another crate, it fails ("crate 'editor-render-wgpu = 0.1.0' is
+# explicitly banned"). And `editor-ffi` joined the wrappers of
+# `editor-shape-parley`'s entry: with the wrapper not yet there, it fails
+# on that edge ("crate 'editor-shape-parley = 0.1.0' is explicitly
+# banned"). Neither is linked into the library Lean links: that is the
+# display pipeline's phase 6.
+#
 # For the libraries behind the `Renderer` port, each with
 # `editor-render-wgpu` its one wrapper, each added in the commit that
 # added its edge. `etagere` (2026-11-14): with the entry's wrapper naming
@@ -136,7 +148,8 @@ deny = [
   { crate = "etagere", wrappers = ["editor-render-wgpu"], reason = "the atlas packer stays behind the Renderer port: only the crate of the port's real adapters may name its types" },
   { crate = "swash", wrappers = ["editor-render-wgpu"], reason = "the glyph rasteriser stays behind the Renderer port: only the crate of the port's real adapters may name its types" },
   { crate = "png", wrappers = ["editor-render-wgpu"], reason = "an image file is read and written only by the renderer's reference-image test and the example that makes the image" },
-  { crate = "editor-shape-parley", wrappers = ["editor-render-wgpu"], reason = "the real shaper has one user today, a dev-dependency: the renderer's two wiring tests and its examples lay real text out with it; the crate that wires the library together is the next, and that is a decision, so it is made here" },
+  { crate = "editor-shape-parley", wrappers = ["editor-render-wgpu", "editor-ffi"], reason = "the real shaper has two users, each by a dev-dependency: the renderer's two wiring tests and its examples lay real text out with it, and so does the example of the crate that wires the library together, which draws a fixture frame in a real window; a user that links it into the library is a decision, so it is made here" },
+  { crate = "editor-render-wgpu", wrappers = ["editor-ffi"], reason = "the renderer's real adapters have one user, by a dev-dependency: the example of the crate that wires the library together, which draws in a real window; linking them into the library Lean links is a decision, so it is made here" },
   { crate = "wgpu", wrappers = ["editor-render-wgpu"], reason = "wgpu stays behind the Renderer port: only the crate of the port's real adapters may name its types" },
   { crate = "pollster", wrappers = ["editor-render-wgpu"], reason = "blocking on wgpu's futures is the renderer's own business: only the crate of the Renderer port's real adapters does it" },
   { crate = "parley", wrappers = ["editor-shape-parley"], reason = "Parley stays behind the Shaper port: only its adapter crate may name its types" },

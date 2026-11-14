@@ -12,17 +12,20 @@
 #
 # It builds the image from the Dockerfile beside it and copies the checkout
 # into a work directory. `ci` runs `mise run ci` there, and its exit status is
-# the gate's. `window` builds the editor there and runs five things under
+# the gate's. `window` builds the editor there and runs six things under
 # Xvfb, a display that needs no screen and no person, failing if any fails:
 # the winit adapter's example, which holds the real window to the window
 # port's contract; `editor window-check`, with xdotool giving the window the
 # focus and typing into it; the same with composition not allowed; the
-# arboard adapter's example, which holds that display's clipboard to the
-# clipboard port's contract; and text written to it by one process, read by
-# another. Its keys are synthetic, and its output says so. The clipboard is
-# the container's own: nothing of the host's is read or written. `render`
-# runs the renderer's
-# example there (`crates/editor-render-wgpu/examples/gpu.rs`): the wgpu
+# window that draws, `editor-ffi`'s example, with the wgpu renderer drawing
+# a fixture frame in the real window on Mesa's software Vulkan driver and
+# xdotool giving it keys, the pointer and a resize; the arboard adapter's
+# example, which holds that display's clipboard to the clipboard port's
+# contract; and text written to it by one process, read by another. Its
+# input is synthetic, and its output says so. The clipboard is the
+# container's own: nothing of the host's is read or written. `render` runs
+# the renderer's example there (`crates/editor-render-wgpu/examples/gpu.rs`):
+# the wgpu
 # adapter on Mesa's software Vulkan driver, llvmpipe, held to the renderer
 # port's contract and compared with the reference image; its exit status is
 # the example's.
@@ -171,11 +174,64 @@ inside_clipboard_across() {
   [ "$got" = "$text" ] || die "the text read is not the text written"
 }
 
+# The window that draws (`crates/editor-ffi/examples/window.rs`): the real
+# window with the wgpu renderer drawing a fixture frame in it, on Mesa's
+# software Vulkan driver, and xdotool giving it input once it says it is
+# ready: a key, a named key, a key with modifiers, a press, a drag, a
+# release, a turn of the wheel and a resize. Fails if the example fails
+# (no frame presented, a picture that is not the frame's, a frame drawn
+# that nothing asked for, no input), or if any of those inputs did not
+# come off the queue as the port documents it.
+inside_drawing_window() {
+  local log=/tmp/window.log pid window status=0 waited=0 wanted
+  /work/target/debug/examples/window --seconds 6 >"$log" 2>&1 &
+  pid=$!
+  # The example says so once it has drawn its frame and left the window
+  # alone for a second: nothing is sent before, so that second is idle.
+  until grep -q '^window: ready for input' "$log"; do
+    waited=$((waited + 1))
+    if [ "$waited" -ge 600 ] || ! kill -0 "$pid" 2>/dev/null; then
+      cat "$log"
+      die "the window that draws was never ready for input"
+    fi
+    sleep 0.1
+  done
+  window=$(timeout 10 xdotool search --sync --name 'editor: window check' | head -n 1)
+  timeout 5 xdotool windowfocus --sync "$window"
+  sleep 0.3
+  xdotool key a
+  xdotool key Escape
+  xdotool key ctrl+shift+a
+  xdotool mousemove --window "$window" 10 20
+  xdotool mousedown 1
+  xdotool mousemove --window "$window" 30 40
+  xdotool mouseup 1
+  xdotool click 4
+  xdotool windowsize "$window" 300 120
+  wait "$pid" || status=$?
+  cat "$log"
+  [ "$status" -eq 0 ] || die "the window that draws exited $status"
+  # Each input as the port documents it, read back from its event. The key
+  # with modifiers is matched up to its text, which the X server decides.
+  for wanted in \
+    "input: key press 'a' at KeyA with none, text \"a\"" \
+    "input: key press Escape at Escape with none, text \"\"" \
+    "input: key press 'A' at KeyA with shift+control, text " \
+    "input: pointer press primary at (10, 20) with none" \
+    "input: pointer drag primary at (30, 40) with none" \
+    "input: pointer release primary at (30, 40) with none" \
+    "input: pointer wheel 0 across and 1 down in lines at (30, 40) with none" \
+    "input: resized 300 by 120 at scale 1"; do
+    grep -qF -- "$wanted" "$log" || die "no input came off the queue as: $wanted"
+  done
+}
+
 # The real window on a display that needs no screen and no person (Xvfb):
 # the winit adapter held to the window port's contract, then the keyboard
-# check with composition allowed and with it not; and the clipboard of that
-# display, which is the container's own: the arboard adapter held to the
-# clipboard port's contract, then a round trip across two processes.
+# check with composition allowed and with it not, then the window that
+# draws; and the clipboard of that display, which is the container's own:
+# the arboard adapter held to the clipboard port's contract, then a round
+# trip across two processes.
 inside_window() {
   [ $# -eq 0 ] || usage
   inside_prepare
@@ -186,6 +242,7 @@ inside_window() {
   mise run lean
   mise exec -- cargo build --locked --package editor-platform-winit --example contract
   mise exec -- cargo build --locked --package editor-platform-arboard --example clipboard
+  mise exec -- cargo build --locked --package editor-ffi --example window
 
   Xvfb :99 -screen 0 1024x768x24 >/tmp/xvfb.log 2>&1 &
   local display=$!
@@ -197,20 +254,23 @@ inside_window() {
     sleep 0.1
   done
 
-  echo "linux-window: 1 of 5: the winit platform against the window port's contract, under Xvfb"
+  echo "linux-window: 1 of 6: the winit platform against the window port's contract, under Xvfb"
   /work/target/debug/examples/contract
 
-  inside_typed_check "2 of 5: the keyboard check"
-  inside_typed_check "3 of 5: the keyboard check with composition not allowed" --no-ime
+  inside_typed_check "2 of 6: the keyboard check"
+  inside_typed_check "3 of 6: the keyboard check with composition not allowed" --no-ime
 
-  echo "linux-window: 4 of 5: the system clipboard against the clipboard port's contract, in one process, under Xvfb"
+  echo "linux-window: 4 of 6: the window that draws a fixture frame, with input given by xdotool: synthetic, nobody at a keyboard"
+  inside_drawing_window
+
+  echo "linux-window: 5 of 6: the system clipboard against the clipboard port's contract, in one process, under Xvfb"
   /work/target/debug/examples/clipboard contract
 
-  echo "linux-window: 5 of 5: text written to the clipboard by one process, read by another"
+  echo "linux-window: 6 of 6: text written to the clipboard by one process, read by another"
   inside_clipboard_across
 
   kill "$display"
-  echo "linux-window: all five passed"
+  echo "linux-window: all six passed"
 }
 
 # The wgpu renderer on a real adapter with no GPU: Mesa's software Vulkan

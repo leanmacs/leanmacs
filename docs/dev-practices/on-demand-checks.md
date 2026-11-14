@@ -129,14 +129,78 @@ and checks there what each option asks for.
 mise run window-contract
 ```
 
-This holds the real window to the window port's contract
-(`crates/editor-platform`, `contract`): it opens, it reports that it opened
-before anything else, and it returns when it is asked to close from another
-thread and not before, even if it was asked to close before it opened. A
-window opens on this desktop for about a second, so it is not part
-of the gate, which only builds it. It is the example of
-`crates/editor-platform-winit`, and it prints one line; its exit status is
-the result.
+**The second of its two programs, the window that draws, has not been run
+on any desktop**, and the first has not been run since the contract gained
+its rules about the drawer. Both ran in the container, under Xvfb, as parts
+1 and 4 of `linux-window`, below. On macOS nothing of the window that draws
+has run at all: a surface on Metal, made on the main thread and drawn on
+from the render thread, is read and compiled, never run. These are the
+steps for the owner.
+
+It opens two windows on this desktop, one after the other, so it is not
+part of the gate, which only builds both programs.
+
+**The first** holds the real window to the window port's contract
+(`crates/editor-platform`, `contract`): it opens, it tells whatever draws
+in it that it opened before it reports so to anyone, it reports that it
+opened before anything else, it returns when it is asked to close from
+another thread and not before, even if it was asked to close before it
+opened, and it tells the drawer it is closing, once, last. The window opens
+for about a second. It is the example of `crates/editor-platform-winit`,
+and it prints one line.
+
+**The second** is the window that draws: the example `window` of
+`crates/editor-ffi` (`examples/window.rs`). The real window is run onto a
+queue with a render session as its drawer, and the session's renderer is
+the wgpu renderer on the window's surface, on this machine's GPU. A second
+thread stands in for the editor: when it learns the window's size it lays
+out a fixture frame with the real shaper over the fixture fonts and
+publishes it. The window stays for 20 seconds once it is ready, or until
+it is closed.
+
+The steps:
+
+1. Start `mise run window-contract` from a terminal that is in front.
+2. A window opens and closes within a second. Expected:
+   `window-contract: the winit platform keeps the window port's contract`.
+3. A second window opens. Look at it: two rows of text on a light
+   background, `fine שלום 日` with part of it selected and `the window
+   draws this`, and a dark status row at the bottom. The text is legible
+   and upright.
+4. Leave it alone until the terminal prints `window: ready for input`.
+5. In the window: press `a`, Escape and Control-A; click, drag and scroll;
+   resize it. Each is printed on a line beginning `input:`, as it read
+   back from its event: check each line against what was done.
+6. Close the window, or wait for it to close. Expected, in order:
+   - `window: the renderer is on <the adapter> (<the back end>), blending
+     by a coverage for each channel: <true or false>`;
+   - `window: <n> frames presented, each with a journal entry; …`;
+   - for each frame, `window: frame <n>: read back from the surface, <d>
+     of <p> pixels differ from the headless renderer's, the worst by <w>
+     of 255`, with `<w>` at most 3; or, where the surface's texture cannot
+     be copied from, the sentence `the surface cannot be copied from, so
+     its picture is not compared`;
+   - `window: idle: over 1 s in which nothing was published, 0 frames
+     were drawn and the window asked for 0` (a system that uncovers the
+     window in that second may ask for a frame or two, and as many are
+     then drawn);
+   - `window: over the whole run, <d> draws for <a> things that asked for
+     one`, with `<d>` no more than `<a>`;
+   - `window: <n> inputs came off the queue, <k> of them keys or the
+     pointer`;
+   - `window: the window drew the fixture frame, drew nothing it was not
+     asked for, and its input arrived on the queue`; exit status 0.
+
+A line beginning `window: FAILED:` says what did not hold, and the exit
+status is then 1. Do not loosen the 3 to make it pass: a difference past
+it is a finding. To keep the window longer or shorter, run the example by
+hand: `cargo run --locked --package editor-ffi --example window --
+--seconds <n>`.
+
+What to write down here when it has been run on a desktop: the machine,
+its GPU and the back end; the lines of step 6; and, on macOS, what the
+window looked like while it was resized and whether anything was drawn
+while it was covered.
 
 ## The system's fonts, on demand
 
@@ -197,46 +261,79 @@ mise run linux-window
 ```
 
 This is where the winit adapter is held to the window port's contract
-without a desktop, and the arboard adapter to the clipboard port's. Run it
-after a change to `crates/editor-platform-winit`, to
-`crates/editor-platform-arboard`, or to a contract in
-`crates/editor-platform`. It uses the image, the cache and the volume of
-`linux-ci`, and runs five things under Xvfb, a display that needs no screen
-and no person, failing if any fails:
+without a desktop, where the window draws, and where the arboard adapter is
+held to the clipboard port's. Run it after a change to
+`crates/editor-platform-winit`, to `crates/editor-platform-arboard`, to a
+contract in `crates/editor-platform`, to the surface code of
+`crates/editor-render-wgpu`, or to `render` in `crates/editor-ffi`. It uses
+the image, the cache and the volume of `linux-ci`, and runs six things
+under Xvfb, a display that needs no screen and no person, failing if any
+fails:
 
-1. the window adapter's example, as `window-contract` runs it;
+1. the window adapter's example, as `window-contract` runs it first;
 2. `editor window-check --seconds 5`, with xdotool giving the window the
    focus and typing a sentence and a dead key into it;
 3. the same with `--no-ime`;
-4. the clipboard adapter's example, as `clipboard-contract` runs it: that
+4. the window that draws, as `window-contract` runs it second
+   (`crates/editor-ffi/examples/window.rs`), on Mesa's software Vulkan
+   driver, llvmpipe. Once it says it is ready, xdotool gives it `a`,
+   Escape, Control-Shift-A, a press, a drag, a release, a turn of the
+   wheel and a resize. The part fails if the example fails (no frame
+   presented; a picture more than 3 of 255 from the headless renderer's;
+   a frame drawn that nothing asked for; no input), and if any of those
+   eight inputs did not come off the queue as the port documents it;
+5. the clipboard adapter's example, as `clipboard-contract` runs it: that
    display's clipboard held to the clipboard port's contract, in one
    process;
-5. a text written to the clipboard by one process and read by another,
+6. a text written to the clipboard by one process and read by another,
    while the first is still alive. One process cannot show this: on X11
    the text is served by the process that wrote it.
 
-Its keys are synthetic. They go through the X server and the real window
-library, so they show the path a key takes on Linux, but nobody typed them:
-it is not the keyboard check above, and its output says so. Its clipboard
-is the container's own: nothing of this machine's is read or written.
+Its input is synthetic. It goes through the X server and the real window
+library, so it shows the path a key and the pointer take on Linux, but
+nobody typed it: it is not the keyboard check above, and its output says
+so. Its clipboard is the container's own: nothing of this machine's is
+read or written.
 
 **It is the required confirmation of what the gate cannot hold.** The gate
-has no clipboard, so the gate being green says nothing of a real one: that
-text written through the clipboard adapter is the text read back through it
-is confirmed by parts 4 and 5 here, and a change to the adapter is not done
-until this task exits 0, every part, on the tree that is to land.
+opens no window, makes no surface and has no clipboard, so the gate being
+green says nothing of any of them. Two things are confirmed here and
+nowhere in the gate:
+
+- that text written through the clipboard adapter is the text read back
+  through it: parts 5 and 6;
+- that the window draws a scene supplied by a fixture, and that input
+  given to it arrives on the queue: part 4.
+
+A change that touches the window, the surface or the clipboard is not done
+until both `mise run ci` and this task exit 0, every part, on the tree that
+is to land. Each of its checks was seen to fail once by hand, in the
+container: the picture, with the surface drawn through a view that is not
+sRGB (every pixel off, by 74 of 255); the idle second, with a render loop
+that marks its frame dirty after every draw (10 frames drawn, 0 asked for)
+and with a window that asks for a redraw whenever it is asked for one
+(270139 asked for); an input's line, with Escape named `Esc`; and the
+input itself, with nothing sent.
 
 Under Xvfb there is no clipboard manager, so a text is gone from the
 clipboard when the process that wrote it ends. That is X11's rule and not
-the adapter's, and part 5 keeps the writer alive for it.
+the adapter's, and part 6 keeps the writer alive for it. Xvfb's display
+says no refresh rate either, so the window paces by the render loop's own
+interval there, and pacing to a display's refresh is not seen.
 
-It was run on 2026-11-14 (aarch64, Debian 13): all five parts passed. It
-has not been run on x86_64, and nothing here runs a Wayland compositor.
+It was run on 2026-11-14 (aarch64, Debian 13, Mesa 25.0.7): all six parts
+passed. In part 4 the renderer was on llvmpipe through Vulkan, blending by
+a coverage for each channel; three frames were presented, of 800 by 600
+and, after the resize, of 300 by 120 twice; each was read back from the
+surface and differed from the headless renderer's picture by 1 of 255 at
+the worst; no frame was drawn in the idle second; and the eight inputs
+came off the queue as documented. It has not been run on x86_64, and
+nothing here runs a Wayland compositor.
 
 ## The clipboard, on demand
 
 **This has not been run on any desktop.** It was written for the owner to
-run; on Linux its two halves are parts 4 and 5 of `linux-window`, above,
+run; on Linux its two halves are parts 5 and 6 of `linux-window`, above,
 which ran in the container.
 
 ```sh

@@ -30,12 +30,27 @@
 # and with one that calls `std::fs::write`, with "use of a disallowed method
 # `std::fs::write`".
 #
+# A third place is marked, for another thing no test may do: make a
+# renderer on a window. `editor_render_wgpu::WgpuRenderer::on_window` is on
+# the list, since it needs a window and a real adapter and the gate has
+# neither, and its one caller is the example `examples/window.rs`, under
+# its own `expect`: the window that draws, run on demand (`mise run
+# linux-window`, `mise run window-contract`). The crate's tests of the
+# render session run on `editor-render`'s recording renderer. Seen to bite
+# once by hand, on 2026-11-14: with the `expect` taken off, `mise run lint`
+# fails with "use of a disallowed method
+# `editor_render_wgpu::WgpuRenderer::on_window`"; and with the entry not yet
+# on the list, it failed on the `expect` itself ("this lint expectation is
+# unfulfilled").
+#
 # What this does not hold is what `crates/editor-text/clippy.toml` says of
 # its own list: it is a list of names.
 
 disallowed-methods = [
   # The file port's real adapter.
   { path = "editor_fs_std::StdFs::system", reason = "the real file system is made in one place, the process's file service; everything else here takes an `Fs`, and a test hands it `FakeFs`" },
+  # A renderer on a window: it needs a window, and a real adapter.
+  { path = "editor_render_wgpu::WgpuRenderer::on_window", reason = "no test makes a renderer on a window: the gate opens none, and the example `window` is the one place it is done" },
   # Every free function of `std::fs`.
   { path = "std::fs::canonicalize", reason = "files are reached through the `Fs` port" },
   { path = "std::fs::copy", reason = "files are reached through the `Fs` port" },
