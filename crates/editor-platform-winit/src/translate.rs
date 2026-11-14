@@ -207,11 +207,16 @@ impl Seen {
 
     /// The window's size and scale as last known, as the port reports them.
     fn resized(&self) -> Input {
-        Input::Resized(Resize {
+        Input::Resized(self.size())
+    }
+
+    /// The window's size and scale as last known.
+    pub(crate) fn size(&self) -> Resize {
+        Resize {
             width: u64::from(self.size.width),
             height: u64::from(self.size.height),
             scale: self.scale,
-        })
+        }
     }
 
     /// The pointer input of `action` with `button`, where the pointer last

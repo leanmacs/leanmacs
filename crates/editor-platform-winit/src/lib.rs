@@ -14,6 +14,10 @@
 //!
 //! What it does beyond translating:
 //!
+//! - **It tells the drawer about the window around its loop.** The window
+//!   opened, before it reports that to anyone; and the window is closing,
+//!   once its loop has ended and before the window is dropped, so that
+//!   whatever was made on the window is let go while it is still there.
 //! - **It says how large the window is when it opens**: a
 //!   [`Input::Resized`] with the window's size and scale straight after
 //!   [`Input::Opened`], since nothing else in the port says so.
@@ -49,7 +53,7 @@ mod translate;
 
 use std::sync::{Mutex, MutexGuard, PoisonError};
 
-use editor_platform::{CannotOpen, Input, Platform, Report, WindowOptions};
+use editor_platform::{CannotOpen, Canvas, Drawer, Input, Platform, Report, WindowOptions};
 use winit::application::ApplicationHandler;
 use winit::event::WindowEvent;
 use winit::event_loop::{ActiveEventLoop, EventLoop, EventLoopProxy};
@@ -92,7 +96,12 @@ impl WinitPlatform {
 }
 
 impl Platform for WinitPlatform {
-    fn run(&self, options: WindowOptions, report: Report) -> Result<(), CannotOpen> {
+    fn run(
+        &self,
+        options: WindowOptions,
+        report: Report,
+        drawer: Drawer,
+    ) -> Result<(), CannotOpen> {
         let cannot_open = |reason: String| CannotOpen { reason };
         if !(self.on_main_thread)() {
             return Err(cannot_open(
@@ -105,12 +114,19 @@ impl Platform for WinitPlatform {
         let mut app = App {
             options,
             report,
+            drawer,
             seen: Seen::default(),
             window: None,
             failure: None,
         };
         let ended = event_loop.run_app(&mut app);
         *self.running() = None;
+        if app.window.is_some() {
+            // The loop has ended and the window is still there: it is
+            // dropped when this function returns. Whatever was made on it
+            // is let go first.
+            (app.drawer)(Canvas::Closing);
+        }
 
         match (app.failure, ended) {
             (Some(reason), _) => Err(cannot_open(reason)),
@@ -135,6 +151,8 @@ struct App {
     options: WindowOptions,
     /// Where what the window reports goes.
     report: Report,
+    /// Where what the window tells whatever draws in it goes.
+    drawer: Drawer,
     /// What winit has said of the window so far.
     seen: Seen,
     /// The window, once the loop has made it.
@@ -155,6 +173,13 @@ impl ApplicationHandler for App {
                 window.focus_window();
                 let size = self.seen.opened(window.inner_size(), window.scale_factor());
                 self.window = Some(window);
+                // The drawer hears of the window before anyone else does.
+                // The native window and the refresh rate are still to come.
+                (self.drawer)(Canvas::Opened {
+                    window: None,
+                    size: self.seen.size(),
+                    refresh_millihertz: None,
+                });
                 (self.report)(Input::Opened {
                     platform: WinitPlatform::NAME.into(),
                 });
@@ -210,7 +235,7 @@ mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     #[test]
-    fn off_the_main_thread_a_run_is_refused_with_a_reason_and_reports_nothing() {
+    fn off_the_main_thread_a_run_is_refused_with_a_reason_and_reports_and_tells_nothing() {
         // The platform is told this thread is not the main one, which is
         // true of a test's thread, so nothing is opened whatever it does.
         let platform = WinitPlatform::new(|| false);
@@ -221,8 +246,15 @@ mod tests {
                 reported.fetch_add(1, Ordering::SeqCst);
             })
         };
+        let told = Arc::new(AtomicUsize::new(0));
+        let drawer: Drawer = {
+            let told = Arc::clone(&told);
+            Arc::new(move |_| {
+                told.fetch_add(1, Ordering::SeqCst);
+            })
+        };
 
-        let result = platform.run(WindowOptions::default(), report);
+        let result = platform.run(WindowOptions::default(), report, drawer);
 
         let reason = result.expect_err("the run is refused").reason;
         assert!(
@@ -230,6 +262,7 @@ mod tests {
             "the reason says why: {reason}"
         );
         assert_eq!(reported.load(Ordering::SeqCst), 0);
+        assert_eq!(told.load(Ordering::SeqCst), 0);
     }
 
     #[test]
