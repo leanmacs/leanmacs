@@ -4163,6 +4163,17 @@ def commandPortChecks : List Check :=
         let paced := (command.runModel { editorModel with watch := { clock := 100, pace := 10 } }).1
         return resulted paced == .inr [100, 110, 120] },
     { name :=
+        "a fuzzy ranking asked inside a command is answered on the editor's models as the fuzzy model answers it, and moves the watch model's clock on by its pace, as a text request does"
+      run := do
+        let candidates := #["wq", "edit", "rewrite", "w"]
+        let command : EditorM (Array Nat × List Nat) := do
+          let start ← Watch.now
+          let ranked ← Fuzzy.rank "w" candidates
+          return (ranked, [start, ← Watch.now])
+        let paced := (command.runModel { editorModel with watch := { clock := 100, pace := 10 } }).1
+        return resulted paced == .inr (FuzzyModel.rank "w" candidates, [100, 110]) &&
+            !(FuzzyModel.rank "w" candidates).isEmpty },
+    { name :=
         "a state request of a command no loop runs is answered as an editor with no buffer and no window answers it, and nothing is kept: a read sees none, a buffer added is not there at the next read, and neither the watch model's clock nor the other models move"
       run := do
         let command :
@@ -4460,7 +4471,17 @@ def guardChecks : List Check :=
             model.watch.clock == 0 &&
             resulted finished == .inr (.finished ()) &&
             wrote.clipboard.held == some "copied" &&
-            wrote.watch.clock == 1 }]
+            wrote.watch.clock == 1 },
+    { name :=
+        "a fuzzy request is guarded like a text request: with the interrupt flag up before a ranking the request is not made, and with the flag down the same command is answered"
+      run := do
+        let candidates := #["wq", "edit", "w"]
+        let command : EditorM (Array Nat) := Fuzzy.rank "w" candidates
+        let (ended, model) := (guarded command).runModel (countingModel { arrived := 1 })
+        let (finished, asked) := (guarded command).runModel countingModel
+        return resulted ended == .inr .interrupted && model.watch.clock == 0 &&
+            resulted finished == .inr (.finished (FuzzyModel.rank "w" candidates)) &&
+            asked.watch.clock == 1 }]
 
 /-- The checks of the user's origin (`Origin.user`) and of how a refusal is
 described to the user (`TextError.describe`). -/

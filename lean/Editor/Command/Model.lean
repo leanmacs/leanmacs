@@ -1,6 +1,7 @@
 import Editor.Clipboard.Model
 import Editor.Command
 import Editor.Display.Model
+import Editor.Fuzzy.Model
 import Editor.Text.Model
 import Editor.Watch.Model
 
@@ -20,10 +21,14 @@ answered from the text the snapshot holds, and a snapshot the command has
 released is one the display does not know.
 
 On the models time passes only with requests, which is all a command can
-do: each text request, each display request and each clipboard request
-moves the watch model's clock on by its pace (`WatchModel.paced`), and a
-watch request moves nothing. So a command of six requests takes six paces,
-and a test of the loop says how long a command took by how much it asked.
+do: each text request, each display request, each clipboard request and
+each fuzzy request moves the watch model's clock on by its pace
+(`WatchModel.paced`), and a watch request moves nothing. So a command of six
+requests takes six paces, and a test of the loop says how long a command
+took by how much it asked.
+
+A fuzzy request is answered by the fuzzy model (`FuzzyModel.rank`), which
+has no state, so there is no field for it here.
 
 The clipboard model is a field here, so a test reads what a command left
 on the clipboard from the models the command ran against, and takes the
@@ -49,8 +54,8 @@ structure EditorModel where
   display request. -/
   display : DisplayModel
   /-- The watch model: the interrupt flag and the clock. Its clock moves on
-  by its pace at each text request, each display request and each clipboard
-  request. -/
+  by its pace at each text request, each display request, each clipboard
+  request and each fuzzy request. -/
   watch : WatchModel := {}
   /-- The clipboard model: available, and holding nothing, unless a test
   says otherwise. -/
@@ -69,9 +74,9 @@ def snapshotTexts (texts : TextModel) : Array (SnapshotId × String) :=
     id
 
 /-- Answers `request` with its sub-port's model. A text request, a display
-request and a clipboard request each move the watch model's clock on by its
-pace. A state request is answered from an editor with nothing in it, and
-changes nothing. -/
+request, a clipboard request and a fuzzy request each move the watch model's
+clock on by its pace. A state request is answered from an editor with
+nothing in it, and changes nothing. -/
 def handle : (request : EditorRequest) → EditorModel → request.Reply × EditorModel
   | .state request, model => ((EditorState.none.handle request).1, model)
   | .text request, model =>
@@ -93,6 +98,8 @@ def handle : (request : EditorRequest) → EditorModel → request.Reply × Edit
     (reply,
       { model with
         clipboard, watch := model.watch.paced })
+  | .fuzzy request, model =>
+    ((FuzzyModel.handle request ()).1, { model with watch := model.watch.paced })
 
 end EditorModel
 

@@ -1,5 +1,6 @@
 import Editor.Clipboard
 import Editor.Display
+import Editor.Fuzzy
 import Editor.State.Request
 import Editor.Watch
 
@@ -9,7 +10,7 @@ import Editor.Watch
 A command is a value of `EditorM`: a program over the editor's port that may
 be refused. The editor's port is a composite: its requests are a sum of the
 requests of its sub-ports, one constructor a sub-port (`EditorRequest`), and
-the reply to each is its sub-port's reply. Today it has five:
+the reply to each is its sub-port's reply. Today it has six:
 
 - **text** (`Editor/Text.lean`): texts, snapshots, markers, the edit log;
 - **display** (`Editor/Display.lean`): publishing a scene, and the two
@@ -18,12 +19,15 @@ the reply to each is its sub-port's reply. Today it has five:
   command loop asks round the commands it runs;
 - **clipboard** (`Editor/Clipboard.lean`): the text the system clipboard
   holds, and having it hold another;
+- **fuzzy** (`Editor/Fuzzy.lean`): which of some candidates a pattern
+  matches, and in what order;
 - **state** (`Editor/State/Request.lean`): the editor state's buffers and
   windows, the echo area and the jobs to start.
 
-The first four keep their own programs (`TextM`, `DisplayM`, `WatchM`,
-`ClipboardM`), operations, model and contract, unchanged. `TextM.lift`,
-`DisplayM.lift`, `Watch.lift` and `Clipboard.lift` embed a sub-port's
+The first five keep their own programs (`TextM`, `DisplayM`, `WatchM`,
+`ClipboardM`, `FuzzyM`), operations, model and contract, unchanged.
+`TextM.lift`, `DisplayM.lift`, `Watch.lift`, `Clipboard.lift` and
+`Fuzzy.lift` embed a sub-port's
 programs in a command, and they are `MonadLift` instances, so an operation
 of any is used in a command as it is: `do let text ← createText "a";
 Display.publish scene` elaborates at `EditorM`. Config is written at `EditorM`, and the lift is
@@ -67,11 +71,17 @@ the loop asks the interrupt flag before it
 clipboard is not taken back when the command is rolled back: the clipboard
 is outside the editor.
 
-A command runs against the four models (`EditorM.runModel`,
+The fuzzy port refuses nothing, and a fuzzy request is guarded in the same
+way. It changes nothing anywhere, so there is nothing of it to roll back.
+
+A command runs against the models (`EditorM.runModel`,
 `Editor/Command/Model.lean`), whose state is the product of theirs, and
 against the text port's real binding with a display handler, a watch
 handler and a clipboard handler (`EditorM.runReal`,
-`Editor/Command/Real.lean`).
+`Editor/Command/Real.lean`). The fuzzy matcher has no state, so the models
+hold nothing for it, and it needs nothing a host could hand in, so the
+runner against the library takes no handler for it: it is answered by its
+real binding as a text request is by the text's.
 `docs/design/lean-runtime.md` ("The editor's port is a composite") records
 why it has this shape.
 
@@ -101,6 +111,8 @@ inductive EditorRequest where
   | watch (request : WatchRequest)
   /-- A request of the clipboard port. -/
   | clipboard (request : ClipboardRequest)
+  /-- A request of the fuzzy port. -/
+  | fuzzy (request : FuzzyRequest)
   /-- A request about the editor state, which the loop that runs the
   command answers. -/
   | state (request : StateRequest)
@@ -111,6 +123,7 @@ def EditorRequest.Reply : EditorRequest → Type
   | .display request => request.Reply
   | .watch request => request.Reply
   | .clipboard request => request.Reply
+  | .fuzzy request => request.Reply
   | .state request => request.Reply
 
 /-- The editor's port: `EditorRequest` and the reply to each request. -/
@@ -151,6 +164,12 @@ def embedClipboard : Program clipboardPort α → Program editorPort α
   | .done value => .done value
   | .step request next => .step (.clipboard request) fun reply => embedClipboard (next reply)
 
+/-- `program`, a program over the fuzzy port, as one over the editor's port:
+each of its requests is the fuzzy constructor's. -/
+def embedFuzzy : Program fuzzyPort α → Program editorPort α
+  | .done value => .done value
+  | .step request next => .step (.fuzzy request) fun reply => embedFuzzy (next reply)
+
 end Program
 
 /-- The text port's refusal of the same name as the display's: both ports
@@ -188,5 +207,12 @@ def Clipboard.lift {α : Type} (program : ClipboardM α) : EditorM α :=
 
 instance : MonadLift ClipboardM EditorM where
   monadLift := Clipboard.lift
+
+/-- A program over the fuzzy port as a command. It is never refused. -/
+def Fuzzy.lift {α : Type} (program : FuzzyM α) : EditorM α :=
+  ExceptT.lift program.embedFuzzy
+
+instance : MonadLift FuzzyM EditorM where
+  monadLift := Fuzzy.lift
 
 end Editor

@@ -7,7 +7,9 @@ What the editor asks of a fuzzy matcher: which of some candidates a pattern
 matches, and in what order. It is a port like the others
 (`Editor/Program.lean`): a request, a pure model (`Editor/Fuzzy/Model.lean`)
 and a contract every implementation is held to
-(`Editor/Fuzzy/Contract.lean`).
+(`Editor/Fuzzy/Contract.lean`). It is a sub-port of the editor's port
+(`Editor/Command.lean`), so a command asks it as it asks a text, and so does
+config.
 
 ## The request
 

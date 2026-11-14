@@ -1,4 +1,5 @@
 import Editor.Command
+import Editor.Fuzzy.Real
 import Editor.Text.Real
 
 /-!
@@ -15,7 +16,11 @@ the one that watches nothing (`Watch.idle`), so a command run where no loop
 dispatched it is never interrupted. Its clipboard requests go to the
 clipboard handler the caller hands in, and by default to the one that
 answers `unavailable` (`Clipboard.unavailable`): a host that was handed no
-clipboard has none, and a command is told so, as a value. This module adds
+clipboard has none, and a command is told so, as a value. Its fuzzy requests
+go to the fuzzy port's real binding (`Fuzzy.real`,
+`Editor/Fuzzy/Real.lean`), as its text requests go to the text's: the
+matcher keeps nothing and needs nothing a host could hand in, so no caller
+passes a handler for it. This module adds
 no decision: each request is passed to its sub-port's handler as it is.
 
 A state request is the loop's to answer (`Editor/Command.lean`, "The state
@@ -28,8 +33,9 @@ models answer it: as an editor with no buffer and no window would
 namespace Editor
 
 /-- Answers `request` with its sub-port's handler: the text binding over the
-table of texts, `display`, `watch`, or `clipboard`. A state request is
-answered from an editor with nothing in it, and changes nothing. -/
+table of texts, `display`, `watch`, `clipboard`, or the fuzzy port's real
+binding. A state request is answered from an editor with nothing in it, and
+changes nothing. -/
 def EditorRequest.handleReal (display : DisplayHandler) (watch : WatchHandler := Watch.idle)
     (clipboard : ClipboardHandler := Clipboard.unavailable) :
     (request : EditorRequest) → StateT RealTexts IO request.Reply
@@ -37,6 +43,7 @@ def EditorRequest.handleReal (display : DisplayHandler) (watch : WatchHandler :=
   | .display request => StateT.lift (display request)
   | .watch request => StateT.lift (watch request)
   | .clipboard request => StateT.lift (clipboard request)
+  | .fuzzy request => StateT.lift (Fuzzy.real request)
   | .state request => pure (EditorState.none.handle request).1
 
 /-- Runs a command against the Rust library, with `texts` as the texts made
