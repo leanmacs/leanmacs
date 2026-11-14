@@ -11774,6 +11774,66 @@ def leftRightRows : List (String × String × String) :=
     ("5 h", "abc\nde|f", "abc\n|def"), ("l", "|", "|"), ("h", "|", "|"), ("l", "|\n", "|\n"),
     ("h", "|\n", "|\n")]
 
+/-- The rows of the oracle table for `w`, `b` and `e`: a word beside a run
+of punctuation, runs of blanks, an empty line, which stops `w` and `b` and
+not `e`, a line of blanks only, leading blanks on the next line, the last
+word with and without a final line feed, trailing blanks at the end, a
+carriage return and line feed as the line break, counts inside and past the
+text, the empty text and the text of one line feed, and one text with
+letters outside ASCII that Vim and the editor both take for word
+characters. -/
+def wordRows : List (String × String × String) :=
+  [("w", "foo |bar baz", "foo bar |baz"), ("1 w", "foo |bar baz", "foo bar |baz"),
+    ("2 w", "|foo bar baz", "foo bar |baz"), ("w", "foo |bar", "foo ba|r"),
+    ("w", "foo b|ar", "foo ba|r"), ("w", "foo ba|r", "foo ba|r"), ("w", "foo |bar\n", "foo ba|r\n"),
+    ("w", "foo ba|r\n", "foo ba|r\n"), ("w", "|foo.bar  x", "foo|.bar  x"),
+    ("3 w", "|foo.bar  x", "foo.bar  |x"), ("9 w", "|foo.bar  x", "foo.bar  |x"),
+    ("9 w", "|ab cd ef", "ab cd e|f"), ("w", "|foo(bar)", "foo|(bar)"),
+    ("w", "foo|(bar)", "foo(|bar)"), ("w", "foo(|bar)", "foo(bar|)"),
+    ("3 w", "|foo(bar)", "foo(bar|)"), ("w", "|foo\n\nbar", "foo\n|\nbar"),
+    ("w", "foo\n|\nbar", "foo\n\n|bar"), ("w", "|foo\n   \nbar", "foo\n   \n|bar"),
+    ("w", "foo\n | \nbar", "foo\n  \n|bar"), ("2 w", "|ab cd\n  ef", "ab cd\n  |ef"),
+    ("w", "a\n|\n", "a\n|\n"), ("w", "foo |bar\r\nbaz", "foo bar\r\n|baz"),
+    ("w", "|héllo wörld", "héllo |wörld"), ("w", "|", "|"), ("w", "|\n", "|\n"),
+    ("b", "foo b|ar", "foo |bar"), ("1 b", "foo b|ar", "foo |bar"), ("b", "foo |bar", "|foo bar"),
+    ("b", "|foo bar", "|foo bar"), ("b", "foo\n\n|bar", "foo\n|\nbar"),
+    ("b", "foo\n|\nbar", "|foo\n\nbar"), ("b", "foo\n   \n|bar", "|foo\n   \nbar"),
+    ("b", "ab\n  |cd", "|ab\n  cd"), ("2 b", "foo.bar  |x", "foo|.bar  x"),
+    ("9 b", "foo.bar  |x", "|foo.bar  x"), ("b", "foo(bar|)", "foo(|bar)"),
+    ("b", "foo(|bar)", "foo|(bar)"), ("3 b", "foo(bar|)", "|foo(bar)"), ("b", "a\n|\n", "|a\n\n"),
+    ("b", "foo\r\n|bar", "|foo\r\nbar"), ("b", "héllo w|örld", "héllo |wörld"), ("b", "|", "|"),
+    ("b", "|\n", "|\n"), ("e", "|foo bar", "fo|o bar"), ("1 e", "|a b c d e", "a |b c d e"),
+    ("e", "fo|o bar", "foo ba|r"), ("e", "foo ba|r", "foo ba|r"), ("e", "foo |bar\n", "foo ba|r\n"),
+    ("e", "foo ba|r\n", "foo ba|r\n"), ("e", "fo|o\n\nbar", "foo\n\nba|r"),
+    ("e", "fo|o\n   \nbar", "foo\n   \nba|r"), ("e", "a|b\n  cd", "ab\n  c|d"),
+    ("e", "fo|o  ", "foo | "), ("e", "fo|o  \n", "foo | \n"),
+    ("2 e", "|foo bar baz", "foo ba|r baz"), ("2 e", "|ab cd ef", "ab c|d ef"),
+    ("3 e", "|a b c d e", "a b c |d e"), ("9 e", "|a b c d e", "a b c d |e"),
+    ("9 e", "|ab cd ef", "ab cd e|f"), ("e", "|foo(bar)", "fo|o(bar)"),
+    ("e", "fo|o(bar)", "foo|(bar)"), ("e", "foo|(bar)", "foo(ba|r)"), ("e", "a\n|\n", "a\n|\n"),
+    ("e", "|héllo wörld", "héll|o wörld"), ("e", "|", "|"), ("e", "|\n", "|\n")]
+
+/-- The rows of the oracle table for `W`, `B` and `E`, which go by runs of
+characters that are not blank: with no count, with a count of 1, with a
+count inside the text and with one past it, and on an empty line, which
+stops `W` and `B` and not `E`. -/
+def bigWordRows : List (String × String × String) :=
+  [("W", "|foo.bar  x", "foo.bar  |x"), ("W", "|foo(bar) x", "foo(bar) |x"),
+    ("W", "|a.b c.d e.f gh", "a.b |c.d e.f gh"), ("1 W", "|a.b c.d e.f gh", "a.b |c.d e.f gh"),
+    ("2 W", "|a.b c.d e.f gh", "a.b c.d |e.f gh"), ("3 W", "|a.b c.d e.f gh", "a.b c.d e.f |gh"),
+    ("9 W", "|a.b c.d e.f gh", "a.b c.d e.f g|h"),
+    ("2 W", "|a.b c.d\n  e.f gh", "a.b c.d\n  |e.f gh"), ("W", "|foo\n\nbar", "foo\n|\nbar"),
+    ("W", "|", "|"), ("W", "|\n", "|\n"), ("B", "foo.bar  |x", "|foo.bar  x"),
+    ("B", "foo(bar) |x", "|foo(bar) x"), ("B", "a.b c.d e.f |gh", "a.b c.d |e.f gh"),
+    ("1 B", "a.b c.d e.f |gh", "a.b c.d |e.f gh"), ("2 B", "a.b c.d e.f |gh", "a.b |c.d e.f gh"),
+    ("2 B", "a.b c.d e.f g|h", "a.b c.d |e.f gh"), ("9 B", "a.b c.d e.f |gh", "|a.b c.d e.f gh"),
+    ("B", "foo\n\n|bar", "foo\n|\nbar"), ("B", "|", "|"), ("B", "|\n", "|\n"),
+    ("E", "|foo.bar  x", "foo.ba|r  x"), ("E", "|foo(bar) x", "foo(bar|) x"),
+    ("E", "|a.b c.d e.f gh", "a.|b c.d e.f gh"), ("1 E", "|a.b c.d e.f gh", "a.|b c.d e.f gh"),
+    ("2 E", "|a.b c.d e.f gh", "a.b c.|d e.f gh"), ("9 E", "|a.b c.d e.f gh", "a.b c.d e.f g|h"),
+    ("9 E", "|a.b c.d e.f gh\n", "a.b c.d e.f g|h\n"), ("E", "fo|o\n\nbar", "foo\n\nba|r"),
+    ("E", "|", "|"), ("E", "|\n", "|\n")]
+
 /-- The checks of evil's motions (`Editor/Evil.lean`, `Editor/Evil/Motions.lean`)
 on the loop's driver over the editor's models, under the Vim scheme that
 ships with the commands compiled code registers for evil: a motion's key
@@ -11783,6 +11843,12 @@ def evilMotionChecks : List Check :=
   [{  name :=
         "h and l move by cells and stay on the line: with no count one cell, with a count that many, as far as the line allows; neither leaves an empty line, the empty text or the line of a text that is one line feed, and l does not go onto the line break"
       run := evilRows leftRightRows },
+    { name :=
+        "w goes to the start of the next word, b to the start of the word before and e to the end of the next, a word being a run of word characters or a run of punctuation: each with a count repeats, and one past the text goes as far as there is a word; an empty line stops w and b and not e; where there is no word further on, w and e rest on the last character"
+      run := evilRows wordRows },
+    { name :=
+        "W, B and E go as w, b and e do, by runs of characters that are not blank: with no count, with a count of 1, with a count inside the text, and with one past it, which goes as far as there is such a run"
+      run := evilRows bigWordRows },
     { name :=
         "a move by a name the vocabulary has no motion of says so in the echo area, the name and then no such motion, and leaves the cursor where it was"
       run :=
