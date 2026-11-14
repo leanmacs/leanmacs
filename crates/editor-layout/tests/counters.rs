@@ -429,6 +429,118 @@ fn a_selection_in_a_face_that_sets_a_weight_shapes_the_rows_it_covers() {
     assert_eq!(unmade, count(3, 3, 17));
 }
 
+/// Five thousand rows of one letter, and an empty row after them.
+fn five_thousand_rows() -> TextRef {
+    TextRef::fixed(
+        TextKey(1),
+        Text::from("a\n".repeat(5000).as_str()).snapshot(),
+    )
+}
+
+/// Faces whose font has lines of no height on the fake shaper (a size of
+/// 0, a line height of 0 pixels, a line height of 0 times the font's own),
+/// and one whose lines are a 64th of a pixel tall (a size of a 64th).
+fn flat_faces() -> [Face; 4] {
+    [
+        Face {
+            size: Some(Length(0)),
+            ..Face::default()
+        },
+        Face {
+            line_height: Some(LineHeight::Pixels(Length(0))),
+            ..Face::default()
+        },
+        Face {
+            line_height: Some(LineHeight::Multiple(0)),
+            ..Face::default()
+        },
+        Face {
+            size: Some(Length(1)),
+            ..Face::default()
+        },
+    ]
+}
+
+/// The scene of one view of `text` 200 pixels wide and 160 tall, with the
+/// faces `faces`.
+fn small_view(text: &TextRef, faces: &[(&str, Face)]) -> Scene {
+    let mut scene = scene_rows(text, 200, 0, 10);
+    scene.faces = Some(
+        faces
+            .iter()
+            .map(|(name, face)| FaceDef {
+                name: (*name).to_owned(),
+                face: face.clone(),
+            })
+            .collect(),
+    );
+    scene
+}
+
+#[test]
+fn a_default_face_whose_lines_have_no_height_lays_out_a_row_for_each_pixel_of_the_view() {
+    let text = five_thousand_rows();
+    for flat in flat_faces() {
+        let scene = small_view(&text, &[("default", flat.clone())]);
+        let mut layout = Layout::new(CellShaper::new(10.0, 16.0));
+        let mut rows = 0;
+        // Not the 5001 rows of the text: one for each of the view's 160
+        // pixels.
+        let first = counted(&mut layout, |layout| {
+            rows = layout.frame(&scene).views[0].rows.len();
+        });
+        assert_eq!((rows, first), (160, count(160, 160, 0)), "{flat:?}");
+        let again = counted(&mut layout, |layout| {
+            layout.frame(&scene);
+        });
+        assert_eq!(again, count(0, 0, 160), "{flat:?}");
+        // And the rows query likewise.
+        let queried = counted(&mut layout, |layout| {
+            rows = layout.rows_shown(&text, 200.0, 160.0, 0).unwrap().len();
+        });
+        assert_eq!((rows, queried), (160, count(0, 0, 160)), "{flat:?}");
+        // A move counts lines, not pixels: three lines down is on the
+        // fourth row, and reaches the four rows from the first to it.
+        let mut row = None;
+        let moved = counted(&mut layout, |layout| {
+            let to = layout
+                .lines_from(&text, 200.0, 0, 3, None)
+                .unwrap()
+                .position;
+            row = text.snapshot.offset_to_point(to).map(|point| point.row);
+        });
+        assert_eq!((row, moved), (Some(3), count(0, 0, 4)), "{flat:?}");
+    }
+}
+
+#[test]
+fn a_decoration_or_a_selection_whose_lines_have_no_height_lays_out_a_row_for_each_pixel_left() {
+    let text = five_thousand_rows();
+    // From the sixth row to the end of the text.
+    let (from, to) = (10, text.snapshot.len());
+    for flat in flat_faces() {
+        // The first five rows are 16 pixels tall, which leaves 80 pixels:
+        // 80 rows of the face, and not the 4996 the text has left.
+        let mut decorated = small_view(&text, &[("flat", flat.clone())]);
+        decorated.views[0].decorations = vec![Decoration {
+            start: from,
+            stop: to,
+            face: "flat".to_owned(),
+        }];
+        let mut selected = small_view(&text, &[("selection", flat.clone())]);
+        selected.views[0].selections =
+            vec![Selection::new(vec![SelectionRange::new(from, to)], 0).unwrap()];
+        for scene in [decorated, selected] {
+            let mut layout = Layout::new(CellShaper::new(10.0, 16.0));
+            let mut rows = 0;
+            let first = counted(&mut layout, |layout| {
+                rows = layout.frame(&scene).views[0].rows.len();
+            });
+            assert_eq!((rows, first), (85, count(85, 85, 0)), "{flat:?}");
+        }
+    }
+}
+
 /// The scene of the twenty rows `text` with the faces `faces` and the
 /// status fields `fields`: each its text and its face's name.
 fn with_status(text: &TextRef, fields: &[(&str, &str)], faces: &[(&str, Face)]) -> Scene {

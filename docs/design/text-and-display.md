@@ -732,7 +732,10 @@ size or a line height in pixels, is a whole number of 64ths of a physical
 pixel, so it is exact as a float and can be hashed. A weight is 1 to 1000,
 with 400 normal and 700 bold. A line height is a multiple of the font's
 own, in 64ths, or pixels. A theme states physical pixels: nothing scales a
-length by the window's scale factor yet.
+length by the window's scale factor yet. A size or a line height of 0 is
+taken as it is, where a weight outside its range is not: the lines of such
+a font have no height, and how many a view shows is layout's rule ("Layout
+and rendering", as built, "A row counts as at least a pixel").
 
 **Themes and config.** `Theme.builtin` defines `default`, which sets every
 attribute, and `cursor`, `selection`, `echo-area`, `minibuffer-prompt` and
@@ -1050,6 +1053,25 @@ facts of each part are in the module docs; these are the decisions.
 - **The queries** lay out whatever they reach, in the same call, from the
   same entries the frame uses, with the selections and decorations of the
   last frame that showed the text, in the faces as they are now.
+- **A row counts as at least a pixel.** The rows a view shows are those
+  that fit its height whole, and in that count a visual line is at least
+  one pixel tall, whatever height the shaper gave it. So a frame or a rows
+  query lays out at most a row for each pixel of its view, and never the
+  text from the anchor to its end, which is what lines of no height would
+  otherwise come to: they all fit. Lines have no height in a font of size
+  0 or of a line height of 0, set by `default` or by the face of a
+  decoration or of the selection, and wherever a shaper reports none; the
+  shaper's contract holds only the default font's lines to a height. The
+  rule is layout's because the cost is: one walk
+  (`crates/editor-layout/src/query.rs`, "The rows that fit") gives the
+  frame and the rows query their rows, and it is bounded whatever a face
+  or a shaper says. Nothing refuses or changes a size or a line height of
+  0, neither the wire nor Lean's binding: that would be a second owner of
+  the rule and would bound nothing, since a size of a 64th of a pixel
+  makes lines as flat. Only the count changes: a row keeps the height the
+  shaper gave it, so in a frame a row of no height is that tall and the
+  next row starts where it does. A move counts visual lines, so no height
+  changes what it costs.
 - **The frame** is a plain immutable value (`Send + Sync`): per view, the
   rows from the anchor's visual line, as many as fit whole, each with its
   glyphs shared with the store, its runs and a content hash; the cursor at

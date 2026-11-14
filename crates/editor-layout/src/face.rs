@@ -51,6 +51,11 @@
 //! ([`Length`]). A theme states physical pixels: nothing here
 //! scales by a window's scale factor.
 //!
+//! A size or a line height of 0 is a value like any other: no face is
+//! refused or changed for it. The font it resolves to has lines of no
+//! height, and how many of those a view shows is the rows query's rule
+//! ([`query`](crate::query), "The rows that fit").
+//!
 //! # Where an addition goes
 //!
 //! A new attribute is a field of [`Face`], merged in [`Face::over`], and

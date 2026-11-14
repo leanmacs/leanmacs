@@ -26,8 +26,9 @@
 //! - which spans each decoration source gives, that a cursor covers
 //!   nothing, how spans merge into styled runs, and that a run is in the
 //!   font its faces resolve to, lowest layer first ([`decoration`]);
-//! - the rows a view shows and where a move goes, with its goal x
-//!   ([`query`]);
+//! - the rows a view shows, at most one for each pixel of its height
+//!   whatever height a font gives its lines, and where a move goes, with
+//!   its goal x ([`query`]);
 //! - the frame: rows from a view's anchor stacked by height, cursor and
 //!   selection geometry, the paint each run, cursor and view resolves to,
 //!   content hashes that cover paint and that a cursor move leaves alone,
@@ -37,10 +38,11 @@
 //!   (`tests/frame_fixture.rs`);
 //! - what is kept between calls and what it costs, by the counters
 //!   ([`cache`], `tests/counters.rs`): a change of a face's paint shapes
-//!   and breaks nothing, and a change of its font shapes the rows drawn in
-//!   it and no other; moved through patches or rebuilt
-//!   when none can be had (`tests/patches.rs`), and the bound on a very
-//!   long row (`tests/long_line.rs`);
+//!   and breaks nothing, a change of its font shapes the rows drawn in
+//!   it and no other, and a face whose lines have no height costs a row
+//!   for each pixel of the view, not the text; moved through patches or
+//!   rebuilt when none can be had (`tests/patches.rs`), and the bound on a
+//!   very long row (`tests/long_line.rs`);
 //! - the round trip of a position through the layers (`tests/layers.rs`).
 //!
 //! The adapter-neutral rules of shaping are [`shaper::contract`]'s, which

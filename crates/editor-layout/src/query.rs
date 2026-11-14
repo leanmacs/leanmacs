@@ -9,6 +9,35 @@
 //! "curswant"): the glyph the x is in, or past a line's last glyph its end
 //! on the line that holds the row's end and its last glyph on any other.
 //!
+//! # The rows that fit
+//!
+//! A view shows the visual lines from its anchor that fit its height
+//! whole, and a frame is built from the same walk
+//! ([`frame`](crate::frame)). **In that count a line is at least one
+//! pixel tall** ([`LEAST_ROW_HEIGHT`]), whatever height the shaper gave
+//! it, so a view lays out at most one line for each pixel of its height.
+//! A height that is no number holds no line.
+//!
+//! The rule is layout's own, because the cost it bounds is: a frame or a
+//! query costs what its view shows, never the length of the text. Without
+//! it, lines of no height all fit, and every frame would lay out the text
+//! from the anchor to its end. Lines have no height in a font of size 0
+//! or of a line height of 0, which a face may set and the wire carries
+//! (the default face, or the face of a decoration or of the selection
+//! once the walk reaches its rows), and wherever a shaper says so: the
+//! shaper's contract holds only the default font's lines to a height. A
+//! line a 64th of a pixel tall is the same case, which is why the rule
+//! is a least height and not a refusal of 0.
+//!
+//! Only the count changes. A line keeps the height the shaper gave it: in
+//! a frame a row of no height is that tall and the row after it starts
+//! where it does, so each such row a view holds leaves a pixel less for
+//! the rows after it.
+//!
+//! The move counts visual lines, not pixels, so no height changes what it
+//! reaches or what it costs: as many steps as the lines asked for, fewer
+//! at an end of the text.
+//!
 //! A refusal is [`QueryError::BadPosition`] for an offset that is not a
 //! position of the text. An unknown snapshot is the binding's refusal:
 //! layout is handed a snapshot or nothing.
@@ -22,6 +51,11 @@ use crate::line::LineEntry;
 use crate::shaper::{FontId, Shaper};
 use crate::tabs::{row_content, segment_of, segment_range};
 use crate::wrap::{Outcome, WrapLayer};
+
+/// The least a visual line counts for among the rows that fit a height, in
+/// pixels, whatever height the shaper gave it (the module docs, "The rows
+/// that fit").
+pub const LEAST_ROW_HEIGHT: f32 = 1.0;
 
 /// One visual row: the bytes from `start` up to `stop`, without its line
 /// break.
@@ -193,14 +227,19 @@ impl<S: Shaper> Walker<'_, S> {
     }
 
     /// The visual lines from the one that holds `anchor`, as many as fit
-    /// `height` pixels whole, fewer at the end of the text.
+    /// `height` pixels whole, fewer at the end of the text. Each counts
+    /// as at least [`LEAST_ROW_HEIGHT`], so it lays out at most a line for
+    /// each pixel of `height`, and none when `height` is no number.
     pub fn rows_shown(&mut self, height: f32, anchor: usize) -> Result<Vec<Visual>, QueryError> {
         let (mut visual, _) = self.locate(anchor)?;
         let mut rows = Vec::new();
         let mut used = 0.0;
         loop {
-            let tall = self.height(visual);
-            if used + tall > height {
+            // `max` gives the least height for a height that is no number.
+            let tall = self.height(visual).max(LEAST_ROW_HEIGHT);
+            // False when either side is no number, which stops the walk.
+            let fits = used + tall <= height;
+            if !fits {
                 break;
             }
             used += tall;
@@ -320,6 +359,35 @@ mod tests {
         // A view shorter than a row shows none.
         let snapshot = TextRef::fixed(TextKey(1), Text::from("ab").snapshot());
         assert_eq!(layout().rows_shown(&snapshot, 40.0, 15.0, 0), Ok(vec![]));
+    }
+
+    #[test]
+    fn a_view_shows_at_most_a_row_for_each_pixel_of_its_height() {
+        let snapshot = TextRef::fixed(
+            TextKey(1),
+            Text::from("a\n".repeat(500).as_str()).snapshot(),
+        );
+        // Lines a quarter of a pixel tall, of no height, of less than
+        // none, and of a height that is no number: each counts as one
+        // pixel, so 20 pixels hold 20 of them and not the 501 of the text.
+        for line_height in [0.25, 0.0, -16.0, f32::NAN] {
+            let mut layout = Layout::new(CellShaper::new(10.0, line_height));
+            let shown = layout.rows_shown(&snapshot, 40.0, 20.0, 0).unwrap();
+            assert_eq!(shown.len(), 20, "lines {line_height} tall");
+            assert_eq!(
+                shown.last(),
+                Some(&RowRange {
+                    start: 38,
+                    stop: 39
+                }),
+                "lines {line_height} tall"
+            );
+            // A part of a pixel holds no row.
+            assert_eq!(layout.rows_shown(&snapshot, 40.0, 0.5, 0), Ok(vec![]));
+        }
+        // A height that is no number holds no row.
+        let shown = layout().rows_shown(&snapshot, 40.0, f32::NAN, 0);
+        assert_eq!(shown.map(|rows| rows.len()), Ok(0));
     }
 
     #[test]

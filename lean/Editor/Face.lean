@@ -30,6 +30,9 @@ call, and only when the theme changed (`Editor/Display/Real.lean`).
   length by a window's scale factor: a theme states physical pixels.
 - A weight is 1 to 1000: 400 is normal and 700 bold. The binding sends a
   weight outside that range as the nearest end of it.
+- A size or a line height of 0 is sent as it is. The lines of such a font
+  have no height, and how many of them a view shows is layout's rule
+  (`crates/editor-layout/src/query.rs`, "The rows that fit").
 
 ## The built-in faces
 

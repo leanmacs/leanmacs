@@ -7,6 +7,12 @@
 //! geometry of its cursors and of its selections. Geometry is in pixels
 //! from the view's top left.
 //!
+//! The rows that fit are the rows query's ([`query`](crate::query), "The
+//! rows that fit"): each counts as at least one pixel, so a frame holds at
+//! most a row for each pixel of its view's height, whatever height a font
+//! gives its lines. A row is as tall as the shaper made it, so a row of no
+//! height has a height of 0 and the row after it has its `y`.
+//!
 //! **The mode line.** A view with at least one status field has a status
 //! row ([`StatusRow`]): its fields' texts one after another with no
 //! separator, shaped through the `Shaper` port as one unbroken line, each
@@ -849,6 +855,25 @@ mod tests {
         let text = tall.text.unwrap();
         assert_eq!(layout.rows_shown(&text, 40.0, 63.0, 0).unwrap().len(), 2);
         assert_eq!(layout.rows_shown(&text, 40.0, 64.0, 0).unwrap().len(), 3);
+    }
+
+    #[test]
+    fn a_row_of_no_height_takes_a_pixel_of_the_count_and_none_of_the_frame() {
+        // The second row is in a face of size 0, whose lines have no
+        // height.
+        let mut layout = layout_with(&[def("flat", sized(0))]);
+        let flat = decorated(view("ab\ncd\nef\ngh", 4, 48, 0, &[]), &[(3..5, "flat")]);
+        let rows = frame(&mut layout, flat).rows;
+        // In the count of the rows that fit it is a pixel tall: 16, 1 and
+        // 16 leave 15 of the 48, which do not hold the fourth row.
+        assert_eq!(rows.len(), 3);
+        // In the frame it is as tall as the shaper made it, and the row
+        // after it starts where it does.
+        assert_eq!(
+            rows.iter().map(|row| row.height).collect::<Vec<_>>(),
+            vec![16.0, 0.0, 16.0]
+        );
+        assert_eq!(tops(&rows), vec![0.0, 16.0, 16.0]);
     }
 
     #[test]

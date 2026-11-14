@@ -39,6 +39,11 @@
 //! definitions merge are layout's rules (`editor_layout::face`); this
 //! module only carries them.
 //!
+//! A size or a line height of 0 is a length like any other and crosses as
+//! it is. Lines of no height are layout's to bound, whatever made them so
+//! (`editor_layout::query`, "The rows that fit"); refusing 0 here would
+//! bound nothing, since a size of a 64th of a pixel is as flat.
+//!
 //! A marker's number is its document's number for it: the display resolves
 //! it against the document of the view's snapshot
 //! ([`crate::snapshot::Snapshot::marker`]). [`WireScene`] keeps the scene
@@ -815,6 +820,20 @@ mod tests {
         ] {
             assert!(with(index, value).is_some(), "word {index} as {value}");
         }
+        // And the smallest: a size and a line height of 0 are lengths
+        // like any other and cross as they are, neither refused nor made
+        // another length.
+        let face_with = |index: usize| with(index, 0)?.faces?.pop().map(|flat| flat.face);
+        assert_eq!(
+            face_with(15).map(|face| face.size),
+            Some(Some(Length(0))),
+            "a size of 0"
+        );
+        assert_eq!(
+            face_with(32).map(|face| face.line_height),
+            Some(Some(LineHeight::Pixels(Length(0)))),
+            "a line height of 0"
+        );
         // A name's length ending inside a character, the string as long
         // as ever: `k`, then `é` across where the name ends.
         let inside = strings.replacen("wm", "é", 1);
