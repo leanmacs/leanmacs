@@ -820,6 +820,40 @@ fn a_dropped_row_lets_its_glyphs_go_so_the_atlas_stays_within_its_budget() {
     assert_eq!(painter.glyph_stats().evicted, evicted);
 }
 
+#[test]
+fn pages_added_past_the_budget_for_glyphs_in_use_are_given_back_at_a_later_draw() {
+    // A budget of one page of masks, and a frame of four rows of ten
+    // glyphs each, no two alike: more images in use than a page holds.
+    let page = 32;
+    let budget = u64::from(page * page);
+    let mut painter = tight(page);
+    let rows: Vec<FrameRow> = (0..4_u32)
+        .map(|row| {
+            let ids: Vec<u32> = (0..10).map(|glyph| row * 10 + glyph).collect();
+            plain_row(row as f32 * 16.0, &ids, u64::from(row) + 1)
+        })
+        .collect();
+    let crowded = painter.paint(&frame_of(rows), target(1.0));
+    // In use wins: the atlas is past its budget, and nothing was let go.
+    assert_eq!(crowded.glyphs_rasterised, 40);
+    assert!(crowded.atlas_bytes > budget);
+    assert_eq!(crowded.glyphs_evicted, 0);
+    assert!(painter.glyph_stats().over_budget > 0);
+    // Then one short row of the first of those glyphs is all there is:
+    // the four rows are dropped, and let their glyphs go.
+    let short = frame_of(vec![plain_row(0.0, &[0], 100)]);
+    painter.paint(&short, target(1.0));
+    // The draw after that begins by giving back the pages nothing uses.
+    let later = painter.paint(&short, target(1.0));
+    assert!(later.atlas_bytes <= budget, "{later:?}");
+    assert!(later.glyphs_evicted > 0);
+    // The glyph still shown is drawn from its own image.
+    let shown = quads_of(&painter, QuadKind::Mask, BLACK);
+    assert_eq!(shown.len(), 1);
+    let made = painter.rasterizer().image(mask_key(0)).expect("an image");
+    assert_eq!(read(&painter, &shown[0]), made.data);
+}
+
 /// The bytes the atlas of `painter` holds where `quad` reads.
 fn read(painter: &Painter<FakeRasterizer>, quad: &Quad) -> Vec<u8> {
     painter
