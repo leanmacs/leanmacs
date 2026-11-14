@@ -43,7 +43,13 @@ one (`Editor/Evil.lean`), so the caller supplies the vocabulary.
 the motion leads under an operator (`Motion.taken`), by Vim's rules, in
 order:
 
-- **Cells from the lower of the two to the higher.**
+- **A motion that failed gives the operator up** (`cannotMove`), as Vim
+  cancels it: nothing is taken, the register is as it was, and a change
+  begins no insert. The operate command sees to it before it asks for a
+  stretch.
+- **Cells from the lower of the two to the higher.** A motion whose reach
+  is `inclusive` takes the cell at the higher end too, unless that end is
+  where its line's content ends: a line break, or the text's end.
 - **The stretch stops no later than where the last line's content ends**
   (`lastLine`): a text that ends in a line feed has an empty last row,
   which is no line, and Vim cannot address the line feed before it.
@@ -55,10 +61,11 @@ order:
 |---|---|---|
 | `delete` | The register is the cells' text. They are deleted. The cursor goes to their start, rested | Nothing is done, and the register is as it was |
 | `yank` | The register is the cells' text. The cursor goes to their start, rested | The register is the empty text. The cursor stays |
-| `change` | The register is the cells' text. They are deleted. The selection is a bar at their start | Nothing is deleted, and the register is as it was. The selection is a bar where the cells would start |
+| `change` | The register is the cells' text. They are deleted. The selection is a bar at their start | Nothing is deleted. The register is as it was, unless the reach is `inclusive` and the text is not empty, when it is the empty text. The selection is a bar where the cells would start |
 
-- **The no-cell column is Vim's**: `yh` at a line's start empties the
-  register, and `dh` and `ch` there leave it.
+- **The no-cell column is Vim's**, quirks included: `yh` at a line's start
+  empties the register, `dh` and `ch` there leave it, and `c$` on an empty
+  line empties it, which is the `inclusive` case.
 - **`change` begins an insert only when a key that enters insert state
   runs it.** It leaves one range of the shape its call's report says, at
   the start of what it took, put where the report's state lets a cursor
@@ -94,12 +101,24 @@ the command expects. -/
 def noOperatorNamed : String :=
   "no operator named (expects an operator's name, the kind of what it acts on, that thing's name, a count and a register's name)"
 
+/-- What the operate command gives up with when the motion called `name`
+could not be made. -/
+def cannotMove (name : String) : String :=
+  s!"{name} cannot move"
+
 /-- What an operator acts on in `text` when its head is at `head` and the
 motion it waits for leads to `taken` ("What an operator takes", in the
 module docs). -/
 def stretch (text : TextId) (head : Nat) (taken : Vocabulary.Taken) : TextM Vocabulary.Stretch := do
+  let high := max head taken.head
+  -- Through the cell at the higher end, where there is one on its line.
+  let through ←
+    if taken.reach == .inclusive && high < (← text.motion .lineEnd high) then
+      text.motion .nextCell high
+    else
+      pure high
   let limit ← text.motion .lineEnd (← text.offsetOf ⟨← lastLine text, 0⟩)
-  let stop := min (max head taken.head) limit
+  let stop := min through limit
   let start := min (min head taken.head) stop
   return .cells ⟨start, stop⟩ taken.reach
 
@@ -136,9 +155,11 @@ def change : Vocabulary.Operator :=
     replaces := true
     act := fun call operand => do
       match operand.stretch with
-      | .cells extent _ =>
+      | .cells extent reach =>
         if extent.start == extent.stop then
           settle call extent.start
+          if reach == .inclusive && (← call.target.buffer.text.byteLength) > 0 then
+            store operand.register { text := "" }
         else
           let taken ← call.target.buffer.text.slice extent.start extent.stop
           call.target.replaceCarrying extent "" operand.before
@@ -190,6 +211,8 @@ def operate (operators : Array Vocabulary.Operator) (motions : Array Vocabulary.
       let taken ←
         motion.taken operator.replaces text
             { head, count := if count == 0 then none else some count }
+      if taken.failed then
+        giveUp (cannotMove name)
       pure
           { stretch := ← stretch text head taken, head, rest := min head taken.head, register,
             before }

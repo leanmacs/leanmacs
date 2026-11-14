@@ -169,15 +169,18 @@ line with no count, and of the last line when the text has fewer below.
 From the last line with a count above 1 it does not move, which is Vim's
 failed motion. The raw target is the line break, or the text's end. It
 keeps the line's end as the wanted column, also when it does not move, so
-the vertical motions after it stay at line ends. -/
+the vertical motions after it stay at line ends. An operator takes it
+through the cell at its target (`inclusive`), which on a line break is no
+cell more; where it does not move for want of a line below it has failed. -/
 def lineEnd : Vocabulary.Motion :=
   { name := "line-end"
+    reach := .inclusive
     target := fun text origin => do
       let count := origin.count.getD 1
       let row := (← text.pointOf origin.head .cells).row
       let last ← lastLine text
       if count > 1 && row ≥ last then
-        return { head := origin.head, wanted := some .lineEnd }
+        return { head := origin.head, wanted := some .lineEnd, failed := true }
       let below ← text.motion (.rowsDown (min (count - 1) (last - row)) 0) origin.head
       return { head := ← text.motion .lineEnd below, wanted := some .lineEnd } }
 

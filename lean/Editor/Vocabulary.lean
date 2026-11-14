@@ -55,6 +55,10 @@ A motion (`Motion`) is a name and a function from where a cursor is
   answers the position with the reach. By default it is `target` with the
   motion's `reach`, so a motion that leads an operator where it leads a
   cursor says nothing more.
+- **A motion says when it could not be made** (`To.failed`, `Taken.failed`),
+  as Vim fails a motion that has nowhere to go. An operator that waits for
+  it is given up by its caller. The move command does not read it: the
+  cursor goes to the target the motion answers, which is where it was.
 
 ## Operators
 
@@ -124,6 +128,10 @@ structure To where
   that could not move may keep what was kept, and cannot tell by itself
   that it could not: where a cursor rests is its caller's rule. -/
   unmoved : Option WantedColumn := wanted
+  /-- Whether the motion could not be made, as Vim fails a motion: an
+  operator that waits for it is given up. A cursor is moved to `head` all
+  the same. -/
+  failed : Bool := false
   deriving DecidableEq, Repr
 
 /-- How an operator takes the cells between the head and a motion's
@@ -143,6 +151,8 @@ structure Taken where
   head : Nat
   /-- How the operator takes what lies between. -/
   reach : Reach
+  /-- Whether the motion could not be made: the operator is given up. -/
+  failed : Bool := false
   deriving DecidableEq, Repr
 
 /-- A motion: its name, by which an input scheme's binding names it, and
@@ -158,8 +168,9 @@ structure Motion where
   /-- Where the motion leads in `text` when an operator waits for it, told
   whether the operator puts an insert in place of what it takes: `target`
   with `reach`, unless the motion says another. -/
-  taken : Bool → TextId → From → TextM Taken := fun _ text origin =>
-    return { head := (← target text origin).head, reach }
+  taken : Bool → TextId → From → TextM Taken := fun _ text origin => do
+    let to ← target text origin
+    return { head := to.head, reach, failed := to.failed }
 
 /-- What an operator acts on. -/
 inductive Stretch where

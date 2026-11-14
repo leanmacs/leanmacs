@@ -14321,10 +14321,31 @@ def yankChangeAlongRows : List OperatorRow :=
     .inserts bareEndText "c ^" "ab cd\n  |h" (charwise "ef g"),
     .rests bareEndText "y ^" "ab cd\n  |ef gh" (charwise "ef g")]
 
+/-- The oracle table's rows for the three operators over `$`, in its five
+situations. With a count it reaches the end of a line below, and the line
+breaks between are taken. On an empty line `c $` empties the register where
+`d $` leaves it. -/
+def lineEndRows : List OperatorRow :=
+  [.rests plainText "d $" "ab\ncd\n  ef| \nmn\nop\n" (charwise "gh.ij kl"),
+    .inserts plainText "c $" "ab\ncd\n  ef |\nmn\nop\n" (charwise "gh.ij kl"),
+    .rests plainText "y $" "ab\ncd\n  ef |gh.ij kl\nmn\nop\n" (charwise "gh.ij kl"),
+    .rests plainText "d 2 $" "ab\ncd\n  ef| \nop\n" (charwise "gh.ij kl\nmn"),
+    .inserts plainText "c 2 $" "ab\ncd\n  ef |\nop\n" (charwise "gh.ij kl\nmn"),
+    .rests plainText "y 2 $" "ab\ncd\n  ef |gh.ij kl\nmn\nop\n" (charwise "gh.ij kl\nmn"),
+    .rests emptyLineText "d $" "ab cd\n|\n  ef gh\n" asItWas,
+    .inserts emptyLineText "c $" "ab cd\n|\n  ef gh\n" (charwise ""),
+    .rests emptyLineText "y $" "ab cd\n|\n  ef gh\n" (charwise ""),
+    .rests endText "d $" "ab cd\n  ef |g\n" (charwise "h"),
+    .inserts endText "c $" "ab cd\n  ef g|\n" (charwise "h"),
+    .rests endText "y $" "ab cd\n  ef g|h\n" (charwise "h"),
+    .rests bareEndText "d $" "ab cd\n  ef |g" (charwise "h"),
+    .inserts bareEndText "c $" "ab cd\n  ef g|" (charwise "h"),
+    .rests bareEndText "y $" "ab cd\n  ef g|h" (charwise "h")]
+
 /-- The rows of the operator × motion table, in the order the motions were
 built. -/
 def operatorTable : List OperatorRow :=
-  deleteAlongRows ++ yankChangeAlongRows
+  deleteAlongRows ++ yankChangeAlongRows ++ lineEndRows
 
 /-- Whether `left` is what a command that gave up with `reason` leaves: the
 text and the cursor `shown`, the register as it was, the view not in insert
@@ -14366,6 +14387,20 @@ def evilOperatorChecks : List Check :=
             .inserts "ab\n|abc" "c h" "ab\n|abc" asItWas,
             .rests "ab\n|\ncd" "y l" "ab\n|\ncd" (charwise ""),
             .inserts "ab\n|\ncd" "c l" "ab\n|\ncd" asItWas] },
+    { name :=
+        "$ under an operator: c 2 $ from a line's start takes the cells through the end of the line below; on an empty line c $ empties the register where d $ leaves it, and in the empty text c $ leaves it too; with a count above 1 on the last line the motion fails and the operator gives up, with and without a final line feed"
+      run := do
+        let held ←
+          operatorRows
+              [.inserts "|ab\ncd\nef" "c 2 $" "|\nef" (charwise "ab\ncd"),
+                .rests "ab\n|\ncd" "d $" "ab\n|\ncd" asItWas,
+                .inserts "ab\n|\ncd" "c $" "ab\n|\ncd" (charwise ""), .inserts "" "c $" "|" asItWas,
+                .givesUp "ab\n|cd" "d 2 $", .givesUp "ab\n|cd" "c 2 $", .givesUp "ab\n|cd" "y 2 $",
+                .givesUp "ab\n|cd\n" "d 2 $", .rests "ab\n|cd\n" "d 1 $" "ab\n|\n" (charwise "cd")]
+        -- The sentence is the one the function makes of the motion's name.
+        return held &&
+            evilGaveUp (evilEdited "ab\n|cd" "d 2 $") "ab\n|cd"
+              (Evil.cannotMove Evil.lineEnd.name) },
     { name :=
         "a change and the text typed after it are one step of the history: c l deletes the cell and leaves its group open, the typed text joins it, <Escape> closes it as one node, and one undo request gives the text from before the change"
       run :=
