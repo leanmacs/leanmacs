@@ -1422,69 +1422,89 @@ and the journal read from Lean.
   coverage of white on black is 188, not 128. On a GPU a coverage for
   each channel is dual-source blending; an adapter without it is given
   plain masks and one coverage, and says so.
-- **The window's text is lighter than Core Text's, and no one measured
-  cause explains it.** Seen by the owner on 2026-11-14: the window in
-  Menlo 14 pt at scale 2 beside TextEdit in Menlo Regular 14 pt at
-  100%, the same size, but TextEdit "much heavier". On the owner's
-  screenshot the sentence `the window draws this` has 1234 pixels
-  darker than mid-grey in the window and 1839 in TextEdit (1.49 times),
-  and about 8% less ink in the window (TextEdit's taken as 1.09 times).
-  The same sentence was then weighed with the renderer's own rasteriser
-  and blend, as the window draws it (the baseline, B: 28 px plain masks
-  at bin 0, hinted, `#202020` on `#f8f8f8`, in linear light), and with
-  each candidate cause changed on its own and in pairs. *Dark* is the
-  pixels below 128; *ink* is how much darker than the ground the pixels
-  are, summed. Key rows:
+- **The weight of text matches the platform's: on macOS, Core Text's.**
+  The owner's decision (2026-11-14, rdm task
+  `editor-render-text-lighter-than-core-text`): match the platform's
+  font rendering as closely as possible. On macOS the window's text is
+  drawn to Core Text's weight; Linux and every other target keep
+  linear-correct rendering, the outlines as they are, until a later
+  task decides otherwise.
 
-  | Candidate | Dark | Ink | Dark / B | Ink / B |
+  How heavy text is drawn is a field of the renderer's settings,
+  `Settings::weight`: a contrast, which raises the coverage of dark text
+  on a light ground (`blend::adjusted`, on the CPU and in the shader
+  alike), and a dilation, which draws each stem that many pixels
+  thicker than its outline (swash's `embolden`, in the rasteriser, so
+  the GPU reads the same atlas). The default, `Weight::LINEAR`, is 0
+  and 0, and draws every byte as before. The macOS setting is
+  `Settings::core_text()`: `Weight::CORE_TEXT`, a contrast of 0.1 and a
+  dilation of 0.8 px, with hinting off, as the fit chose. The program
+  picks it where it wires the renderer: `editor-ffi`'s example `window`
+  asks `cfg!(target_os = "macos")` and nothing in the renderer or the
+  core names a system. Whatever later makes the editor's own renderer
+  applies the same rule.
+
+  Why. Seen by the owner on 2026-11-14: the window in Menlo 14 pt at
+  scale 2 beside TextEdit in Menlo Regular 14 pt at 100%, the same
+  size, but TextEdit "much heavier". The first measurement held the
+  renderer to ratios read off the owner's screenshot (1.49 times the
+  dark pixels, 1.09 times the ink), and no single cause reached them.
+  Those ratios are superseded: the 1.09 most likely counted the
+  window's `#f8f8f8` ground, and TextEdit draws black on white, so part
+  of that gap was the colours. The target is now Core Text's own
+  drawing of the sentence `the window draws this`, from the fixture
+  font at 14 pt on a bitmap of scale 2, black on white, with font
+  smoothing on (`tests/coretext/sentence.png`, captured on demand by
+  `mise run coretext-reference`; its README says how). The renderer
+  draws the same sentence through its CPU path, each glyph at Core
+  Text's pen position, black on white, and both are counted the same
+  way: *dark* is the pixels below 128, *ink* how far below the white
+  ground the pixels are, summed.
+
+  | Drawing | Dark | Ink | Dark / Core Text | Ink / Core Text |
   |---|---|---|---|---|
-  | B, the window as drawn | 1282 | 313941 | 1.000 | 1.000 |
-  | C, black on white, as TextEdit draws | 1281 | 356541 | 0.999 | 1.136 |
-  | G, blending on the sRGB values | 1644 | 359475 | 1.282 | 1.145 |
-  | H, hinting off | 1330 | 318526 | 1.037 | 1.015 |
-  | D(0.3), each stem 0.3 px thicker | 1505 | 354386 | 1.174 | 1.129 |
-  | D(0.6), each stem 0.6 px thicker | 1624 | 391715 | 1.267 | 1.248 |
-  | K(0.5), the coverage adjustment at 0.5 | 1527 | 336442 | 1.191 | 1.072 |
-  | K(1), the coverage adjustment at 1 | 1649 | 365699 | 1.286 | 1.165 |
-  | G with D(0.3) | 1764 | 400068 | 1.376 | 1.274 |
+  | Core Text, smoothed: the target | 1891 | 503470 | 1.000 | 1.000 |
+  | Core Text, not smoothed (for comparison) | 1638 | 429519 | 0.866 | 0.853 |
+  | The default, `Weight::LINEAR`, hinted | 1321 | 362857 | 0.699 | 0.721 |
+  | macOS, `Settings::core_text()` | 1910 | 499078 | 1.010 | 0.991 |
 
-  A candidate explains the gap when both its ratios are within 10% of
-  the owner's, 1.49 and 1.09; candidates are ranked by the two errors,
-  each a part of its target, added. None is within both. The nearest
-  are G (error 0.190), K(1) (0.206) and K(0.5) (0.218); the nearest
-  pair is G with D(0.3) (0.246), and outline dilation alone comes next,
-  D(0.3) at 0.248. What the numbers do show: the gap is mostly in the
-  pixels that cross mid-grey, not in ink, and the candidates that come
-  nearest (G and K) darken the partly covered pixels at a glyph's edge
-  rather than add outline. D adds ink as fast as dark pixels, and past
-  0.3 px overshoots the ink: D(0.6), Pathfinder's macOS stem darkening
-  at 28 px ("Risks", in
-  [rendering-prior-art.md](rendering-prior-art.md)), has 25% more ink
-  for 27% more dark pixels. TextEdit's colours add ink over the ground
-  and no dark pixels: in linear light the window's grey on its lighter
-  grey crosses mid-grey at about the coverage black on white does.
-  Hinting moves little. The baseline's 1282 dark pixels are within 4%
-  of the owner's 1234 for the window.
+  The fit swept the contrast from 0 to 1 and the dilation from 0 to
+  0.8 px in steps of 0.1, with hinting on and off, and took the point
+  whose larger miss of the two counts was least: 0.010. Many points
+  come within a few hundredths, trading contrast for dilation (a
+  contrast of 1 with 0.5 px, hinted, misses by 0.012), so the
+  constant is one good point of a shallow valley, not a unique one. The
+  earlier candidates' directions still hold and are pinned: dilating
+  the outline, raising the coverage, blending on sRGB values and
+  drawing black on white each add ink. Even without smoothing Core Text
+  draws about a fifth more ink than the default; smoothing adds about
+  as much again.
 
   The caveats. The font is Noto Sans Mono, a stand-in for Menlo, whose
-  licence keeps it out of the repository. The target ratios are of one
-  screenshot. Core Text was not run, so what it does is inferred, not
-  seen. Each glyph is weighed over its own image, as if no two touched;
-  at a monospace advance at 28 px they barely do. Ink is counted over
-  the ground, so the window's lighter ground adds nothing to it, where
-  a screenshot cropped around the text counts the ground's 7 a pixel.
+  licence keeps it out of the repository. It is fitted at one size,
+  28 px. The dilation is a fixed number of pixels, where Pathfinder
+  reads Core Text's stem darkening as growing with the size below about
+  25 px ("Risks", in [rendering-prior-art.md](rendering-prior-art.md);
+  read, not verified): at other sizes the match is not measured (rdm
+  task `editor-render-weight-at-other-sizes`). The target is Core Text
+  drawing offscreen into a bitmap, not TextEdit on screen; whether the
+  window now looks as heavy as TextEdit is the owner's to say by eye
+  (`docs/dev-practices/on-demand-checks.md`, "The weight beside
+  TextEdit, by eye"), and is not yet said.
 
-  Pinned in `crates/editor-render-wgpu/src/weight_tests.rs`, which
-  states each candidate's direction and prints the whole table with its
-  ranking: `cargo test --locked -p editor-render-wgpu --lib weight_tests
-  -- --nocapture`. Two runs print the same table. Whether the editor
-  should match the platform's weight is an open question ("The weight
-  of text beside the platform's").
+  Pinned in `crates/editor-render-wgpu/src/weight_tests.rs`: the macOS
+  setting within a tenth of both counts, and no worse than its
+  neighbours on the grid and the default; the counts are printed by
+  `cargo test --locked -p editor-render-wgpu --lib weight_tests --
+  --nocapture`, and two runs print the same. That the GPU draws what
+  the CPU draws at the macOS weight is checked on demand, by `mise run
+  render-gpu` and `mise run linux-render`.
 - **Antialiasing is a setting, and by default follows the scale:**
   subpixel masks below 2 physical pixels to a logical one, plain masks
   from 2 up. The order of a display's colour stripes cannot be asked of
   the window system, so it is a setting too (red, green, blue unless
-  told otherwise). Hinting is on, as a setting. A renderer says which
+  told otherwise). Hinting is a setting, on by default and off at the
+  macOS weight (`Settings::core_text()`). A renderer says which
   kind of mask its last draw asked its glyph images in (`masks()` on
   both adapters: plain, or subpixel with the order of the stripes; none
   before a first draw). It is what the draw did, kept as it did it, and
@@ -1825,23 +1845,6 @@ frame journal and the renderer's counters.
 
 ## Open questions
 
-- **The weight of text beside the platform's.** The window's text is
-  lighter than Core Text's, by a gap no one measured cause explains
-  ("The renderer, as built"). Two policies: (a) keep linear-correct
-  blending as it is, and the text as light as it comes; or (b) match
-  Core Text's weight. For (b), the means the measurement shows, each
-  of which closes part of the gap: the coverage adjustment's amount
-  (`CONTRAST` in `crates/editor-render-wgpu/src/blend.rs`, one
-  constant, already in the shader's globals), between 0.5 and 1 by the
-  table; outline dilation, which would be a new rasteriser setting
-  (swash's `embolden` does it), about 0.3 px of stem; theme colours
-  nearer black on white; or blending on sRGB values, which gives up
-  linear light. Any of them changes the reference image
-  (`tests/render/frame.png`), which a person must make again and look
-  at, and a change to the shader needs `mise run render-gpu` again.
-  Running Core Text itself on the fixture, in an on-demand macOS
-  example, would replace the screenshot's ratios with measured ones.
-  It awaits the owner (rdm task `editor-render-text-weight-policy`).
 - **A summarised tree for the display layers.** The rope is a library's
   ("Text", as built). Display layers, excerpt buffers and decoration
   interval trees favour a sum tree in the style of Zed's; whether they get
@@ -2098,11 +2101,12 @@ frame journal and the renderer's counters.
   subpixel masks and in plain ones, and that path of the shader is only
   validated. COLR version 1 glyphs are not drawn in colour by `swash` at
   the pin, and a colour bitmap's alpha convention was not checked.
-- **What only a person at a display can tune.** Hinting (on), the
-  coverage adjustment for thin dark text (its amount is 0, which changes
-  nothing; what other amounts do to the weight of a run is measured, in
-  "The renderer, as built", and the choice is the open question "The
-  weight of text beside the platform's"), the amount of synthetic bold, where an underline and a
+- **What only a person at a display can tune.** Hinting (on by
+  default, off at the macOS weight), the weight of text (a per-platform
+  setting: linear by default, and on macOS fitted to Core Text's drawing
+  of one sentence at one size, "The renderer, as built"; whether it
+  looks right beside TextEdit is the owner's to say by eye), the
+  amount of synthetic bold, where an underline and a
   strike-through sit (the frame carries no metric for either), and the
   default atlas budget and page size. The order of a display's colour
   stripes is a setting nobody sets yet.

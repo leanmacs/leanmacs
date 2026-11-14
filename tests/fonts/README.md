@@ -35,8 +35,10 @@ advance, an offset, a variation coordinate or a height of a font.
   than the `a` left as its outline is (the rasteriser's tests,
   `crates/editor-render-wgpu/src/raster.rs`).
 - Noto Sans Mono draws `|` as one upright stem, so the coverage summed
-  across its middle row is the stem's width in pixels (the measurement
-  of a run's weight, `crates/editor-render-wgpu/src/weight_tests.rs`).
+  across its middle row is the stem's width in pixels (the rasteriser's
+  dilation, `crates/editor-render-wgpu/src/raster.rs`). It is also the
+  stand-in for Menlo that Core Text's reference drawing of the weight
+  sentence is made from (`tests/coretext/README.md`).
 
 ## Where they come from
 

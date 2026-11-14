@@ -367,6 +367,26 @@ front, where the first draw presents and a second answers the damage
 idle second begins); the whole task, both programs; input checked line
 by line; a resize by hand; the window covered and uncovered.
 
+### The window at the macOS weight, without a person
+
+On 2026-11-14 the agent that implemented the macOS weight ran the second
+program alone (`cargo run --locked --package editor-ffi --example
+window`), on the same machine, with no person at it. The window was
+occluded for its first 30 seconds (three draws not presented: `the
+window's surface gave no texture: Occluded`), then shown; one frame was
+presented, in plain masks at scale 2, and read back:
+
+```
+window: frame 1: read back from the surface, 64 of 1920000 pixels differ from the headless renderer's, the worst by 1 of 255
+```
+
+So on Metal the window's picture at the macOS weight is the headless
+renderer's at the same settings (`Settings::core_text()` on both). The
+run failed, exit status 1, on what needs a person or a shown window: `the
+window was never seen idle: no frame was presented` before the idle second
+could begin, and `no key and no pointer event came off the queue`. The
+first program, the contract, was not run. Nobody looked at the window.
+
 ## Scale and fullscreen, by hand
 
 ```sh
@@ -430,10 +450,15 @@ The steps:
    family, regular, at 14 points, at 100%, and put it beside the window.
    Pass: the letters are the same height and a row is as tall, by eye.
    Before this phase's change the window's text was 16 pixels whatever
-   the display, a little over half that size at scale 2. The window's
-   text is known to look lighter than TextEdit's; that is not a failure
-   of this step (see "The weight of text beside the platform's" in
-   `docs/design/text-and-display.md`, "Open questions").
+   the display, a little over half that size at scale 2. **Weight.**
+   Pass: by eye, the window's text is not lighter than TextEdit's in
+   the same family and size. Check it in Menlo (`--family Menlo`, as
+   above) and in the fixture's default family (`mise run
+   window-by-hand`). On macOS the window draws to Core Text's weight
+   (`Settings::core_text()`, "The renderer, as built" in
+   `docs/design/text-and-display.md`); before that change it was known
+   to look lighter. Record what was seen under "The weight beside
+   TextEdit, by eye", below.
 3. **Two displays.** Drag the window to the display at scale 1 and let
    go; wait a second. Expected in the terminal: `input: resized … at
    scale 1`, once for the scale and again for the size (winit sends one
@@ -570,6 +595,32 @@ the size beside another app.
 Not yet run. Record here, and in the phase body: the machine, the two
 displays and their scales; the lines of steps 1, 3 and 7; and what was
 seen at steps 2 to 6.
+
+### The weight beside TextEdit, by eye
+
+**For the owner.** This is the check that the window's text, drawn on
+macOS to Core Text's weight, no longer looks lighter than TextEdit's
+(rdm task `editor-render-text-lighter-than-core-text`). The weight was
+fitted to Core Text drawing offscreen, and the window was never seen
+beside TextEdit since; only a person at the display can say whether it
+now looks right.
+
+On macOS, at a display of scale 2, run
+
+```sh
+cargo run --locked --package editor-ffi --example window -- --until-closed --no-picture --family Menlo
+```
+
+and then `mise run window-by-hand`, and put each beside TextEdit
+showing `the window draws this` in the same family, regular, 14 points,
+at 100%. Pass: the window's text is not lighter than TextEdit's.
+
+Record here, and in the task: the date, the machine and the display's
+scale; for Menlo and for the fixture's default family, whether the
+window's text looked lighter, as heavy, or heavier than TextEdit's; and,
+if it helps, a screenshot of each pair.
+
+Not yet run.
 
 ## The system's fonts, on demand
 
@@ -921,7 +972,11 @@ the first two held:
    of two physical pixels to a logical one gets them, with the headless
    adapter's picture of the same frame drawn the same way. An adapter
    that cannot blend by a coverage for each channel draws only the
-   second. The fixture has no colour glyph, so a colour image is drawn by
+   second. Then the same frame at the macOS weight
+   (`Settings::core_text()`), in plain masks and, where the adapter can,
+   in subpixel masks, each against the headless adapter's picture drawn
+   with the same settings: the contrast reaches the shader and the
+   dilation the atlas. The fixture has no colour glyph, so a colour image is drawn by
    no GPU here: that path of the shader is validated in the gate and has
    never been seen;
 3. prints how long a first frame, a frame with a row edited and a frame
@@ -938,6 +993,15 @@ blending by a coverage for each channel; all 9 properties of the contract
 held; 42 of the frame's 24576 pixels differed from the reference image,
 and 14 from the headless adapter's picture in plain masks, the worst by 1
 of 255 in each.
+
+It was run again on 2026-11-14 on the same machine (macOS 27.2, Metal on
+the Apple M5 Max), with the macOS weight's comparisons: exit status 0;
+all 9 properties held; 42 pixels differed from the reference image and 14
+from the plain masks, as before; at the macOS weight, 35 differed in plain
+masks and 64 in subpixel masks, the worst by 1 of 255 in each. With the
+contrast left out of the CPU's side only (a change made for the run and
+undone), the macOS weight's comparisons failed, the worst by 5: so the
+check sees the shader's contrast.
 
 ## The renderer on Linux, on demand
 
@@ -957,6 +1021,12 @@ through Vulkan, blending by a coverage for each channel; all 9 properties
 held; 247 pixels differed from the reference image, and 168 from the
 headless adapter's picture in plain masks, the worst by 1 of 255 in each.
 It has not been run on x86_64.
+
+It was run again on 2026-11-14 (aarch64, on an Apple M5 Max host), with the
+macOS weight's comparisons: exit status 0; llvmpipe (LLVM 19.1.7) through
+Vulkan; all 9 properties held; 247 and 168 pixels differed, as before; at
+the macOS weight, 246 differed in plain masks and 394 in subpixel masks,
+the worst by 1 of 255 in each.
 
 ## The reference image, on demand
 
