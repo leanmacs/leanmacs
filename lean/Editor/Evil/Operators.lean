@@ -47,7 +47,10 @@ order:
   cancels it: nothing is taken, the register is as it was, and a change
   begins no insert. The operate command sees to it before it asks for a
   stretch.
-- **Cells from the lower of the two to the higher.** A motion whose reach
+- **A motion whose reach is `lines`** takes the lines of the head and of
+  its target, and those between.
+- **Otherwise cells from the lower of the two to the higher.** A motion
+  whose reach
   is `inclusive` takes the cell at the higher end too, unless that end is
   where its line's content ends: a line break, or the text's end.
 - **The stretch stops no later than where the last line's content ends**
@@ -143,6 +146,8 @@ module docs). -/
 def stretch (operator : Vocabulary.Operator) (text : TextId) (head : Nat)
     (taken : Vocabulary.Taken) : TextM Vocabulary.Stretch := do
   let high := max head taken.head
+  if taken.reach == .lines then
+    return .lines (← rowOf text (min head taken.head)) (← rowOf text high)
   -- Through the cell at the higher end, where there is one on its line.
   let through ←
     if taken.reach == .inclusive && high < (← text.motion .lineEnd high) then

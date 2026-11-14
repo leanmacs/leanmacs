@@ -30,6 +30,21 @@ means, and what a motion does when it cannot go the whole way, is Vim's
 | `line-end` | `rowsDown (count - 1)`, then `lineEnd` | The end of the line `count - 1` lines below. With fewer lines below it goes to the last line's end. On the last line with a count above 1 it does not move, which is Vim's failed motion |
 | `first-line`, `last-line` | `offsetOf` of the row's start, then `lineFirstNonBlank` | The line number, from 1, stopped at the last line. With none: the first line, and the last |
 
+What each says of itself for an operator (`Editor/Vocabulary.lean`,
+"Motions"; what an operator then takes is `Editor/Evil/Operators.lean`):
+
+| Motion | Reach | Where it leads an operator, where that is not its target | Fails |
+|---|---|---|---|
+| `left`, `right` | exclusive | | Never |
+| `down`, `up` | lines | | On the last line, and on the first. A count past the text stops there and does not fail |
+| `word-forward`, `bigword-forward` | exclusive | The last step stops where its line's content ends, and from an empty line goes to the next line's start. For an operator that replaces, on a cell that is neither a blank nor a line break: the end of the word, inclusive | Never |
+| `word-backward`, `bigword-backward` | exclusive | | When a step is asked of it at the text's start |
+| `word-end`, `bigword-end` | inclusive | | Never |
+| `line-start` | exclusive | | Never |
+| `line-first-non-blank` | exclusive | On a line of blanks only, the line's last blank | Never |
+| `line-end` | inclusive | | With a count above 1 on the last line |
+| `first-line`, `last-line` | lines | | Never |
+
 - **The last line** (`lastLine`) is the last row a cursor may rest in
   outside insert state: the row before the empty last row of a text that
   ends in a line feed, and the last row otherwise.
@@ -245,9 +260,12 @@ otherwise: `count` lines, 1 with no count, and no further than the last
 line (`lastLine`) or the first. It aims for the wanted column it is handed,
 or for the cursor's own column, counted in cells, when it is handed none,
 and keeps the column it aimed for: on a row with fewer cells the raw
-target is where the row's content ends. -/
+target is where the row's content ends. An operator takes the whole lines
+of both ends. With no line to go to, on the last line going down and on the
+first going up, it has failed. -/
 def vertical (name : String) (down : Bool) : Vocabulary.Motion :=
   { name
+    reach := .lines
     target := fun text origin => do
       let point ← text.pointOf origin.head .cells
       let last ← lastLine text
@@ -260,7 +278,7 @@ def vertical (name : String) (down : Bool) : Vocabulary.Motion :=
           text.motion (to cells) origin.head
         | .lineEnd =>
           text.motion .lineEnd (← text.motion (to 0) origin.head)
-      return { head, wanted := some column } }
+      return { head, wanted := some column, failed := rows == 0 } }
 
 /-- Down by lines of the text. -/
 def down : Vocabulary.Motion :=
@@ -273,9 +291,11 @@ def up : Vocabulary.Motion :=
 /-- The motion called `name` to a line: with a count, the line of that
 number, from 1, or the last line (`lastLine`) when the text has fewer; with
 none, the last line when `last` and the first otherwise. It goes to the
-line's first character that is not a blank, which is Vim's default. -/
+line's first character that is not a blank, which is Vim's default. An
+operator takes the whole lines of both ends. -/
 def toLine (name : String) (last : Bool) : Vocabulary.Motion :=
   { name
+    reach := .lines
     target := fun text origin => do
       let final ← lastLine text
       let row :=
