@@ -206,8 +206,8 @@ The config session's decisions are tested here too, with no elaborator:
 
 - `setupChecks`: what a `setup` registers, commands, stores, jobs, key
   bindings and modes, and when it is refused;
-- `registryChecks`: the registry, its commands and its jobs, replaced by
-  owner;
+- `registryChecks`: the registry, its commands, its jobs, its key
+  bindings, its modes and its ex bindings, replaced by owner;
 - `storeChecks`: the rule that meets a new config's stores with the cells
   there are, one check for each case;
 - `sessionChecks`: one reload (`Config.build`), on a fake elaborator that
@@ -1954,7 +1954,53 @@ def registryChecks : List Check :=
             (replaced.mode? "gone").isNone &&
             parentOf replaced "new" == some "config" &&
             replaced.modes.map (·.mode.name) == #["listing", "kept", "new"] &&
-            (registry.mode? "none").isNone) }]
+            (registry.mode? "none").isNone) },
+    { name :=
+        "replacing an owner's ex bindings removes its old ones and adds the new, and leaves another owner's; a name nobody bound is not found"
+      run :=
+        let registry : Config.Registry :=
+          (({} : Config.Registry).replaceEx .compiled
+                #[{ name := "w", command := "theirs" }]).replaceEx
+            .config
+            #[{ name := "greet", command := "one", takes := .text },
+              { name := "old", command := "gone" }]
+        let replaced := registry.replaceEx .config #[{ name := "greet", command := "two" }]
+        pure
+          (registry.ex? "w" == some { name := "w", command := "theirs" } &&
+            registry.ex? "greet" == some { name := "greet", command := "one", takes := .text } &&
+            registry.ex? "old" == some { name := "old", command := "gone" } &&
+            replaced.ex? "w" == some { name := "w", command := "theirs" } &&
+            replaced.ex? "greet" == some { name := "greet", command := "two" } &&
+            replaced.ex? "old" == none &&
+            replaced.ex.size == 2 &&
+            registry.ex? "missing" == none) },
+    { name :=
+        "of two owners' ex bindings of one name the latest entry is the one found: config's while it is there, and the compiled one again once config binds nothing"
+      run :=
+        let registry : Config.Registry :=
+          (({} : Config.Registry).replaceEx .compiled
+                #[{ name := "w", command := "compiled" },
+                  { name := "q", command := "kept" }]).replaceEx
+            .config #[{ name := "w", command := "config" }]
+        pure
+          ((registry.ex? "w").map (·.command) == some "config" &&
+            (registry.ex? "q").map (·.command) == some "kept" &&
+            ((registry.replaceEx .config #[]).ex? "w").map (·.command) == some "compiled") },
+    { name :=
+        "replacing an owner's ex bindings leaves the commands, the jobs, the key bindings and the modes as they were"
+      run :=
+        let registry : Config.Registry :=
+          (((({} : Config.Registry).replace .config #[registration "greet" "1"]).replaceJobs .config
+                    #[jobRegistration "count" "1"]).replaceBindings
+                .config #[binding "C-c b" "one"]).replaceModes
+            .config #[{ name := "listing" }]
+        let replaced := registry.replaceEx .config #[{ name := "w", command := "write" }]
+        pure
+          (replaced.names == #["greet"] && registeredTexts replaced "greet" == some #["1"] &&
+            replaced.jobs.map (·.registration.name) == #["count"] &&
+            boundTo replaced "C-c b" == some (invoke "one") &&
+            replaced.modes.map (·.mode.name) == #["listing"] &&
+            (replaced.ex? "w").isSome) }]
 
 /-- A declaration of the store `name` at `version`, which starts at the
 number 0 and accepts any number. It migrates a number written at version 1 by

@@ -1,6 +1,7 @@
 import Editor.Command.Call
 import Editor.Command.Dispatch
 import Editor.Config.Owner
+import Editor.Ex.Line
 import Editor.InputScheme
 import Editor.Mode
 import Editor.Setup
@@ -80,6 +81,16 @@ is used in its place until a reload drops it.
   derived modes run their parent's body first. A name no mode is
   registered under is refused there (`ModeRefusal.noSuchMode`). Adding a
   minor mode runs no action.
+
+## Ex bindings
+
+An ex name is bound to a command's name (`Ex.Binding`,
+`Editor/Ex/Line.lean`), held by owner in an `ExEntry` and replaced as a set
+(`replaceEx`), as a key binding is. `ex?` finds the latest entry of a name,
+so config's binding of an ex name a compiled binding has is the one a line
+runs while config binds it, and the compiled one runs again once a reload
+drops it. The command's name is not looked up here: it is looked up when
+the line is run. An ex binding is not a command and is not counted as one.
 
 Motions, operators and text objects will be registered the same way, as
 vocabulary: entries by owner, replaced as a set, the latest of a name
@@ -175,8 +186,16 @@ structure ModeEntry where
   /-- The mode. -/
   mode : Mode
 
-/-- The editor's table of commands, of jobs, of key bindings and of modes,
-oldest entry first. -/
+/-- An ex entry of the registry: an ex binding and its owner. -/
+structure ExEntry where
+  /-- Who bound the ex name. -/
+  owner : Owner
+  /-- The binding. -/
+  binding : Ex.Binding
+  deriving DecidableEq, Repr
+
+/-- The editor's table of commands, of jobs, of key bindings, of modes and of
+ex bindings, oldest entry first. -/
 structure Registry where
   /-- The command entries. -/
   entries : Array Entry := #[]
@@ -186,8 +205,20 @@ structure Registry where
   bindings : Array BindingEntry := #[]
   /-- The mode entries. -/
   modes : Array ModeEntry := #[]
+  /-- The ex bindings. -/
+  ex : Array ExEntry := #[]
 
 namespace Registry
+
+/-- `registry` with every ex binding of `owner` removed and `bindings` added
+as its ex bindings. -/
+def replaceEx (registry : Registry) (owner : Owner) (bindings : Array Ex.Binding) : Registry :=
+  { registry with
+    ex := registry.ex.filter (·.owner != owner) ++ bindings.map fun binding => { owner, binding } }
+
+/-- The ex binding of the ex name `name`: the latest entry of that name. -/
+def ex? (registry : Registry) (name : String) : Option Ex.Binding :=
+  (registry.ex.findRev? (·.binding.name == name)).map (·.binding)
 
 /-- `registry` with every entry of `owner` removed and `registrations` added
 as its entries. -/
