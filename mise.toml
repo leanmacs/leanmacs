@@ -214,6 +214,19 @@ run = [
   # waits for the save, so the script has a `join` after the `wq` line,
   # which ends when the save's result has ended the loop.
   "dir=$(mktemp -d) && trap 'rm -rf \"$dir\"' EXIT && cp ../tests/headless/ex/note.txt \"$dir/note.txt\" && sed \"s|@FILE@|$dir/note.txt|\" ../tests/headless/ex/wq-script > \"$dir/script\" && out=$(.lake/build/bin/editor headless \"$(lean --print-prefix)\" .lake/build/lib/lean ../tests/headless/config \"$dir/script\") && printf '%s\\n' \"$out\" && cmp \"$dir/note.txt\" ../tests/headless/ex/note-expected && ! printf '%s\\n' \"$out\" | grep -q '^commands:'",
+  # An evil session on a real file, as a process, with no config
+  # (tests/headless/session): `:e`, a count and an operator (`2dw`), a dot
+  # repeat, an undo, a change with typed text and its dot repeat, a visual
+  # yank, a put, an undo and a redo, and `:w`, with a scene printed after
+  # each step. This entry is one shell, as the two above are: it makes a
+  # temporary directory and removes it by a trap, copies `session/verse.txt`
+  # there, and writes the script there from the template `session/script`
+  # with the copy's absolute path in place of `@FILE@`. The editor must exit
+  # with status 0, its output, with the temporary directory's path written
+  # `@DIR@`, must be exactly `session/expected` (the text, the cursor, the
+  # selection, the state and the echo of every scene), and the copy must
+  # hold the bytes of `session/verse-expected`.
+  "dir=$(mktemp -d) && trap 'rm -rf \"$dir\"' EXIT && cp ../tests/headless/session/verse.txt \"$dir/verse.txt\" && sed \"s|@FILE@|$dir/verse.txt|\" ../tests/headless/session/script > \"$dir/script\" && out=$(.lake/build/bin/editor headless \"$(lean --print-prefix)\" .lake/build/lib/lean ../tests/headless/config \"$dir/script\") && printf '%s\\n' \"$out\" | sed \"s|$dir|@DIR@|g\" | diff ../tests/headless/session/expected - && cmp \"$dir/verse.txt\" ../tests/headless/session/verse-expected",
   # The editor's failure statuses. A command line it does not understand is
   # status 2, with the usage on stderr.
   "status=0; .lake/build/bin/editor bogus || status=$?; test \"$status\" -eq 2",

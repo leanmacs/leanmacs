@@ -1,0 +1,85 @@
+# A template of a script: `mise run ffi-test` copies `verse.txt` into a
+# temporary directory, writes this file there with `@FILE@` replaced by the
+# copy's absolute path, and has the editor's headless mode run it against
+# the config in `../config/`, of which it loads nothing: there is no
+# `reload`, so every command its keys run is one the editor ships. The run
+# must exit with status 0, print exactly `expected` once the temporary
+# directory's path is written `@DIR@`, and leave the copy holding the bytes
+# of `verse-expected`.
+#
+# It is one evil session on a file: a count, an operator, a dot repeat, an
+# undo, a change with typed text and its repeat, a visual yank, a put, an
+# undo and a redo, and `:w`. A scene is printed after each step.
+
+# `:` opens the ex line and `e` opens the file. The open is a job: `join`
+# waits for its result, which makes the buffer and shows it. Without the
+# wait the keys below would be typed into the scratch buffer.
+key : Semicolon shift
+commit e @FILE@
+key <Enter> Enter -
+join
+scene
+
+# A count and an operator over a motion: `2dw` deletes two words.
+key 2 Digit2 -
+key d KeyD -
+key w KeyW -
+scene
+
+# Dot repeat: `.` deletes the next two.
+key . Period -
+scene
+
+# Undo: `u` takes the repeat back, and the cursor is where it was.
+key u KeyU -
+scene
+
+# A change with typed text: `j`, then `cw` and `new`. The view is in insert
+# state, with the bar after the text.
+key j KeyJ -
+key c KeyC -
+key w KeyW -
+key n KeyN -
+key e KeyE -
+key w KeyW -
+scene
+
+# `<Escape>` returns to normal state: the cursor is one cell back.
+key <Escape> Escape -
+scene
+
+# Dot repeat with the typed text: `w` to the next word, and `.` changes it
+# to `new` too, and leaves the view in normal state.
+key w KeyW -
+key . Period -
+scene
+
+# A visual selection: `v`, and `e` extends it to the end of the next word.
+key v KeyV -
+key e KeyE -
+scene
+
+# `y` yanks the selection and returns to normal state, with the cursor at
+# the selection's start.
+key y KeyY -
+scene
+
+# A put: `$` to the line's last character, and `p` puts the yanked text
+# after it. The cursor is on the last character put.
+key $ Digit4 shift
+key p KeyP -
+scene
+
+# An undo and a redo: `u` takes the put back, and `C-r` puts it again.
+key u KeyU -
+scene
+key r KeyR control
+scene
+
+# `:w` saves. The save is a job: `join` waits for its result, so the host's
+# lines and the scene are in one order.
+key : Semicolon shift
+commit w
+key <Enter> Enter -
+join
+scene
