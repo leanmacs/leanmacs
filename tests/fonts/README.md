@@ -17,7 +17,7 @@ whole upstream files are 7.7 MB; these are 119 KB.
 
 ## What the tests rest on
 
-Six facts of these files, and no other: no test states a glyph id, an
+Seven facts of these files, and no other: no test states a glyph id, an
 advance, an offset, a variation coordinate or a height of a font.
 
 - Noto Sans has a ligature for `fi`: the two characters are one glyph.
@@ -34,6 +34,9 @@ advance, an offset, a variation coordinate or a height of a font.
   hints: at 16 pixels the `a` fitted to the pixel grid is another image
   than the `a` left as its outline is (the rasteriser's tests,
   `crates/editor-render-wgpu/src/raster.rs`).
+- Noto Sans Mono draws `|` as one upright stem, so the coverage summed
+  across its middle row is the stem's width in pixels (the measurement
+  of a run's weight, `crates/editor-render-wgpu/src/weight_tests.rs`).
 
 ## Where they come from
 

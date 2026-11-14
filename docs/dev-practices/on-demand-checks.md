@@ -430,7 +430,10 @@ The steps:
    family, regular, at 14 points, at 100%, and put it beside the window.
    Pass: the letters are the same height and a row is as tall, by eye.
    Before this phase's change the window's text was 16 pixels whatever
-   the display, a little over half that size at scale 2.
+   the display, a little over half that size at scale 2. The window's
+   text is known to look lighter than TextEdit's; that is not a failure
+   of this step (see "The weight of text beside the platform's" in
+   `docs/design/text-and-display.md`, "Open questions").
 3. **Two displays.** Drag the window to the display at scale 1 and let
    go; wait a second. Expected in the terminal: `input: resized … at
    scale 1`, once for the scale and again for the size (winit sends one

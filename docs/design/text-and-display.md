@@ -1422,6 +1422,64 @@ and the journal read from Lean.
   coverage of white on black is 188, not 128. On a GPU a coverage for
   each channel is dual-source blending; an adapter without it is given
   plain masks and one coverage, and says so.
+- **The window's text is lighter than Core Text's, and no one measured
+  cause explains it.** Seen by the owner on 2026-11-14: the window in
+  Menlo 14 pt at scale 2 beside TextEdit in Menlo Regular 14 pt at
+  100%, the same size, but TextEdit "much heavier". On the owner's
+  screenshot the sentence `the window draws this` has 1234 pixels
+  darker than mid-grey in the window and 1839 in TextEdit (1.49 times),
+  and about 8% less ink in the window (TextEdit's taken as 1.09 times).
+  The same sentence was then weighed with the renderer's own rasteriser
+  and blend, as the window draws it (the baseline, B: 28 px plain masks
+  at bin 0, hinted, `#202020` on `#f8f8f8`, in linear light), and with
+  each candidate cause changed on its own and in pairs. *Dark* is the
+  pixels below 128; *ink* is how much darker than the ground the pixels
+  are, summed. Key rows:
+
+  | Candidate | Dark | Ink | Dark / B | Ink / B |
+  |---|---|---|---|---|
+  | B, the window as drawn | 1282 | 313941 | 1.000 | 1.000 |
+  | C, black on white, as TextEdit draws | 1281 | 356541 | 0.999 | 1.136 |
+  | G, blending on the sRGB values | 1644 | 359475 | 1.282 | 1.145 |
+  | H, hinting off | 1330 | 318526 | 1.037 | 1.015 |
+  | D(0.3), each stem 0.3 px thicker | 1505 | 354386 | 1.174 | 1.129 |
+  | D(0.6), each stem 0.6 px thicker | 1624 | 391715 | 1.267 | 1.248 |
+  | K(0.5), the coverage adjustment at 0.5 | 1527 | 336442 | 1.191 | 1.072 |
+  | K(1), the coverage adjustment at 1 | 1649 | 365699 | 1.286 | 1.165 |
+  | G with D(0.3) | 1764 | 400068 | 1.376 | 1.274 |
+
+  A candidate explains the gap when both its ratios are within 10% of
+  the owner's, 1.49 and 1.09; candidates are ranked by the two errors,
+  each a part of its target, added. None is within both. The nearest
+  are G (error 0.190), K(1) (0.206) and K(0.5) (0.218); the nearest
+  pair is G with D(0.3) (0.246), and outline dilation alone comes next,
+  D(0.3) at 0.248. What the numbers do show: the gap is mostly in the
+  pixels that cross mid-grey, not in ink, and the candidates that come
+  nearest (G and K) darken the partly covered pixels at a glyph's edge
+  rather than add outline. D adds ink as fast as dark pixels, and past
+  0.3 px overshoots the ink: D(0.6), Pathfinder's macOS stem darkening
+  at 28 px ("Risks", in
+  [rendering-prior-art.md](rendering-prior-art.md)), has 25% more ink
+  for 27% more dark pixels. TextEdit's colours add ink over the ground
+  and no dark pixels: in linear light the window's grey on its lighter
+  grey crosses mid-grey at about the coverage black on white does.
+  Hinting moves little. The baseline's 1282 dark pixels are within 4%
+  of the owner's 1234 for the window.
+
+  The caveats. The font is Noto Sans Mono, a stand-in for Menlo, whose
+  licence keeps it out of the repository. The target ratios are of one
+  screenshot. Core Text was not run, so what it does is inferred, not
+  seen. Each glyph is weighed over its own image, as if no two touched;
+  at a monospace advance at 28 px they barely do. Ink is counted over
+  the ground, so the window's lighter ground adds nothing to it, where
+  a screenshot cropped around the text counts the ground's 7 a pixel.
+
+  Pinned in `crates/editor-render-wgpu/src/weight_tests.rs`, which
+  states each candidate's direction and prints the whole table with its
+  ranking: `cargo test --locked -p editor-render-wgpu --lib weight_tests
+  -- --nocapture`. Two runs print the same table. Whether the editor
+  should match the platform's weight is an open question ("The weight
+  of text beside the platform's").
 - **Antialiasing is a setting, and by default follows the scale:**
   subpixel masks below 2 physical pixels to a logical one, plain masks
   from 2 up. The order of a display's colour stripes cannot be asked of
@@ -1767,6 +1825,23 @@ frame journal and the renderer's counters.
 
 ## Open questions
 
+- **The weight of text beside the platform's.** The window's text is
+  lighter than Core Text's, by a gap no one measured cause explains
+  ("The renderer, as built"). Two policies: (a) keep linear-correct
+  blending as it is, and the text as light as it comes; or (b) match
+  Core Text's weight. For (b), the means the measurement shows, each
+  of which closes part of the gap: the coverage adjustment's amount
+  (`CONTRAST` in `crates/editor-render-wgpu/src/blend.rs`, one
+  constant, already in the shader's globals), between 0.5 and 1 by the
+  table; outline dilation, which would be a new rasteriser setting
+  (swash's `embolden` does it), about 0.3 px of stem; theme colours
+  nearer black on white; or blending on sRGB values, which gives up
+  linear light. Any of them changes the reference image
+  (`tests/render/frame.png`), which a person must make again and look
+  at, and a change to the shader needs `mise run render-gpu` again.
+  Running Core Text itself on the fixture, in an on-demand macOS
+  example, would replace the screenshot's ratios with measured ones.
+  It awaits the owner (rdm task `editor-render-text-weight-policy`).
 - **A summarised tree for the display layers.** The rope is a library's
   ("Text", as built). Display layers, excerpt buffers and decoration
   interval trees favour a sum tree in the style of Zed's; whether they get
@@ -2025,7 +2100,9 @@ frame journal and the renderer's counters.
   the pin, and a colour bitmap's alpha convention was not checked.
 - **What only a person at a display can tune.** Hinting (on), the
   coverage adjustment for thin dark text (its amount is 0, which changes
-  nothing), the amount of synthetic bold, where an underline and a
+  nothing; what other amounts do to the weight of a run is measured, in
+  "The renderer, as built", and the choice is the open question "The
+  weight of text beside the platform's"), the amount of synthetic bold, where an underline and a
   strike-through sit (the frame carries no metric for either), and the
   default atlas budget and page size. The order of a display's colour
   stripes is a setting nobody sets yet.

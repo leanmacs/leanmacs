@@ -418,7 +418,17 @@ port that contains it.
   a native back end be added later if measurement says so.
 - **Low-resolution displays.** Zed carried complaints about blurry text on
   Linux for years. Subpixel antialiasing and gamma correction have to be
-  planned, not added.
+  planned, not added. Gamma-correct blending makes dark text on a light
+  ground thinner, and Pathfinder answers it with stem darkening: its
+  outlines are expanded by `0.0121` of the size in pixels across and
+  `0.0121 × 1.25` down, with a maximum of 0.3 device pixels each
+  (`MAX_STEM_DARKENING_AMOUNT`), to "approximate
+  the macOS look" of 10.13 (`content/src/effects.rs` and
+  `content/src/dilation.rs` in `servo/pathfinder` at `6c3c046`; read,
+  not verified against macOS). Each edge moves out by that amount, so
+  at 28 pixels a stem is 0.6 pixels thicker. What that does to the
+  weight of the window's text is measured in
+  [text-and-display.md](text-and-display.md) ("The renderer, as built").
 - **Vello is young**: its GPU path and its glyph crate are both described
   as immature. It was the first candidate for drawing and glyph caching
   behind the `Renderer` port, and we were to write our own atlas only if
