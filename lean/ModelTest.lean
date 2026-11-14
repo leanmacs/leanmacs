@@ -12112,6 +12112,15 @@ def evilMotionChecks : List Check :=
                   { command := Vim.moveCommand, arguments := [.str "nowhere", .nat 0] })
             driver.loop.state.echo == "nowhere: no such motion" && evilShown driver == "a|bc" },
     { name :=
+        "the move command run by its name, which hands it no argument, says that no motion was named and what it expects, which is not what it says of a name the vocabulary has no motion of, and leaves the cursor where it was"
+      run := do
+        let some driver := evilDriver "a|bc" | throw (IO.userError "no driver")
+        let (ran, _) := driver.stepped (driver.loop.runNamed driver.handed Vim.moveCommand)
+        let echo := ran.loop.state.echo
+        unless echo == "move: no motion named (expects a motion's name, then an optional count)" do
+          throw (IO.userError s!"the echo area says {repr echo}")
+        return echo != Evil.noSuchMotion "" && evilShown ran == "a|bc" },
+    { name :=
         "a motion is no step of the history: after it the buffer's tree has no node more and nothing pending, and the buffer is not modified"
       run :=
         pure <|

@@ -34,6 +34,12 @@ looks the motion's name up in, so the caller supplies the vocabulary.
   number, with 0 for none, as the Vim scheme lays a move out
   (`Editor/InputScheme/Vim.lean`, "Edits"). A name with no entry says
   `<name>: no such motion` in the echo area and moves nothing.
+- **A call that names no motion says so, apart from a name with no
+  entry.** Run by its name, which hands a command no argument, or called
+  with a first argument that is not a string, it says
+  `move: no motion named` and what it expects (`noMotionNamed`), and moves
+  nothing: the reader is told the call was malformed, not that a name was
+  misspelt.
 - **It reads the primary range of its target's selection**, asks the motion
   for the raw target from that range's head, rests the raw target by the
   rule of the call's report ("Where a cursor rests"), and places one range
@@ -212,6 +218,13 @@ has no motion of. -/
 def noSuchMotion (name : String) : String :=
   s!"{name}: no such motion"
 
+/-- What the move command says in the echo area when it is called with no
+motion's name, which is when its first argument is not a string: the call
+is malformed, which is another fault than a name the vocabulary has no
+motion of (`noSuchMotion`), so it says what the command expects. -/
+def noMotionNamed : String :=
+  "move: no motion named (expects a motion's name, then an optional count)"
+
 /-- What the command typed text runs says in the echo area when it is called
 with no string to insert. -/
 def noText : String :=
@@ -223,14 +236,16 @@ its second is the count, 0 for none. The head of the primary range of the
 target's selection goes where the motion leads, rested by the rule of the
 call's report, and the selection is one range of the report's shape, from
 the anchor it had where the report says a motion extends the selection,
-and with both ends on the new head otherwise. A name with no motion is
-said in the echo area, and nothing moves. -/
+and with both ends on the new head otherwise. A call that names no motion
+(`noMotionNamed`) and a name with no motion (`noSuchMotion`) are each said
+in the echo area, and nothing moves. -/
 def move (motions : Array Vocabulary.Motion) (call : Call) : EditorM Unit := do
-  let (name, count) :=
+  let named : Option (String × Option Nat) :=
     match call.arguments with
-    | .str name :: .nat count :: _ => (name, if count == 0 then none else some count)
-    | .str name :: _ => (name, none)
-    | _ => ("", none)
+    | .str name :: .nat count :: _ => some (name, if count == 0 then none else some count)
+    | .str name :: _ => some (name, none)
+    | _ => none
+  let some (name, count) := named | message noMotionNamed
   let some motion := motions.find? (·.name == name) | message (noSuchMotion name)
   let text := call.target.buffer.text
   let window := call.target.window

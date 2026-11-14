@@ -445,7 +445,11 @@ structure Vocabulary.Motion where
   names the default tables bind; "Motions as built"). The move command is
   a function of the table it looks names up in (`Evil.move motions`), so
   the caller supplies the vocabulary. A name with no entry says
-  `<name>: no such motion` in the echo area and moves nothing.
+  `<name>: no such motion` in the echo area and moves nothing. A call
+  that names no motion, which is the command run by its name or called
+  with a first argument that is not a string, says
+  `move: no motion named (expects a motion's name, then an optional count)`,
+  so a malformed call is not taken for a misspelt name.
 - **Config can name the table and its entries**: the root module imports
   `lean/Editor/Evil/Motions.lean`, which names no registry. So a command
   of config's runs the move command over the vocabulary that ships, or
