@@ -5523,7 +5523,7 @@ def dispatchRollbackChecks : List Check :=
             buffer.text.insert 0 "x"
             let during := { state with buffers := #[some { buffer with history := moved.tree }] }
             let before ← buffer.text.read
-            let (restored, said) ← kept.restore during
+            let (restored, said) ← kept.restore state during
             let after ← buffer.text.read
             let some again := restored.buffer? ⟨0⟩ | throw .noSuchText
             let some _ ← again.history.redo Origin.user | throw .noInverse
@@ -5709,11 +5709,117 @@ def dispatchSlowChecks : List Check :=
             logged keys (presses "C-c a C-c b") ==
               #[#[], #[], #[], #["slow command: eleven took 110 ms"]]) }]
 
+/-- Splits the window a command was called on, along rows, by the state
+request, with markers the command makes on the buffer's text first: the new
+view. Refused with `noSuchMarker` if the split is. -/
+def splitting (call : Call) : EditorM ViewId := do
+  let text := call.target.buffer.text
+  let scroll ← text.mark (.anchor { offset := 0, bias := .before })
+  let selection ← text.mark (.selection { ranges := #[⟨0, 0⟩] })
+  match ← EditorState.ask (.split call.target.window.id .rows scroll selection) with
+  | .ok view =>
+    return view
+  | .error _ =>
+    throw .noSuchMarker
+
+/-- The checks of a command's state requests in the loop
+(`Editor/Command/Dispatch.lean`, `Editor/Loop.lean`), on the editor's
+models: the loop answers them from the state it holds, keeps the state a
+command that ran to its end left, and goes back to the state from before
+one that did not. -/
+def dispatchStateChecks : List Check :=
+  let split : Dispatched := fun call => do
+    discard <| splitting call
+    return none
+  let moving : Dispatched :=
+    failingAfter fun call => do
+      -- A move in the history, recorded as a command records one: an undo
+      -- to the root, the moved tree set as the buffer's, and then an edit.
+      let state ← editorState
+      let some buffer := state.buffer? call.target.window.buffer | throw .noSuchText
+      let some moved ← (← buffer.history.sync).undo Origin.user | throw .noInverse
+      discard <| EditorState.ask (.setHistory call.target.window.buffer moved.tree)
+      buffer.text.insert 0 "x"
+  let keys :=
+    dispatchKeys [("C-c s", invoke "split"), ("C-c f", invoke "fail"), ("C-c m", invoke "moving")]
+      [("split", split), ("fail", failingAfter fun call => discard <| splitting call),
+        ("moving", moving)]
+  let oneWindow : Split := .split .rows (.window ⟨0⟩) .minibuffer
+  [{  name :=
+        "a key's command that splits its window by a state request: the loop keeps the new window after the step, well formed, and the scene shows both views"
+      run :=
+        pure <|
+          match dispatched keys (presses "C-c s") with
+          | some ((loop, _), scenes, _) =>
+            loop.state.wellFormed && loop.state.windows.map (·.id) == #[⟨0⟩, ⟨1⟩] &&
+              loop.state.frame.tree ==
+                .split .rows (.split .rows (.window ⟨0⟩) (.window ⟨1⟩)) .minibuffer &&
+              loop.state.echo == "" &&
+              scenes.back?.map (·.views.map (·.id)) == some #[⟨0⟩, ⟨1⟩]
+          | none => false },
+    { name :=
+        "a command that splits its window and is then refused leaves the state from before it: one window, the tree as it was, and the refusal in the echo"
+      run :=
+        pure <|
+          match dispatched keys (presses "C-c f") with
+          | some ((loop, _), scenes, _) =>
+            loop.state.wellFormed && loop.state.windows.map (·.id) == #[⟨0⟩] &&
+              loop.state.frame.tree == oneWindow &&
+              loop.state.echo == "fail: refused: bad range" &&
+              scenes.back?.map (·.views.map (·.id)) == some #[⟨0⟩]
+          | none => false },
+    { name :=
+        "the interrupt flag is asked before each request that reaches the models and not before a state request: with the interrupt key arriving at a command's second ask, the state request before it is answered, the text request after it is not made, and the state the command had reached is handed back"
+      run :=
+        pure <|
+          let command : EditorM Unit := do
+            discard <| createText "one"
+            EditorState.ask (.message "said")
+            discard <| createText "two"
+            EditorState.ask (.message "late")
+          let program : EditorM (Guarded Unit × EditorState) := do
+            command.dispatched {} (← EditorState.initial ⟨640, 480⟩)
+          let ran (arrivesAfter : Nat) :=
+            program.runModel { editorModel with watch := { arrivesAfter := some arrivesAfter } }
+          (match ran 1 with
+            | (.ok (outcome, state), model) =>
+              outcome == .interrupted && state.echo == "said" &&
+                model.texts.contents == #["", "one"]
+            | (.error _, _) => false) &&
+            -- Two asks for the four requests: the key placed two asks away
+            -- has not arrived when the command ends, and is one ask off.
+            match ran 2 with
+            | (.ok (outcome, state), model) =>
+              outcome == .finished () && state.echo == "late" &&
+                model.texts.contents == #["", "one", "two"] &&
+                model.watch.arrivesAfter == some 0 &&
+                model.watch.arrived == 0
+            | (.error _, _) => false },
+    { name :=
+        "a command that edits, moves in the history and records the move, edits again and is then refused: the rollback reverts the edit made since the move from the tree the command left, leaves the text at the node the move reached, says the command moved in the history, and what was undone can be redone"
+      run :=
+        pure <|
+          let program : EditorM (String × String × Array String × String) := do
+            let loop : TestLoop := { state := ← holding "one" #[⟨3, 3⟩] }
+            -- The first step records the insertion as a step of the history.
+            let (loop, _) ← stepsWith keys loop ([pressF5] ++ presses "C-c m")
+            let target ← focusedOf loop
+            let text ← target.buffer.text.read
+            let some _ ← target.buffer.history.redo Origin.user | throw .noInverse
+            return (text, loop.state.echo, loop.state.windows.map fun _ => "window",
+                ← target.buffer.text.read)
+          (program.runModel editorModel).1.toOption ==
+            some
+              ("", "moving: refused: bad range; the command moved in the history", #["window"],
+                "one") }]
+
 /-- The checks of key dispatch in the loop (`Editor/Loop.lean`), on the
 editor's models: keys through the scheme and the commands they run,
-rollback, the interrupt, and the slow-command log. -/
+rollback, the interrupt, the slow-command log, and a command's state
+requests. -/
 def dispatchChecks : List Check :=
-  dispatchKeyChecks ++ dispatchRollbackChecks ++ dispatchInterruptChecks ++ dispatchSlowChecks
+  dispatchKeyChecks ++ dispatchRollbackChecks ++ dispatchInterruptChecks ++ dispatchSlowChecks ++
+    dispatchStateChecks
 
 /-- A scheme written for the test that breaks the contract: it yields the
 first binding that the keys so far begin, so it emits on a strict prefix. -/

@@ -1,6 +1,6 @@
 import Editor.Command
 import Editor.Command.Call
-import Editor.Command.Guard
+import Editor.Command.Dispatch
 import Editor.Config.Stores
 import Editor.Event
 import Editor.InputScheme
@@ -56,14 +56,19 @@ command's name and plain arguments, and the loop runs it (`Loop.run`):
    where the scheme laid it out, and the keys that yielded it, which are
    what the scheme reported as pending before the last key, then that key's
    chord.
-4. **A refusal is said in the echo area**, `<name>: refused: ` and the
+4. **Its state requests are answered from the loop's state**
+   (`EditorM.dispatched`, `Editor/Command/Dispatch.lean`), each from the
+   state the one before left, starting with the echo area cleared. When the
+   command runs to its end, the state it left is the loop's. When it does
+   not, the loop's state is the one from before the command ("Rollback").
+5. **A refusal is said in the echo area**, `<name>: refused: ` and the
    refusal (`TextError.describe`), and the editor keeps running: the step
    is not refused, and the next key is handled. What the command did before
    it was refused is rolled back ("Rollback").
-5. **What the command asked to be written** (a command over a store) is
+6. **What the command asked to be written** (a command over a store) is
    handed back with the step (`Loop.Stepped.write`), for whoever holds the
    cells.
-6. **A slow command is logged.** The loop reads the watch port's clock just
+7. **A slow command is logged.** The loop reads the watch port's clock just
    before the command and just after it, however it ended. When it took
    longer than the threshold the step was handed (`Loop.Keys.slowAfter`,
    `Loop.slowAfter` by default), the step hands back one entry
@@ -97,7 +102,18 @@ they were before it (`docs/design/concurrency.md`, "Foreground: commands").
   each kept buffer's tree is told the revision and reverted to the kept
   state (`UndoTree.revertTo`), with the user's origin, and the tree it
   returns is the buffer's. Then each kept marker is placed back. The editor
-  state is the one before the command.
+  state is the one before the command: the windows, the buffers, the echo
+  and everything else a state request of the command changed are as they
+  were.
+- **The tree that is reverted is the one the command left.** A command can
+  move in a buffer's history and record the moved tree
+  (`StateRequest.setHistory`). The tree from before the command does not
+  know of the move, and the move dropped the inverses that tree's edges
+  cross: reverting it would be refused, or would leave a tree out of step
+  with the store. So each kept buffer is reverted from the tree it has in
+  the state the command left, when that state still has the buffer, over
+  the same text, and from the tree it had before otherwise. The buffer of
+  the state the loop keeps gets the tree that comes back.
 - **Markers are placed back, and not left to the inverse.** A marker moves
   with every transaction: a deletion and its inverse do not return a marker
   inside the deleted range to where it was, and a command can place a
@@ -120,8 +136,8 @@ they were before it (`docs/design/concurrency.md`, "Foreground: commands").
   takes back the edits made since the move and leaves the text at the node
   the move reached. The echo area ends `; the command moved in the
   history`, and the markers of that text are left where the store moved
-  them. No command can move the loop's tree until commands have a request
-  for it, so this is pinned on a state whose history was moved by hand.
+  them. It is pinned on a command that moves and records the move, and on
+  a state whose history was moved by hand.
 
 An event's own handler, such as the commit's (`Loop.insert`), is one
 transaction, which the store accepts whole or refuses whole, and is not
@@ -133,11 +149,12 @@ The Rust library raises a flag as the interrupt key arrives, before the key
 is queued, and marks that event. What the loop does with the flag is here
 (`Editor/Watch.lean` has the port):
 
-- **A command the loop runs is guarded** (`EditorM.guarded`,
-  `Editor/Command/Guard.lean`): the flag is asked before each of its
-  requests, and once it is up the command makes no further request. It is
-  then rolled back like a command that was refused, and the echo area reads
-  `<name>: interrupted`.
+- **A command the loop runs is guarded** (`EditorM.dispatched`,
+  `Editor/Command/Dispatch.lean`, as `EditorM.guarded` guards one): the
+  flag is asked before each of its requests that reaches the library, and
+  once it is up the command makes no further request. A state request is
+  answered without asking. The command is then rolled back like one that
+  was refused, and the echo area reads `<name>: interrupted`.
 - **Only the command is guarded.** The loop's own requests (keeping,
   rolling back, publishing) are not, so a flag that is up stops neither a
   rollback nor a scene.
@@ -320,6 +337,9 @@ structure Loop.Keys (scheme : InputScheme) where
   /-- How long a command may take before it is logged as slow, in
   milliseconds: one that takes longer is logged. -/
   slowAfter : Nat := Loop.slowAfter
+  /-- What a command's state requests are told of the registry
+  (`Editor/Command/Dispatch.lean`). -/
+  registered : Loop.Registered := {}
 
 /-- What a step hands back: the loop after it, and what to do next. A
 one-shot output of a step is a field here. -/
@@ -551,22 +571,30 @@ def revertBuffer (buffer : Buffer) (was : UndoTree.State) : TextM (UndoTree × B
   | none =>
     return (history, true)
 
-/-- Rolls `state` back to what was kept ("Rollback", in the module docs):
-each kept buffer's text is reverted to its kept history state, and each
-kept marker is placed back. Returns the state with the buffers' histories
-after it, and what to say of the rollback after the command's error, which
-is nothing when all of it was done.
+/-- Rolls back to what was kept ("Rollback", in the module docs), from
+`before`, the state from before the command, and `after`, the state the
+command left: each kept buffer's text is reverted to its kept history
+state, from the tree the buffer has in `after` when `after` still has it
+over the same text, and each kept marker is placed back. Returns `before`
+with the buffers' histories after it, and what to say of the rollback after
+the command's error, which is nothing when all of it was done.
 
 It is not refused. The first thing that refuses is said, `; not rolled
 back: ` and the refusal, and the rest is still done. A buffer whose history
 moved since it was kept is said too, `; the command moved in the history`,
 and the markers of its text are left where the store moved them. -/
-def Kept.restore (kept : Kept) (state : EditorState) : TextM (EditorState × String) := do
-  let mut buffers := state.buffers
+def Kept.restore (kept : Kept) (before after : EditorState) : TextM (EditorState × String) := do
+  let mut buffers := before.buffers
   let mut refusal : Option TextError := none
   let mut moved : Array TextId := #[]
   for (index, was) in kept.histories do
     let some (some buffer) := buffers[index]? | continue
+    -- The tree the command left knows of a move the command made.
+    let buffer :=
+      match after.buffer? ⟨index⟩ with
+      | some left =>
+        if left.text == buffer.text then { buffer with history := left.history } else buffer
+      | none => buffer
     match ← observing (revertBuffer buffer was) with
     | .ok (history, movedSince) =>
       buffers := buffers.modify index (·.map ({ · with history }))
@@ -583,7 +611,7 @@ def Kept.restore (kept : Kept) (state : EditorState) : TextM (EditorState × Str
     match refusal with
     | some error => s!"; not rolled back: {error.describe}"
     | none => ""
-  return ({ state with buffers }, history ++ unrestored)
+  return ({ before with buffers }, history ++ unrestored)
 
 /-- What running an invocation came to. -/
 structure Ran where
@@ -609,11 +637,13 @@ def slow (name : String) (took threshold : Nat) : Array String :=
 
 /-- Runs `invocation`, which the keys `typed` yielded, from `state` ("Running
 an invocation", in the module docs): clears the echo area, looks the
-command up, and runs it, guarded (`EditorM.guarded`), with the focused
-window, the invocation's arguments and the keys. It is not refused: a name
-with no command, a refusal of the command and an interrupt are each said in
-the echo area, and a command that was refused or interrupted is rolled back,
-with what could not be said after it.
+command up, and runs it, dispatched (`EditorM.dispatched`: guarded, with
+its state requests answered from `state`), with the focused window, the
+invocation's arguments and the keys. The state of a command that ran to its
+end is the one it left. It is not refused: a name with no command, a
+refusal of the command and an interrupt are each said in the echo area, and
+a command that was refused or interrupted is rolled back to the state from
+before it, with what could not be said after it.
 
 Only the command is guarded. What this makes of its own requests, keeping
 before it and rolling back after it, is not, so a flag that is up does not
@@ -632,14 +662,16 @@ def run (keys : Keys scheme) (state : EditorState) (invocation : Invocation) (ty
     state.focusedTarget? | return { state := said state name "no window is focused", finished := false }
   let kept ← keep state
   let started ← Watch.now
-  let outcome ← (command { target, arguments := invocation.arguments, keys := typed }).guarded
+  let (outcome, left) ←
+    (command { target, arguments := invocation.arguments, keys := typed }).dispatched
+        keys.registered state
   let log := slow name ((← Watch.now) - started) keys.slowAfter
   let failed (what : String) : EditorM Ran := do
-    let (state, unrestored) ← kept.restore state
+    let (state, unrestored) ← kept.restore state left
     return { state := said state name (what ++ unrestored), finished := false, log }
   match outcome with
   | .finished write =>
-    return { state, finished := true, write, log }
+    return { state := left, finished := true, write, log }
   | .refused refusal =>
     failed s!"refused: {refusal.describe}"
   | .interrupted =>
