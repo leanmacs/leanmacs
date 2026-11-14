@@ -20,9 +20,24 @@
 //! that the window opened; and a request to close.
 //!
 //! The command loop fixed this shape (its phase 1), so that it and the
-//! display pipeline build on one. The winit adapter maps only a dead key and
-//! a bare pointer press so far; producing the rest from winit is the display
-//! pipeline's (its phase 5).
+//! display pipeline build on one. The winit adapter produces all of it.
+//!
+//! What the shape leaves to say:
+//!
+//! - **The modifiers are those the platform last reported.** A platform may
+//!   report a modifier's own press before it says the modifier is held, as
+//!   X11 does: the press of Control then does not carry `control`. Nothing
+//!   puts that right.
+//! - **A key's text is what it produced to insert.** A release produces
+//!   none, and neither does a key known by its name (`Escape`, `Enter`,
+//!   `Tab`, `Backspace`): a control character is not text.
+//! - **A wheel's delta is positive when the content moves right and down**,
+//!   in lines or in pixels as the device counts.
+//! - **A window says how large it is in a [`Input::Resized`].** A platform
+//!   with a real window reports one straight after [`Input::Opened`], with
+//!   the size and scale it opened at: nothing else says so. A change of
+//!   scale alone is a `Resized` at the same size. The fake reports what its
+//!   script says and no more.
 //!
 //! # Where an addition goes
 //!

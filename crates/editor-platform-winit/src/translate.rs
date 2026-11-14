@@ -45,10 +45,27 @@
 //!   no button. Positive is the content moving right and down.
 //!
 //! Touch is not mapped.
+//!
+//! # Size and scale
+//!
+//! winit says the window's size when it changes and its scale factor when
+//! that does, each alone, and the port's resize carries both:
+//!
+//! - **A resize is the new size at the scale last known**, which is 1
+//!   before winit has said.
+//! - **A change of scale is a resize at the size last known and the new
+//!   scale.** The size winit then gives the window arrives as a resize of
+//!   its own. winit's event for it cannot be built outside winit either, so
+//!   [`Seen::scale`] takes the scale alone, and the handler takes the event
+//!   apart.
+//! - **A window that opens says its size and scale** ([`Seen::opened`]),
+//!   which the handler reports straight after `Opened`: nothing else in
+//!   the port says how large a window is.
 
 use editor_platform::{
-    Button, Composition, Input, Key, Modifiers, Pointer, PointerAction, WheelDelta,
+    Button, Composition, Input, Key, Modifiers, Pointer, PointerAction, Resize, WheelDelta,
 };
+use winit::dpi::PhysicalSize;
 use winit::event::{ElementState, Ime, MouseButton, MouseScrollDelta, WindowEvent};
 use winit::keyboard;
 
@@ -72,7 +89,7 @@ pub(crate) struct KeyParts<'a> {
 /// What winit has said of the window so far that the port wants on what
 /// comes after: winit says a thing once, when it changes, and the port
 /// carries it on every input.
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub(crate) struct Seen {
     /// The modifiers held, as winit last reported them.
     modifiers: Modifiers,
@@ -81,6 +98,24 @@ pub(crate) struct Seen {
     position: (f64, f64),
     /// The buttons held, in the order they went down.
     held: Vec<Button>,
+    /// The window's drawable size, in physical pixels; none until winit
+    /// says.
+    size: PhysicalSize<u32>,
+    /// The window's scale factor; 1 until winit says.
+    scale: f64,
+}
+
+impl Default for Seen {
+    /// What is known of a window winit has said nothing of.
+    fn default() -> Self {
+        Self {
+            modifiers: Modifiers::default(),
+            position: (0.0, 0.0),
+            held: Vec::new(),
+            size: PhysicalSize::new(0, 0),
+            scale: 1.0,
+        }
+    }
 }
 
 impl Seen {
@@ -145,9 +180,38 @@ impl Seen {
                 };
                 Some(self.pointer(PointerAction::Wheel(delta), None))
             }
+            WindowEvent::Resized(size) => {
+                self.size = *size;
+                Some(self.resized())
+            }
             WindowEvent::CloseRequested => Some(Input::CloseRequested),
             _ => None,
         }
+    }
+
+    /// Takes in that the window has opened, `size` at `scale`, and gives
+    /// what the port reports for it after [`Input::Opened`].
+    pub(crate) fn opened(&mut self, size: PhysicalSize<u32>, scale: f64) -> Input {
+        self.size = size;
+        self.scale = scale;
+        self.resized()
+    }
+
+    /// Takes in that the window's scale factor is now `scale`, and gives
+    /// what the port reports for it. It takes the scale and not winit's
+    /// whole event, which cannot be built outside winit.
+    pub(crate) fn scale(&mut self, scale: f64) -> Option<Input> {
+        self.scale = scale;
+        Some(self.resized())
+    }
+
+    /// The window's size and scale as last known, as the port reports them.
+    fn resized(&self) -> Input {
+        Input::Resized(Resize {
+            width: u64::from(self.size.width),
+            height: u64::from(self.size.height),
+            scale: self.scale,
+        })
     }
 
     /// The pointer input of `action` with `button`, where the pointer last
@@ -193,7 +257,7 @@ fn text(pressed: bool, given: Option<&str>) -> String {
 mod tests {
     use super::{KeyParts, Seen};
     use editor_platform::{Button, Composition, Input, Key, LogicalKey, Modifiers, PhysicalKey};
-    use editor_platform::{Pointer, PointerAction, WheelDelta};
+    use editor_platform::{Pointer, PointerAction, Resize, WheelDelta};
     use winit::dpi::{PhysicalPosition, PhysicalSize};
     use winit::event::{
         DeviceId, ElementState, Ime, MouseButton, MouseScrollDelta, TouchPhase, WindowEvent,
@@ -529,11 +593,73 @@ mod tests {
 
     #[test]
     fn an_event_the_port_has_no_input_for_is_not_reported() {
+        assert_eq!(translate(&WindowEvent::Destroyed), None);
         assert_eq!(
-            translate(&WindowEvent::Resized(PhysicalSize::new(800, 600))),
+            translate(&WindowEvent::Moved(PhysicalPosition::new(10, 20))),
             None
         );
-        assert_eq!(translate(&WindowEvent::Destroyed), None);
+        assert_eq!(
+            translate(&WindowEvent::CursorLeft {
+                device_id: DeviceId::dummy()
+            }),
+            None
+        );
+    }
+
+    /// The port's word that the window is `width` by `height` at `scale`.
+    fn resized(width: u64, height: u64, scale: f64) -> Input {
+        Input::Resized(Resize {
+            width,
+            height,
+            scale,
+        })
+    }
+
+    #[test]
+    fn a_resize_is_the_new_size_at_the_scale_last_known() {
+        let mut seen = Seen::default();
+        // Before winit has said what the scale is, it is 1.
+        assert_eq!(
+            seen.window_event(&WindowEvent::Resized(PhysicalSize::new(800, 600))),
+            Some(resized(800, 600, 1.0))
+        );
+        seen.scale(2.0);
+        assert_eq!(
+            seen.window_event(&WindowEvent::Resized(PhysicalSize::new(300, 120))),
+            Some(resized(300, 120, 2.0))
+        );
+    }
+
+    #[test]
+    fn a_change_of_scale_is_a_resize_at_the_new_scale() {
+        let mut seen = Seen::default();
+        seen.window_event(&WindowEvent::Resized(PhysicalSize::new(800, 600)));
+        // The size is the one last known. The size winit then gives the
+        // window arrives as a resize of its own.
+        assert_eq!(seen.scale(2.0), Some(resized(800, 600, 2.0)));
+        assert_eq!(
+            seen.window_event(&WindowEvent::Resized(PhysicalSize::new(1600, 1200))),
+            Some(resized(1600, 1200, 2.0))
+        );
+        assert_eq!(seen.scale(1.25), Some(resized(1600, 1200, 1.25)));
+    }
+
+    #[test]
+    fn a_window_that_opens_says_its_size_and_scale_which_are_then_the_ones_last_known() {
+        let mut seen = Seen::default();
+        assert_eq!(
+            seen.opened(PhysicalSize::new(256, 96), 1.5),
+            resized(256, 96, 1.5)
+        );
+        // A resize is at the scale the window opened at, and a change of
+        // scale at the size it opened at.
+        let mut resized_after = Seen::default();
+        resized_after.opened(PhysicalSize::new(256, 96), 1.5);
+        assert_eq!(
+            resized_after.window_event(&WindowEvent::Resized(PhysicalSize::new(300, 120))),
+            Some(resized(300, 120, 1.5))
+        );
+        assert_eq!(seen.scale(3.0), Some(resized(256, 96, 3.0)));
     }
 
     /// The parts of a press of the key `logical` at `code` that produced

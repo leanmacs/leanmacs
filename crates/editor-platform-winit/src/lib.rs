@@ -6,7 +6,17 @@
 //! the port's [`Input`], and ends its loop when it is asked to close. No
 //! winit type is public, and no other crate depends on winit (`deny.toml`).
 //!
+//! The translation is the module `translate`'s, with a key's names in
+//! `names`: every key with its logical key, physical key and modifiers; the
+//! pointer's press, drag, release and wheel; a resize with the size and the
+//! scale; the focus; a composition; and a request to close. Their docs say
+//! what is decided where winit and the port differ.
+//!
 //! What it does beyond translating:
+//!
+//! - **It says how large the window is when it opens**: a
+//!   [`Input::Resized`] with the window's size and scale straight after
+//!   [`Input::Opened`], since nothing else in the port says so.
 //!
 //! - **It refuses to run off the process's main thread**, with a reason,
 //!   before it touches winit: winit panics there. Whether the calling thread
@@ -26,7 +36,9 @@
 //!
 //! The gate (`mise run ci`) opens no window, so what it covers here is the
 //! translation from winit's values to [`Input`] and the refusal off the main
-//! thread. The event loop itself needs a display. It is held to the port's
+//! thread. The event loop itself needs a display, and so do the handler's
+//! two lines that take apart the events no test can build (a key, a change
+//! of scale) and its reading of the window's size as it opens. It is held to the port's
 //! contract by `examples/contract.rs`, which two opt-in tasks run:
 //! `mise run linux-window`, under Xvfb in a container, and
 //! `mise run window-contract`, on the desktop it is started from. Run the
@@ -141,10 +153,12 @@ impl ApplicationHandler for App {
             Ok(window) => {
                 window.set_ime_allowed(self.options.composition);
                 window.focus_window();
+                let size = self.seen.opened(window.inner_size(), window.scale_factor());
                 self.window = Some(window);
                 (self.report)(Input::Opened {
                     platform: WinitPlatform::NAME.into(),
                 });
+                (self.report)(size);
             }
             Err(error) => {
                 self.failure = Some(error.to_string());
@@ -158,9 +172,10 @@ impl ApplicationHandler for App {
     }
 
     fn window_event(&mut self, _: &ActiveEventLoop, _: WindowId, event: WindowEvent) {
+        // Two of winit's events cannot be built in a test, a key and a change
+        // of scale, so each is taken apart here and translated from its
+        // parts. These two arms are all this handler decides.
         let input = match &event {
-            // winit's key event cannot be built in a test, so it is taken
-            // apart here and translated from its parts.
             WindowEvent::KeyboardInput { event, .. } => Some(self.seen.key(&KeyParts {
                 state: event.state,
                 repeat: event.repeat,
@@ -168,6 +183,7 @@ impl ApplicationHandler for App {
                 physical: event.physical_key,
                 text: event.text.as_deref(),
             })),
+            WindowEvent::ScaleFactorChanged { scale_factor, .. } => self.seen.scale(*scale_factor),
             other => self.seen.window_event(other),
         };
         if let Some(input) = input {
