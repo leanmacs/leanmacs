@@ -108,7 +108,9 @@ registered command:
   minibuffer of a prompt that was accepted or cancelled;
 - `dispatchMinibufferNoticeChecks`: the loop tells its scheme when a
   command that ran to its end opened the minibuffer's view, in both states
-  of the scheme it keeps, after the views the command closed.
+  of the scheme it keeps, after the views the command closed, and tells it
+  nothing after a later command, a key's or a job's, that ran with the
+  prompt open.
 
 Jobs started from commands are checked on the loop's driver over the
 editor's models and the job model (`Editor/Loop/Driver.lean`):
@@ -7082,9 +7084,10 @@ def dispatchMinibufferNoticeChecks : List Check :=
     { maps := fun _ _ =>
         [Keymap.ofList
             [(ModelTest.keys "C-c a", invoke "ask"), (ModelTest.keys "C-c f", invoke "fail"),
-              (ModelTest.keys "C-c y", invoke "accept"), (ModelTest.keys "C-c s", invoke "swap")]]
+              (ModelTest.keys "C-c y", invoke "accept"), (ModelTest.keys "C-c s", invoke "swap"),
+              (ModelTest.keys "C-c n", invoke "idle")]]
       command? := fun name =>
-        ([("ask", ran asks), ("fail", failingAfter fun _ => asks),
+        ([("ask", ran asks), ("fail", failingAfter fun _ => asks), ("idle", ran (pure ())),
                   ("accept", ran (discard acceptPrompt)),
                   ("swap",
                     ran do
@@ -7098,10 +7101,36 @@ def dispatchMinibufferNoticeChecks : List Check :=
       let (loop, _) ← stepsWith keys loop (presses typed)
       return (noticed loop, loop.state.minibufferView?)
     (program.runModel editorModel).1.toOption
+  -- What the scheme was told once a prompt was asked for and `next` then ran
+  -- one more command from the loop with the prompt open, with the
+  -- minibuffer's view after that command and how it ended.
+  let toldAfter (next : Loop noticing → EditorM (Option (Loop.Stepped noticing))) :
+    Option ((List Notice × List Notice) × Option ViewId × Option Loop.Ending) :=
+    let program :
+      EditorM (Option ((List Notice × List Notice) × Option ViewId × Option Loop.Ending)) := do
+      let loop : Loop noticing := { state := ← EditorState.initial ⟨640, 480⟩ }
+      let (loop, _) ← stepsWith keys loop (presses "C-c a")
+      return (← next loop).map fun stepped =>
+          (noticed stepped.loop, stepped.loop.state.minibufferView?, stepped.ended)
+    (program.runModel editorModel).1.toOption.join
+  let typing (typed : String) (loop : Loop noticing) : EditorM (Option (Loop.Stepped noticing)) :=
+    (·.2.back?) <$> stepsWith keys loop (presses typed)
   let both (notices : List Notice) := (notices, notices)
   [{  name :=
         "after a command that asked for a prompt, the loop has told its scheme that the new view is the minibuffer's, once, in both states of the scheme it keeps"
       run := pure (told "C-c a" == some (both [.minibuffer ⟨1⟩], some ⟨1⟩)) },
+    { name :=
+        "a key's command that runs to its end while the prompt stays open opened nothing: the scheme is told of the minibuffer's view by the command that opened it alone, so both its states still hold the one notice after a command that does nothing, and after one that asks again and is refused as a value"
+      run :=
+        pure <|
+          ["C-c n", "C-c a"].all fun typed =>
+            toldAfter (typing typed) == some (both [.minibuffer ⟨1⟩], some ⟨1⟩, some .finished) },
+    { name :=
+        "a job's command that runs to its end while the prompt stays open opened nothing: after its delivery both states of the scheme still hold the one notice"
+      run :=
+        pure
+          (toldAfter (fun loop => return some (← loop.deliver keys "job" (pure ()))) ==
+            some (both [.minibuffer ⟨1⟩], some ⟨1⟩, some .finished)) },
     { name :=
         "a command that asked for a prompt and was then refused opened nothing: the scheme is told nothing"
       run := pure (told "C-c f" == some (both [], none)) },
