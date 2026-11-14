@@ -7,6 +7,18 @@
 //! animation deadline. The loop never calls layout, a shaper or Lean, and
 //! holds no lock while it draws.
 //!
+//! # A hidden target
+//!
+//! A target nobody can see is not drawn on
+//! ([`RenderHandle::set_hidden`]). While it is hidden the loop draws
+//! nothing and waits with no deadline, whatever is asked: a window that is
+//! hidden refuses a draw, and a refused draw is tried again every refresh,
+//! which would be a timer for as long as it stayed hidden. What is asked
+//! meanwhile is kept as it was left, each demand with its stamp, and one
+//! draw serves it all once the target is shown. Being shown is no demand
+//! by itself: with nothing asked, nothing is drawn. A hidden loop still
+//! stops when it is told to.
+//!
 //! # What is a demand
 //!
 //! - **A frame** that is not the one shown. Submitting the frame shown
@@ -247,6 +259,8 @@ struct Shared {
     asked: Mutex<Asked>,
     /// Whether the loop was told to stop.
     stopped: AtomicBool,
+    /// Whether the target is hidden.
+    hidden: AtomicBool,
     /// How many frames were submitted.
     frames_submitted: AtomicU64,
     /// How many frames a newer one replaced before they were drawn.
@@ -307,6 +321,15 @@ impl RenderHandle {
     /// Says the display refreshes every `ns` nanoseconds.
     pub fn set_refresh(&self, ns: u64) {
         self.shared.refresh_ns.store(ns, Ordering::SeqCst);
+        self.shared.park.notify();
+    }
+
+    /// Says the target is hidden (`true`), so that nothing drawn on it
+    /// would be seen, or shown again (`false`). While it is hidden nothing
+    /// is drawn and what is asked is kept; being shown asks for nothing by
+    /// itself.
+    pub fn set_hidden(&self, hidden: bool) {
+        self.shared.hidden.store(hidden, Ordering::SeqCst);
         self.shared.park.notify();
     }
 
@@ -401,6 +424,7 @@ impl<R: Renderer> RenderLoop<R> {
                 since: None,
             }),
             stopped: AtomicBool::new(false),
+            hidden: AtomicBool::new(false),
             frames_submitted: AtomicU64::new(0),
             frames_replaced: AtomicU64::new(0),
             record: Mutex::new(Record::default()),
@@ -450,6 +474,11 @@ impl<R: Renderer> RenderLoop<R> {
             && same(frame, shown)
         {
             self.pending = None;
+        }
+        // A hidden target is not drawn on. What is asked stays as it is
+        // left, and there is nothing to wait for but being shown.
+        if shared.hidden.load(Ordering::SeqCst) {
+            return Step::Wait(None);
         }
         // What a draw would show: the newest frame, or the one shown again.
         // Before a first frame there is nothing to draw.
@@ -1201,6 +1230,118 @@ mod tests {
     }
 
     #[test]
+    fn a_hidden_target_is_not_drawn_on_and_keeps_what_was_asked() {
+        let mut rig = Rig::showing(&frame_of("one"));
+        rig.handle.set_hidden(true);
+        // Everything that asks for a draw is asked: a frame, a mark, a new
+        // size, and a deadline that has come.
+        let asked = rig.clock.peek();
+        rig.handle.submit(frame_of("two"), None);
+        rig.handle.mark_dirty();
+        rig.handle.resize(Target {
+            width: 800,
+            ..TARGET
+        });
+        rig.handle.animate_at(asked);
+        // Nothing is drawn, however long it is hidden, and the loop waits
+        // with no deadline: nothing wakes it every refresh to try again.
+        for _ in 0..3 {
+            assert_eq!(rig.render.step(), Step::Wait(None));
+            rig.clock.advance(REFRESH * 10);
+        }
+        assert_eq!(rig.requests(), 1);
+        let counters = rig.handle.counters();
+        assert_eq!((counters.draws, counters.draws_failed), (1, 0));
+        assert_eq!(rig.handle.journal().len(), 1);
+
+        // What was asked is kept: shown again, the frame is drawn, and it
+        // answers what was asked when it was asked.
+        rig.handle.set_hidden(false);
+        let entry = rig.drew();
+        assert_eq!(entry.input_ns, asked);
+    }
+
+    #[test]
+    fn shown_again_it_draws_once() {
+        let mut rig = Rig::showing(&frame_of("one"));
+        let wider = Target {
+            width: 800,
+            ..TARGET
+        };
+        rig.handle.set_hidden(true);
+        let two = frame_of("two");
+        rig.handle.submit(Arc::clone(&two), None);
+        rig.handle.mark_dirty();
+        rig.handle.resize(wider);
+        rig.handle.animate_at(rig.clock.peek());
+        assert_eq!(rig.render.step(), Step::Wait(None));
+        rig.clock.advance(REFRESH * 10);
+
+        rig.handle.set_hidden(false);
+        rig.drew();
+        // One draw, of the newest frame on the size last asked for, served
+        // every word left while it was hidden: there is nothing more to
+        // draw, now or a refresh on.
+        assert_eq!(rig.render.step(), Step::Wait(None));
+        rig.clock.advance(REFRESH * 10);
+        assert_eq!(rig.render.step(), Step::Wait(None));
+        assert_eq!(rig.requests(), 2);
+        let request = &rig.render.renderer().requests()[1];
+        assert!(Arc::ptr_eq(&request.frame, &two));
+        assert_eq!(request.target, wider);
+    }
+
+    #[test]
+    fn showing_a_target_of_which_nothing_was_asked_draws_nothing() {
+        let mut rig = Rig::showing(&frame_of("one"));
+        rig.handle.set_hidden(true);
+        assert_eq!(rig.render.step(), Step::Wait(None));
+        rig.handle.set_hidden(false);
+        assert_eq!(rig.render.step(), Step::Wait(None));
+        // Nor does saying again that it is shown.
+        rig.handle.set_hidden(false);
+        assert_eq!(rig.render.step(), Step::Wait(None));
+        assert_eq!(rig.requests(), 1);
+    }
+
+    #[test]
+    fn a_hidden_loop_still_stops_when_told() {
+        let mut rig = Rig::showing(&frame_of("one"));
+        rig.handle.set_hidden(true);
+        rig.handle.mark_dirty();
+        assert_eq!(rig.render.step(), Step::Wait(None));
+        rig.handle.stop();
+        assert_eq!(rig.render.step(), Step::Stopped);
+    }
+
+    #[test]
+    fn a_first_frame_submitted_to_a_hidden_target_is_drawn_when_it_is_shown() {
+        let mut rig = rig();
+        rig.handle.set_hidden(true);
+        rig.clock.set(500);
+        rig.handle.submit(frame_of("one"), None);
+        rig.clock.set(900);
+        assert_eq!(rig.render.step(), Step::Wait(None));
+        assert_eq!(rig.requests(), 0);
+        rig.handle.set_hidden(false);
+        assert_eq!(rig.drew().input_ns, 500);
+    }
+
+    #[test]
+    fn a_deadline_still_ahead_is_not_waited_for_while_hidden() {
+        let mut rig = Rig::showing(&frame_of("one"));
+        let deadline = rig.clock.peek() + REFRESH * 5;
+        rig.handle.animate_at(deadline);
+        assert_eq!(rig.render.step(), Step::Wait(Some(deadline)));
+        // Hidden, the loop sets no timer for it.
+        rig.handle.set_hidden(true);
+        assert_eq!(rig.render.step(), Step::Wait(None));
+        // Shown before it has come, it is waited for again.
+        rig.handle.set_hidden(false);
+        assert_eq!(rig.render.step(), Step::Wait(Some(deadline)));
+    }
+
+    #[test]
     fn every_word_left_wakes_the_render_thread() {
         let rig = rig();
         let before = rig.park.notifications();
@@ -1212,8 +1353,9 @@ mod tests {
         });
         rig.handle.animate_at(50);
         rig.handle.set_refresh(REFRESH);
+        rig.handle.set_hidden(false);
         rig.handle.stop();
-        assert_eq!(rig.park.notifications(), before + 6);
+        assert_eq!(rig.park.notifications(), before + 7);
         // The fake park keeps the waits it is asked for.
         rig.park.wait(Some(5));
         rig.park.wait(None);
