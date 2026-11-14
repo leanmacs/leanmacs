@@ -10,5 +10,6 @@
 //! The modules are public only until the adapters that use them are
 //! written: nothing outside this crate is meant to name them.
 
+pub mod atlas;
 pub mod glyphs;
 pub mod quads;

@@ -14,3 +14,9 @@ editor-render = { path = "../editor-render" }
 # The frame a renderer draws, as plain data. `deny.toml` lists this crate
 # among editor-layout's wrappers.
 editor-layout = { path = "../editor-layout" }
+# Packs glyph images into the pages of the atlas: a shelf allocator that
+# gives a rectangle back when its glyph is evicted. Pinned exactly, and
+# kept behind one type of this crate (`atlas::Atlas`); `deny.toml` lets no
+# other crate depend on it. Checked by reading its manifest and glyphon's
+# use of it; first run by this crate's tests.
+etagere = "=0.3.0"

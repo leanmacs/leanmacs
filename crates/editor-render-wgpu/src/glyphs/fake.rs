@@ -43,12 +43,9 @@ impl FakeRasterizer {
     pub(crate) fn new() -> Self {
         Self::default()
     }
-}
 
-impl Rasterize for FakeRasterizer {
-    fn rasterize(&mut self, request: &GlyphRequest<'_>) -> Option<GlyphImage> {
-        let key = request.key;
-        self.asked.push((key, request.font.size, request.hint));
+    /// The image it makes for `key`, without recording a request.
+    pub(crate) fn image(&self, key: GlyphKey) -> Option<GlyphImage> {
         if self.missing.contains(&key.glyph) {
             return None;
         }
@@ -79,6 +76,14 @@ impl Rasterize for FakeRasterizer {
             top: height as i32,
             data,
         })
+    }
+}
+
+impl Rasterize for FakeRasterizer {
+    fn rasterize(&mut self, request: &GlyphRequest<'_>) -> Option<GlyphImage> {
+        let key = request.key;
+        self.asked.push((key, request.font.size, request.hint));
+        self.image(key)
     }
 }
 
