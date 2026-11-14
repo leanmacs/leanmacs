@@ -4611,8 +4611,8 @@ def stamp : Dispatched := fun call => do
 
 /-- Feeds `loop` the `events` in order, each step handed `keys`: the loop
 after them and what each step handed back. -/
-def stepsWith (keys : Loop.Keys TestScheme.scheme) (loop : TestLoop) (events : List Event) :
-    EditorM (TestLoop × Array (Loop.Stepped TestScheme.scheme)) := do
+def stepsWith {scheme : InputScheme} (keys : Loop.Keys scheme) (loop : Loop scheme)
+    (events : List Event) : EditorM (Loop scheme × Array (Loop.Stepped scheme)) := do
   let mut loop := loop
   let mut steps := #[]
   for event in events do
@@ -4654,10 +4654,11 @@ def lastScene (keys : Loop.Keys TestScheme.scheme) (events : List Event)
     scenes.back?.map fun scene => (scene.echo, scene.pending, scene.views.map (shownText model))
   | none => none
 
-/-- The checks of key dispatch in the loop (`Editor/Loop.lean`), on the
-editor's models and the test scheme, with keymaps written here: which keys
-are stepped through the scheme, and the pending keys the scene shows. -/
-def dispatchChecks : List Check :=
+/-- The checks of keys in the loop (`Editor/Loop.lean`), on the editor's
+models and the test scheme, with keymaps written here: which keys are
+stepped through the scheme, the pending keys the scene shows, and the
+command a completed sequence runs. -/
+def dispatchKeyChecks : List Check :=
   let saves := dispatchKeys [("C-x C-s", invoke "save"), ("C-x r t", invoke "rectangle")]
   [{  name :=
         "after the first key of a bound sequence the scene shows it as pending, after each further key of a longer one the keys so far, and after the key that completes the sequence none"
@@ -4794,6 +4795,210 @@ def dispatchChecks : List Check :=
                   step.write.map fun write => (write.owner.name, write.store, write.value)) ==
               #[none, some ("config", "counter", Value.nat 5), none, none, none, none]
           | none => false }]
+
+/-- A command of the rollback checks that is refused with `badRange`, after
+`before` has run on what it was called with. -/
+def failingAfter (before : Call → EditorM Unit) : Dispatched := fun call => do
+  before call
+  call.target.buffer.text.delete 9 99
+  return none
+
+/-- The command `boom` of the rollback checks: it replaces what the
+selection covers with `boom`, which edits the text and moves the selection,
+and is then refused. -/
+def boom : Dispatched :=
+  failingAfter fun call => Loop.insert call.target "boom"
+
+/-- A scheme written for the rollback checks: the test scheme, with two
+counts beside its state that no reset clears, as a scheme's state may hold
+what a reset must keep. The first counts the keys that yielded an
+invocation, and the second the keys that yielded nothing and left nothing
+pending. -/
+def tallying : InputScheme :=
+  { State := TestScheme.State × Nat × Nat
+    Binding := Invocation
+    init := ({}, 0, 0)
+    step := fun maps view state key =>
+      match TestScheme.step maps view state.1 key with
+      | (next, some invocation) => ((next, state.2.1 + 1, state.2.2), some invocation)
+      | (next, none) =>
+        ((next, state.2.1, if next.pending.isEmpty then state.2.2 + 1 else state.2.2), none)
+    pending := (·.1.pending)
+    command := fun name => { command := name } }
+
+/-- The two counts of `tallying` in a loop's state: the keys that yielded an
+invocation, and the keys that yielded nothing and left nothing pending. -/
+def tallies (loop : Loop tallying) : Nat × Nat :=
+  let state : TestScheme.State × Nat × Nat := loop.input
+  state.2
+
+/-- The focused window's scroll anchor in `loop`'s state, as the text holds
+it. -/
+def scrollOf {scheme : InputScheme} (loop : Loop scheme) : EditorM (Option Anchor) := do
+  let some target := loop.state.focusedTarget? | throw .noSuchText
+  match ← target.buffer.text.marker target.window.scroll with
+  | .anchor anchor =>
+    return some anchor
+  | .selection _ =>
+    return none
+
+/-- The checks of rollback in the loop (`Editor/Loop.lean`), on the editor's
+models: what a command that failed leaves, in the text, in the windows'
+markers, in the history and in the scheme's state. -/
+def dispatchRollbackChecks : List Check :=
+  let keys :=
+    dispatchKeys [("C-c b", invoke "boom"), ("C-c s", invoke "stamp")]
+      [("boom", boom), ("stamp", stamp)]
+  [{  name :=
+        "a command that fails after editing: the echo area shows its error, the buffer's text and the window's selection are those before the command, the history has no step for it, and the next key runs its command"
+      run :=
+        pure <|
+          let program :
+            EditorM ((String × Array SelectionRange × String × Nat) × Nat × String × String) := do
+            let loop : TestLoop := { state := ← holding "abcd" #[⟨1, 3⟩] }
+            let (loop, _) ← stepsWith keys loop (presses "C-c")
+            let nodes := (← focusedOf loop).buffer.history.nodes.size
+            let (loop, _) ← stepsWith keys loop (presses "b")
+            let target ← focusedOf loop
+            let failed :=
+              (← target.buffer.text.read, ← cursorsOf loop, loop.state.echo,
+                target.buffer.history.nodes.size)
+            let (loop, _) ← stepsWith keys loop (presses "C-c s")
+            let target ← focusedOf loop
+            let after ← target.buffer.text.read
+            let some _ ← target.buffer.history.undo | throw .noInverse
+            return (failed, nodes, after, ← target.buffer.text.read)
+          match program.runModel editorModel with
+          | (.ok (failed, nodes, after, undone), model) =>
+            failed == ("abcd", #[⟨1, 3⟩], "boom: refused: bad range", nodes) &&
+              after == "aC-c sd" &&
+              undone == "abcd" &&
+              model.display.scenes.map (·.echo) ==
+                #["", "boom: refused: bad range", "boom: refused: bad range", ""]
+          | (.error _, _) => false },
+    { name :=
+        "a command that placed the window's selection and its scroll anchor without editing, and then failed, has both put back where they were"
+      run :=
+        pure <|
+          let wander : Dispatched :=
+            failingAfter fun call => do
+              let text := call.target.buffer.text
+              text.place call.target.window.selection (.selection { ranges := #[⟨0, 0⟩, ⟨4, 4⟩] })
+              text.place call.target.window.scroll (.anchor { offset := 2, bias := .after })
+          let keys := dispatchKeys [("C-c w", invoke "wander")] [("wander", wander)]
+          let program : EditorM (Array SelectionRange × Option Anchor × String) := do
+            let loop : TestLoop := { state := ← holding "abcd" #[⟨1, 3⟩] }
+            let (loop, _) ← stepsWith keys loop (presses "C-c w")
+            return (← cursorsOf loop, ← scrollOf loop, loop.state.echo)
+          match (program.runModel editorModel).1 with
+          | .ok (cursors, scroll, echo) =>
+            cursors == #[⟨1, 3⟩] && scroll == some { offset := 0, bias := .before } &&
+              echo == "wander: refused: bad range"
+          | .error _ => false },
+    { name :=
+        "a command that fails after editing two buffers has both texts as they were before it, and one that edited nothing leaves the texts and their revisions as they were"
+      run :=
+        pure <|
+          let both : Dispatched :=
+            failingAfter fun call => do
+              call.target.buffer.text.insert 0 "x"
+              (⟨1⟩ : TextId).insert 5 "!"
+              call.target.buffer.text.insert 0 "y"
+          let idle : Dispatched := failingAfter fun _ => pure ()
+          let keys :=
+            dispatchKeys [("C-c 2", invoke "both"), ("C-c 0", invoke "idle")]
+              [("both", both), ("idle", idle)]
+          let revisions (loop : TestLoop) : EditorM (Array Nat) :=
+            loop.state.buffers.mapM fun buffer => buffer.text.revision
+          let program : EditorM (Array String × Array Nat × Array Nat) := do
+            let (loop, _) ← stepsWith keys { state := ← twoBuffers } (presses "C-c 2")
+            let texts ← loop.state.buffers.mapM fun buffer => buffer.text.read
+            let before ← revisions loop
+            let (loop, _) ← stepsWith keys loop (presses "C-c 0")
+            return (texts, before, ← revisions loop)
+          match (program.runModel editorModel).1 with
+          | .ok (texts, before, after) => texts == #["", "other"] && before == after
+          | .error _ => false },
+    { name :=
+        "after a command that failed the scheme is as it was before the first key of the sequence, with what it keeps across a reset: the key that yielded the failed invocation is not counted, a key that yielded nothing before it still is, and nothing is pending"
+      run :=
+        pure <|
+          let keys : Loop.Keys tallying :=
+            { maps := fun _ =>
+                [Keymap.ofList
+                    [(ModelTest.keys "C-c b", invoke "boom"),
+                      (ModelTest.keys "C-c s", invoke "stamp")]]
+              command? := fun name =>
+                ([("boom", boom), ("stamp", stamp)].find? (·.1 == name)).map (·.2) }
+          let program : EditorM (List (Nat × Nat) × String) := do
+            let loop : Loop tallying := { state := ← EditorState.initial ⟨640, 480⟩ }
+            let (ran, _) ← stepsWith keys loop (presses "C-c s")
+            let (reset, _) ← stepsWith keys ran [pressF5]
+            let (failed, _) ← stepsWith keys reset (presses "C-c b")
+            let (again, _) ← stepsWith keys failed (presses "C-c s")
+            return ([tallies ran, tallies reset, tallies failed, tallies again], failed.pending)
+          match (program.runModel editorModel).1 with
+          | .ok (counts, pending) => counts == [(1, 0), (1, 1), (1, 1), (2, 1)] && pending == ""
+          | .error _ => false },
+    { name :=
+        "a command that gave up the window's selection marker and then failed cannot be rolled back whole: the echo area says what was not, after the command's error, the text is still put back, and the step is not refused"
+      run :=
+        pure <|
+          let forget : Dispatched :=
+            failingAfter fun call => do
+              call.target.buffer.text.insert 0 "x"
+              call.target.buffer.text.unmark call.target.window.selection
+          let keys := dispatchKeys [("C-c f", invoke "forget")] [("forget", forget)]
+          lastScene keys (presses "C-c f") (holding "abcd" #[⟨1, 3⟩]) ==
+            some
+              ("forget: refused: bad range; not rolled back: no such marker", "", #[some "abcd"]) },
+    { name :=
+        "a command that released a buffer's text and then failed: running it says what was not rolled back and still rolls back the other buffer, and the step that runs it is not refused"
+      run :=
+        pure <|
+          let release : Dispatched :=
+            failingAfter fun call => do
+              (⟨1⟩ : TextId).insert 5 "!"
+              call.target.buffer.text.release
+          let keys := dispatchKeys [("C-c r", invoke "release")] [("release", release)]
+          let ran : EditorM (String × String) := do
+            let state ← twoBuffers
+            let ran ← Loop.run keys state (invoke "release") (ModelTest.keys "C-c r")
+            return (ran.state.echo, ← (⟨1⟩ : TextId).read)
+          (match (ran.runModel editorModel).1 with
+            | .ok (echo, other) =>
+              echo == "release: refused: no such text; not rolled back: no such text" &&
+                other == "other"
+            | .error _ => false) &&
+            (dispatched keys (presses "C-c r") twoBuffers).isSome },
+    { name :=
+        "a rollback after the history moved does not take the move back: it reverts the edits made since the move, leaves the text at the node the move reached, says the command moved in the history, and what was undone can be redone"
+      run :=
+        pure <|
+          let program : EditorM (String × String × String × String) := do
+            let state ← holding "one" #[⟨3, 3⟩]
+            let (state, _) ← state.recordHistories
+            let kept ← Loop.keep state
+            -- What a command that moved in the history would have done: an
+            -- undo, to the root, and then an edit.
+            let some buffer := state.buffers[0]? | throw .noSuchText
+            let some moved ← buffer.history.undo Origin.user | throw .noInverse
+            buffer.text.insert 0 "x"
+            let during := { state with buffers := #[{ buffer with history := moved.tree }] }
+            let before ← buffer.text.read
+            let (restored, said) ← kept.restore during
+            let after ← buffer.text.read
+            let some again := restored.buffers[0]? | throw .noSuchText
+            let some _ ← again.history.redo Origin.user | throw .noInverse
+            return (before, after, said, ← buffer.text.read)
+          (program.runModel editorModel).1.toOption ==
+            some ("x", "", "; the command moved in the history", "one") }]
+
+/-- The checks of key dispatch in the loop (`Editor/Loop.lean`), on the
+editor's models: keys through the scheme and the commands they run, and
+rollback. -/
+def dispatchChecks : List Check :=
+  dispatchKeyChecks ++ dispatchRollbackChecks
 
 /-- A scheme written for the test that breaks the contract: it yields the
 first binding that the keys so far begin, so it emits on a strict prefix. -/

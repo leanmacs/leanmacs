@@ -54,7 +54,8 @@ command's name and plain arguments, and the loop runs it (`Loop.run`):
    chord.
 4. **A refusal is said in the echo area**, `<name>: refused: ` and the
    refusal (`TextError.describe`), and the editor keeps running: the step
-   is not refused, and the next key is handled.
+   is not refused, and the next key is handled. What the command did before
+   it was refused is rolled back ("Rollback").
 5. **What the command asked to be written** (a command over a store) is
    handed back with the step (`Loop.Stepped.write`), for whoever holds the
    cells.
@@ -63,6 +64,58 @@ A call into a config command is not guarded against the interpreter: an
 exception thrown by interpreted code ends the process
 (`docs/design/lean-runtime.md`, "An exception from the interpreter ends the
 process").
+
+**The scheme after a command that failed.** The loop keeps two states of
+the scheme: the one after the last key (`Loop.input`), and the last one at
+rest (`Loop.atRest`), in which nothing was pending. When an invocation does
+not run to its end, the scheme goes back to its state at rest: it is as it
+was before the first key of the sequence, so a key that entered a state of
+the scheme's has not entered it, and no prefix is left pending. When the
+invocation runs to its end, or a key yields nothing and leaves nothing
+pending, the state at rest becomes the state after the key.
+
+## Rollback
+
+A command that does not run to its end leaves the texts and the windows as
+they were before it (`docs/design/concurrency.md`, "Foreground: commands").
+
+- **Before a command** the loop keeps (`Loop.keep`), for each buffer, the
+  state of its undo tree once told the revision its text is at, and, for
+  each window, its selection marker and its scroll marker as read. A buffer
+  whose text refuses, and a marker that does, is not kept.
+- **After a command that did not run to its end** (`Loop.Kept.restore`)
+  each kept buffer's tree is told the revision and reverted to the kept
+  state (`UndoTree.revertTo`), with the user's origin, and the tree it
+  returns is the buffer's. Then each kept marker is placed back. The editor
+  state is the one before the command.
+- **Markers are placed back, and not left to the inverse.** A marker moves
+  with every transaction: a deletion and its inverse do not return a marker
+  inside the deleted range to where it was, and a command can place a
+  marker with no edit. A revert hands back only the selection a transaction
+  carried.
+- **No group of its own.** The kept state may be a point inside an open
+  group, and the revert goes back to it. The loop closes each group after
+  every event (`Loop.publish`), so today the kept state is a node's, and
+  the revert leaves nothing pending, no node and nothing to redo.
+- **What is not undone**: the texts, snapshots and markers the command
+  made, and the scenes it published. The step publishes the true scene
+  right after.
+- **A rollback that is refused is said, and the rest is still done.** A
+  command that released a buffer's text, gave up a window's marker or
+  dropped the inverses of its own edits cannot be rolled back. The echo
+  area then ends `; not rolled back: ` and the first refusal.
+- **A move in the history is not taken back.** When the kept state is no
+  longer a state of the open group, the history moved since it was kept.
+  The loop then reverts the group that is open (`UndoTree.revert`), which
+  takes back the edits made since the move and leaves the text at the node
+  the move reached. The echo area ends `; the command moved in the
+  history`, and the markers of that text are left where the store moved
+  them. No command can move the loop's tree until commands have a request
+  for it, so this is pinned on a state whose history was moved by hand.
+
+An event's own handler, such as the commit's (`Loop.insert`), is one
+transaction, which the store accepts whole or refuses whole, and is not
+routed through this.
 
 ## What each event does
 
@@ -80,8 +133,8 @@ process").
 A handler is given what it acts on (a `Target`: the window and its buffer),
 never "the current buffer". When one is refused, the state stays as it was
 and the echo area reads `refused: ` and the refusal (`TextError.describe`).
-Nothing rolls back what the store accepted before the refusal: rollback is
-the command loop's phase 6.
+A handler's edit is one transaction, so a refusal leaves nothing behind in
+the store; what a command leaves behind is rolled back ("Rollback").
 
 ## After each event
 
@@ -157,6 +210,10 @@ its own the `Target` it acts on (`EditorState.focusedTarget?`, or the window
 the event names) and the state. Its effect on the state and on the scene is
 pinned by a check in `ModelTest.loopChecks`, on the models.
 
+What a key does is not a handler's: keys, the commands they run and
+rollback are pinned by `ModelTest.dispatchChecks`, on the models and the
+test scheme.
+
 The known gap: no view scrolls to follow its cursor in this phase (phase
 15).
 -/
@@ -189,6 +246,10 @@ structure Loop (scheme : InputScheme) where
   shown : Array Loop.Shown := #[]
   /-- The scheme's state after the last key. -/
   input : scheme.State := scheme.init
+  /-- The scheme's state at rest: the last one in which nothing was pending
+  and no command had just failed. It is what the scheme goes back to when
+  the invocation a key yields does not run to its end. -/
+  atRest : scheme.State := scheme.init
 
 /-- What the loop does after a step. -/
 inductive Loop.Next where
@@ -389,6 +450,84 @@ def stepped? : Event → Option Key
   | .key key true _ => if key.isModifier then none else some key
   | _ => none
 
+/-- What the loop keeps before a command, to roll back to if the command
+does not run to its end ("Rollback", in the module docs). -/
+structure Kept where
+  /-- For each buffer whose text answered, by its index in the state's
+  buffers: the state of its undo tree, once told the revision the text was
+  at. -/
+  histories : Array (Nat × UndoTree.State) := #[]
+  /-- Each window's selection marker and scroll marker that answered, as it
+  was read. -/
+  markers : Array (MarkerId × Marker) := #[]
+  deriving DecidableEq, Repr
+
+/-- What to roll back to from `state`: each buffer's history state and each
+window's markers, as they are now. It is not refused: a buffer whose text
+refuses, and a marker that does, is not kept. -/
+def keep (state : EditorState) : TextM Kept := do
+  let mut histories := #[]
+  for index in [0:state.buffers.size] do
+    let some buffer := state.buffers[index]? | continue
+    if let .ok history← observing buffer.history.sync then
+      histories := histories.push (index, history.state)
+  let mut markers := #[]
+  for window in state.windows do
+    for id in [window.selection, window.scroll] do
+      if let .ok marker← observing (id.text.marker id) then
+        markers := markers.push (id, marker)
+  return { histories, markers }
+
+/-- Rolls one buffer's text back to the history state `was`: tells the
+tree the revision the text is at and reverts to `was`, with the user's
+origin. The tree after it, and whether the history moved since `was` was
+kept: `was` is then no state of the open group, the move is not taken back,
+and the group that is open is reverted instead, which takes back the edits
+made since the move. -/
+def revertBuffer (buffer : Buffer) (was : UndoTree.State) : TextM (UndoTree × Bool) := do
+  let history ← buffer.history.sync
+  if let some reverted← history.revertTo was Origin.user then
+    return (reverted.tree, false)
+  match ← history.revert Origin.user with
+  | some reverted =>
+    return (reverted.tree, true)
+  | none =>
+    return (history, true)
+
+/-- Rolls `state` back to what was kept ("Rollback", in the module docs):
+each kept buffer's text is reverted to its kept history state, and each
+kept marker is placed back. Returns the state with the buffers' histories
+after it, and what to say of the rollback after the command's error, which
+is nothing when all of it was done.
+
+It is not refused. The first thing that refuses is said, `; not rolled
+back: ` and the refusal, and the rest is still done. A buffer whose history
+moved since it was kept is said too, `; the command moved in the history`,
+and the markers of its text are left where the store moved them. -/
+def Kept.restore (kept : Kept) (state : EditorState) : TextM (EditorState × String) := do
+  let mut buffers := state.buffers
+  let mut refusal : Option TextError := none
+  let mut moved : Array TextId := #[]
+  for (index, was) in kept.histories do
+    let some buffer := buffers[index]? | continue
+    match ← observing (revertBuffer buffer was) with
+    | .ok (history, movedSince) =>
+      buffers := buffers.modify index ({ · with history })
+      if movedSince then
+        moved := moved.push buffer.text
+    | .error error =>
+      refusal := refusal <|> some error
+  for (id, marker) in kept.markers do
+    unless moved.contains id.text do
+      if let .error error← observing (id.text.place id marker) then
+        refusal := refusal <|> some error
+  let history := if moved.isEmpty then "" else "; the command moved in the history"
+  let unrestored :=
+    match refusal with
+    | some error => s!"; not rolled back: {error.describe}"
+    | none => ""
+  return ({ state with buffers }, history ++ unrestored)
+
 /-- What running an invocation came to. -/
 structure Ran where
   /-- The editor state after it, with what it left in the echo area. -/
@@ -407,7 +546,8 @@ def said (state : EditorState) (name what : String) : EditorState :=
 an invocation", in the module docs): clears the echo area, looks the
 command up, and runs it with the focused window, the invocation's arguments
 and the keys. It is not refused: a name with no command and a refusal of
-the command are each said in the echo area. -/
+the command are each said in the echo area, and a command that was refused
+is rolled back, with what could not be said after its error. -/
 def run (keys : Keys scheme) (state : EditorState) (invocation : Invocation) (typed : List Key) :
     EditorM Ran := do
   let state := { state with echo := "" }
@@ -416,24 +556,42 @@ def run (keys : Keys scheme) (state : EditorState) (invocation : Invocation) (ty
     keys.command? name | return { state := said state name "no such command", finished := false }
   let some target :=
     state.focusedTarget? | return { state := said state name "no window is focused", finished := false }
+  let kept ← keep state
   match ← observing (command { target, arguments := invocation.arguments, keys := typed }) with
   | .ok write =>
     return { state, finished := true, write }
   | .error refusal =>
-    return { state := said state name s!"refused: {refusal.describe}", finished := false }
+    let (state, unrestored) ← kept.restore state
+    return { state := said state name s!"refused: {refusal.describe}{unrestored}",
+             finished := false }
 
 /-- One key through the scheme, for the focused view, and the invocation it
 yields, if it yields one, run (`run`): the loop after them, and what the
 command asked to be written. The keys the command is told of are what the
-scheme reported as pending before the key, then the key's chord. -/
+scheme reported as pending before the key, then the key's chord.
+
+The scheme's state after the key is kept, and it is the state at rest from
+then on, when the invocation ran to its end, or when the key yielded
+nothing and left nothing pending. When the invocation did not run to its
+end the scheme goes back to its state at rest: it is as it was before the
+first key of the sequence. -/
 def key (keys : Keys scheme) (loop : Loop scheme) (key : Key) :
     EditorM (Loop scheme × Option Config.Write) := do
   let before := scheme.pending loop.input
   let (input, yielded) := scheme.step keys.maps loop.state.frame.focused loop.input key
-  let loop := { loop with input }
-  let some invocation := yielded | return (loop, none)
+  let some invocation := yielded |
+    return ({ loop with
+          input, atRest := if (scheme.pending input).isEmpty then input else loop.atRest },
+        none)
   let ran ← run keys loop.state invocation (before ++ [key.chord])
-  return ({ loop with state := ran.state }, ran.write)
+  if ran.finished then
+    return ({ loop with
+          state := ran.state, input, atRest := input },
+        ran.write)
+  else
+    return ({ loop with
+          state := ran.state, input := loop.atRest },
+        none)
 
 /-- Handles `event` and publishes a scene of the state after it, and says
 whether to go on. A close request and a quit stop the loop and publish

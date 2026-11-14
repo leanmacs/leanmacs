@@ -97,7 +97,9 @@ text port, a value of `TextM`.
   command and reverting to it if the command fails. Inside an insert
   session that is a state within the session's open group, which is why
   groups need not nest. A command that moved in the history cannot be
-  rolled back this way: the move closed the group.
+  rolled back this way: the move closed the group. The command loop does
+  this (`Editor/Loop.lean`, "Rollback"), and does not take a move back: it
+  reverts the group that is open after it (`revert`).
 - A state is one `UndoTree.state` gave. `revertTo` answers `none`, with
   nothing done, for a state of another node and for one that is not of the
   open group, and applies nothing for the state the text is in. The state
