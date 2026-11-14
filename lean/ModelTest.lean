@@ -6318,7 +6318,27 @@ def vimStateChecks : List Check :=
     { name := "typed text does not replace the last change"
       run :=
         let (inserting, _) := vimParsed "i"
-        pure ((vimParsedFrom inserting "a b").1.lastChange == inserting.lastChange) }]
+        pure ((vimParsedFrom inserting "a b").1.lastChange == inserting.lastChange) },
+    { name :=
+        "a key a mode binds runs its command in normal state, and in insert state it is typed text, while a key an active keymap binds for no mode still runs there"
+      run :=
+        let scheme := Vim.scheme vimStates
+        let maps (_ : ViewId) : List (Keymap Vim.Bound) :=
+          [Keymap.ofList
+              [(keys "z", scheme.modeCommand "mode-thing"),
+                (keys "Z", scheme.command "global-thing")]]
+        let (inserting, _) := vimFed "i"
+        pure
+          ((vimFed "z" maps).2 == [some (vimRun "mode-thing")] &&
+            (vimFedFrom inserting "z Z" maps).2 ==
+              [some (Vim.selfInsert "z"), some (vimRun "global-thing")]) },
+    { name := "a mode's binding that wraps a motion moves, and is an operator's target"
+      run :=
+        let maps (_ : ViewId) : List (Keymap Vim.Bound) :=
+          [vimKeymap [("z", .mode (.motion "zed"))]]
+        pure
+          ((vimFed "z" maps).2 == [some (vimMove "zed")] &&
+            (vimFed "d z" maps).2 == [none, some (vimOperate "delete" "motion" "zed")]) }]
 
 /-- The default Vim scheme's grammar folded from its initial state through
 the keys the key string `text` names, keys for view 0 with no active

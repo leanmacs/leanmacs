@@ -40,7 +40,8 @@ is `parse` with the edit compiled, and `scheme` packages it as an
   (`Keymap.walk` over `maps view ++ record.keymaps`, with `record` the
   record of the Vim state the key's view is in). The active keymaps are the
   specific ones, so a binding of theirs replaces a default, and it holds in
-  every Vim state. It is one walk, so prefixes merge across the two lists,
+  every Vim state, except a mode's where typing is text ("Mode keys"
+  below). It is one walk, so prefixes merge across the two lists,
   and a part of speech bound in an active keymap is the same to the grammar
   as one bound in a state's keymap.
 - **A motion alone is a move**, and **a command is run**. A key bound to a
@@ -174,6 +175,13 @@ A key a mode binds is bound to `Bound.mode` of what it runs
 (`InputScheme.modeCommand`: `.mode (.command { name })`). The grammar
 reaches a `.mode` binding as the binding it wraps, so a mode's motion is a
 move like any other.
+
+**A mode's keys hold only where typing is not text.** For a view whose Vim
+state inserts text (`StateRecord.insertsText`, the field that already says
+a digit is not a count), `parse` leaves the `.mode` bindings out of the
+active keymaps (`Keymap.filter`), so a key a mode binds is typed text there.
+A binding of the active keymaps that is no mode's, such as one from
+config's `bindKey`, holds in every state.
 
 ## Where an addition goes
 
@@ -523,7 +531,8 @@ def parse (states : States) (maps : ViewId → List (Keymap Bound)) (view : View
           typed, digits := some (state.digits.getD 0 * 10 + digit) },
         .nothing)
     | none =>
-      match Keymap.walk (maps view ++ record.keymaps) state.walked key with
+      let active := if record.insertsText then (maps view).map (·.filter (!·.isMode)) else maps view
+      match Keymap.walk (active ++ record.keymaps) state.walked key with
       | (_, some binding) => state.reached states view typed binding
       | (walked, none) =>
         if !walked.isEmpty then
