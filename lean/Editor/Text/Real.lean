@@ -439,6 +439,22 @@ def unit : ColumnUnit → Ffi.ColumnUnit
   | .utf16 => .utf16
   | .cells => .cells
 
+/-- The library's form of a motion of the port. A count of rows and a column
+that no word holds go as the largest word (`word`), which the library reads
+as past any text's rows or cells: the motion stops at the first or the last
+row and at the end of a row's content, as it does for any count or column
+that large. -/
+def motionOf : Motion → Ffi.Motion
+  | .nextCell => .nextCell
+  | .previousCell => .previousCell
+  | .lineStart => .lineStart
+  | .lineEnd => .lineEnd
+  | .lineFirstNonBlank => .lineFirstNonBlank
+  | .textStart => .textStart
+  | .textEnd => .textEnd
+  | .rowsUp count column => .rowsUp (word count) (word column)
+  | .rowsDown count column => .rowsDown (word count) (word column)
+
 /-- The library's answer to `query` about `snapshot`.
 
 The port's offsets, rows and columns are `Nat` and the library's are machine
@@ -479,6 +495,12 @@ def answer (snapshot : Ffi.Snapshot) : (query : TextQuery) → IO (Except TextEr
       return .error .badRange
     let some read ← snapshot.slice start.toUSize stop.toUSize | return .error .badRange
     return .ok read
+  | .motion motion offset => do
+    unless offset < USize.size do
+      return .error .badPosition
+    let some position ←
+      snapshot.motion (motionOf motion) offset.toUSize | return .error .badPosition
+    return .ok position.toNat
 
 /-- The library's snapshot of `source`: the snapshot it names, or a new one
 of the text it names, as the text is now. The refusal when it names nothing,

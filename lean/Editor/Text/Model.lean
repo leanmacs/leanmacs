@@ -75,6 +75,13 @@ One row's content and a range of a text are read as the characters that
 start between two offsets (`TextModel.between`), found by walking the whole
 string; the library reads the pieces of the range and no others.
 
+A motion (`TextModel.motion?`) is answered by listing first and picking
+after: every cell start of the text, or its rows with their cells, read off
+`TextModel.rowsOf`, and then the first after the position or the last before
+it. The library lists nothing: it walks its rope from the position, a cell
+at a time. The line start is the model's own conversions: the offset of
+column 0 of the position's row.
+
 The contract (`Editor/Text/Contract.lean`) is what says the model and the real
 binding agree. A clause added to `TextModel.handle`, to `TextModel.answer` or
 to `TextModel.answerLog` needs its property there.
@@ -549,6 +556,58 @@ def slice (text : String) (start stop : Nat) : Option String :=
     some (between text start stop)
   else none
 
+/-- Where every cell of `text` starts, in order: the cells of each row's
+content, and then the row's line break, when it has one. -/
+def cellStarts (text : String) : Array Nat :=
+  (rowsOf text).flatMap fun row =>
+    let content := row.cells.map (·.start)
+    if row.content < row.stop then content.push row.content else content
+
+/-- The character of `text` that starts at the byte offset `offset`; `none`
+when none does. -/
+def characterAt (text : String) (offset : Nat) : Option Char :=
+  go text.toList 0
+where
+  /-- Walks the characters that are left. `here` is the byte offset
+  reached. -/
+  go : List Char → Nat → Option Char
+    | [], _ => none
+    | c :: rest, here => if here == offset then some c else go rest (here + c.utf8Size)
+
+/-- Whether the character of `text` that starts at `offset` is a blank: a
+space or a tab. -/
+def blankAt (text : String) (offset : Nat) : Bool :=
+  characterAt text offset == some ' ' || characterAt text offset == some '\t'
+
+/-- The position `column` cells into the content of `row`, or where the
+content ends when it has fewer. -/
+def atColumn (row : Row) (column : Nat) : Nat :=
+  (row.cells[column]?.map (·.start)).getD row.content
+
+/-- Where `motion` leads from the byte offset `offset` of `text`. `none`
+unless the offset is a position.
+
+Each answer is picked from a list of the whole text: its cell starts, or its
+rows with their cells. The library lists nothing and walks from the
+position. The line start is the offset of column 0 of the position's row,
+by the model's own conversions. -/
+def motion? (text : String) (motion : Motion) (offset : Nat) : Option Nat :=
+  (pointOf .bytes text offset).bind fun point =>
+    let rows := rowsOf text
+    let row := rowAt rows offset
+    match motion with
+    | .nextCell => some (((cellStarts text).find? (· > offset)).getD text.utf8ByteSize)
+    | .previousCell => some (((cellStarts text).filter (· < offset)).back?.getD 0)
+    | .lineStart => offsetOf .bytes text ⟨point.row, 0⟩
+    | .lineEnd => some row.content
+    | .lineFirstNonBlank =>
+      some (((row.cells.find? fun cell => !blankAt text cell.start).map (·.start)).getD row.content)
+    | .textStart => some 0
+    | .textEnd => some text.utf8ByteSize
+    | .rowsUp count column => some (atColumn (rows[point.row - count]?.getD row) column)
+    | .rowsDown count column =>
+      some (atColumn (rows[min (point.row + count) (rows.size - 1)]?.getD row) column)
+
 /-- The model's answer to `query` about `content`. -/
 def answer (content : TextContent) : (query : TextQuery) → Except TextError query.Answer
   | .revision => .ok content.revision
@@ -575,6 +634,10 @@ def answer (content : TextContent) : (query : TextQuery) → Except TextError qu
     match slice content.contents start stop with
     | some read => .ok read
     | none => .error .badRange
+  | .motion motion offset =>
+    match motion? content.contents motion offset with
+    | some position => .ok position
+    | none => .error .badPosition
 
 end TextModel
 

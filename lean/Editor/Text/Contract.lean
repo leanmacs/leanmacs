@@ -1869,6 +1869,176 @@ def readProperties : List Property :=
         let noSnapshotRange ← refusedWith .noSuchSnapshot (discard <| (SnapshotId.mk 99).slice 0 0)
         return alike && kept && moved && noText && noTextRange && noSnapshot && noSnapshotRange }]
 
+/-- Text of four rows, 30 bytes long, for the motions. The combining acute
+(U+0301) is two bytes and "😀" four.
+
+| Row | Bytes | Holds |
+|---|---|---|
+| 0 | 0 to 10 | `foo.bar`, two spaces at 7 and 8, `x` at 9; then a carriage return at 10 and a line feed at 11 |
+| 1 | 12 | Nothing: a carriage return at 12 and a line feed at 13. An empty line |
+| 2 | 14 to 26 | A tab at 14, `s` at 15, `e` at 16, the combining acute at 17, "😀" at 19, `!` at 23, a space at 24, `y` at 25; then a line feed at 26 |
+| 3 | 27 to 30 | `end`, with no line break |
+-/
+def lines : String :=
+  "foo.bar  x\r\n\r\n\tsé😀! y\nend"
+
+/-- Every position of `lines`, written out by hand. The offsets 18, 20, 21
+and 22 are inside a character; 11 and 13 are positions where no cell
+starts. -/
+def linePositions : List Nat :=
+  [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 19, 23, 24, 25, 26, 27, 28, 29, 30]
+
+/-- What each motion answers from each position of `lines`, in the order of
+`linePositions`, written out by hand from the port's rules. -/
+def lineAnswers : List (Motion × List Nat) :=
+  [(.nextCell,
+      [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 12, 12, 14, 14, 15, 16, 17, 19, 23, 24, 25, 26, 27, 28, 29,
+        30, 30]),
+    (.previousCell,
+      [0, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 10, 12, 12, 14, 15, 16, 17, 19, 23, 24, 25, 26, 27, 28,
+        29]),
+    (.lineStart,
+      [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 12, 12, 14, 14, 14, 14, 14, 14, 14, 14, 14, 27, 27, 27,
+        27]),
+    (.lineEnd,
+      [10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 12, 12, 26, 26, 26, 26, 26, 26, 26, 26, 26,
+        30, 30, 30, 30]),
+    (.lineFirstNonBlank,
+      [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 12, 12, 15, 15, 15, 15, 15, 15, 15, 15, 15, 27, 27, 27,
+        27]),
+    (.textStart, List.replicate 27 0), (.textEnd, List.replicate 27 30),
+    -- One row down at column 2: row 1 is empty, in row 2 the column is `e`,
+    -- in row 3 `d`, and below the last row there is none.
+    (.rowsDown 1 2,
+      [12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 16, 16, 29, 29, 29, 29, 29, 29, 29, 29, 29,
+        29, 29, 29, 29]),
+    -- One row up at column 4: `b` in row 0, also from row 0; the empty row
+    -- 1; and "😀" in row 2.
+    (.rowsUp 1 4,
+      [4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 12, 12, 12, 12, 12, 12, 12, 12, 12, 19, 19, 19,
+        19]),
+    -- No rows away at column 3: `.` in row 0, the combining mark in row 2,
+    -- and the end of row 3, which has three cells.
+    (.rowsDown 0 3,
+      [3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 12, 12, 17, 17, 17, 17, 17, 17, 17, 17, 17, 30, 30, 30,
+        30]),
+    (.rowsDown 9 99, List.replicate 27 30), (.rowsUp 9 0, List.replicate 27 0)]
+
+/-- What `motion` answers from each of `offsets` in `source`, in order. -/
+def answersFrom (source : TextSource) (motion : Motion) (offsets : List Nat) : TextM (List Nat) :=
+  offsets.mapM fun offset => source.ask (.motion motion offset)
+
+/-- Whether `motion` answers `answers` from the offsets from 0 on, one each,
+in a new text holding `initial`. For a text with no character of several
+bytes, those are its positions when there is one answer more than it has
+bytes. -/
+def answersIn (initial : String) (motion : Motion) (answers : List Nat) : TextM Bool := do
+  let text ← createText initial
+  return answers.length == initial.utf8ByteSize + 1 &&
+      (← answersFrom (.text text) motion (List.range answers.length)) == answers
+
+/-- Whether `motion` from `offset` in `source` is refused with
+`badPosition`. -/
+def motionRefused (source : TextSource) (motion : Motion) (offset : Nat) : TextM Bool :=
+  refusedWith .badPosition (discard <| source.ask (.motion motion offset))
+
+/-- The properties of the motions: from a position to a position. -/
+def motionProperties : List Property :=
+  [{
+      name :=
+        "each motion by cells, lines, the text's ends and rows answers, from every position of a text, what a table written out by hand says",
+      holds := do
+        let text ← createText lines
+        let mut held := (← text.byteLength) == 30 && (← text.rowCount) == 4
+        for (motion, answers) in lineAnswers do
+          held :=
+            held && answers.length == linePositions.length &&
+              (← answersFrom (.text text) motion linePositions) == answers
+        return held },
+    { name :=
+        "in small texts the motions answer as the rules say: an empty text, a text that is one line break, a line of blanks, empty lines, a carriage return alone, and a row that ends in a carriage return and a line feed"
+      holds := do
+        let mut held := true
+        for motion in lineAnswers.map (·.1) do
+          held := held && (← answersIn "" motion [0])
+        for (initial, motion, answers) in
+          ([("\n", .lineEnd, [0, 1]), ("\n", .rowsDown 1 1, [1, 1]),
+              ("a\n \t\n\nb\n", .lineFirstNonBlank, [0, 0, 4, 4, 4, 5, 6, 6, 8]),
+              ("a\n \t\n\nb\n", .lineEnd, [1, 1, 4, 4, 4, 5, 7, 7, 8]),
+              ("a\n \t\n\nb\n", .rowsDown 1 1, [3, 3, 5, 5, 5, 7, 8, 8, 8]),
+              ("a\r\n\r\nb", .nextCell, [1, 3, 3, 5, 5, 6, 6]),
+              ("a\r\n\r\nb", .previousCell, [0, 0, 1, 1, 3, 3, 5]),
+              ("a\r\n\r\nb", .lineStart, [0, 0, 0, 3, 3, 5, 5]),
+              ("a\r\n\r\nb", .lineEnd, [1, 1, 1, 3, 3, 6, 6]), ("x\r", .lineEnd, [2, 2, 2]),
+              ("x\r", .lineFirstNonBlank, [0, 0, 0]), ("  ", .lineFirstNonBlank, [2, 2, 2]),
+              -- A row motion never answers past a row's content: not the
+              -- position between a carriage return and its line feed.
+              ("ab\r\ncd", .rowsUp 1 3, [2, 2, 2, 2, 2, 2, 2]),
+              ("ab\r\ncd", .rowsDown 0 9, [2, 2, 2, 2, 6, 6, 6]),
+              ("ab\r\ncd", .lineEnd, [2, 2, 2, 2, 6, 6, 6])] :
+            List (String × Motion × List Nat)) do
+          held := held && (← answersIn initial motion answers)
+        return held },
+    { name :=
+        "from every position of a text the next cell is where what an inclusive cursor covers stops, the line start is the offset of column 0 of the position's row and its own line start, the row read is the range from the line start to the line end, and no rows away at the position's own column in cells is the position, or the end of its row's content when it is past that"
+      holds := do
+        let mut held := true
+        for contents in
+          [lines, rows, "", "a\n", "a\r\nb", "\n\n", "héllo wörld", escaped, "a\n \t\n\nb\n"] do
+          let text ← createText contents
+          let source := TextSource.text text
+          for offset in [0:contents.utf8ByteSize + 1] do
+            if let some point← pointOf? source .bytes offset then
+              let covered ← text.extents { ranges := #[⟨offset, offset⟩], shape := .inclusive }
+              let start ← text.motion .lineStart offset
+              let stop ← text.motion .lineEnd offset
+              let column := (← text.pointOf offset .cells).column
+              held :=
+                held && covered.map (·.stop) == #[← text.motion .nextCell offset] &&
+                  start == (← text.offsetOf ⟨point.row, 0⟩) &&
+                  (← text.motion .lineStart start) == start &&
+                  (← text.rowContent point.row) == (← text.slice start stop) &&
+                  (← text.motion (.rowsDown 0 column) offset) == min offset stop &&
+                  (← text.motion (.rowsUp 0 column) offset) == min offset stop
+        return held },
+    -- Cut down to a 64-bit word, `2 ^ 64 + 1` is 1 and `2 ^ 64` is 0: a
+    -- position, one row and one column. An implementation that converted
+    -- without looking would answer from the position 1, and would move one
+    -- row or to column 1.
+    { name :=
+        "a motion from an offset inside a character, past the end or that no machine word holds is refused as no position, whichever motion it is, of a text and of a snapshot; a count and a column that no machine word holds are answered as the largest are"
+      holds := do
+        let text ← createText lines
+        let snapshot ← text.snapshot
+        let mut refused := true
+        for source in [TextSource.text text, TextSource.snapshot snapshot] do
+          for motion in lineAnswers.map (·.1) do
+            for offset in [18, 20, 31, 2 ^ 64, 2 ^ 64 + 1] do
+              refused := refused && (← motionRefused source motion offset)
+        let huge := 2 ^ 64 + 1
+        -- The last row starts at 27, and row 0's content ends at 10.
+        let farDown := (← text.motion (.rowsDown huge 0) 0) == 27
+        let farColumn := (← text.motion (.rowsDown 0 huge) 0) == 10
+        let farUp := (← text.motion (.rowsUp (2 ^ 64) (2 ^ 64)) 30) == 10
+        return refused && farDown && farColumn && farUp },
+    { name :=
+        "a text and a snapshot of it answer every motion alike, after an edit the snapshot still answers as it did, and a source that names nothing is refused before the offset is looked at"
+      holds := do
+        let text ← createText lines
+        let snapshot ← text.snapshot
+        let mut alike := true
+        for (motion, answers) in lineAnswers do
+          alike := alike && (← answersFrom (.snapshot snapshot) motion linePositions) == answers
+        -- The text loses its first row: every row is one earlier.
+        text.delete 0 12
+        let kept := (← snapshot.motion .lineEnd 0) == 10 && (← snapshot.motion .textEnd 0) == 30
+        let moved := (← text.motion .lineEnd 0) == 0 && (← text.motion .textEnd 0) == 18
+        -- 99 is past the end of any text here.
+        let noText ← refusedWith .noSuchText (discard <| (TextId.mk 99).motion .nextCell 99)
+        let noSnapshot ←
+          refusedWith .noSuchSnapshot (discard <| (SnapshotId.mk 99).motion .nextCell 99)
+        return alike && kept && moved && noText && noSnapshot }]
+
 /-- The properties every implementation of the text port has. -/
 def properties : List Property :=
   editProperties ++ revisionProperties ++ snapshotProperties ++ positionProperties ++
@@ -1880,7 +2050,8 @@ def properties : List Property :=
     extentProperties ++
     inverseProperties ++
     copyProperties ++
-    readProperties
+    readProperties ++
+    motionProperties
 
 /-- Runs each of `properties` with `run`, which must start every command from
 an empty store, and returns the names of those that did not hold. A property

@@ -241,6 +241,39 @@ operations as they are: they are lifted into it.
   the text from one position up to, not including, another; it is refused
   with `badRange` unless both are positions and the start is not after the
   stop, as an edit and a trace are.
+- A *motion* leads from a position to a position, and is a question of a
+  text or a snapshot (`TextQuery.motion`, `Motion`). It is refused with
+  `badPosition` from an offset that is not a position, whichever motion it
+  is, the text's start and end included. Its answer is a position and is
+  never clamped: which key runs which motion, a count as repetition, and
+  keeping a cursor on a line and off a line break are the editor's rules.
+- A motion moves by the cell. A *cell start* is a position where a cell
+  starts: every position but the one between a carriage return and the line
+  feed after it. The end of the text is none. A *blank* is a space or a
+  tab. For the position `p` in a text of length `n`:
+
+  | Motion | Answers |
+  |---|---|
+  | `nextCell` | The first cell start after `p`, or `n`. It is where the cell at `p` ends: the stop of what an inclusive cursor at `p` covers |
+  | `previousCell` | The last cell start before `p`, or 0 |
+  | `lineStart` | Where `p`'s row starts |
+  | `lineEnd` | Where the content of `p`'s row ends: where its line break starts, or `n` in the last row |
+  | `lineFirstNonBlank` | The first position of the content of `p`'s row whose character is not a blank; `lineEnd` when there is none, so the row's start on an empty line |
+  | `textStart` | 0 |
+  | `textEnd` | `n` |
+  | `rowsUp count column` | In the row `count` rows above `p`'s, or the first row when there is none: the position `column` cells from the row's start, or where its content ends when it has fewer |
+  | `rowsDown count column` | The same in the row `count` rows below `p`'s, or the last row when there is none |
+
+  The line break is a cell like any other, so `nextCell` and `previousCell`
+  cross lines. The position of a line feed belongs to the row it ends: from
+  between a carriage return and its line feed, `lineEnd` is the position
+  before.
+- A motion by rows counts its column as `ColumnUnit.cells` does, and never
+  answers past a row's content, whatever the column. A count of 0 stays in
+  the position's row. The empty last row of a text that ends in a line feed
+  is a row like any other. A count or a column that no machine word holds
+  means what the largest means: the first or the last row, and the end of
+  the content.
 - `release` gives up a text or a snapshot. Its id is refused from then on,
   for good: an id is never used again. Releasing a text leaves its snapshots
   readable.
@@ -314,6 +347,12 @@ A new question about a text is a constructor of `TextQuery` with its case in
 snapshot. It needs a clause in the model (`TextModel.answer`) and in the real
 binding (`RealTexts.answer`), and a property in the contract. It is not a
 new request: `ask` carries every question.
+
+A new motion is a constructor of `Motion`, with its clause in the model
+(`TextModel.motion?`), its case in the real binding's encoder
+(`RealTexts.motionOf`, and a tag in the library), and its rows in the
+contract's tables (`TextContract.lineAnswers`). It is not a new question:
+`motion` carries every one.
 
 A new question about a text's edit log is a constructor of `LogQuery` with
 its case in `LogQuery.Answer`, and an operation here that asks it. It needs
@@ -479,6 +518,36 @@ structure Extent where
   stop : Nat
   deriving DecidableEq, Repr
 
+/-- A motion: a way from one position of a text to another. The rules of the
+port say what each answers. A new motion is a constructor here, not a
+question. -/
+inductive Motion where
+  /-- The first cell start after the position, or the end of the text: where
+  the cell at the position ends. -/
+  | nextCell
+  /-- The last cell start before the position, or 0. -/
+  | previousCell
+  /-- Where the position's row starts. -/
+  | lineStart
+  /-- Where the content of the position's row ends: where its line break
+  starts, or the end of the text in the last row. -/
+  | lineEnd
+  /-- The first position of the content of the position's row whose
+  character is not a blank, or where that content ends. -/
+  | lineFirstNonBlank
+  /-- The start of the text: 0. -/
+  | textStart
+  /-- The end of the text. -/
+  | textEnd
+  /-- In the row `count` rows above the position's, or the first row: the
+  position `column` cells from the row's start, or where its content ends
+  when it has fewer. -/
+  | rowsUp (count column : Nat)
+  /-- The same in the row `count` rows below the position's, or the last
+  row. -/
+  | rowsDown (count column : Nat)
+  deriving DecidableEq, Repr
+
 /-- A question about a text or a snapshot. A new question is a constructor
 here, not a request. -/
 inductive TextQuery where
@@ -500,6 +569,8 @@ inductive TextQuery where
   | rowContent (row : Nat)
   /-- The text from the byte offset `start` up to, not including, `stop`. -/
   | slice (start stop : Nat)
+  /-- Where `motion` leads from the byte offset `offset`. -/
+  | motion (motion : Motion) (offset : Nat)
 
 /-- The type of the answer to each question. It is an `abbrev` so that an
 answer's type unfolds where an instance is looked for: with a `def`,
@@ -514,6 +585,7 @@ abbrev TextQuery.Answer : TextQuery → Type
   | .extents _ => Array Extent
   | .rowContent _ => String
   | .slice .. => String
+  | .motion .. => Nat
 
 /-- Who made an edit: a number the editor chooses and the text store keeps
 with the edit and never reads. What a number stands for is the editor's
@@ -980,6 +1052,12 @@ unless both offsets are positions and `start ≤ stop`. -/
 def TextId.slice (text : TextId) (start stop : Nat) : TextM String :=
   (TextSource.text text).ask (.slice start stop)
 
+/-- Where `motion` leads from the byte offset `offset` of `text`: a position
+of the text. Refused with `badPosition` unless `offset` is a position,
+whichever motion it is. -/
+def TextId.motion (text : TextId) (motion : Motion) (offset : Nat) : TextM Nat :=
+  (TextSource.text text).ask (.motion motion offset)
+
 /-- Gives `text` up. Its id is refused from then on; its snapshots still
 read. -/
 def TextId.release (text : TextId) : TextM Unit :=
@@ -1033,6 +1111,12 @@ including, `stop`. Refused with `badRange` unless both offsets are positions
 and `start ≤ stop`. -/
 def SnapshotId.slice (snapshot : SnapshotId) (start stop : Nat) : TextM String :=
   (TextSource.snapshot snapshot).ask (.slice start stop)
+
+/-- Where `motion` leads from the byte offset `offset` of the text
+`snapshot` holds: a position of that text. Refused with `badPosition` unless
+`offset` is a position, whichever motion it is. -/
+def SnapshotId.motion (snapshot : SnapshotId) (motion : Motion) (offset : Nat) : TextM Nat :=
+  (TextSource.snapshot snapshot).ask (.motion motion offset)
 
 /-- Gives `snapshot` up. Its id is refused from then on. -/
 def SnapshotId.release (snapshot : SnapshotId) : TextM Unit :=
