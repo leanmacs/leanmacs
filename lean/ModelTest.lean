@@ -14408,10 +14408,36 @@ def wordEndBackRows : List OperatorRow :=
     .inserts bareEndText "c E" "ab cd\n  ef g|" (charwise "h"),
     .rests bareEndText "y E" "ab cd\n  ef g|h" (charwise "h")]
 
+/-- The oracle table's rows for `d` and `y` over `w` and `W`, in its five
+situations. Under an operator the last word moved over ends the stretch
+where its line's content ends, and from an empty line the stretch is that
+line. -/
+def wordForwardRows : List OperatorRow :=
+  [.rests plainText "d w" "ab\ncd\n  ef |.ij kl\nmn\nop\n" (charwise "gh"),
+    .rests plainText "y w" "ab\ncd\n  ef |gh.ij kl\nmn\nop\n" (charwise "gh"),
+    .rests plainText "d W" "ab\ncd\n  ef |kl\nmn\nop\n" (charwise "gh.ij "),
+    .rests plainText "y W" "ab\ncd\n  ef |gh.ij kl\nmn\nop\n" (charwise "gh.ij "),
+    .rests plainText "d 2 w" "ab\ncd\n  ef |ij kl\nmn\nop\n" (charwise "gh."),
+    .rests plainText "y 2 w" "ab\ncd\n  ef |gh.ij kl\nmn\nop\n" (charwise "gh."),
+    .rests plainText "d 2 W" "ab\ncd\n  ef| \nmn\nop\n" (charwise "gh.ij kl"),
+    .rests plainText "y 2 W" "ab\ncd\n  ef |gh.ij kl\nmn\nop\n" (charwise "gh.ij kl"),
+    .rests emptyLineText "d w" "ab cd\n  |ef gh\n" (linewise "\n"),
+    .rests emptyLineText "y w" "ab cd\n|\n  ef gh\n" (linewise "\n"),
+    .rests emptyLineText "d W" "ab cd\n  |ef gh\n" (linewise "\n"),
+    .rests emptyLineText "y W" "ab cd\n|\n  ef gh\n" (linewise "\n"),
+    .rests endText "d w" "ab cd\n  ef |g\n" (charwise "h"),
+    .rests endText "y w" "ab cd\n  ef g|h\n" (charwise "h"),
+    .rests endText "d W" "ab cd\n  ef |g\n" (charwise "h"),
+    .rests endText "y W" "ab cd\n  ef g|h\n" (charwise "h"),
+    .rests bareEndText "d w" "ab cd\n  ef |g" (charwise "h"),
+    .rests bareEndText "y w" "ab cd\n  ef g|h" (charwise "h"),
+    .rests bareEndText "d W" "ab cd\n  ef |g" (charwise "h"),
+    .rests bareEndText "y W" "ab cd\n  ef g|h" (charwise "h")]
+
 /-- The rows of the operator × motion table, in the order the motions were
 built. -/
 def operatorTable : List OperatorRow :=
-  deleteAlongRows ++ yankChangeAlongRows ++ lineEndRows ++ wordEndBackRows
+  deleteAlongRows ++ yankChangeAlongRows ++ lineEndRows ++ wordEndBackRows ++ wordForwardRows
 
 /-- Whether `left` is what a command that gave up with `reason` leaves: the
 text and the cursor `shown`, the register as it was, the view not in insert
@@ -14483,6 +14509,36 @@ def evilOperatorChecks : List Check :=
                 .givesUp "|abc" "c b", .givesUp "|abc" "y B", .givesUp "|" "d b"]
         return held &&
             evilGaveUp (evilEdited "|abc" "d b") "|abc" (Evil.cannotMove Evil.wordBackward.name) },
+    { name :=
+        "w under d and y: the last word of a line is taken with the blanks after it and not the line break, with a count that ends there too; a count that ends on a later line takes up to that word; from an empty line the stretch is that line, whole; at the text's end the last word is taken, with and without a final line feed, and a count past the text takes what there is"
+      run :=
+        operatorRows
+          [.rests "one |two\nthree" "d w" "one| \nthree" (charwise "two"),
+            .rests "|two\nthree" "d w" "|\nthree" (charwise "two"),
+            .rests "|foo   \nbar" "d w" "|\nbar" (charwise "foo   "),
+            .rests "foo|   \nbar" "d w" "fo|o\nbar" (charwise "   "),
+            .rests "|foo\n  bar" "d w" "|\n  bar" (charwise "foo"),
+            .rests "|one two\nthree" "d 2 w" "|\nthree" (charwise "one two"),
+            .rests "|one\ntwo three" "d 2 w" "|three" (charwise "one\ntwo "),
+            .rests "foo |bar\nbaz" "y w" "foo |bar\nbaz" (charwise "bar"),
+            .rests "a b |c" "d w" "a b| " (charwise "c"),
+            .rests "a b |c\n" "d w" "a b| \n" (charwise "c"),
+            .rests "a |b c\nd" "d 9 w" "a| " (charwise "b c\nd"),
+            .rests "x |foo.bar\nbaz" "d W" "x| \nbaz" (charwise "foo.bar"),
+            .rests "ab\n|\nfoo" "d w" "ab\n|foo" (linewise "\n"),
+            .rests "|one\n\nthree" "d 2 w" "|three" (linewise "one\n\n"),
+            .rests "x |one\n\nthree" "d 2 w" "x| \nthree" (charwise "one\n")] },
+    { name :=
+        "Vi's rule for a deletion over lines: cells that start at or before their line's first non-blank, stop on a later line and have only blanks after them on it are whole lines for d, and cells for y; from past the indent they are cells for d too"
+      run :=
+        operatorRows
+          [.rests "|one\ntwo\nthree" "d 3 w" "|" (linewise "one\ntwo\nthree\n"),
+            .rests "|one\ntwo\nthree" "y 3 w" "|one\ntwo\nthree" (charwise "one\ntwo\nthree"),
+            .rests "|ab\ncd\nef" "d 2 $" "|ef" (linewise "ab\ncd\n"),
+            .rests "a|b\ncd\nef" "d 2 $" "|a\nef" (charwise "b\ncd"),
+            .rests "|ab\n  cd  \nef" "d 2 e" "|ef" (linewise "ab\n  cd  \n"),
+            .rests "ab\n|\ncd" "d e" "|ab" (linewise "\ncd\n"),
+            .rests "  |ab\n\tcd \t\nef\n" "d 2 $" "|ef\n" (linewise "  ab\n\tcd \t\n")] },
     { name :=
         "a departure from Vim, recorded: when b with a count comes to rest on an empty first line with steps left over, the motion fails and the operator gives up, and the cursor stays where it was, where Vim leaves it on the empty line; the text, the register and the state are Vim's"
       run := operatorRows [.givesUp "\nab |cd" "d 3 b", .givesUp "\nab |cd" "c 3 B"] },

@@ -58,6 +58,11 @@ order:
   non-blank, it is the whole lines from its first to the line before its
   stop. Otherwise it stops where the line before ends. These are Vim's two
   exceptions for an exclusive motion whose end is in column 1.
+- **Vi's rule, for an operator that says so** (`linesOverBlanks`, which
+  `delete` alone does): cells that start at or before their line's first
+  non-blank, stop on a later line, and have only blanks between their stop
+  and that line's end are that many whole lines. So `d2$` from a line's
+  indent takes two lines where `y2$` takes cells.
 - **Otherwise the stretch is those cells, with the motion's reach.**
 
 ## What an operator does
@@ -69,7 +74,15 @@ order:
 | `change` | The register is the cells' text. They are deleted. The selection is a bar at their start | Nothing is deleted. The register is as it was, unless the reach is `inclusive` and the text is not empty, when it is the empty text. The selection is a bar where the cells would start | The register is the lines, line-wise. The text from the first line's start to where the last line's content ends is deleted, so one line break stays. The selection is a bar at that line's start |
 
 - **A line-wise register's text** is the lines from the first line's start
-  through the last line's line break (`linesOf`).
+  through the last line's line break (`linesOf`), and the buffer's line
+  ending (`Buffer.lineEnding`) is added when the last line has none.
+- **A line-wise deletion leaves the text ending the way it ended.** The
+  lines go from the first line's start through the last line's line break.
+  When the last of them is the text's last line and has no line break, the
+  line break before the first goes instead (`Lines.cut`), so deleting the
+  last line of `a⏎b` leaves `a`, and of `a⏎b⏎` leaves `a⏎`. The cursor
+  then goes to the first non-blank of the line before, there being none
+  after.
 
 - **The no-cell column is Vim's**, quirks included: `yh` at a line's start
   empties the register, `dh` and `ch` there leave it, and `c$` on an empty
@@ -119,10 +132,16 @@ so a carriage return and line feed is one line break. -/
 def rowOf (text : TextId) (offset : Nat) : TextM Nat :=
   return (← text.pointOf offset .cells).row
 
-/-- What an operator acts on in `text` when its head is at `head` and the
+/-- Whether `text` holds only blanks, a blank being a space or a tab, which
+are the two characters Vim's rule for a deletion over lines names. -/
+def blanksOnly (text : String) : Bool :=
+  text.all fun char => char == ' ' || char == '\t'
+
+/-- What `operator` acts on in `text` when its head is at `head` and the
 motion it waits for leads to `taken` ("What an operator takes", in the
 module docs). -/
-def stretch (text : TextId) (head : Nat) (taken : Vocabulary.Taken) : TextM Vocabulary.Stretch := do
+def stretch (operator : Vocabulary.Operator) (text : TextId) (head : Nat)
+    (taken : Vocabulary.Taken) : TextM Vocabulary.Stretch := do
   let high := max head taken.head
   -- Through the cell at the higher end, where there is one on its line.
   let through ←
@@ -140,6 +159,15 @@ def stretch (text : TextId) (head : Nat) (taken : Vocabulary.Taken) : TextM Voca
     if start ≤ (← text.motion .lineFirstNonBlank start) then
       return .lines (← rowOf text start) ((← rowOf text stop) - 1)
     return .cells ⟨start, ← text.motion .previousCell stop⟩ taken.reach
+  -- Vi's rule: cells from a line's indent to the blanks that end a later
+  -- line are whole lines, for an operator that says so.
+  if operator.linesOverBlanks then
+    let first ← rowOf text start
+    let last ← rowOf text stop
+    if
+        first < last && start ≤ (← text.motion .lineFirstNonBlank start) &&
+          blanksOnly (← text.slice stop (← text.motion .lineEnd stop)) then
+      return .lines first last
   return .cells ⟨start, stop⟩ taken.reach
 
 /-- One range of the shape the call's report says, with both ends at
@@ -162,24 +190,45 @@ structure Lines where
   /-- Where the line after the last starts, past the last line's line break,
   or the text's end. -/
   stop : Nat
-  /-- The lines' text, from `start` up to `stop`. -/
+  /-- Where a deletion of the lines starts, so that the text ends the way it
+  ended: `start`, or, when the last of them has no line break and a line
+  is before the first, where that line's content ends, so its line break
+  goes instead. -/
+  cut : Nat
+  /-- Whether the lines run to the text's end: no line follows them. -/
+  final : Bool
+  /-- The lines' text as a line-wise register holds it: from `start` up to
+  `stop`, and then the buffer's line ending when the last line has no line
+  break. -/
   taken : String
 
-/-- The lines of `text` from the row `first` through the row `last`. -/
-def linesOf (text : TextId) (first last : Nat) : TextM Lines := do
+/-- The lines of `target`'s text from the row `first` through the row
+`last`. -/
+def linesOf (target : Target) (first last : Nat) : TextM Lines := do
+  let text := target.buffer.text
+  let length ← text.byteLength
   let start ← text.offsetOf ⟨first, 0⟩
   let content ← text.motion .lineEnd (← text.offsetOf ⟨last, 0⟩)
   let stop ←
     if last + 1 < (← text.rowCount) then
       text.offsetOf ⟨last + 1, 0⟩
     else
-      text.byteLength
-  return { start, content, stop, taken := ← text.slice start stop }
+      pure length
+  let bare := stop == content
+  let cut ←
+    if bare && first > 0 then
+      text.motion .lineEnd (← text.offsetOf ⟨first - 1, 0⟩)
+    else
+      pure start
+  return {
+      start, content, stop, cut, final := stop == length
+      taken := (← text.slice start stop) ++ if bare then target.buffer.lineEnding.text else "" }
 
 /-- The operator that deletes what it is handed into the register ("What an
 operator does", in the module docs). -/
 def delete : Vocabulary.Operator :=
   { name := "delete"
+    linesOverBlanks := true
     act := fun call operand => do
       match operand.stretch with
       | .cells extent _ =>
@@ -190,12 +239,18 @@ def delete : Vocabulary.Operator :=
           store operand.register { text := taken }
       | .lines first last =>
         let text := call.target.buffer.text
-        let lines ← linesOf text first last
+        let lines ← linesOf call.target first last
         -- The first non-blank of the line that follows, in the text the
-        -- deletion leaves.
-        let after := (← text.motion .lineFirstNonBlank lines.stop) - (lines.stop - lines.start)
-        call.target.replaceCarrying ⟨lines.start, lines.stop⟩ "" operand.before
-            (cursorAt call after)
+        -- deletion leaves; of the line before when none follows; and 0 when
+        -- there is neither.
+        let after ←
+          if !lines.final then
+            pure ((← text.motion .lineFirstNonBlank lines.stop) - (lines.stop - lines.cut))
+          else if first > 0 then
+            text.motion .lineFirstNonBlank (← text.offsetOf ⟨first - 1, 0⟩)
+          else
+            pure 0
+        call.target.replaceCarrying ⟨lines.cut, lines.stop⟩ "" operand.before (cursorAt call after)
         settle call after
         store operand.register { text := lines.taken, linewise := true } }
 
@@ -220,7 +275,7 @@ def change : Vocabulary.Operator :=
           settle call extent.start
           store operand.register { text := taken }
       | .lines first last =>
-        let lines ← linesOf call.target.buffer.text first last
+        let lines ← linesOf call.target first last
         -- One line break stays: the lines' content goes, and not the last
         -- line's line break.
         unless lines.start == lines.content do
@@ -241,7 +296,7 @@ def yank : Vocabulary.Operator :=
           settle call extent.start
         store operand.register { text := taken }
       | .lines first last =>
-        let lines ← linesOf call.target.buffer.text first last
+        let lines ← linesOf call.target first last
         settle call operand.rest
         store operand.register { text := lines.taken, linewise := true } }
 
@@ -276,8 +331,8 @@ def operate (operators : Array Vocabulary.Operator) (motions : Array Vocabulary.
       if taken.failed then
         giveUp (cannotMove name)
       pure
-          { stretch := ← stretch text head taken, head, rest := min head taken.head, register,
-            before }
+          { stretch := ← stretch operator text head taken, head, rest := min head taken.head,
+            register, before }
     | "text-object" =>
       giveUp noTextObject
     | _ =>

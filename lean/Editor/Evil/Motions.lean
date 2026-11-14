@@ -129,9 +129,27 @@ def backward (name : String) (kind : WordKind) : Vocabulary.Motion :=
         head ← text.motion (.previousWordStart kind) head
       return { head, failed } }
 
+/-- The motion called `name` to the start of the next word of `kind`,
+`count` times, 1 with no count. Under an operator its last step is another
+(`taken`), which is Vim's special case for a word motion with an operator:
+it stops where its line's content ends, so the last word of a line is taken
+with the blanks after it and not the line break; and from an empty line it
+goes to the next line's start, so that line is what is taken. -/
+def forward (name : String) (kind : WordKind) : Vocabulary.Motion :=
+  let step : Motion := .nextWordStart kind
+  { name
+    target := fun text origin =>
+      return { head := ← stepped text step (origin.count.getD 1) (fun _ => false) origin.head }
+    taken := fun _ text origin => do
+      let last ← stepped text step (origin.count.getD 1 - 1) (fun _ => false) origin.head
+      let stop ← text.motion .lineEnd last
+      if last < (← text.byteLength) && (← text.motion .lineStart last) == stop then
+        return { head := ← text.motion .nextCell last, reach := .exclusive }
+      return { head := min (← text.motion step last) stop, reach := .exclusive } }
+
 /-- To the start of the next word. -/
 def wordForward : Vocabulary.Motion :=
-  repeating "word-forward" (.nextWordStart .word)
+  forward "word-forward" .word
 
 /-- To the start of the word before. -/
 def wordBackward : Vocabulary.Motion :=
@@ -143,7 +161,7 @@ def wordEnd : Vocabulary.Motion :=
 
 /-- To the start of the next WORD. -/
 def bigwordForward : Vocabulary.Motion :=
-  repeating "bigword-forward" (.nextWordStart .bigWord)
+  forward "bigword-forward" .bigWord
 
 /-- To the start of the WORD before. -/
 def bigwordBackward : Vocabulary.Motion :=
