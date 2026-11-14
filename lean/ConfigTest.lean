@@ -108,6 +108,24 @@ structure Context where
   bumped : Nat
   /-- The next source id no host of this process has posted under. -/
   ids : IO.Ref UInt64
+  /-- The table of waits the hosts over the library's file service share,
+  once the first of them has asked for it (`Context.fileWaits`); none until
+  then. -/
+  waits : IO.Ref (Option Job.Completions)
+
+/-- The table of waits every host over the library's file service is staged
+over, with the process's one completion pump running over it. It is made,
+and the pump started on a dedicated task, the first time it is asked for,
+and handed back as it is afterwards: a second pump would take the first
+one's completions, so the checks of files share one table and one pump.
+The executable exits explicitly, which a pump parked in its pull needs. -/
+def Context.fileWaits (context : Context) : IO Job.Completions := do
+  if let some completions← context.waits.get then
+    return completions
+  let completions ← Job.Completions.new
+  discard <| IO.asTask (prio := .dedicated) (Job.pump completions)
+  context.waits.set (some completions)
+  return completions
 
 /-- Evaluates the constant `name` of `environment` as an `IO Nat`. It is
 `unsafe` because evaluating a constant trusts the type it is given. -/
@@ -364,13 +382,21 @@ structure Compiled where
 
 /-- A stage for a host over `elaborator` and `source`, with what `compiled`
 hands it. Hosts follow one another on one queue: each gets source ids of its
-own, so none takes a late event of an earlier one for its own. -/
+own, so none takes a late event of an earlier one for its own. Its jobs wait
+in a table of waits of its own, unless it is handed one (`waits`), as a
+stage over a real service is. -/
 def Stage.new {σ : Type} (context : Context) (elaborator : Config.Elaborator σ)
-    (source : Config.Source) (compiled : Compiled := {}) : IO (Stage σ) := do
+    (source : Config.Source) (compiled : Compiled := {}) (waits : Option Job.Completions := none) :
+    IO (Stage σ) := do
   let output ← IO.mkRef #[]
   let threads ← IO.mkRef #[]
   let log ← IO.mkRef #[]
-  let completions ← Job.Completions.new
+  let completions ←
+    match waits with
+    | some completions =>
+      pure completions
+    | none =>
+      Job.Completions.new
   let clock ← Job.FakeClock.new completions
   let requests ← context.ids.modifyGet fun next => (next, next + 3)
   return {
@@ -439,13 +465,9 @@ def lines (session : Session) : IO (Array String) :=
 
 end Session
 
-/-- Runs `check` against a host started on a stage of its own over
-`elaborator` and `source`, with what `compiled` hands it, and stops the
-host. `false` if the check did not hold or the host did not stop. -/
-def staged {σ : Type} (context : Context) (elaborator : Config.Elaborator σ)
-    (source : Config.Source) (check : Headless.Host → Stage σ → IO Bool)
-    (compiled : Compiled := {}) : IO Bool := do
-  let stage ← Stage.new context elaborator source compiled
+/-- Runs `check` against a host started on `stage`, and stops the host.
+`false` if the check did not hold or the host did not stop. -/
+def onStage {σ : Type} (stage : Stage σ) (check : Headless.Host → Stage σ → IO Bool) : IO Bool := do
   let host ← Headless.start stage.collaborators
   try
     let held ← check host stage
@@ -454,6 +476,14 @@ def staged {σ : Type} (context : Context) (elaborator : Config.Elaborator σ)
   catch error =>
     discard <| host.halt patience
     throw error
+
+/-- Runs `check` against a host started on a stage of its own over
+`elaborator` and `source`, with what `compiled` hands it, and stops the
+host. `false` if the check did not hold or the host did not stop. -/
+def staged {σ : Type} (context : Context) (elaborator : Config.Elaborator σ)
+    (source : Config.Source) (check : Headless.Host → Stage σ → IO Bool)
+    (compiled : Compiled := {}) : IO Bool := do
+  onStage (← Stage.new context elaborator source compiled) check
 
 /-- Runs `check` against a host started over `elaborator` and `source`, with
 its output in a buffer `check` is handed, and stops the host. `false` if the
@@ -1245,13 +1275,31 @@ def setup : SetupM Unit := do
     ") fun loaded => discard loaded.toText
 "
 
-/-- The check of files through the headless host (`Editor/Headless.lean`),
+/-- A stage for a host whose jobs reach real files: one over the real
+elaborator and `source`, with what `compiled` hands it, whose services have
+the library's file service, over the table of waits the file checks share
+(`Context.fileWaits`), which the one completion pump runs over. Its clock is
+still a fake one. -/
+def Stage.overFiles (context : Context) (source : Config.Source) (compiled : Compiled := {}) :
+    IO (Stage Config.Elaborate.State) := do
+  let completions ← context.fileWaits
+  let stage ← Stage.new context context.elaborator source compiled (some completions)
+  let collaborators := stage.collaborators
+  return { stage with
+      collaborators :=
+        { collaborators with
+          services :=
+            { collaborators.services with
+              files :=
+                Job.realFiles completions collaborators.published.reader collaborators.held } } }
+
+/-- The checks of files through the headless host (`Editor/Headless.lean`),
 with the real elaborator, the real queue, the real text binding and the
-library's file service: the one check of this executable whose host is over
-a real service. So it starts the completion pump, once, on a dedicated task,
-over the table of waits its host's services use. No other check of the gated
-run starts a pump, so none takes this one's completions, and the executable
-exits explicitly, which a pump parked in its pull needs. -/
+library's file service: the checks of this executable whose hosts are over a
+real service. They share one table of waits and one completion pump over it
+(`Context.fileWaits`, `Stage.overFiles`), started by the first of them. No
+other check of the gated run starts a pump, so none takes these checks'
+completions. -/
 def fileChecks (context : Context) : List Check :=
   [{
       name :=
@@ -1261,18 +1309,9 @@ def fileChecks (context : Context) : List Check :=
           IO.FS.withTempDir fun config => do
             IO.FS.writeBinFile (files / "note.txt") "héllo\n".toUTF8
             writeFiles config [("10-open.lean", openChunk files)]
-            let stage ← Stage.new context context.elaborator (Config.Directory.source config)
-            let completions := stage.collaborators.services.completions
-            discard <| IO.asTask (prio := .dedicated) (Job.pump completions)
-            let collaborators : Headless.Collaborators Config.Elaborate.State TestScheme.scheme :=
-              { stage.collaborators with
-                services :=
-                  { stage.collaborators.services with
-                    files :=
-                      Job.realFiles completions stage.collaborators.published.reader
-                        stage.collaborators.held } }
+            let stage ← Stage.overFiles context (Config.Directory.source config)
             let snapshots ← Ffi.Snapshot.live
-            let host ← Headless.start collaborators
+            let host ← Headless.start stage.collaborators
             try
               let ask (requests : List Headless.Request) : IO Unit := do
                 for request in requests do
@@ -2287,7 +2326,8 @@ def run (sysroot oleanDir : String) : IO UInt8 := do
   let bumped ← ConfigFixture.bump
   let base ← real.base
   let context : Context :=
-    { elaborator := { real with base := pure base }, base, bumped, ids := ← IO.mkRef 100 }
+    { elaborator := { real with base := pure base }, base, bumped, ids := ← IO.mkRef 100
+      waits := ← IO.mkRef none }
   let checks := checks context
   let failed ← failures checks
   for name in failed do
