@@ -402,4 +402,21 @@ def operate (operators : Array Vocabulary.Operator) (motions : Array Vocabulary.
   discard <| call.target.window.id.setWanted none
   operator.act call operand
 
+/-- The command that deletes the cell under the cursor, Vim's `x`, as it is
+called: with the count and the register a command's key compiles to
+(`Editor/InputScheme/Vim.lean`, "Edits"), each of which may be left out. It
+is the operate command's own path, with the operator `delete` over the
+motion `right`, and has no rule of its own: it deletes up to `count` cells
+and no further than the line's end, into the register, and the cursor
+rests on the cell that follows or on the line's last cell. -/
+def deleteChar (call : Call) : EditorM Unit :=
+  let (count, register) :=
+    match call.arguments with
+    | .nat count :: .str register :: _ => (count, register)
+    | .nat count :: _ => (count, "")
+    | _ => (0, "")
+  operate operators motions
+    { call with
+      arguments := [.str delete.name, .str "motion", .str right.name, .nat count, .str register] }
+
 end Editor.Evil

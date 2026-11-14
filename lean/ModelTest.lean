@@ -337,7 +337,8 @@ registers for evil (`Editor/Evil/Compiled.lean`), on the loop's driver:
   with every default motion key from every resting position of a few
   texts;
 - `evilSelectionChecks`: the operators over a `v` and a `V` selection, by
-  the same rows, and that the operator's key leaves one cursor.
+  the same rows, and that the operator's key leaves one cursor;
+- `evilRegisterChecks`: `x`, by the same rows.
 
 Each expected text of a row is written by hand from Vim's documented
 behaviour (`docs/design/keymaps-and-modes.md`, "Motions as built"). No
@@ -14913,6 +14914,31 @@ def evilSelectionChecks : List Check :=
           [.rests "foo |bar baz" "v w 3 d" "foo |az" (charwise "bar b"),
             .rests "abc\nd|ef\nghi" "V 2 y" "abc\n|def\nghi" (linewise "def\n")] }]
 
+/-- The checks of evil's registers and of the commands that read and set
+them without an operator's key (`Editor/Evil/Registers.lean`,
+`Editor/Evil/Operators.lean`), by key, as `evilOperatorChecks` are. -/
+def evilRegisterChecks : List Check :=
+  [{  name :=
+        "x deletes the cell under the cursor into the unnamed register and leaves the cursor on the cell that follows, or on the line's last cell when it deleted the last one; with a count it deletes that many cells and no further than the line's end; on an empty line it does nothing"
+      run :=
+        operatorRows
+          [.rests "a|bc" "x" "a|c" (charwise "b"), .rests "ab|c" "x" "a|b" (charwise "c"),
+            .rests "ab|c\ndef" "x" "a|b\ndef" (charwise "c"),
+            .rests "a|bcde" "3 x" "a|e" (charwise "bcd"),
+            .rests "a|bcde" "9 x" "|a" (charwise "bcde"),
+            .rests "ab\n|\ncd" "x" "ab\n|\ncd" asItWas] },
+    { name :=
+        "x is d l: from the same text and cursor the two leave the same text, cursor and register, with no count and with one, and each is one step of the history"
+      run :=
+        pure <|
+          ["a|bc", "ab|c", "ab|c\ndef", "ab\n|\ncd", "|", "a|é😀b\r\nc"].all
+              (fun fixture =>
+                (evilEdited fixture "x").isSome &&
+                  evilEdited fixture "x" == evilEdited fixture "d l" &&
+                  evilEdited fixture "3 x" == evilEdited fixture "d 3 l") &&
+            ((evilDriver "a|bc").map fun driver => evilHistory (evilFed driver "x")) ==
+              some (some (2, false)) }]
+
 /-- Every check, in the order they run.
 
 The order matters where the process's one pool is measured. `poolChecks` run
@@ -14973,7 +14999,8 @@ def checks : List Check :=
     evilStateChecks ++
     evilInsertChecks ++
     evilOperatorChecks ++
-    evilSelectionChecks
+    evilSelectionChecks ++
+    evilRegisterChecks
 
 /-- Runs `checks` and returns the names of those that failed. A check that
 throws has failed, and its error is reported with its name. -/
