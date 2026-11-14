@@ -6152,6 +6152,21 @@ def holding (text : String) (ranges : Array SelectionRange) : TextM EditorState 
   target.buffer.text.place target.window.selection (.selection { ranges })
   return state
 
+/-- A scheme written for the commit checks: the test scheme, which keeps
+what it is told was committed, the newest first, and says of every view
+that it takes text or that it takes none, as `takesText` says. -/
+def telling (takesText : Bool) : InputScheme :=
+  { State := TestScheme.State × List (ViewId × String)
+    Binding := Invocation
+    init := ({}, [])
+    step := fun maps view state key =>
+      let (next, yielded) := TestScheme.step maps view state.1 key
+      ((next, state.2), yielded)
+    pending := (·.1.pending)
+    command := fun name => { command := name }
+    committed := fun view text state => (state.1, (view, text) :: state.2)
+    report := fun _ _ => { takesText } }
+
 /-- The checks of a text commit in the loop, on the editor's models. -/
 def commitChecks : List Check :=
   [{  name :=
@@ -6269,7 +6284,28 @@ def commitChecks : List Check :=
             [.commit "x"] ++ (keys "C-p").map (Event.key · true "") ++ [.commit "y"]
           match switched (holding "abcd" #[⟨1, 3⟩]) "C-d" events with
           | some (_, _, model) => model.texts.contents == #["ayd"]
-          | none => false }]
+          | none => false },
+    { name :=
+        "the loop tells the scheme of a committed text it inserted, for the focused view, in both states of the scheme it keeps; a commit that is dropped, where the scheme says the view takes no text, is not told; and the test scheme's notice changes nothing"
+      run :=
+        pure <|
+          let told (takesText : Bool) :
+            Option (List (ViewId × String) × List (ViewId × String) × Array String) :=
+            let program : EditorM (Loop (telling takesText)) := do
+              let mut loop ← Loop.start (telling takesText) ⟨640, 480⟩
+              for event in [Event.commit "ab", .preedit "k", .commit "c"] do
+                loop := (← loop.step {} event).loop
+              return loop
+            match program.runModel editorModel with
+            | (.ok loop, model) =>
+              let input : TestScheme.State × List (ViewId × String) := loop.input
+              let atRest : TestScheme.State × List (ViewId × String) := loop.atRest
+              some (input.2, atRest.2, model.texts.contents)
+            | (.error _, _) => none
+          told true == some ([(⟨0⟩, "c"), (⟨0⟩, "ab")], [(⟨0⟩, "c"), (⟨0⟩, "ab")], #["abc"]) &&
+            told false == some ([], [], #[""]) &&
+            (TestScheme.scheme.pending
+                (TestScheme.scheme.committed ⟨0⟩ "x" TestScheme.scheme.init)).isEmpty }]
 
 /-- The key of the character `text`, with `modifiers` held, as a binding
 names it. -/
@@ -9816,6 +9852,19 @@ def vimStateChecks : List Check :=
             closed.inserted == some "a" &&
             closed.recording == none &&
             (Vim.State.closeView ⟨1⟩ elsewhere).recording == some ⟨0⟩) },
+    { name :=
+        "a committed text the scheme is told of is typed text: it is added to what is kept for the last change when it was committed in the view being kept for, and not when in another"
+      run :=
+        let scheme := Vim.scheme vimStates
+        let (typed, _) := vimParsed "c w a"
+        let here : Vim.State := scheme.committed ⟨0⟩ "かな" typed
+        let there : Vim.State := scheme.committed ⟨1⟩ "かな" typed
+        let idle : Vim.State := scheme.committed ⟨0⟩ "かな" vimInit
+        pure
+          (here.inserted == some "aかな" &&
+            decide ({ here with inserted := typed.inserted } = typed) &&
+            decide (there = typed) &&
+            decide (idle = vimInit)) },
     { name :=
         "a key a mode binds runs its command in normal state, and in insert state it is typed text, while a key an active keymap binds for no mode still runs there"
       run :=

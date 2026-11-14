@@ -711,8 +711,10 @@ no state: the grammar cannot look either up. A key a mode binds, and a
 hand-tuned key, is marked as a mode's (`Bound.mode`). Its own keymaps are
 every state's. A view that is closed has its Vim state forgotten, and a
 view that is opened as the minibuffer's is put in the state the registry
-names for it. What it reports of a view is read off the record of the
-view's Vim state (`State.report`). -/
+names for it. A text it is told was committed in a view is typed text
+there: it is added to what is kept for the last change when the view is
+the one being kept for (`State.typedText`). What it reports of a view is
+read off the record of the view's Vim state (`State.report`). -/
 def scheme (states : States) (modes : ModeKeys := {}) : InputScheme :=
   { State, Binding := Bound, init := {}, step := step states, pending := (·.typed)
     report := State.report states
@@ -723,6 +725,7 @@ def scheme (states : States) (modes : ModeKeys := {}) : InputScheme :=
     defaults := states.initial.keymaps ++ states.others.flatMap (·.keymaps)
     tuned := modes.tuned.map fun (name, keys, bound) => (name, keys, .mode bound)
     closeView := State.closeView
-    openMinibuffer := State.openMinibuffer states }
+    openMinibuffer := State.openMinibuffer states
+    committed := fun view text state => state.typedText view text }
 
 end Editor.Vim

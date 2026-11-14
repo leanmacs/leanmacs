@@ -58,6 +58,15 @@ view. It is a notice for the minibuffer alone and not a general one with a
 kind of view: there is one kind of view a scheme must treat apart today.
 The notice resets nothing the scheme keeps of a sequence begun.
 
+A scheme is told when a committed text was inserted in a view
+(`committed`): the state once that text was typed there. A committed text
+is typed text that no key printed, what an input method composed, so it
+never passes through `step`, and a scheme that keeps what is typed, as the
+Vim scheme keeps the text of the last change's insert session, would miss
+it. It defaults to the state as it was. Whoever runs the scheme tells it
+once for each commit it inserted, and not for one it dropped (the command
+loop).
+
 ## What a scheme reports of a view
 
 A scheme says what it knows of a view in a state (`report`, an
@@ -192,6 +201,10 @@ structure InputScheme where
   scheme keeps for a view that typed text goes into. A scheme that treats
   no view apart leaves it as it was. -/
   openMinibuffer : ViewId → State → State := fun _ state => state
+  /-- The state once this text, committed and not typed by a key, was
+  inserted in the view. A scheme that keeps nothing of what is typed leaves
+  it as it was. -/
+  committed : ViewId → String → State → State := fun _ _ state => state
   /-- What the scheme says of a view in a state: how its cursor is drawn,
   its fields of the status line, the shape of its selection, and what the
   loop and a command act on. A scheme that says nothing of a view reports

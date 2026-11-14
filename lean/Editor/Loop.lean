@@ -464,6 +464,13 @@ state does not let one rest, so there it is dropped
 (`docs/design/keymaps-and-modes.md`, "Insert sessions"). A commit inside
 an insert session joins the session's step of the history.
 
+**The scheme is told of a commit that was inserted**
+(`InputScheme.committed`, `Loop.inserts`), for the focused view, in both
+states of it the loop keeps, the one it is in and the one it was last at
+rest in: no key printed the text, so the scheme's `step` never saw it, and
+a scheme that keeps what is typed would miss it. A commit that is dropped,
+and one whose insertion is refused, is not told.
+
 A handler is given what it acts on (a `Target`: the window and its buffer),
 never "the current buffer". When one is refused, the state stays as it was
 and the echo area reads `refused: ` and the refusal (`TextError.describe`).
@@ -931,6 +938,14 @@ def handle (state : EditorState) (report : InputScheme.Report := {}) : Event →
     return { state with preedit := none }
   | _ => return state
 
+/-- The text `handle` inserts for `event` from `state`, `report` being what
+the scheme says of the focused view: a committed text, where there is a
+focused window and the report says its view takes text. None for any other
+event, and for a commit that is dropped. -/
+def inserts (state : EditorState) (report : InputScheme.Report) : Event → Option String
+  | .commit text => if report.takesText && state.focusedTarget?.isSome then some text else none
+  | _ => none
+
 /-- Whether the loop steps `event` through its scheme: a key press, a
 repeat among them, whose key is not a modifier by itself
 (`Key.isModifier`). The key it steps, if so. -/
@@ -1324,12 +1339,24 @@ def step (keys : Keys scheme) (loop : Loop scheme) (event : Event) : EditorM (St
   | .closeRequested | .quit =>
     return { loop, next := .stop }
   | _ =>
-    let state ←
+    let focused := loop.state.frame.focused
+    let report := scheme.report loop.input focused
+    let (state, typed) ←
       try
-        handle loop.state (scheme.report loop.input loop.state.frame.focused) event
+        let state ← handle loop.state report event
+        pure (state, inserts loop.state report event)
       catch refusal =>
-        pure (loop.state.refused refusal)
-    ({ loop := { loop with state }, next := .continue } : Stepped scheme).published
+        pure (loop.state.refused refusal, none)
+    -- A committed text that was inserted is typed text the scheme saw no
+    -- key of: both states the loop keeps of it are told.
+    let told (input : scheme.State) : scheme.State :=
+      match typed with
+      | some text => scheme.committed focused text input
+      | none => input
+    ({      loop :=
+              { loop with
+                state, input := told loop.input, atRest := told loop.atRest }
+            next := .continue } : Stepped scheme).published
 
 /-- Lowers the interrupt flag for an event taken off the queue when the
 library marked it as a press of the interrupt key (`interrupt`), and for no
