@@ -19,8 +19,10 @@ A registered command is a value: the `EditorM` program `setup` handed over
 (`Editor/Setup.lean`). Running it is running that program against the
 editor's port. Nothing looks a command up in an environment.
 
-A registered job is a value too, a `Work`: the job with the handler that
-makes the command its result is taken to the editor with. The job entries
+A registered job is a value too: a function from the arguments the job is
+started with to a `Work`, the job with the handler that makes the command
+its result is taken to the editor with. A job registered without arguments
+(`job`) is that function ignoring them. The job entries
 are held apart from the command entries, by owner, and replaced as a set the
 same way (`replaceJobs`). A job is not a command and is not counted as one.
 Registering a job starts nothing: the runtime that owns the job table starts
@@ -131,9 +133,9 @@ structure Entry where
 structure JobRegistration where
   /-- The job's name. -/
   name : String
-  /-- The job, with the handler that makes the command its result is taken
-  to the editor with. -/
-  work : Work
+  /-- The job, given the arguments it is started with, with the handler
+  that makes the command its result is taken to the editor with. -/
+  work : List Argument → Work
 
 /-- A job entry of the registry: a registered job and its owner. -/
 structure JobEntry where

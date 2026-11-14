@@ -1551,8 +1551,46 @@ def setupChecks : List Check :=
           pure
             (collected.commands.map (·.name) == #["first", "second"] &&
               collected.jobs.map (·.name) == #["count", "name"] &&
-              collected.jobs.map (worked ·.work) ==
+              collected.jobs.map (fun job => worked (job.work [])) ==
                 #[.finished #["counted 42"], .finished #["x"]]) },
+    { name :=
+        "a setup that registers a job that takes arguments collects it under its name beside the others, and the job computes from the arguments it is started with; a job registered without them is the same whatever it is started with"
+      run :=
+        let setup : SetupM Unit := do
+          jobWith "double"
+              (fun arguments => do
+                let [.nat n] := arguments | throw "double takes one number"
+                sleep 5
+                return 2 * n)
+              fun n => makes s!"doubled to {n}"
+          job "fixed" (fun _ => pure "x") makes
+        match Config.Registrations.ofSetup setup with
+        | .error _ => pure false
+        | .ok collected =>
+          let started (name : String) (arguments : List Argument) :=
+            (collected.jobs.find? (·.name == name)).map fun job => worked (job.work arguments)
+          pure
+            (collected.jobs.map (·.name) == #["double", "fixed"] && collected.commands.isEmpty &&
+              started "double" [.nat 21] == some (.finished #["doubled to 42"]) &&
+              started "double" [.nat 4] == some (.finished #["doubled to 8"]) &&
+              started "double" [] == some (.failed "double takes one number") &&
+              started "fixed" [.nat 1] == some (.finished #["x"]) &&
+              started "fixed" [] == some (.finished #["x"])) },
+    { name :=
+        "a job that takes arguments registered under the name of another job is refused with a message that names the job, whichever of the two was first"
+      run :=
+        let doubling (name : String) : SetupM Unit :=
+          jobWith name (fun _ => pure 1) fun n => makes (toString n)
+        let twice : SetupM Unit := do
+          doubling "count"
+          job "count" (fun _ => pure 3) fun n => makes (toString n)
+        let again : SetupM Unit := do
+          job "count" (fun _ => pure 3) fun n => makes (toString n)
+          doubling "other"
+          doubling "count"
+        pure
+          (refusal twice == some "the job `count` is registered twice" &&
+            refusal again == some "the job `count` is registered twice") },
     { name :=
         "a setup that registers a job name twice is refused with a message that names the job, and a job may have the name of a command"
       run :=
@@ -1652,13 +1690,13 @@ def registration (name text : String) : Config.Registration :=
 /-- A registration of the job `name`, which finishes with a command that
 makes the text `text`. -/
 def jobRegistration (name text : String) : Config.JobRegistration :=
-  { name, work := fun _ => pure (makes text) }
+  { name, work := fun _ _ => pure (makes text) }
 
-/-- How the job `registry` holds under `name` ends, run against the job
-model; `none` if there is no such job. -/
-def registeredWork (registry : Config.Registry) (name : String) :
+/-- How the job `registry` holds under `name` ends, started with `arguments`
+and run against the job model; `none` if there is no such job. -/
+def registeredWork (registry : Config.Registry) (name : String) (arguments : List Argument := []) :
     Option (Job.Outcome (Array String)) :=
-  (registry.findJob? name).map (worked ·.registration.work)
+  (registry.findJob? name).map fun entry => worked (entry.registration.work arguments)
 
 /-- An owner that is not the config. -/
 def other : Config.Owner :=
@@ -1726,6 +1764,28 @@ def registryChecks : List Check :=
             registeredWork replaced "old" == none &&
             replaced.names == #["greet"] &&
             (replaced.find? "count").isNone) },
+    { name :=
+        "a job is held with what it takes: the work a lookup hands back for the arguments the job is started with computes from them, and so does the work the editor would start for an installed config"
+      run :=
+        let doubling : Config.JobRegistration :=
+          { name := "double"
+            work := fun arguments =>
+              Work.of
+                (fun _ =>
+                  match arguments with
+                  | [.nat n] => pure (2 * n)
+                  | _ => throw "no number")
+                fun n => makes (toString n) }
+        let registry := ({} : Config.Registry).replaceJobs .config #[doubling]
+        let state : Config.State Unit := { registry }
+        let starting (arguments : List Argument) :=
+          (state.work? "double" arguments).map fun (owner, work) => (owner.name, worked work)
+        pure
+          (registeredWork registry "double" [.nat 21] == some (.finished #["42"]) &&
+            registeredWork registry "double" == some (.failed "no number") &&
+            starting [.nat 4] == some ("config", .finished #["8"]) &&
+            starting [] == some ("config", .failed "no number") &&
+            (state.work? "missing" [.nat 4]).isNone) },
     { name :=
         "compiled code is an owner of its own: config's entry of a name a compiled entry has is the one a lookup finds, and once config no longer registers it the compiled one is found again"
       run :=

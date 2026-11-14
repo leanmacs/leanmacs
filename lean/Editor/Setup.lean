@@ -30,6 +30,24 @@ taken to the editor with. `setup` starts nothing: it is a collected program,
 and nothing of a config exists until it is installed. A job is not a
 command, and is not counted as one.
 
+A job may take arguments (`jobWith`): plain values (`Argument`,
+`Editor/Invocation.lean`), given by whoever starts it. A command starts a
+job by its name with arguments (`startJob`, `Editor/Api.lean`), since a
+request of the editor's port holds plain data and cannot hold the job:
+
+```lean
+def setup : SetupM Unit := do
+  jobWith "double"
+      (fun arguments => do
+        let [.nat n] := arguments | throw "double takes one number"
+        return 2 * n)
+      fun n => message s!"doubled to {n}"
+  command "ask" (discard <| startJob "double" [.nat 21])
+```
+
+A job registered with `job` takes none, and is the same job whatever it is
+started with.
+
 A mode (`Editor/Mode.lean`) is defined with `defineMode`: the roles it
 fills and its suffixes name commands, which are looked up when the keys are
 typed. Its owner is the registry's to say, never the mode's. A mode is not a
@@ -96,9 +114,10 @@ inductive SetupRequest where
   /-- Register the command called `name` over the store called `store`:
   `step` takes the cell's tree to its new tree. -/
   | storeCommand (name : String) (store : String) (step : Value → EditorM Value)
-  /-- Register `work` as the job called `name`: a job that finishes with the
-  command that takes its result to the editor (`Editor/Job.lean`). -/
-  | job (name : String) (work : Work)
+  /-- Register `work` as the job called `name`: given the arguments it is
+  started with, a job that finishes with the command that takes its result
+  to the editor (`Editor/Job.lean`). -/
+  | job (name : String) (work : List Argument → Work)
   /-- Bind the key sequence `keys` to the command called `command`. The
   name is looked up when the keys are typed. -/
   | bind (keys : List Key) (command : String)
@@ -144,10 +163,24 @@ command that receives its result. Registering starts nothing: the editor
 starts the job when it is asked to, on a pool thread, and runs the command
 the handler makes on the editor thread when the job has finished.
 
-`run` is a function, so that none of the job runs before its task exists. -/
+`run` is a function, so that none of the job runs before its task exists.
+The job takes no arguments: it is the same whatever it is started with. -/
 def job {α : Type} (name : String) (run : Unit → JobM α) (handler : α → EditorM Unit) :
     SetupM Unit :=
-  ExceptT.lift (Program.request (port := setupPort) (.job name (Work.of run handler)))
+  ExceptT.lift (Program.request (port := setupPort) (.job name fun _ => Work.of run handler))
+
+/-- Registers `run` as the job called `name`, which takes the arguments it
+is started with, and `handler` as what makes the command that receives its
+result. Registering starts nothing, as for `job`.
+
+`run` is applied to the arguments inside the job, on the job's task: what
+is made where the job is started is only the function the task applies, so
+none of the job runs before its task exists. -/
+def jobWith {α : Type} (name : String) (run : List Argument → JobM α) (handler : α → EditorM Unit) :
+    SetupM Unit :=
+  ExceptT.lift
+    (Program.request (port := setupPort)
+      (.job name fun arguments => Work.of (fun _ => run arguments) handler))
 
 /-- The message a binding of no keys to the command called `command` is
 refused with. -/

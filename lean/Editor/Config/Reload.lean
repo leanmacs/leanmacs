@@ -224,10 +224,11 @@ def written (state : State σ) : Option Write → State σ
   | none => state
   | some write => { state with cells := state.cells.set write.owner write.store write.value }
 
-/-- The job registered under `name`, and the owner the runtime is to start it
-for; `none` if there is no such job. -/
-def work? (state : State σ) (name : String) : Option (Owner × Work) :=
-  (state.registry.findJob? name).map fun entry => (entry.owner, entry.registration.work)
+/-- The job registered under `name`, to be started with `arguments`, and the
+owner the runtime is to start it for; `none` if there is no such job. -/
+def work? (state : State σ) (name : String) (arguments : List Argument := []) :
+    Option (Owner × Work) :=
+  (state.registry.findJob? name).map fun entry => (entry.owner, entry.registration.work arguments)
 
 end State
 
