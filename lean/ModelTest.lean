@@ -4303,7 +4303,102 @@ def stateChecks : List Check :=
                   PromptRefusal.describe).eraseDups.length ==
               4 &&
             [PromptRefusal.alreadyOpen ⟨1⟩, .notOpen, .notItsText, .noWindow].all fun refusal =>
-              !refusal.describe.isEmpty) }]
+              !refusal.describe.isEmpty) },
+    { name :=
+        "closing a prompt with no answer leaves no prompt: the minibuffer's window is gone, its buffer's slot is empty, the focus is on the asking view, the tree and the next view's id are as they were after the open, and nothing is answered; the state is well formed"
+      run :=
+        pure <|
+          match onTextModel (EditorState.initial ⟨640, 480⟩) with
+          | none => false
+          | some state =>
+            let (_, asking) := prompted state
+            match asking.closePrompt none with
+            | (.ok (), closed) =>
+              closed ==
+                  { state with
+                    buffers := state.buffers.push none, nextView := 2 } &&
+                closed.prompt == none &&
+                closed.window? ⟨1⟩ == none &&
+                closed.buffers[1]? == some none &&
+                closed.frame.focused == ⟨0⟩ &&
+                closed.frame.tree == asking.frame.tree &&
+                closed.nextView == asking.nextView &&
+                closed.answered == #[] &&
+                closed.wellFormed
+            | _ => false },
+    { name :=
+        "closing a prompt with an answer does the same, and records the continuation with the answer as its first argument, before its own"
+      run :=
+        pure <|
+          match onTextModel (EditorState.initial ⟨640, 480⟩) with
+          | none => false
+          | some state =>
+            let (_, asking) := prompted state
+            match asking.closePrompt none, asking.closePrompt (some "héllo") with
+            | (.ok (), cancelled), (.ok (), accepted) =>
+              accepted.answered == #[{ command := "greet", arguments := [.str "héllo", .nat 7] }] &&
+                { accepted with answered := #[] } == cancelled &&
+                accepted.wellFormed
+            | _, _ => false },
+    { name :=
+        "two prompts opened and accepted one after the other leave two answered invocations, in order, and the second prompt's view and buffer have ids the first's never had"
+      run :=
+        pure <|
+          match onTextModel (EditorState.initial ⟨640, 480⟩) with
+          | none => false
+          | some state =>
+            let (first, one) := prompted state
+            let (_, one) := one.closePrompt (some "a")
+            let (second, two) := prompted one 8
+            let minibuffer := two.minibufferBuffer?
+            let (_, two) := two.closePrompt (some "b")
+            replied first == .inr ⟨1⟩ && replied second == .inr ⟨2⟩ && minibuffer == some ⟨2⟩ &&
+              two.answered ==
+                #[{ command := "greet", arguments := [.str "a", .nat 7] },
+                  { command := "greet", arguments := [.str "b", .nat 7] }] &&
+              two.buffers.size == 3 &&
+              two.nextView == 3 &&
+              two.wellFormed },
+    { name :=
+        "closing a prompt gives the focus back to the asking view, though the focus was moved to another window meanwhile"
+      run :=
+        pure <|
+          match onTextModel twoBuffers with
+          | none => false
+          | some state =>
+            let (_, asking) := prompted state
+            let (_, away) := asking.focusWindow ⟨1⟩
+            let (_, closed) := away.closePrompt (some "a")
+            asking.prompt.map (·.asker) == some ⟨0⟩ && away.frame.focused == ⟨1⟩ &&
+              closed.frame.focused == ⟨0⟩ &&
+              closed.wellFormed },
+    { name :=
+        "when the asking view was removed while the prompt was open, the prompt stays open, and closing it focuses the first window of the tree"
+      run :=
+        pure <|
+          match onTextModel threeWindows with
+          | none => false
+          | some state =>
+            let (_, asking) := prompted state
+            let (removed, without) := asking.removeWindow ⟨0⟩
+            let (_, closed) := without.closePrompt (some "a")
+            (replied removed).isRight && without.prompt == asking.prompt && without.wellFormed &&
+              without.frame.focused == ⟨3⟩ &&
+              closed.frame.focused == ⟨1⟩ &&
+              closed.frame.tree.windows == #[⟨1⟩, ⟨2⟩] &&
+              closed.answered.size == 1 &&
+              closed.wellFormed },
+    { name :=
+        "closing a prompt when none is open is refused with notOpen, with or without an answer, and the state is as it was"
+      run :=
+        pure <|
+          match onTextModel twoBuffers with
+          | none => false
+          | some state =>
+            [none, some "a"].all fun answer =>
+              match state.closePrompt answer with
+              | (.error .notOpen, after) => after == state
+              | _ => false }]
 
 /-- `twoBuffers` with a third buffer, `hidden`, over a text of its own that
 no window shows, and that text. -/
@@ -4341,7 +4436,8 @@ def stateRequests : List StateRequest :=
     .attachFile ⟨9⟩ notePath noteStamp .lf, .beginSave ⟨0⟩ ⟨4⟩ ⟨0⟩, .beginSave ⟨9⟩ ⟨4⟩ ⟨0⟩,
     .endSave ⟨0⟩ ⟨4⟩ (some noteStamp), .endSave ⟨9⟩ ⟨4⟩ none,
     .openPrompt "Name: " asked ⟨8⟩ (UndoTree.new ⟨8⟩ 0) (marker 8 0) (marker 8 1),
-    .openPrompt "Name: " asked ⟨8⟩ (UndoTree.new ⟨8⟩ 0) (marker 0 0) (marker 8 1)]
+    .openPrompt "Name: " asked ⟨8⟩ (UndoTree.new ⟨8⟩ 0) (marker 0 0) (marker 8 1),
+    .closePrompt none, .closePrompt (some "typed")]
 
 /-- The checks of the state requests' pure handler (`EditorState.handle`,
 `Editor/State/Request.lean`), on states made on the text model. The handler
@@ -4728,6 +4824,24 @@ def stateRequestChecks : List Check :=
             replied made == .inr ⟨2⟩ && asking == (prompted state).2 && asking.prompt.isSome &&
               replied again == .inl (.alreadyOpen ⟨2⟩) &&
               same == asking },
+    { name :=
+        "the request to close a prompt is the state's operation, with an answer and with none, and with no prompt open it is refused with notOpen, a value"
+      run :=
+        pure <|
+          match onTextModel twoBuffers with
+          | none => false
+          | some state =>
+            let (_, asking) := prompted state
+            let (cancelled, without) := asking.handle (.closePrompt none)
+            let (accepted, answered) := asking.handle (.closePrompt (some "a"))
+            let (refused, same) := state.handle (.closePrompt (some "a"))
+            replied cancelled == .inr () && without == (asking.closePrompt none).2 &&
+              without.prompt == none &&
+              replied accepted == .inr () &&
+              answered == (asking.closePrompt (some "a")).2 &&
+              answered.answered.size == 1 &&
+              replied refused == .inl .notOpen &&
+              same == state },
     { name :=
         "every kind of request, accepted and refused, leaves a well-formed state well formed, with no prompt open and with one open, and the state with nothing in it answers each without a buffer or a window"
       run := do

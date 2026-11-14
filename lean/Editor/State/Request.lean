@@ -5,7 +5,8 @@ import Editor.State
 # The state requests
 
 What a command asks of the editor state (`Editor/State.lean`): its buffers
-and the files they hold, its windows, the echo area and the jobs to start.
+and the files they hold, its windows, the echo area, the jobs to start and
+the prompt.
 A `StateRequest` is a request of the editor's port (`EditorRequest.state`,
 `Editor/Command.lean`), and `EditorState.handle` is its handler: one pure
 function from a request and a state to the reply and the state after it. It
@@ -41,6 +42,12 @@ the models and against the library alike (`Editor/Command/Dispatch.lean`).
   its window, and names the command that receives the answer as an
   invocation (`Editor/State.lean`, "Prompts"). It is refused with a
   `PromptRefusal`.
+- **A prompt is closed by one request**, `closePrompt`, with the answer or
+  with none. Closing the minibuffer's window and recording the answer are
+  that one request, which asks the text store nothing, so the command that
+  makes it cannot be interrupted between the two. The handler releases
+  nothing: the loop gives up the minibuffer's markers and text once the
+  command has run to its end.
 - **A file is attached by one request, and a save is two.** `attachFile`
   has a buffer hold a file a load answered. `beginSave` records a save in
   flight, with the snapshot it writes, which the command took first, and
@@ -113,6 +120,9 @@ inductive StateRequest where
   |
   openPrompt (label : String) (continuation : Invocation) (text : TextId) (history : UndoTree)
     (scroll selection : MarkerId)
+  /-- Close the open prompt: with `answer`, which its continuation's command
+  receives, or with `none` for a prompt that is cancelled. -/
+  | closePrompt (answer : Option String)
 
 /-- The type of the reply to each request. -/
 abbrev StateRequest.Reply : StateRequest → Type
@@ -134,6 +144,7 @@ abbrev StateRequest.Reply : StateRequest → Type
   | .beginSave .. => Except BufferRefusal Unit
   | .endSave .. => Except BufferRefusal Unit
   | .openPrompt .. => Except PromptRefusal ViewId
+  | .closePrompt _ => Except PromptRefusal Unit
 
 namespace EditorState
 
@@ -174,6 +185,7 @@ def handle : (request : StateRequest) → EditorState → request.Reply × Edito
   | .endSave id snapshot stamp, state => state.endSave id snapshot stamp
   | .openPrompt label continuation text history scroll selection, state =>
     state.openPrompt label continuation text history scroll selection
+  | .closePrompt answer, state => state.closePrompt answer
 
 end EditorState
 

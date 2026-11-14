@@ -131,6 +131,24 @@ A prompt is a request for one string, with a text to show beside the input
   to ask from (the state with nothing in it), and `notItsText` for a
   history or a marker of another text than the minibuffer's.
   `PromptRefusal.describe` says each as a sentence.
+- `closePrompt` closes the open prompt, with an answer or with none for a
+  prompt that is cancelled. It removes the minibuffer's window, empties
+  its buffer's slot, and clears the prompt; the tree is as it was. It
+  refuses `notOpen`, with the state as it was, when no prompt is open.
+  - **The focus goes to the asking view**, even if it was moved meanwhile,
+    so the answer's command runs with the window the prompt was asked in.
+    When that view is no longer a window of the tree, it goes to the first
+    window of the tree, in drawing order. A view's id is never used again,
+    so the asker cannot have come to mean another view.
+  - **Given an answer it records the continuation**, with the answer as
+    its first argument and the continuation's own after it
+    (`EditorState.answered`), until the loop hands it to its host
+    (`Editor/Loop.lean`), as `starts` holds the jobs a command asked for.
+    Closing and recording are one operation, so one request.
+  - **The minibuffer's markers and text are not given up here**: the loop
+    gives them up once the command that closed the prompt has run to its
+    end, as it does for any window that is closed and any buffer that is
+    removed.
 
 ## Buffers
 
@@ -418,6 +436,10 @@ structure EditorState where
   /-- The prompt that is open, if one is: its view is a window of `windows`
   that is not in the frame's tree. -/
   prompt : Option Prompt := none
+  /-- The continuations of the prompts commands accepted, each with its
+  answer as its first argument, in order, which the loop has not yet handed
+  to its host. -/
+  answered : Array Invocation := #[]
   deriving BEq, Repr
 
 /-- What a handler acts on: a window and the buffer it shows. -/
@@ -974,6 +996,38 @@ def openPrompt (label : String) (continuation : Invocation) (text : TextId) (his
           frame := { state.frame with focused := view }
           nextView := view.index + 1
           prompt := some { label, view, asker := asker.id, continuation } })
+
+/-- Closes the open prompt: the minibuffer's window is removed, its buffer's
+slot is emptied, and the focus goes to the asking view, or, when that view
+is no longer a window of the tree, to the first window of the tree, in
+drawing order. The tree is as it was. Given an answer, the prompt's
+continuation is recorded with the answer as its first argument, before its
+own (`answered`). The minibuffer's markers and text are the caller's to
+give up. Refused, with the state unchanged, with `notOpen` when no prompt
+is open. -/
+def closePrompt (answer : Option String) (state : EditorState) :
+    Except PromptRefusal Unit × EditorState :=
+  match state.prompt with
+  | none => (.error .notOpen, state)
+  | some asked =>
+    let windows := state.frame.tree.windows
+    let focused :=
+      if windows.contains asked.asker then asked.asker else windows[0]?.getD asked.asker
+    (.ok (),
+      { state with
+        buffers :=
+          match state.minibufferBuffer? with
+          | some buffer => state.buffers.set! buffer.index none
+          | none => state.buffers
+        windows := state.windows.filter (·.id != asked.view)
+        frame := { state.frame with focused }
+        prompt := none
+        answered :=
+          match answer with
+          | some answer =>
+            state.answered.push
+              { asked.continuation with arguments := .str answer :: asked.continuation.arguments }
+          | none => state.answered })
 
 end EditorState
 
