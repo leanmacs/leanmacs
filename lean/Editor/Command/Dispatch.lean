@@ -62,6 +62,11 @@ from the next command.
 - **An on-enter action that is refused refuses the command**, at the
   request that set the mode: the command cannot catch it, since it is no
   reply to that request.
+- **Starting a job** (`StateRequest.startJob`) is refused with `noSuchJob`
+  for a name no job is registered under (`Loop.Registered.jobs`), with the
+  state as it was. Otherwise the start is kept in the state, for the loop
+  to hand to its host once the command has run to its end
+  (`Editor/Loop.lean`, "Jobs from commands").
 
 Putting an action's program before the rest of the command makes the
 transformation recurse into a program that is no part of the one it was
@@ -87,6 +92,9 @@ structure Loop.Registered where
   becomes a buffer's major mode: its lineage, root first. `none` for a name
   no mode is registered under. -/
   entering : String → Option (List Mode) := fun _ => none
+  /-- Whether a job is registered under this name, for a command to
+  start. -/
+  jobs : String → Bool := fun _ => false
 
 /-- A program that ends at once, interrupted, with no state: what the
 compiler is shown for `Program.dispatched`, which is `partial`. -/
@@ -122,6 +130,11 @@ partial def Program.dispatched {α : Type} (registered : Loop.Registered) :
           | .error error =>
             pure (.error error)
       | (reply, state) => dispatched registered state (next reply)
+  | state, .step (.state (.startJob name arguments)) next =>
+    if registered.jobs name then
+      let (reply, state) := state.handle (.startJob name arguments)
+      dispatched registered state (next reply)
+    else dispatched registered state (next (.error (.noSuchJob name)))
   | state, .step (.state request) next =>
     let (reply, state) := state.handle request
     dispatched registered state (next reply)

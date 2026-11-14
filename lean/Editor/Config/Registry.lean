@@ -289,9 +289,11 @@ def activeMaps (registry : Registry) (scheme : InputScheme) (state : EditorState
 /-- What the loop is told of the registry for a command's state requests
 (`Editor/Command/Dispatch.lean`): for a name a mode is registered under,
 its lineage, root first, whose on-enter actions run when the mode becomes a
-buffer's major mode. -/
+buffer's major mode; and whether a job is registered under a name, for a
+command to start. -/
 def registered (registry : Registry) : Loop.Registered :=
-  { entering := fun name => (registry.mode? name).map fun _ => (registry.lineage name).reverse }
+  { entering := fun name => (registry.mode? name).map fun _ => (registry.lineage name).reverse
+    jobs := fun name => (registry.findJob? name).isSome }
 
 end Registry
 

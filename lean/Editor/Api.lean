@@ -169,6 +169,25 @@ does not run to its end leaves no message: the echo area then says what
 became of it (`Editor/Loop.lean`, "Running an invocation"). Pinned by
 `ModelTest.loopChecks`.
 
+## Jobs
+
+`startJob name arguments` asks for the job registered under `name` to be
+started with `arguments`, plain values (`Argument`). A command cannot wait,
+so what the job computes comes back later, as the command the job's handler
+makes of it, which the loop runs like any command, after whatever events
+arrived before it (`Editor/Loop.lean`, "Jobs from commands").
+
+- **The job is named, not carried.** A request of the editor's port holds
+  plain data, and a job ends in a program over that port. A job that takes
+  arguments is registered with `jobWith` (`Editor/Setup.lean`).
+- **A name no job is registered under is refused**, as a value
+  (`noSuchJob`), when the command asks.
+- **The job is started once the command has run to its end**, for whoever
+  registered it. A command that is refused or interrupted after asking
+  starts no job.
+
+Pinned by `ModelTest.driverChecks`.
+
 Each operation that makes a text request has a case in
 `Editor/Api/Cases.lean`, played on the editor's models and on the real
 binding.
@@ -189,6 +208,13 @@ def editorState : EditorM EditorState :=
 scene published after the command, until the next invocation. -/
 def message (text : String) : EditorM Unit :=
   EditorState.ask (.message text)
+
+/-- Asks for the job registered under `name` to be started with
+`arguments`, once this command has run to its end. Its result comes back
+later, as the command its handler makes. Refused with `noSuchJob` for a
+name no job is registered under. -/
+def startJob (name : String) (arguments : List Argument := []) : EditorM (Except JobRefusal Unit) :=
+  EditorState.ask (.startJob name arguments)
 
 /-- Replaces the bytes of `text` from `start` up to, not including, `stop`
 with `s`, as one transaction made by the user. Refused, changing nothing,

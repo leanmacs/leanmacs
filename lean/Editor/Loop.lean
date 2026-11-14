@@ -80,11 +80,64 @@ command's name and plain arguments, and the loop runs it (`Loop.run`):
    `Loop.slowAfter` by default), the step hands back one entry
    (`Loop.Stepped.log`): `slow command: <name> took <n> ms`. The loop
    writes no log itself: the host does, with what the step hands back.
+8. **The jobs the command asked for are handed back** with the step
+   (`Loop.Stepped.starts`), for the host to start ("Jobs from commands").
+9. **The step says how the command ended** (`Loop.Stepped.ended`, a
+   `Loop.Ending`), for a host that prints it.
 
 A call into a config command is not guarded against the interpreter: an
 exception thrown by interpreted code ends the process
 (`docs/design/lean-runtime.md`, "An exception from the interpreter ends the
 process").
+
+## Every command goes through the loop
+
+A key is one of three ways a command comes to run, and the loop runs all
+three the same way (`Loop.dispatch`): the command is dispatched from the
+loop's state, so it is guarded and its state requests are answered; it is
+rolled back if it does not run to its end; what it gave up is given up, its
+jobs are handed back, and a scene is published after it.
+
+- **A key's invocation** (`Loop.key`, above).
+- **A command run by its name** (`Loop.runNamed`), for a host's driver. It
+  is an invocation with no arguments and no keys: the echo area is cleared,
+  the name is looked up, and the command is called with the focused window.
+  The scheme's states are left as they are but for a view the command
+  closed: no key was typed.
+- **A command the loop is handed** (`Loop.deliver`), with a label for it: a
+  finished job's command, which is no invocation. The echo area is **not**
+  cleared, because a result that arrives in the background should not wipe
+  what the user is reading; a command that says nothing leaves it. When the
+  command does not run to its end the echo area reads `<label>: refused: `
+  and the refusal, or `<label>: interrupted`, as an invocation's does under
+  its name.
+
+## Jobs from commands
+
+A command starts a job by the name it is registered under, with plain
+arguments (`startJob`, `Editor/Api.lean`). A request holds no job: a job is
+a program that ends in a program over the editor's port, so a request of
+that port cannot carry one (`docs/design/lean-runtime.md`, "A request that
+carries a program over its own port"). The loop starts none either: it
+holds no job table.
+
+- **The name is checked when the command asks.** The request is refused,
+  as a value the command sees, with `noSuchJob` for a name the step was not
+  told a job is registered under (`Loop.Registered.jobs`).
+- **A start is kept in the state** until the command ends
+  (`EditorState.starts`). After a command that ran to its end the loop
+  takes the starts out of the state and hands them back with the step, in
+  the order they were asked for. A command that did not run to its end
+  starts no job: its starts go with the state it left.
+- **The host starts each**, for whoever registered it, and when the job has
+  ended hands the loop the command it finished with (`Loop.deliver`). The
+  result comes back through the host's queue, so events that arrived before
+  it are handled before it: a job never interleaves with a command.
+- **On the models** `Loop.Driver` (`Editor/Loop/Driver.lean`) is that host:
+  it runs each job a step hands back on the job model and keeps what it
+  ended with until a test says the job is finished.
+
+Pinned by `ModelTest.driverChecks`.
 
 **The scheme after a command that failed.** The loop keeps two states of
 the scheme: the one after the last key (`Loop.input`), and the last one at
@@ -376,6 +429,21 @@ structure Loop.Keys (scheme : InputScheme) where
   (`Editor/Command/Dispatch.lean`). -/
   registered : Loop.Registered := {}
 
+/-- How a command the loop ran ended. -/
+inductive Loop.Ending where
+  /-- It ran to its end. -/
+  | finished
+  /-- It was refused, with `error`, and rolled back. -/
+  | refused (error : TextError)
+  /-- The interrupt flag was up before one of its requests, and it was
+  rolled back. -/
+  | interrupted
+  /-- No command is registered under the name. -/
+  | noSuchCommand
+  /-- No window is focused for the command to act on. -/
+  | noWindow
+  deriving DecidableEq, Repr
+
 /-- What a step hands back: the loop after it, and what to do next. A
 one-shot output of a step is a field here. -/
 structure Loop.Stepped (scheme : InputScheme) where
@@ -392,6 +460,13 @@ structure Loop.Stepped (scheme : InputScheme) where
   command it ran that took longer than the threshold. The loop writes
   nothing itself. -/
   log : Array String := #[]
+  /-- The jobs the command the step ran asked to be started, in the order it
+  asked, for the host to start. None for a step that ran no command, and
+  for one whose command did not run to its end. -/
+  starts : Array JobStart := #[]
+  /-- How the command the step ran ended; `none` for a step that ran no
+  command. -/
+  ended : Option Loop.Ending := none
 
 namespace EditorState
 
@@ -656,18 +731,24 @@ def closedViews (before after : EditorState) : Array ViewId :=
 def forgetViews (views : Array ViewId) (state : scheme.State) : scheme.State :=
   views.foldl (fun state view => scheme.closeView view state) state
 
-/-- What running an invocation came to. -/
+/-- What running a command came to. -/
 structure Ran where
   /-- The editor state after it, with what it left in the echo area. -/
   state : EditorState
-  /-- Whether the command ran to its end. -/
-  finished : Bool
+  /-- How the command ended. -/
+  ending : Ending
   /-- The views the command closed, when it ran to its end. -/
   closed : Array ViewId := #[]
   /-- What the command asked to be written, when it ran to its end. -/
   write : Option Config.Write := none
   /-- The log entry of a command that took longer than the threshold. -/
   log : Array String := #[]
+  /-- The jobs the command asked to be started, when it ran to its end. -/
+  starts : Array JobStart := #[]
+
+/-- Whether the command ran to its end. -/
+def Ran.finished (ran : Ran) : Bool :=
+  ran.ending == .finished
 
 /-- `state` with what became of the command called `name` in the echo
 area: its name, then `what`. -/
@@ -680,15 +761,15 @@ than `threshold`, and none otherwise. -/
 def slow (name : String) (took threshold : Nat) : Array String :=
   if took > threshold then #[s!"slow command: {name} took {took} ms"] else #[]
 
-/-- Runs `invocation`, which the keys `typed` yielded, from `state` ("Running
-an invocation", in the module docs): clears the echo area, looks the
-command up, and runs it, dispatched (`EditorM.dispatched`: guarded, with
-its state requests answered from `state`), with the focused window, the
-invocation's arguments and the keys. The state of a command that ran to its
-end is the one it left. It is not refused: a name with no command, a
-refusal of the command and an interrupt are each said in the echo area, and
-a command that was refused or interrupted is rolled back to the state from
-before it, with what could not be said after it.
+/-- Runs `command` from `state`, under `name`, as the loop runs every
+command ("Every command goes through the loop", in the module docs):
+dispatched (`EditorM.dispatched`: guarded, with its state requests answered
+from `state`). The state of a command that ran to its end is the one it
+left, with the jobs it asked for taken out and handed back. It is not
+refused: a refusal of the command and an interrupt are each said in the
+echo area, after `name`, and a command that was refused or interrupted is
+rolled back to the state from before it, with what could not be said after
+it.
 
 Only the command is guarded. What this makes of its own requests, keeping
 before it, rolling back after it and giving up what a command that ran to
@@ -698,38 +779,66 @@ rollback.
 The clock is read just before the command and just after it, however it
 ended, and a command that took longer than the threshold is logged
 (`slow`). Keeping and rolling back are not timed. -/
+def dispatch (keys : Keys scheme) (state : EditorState) (name : String)
+    (command : EditorM (Option Config.Write)) : EditorM Ran := do
+  let kept ← keep state
+  let started ← Watch.now
+  let (outcome, left) ← command.dispatched keys.registered state
+  let log := slow name ((← Watch.now) - started) keys.slowAfter
+  let failed (what : String) (ending : Ending) : EditorM Ran := do
+    let (state, unrestored) ← kept.restore state left
+    return { state := said state name (what ++ unrestored), ending, log }
+  match outcome with
+  | .finished write =>
+    let ungiven ← gaveUp state left
+    return {
+        state := { left.refusedBy ungiven with starts := #[] }
+        ending := .finished
+        closed := closedViews state left
+        write
+        log
+        starts := left.starts }
+  | .refused refusal =>
+    failed s!"refused: {refusal.describe}" (.refused refusal)
+  | .interrupted =>
+    failed "interrupted" .interrupted
+
+/-- Runs `invocation`, which the keys `typed` yielded, from `state` ("Running
+an invocation", in the module docs): clears the echo area, looks the
+command up, and runs it (`dispatch`) with the focused window, the
+invocation's arguments and the keys. It is not refused: a name with no
+command and a state with no focused window are each said in the echo area,
+as what became of a command that did not run to its end is. -/
 def run (keys : Keys scheme) (state : EditorState) (invocation : Invocation) (typed : List Key) :
     EditorM Ran := do
   let state := { state with echo := "" }
   let name := invocation.command
   let some command :=
-    keys.command? name | return { state := said state name "no such command", finished := false }
+    keys.command?
+      name | return { state := said state name "no such command", ending := .noSuchCommand }
   let some target :=
-    state.focusedTarget? | return { state := said state name "no window is focused", finished := false }
-  let kept ← keep state
-  let started ← Watch.now
-  let (outcome, left) ←
-    (command { target, arguments := invocation.arguments, keys := typed }).dispatched
-        keys.registered state
-  let log := slow name ((← Watch.now) - started) keys.slowAfter
-  let failed (what : String) : EditorM Ran := do
-    let (state, unrestored) ← kept.restore state left
-    return { state := said state name (what ++ unrestored), finished := false, log }
-  match outcome with
-  | .finished write =>
-    let ungiven ← gaveUp state left
-    return {
-        state := left.refusedBy ungiven, finished := true, closed := closedViews state left, write
-        log }
-  | .refused refusal =>
-    failed s!"refused: {refusal.describe}"
-  | .interrupted =>
-    failed "interrupted"
+    state.focusedTarget? | return { state := said state name "no window is focused", ending := .noWindow }
+  dispatch keys state name (command { target, arguments := invocation.arguments, keys := typed })
+
+/-- What a step that ran a command hands back, before its scene is
+published: `loop` with the state the command left, and the scheme's two
+states told of each view the command closed (`forgetViews`). -/
+def ranInto (loop : Loop scheme) (ran : Ran) : Stepped scheme :=
+  { loop :=
+      { loop with
+        state := ran.state
+        input := forgetViews ran.closed loop.input
+        atRest := forgetViews ran.closed loop.atRest }
+    next := .continue
+    write := ran.write
+    log := ran.log
+    starts := ran.starts
+    ended := some ran.ending }
 
 /-- One key through the scheme, for the focused view, and the invocation it
-yields, if it yields one, run (`run`): the loop after them, what the
-command asked to be written, and what there is to log. The keys the command
-is told of are what the scheme reported as pending before the key, then the
+yields, if it yields one, run (`run`): what the step hands back, with the
+loop after them, whose scene is not yet published. The keys the command is
+told of are what the scheme reported as pending before the key, then the
 key's chord.
 
 The scheme's state after the key is kept, and it is the state at rest from
@@ -737,24 +846,47 @@ then on, when the invocation ran to its end, or when the key yielded
 nothing and left nothing pending. When the invocation did not run to its
 end the scheme goes back to its state at rest: it is as it was before the
 first key of the sequence. -/
-def key (keys : Keys scheme) (loop : Loop scheme) (key : Key) :
-    EditorM (Loop scheme × Option Config.Write × Array String) := do
+def key (keys : Keys scheme) (loop : Loop scheme) (key : Key) : EditorM (Stepped scheme) := do
   let before := scheme.pending loop.input
   let (input, yielded) := scheme.step (keys.maps loop.state) loop.state.frame.focused loop.input key
   let some invocation := yielded |
-    return ({ loop with
-          input, atRest := if (scheme.pending input).isEmpty then input else loop.atRest },
-        none, #[])
+    return {
+        loop :=
+          { loop with
+            input, atRest := if (scheme.pending input).isEmpty then input else loop.atRest }
+        next := .continue }
   let ran ← run keys loop.state invocation (before ++ [key.chord])
   if ran.finished then
-    let input := forgetViews ran.closed input
     return ({ loop with
-          state := ran.state, input, atRest := input },
-        ran.write, ran.log)
+              input, atRest := input } :
+            Loop scheme).ranInto
+        ran
   else
-    return ({ loop with
-          state := ran.state, input := loop.atRest },
-        none, ran.log)
+    return ({ loop with input := loop.atRest } : Loop scheme).ranInto ran
+
+/-- Runs the command registered under `name` as an invocation with no
+arguments that no key yielded (`run`), and publishes a scene of the state
+after it: what a host's driver asks for. The scheme's states are left as
+they are, but for a view the command closed. -/
+def runNamed (keys : Keys scheme) (loop : Loop scheme) (name : String) : EditorM (Stepped scheme) :=
+  do
+  let stepped := loop.ranInto (← run keys loop.state { command := name } [])
+  return { stepped with loop := ← stepped.loop.publish }
+
+/-- Runs `command`, which the loop is handed with `label` as its name, and
+publishes a scene of the state after it: how a finished job's command is
+run. It is run as every command is (`dispatch`), and it is no invocation:
+the echo area is not cleared, so a command that says nothing leaves what
+the user was reading. When it does not run to its end the echo area reads
+`<label>: refused: ` and the refusal, or `<label>: interrupted`. -/
+def deliver (keys : Keys scheme) (loop : Loop scheme) (label : String) (command : EditorM Unit) :
+    EditorM (Stepped scheme) := do
+  let ran ←
+    dispatch keys loop.state label do
+        command
+        return none
+  let stepped := loop.ranInto ran
+  return { stepped with loop := ← stepped.loop.publish }
 
 /-- Handles `event` and publishes a scene of the state after it, and says
 whether to go on. A close request and a quit stop the loop and publish
@@ -765,8 +897,8 @@ refused: the publish puts a refusal of its own in the echo area too ("When
 publishing is refused", in the module docs). -/
 def step (keys : Keys scheme) (loop : Loop scheme) (event : Event) : EditorM (Stepped scheme) := do
   if let some pressed := stepped? event then
-    let (loop, write, log) ← loop.key keys pressed
-    return { loop := ← loop.publish, next := .continue, write, log }
+    let stepped ← loop.key keys pressed
+    return { stepped with loop := ← stepped.loop.publish }
   match event with
   | .closeRequested | .quit =>
     return { loop, next := .stop }

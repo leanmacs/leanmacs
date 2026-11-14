@@ -16,7 +16,7 @@ import Editor.Job.Jobs
 import Editor.Job.Model
 import Editor.Job.Pool
 import Editor.Key.Notation
-import Editor.Loop
+import Editor.Loop.Driver
 import Editor.Mode
 import Editor.Role
 import Editor.Scene
@@ -7963,6 +7963,202 @@ def apiStateChecks : List Check :=
               some state == onTextModel twoBuffers
           | none => false }]
 
+/-- The driver the job checks run: one over the test scheme. -/
+abbrev TestDriver :=
+  Loop.Driver TestScheme.scheme
+
+/-- The jobs of the driver checks, by name. `double` doubles the number it
+is started with, and its command inserts the result, in brackets, at the
+cursor of view 0. `bad` finishes with a command that inserts and is then
+refused. `chain` finishes with a command that starts `double` with 5. -/
+def driverJobs (name : String) : Option (List Argument → Work) :=
+  let inserts (text : String) : EditorM Unit := discard <| (⟨0⟩ : ViewId).insertAtSelections text
+  match name with
+  | "double" =>
+    some fun arguments =>
+      Work.of
+        (fun _ => do
+          let [.nat n] := arguments | throw "double takes one number"
+          sleep 10
+          return 2 * n)
+        fun n => inserts s!"[{n}]"
+  | "bad" =>
+    some fun _ =>
+      Work.of (fun _ => pure ()) fun _ => do
+        inserts "lost"
+        (⟨0⟩ : TextId).delete 9 99
+  | "chain" =>
+    some fun _ => Work.of (fun _ => pure ()) fun _ => discard <| startJob "double" [.nat 5]
+  | _ => none
+
+/-- The commands of the driver checks, bound under `C-c`: `ask` (`a`)
+messages `asked` and starts `double` with 21; `missing` (`m`) starts a job
+no one registered and messages the refusal; `fail` (`f`) starts `double`
+and is then refused; `none` (`n`) starts `double` with no argument; `bad`
+(`b`) and `chain` (`c`) start the jobs of those names. -/
+def driverKeys : Loop.Keys TestScheme.scheme :=
+  let starts (name : String) (arguments : List Argument := []) : Dispatched := fun _ => do
+    discard <| startJob name arguments
+    return none
+  dispatchKeys
+    [("C-c a", invoke "ask"), ("C-c m", invoke "missing"), ("C-c f", invoke "fail"),
+      ("C-c n", invoke "none"), ("C-c b", invoke "bad"), ("C-c c", invoke "chain")]
+    [("ask", fun _ => do
+        message "asked"
+        discard <| startJob "double" [.nat 21]
+        return none),
+      ("missing", fun _ => do
+        if let .error (.noSuchJob name)← startJob "nope" [.nat 1] then
+          message s!"no job {name}"
+        return none),
+      ("fail", failingAfter fun _ => discard <| startJob "double" [.nat 1]),
+      ("none", starts "double"), ("bad", starts "bad"), ("chain", starts "chain")]
+
+/-- A driver over the initial state, with the commands and the jobs of the
+driver checks; `none` if making the state was refused. -/
+def newDriver : Option TestDriver :=
+  (Loop.Driver.over driverKeys driverJobs (EditorState.initial ⟨640, 480⟩) editorModel).toOption
+
+/-- Feeds `driver` the `events` in order: the driver after them, and what
+each step handed back, `none` for a step that was refused. -/
+def fedTo (driver : TestDriver) (events : List Event) :
+    TestDriver × Array (Option (Loop.Stepped TestScheme.scheme)) :=
+  events.foldl
+    (fun (driver, steps) event =>
+      let (driver, stepped) := driver.feed { event, stamp := 0 }
+      (driver, steps.push stepped.toOption))
+    (driver, #[])
+
+/-- What the buffer of view 0 holds in `driver`'s text model. -/
+def driverText (driver : TestDriver) : Option String :=
+  driver.model.texts.contents[0]?
+
+/-- The checks of jobs started from commands (`Editor/Loop.lean`,
+`Editor/Loop/Driver.lean`), on the loop's driver over the editor's models
+and the job model: a command starts a job by its name with arguments, and
+the job's result comes back as a command the loop delivers. -/
+def driverChecks : List Check :=
+  let started (steps : Array (Option (Loop.Stepped TestScheme.scheme))) : Array JobStart :=
+    steps.flatMap fun step => (step.map (·.starts)).getD #[]
+  let echoOf (driver : TestDriver) : Option String := driver.model.display.scenes.back?.map (·.echo)
+  [{  name :=
+        "a command that starts a job with an argument: the step hands the start back, the job is run with that argument, and once it is finished a command has run that received the value the job computed from it; the delivery publishes a scene and leaves the echo the command left"
+      run :=
+        pure <|
+          match newDriver with
+          | none => false
+          | some driver =>
+            let (asked, steps) := fedTo driver (presses "C-c a")
+            let (finished, delivered) := asked.finish 1
+            started steps == #[{ name := "double", arguments := [.nat 21] }] &&
+              asked.pending.map (fun job => (job.id, job.name)) == #[(1, "double")] &&
+              asked.loop.state.starts.isEmpty &&
+              driverText asked == some "" &&
+              echoOf asked == some "asked" &&
+              (delivered.map (·.ended)) == some (some .finished) &&
+              finished.pending.isEmpty &&
+              driverText finished == some "[42]" &&
+              echoOf finished == some "asked" &&
+              finished.model.display.scenes.size == asked.model.display.scenes.size + 1 &&
+              finished.jobs.now == 10 },
+    { name :=
+        "events fed after a job started and before its result is delivered are each handled before the result's command: two commits are both in the text, in order, after their own steps, the result's command has run after neither, and it runs when the job is finished"
+      run :=
+        pure <|
+          match newDriver with
+          | none => false
+          | some driver =>
+            let (asked, _) := fedTo driver (presses "C-c a")
+            let (first, _) := fedTo asked [.commit "a"]
+            let (second, _) := fedTo first [.commit "b"]
+            let (finished, _) := second.finish 1
+            driverText asked == some "" && driverText first == some "a" &&
+              driverText second == some "ab" &&
+              second.pending.size == 1 &&
+              driverText finished == some "ab[42]" },
+    { name :=
+        "starting a job no one registered is refused with noSuchJob, a value the command sees, and starts nothing; a job started with arguments it does not take fails, and no command is delivered for it"
+      run :=
+        pure <|
+          match newDriver with
+          | none => false
+          | some driver =>
+            let (missing, steps) := fedTo driver (presses "C-c m")
+            let (wrong, wrongSteps) := fedTo driver (presses "C-c n")
+            let (failed, delivered) := wrong.finish 1
+            started steps == #[] && missing.pending.isEmpty &&
+              echoOf missing == some "no job nope" &&
+              started wrongSteps == #[{ name := "double" }] &&
+              (wrong.pending.map fun job =>
+                  job.outcome matches .failed "double takes one number") ==
+                #[true] &&
+              delivered.isNone &&
+              failed.pending.isEmpty &&
+              driverText failed == some "" },
+    { name :=
+        "a command that asked for a job and was then refused starts nothing: the step hands back no start, the state keeps none, and the echo says the refusal"
+      run :=
+        pure <|
+          match newDriver with
+          | none => false
+          | some driver =>
+            let (failed, steps) := fedTo driver (presses "C-c f")
+            started steps == #[] && failed.pending.isEmpty && failed.loop.state.starts.isEmpty &&
+              (steps.back?.join.map (·.ended)) == some (some (.refused .badRange)) &&
+              echoOf failed == some "fail: refused: bad range" },
+    { name :=
+        "a delivered command that is refused is rolled back: the text is as it was before the delivery, the echo names the job and the refusal, a scene is still published, and the loop goes on"
+      run :=
+        pure <|
+          match newDriver with
+          | none => false
+          | some driver =>
+            let (typed, _) := fedTo driver ([.commit "ab"] ++ presses "C-c b")
+            let (finished, delivered) := typed.finish 1
+            let (after, _) := fedTo finished [.commit "c"]
+            driverText typed == some "ab" && driverText finished == some "ab" &&
+              (delivered.map (·.ended)) == some (some (.refused .badRange)) &&
+              echoOf finished == some "job 1 bad: refused: bad range" &&
+              finished.model.display.scenes.size == typed.model.display.scenes.size + 1 &&
+              driverText after == some "abc" },
+    { name :=
+        "a delivered command may itself start a job: the delivery hands the start back, the job gets the next id, and its result is delivered in its turn; finishing an id that names no job started changes nothing"
+      run :=
+        pure <|
+          match newDriver with
+          | none => false
+          | some driver =>
+            let (chained, _) := fedTo driver (presses "C-c c")
+            let (first, delivered) := chained.finish 1
+            let (unknown, nothing) := first.finish 7
+            let (second, _) := unknown.finish 2
+            (delivered.map (·.starts)) == some #[{ name := "double", arguments := [.nat 5] }] &&
+              first.pending.map (fun job => (job.id, job.name)) == #[(2, "double")] &&
+              nothing.isNone &&
+              unknown.pending.size == 1 &&
+              driverText unknown == some "" &&
+              driverText second == some "[10]" },
+    { name :=
+        "a command run by its name is run as a key's is, with the focused window, no keys and the echo cleared, and a scene is published after it; a name no command has is said in the echo, and the step says which it was"
+      run :=
+        pure <|
+          let program : EditorM (Array (Option Loop.Ending) × Array String × String) := do
+            let loop : TestLoop := { state := { (← holding "abcd" #[⟨1, 3⟩]) with echo := "old" } }
+            let keys := dispatchKeys [] [("stamp", stamp), ("boom", boom)]
+            let stamped ← loop.runNamed keys "stamp"
+            let failed ← stamped.loop.runNamed keys "boom"
+            let unknown ← failed.loop.runNamed keys "nope"
+            return (#[stamped.ended, failed.ended, unknown.ended],
+                #[stamped.loop.state.echo, failed.loop.state.echo, unknown.loop.state.echo],
+                ← (← focusedOf unknown.loop).buffer.text.read)
+          match program.runModel editorModel with
+          | (.ok (endings, echoes, text), model) =>
+            endings == #[some .finished, some (.refused .badRange), some .noSuchCommand] &&
+              echoes == #["", "boom: refused: bad range", "nope: no such command"] &&
+              text == "ad" &&
+              model.display.scenes.map (·.echo) == echoes
+          | (.error _, _) => false }]
+
 /-- Every check, in the order they run.
 
 The order matters where the process's one pool is measured. `poolChecks` run
@@ -8010,7 +8206,8 @@ def checks : List Check :=
     modeRegistryChecks ++
     modeDispatchChecks ++
     modeEnterChecks ++
-    apiStateChecks
+    apiStateChecks ++
+    driverChecks
 
 /-- Runs `checks` and returns the names of those that failed. A check that
 throws has failed, and its error is reported with its name. -/
