@@ -12519,7 +12519,84 @@ def exChecks : List Check :=
           | some driver =>
             let (refused, _) := fedTo driver (exLine "q now")
             promptEcho refused == Ex.noArgument "q" && !refused.stopped &&
-              !refused.loop.state.quitting }]
+              !refused.loop.state.quitting },
+    { name :=
+        "criterion 2 on the models: the ex name wq on a modified buffer of a file starts the save and asks to quit: the driver has not stopped while the save is not finished, and once it is finished the file holds the buffer's text and the driver has stopped"
+      run :=
+        pure <|
+          match exNoteOpen with
+          | none => false
+          | some opened =>
+            let path := inFiles "note.txt"
+            let text := "x" ++ FileCases.noteText
+            let (asked, _) := fedTo opened ([.commit "x"] ++ exLine "wq")
+            let (left, _) := asked.finish 2
+            asked.pending.size == 1 && (heldFile asked).bind (·.saving) != none && !asked.stopped &&
+              asked.loop.state.quitting &&
+              left.stopped &&
+              bytesOf left path == some (FileModel.encode text) &&
+              (showing left).map (·.buffer.isModified) == some false },
+    { name :=
+        "the ex name wq on a buffer of a file that is not modified saves it all the same and stops the driver once the save is finished, with the file's bytes as they were"
+      run :=
+        pure <|
+          match exNoteOpen with
+          | none => false
+          | some opened =>
+            let path := inFiles "note.txt"
+            let (asked, _) := fedTo opened (exLine "wq")
+            let (left, _) := asked.finish 2
+            asked.pending.size == 1 && !asked.stopped && left.stopped &&
+              bytesOf left path == some FileCases.noteBytes &&
+              stampOf left path != stampOf opened path },
+    { name :=
+        "the ex name wq in the scratch buffer says the buffer has no file, by the save command's message, starts nothing and does not ask to quit"
+      run :=
+        pure <|
+          match exDriver Ex.bindings with
+          | none => false
+          | some driver =>
+            let (refused, _) := fedTo driver ([.commit "typed"] ++ exLine "wq")
+            promptEcho refused == Files.noFile "scratch" && refused.pending.isEmpty &&
+              !refused.stopped &&
+              !refused.loop.state.quitting },
+    { name :=
+        "the ex name wq with the file changed behind the editor: the save is refused, the echo area says so by the save command's message, the quit is withdrawn and the driver has not stopped; a later q is refused, the buffer being still modified"
+      run :=
+        pure <|
+          match exNoteOpen with
+          | none => false
+          | some opened =>
+            let path := inFiles "note.txt"
+            let changed := rewritten opened path JobContract.otherFile
+            let (asked, _) := fedTo changed ([.commit "x"] ++ exLine "wq")
+            let (refused, _) := asked.finish 2
+            let (later, _) := fedTo refused (exLine "q")
+            asked.loop.state.quitting && !refused.stopped && !refused.loop.state.quitting &&
+              echoOf refused == some (Files.notSaved path (.changed (stampOf changed path))) &&
+              bytesOf refused path == some JobContract.otherFile &&
+              promptEcho later == Ex.notQuitting (.unsaved "note.txt") &&
+              !later.stopped },
+    { name :=
+        "the ex name wq while another file's buffer has unsaved changes starts this buffer's save and is refused the quit, with the other buffer's name: the file is written and the driver has not stopped"
+      run :=
+        pure <|
+          match exNoteOpen with
+          | none => false
+          | some opened =>
+            let path := inFiles "crlf.txt"
+            let (second, _) := fedTo opened ([.commit "x"] ++ exLine s!"e {path}")
+            let (second, _) := second.finish 2
+            let (asked, _) := fedTo second ([.commit "y"] ++ exLine "wq")
+            let (saved, _) := asked.finish 3
+            (showing second).map (·.buffer.name) == some "crlf.txt" &&
+              promptEcho asked == Ex.notQuitting (.unsaved "note.txt") &&
+              asked.pending.size == 1 &&
+              !asked.loop.state.quitting &&
+              !saved.stopped &&
+              (bytesOf saved path).map (·.size) == some (mostlyCrlf.size + 1) &&
+              echoOf saved == some (Files.wrote path) &&
+              bytesOf saved (inFiles "note.txt") == some FileCases.noteBytes }]
 
 /-- Texts of the resting rule's checks, each with every position it has, in
 order, and where each rests under `onCell` and under `offLineBreak`,

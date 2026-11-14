@@ -1,6 +1,7 @@
 import Editor.Api
 import Editor.Command.Call
 import Editor.Ex.Line
+import Editor.Files
 
 /-!
 # The ex command line
@@ -9,7 +10,7 @@ The ex line is a prompt whose answer is run as a named ex command
 (`docs/design/keymaps-and-modes.md`, "The ex command line"). It is one
 command, `ex`, written over the editor API (`Editor/Api.lean`): it asks for
 a line and then runs it. The commands the shipped ex names run that are the
-ex line's own are here too: `quit`. `Editor.lean` imports this module, so
+ex line's own are here too: `quit` and `save-and-quit`. `Editor.lean` imports this module, so
 config calls them. The commands as compiled code registers them, and the ex
 names that ship, are in `Editor/Ex/Compiled.lean`.
 
@@ -71,6 +72,31 @@ names that ship, are in `Editor/Ex/Compiled.lean`.
   refusal is what the echo area says.
 - **It quits the editor, not a window.** Vim's `q` closes the current
   window and quits when it is the last.
+
+## Save and quit
+
+- **`save-and-quit`** (`saveQuitName`, `saveQuitCommand`) is one command:
+  it starts the save of the buffer of the window it was called with
+  (`Files.save`, `Editor/Files.lean`), reads the state again, and asks
+  the editor to quit only if that buffer then has a save in flight. The
+  ex name `wq` is bound to it.
+- **The quit waits for the save**, by the rule above: the file is
+  written, the save's result is delivered, and that step says stop. The
+  order is fixed by the wait, not by timing.
+- **When the save did not start, it does not quit.** A buffer with no
+  file says so (`Files.noFile`), and the editor goes on, as Vim's `wq`
+  does with no file name.
+- **When the save is refused**, the file having changed on disk, the quit
+  is withdrawn and the echo area says the save's refusal
+  (`Files.notSaved`).
+- **When another buffer has unsaved changes**, the save starts and the
+  quit is refused with that buffer's name (`notQuitting`): the file is
+  written and the editor goes on. Vim does the same.
+- **It saves a buffer that is not modified too**, as Vim's `wq` does.
+- **While an earlier save of the buffer is in flight** the save command
+  says so and starts none; the buffer has a save in flight, so the quit
+  is asked, and waits for that save, or is refused if the buffer was
+  edited since it began.
 
 ## Where an addition goes
 
@@ -150,5 +176,24 @@ reads nothing of its call. -/
 def quitCommand (_ : Call) : EditorM Unit := do
   if let .error refusal← quit then
     message (notQuitting refusal)
+
+/-- The name the save-and-quit command is registered under. -/
+def saveQuitName : String :=
+  "save-and-quit"
+
+/-- The save-and-quit command as it is called: saves the buffer of the
+window it was called with (`Files.save`), and, when that buffer then has a
+save in flight, asks the editor to quit, which waits for the save ("Save
+and quit", in the module docs). When the save did not start, the save
+command's message stays and the editor is not asked. A quit that is
+refused, for another buffer, is said in the echo area (`notQuitting`), and
+the save goes on. -/
+def saveQuitCommand (call : Call) : EditorM Unit := do
+  let id := call.target.window.buffer
+  Files.save id
+  -- The state is read again: the save is in flight only if it started.
+  if ((← editorState).buffer? id).any (·.file.any (·.saving.isSome)) then
+    if let .error refusal← quit then
+      message (notQuitting refusal)
 
 end Editor.Ex

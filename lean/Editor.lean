@@ -3,7 +3,6 @@ import Editor.Command.Append
 import Editor.Evil
 import Editor.Evil.Motions
 import Editor.Ex
-import Editor.Files
 import Editor.InputScheme.Vim.Default
 import Editor.Minibuffer
 import Editor.Setup
@@ -44,7 +43,9 @@ command line is here too (`Editor/Ex.lean`, with an ex line as data in
 `Editor/Ex/Line.lean`): a command of config's runs a line with `Ex.run`,
 and `setup` binds an ex name to a command with `exCommand`
 (`Editor/Setup.lean`). The registrations of the ex line's commands and the
-ex names that ship (`Editor/Ex/Compiled.lean`) are not imported.
+ex names that ship (`Editor/Ex/Compiled.lean`) are not imported. The file
+commands come with `Editor/Ex.lean`, whose save-and-quit command calls
+`Files.save`.
 
 How a key becomes an invocation is here too, so config can come to write
 bindings: input schemes (`Editor/InputScheme.lean`), with the keymaps they

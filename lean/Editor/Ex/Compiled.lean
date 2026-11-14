@@ -20,6 +20,9 @@ drops it.
     (`Editor/Minibuffer/Compiled.lean`) for that prompt to be answered.
   - `quit` asks the editor to quit, and says a refusal in the echo area
     (`Ex.quitCommand`).
+  - `save-and-quit` saves the buffer of the window it was called with and
+    asks the editor to quit if the save started (`Ex.saveQuitCommand`). A
+    host must be handed the save job too (`Files.jobs`).
 - **`Ex.bindings`**: the ex names that ship. Each is bound to a command by
   its name, so a host must be handed that command too.
   - `w` runs `save-buffer` (`Editor/Files.lean`) and takes nothing: it
@@ -32,6 +35,7 @@ drops it.
     with no argument reads the current file again, which is not built.
   - `q` runs `quit` and takes nothing. It quits the editor, not the
     window the line was asked from: no shipped command splits a window.
+  - `wq` runs `save-and-quit` and takes nothing.
 
 This module is apart from `Editor/Ex.lean` because it names the registry,
 which is the config session's: `Editor.lean` imports the commands, so that
@@ -45,13 +49,14 @@ namespace Editor.Ex
 /-- The ex line's commands, as a host registers them for the owner
 `compiled`. -/
 def commands : Array Config.Registration :=
-  #[{ name := name, action := .call exCommand }, { name := quitName, action := .call quitCommand }]
+  #[{ name := name, action := .call exCommand }, { name := quitName, action := .call quitCommand },
+    { name := saveQuitName, action := .call saveQuitCommand }]
 
 /-- The ex names that ship, as a host registers them for the owner
 `compiled`. -/
 def bindings : Array Binding :=
   #[{ name := "w", command := Files.saveName },
     { name := "e", command := Files.openName, takes := .text },
-    { name := "q", command := quitName }]
+    { name := "q", command := quitName }, { name := "wq", command := saveQuitName }]
 
 end Editor.Ex
