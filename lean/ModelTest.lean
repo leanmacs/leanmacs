@@ -11981,6 +11981,32 @@ def toLineRows : List (String × String × String) :=
     ("9 9 g g", "a\nb\n  c|c\nd\n", "a\nb\n  cc\n|d\n"), ("g g", "|", "|"), ("g g", "|\n", "|\n"),
     ("j G k k", "abc|d\nx\nabcd", "|abcd\nx\nabcd")]
 
+/-- Rows for every motion key from an empty line between two lines: where
+Vim's motion puts the cursor, which for the motions along the line is
+where it is. -/
+def emptyLineRows : List (String × String × String) :=
+  let here := "ab\n|\ncd"
+  [("h", here, here), ("2 h", here, here), ("l", here, here), ("2 l", here, here),
+    ("j", here, "ab\n\n|cd"), ("2 j", here, "ab\n\n|cd"), ("k", here, "|ab\n\ncd"),
+    ("2 k", here, "|ab\n\ncd"), ("w", here, "ab\n\n|cd"), ("b", here, "|ab\n\ncd"),
+    ("e", here, "ab\n\nc|d"), ("W", here, "ab\n\n|cd"), ("B", here, "|ab\n\ncd"),
+    ("E", here, "ab\n\nc|d"), ("0", here, here), ("^", here, here), ("$", here, here),
+    ("2 $", here, "ab\n\nc|d"), ("g g", here, "|ab\n\ncd"), ("G", here, "ab\n\n|cd")]
+
+/-- Rows for every motion key from the last character of a text that ends
+`ending`, which is nothing or a line feed: a motion that would leave the
+text does not move, with a count as with none, and the cursor is never past
+the last character. -/
+def lastCharacterRows (ending : String) : List (String × String × String) :=
+  let here := "ab\nc|d" ++ ending
+  let lineStart := "ab\n|cd" ++ ending
+  [("h", here, lineStart), ("l", here, here), ("3 l", here, here), ("j", here, here),
+    ("3 j", here, here), ("k", here, "a|b\ncd" ++ ending), ("w", here, here), ("3 w", here, here),
+    ("b", here, lineStart), ("e", here, here), ("3 e", here, here), ("W", here, here),
+    ("3 W", here, here), ("B", here, lineStart), ("E", here, here), ("3 E", here, here),
+    ("0", here, lineStart), ("^", here, lineStart), ("$", here, here), ("3 $", here, here),
+    ("g g", here, "|ab\ncd" ++ ending), ("G", here, lineStart)]
+
 /-- The checks of evil's motions (`Editor/Evil.lean`, `Editor/Evil/Motions.lean`)
 on the loop's driver over the editor's models, under the Vim scheme that
 ships with the commands compiled code registers for evil: a motion's key
@@ -12008,6 +12034,12 @@ def evilMotionChecks : List Check :=
     { name :=
         "gg goes to the first line and G to the last, or with a count each to the line of that number, the last line when the text has fewer, and to that line's first character that is not a blank; the last line of a text that ends in a line feed is the line before its end; neither keeps a wanted column"
       run := evilRows toLineRows },
+    { name :=
+        "from an empty line every motion key leaves the cursor where Vim's does: h, l, 0, ^ and $ where it is, the others on the line they lead to"
+      run := evilRows emptyLineRows },
+    { name :=
+        "from the last character of the text, with a final line feed and with none, every motion key leaves the cursor where Vim's does, with a count as with none: a motion that would leave the text does not move, and the cursor is never past the last character"
+      run := evilRows (lastCharacterRows "" ++ lastCharacterRows "\n") },
     { name :=
         "every key the default tables bind to a motion has a motion of its name in the vocabulary: pressed in a text of three lines, none says anything in the echo area"
       run := do

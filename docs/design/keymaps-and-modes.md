@@ -1230,6 +1230,10 @@ rows of the same kinds than are listed here.
 | `j G k k` | `abc\|d⏎x⏎abcd` | `\|abcd⏎x⏎abcd` (`G` keeps no column) |
 | `j v j`, `j v <Escape> j`, `j i <Escape> j` | `abc\|d⏎x⏎abcd` | `abcd⏎x⏎abc\|d`, then `abcd⏎x⏎\|abcd` twice |
 | every motion | the empty text, and the text of one line feed | unchanged, at 0 |
+| `h`, `l`, `0`, `^`, `$` | `ab⏎\|⏎cd` (an empty line) | unchanged |
+| `j`, `w`, `W`, `G`; `k`, `b`, `B`, `g g`; `e`, `E`, `2 $` | the same | `ab⏎⏎\|cd`; `\|ab⏎⏎cd`; `ab⏎⏎c\|d` |
+| `l`, `j`, `w`, `e`, `W`, `E`, `$`, each also with a count of 3 | `ab⏎c\|d`, and `ab⏎c\|d⏎` (the last character) | unchanged |
+| `h`, `b`, `B`, `0`, `^`, `G`; `k`; `g g` | the same | `ab⏎\|cd`; `a\|b⏎cd`; `\|ab⏎cd` |
 | `k` | `ab␍⏎\|cd` | `\|ab␍⏎cd` |
 | `$`, `l` | `a\|b␍⏎cd` | unchanged, on `b` |
 | `w`, `b` | `foo \|bar␍⏎baz`, `foo␍⏎\|bar` | `foo bar␍⏎\|baz`, `\|foo␍⏎bar` |
