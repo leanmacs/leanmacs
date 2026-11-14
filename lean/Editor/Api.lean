@@ -248,6 +248,16 @@ the loop says stop once the editor can leave, and the host ends its loop.
   a case in `Editor/Api/Cases.lean`. Its rules are pinned by
   `ModelTest.apiStateChecks`.
 
+## Reload
+
+`reloadConfig` asks for the config to be reloaded. The request is kept
+until the command has run to its end, and the loop then hands it to its
+host, which asks its config session (`Editor/Loop.lean`, "Reload from a
+command"). The reload runs in the background and is installed between two
+later events. A command that is refused or interrupted after asking asks
+for none. It makes no request of the library. Pinned by
+`ModelTest.dispatchQuitChecks`.
+
 ## Jobs
 
 `startJob name arguments` asks for the job registered under `name` to be
@@ -389,6 +399,13 @@ def quit : EditorM (Except QuitRefusal Unit) := do
       if buffer.unsavedAt (← buffer.history.sync) then
         return .error (.unsaved buffer.name)
   return .ok (← EditorState.ask .quit)
+
+/-- Asks for the config to be reloaded, once this command has run to its
+end ("Reload", in the module docs). The reload runs in the background and
+is installed between two events; a command that does not run to its end
+asks for none. -/
+def reloadConfig : EditorM Unit :=
+  EditorState.ask .reload
 
 /-- Asks for a string: opens a prompt labelled `label`, whose minibuffer
 holds `initial`, with the cursor after it, and returns the minibuffer's

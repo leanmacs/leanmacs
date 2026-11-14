@@ -4879,7 +4879,7 @@ def stateRequests : List StateRequest :=
     .openPrompt "Name: " asked ⟨8⟩ (UndoTree.new ⟨8⟩ 0) (marker 0 0) (marker 8 1),
     .closePrompt none, .closePrompt (some "typed"),
     .setWanted ⟨0⟩ (some { column := .cells 3, head := 7 }), .setWanted ⟨1⟩ none,
-    .setWanted ⟨9⟩ (some { column := .lineEnd, head := 0 }), .ex "w", .invoke asked, .quit]
+    .setWanted ⟨9⟩ (some { column := .lineEnd, head := 0 }), .ex "w", .invoke asked, .quit, .reload]
 
 /-- The checks of the state requests' pure handler (`EditorState.handle`,
 `Editor/State/Request.lean`), on states made on the text model. The handler
@@ -5341,6 +5341,15 @@ def stateRequestChecks : List Check :=
             let (_, again) := asked.handle .quit
             !state.quitting && asked.quitting && { asked with quitting := false } == state &&
               again == asked },
+    { name :=
+        "the request to reload the config sets the state's flag that a reload was asked for and changes nothing else"
+      run :=
+        pure <|
+          match onTextModel twoBuffers with
+          | none => false
+          | some state =>
+            let (_, asked) := state.handle .reload
+            !state.reload && asked.reload && { asked with reload := false } == state },
     { name :=
         "every kind of request, accepted and refused, leaves a well-formed state well formed, with no prompt open and with one open, and the state with nothing in it answers each without a buffer or a window"
       run := do
@@ -12056,12 +12065,14 @@ command checks have them, and five commands written here, under `C-l`:
 `leave` (`l`) asks the editor to quit and says a refusal (`notLeaving`),
 `leave-then-fail` (`f`) asks and is then refused, `stamp` (`s`) edits its
 buffer, `other` (`o`) says `other`, and `hand-leave` (`h`) asks for `leave`
-to be run after it. -/
+to be run after it. Two more ask for the config to be reloaded: `again`
+(`r`), and `again-then-fail` (`g`), which asks and is then refused. -/
 def quitKeys : Loop.Keys TestScheme.scheme :=
   dispatchKeys
     [("C-o n", opens (inFiles "note.txt")), ("C-o w", invoke Files.saveName),
       ("C-l l", invoke "leave"), ("C-l f", invoke "leave-then-fail"), ("C-l s", invoke "stamp"),
-      ("C-l o", invoke "other"), ("C-l h", invoke "hand-leave")]
+      ("C-l o", invoke "other"), ("C-l h", invoke "hand-leave"), ("C-l r", invoke "again"),
+      ("C-l g", invoke "again-then-fail")]
     [(Files.openName, fun call => do
         Files.openCommand call
         return none),
@@ -12078,7 +12089,11 @@ def quitKeys : Loop.Keys TestScheme.scheme :=
         return none),
       ("hand-leave", fun _ => do
         Editor.invoke { command := "leave" }
-        return none)]
+        return none),
+      ("again", fun _ => do
+        reloadConfig
+        return none),
+      ("again-then-fail", failingAfter fun _ => reloadConfig)]
 
 /-- A driver of the quit checks over the files `files`, with the file
 `note.txt` open in view 0: the open command, and its job finished. The load
@@ -12202,7 +12217,28 @@ def dispatchQuitChecks : List Check :=
           | some driver =>
             let (left, steps) := fedTo driver (presses "C-l h")
             next steps == #[some .continue, some .continue] && left.stopped &&
-              left.loop.state.quitting }]
+              left.loop.state.quitting },
+    { name :=
+        "a step whose command asked for the config to be reloaded hands the request back, and the state after it is not asking; a step that ran another command hands back none, and so does one whose command asked and was then refused; the driver counts the reloads asked for"
+      run :=
+        pure <|
+          match quitDriver with
+          | none => false
+          | some driver =>
+            let asked (steps : Array (Option (Loop.Stepped TestScheme.scheme))) :=
+              steps.map (·.map (·.reload))
+            let (once, steps) := fedTo driver (presses "C-l r")
+            let (other, went) := fedTo once (presses "C-l o")
+            let (failed, lost) := fedTo other (presses "C-l g")
+            let (twice, _) := fedTo failed (presses "C-l r")
+            asked steps == #[some false, some true] && !once.loop.state.reload &&
+              once.reloads == 1 &&
+              asked went == #[some false, some false] &&
+              asked lost == #[some false, some false] &&
+              !failed.loop.state.reload &&
+              failed.reloads == 1 &&
+              twice.reloads == 2 &&
+              driver.reloads == 0 }]
 
 /-- The ex bindings of the ex line's own checks, written here: `say` runs
 the command `greet` of the prompt checks with the rest of the line, and
@@ -12596,7 +12632,22 @@ def exChecks : List Check :=
               !saved.stopped &&
               (bytesOf saved path).map (·.size) == some (mostlyCrlf.size + 1) &&
               echoOf saved == some (Files.wrote path) &&
-              bytesOf saved (inFiles "note.txt") == some FileCases.noteBytes }]
+              bytesOf saved (inFiles "note.txt") == some FileCases.noteBytes },
+    { name :=
+        "the ex name reload asks for the config to be reloaded: the driver counts one reload, and two once the line is typed twice; with an argument it says it takes none and asks for none"
+      run :=
+        pure <|
+          match exDriver Ex.bindings with
+          | none => false
+          | some driver =>
+            let (once, _) := fedTo driver (exLine "reload")
+            let (twice, _) := fedTo once (exLine "reload")
+            let (refused, _) := fedTo driver (exLine "reload now")
+            driver.reloads == 0 && once.reloads == 1 && twice.reloads == 2 && closed twice &&
+              !twice.stopped &&
+              promptEcho once == "" &&
+              promptEcho refused == Ex.noArgument "reload" &&
+              refused.reloads == 0 }]
 
 /-- Texts of the resting rule's checks, each with every position it has, in
 order, and where each rests under `onCell` and under `offLineBreak`,

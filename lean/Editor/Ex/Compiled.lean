@@ -23,6 +23,8 @@ drops it.
   - `save-and-quit` saves the buffer of the window it was called with and
     asks the editor to quit if the save started (`Ex.saveQuitCommand`). A
     host must be handed the save job too (`Files.jobs`).
+  - `reload-config` asks for the config to be reloaded
+    (`Ex.reloadCommand`).
 - **`Ex.bindings`**: the ex names that ship. Each is bound to a command by
   its name, so a host must be handed that command too.
   - `w` runs `save-buffer` (`Editor/Files.lean`) and takes nothing: it
@@ -36,6 +38,7 @@ drops it.
   - `q` runs `quit` and takes nothing. It quits the editor, not the
     window the line was asked from: no shipped command splits a window.
   - `wq` runs `save-and-quit` and takes nothing.
+  - `reload` runs `reload-config` and takes nothing.
 
 This module is apart from `Editor/Ex.lean` because it names the registry,
 which is the config session's: `Editor.lean` imports the commands, so that
@@ -50,13 +53,15 @@ namespace Editor.Ex
 `compiled`. -/
 def commands : Array Config.Registration :=
   #[{ name := name, action := .call exCommand }, { name := quitName, action := .call quitCommand },
-    { name := saveQuitName, action := .call saveQuitCommand }]
+    { name := saveQuitName, action := .call saveQuitCommand },
+    { name := reloadName, action := .call reloadCommand }]
 
 /-- The ex names that ship, as a host registers them for the owner
 `compiled`. -/
 def bindings : Array Binding :=
   #[{ name := "w", command := Files.saveName },
     { name := "e", command := Files.openName, takes := .text },
-    { name := "q", command := quitName }, { name := "wq", command := saveQuitName }]
+    { name := "q", command := quitName }, { name := "wq", command := saveQuitName },
+    { name := "reload", command := reloadName }]
 
 end Editor.Ex

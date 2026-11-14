@@ -10,7 +10,8 @@ The ex line is a prompt whose answer is run as a named ex command
 (`docs/design/keymaps-and-modes.md`, "The ex command line"). It is one
 command, `ex`, written over the editor API (`Editor/Api.lean`): it asks for
 a line and then runs it. The commands the shipped ex names run that are the
-ex line's own are here too: `quit` and `save-and-quit`. `Editor.lean` imports this module, so
+ex line's own are here too: `quit`, `save-and-quit` and `reload-config`.
+`Editor.lean` imports this module, so
 config calls them. The commands as compiled code registers them, and the ex
 names that ship, are in `Editor/Ex/Compiled.lean`.
 
@@ -97,6 +98,18 @@ names that ship, are in `Editor/Ex/Compiled.lean`.
   says so and starts none; the buffer has a save in flight, so the quit
   is asked, and waits for that save, or is refused if the buffer was
   edited since it began.
+
+## Reload
+
+- **`reload-config`** (`reloadName`, `reloadCommand`) asks for the config
+  to be reloaded (`reloadConfig`, `Editor/Api.lean`). The ex name `reload`
+  is bound to it.
+- **The reload is asynchronous.** The command runs to its end at once; the
+  host starts the reload job, and the new config is installed between two
+  later events (`docs/design/concurrency.md`, "Reload"). A key typed
+  before the install runs the old config's binding.
+- **It says nothing.** A reload's report is the host's to show: the
+  headless host prints it, and nothing puts it in the echo area.
 
 ## Where an addition goes
 
@@ -195,5 +208,15 @@ def saveQuitCommand (call : Call) : EditorM Unit := do
   if ((← editorState).buffer? id).any (·.file.any (·.saving.isSome)) then
     if let .error refusal← quit then
       message (notQuitting refusal)
+
+/-- The name the command that reloads the config is registered under. -/
+def reloadName : String :=
+  "reload-config"
+
+/-- The reload command as it is called: asks for the config to be reloaded
+(`reloadConfig`, `Editor/Api.lean`). It says nothing, and reads nothing of
+its call. -/
+def reloadCommand (_ : Call) : EditorM Unit :=
+  reloadConfig
 
 end Editor.Ex

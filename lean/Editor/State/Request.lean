@@ -62,6 +62,10 @@ the models and against the library alike (`Editor/Command/Dispatch.lean`).
   does not judge whether the editor may quit: the command that asks
   checks first (`quit`, `Editor/Api.lean`), since that needs the text
   store, and the loop decides when the editor leaves.
+- **A reload of the config is asked for by one request**, `reload`,
+  which sets a flag of the state (`EditorState.reload`) until the loop
+  hands it to its host, as `starts` holds the jobs a command asked for
+  (`Editor/Loop.lean`, "Reload from a command").
 - **A window's wanted column is set by one request**, `setWanted`, with
   the column and the offset it is kept at, or with none
   (`Editor/State.lean`, "The wanted column"). It is refused with a
@@ -149,6 +153,8 @@ inductive StateRequest where
   | invoke (invocation : Invocation)
   /-- Ask the editor to quit. -/
   | quit
+  /-- Ask for the config to be reloaded. -/
+  | reload
 
 /-- The type of the reply to each request. -/
 abbrev StateRequest.Reply : StateRequest → Type
@@ -175,6 +181,7 @@ abbrev StateRequest.Reply : StateRequest → Type
   | .ex _ => Option Ex.Binding
   | .invoke _ => Unit
   | .quit => Unit
+  | .reload => Unit
 
 namespace EditorState
 
@@ -220,6 +227,7 @@ def handle : (request : StateRequest) → EditorState → request.Reply × Edito
   | .ex _, state => (none, state)
   | .invoke invocation, state => ((), { state with answered := state.answered.push invocation })
   | .quit, state => ((), { state with quitting := true })
+  | .reload, state => ((), { state with reload := true })
 
 end EditorState
 

@@ -212,6 +212,28 @@ loop has little of its own to do.
 
 Pinned by `ModelTest.promptChecks`.
 
+## Reload from a command
+
+A command asks for the config to be reloaded (`reloadConfig`,
+`Editor/Api.lean`). The loop holds no config session, so the request is a
+one-shot output of the step, like the jobs to start
+(`docs/design/concurrency.md`, "Reload").
+
+- **The request is kept in the state** until the command ends
+  (`EditorState.reload`). After a command that ran to its end the loop
+  takes it out and hands it back with the step (`Loop.Stepped.reload`). A
+  command that did not run to its end asks for none: the flag goes with
+  the state it left.
+- **The host asks its config session**, as it does for its driver's
+  request: one reload job at a time, and a request made while one runs
+  makes one follow-up (`Editor/Config/Reload.lean`). The reload is
+  installed later, between two events, so a key typed right after the
+  command still runs the old config's binding.
+- **On the models** `Loop.Driver` counts the requests
+  (`Loop.Driver.reloads`): it has no config session.
+
+Pinned by `ModelTest.dispatchQuitChecks`.
+
 ## Quit
 
 A command asks the editor to quit (`quit`, `Editor/Api.lean`), and the
@@ -690,6 +712,11 @@ structure Loop.Stepped (scheme : InputScheme) where
   a step that ran no command, and for one whose command did not run to its
   end. -/
   answered : Array Invocation := #[]
+  /-- Whether the command the step ran asked for the config to be reloaded
+  (`reloadConfig`, `Editor/Api.lean`), for the host to ask its config
+  session. `false` for a step that ran no command, and for one whose
+  command did not run to its end. -/
+  reload : Bool := false
   /-- How the command the step ran ended; `none` for a step that ran no
   command. -/
   ended : Option Loop.Ending := none
@@ -1091,9 +1118,13 @@ structure Ran where
   log : Array String := #[]
   /-- The jobs the command asked to be started, when it ran to its end. -/
   starts : Array JobStart := #[]
-  /-- The continuations of the prompts the command accepted, each with its
-  answer, when it ran to its end. -/
+  /-- The invocations to run next, when the command ran to its end: the
+  continuations of the prompts it accepted, each with its answer, and the
+  invocations it asked to be run after it. -/
   answered : Array Invocation := #[]
+  /-- Whether the command asked for the config to be reloaded, when it ran
+  to its end. -/
+  reload : Bool := false
 
 /-- Whether the command ran to its end. -/
 def Ran.finished (ran : Ran) : Bool :=
@@ -1114,7 +1145,8 @@ def slow (name : String) (took threshold : Nat) : Array String :=
 command ("Every command goes through the loop", in the module docs):
 dispatched (`EditorM.dispatched`: guarded, with its state requests answered
 from `state`). The state of a command that ran to its end is the one it
-left, with the jobs it asked for taken out and handed back. It is not
+left, with the jobs it asked for, the invocations to run next and a reload
+it asked for taken out and handed back. It is not
 refused: a refusal of the command and an interrupt are each said in the
 echo area, after `name`, and a command that was refused or interrupted is
 rolled back to the state from before it, with what could not be said after
@@ -1143,14 +1175,15 @@ def dispatch (keys : Keys scheme) (state : EditorState) (name : String)
     return {
         state :=
           { left.refusedBy ungiven with
-            starts := #[], answered := #[] }
+            starts := #[], answered := #[], reload := false }
         ending := .finished
         closed := closedViews state left
         opened := openedMinibuffer state left
         write
         log
         starts := left.starts
-        answered := left.answered }
+        answered := left.answered
+        reload := left.reload }
   | .refused refusal =>
     failed s!"refused: {refusal.describe}" (.refused refusal)
   | .interrupted =>
@@ -1190,6 +1223,7 @@ def ranInto (loop : Loop scheme) (ran : Ran) : Stepped scheme :=
     log := ran.log
     starts := ran.starts
     answered := ran.answered
+    reload := ran.reload
     ended := some ran.ending }
 
 /-- One key through the scheme, for the focused view, and the invocation it

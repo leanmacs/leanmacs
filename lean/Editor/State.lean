@@ -555,6 +555,9 @@ structure EditorState where
   /-- Whether a command asked the editor to quit ("Quit", in the module
   docs). -/
   quitting : Bool := false
+  /-- Whether a command asked for the config to be reloaded, which the loop
+  has not yet handed to its host. -/
+  reload : Bool := false
   deriving BEq, Repr
 
 /-- What a handler acts on: a window and the buffer it shows. -/
