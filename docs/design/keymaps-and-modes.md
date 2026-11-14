@@ -209,6 +209,50 @@ structure InputScheme where
   ambient "current buffer" (see the principles in
   [overview.md](overview.md)).
 
+#### What a scheme reports of a view
+
+Status: decided 2026-11-14, not yet built (the command loop's phase 11).
+
+A command cannot learn which Vim state its view is in: the state is in the
+scheme's state, which the loop holds at a type it does not know. The scene
+cannot either. So the scheme interface gains one function, and the loop
+hands its answer to the command it runs and to the scene:
+
+```lean
+report : State → ViewId → InputScheme.Report   -- defaults to the default report
+```
+
+| Field of `InputScheme.Report` | Default | Read by |
+|---|---|---|
+| `cursor : Cursor` | A bar in the face `cursor` | The scene: how the view's cursors are drawn |
+| `status : Array StatusField` | None | The scene: the view's status line begins with these fields |
+| `shape : Shape` | `exclusive` | The first window's selection, and a command that places one |
+| `selecting : Bool` | `false` | A command: a motion moves the head and keeps the anchor |
+| `session : Bool` | `false` | The loop: the view is in an insert session ("Insert sessions") |
+| `takesText : Bool` | `true` | The loop: a committed text is inserted in the view |
+
+- **The defaults are what the loop does with no report**, so a scheme that
+  says nothing of a view, as the test scheme does, changes nothing.
+- **A command is told the report of its view** (a field of `Call`), in the
+  scheme's state after the key: the key that enters a state is the key
+  whose command reshapes the selection, and that command must see the
+  state it is entering. When the command fails the scheme goes back to its
+  state at rest and the editor state to the one before the command, so the
+  two cannot disagree.
+- **The first window's selection has the reported shape**: the loop starts
+  its state with the scheme's report of the first view.
+- **The contract gains a property**: a key that yields nothing leaves the
+  report of its view as it was, after a strict prefix of a complete input
+  and after the unbound key that resets it. The loop decides after every
+  key whether a buffer's undo group stays open, and a key that ran no
+  command must not open or end a session.
+- **Set aside: the Vim state mirrored in the editor state's window.** It
+  would be one fact in two places, kept in step by every command and by
+  the rollback.
+- **Set aside: the state's facts as arguments of the invocation.** The
+  layout of a move's arguments is the grammar's, and a command run by name
+  has no such arguments.
+
 #### The test scheme
 
 The simplest scheme there is, published for other modules' tests
@@ -531,6 +575,25 @@ here.
 - A motion in a visual state is the same `move` edit as in normal state.
   That it extends the selection is the command's, when the edit runs.
 
+**How entering and leaving a visual state changes the selection.**
+Decided 2026-11-14, not yet built (the command loop's phase 11). It is the
+entering rule of "Vim states", read for the three keys:
+
+- **`v` in normal state changes nothing but the view's state.** The
+  selection is already one inclusive range with equal ends, on the cell
+  under the cursor. The next motion moves its head and keeps its anchor,
+  because the state is one whose operators act on the selection.
+- **`V` gives the same two ends the line shape.** The ends are not moved
+  to the lines' starts and ends: what a line-shaped range covers is the
+  text store's answer, so the columns survive leaving the state, and
+  `V` then `v` selects from the first column the cursor was in.
+- **`v` in `visual-line` and `V` in `visual` change the shape and keep
+  both ends.**
+- **`<Escape>`, and the state's own key typed again, collapse the
+  selection onto its head**, as one inclusive range with equal ends, which
+  is then put where normal state lets a cursor rest ("Where a cursor
+  rests").
+
 ### Vim states
 
 ```lean
@@ -558,8 +621,41 @@ structure States where
   `InputScheme`. The registry is a value; a reload that changes it builds
   the scheme again, and the scheme's state type does not change.
   Registering a state from `setup` is not built.
-- The selection shape a state gives a cursor is added to the record with
-  the text store's shapes.
+
+**A state's record says the shape of its selection, and entering a state
+reshapes the selection by that record.** Decided 2026-11-14, not yet built
+(the command loop's phase 11).
+
+- **The record gains `shape : Shape := .inclusive`.** The defaults:
+  `normal` and `visual` inclusive, `visual-line` line, `insert` and
+  `minibuffer` exclusive, which is the table
+  [text-and-display.md](text-and-display.md) has ("What a selection covers,
+  and how evil maps onto it").
+- **The entering rule is one for every state**, run by the command the
+  entering key names:
+  1. The selection takes the record's shape.
+  2. Its two ends are kept when the state is one whose operators act on
+     the selection (`operatesOnSelection`: the visual states). Otherwise it
+     is collapsed onto its head.
+  3. When the selection was exclusive and the new shape is not (an insert
+     session ends), the head first steps back one cell, and stays where it
+     is at the start of its line. This is Vim's escape.
+  4. The head is then put where the state lets it rest ("Where a cursor
+     rests").
+- **No command matches a state's name.** The commands that enter `normal`,
+  `visual` and `visual-line` are one function, which reads the record's
+  facts from the scheme's report of the view ("What a scheme reports of a
+  view"). A state that config registers with the block shape would be
+  entered by the same function.
+- **No second field for "a motion extends the selection".** A state whose
+  operators act on the selection is a state in which the selection is the
+  user's to grow. One field says both, as `insertsText` says both "typing
+  is text" and "a digit is not a count".
+- **The scheme reports the record**, because nothing outside the scheme
+  can read one: the record's cursor shape in the face `cursor.` followed
+  by the state's name, one status field with the state's name, the
+  record's shape, `selecting` from `operatesOnSelection`, and `session`
+  and `takesText` both from `insertsText`.
 
 **Where the current Vim state is held**: in the scheme's state, one entry a
 view. `current : List (ViewId × String)` is the name of the Vim state of
@@ -643,6 +739,135 @@ changed text, as a value: what dot repeat replays.
 - It is one for the scheme, not one a view.
 - Replaying it, and the text typed in an insert session as part of it, are
   not built.
+
+### The wanted column
+
+Status: decided 2026-11-14, not yet built (the command loop's phase 11).
+
+The wanted column is the column a view's `j` and `k` aim for, which
+survives crossing a shorter line (Vim's `curswant`).
+
+**It is kept on the view's window, in the editor state, with the position
+it was kept at.**
+
+- **The field**: `Window.wanted : Option Window.Wanted`, none by default,
+  with `Window.Wanted { column : WantedColumn, head : Nat }`. A
+  `WantedColumn` is `cells n`, a column counted in cells from the row's
+  start as the text port counts one (`ColumnUnit.cells`), or `lineEnd`,
+  which is what `$` leaves so that `j` and `k` then stay at line ends.
+- **`head` is the offset the cursor was left at when the column was
+  kept.** A vertical motion uses the kept column only when the cursor is
+  still at that offset. Anything else that moves the cursor (a horizontal
+  motion, an edit, an undo, a command of config's) makes the kept column
+  stale with nobody clearing it. That is the reason for the field: a rule
+  that every cursor-moving operation clears the column would bind every
+  command anyone writes.
+- **One state request sets it**, refused for a view with no window, and
+  the editor API has the operation over it. A command reads it from its
+  target's window. Showing another buffer in the window clears it, because
+  offsets of one text mean nothing in another, and a window a split makes
+  has none.
+- **It is rolled back with the command**, because it is editor state.
+- **It counts cells, and Vim's counts display columns.** With a tab or a
+  wide character before the cursor the two differ
+  ([text-and-display.md](text-and-display.md), "Vim's `curswant` is a
+  display column"). Display columns need the display pipeline's tab stops
+  and character widths.
+- **Set aside: in the scheme's state.** `step` is pure and never sees what
+  a command did, so the scheme cannot know the column.
+- **Set aside: in the selection marker.** The store's selection has no
+  such field. Adding one is a change to the Rust library and to every
+  marker.
+- **Set aside: a buffer-local value.** Two windows on one buffer have two
+  cursors.
+- **What it costs.** An edit made through another window that shifts the
+  cursor's offset makes the kept column stale, where Vim would keep it.
+  The next `j` then aims for the cursor's own column.
+
+### Where a cursor rests
+
+Status: decided 2026-11-14, not yet built (the command loop's phase 11).
+
+A motion answers a position, its raw target, which the text port never
+clamps. Where the head of a selection may stay after a command is a rule
+of the view's state, applied to the raw target. The rule is evil's and is
+in Lean.
+
+| The state's report | Rule | Where the head may rest |
+|---|---|---|
+| Exclusive shape (insert, the minibuffer) | `anywhere` | Any position, the text's end included |
+| Not exclusive, not selecting (normal) | `offLineBreak` | A cell of its line that is not the line break, or the line break of an empty line |
+| Not exclusive, selecting (the visual states) | `onCell` | Any cell, a line break included |
+
+For the two rules that are not `anywhere`, in order:
+
+1. An empty text answers 0.
+2. An offset at or past the text's length goes to the start of the last
+   cell. This keeps the head out of the empty last row of a text that ends
+   in a line feed, and never past the last cell.
+3. An offset past its row's content (between a carriage return and its
+   line feed) goes to where the content ends.
+4. For `offLineBreak`, an offset on the line break of a row that has
+   content goes back one cell.
+
+- **A line break is a cell in a visual state**, because Vim's cursor may
+  be one past the line there: `v$` puts the head on it, and so do `l` at
+  the last character and `j` onto a shorter line.
+- **The empty last row is not a line for a cursor outside insert state.**
+  A text that ends in a line feed has an empty last row with no cell;
+  Vim has no such line, since its lines are ended by line breaks and not
+  separated by them. `G` goes to the last row that has a cell, `j` stops
+  there, and a `w` or an `e` that runs off the text rests on the last
+  character, as Vim does on a file.
+  - **What differs from Vim**: in insert state the bar can be in the empty
+    last row, for example after a line break is inserted at the very end
+    of a text. On escape the cursor rests on the last character of the row
+    above, where Vim would show a new empty line.
+- **A departure**: on a last row with no line feed, a visual-state head
+  stops on the last character, where Vim's goes one past. There is no
+  cell there for an inclusive range to cover.
+- **Set aside: clamping inside each motion.** An operator needs the raw
+  target: `dw` on the last word wants the text's end.
+
+### Insert sessions
+
+Status: decided 2026-11-14, not yet built (the command loop's phase 11).
+
+An insert session is the time a view is in a state where typing is text.
+What is edited in its buffer during one session is one step of the
+history.
+
+**The loop leaves a buffer's undo group open while a view of it is in a
+session.** Today the loop closes every buffer's group after every event.
+From this phase it closes the group of each buffer but those shown by a
+window whose view the scheme reports as in a session, in the scheme's
+state after the key.
+
+- **A session's boundary is the state change itself.** Escape enters
+  normal state; the scene published after its command finds no view of
+  the buffer in a session, and the group is closed: one node for
+  everything typed. Nothing is set by the command that begins an insert,
+  and nothing is cleared by the one that ends it.
+- **An insert that begins with an edit is one step with no further
+  rule**: `o` (a line break, then typed text) and `cw` (a deletion, then
+  typed text), because the view is in insert state when the scene after
+  the command is published. That is Vim's rule.
+- **A command that fails inside a session** is rolled back to the point of
+  the open group it began at ([concurrency.md](concurrency.md),
+  "Rollback"). The session's earlier text stays pending, and is one step
+  with what follows.
+- **Anything else that edits the buffer during a session** (a job's
+  command, a committed text) joins the session's step.
+- **A buffer is modified while its group is open**, so the status line
+  shows it during the session.
+- **The minibuffer's buffer** is in a session for as long as its prompt is
+  open. Its history is given up with it.
+- **Set aside: commands close their own groups and the loop closes none.**
+  Every command anyone writes would have to remember.
+- **Set aside: a flag on the buffer that the inserting command sets and
+  escape clears.** Every command that begins an insert would have to set
+  it, and a command that fails between the two leaves it wrong unless it
+  is rolled back with care. The scheme's state already says it.
 
 ### Default bindings
 
@@ -1290,14 +1515,6 @@ every build); the second is a proposal.
   minibuffer"). Binding it to `minibuffer-cancel` in the minibuffer under
   each scheme is the alternative, and under the Vim scheme whether `C-c`
   should cancel as well as `<Escape>`.
-- **The wanted column and the selection's shape** in the Vim scheme. How
-  counts, registers and the visual selection appear in the scheme's state
-  and in an edit, and where the current Vim state is held, are built ("The
-  Vim scheme"), and how a selection is represented is settled
-  ([text-and-display.md](text-and-display.md)). What is open is where the
-  column a vertical motion wants is kept, and how entering and leaving a
-  visual state changes the selection's shape. The shape a state gives a
-  cursor is not yet on its record.
 - **Text objects on `i` and `a`.** Vim's text objects begin with `i` or `a`
   (`diw`, `da(`). The default normal state binds both keys as commands, and
   a bound sequence is never also a prefix, so they cannot also begin a text
