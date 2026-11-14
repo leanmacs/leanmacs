@@ -80,7 +80,10 @@ after: every cell start of the text, or its rows with their cells, read off
 `TextModel.rowsOf`, and then the first after the position or the last before
 it. The library lists nothing: it walks its rope from the position, a cell
 at a time. The line start is the model's own conversions: the offset of
-column 0 of the position's row.
+column 0 of the position's row. Two theorems are stated about them at the
+end of this module: a conversion that answers is undone by the other
+(`TextModel.offsetOf_pointOf`), and so the line start of a line start is
+itself (`TextModel.lineStart_idempotent`).
 
 The contract (`Editor/Text/Contract.lean`) is what says the model and the real
 binding agree. A clause added to `TextModel.handle`, to `TextModel.answer` or
@@ -1349,5 +1352,114 @@ theorem TextModel.splice_end (text s : String) :
     String.Pos.Raw.isValid_rawEndPos
   have atEnd : text.pos ⟨text.utf8ByteSize⟩ valid = text.endPos := String.Pos.ext rfl
   simp [TextModel.splice, valid, atEnd, String.sliceTo_endPos]
+
+/-- The walk of `offsetOf` never answers an offset before the one it is at:
+it answers where it is, or walks on, and a character is at least a byte. -/
+theorem TextModel.offsetOf_go_le (unit : ColumnUnit) (point : Point) (chars : List Char)
+    (offset : Nat) (here : Point) (found : Nat)
+    (answered : offsetOf.go unit point chars offset here = some found) : offset ≤ found := by
+  induction chars generalizing offset here with
+  | nil =>
+    unfold offsetOf.go at answered
+    split at answered
+    · injection answered with same
+      omega
+    · contradiction
+  | cons c rest ih =>
+    unfold offsetOf.go at answered
+    split at answered
+    · injection answered with same
+      omega
+    · split at answered
+      · split at answered
+        · contradiction
+        · have := ih _ _ answered
+          omega
+      · have := ih _ _ answered
+        omega
+
+/-- The two conversions walk a text alike: from the same characters, offset
+and point, where the walk of `offsetOf` answers an offset for `point`, the
+walk of `pointOf` answers `point` for that offset. Each step of one is a step
+of the other, and the walk of `pointOf` does not stop early, because the
+offset answered is not before where the walk is. -/
+theorem TextModel.pointOf_go_of_offsetOf_go (unit : ColumnUnit) (point : Point) (chars : List Char)
+    (offset : Nat) (here : Point) (found : Nat)
+    (answered : offsetOf.go unit point chars offset here = some found) :
+    pointOf.go unit found chars offset here = some point := by
+  induction chars generalizing offset here with
+  | nil =>
+    unfold offsetOf.go at answered
+    split at answered
+    next same =>
+      injection answered with reached
+      have arrived : here = point := by simpa using same
+      simp [pointOf.go, reached, arrived]
+    next => contradiction
+  | cons c rest ih =>
+    unfold offsetOf.go at answered
+    split at answered
+    next same =>
+      injection answered with reached
+      have arrived : here = point := by simpa using same
+      simp [pointOf.go, reached, arrived]
+    next =>
+      have size := Char.utf8Size_pos c
+      split at answered
+      next lineFeed =>
+        split at answered
+        · contradiction
+        · have past := offsetOf_go_le _ _ _ _ _ _ answered
+          have rest := ih _ _ answered
+          have before : (offset == found) = false := by
+            simp
+            omega
+          have notPast : ¬offset > found := by omega
+          simp [pointOf.go, before, notPast, lineFeed, rest]
+      next notLineFeed =>
+        have past := offsetOf_go_le _ _ _ _ _ _ answered
+        have rest := ih _ _ answered
+        have before : (offset == found) = false := by
+          simp
+          omega
+        have notPast : ¬offset > found := by omega
+        simp [pointOf.go, before, notPast, notLineFeed, rest]
+
+/-- A conversion that answers is undone by the other: where a point names an
+offset, that offset's point is the point, in every unit. This is the port's
+rule that the conversions are inverses wherever they answer, for the
+model. -/
+theorem TextModel.offsetOf_pointOf (unit : ColumnUnit) (text : String) (point : Point)
+    (offset : Nat) (found : offsetOf unit text point = some offset) :
+    pointOf unit text offset = some point :=
+  pointOf_go_of_offsetOf_go unit point text.toList 0 ⟨0, 0⟩ offset found
+
+/-- Line start is idempotent: the line start of a line start is itself. If
+the model answers `start` to the line start from `offset`, it answers `start`
+to the line start from `start`.
+
+The line start from a position is the offset of column 0 of the position's
+row. That offset's point is column 0 of the same row (`offsetOf_pointOf`), so
+the line start from it asks for the same offset again. -/
+theorem TextModel.lineStart_idempotent (content : TextContent) (offset start : Nat)
+    (answered : answer content (.motion .lineStart offset) = .ok start) :
+    answer content (.motion .lineStart start) = .ok start := by
+  have asked (position : Nat) :
+    motion? content.contents .lineStart position =
+      (pointOf .bytes content.contents position).bind fun point =>
+        offsetOf .bytes content.contents ⟨point.row, 0⟩ :=
+    rfl
+  simp only [answer, asked] at answered ⊢
+  cases located : pointOf .bytes content.contents offset with
+  | none => simp [located] at answered
+  | some point =>
+    cases column : offsetOf .bytes content.contents ⟨point.row, 0⟩ with
+    | none => simp [located, column] at answered
+    | some first =>
+      simp only [located, Option.bind_some, column] at answered
+      injection answered with same
+      subst same
+      have back := offsetOf_pointOf .bytes content.contents ⟨point.row, 0⟩ first column
+      simp [back, column]
 
 end Editor
