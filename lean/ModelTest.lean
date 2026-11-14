@@ -12566,12 +12566,18 @@ def promptModeChecks : List Check :=
               closed accepted ⟨1⟩ &&
               accepted.loop.state.windows.map (·.id) == #[⟨1⟩] },
     { name :=
-        "the minibuffer's commands are registered under their two names, and its one mode is called by the name the minibuffer's buffer is made with and has no problem under the test scheme"
+        "the minibuffer's commands are registered under their four names, each another; its one mode is called by the name the minibuffer's buffer is made with, fills four roles, to accept, to cancel and to move to the next and the previous candidate, each with its command, and has no problem under the test scheme"
       run :=
         pure
-          (Minibuffer.commands.map (·.name) == #[Minibuffer.acceptName, Minibuffer.cancelName] &&
-            Minibuffer.acceptName != Minibuffer.cancelName &&
+          (Minibuffer.commands.map (·.name) ==
+              #[Minibuffer.acceptName, Minibuffer.cancelName, Minibuffer.nextName,
+                Minibuffer.previousName] &&
+            (Minibuffer.commands.map (·.name)).toList.eraseDups.length == 4 &&
             Minibuffer.modes.map (·.name) == #[Prompt.mode] &&
+            Minibuffer.modes.map (·.roles) ==
+              #[[(Role.activate, Minibuffer.acceptName), (Role.quit, Minibuffer.cancelName),
+                  (Role.nextItem, Minibuffer.nextName),
+                  (Role.previousItem, Minibuffer.previousName)]] &&
             Minibuffer.modes.all fun mode => mode.check TestScheme.scheme == []) }]
 
 /-- The checks of prompts on the loop's driver: the loop's part and its
@@ -12649,6 +12655,39 @@ checks and the jobs of the driver checks, on the models `model`; `none` if
 making the state was refused. -/
 def candidateDriver (model : EditorModel := editorModel) : Option TestDriver :=
   (Loop.Driver.over candidateKeys driverJobs (EditorState.initial ⟨640, 480⟩) model).toOption
+
+/-- The registry of the candidate checks that press the minibuffer's keys:
+the minibuffer's commands and its mode registered for the owner `compiled`,
+as a host registers them, and as config's bindings two that ask and two
+that run the commands that move through the list by their names, from any
+view. -/
+def pickRegistry : Config.Registry :=
+  ((({} : Config.Registry).replace .compiled Minibuffer.commands).replaceModes .compiled
+        Minibuffer.modes).replaceBindings
+    .config
+    ([("C-c a", "ask-pick"), ("C-c p", "ask-plain"), ("C-c 3", Minibuffer.nextName),
+          ("C-c 4", Minibuffer.previousName)].toArray.map
+      fun (text, command) => { keys := keys text, command })
+
+/-- What a step of those checks is handed: the active keymaps `pickRegistry`
+makes for the test scheme from the loop's state, so the minibuffer's mode
+holds in the minibuffer's view and nowhere else; the registry's commands,
+each given its call; and, for any other name, the commands of the candidate
+checks. -/
+def pickKeys : Loop.Keys TestScheme.scheme :=
+  { maps := pickRegistry.activeMaps TestScheme.scheme
+    command? := fun name =>
+      match pickRegistry.find? name with
+      | some { registration := { action := .call run, .. }, .. } =>
+        some fun call => do
+          run call
+          return none
+      | _ => (candidateCommands.find? (·.1 == name)).map (·.2) }
+
+/-- A driver of those checks over the initial state, with the jobs of the
+driver checks; `none` if making the state was refused. -/
+def pickDriver : Option TestDriver :=
+  (Loop.Driver.over pickKeys driverJobs (EditorState.initial ⟨640, 480⟩) editorModel).toOption
 
 /-- The candidates of the prompt open in `driver`'s loop, with their listing
 and the choice. -/
@@ -12830,7 +12869,124 @@ def candidateChecks : List Check :=
                 some #[false, false, true, false] &&
               Loop.chosenFace != Loop.candidateFace &&
               candidatesOf unchosen == some (pickListed "w") &&
-              pickStatus unchosen == some (pickFields "w") }]
+              pickStatus unchosen == some (pickFields "w") },
+    { name :=
+        "text is typed, the key of the role next-item is pressed and then the accept key: the continuation's command runs with the first listed candidate as its first argument, which is not the typed text, and its own argument after it; the prompt is closed"
+      run :=
+        pure <|
+          match pickDriver with
+          | none => false
+          | some driver =>
+            let (typed, _) := fedTo driver (presses "C-c a e")
+            let (chosen, _) := fedTo typed (rolePresses Role.nextItem)
+            let (accepted, _) := fedTo chosen (rolePresses Role.activate)
+            let first := (pickListed "e").listed[0]?
+            !(rolePresses Role.nextItem).isEmpty && first.isSome && first != some "e" &&
+              candidatesOf chosen == some (pickListed "e" (some 0)) &&
+              minibufferText chosen == some "e" &&
+              first.map (fun candidate => picked [.str candidate, .nat 7]) ==
+                some (promptEcho accepted) &&
+              accepted.loop.state.prompt == none },
+    { name :=
+        "the keys of the roles next-item and previous-item move the choice through the listing, and the scene's chosen field follows: next twice is the second, previous then the first, previous again nothing, and previous from nothing the last"
+      run :=
+        pure <|
+          match pickDriver with
+          | none => false
+          | some driver =>
+            let next := rolePresses Role.nextItem
+            let previous := rolePresses Role.previousItem
+            let (typed, _) := fedTo driver (presses "C-c a w")
+            let (second, _) := fedTo typed (next ++ next)
+            let (first, _) := fedTo second previous
+            let (unchosen, _) := fedTo first previous
+            let (last, _) := fedTo unchosen previous
+            !previous.isEmpty && previous != next &&
+              candidatesOf second == some (pickListed "w" (some 1)) &&
+              pickStatus second == some (pickFields "w" (some 1)) &&
+              candidatesOf first == some (pickListed "w" (some 0)) &&
+              pickStatus first == some (pickFields "w" (some 0)) &&
+              candidatesOf unchosen == some (pickListed "w") &&
+              pickStatus unchosen == some (pickFields "w") &&
+              candidatesOf last == some (pickListed "w" (some 2)) &&
+              pickStatus last == some (pickFields "w" (some 2)) &&
+              minibufferText last == some "w" },
+    { name :=
+        "the next key from the last listed candidate chooses nothing, and the accept key then gives the continuation the typed text"
+      run :=
+        pure <|
+          match pickDriver with
+          | none => false
+          | some driver =>
+            let next := rolePresses Role.nextItem
+            let (typed, _) := fedTo driver (presses "C-c a e")
+            let (last, _) := fedTo typed (next ++ next)
+            let (past, _) := fedTo last next
+            let (accepted, _) := fedTo past (rolePresses Role.activate)
+            (pickListed "e").listed.size == 2 &&
+              candidatesOf last == some (pickListed "e" (some 1)) &&
+              candidatesOf past == some (pickListed "e") &&
+              promptEcho accepted == picked [.str "e", .nat 7] },
+    { name :=
+        "a key typed after a choice forgets it: the listing is the one for the new text, with nothing chosen, and the accept key gives the typed text"
+      run :=
+        pure <|
+          match pickDriver with
+          | none => false
+          | some driver =>
+            let (chosen, _) := fedTo driver (presses "C-c a e" ++ rolePresses Role.nextItem)
+            let (typed, _) := fedTo chosen (presses "d")
+            let (accepted, _) := fedTo typed (rolePresses Role.activate)
+            candidatesOf chosen == some (pickListed "e" (some 0)) &&
+              candidatesOf typed == some (pickListed "ed") &&
+              pickStatus typed == some (pickFields "ed") &&
+              promptEcho accepted == picked [.str "ed", .nat 7] },
+    { name :=
+        "a text no candidate matches: the scene lists none, the next key and the previous key change nothing, and the accept key gives the continuation the typed text"
+      run :=
+        pure <|
+          match pickDriver with
+          | none => false
+          | some driver =>
+            let (typed, _) := fedTo driver (presses "C-c a z")
+            let (moved, _) :=
+              fedTo typed (rolePresses Role.nextItem ++ rolePresses Role.previousItem)
+            let (accepted, _) := fedTo moved (rolePresses Role.activate)
+            let label : Array StatusField := #[{ text := pickLabel, face := Loop.promptFace }]
+            candidatesOf typed == some (pickListed "z") &&
+              (candidatesOf typed).map (·.listed) == some #[] &&
+              pickStatus typed == some label &&
+              candidatesOf moved == candidatesOf typed &&
+              pickStatus moved == some label &&
+              minibufferText moved == some "z" &&
+              promptEcho accepted == picked [.str "z", .nat 7] &&
+              accepted.loop.state.prompt == none },
+    { name :=
+        "in a prompt with no candidates the next key and the previous key change nothing, and the accept key gives the typed text"
+      run :=
+        pure <|
+          match pickDriver with
+          | none => false
+          | some driver =>
+            let (typed, _) := fedTo driver (presses "C-c p w")
+            let (moved, _) :=
+              fedTo typed (rolePresses Role.nextItem ++ rolePresses Role.previousItem)
+            let (accepted, _) := fedTo moved (rolePresses Role.activate)
+            candidatesOf moved == some {} && minibufferText moved == some "w" &&
+              promptEcho accepted == picked [.str "w", .nat 7] },
+    { name :=
+        "with no prompt open, the command that moves to the next candidate and the one that moves to the previous, each run by its name, say that no prompt is open, and nothing else changes"
+      run :=
+        pure <|
+          match pickDriver with
+          | none => false
+          | some driver =>
+            let (next, _) := fedTo driver (presses "C-c 3")
+            let (previous, _) := fedTo driver (presses "C-c 4")
+            !Minibuffer.notOpen.isEmpty && promptEcho next == Minibuffer.notOpen &&
+              promptEcho previous == Minibuffer.notOpen &&
+              next.loop.state.prompt == none &&
+              { next.loop.state with echo := "" } == driver.loop.state }]
 
 /-- A file of three lines of which two end in CRLF and one in a line
 feed. -/

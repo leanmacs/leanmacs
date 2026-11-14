@@ -419,6 +419,13 @@ A command asks for a string without waiting for it
     is refused, as a value, with `notOpen` when no prompt is open.
   - A prompt asked with none, the default, makes the requests it made
     before there were candidates.
+  - **The loop lists them**, before each scene: the candidates the
+    minibuffer's text matches, in the fuzzy matcher's order
+    (`Editor/Loop.lean`, "Prompts"). `chooseCandidate step` moves a choice
+    through that listing, one step forward or back, with "nothing chosen"
+    as one stop of the round, and leaves the minibuffer's text as it is.
+    With nothing listed it changes nothing; with no prompt open it is
+    refused, as a value, with `notOpen`.
 - `acceptPrompt` reads the minibuffer's text and makes one state request
   that closes the prompt with the answer
   (`StateRequest.closePrompt`): the minibuffer's window is closed, the
@@ -609,6 +616,15 @@ has listed and chosen ("Prompts", in the module docs). Refused with
 `notOpen` when no prompt is open. -/
 def setCandidates (all : Array String) : EditorM (Except PromptRefusal Unit) :=
   EditorState.ask (.setCandidates all)
+
+/-- Moves the open prompt's choice by `step` through the candidates it has
+listed ("Prompts", in the module docs): from nothing chosen to the first or
+the last, from the last onward and from the first backward to nothing
+chosen, and otherwise by one. With nothing listed it changes nothing. The
+minibuffer's text is not changed. Refused with `notOpen` when no prompt is
+open. -/
+def chooseCandidate (step : Candidates.Step) : EditorM (Except PromptRefusal Unit) :=
+  EditorState.ask (.chooseCandidate step)
 
 /-- Accepts the open prompt: it is closed, and its continuation's command is
 run with the answer once this command has run to its end ("Prompts", in

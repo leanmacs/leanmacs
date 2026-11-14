@@ -18,19 +18,34 @@ fails to load, and a reload does not replace them.
   runs next, with the answer.
 - **`minibuffer-cancel`** (`cancelName`, `cancelCommand`) cancels the open
   prompt (`cancelPrompt`): it is closed, and the continuation does not run.
-- **With no prompt open** each says `notOpen` in the echo area and does
-  nothing else. Either can be bound in the global keymap or run by its
-  name, so it can run in any view.
+- **`minibuffer-next`** and **`minibuffer-previous`** (`nextName`,
+  `nextCommand`; `previousName`, `previousCommand`) move a choice through
+  the candidates the prompt has listed (`chooseCandidate`,
+  `Editor/Api.lean`), which the scene shows in the minibuffer's status
+  line (`Editor/Loop.lean`).
+  - From nothing chosen, next chooses the first and previous the last;
+    next from the last and previous from the first choose nothing. So the
+    text as typed is one stop of the round, as in Vim's wild menu.
+  - The minibuffer's text is not changed by a choice. Accepting takes the
+    chosen candidate, and the typed text when nothing is chosen.
+  - A change of the text forgets the choice: the loop lists again for the
+    new text.
+  - With nothing listed, and in a prompt with no candidates, each changes
+    nothing.
+- **With no prompt open** each of the four says `notOpen` in the echo area
+  and does nothing else. Any can be bound in the global keymap or run by
+  its name, so it can run in any view.
 - **The mode** (`mode`) is the major mode the minibuffer's buffer is made
-  with (`Prompt.mode`, `Editor/State.lean`). It fills two roles:
-  `activate` with the accept command and `quit` with the cancel command.
-  So under any scheme the minibuffer has an accept key and a cancel key,
-  the scheme's keys for those roles, with no binding written for the
-  scheme. It has no suffix and no on-enter action: the buffer is made with
-  the mode, which is not set through a view.
+  with (`Prompt.mode`, `Editor/State.lean`). It fills four roles:
+  `activate` with the accept command, `quit` with the cancel command, and
+  `next-item` and `previous-item` with the two that move through the
+  candidates. So under any scheme whose role keys hold in the minibuffer
+  it has those four keys, the scheme's keys for the roles, with no binding
+  written for the scheme. It has no suffix and no on-enter action: the
+  buffer is made with the mode, which is not set through a view.
 - **Under the Vim scheme** the minibuffer's view is in a Vim state where
   typing is text, in which a mode's keys do not hold; that state binds the
-  two commands by their names (`Editor/InputScheme/Vim/Default.lean`). The
+  commands by their names (`Editor/InputScheme/Vim/Default.lean`). The
   names here and in that table are changed together.
 
 Nothing here inserts typed text: the command a key that prints runs is the
@@ -47,7 +62,9 @@ loop runs the command with the focused window, which is the minibuffer's.
 | A key every scheme should have in the minibuffer | A role the mode fills |
 | A key one scheme has in the minibuffer | That scheme's own table |
 
-Pinned by `ModelTest.promptChecks`, on the models and the test scheme.
+Pinned by `ModelTest.promptChecks`, on the models and the test scheme, and
+the two commands that move through the candidates by
+`ModelTest.candidateChecks`.
 -/
 
 namespace Editor.Minibuffer
@@ -59,6 +76,16 @@ def acceptName : String :=
 /-- The name the cancel command is registered under. -/
 def cancelName : String :=
   "minibuffer-cancel"
+
+/-- The name the command that moves to the next candidate is registered
+under. -/
+def nextName : String :=
+  "minibuffer-next"
+
+/-- The name the command that moves to the previous candidate is registered
+under. -/
+def previousName : String :=
+  "minibuffer-previous"
 
 /-- What the accept command and the cancel command say in the echo area when
 no prompt is open. -/
@@ -78,10 +105,28 @@ def cancelCommand (_ : Call) : EditorM Unit := do
   if let .error _← cancelPrompt then
     message notOpen
 
+/-- The command that moves to the next candidate, as it is called: moves the
+open prompt's choice one step forward through its listing
+(`chooseCandidate`). With no prompt open it says so in the echo area. -/
+def nextCommand (_ : Call) : EditorM Unit := do
+  if let .error _← chooseCandidate .next then
+    message notOpen
+
+/-- The command that moves to the previous candidate, as it is called: moves
+the open prompt's choice one step back through its listing. With no prompt
+open it says so in the echo area. -/
+def previousCommand (_ : Call) : EditorM Unit := do
+  if let .error _← chooseCandidate .previous then
+    message notOpen
+
 /-- The minibuffer's mode: the major mode the minibuffer's buffer is made
-with. It fills the role `activate` with the accept command and the role
-`quit` with the cancel command. -/
+with. It fills the role `activate` with the accept command, the role `quit`
+with the cancel command, and the roles `next-item` and `previous-item` with
+the commands that move through the candidates. -/
 def mode : Mode :=
-  { name := Prompt.mode, roles := [(Role.activate, acceptName), (Role.quit, cancelName)] }
+  { name := Prompt.mode
+    roles :=
+      [(Role.activate, acceptName), (Role.quit, cancelName), (Role.nextItem, nextName),
+        (Role.previousItem, previousName)] }
 
 end Editor.Minibuffer
