@@ -1,0 +1,89 @@
+# What no line of `editor-shape-parley` may name, its tests included: a
+# real file, a directory of the machine, a process, a clock, or the fonts
+# of the machine. The adapter is handed font files as bytes
+# (`FontSet::only`), and its tests are handed the fixture files under
+# `tests/fonts`, compiled in with `include_bytes!`: nothing is read when a
+# test runs, and no test depends on which fonts the machine has.
+#
+# Clippy reads the first `clippy.toml` it finds from a package's manifest
+# directory upwards, and the workspace root has none, so this file governs
+# every target of this crate and no other. `disallowed_methods` and
+# `disallowed_types` are on by default at `warn`, and `mise run lint` denies
+# warnings, so a line that names one of these fails the gate.
+#
+# The list is `crates/editor-layout/clippy.toml`'s, whose header says what a
+# list of names does not hold, and after it the ways Parley and fontique
+# reach the machine's fonts or its disk.
+#
+# What this list cannot hold: system fonts are turned on by a field of a
+# struct literal (`CollectionOptions { system_fonts: true, .. }`), which no
+# list of names forbids. What holds that instead is a test of behaviour,
+# `a_font_set_holds_exactly_the_families_it_was_given`
+# (`tests/fixtures.rs`): a set made of the fixture files holds their five
+# families and no other, which no machine's fonts would leave true.
+#
+# Seen to bite once by hand, on 2026-11-13: with a test added to
+# `tests/fixtures.rs` that calls `parley::FontContext::new()`,
+# `mise run lint` fails with "use of a disallowed method
+# `parley::FontContext::new`"; with one that calls
+# `std::fs::read("/nonexistent")`, with "use of a disallowed method
+# `std::fs::read`". With each taken out it passes.
+
+disallowed-methods = [
+  # Every free function of `std::fs`.
+  { path = "std::fs::canonicalize", reason = "the adapter touches no file: fonts reach it as bytes" },
+  { path = "std::fs::copy", reason = "the adapter touches no file: fonts reach it as bytes" },
+  { path = "std::fs::create_dir", reason = "the adapter touches no file: fonts reach it as bytes" },
+  { path = "std::fs::create_dir_all", reason = "the adapter touches no file: fonts reach it as bytes" },
+  { path = "std::fs::exists", reason = "the adapter touches no file: fonts reach it as bytes" },
+  { path = "std::fs::hard_link", reason = "the adapter touches no file: fonts reach it as bytes" },
+  { path = "std::fs::metadata", reason = "the adapter touches no file: fonts reach it as bytes" },
+  { path = "std::fs::read", reason = "the adapter touches no file: fonts reach it as bytes" },
+  { path = "std::fs::read_dir", reason = "the adapter touches no file: fonts reach it as bytes" },
+  { path = "std::fs::read_link", reason = "the adapter touches no file: fonts reach it as bytes" },
+  { path = "std::fs::read_to_string", reason = "the adapter touches no file: fonts reach it as bytes" },
+  { path = "std::fs::remove_dir", reason = "the adapter touches no file: fonts reach it as bytes" },
+  { path = "std::fs::remove_dir_all", reason = "the adapter touches no file: fonts reach it as bytes" },
+  { path = "std::fs::remove_file", reason = "the adapter touches no file: fonts reach it as bytes" },
+  { path = "std::fs::rename", reason = "the adapter touches no file: fonts reach it as bytes" },
+  { path = "std::fs::set_permissions", reason = "the adapter touches no file: fonts reach it as bytes" },
+  { path = "std::fs::symlink_metadata", reason = "the adapter touches no file: fonts reach it as bytes" },
+  { path = "std::fs::write", reason = "the adapter touches no file: fonts reach it as bytes" },
+  # The methods of `Path` that ask the disk.
+  { path = "std::path::Path::canonicalize", reason = "the adapter touches no file: fonts reach it as bytes" },
+  { path = "std::path::Path::exists", reason = "the adapter touches no file: fonts reach it as bytes" },
+  { path = "std::path::Path::is_dir", reason = "the adapter touches no file: fonts reach it as bytes" },
+  { path = "std::path::Path::is_file", reason = "the adapter touches no file: fonts reach it as bytes" },
+  { path = "std::path::Path::is_symlink", reason = "the adapter touches no file: fonts reach it as bytes" },
+  { path = "std::path::Path::metadata", reason = "the adapter touches no file: fonts reach it as bytes" },
+  { path = "std::path::Path::read_dir", reason = "the adapter touches no file: fonts reach it as bytes" },
+  { path = "std::path::Path::read_link", reason = "the adapter touches no file: fonts reach it as bytes" },
+  { path = "std::path::Path::symlink_metadata", reason = "the adapter touches no file: fonts reach it as bytes" },
+  { path = "std::path::Path::try_exists", reason = "the adapter touches no file: fonts reach it as bytes" },
+  # The directories of the machine.
+  { path = "std::env::current_dir", reason = "the adapter has no directory of the machine, and a test leaves the process as it found it" },
+  { path = "std::env::set_current_dir", reason = "the adapter has no directory of the machine, and a test leaves the process as it found it" },
+  { path = "std::env::temp_dir", reason = "the adapter has no directory of the machine, and a test leaves the process as it found it" },
+  # The environment.
+  { path = "std::env::var", reason = "what the adapter shapes depends on its input and its fonts alone, not on the environment" },
+  { path = "std::env::var_os", reason = "what the adapter shapes depends on its input and its fonts alone, not on the environment" },
+  { path = "std::env::vars", reason = "what the adapter shapes depends on its input and its fonts alone, not on the environment" },
+  { path = "std::env::vars_os", reason = "what the adapter shapes depends on its input and its fonts alone, not on the environment" },
+  # Processes.
+  { path = "std::process::Command::new", reason = "the adapter starts no process" },
+  # The clocks.
+  { path = "std::time::SystemTime::now", reason = "the adapter reads no clock; a cost is counted (`ShapeCounters`), never timed" },
+  { path = "std::time::Instant::now", reason = "the adapter reads no clock; a cost is counted (`ShapeCounters`), never timed" },
+  # The fonts of the machine, and fonts read from its disk.
+  { path = "parley::FontContext::new", reason = "a font context of Parley's own making holds the system's fonts; a `FontSet` says where fonts come from" },
+  { path = "fontique::Collection::load_system_fonts", reason = "the system's fonts come only through a `FontSet`, and no test uses them" },
+  { path = "fontique::Collection::load_fonts_from_paths", reason = "the adapter reads no font from the disk: fonts reach it as bytes" },
+]
+
+disallowed-types = [
+  { path = "std::fs::File", reason = "the adapter touches no file: fonts reach it as bytes" },
+  { path = "std::fs::OpenOptions", reason = "the adapter touches no file: fonts reach it as bytes" },
+  { path = "std::fs::DirBuilder", reason = "the adapter touches no file: fonts reach it as bytes" },
+  { path = "std::fs::ReadDir", reason = "the adapter touches no file: fonts reach it as bytes" },
+  { path = "std::fs::DirEntry", reason = "the adapter touches no file: fonts reach it as bytes" },
+]

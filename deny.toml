@@ -35,6 +35,22 @@
 # `editor-ffi` came to depend on it: with it added to
 # `editor-platform-winit`'s dependencies, it fails.
 #
+# For Parley and its font library (2026-11-13), whose entries came in the
+# commit that added their adapter, `editor-shape-parley`: with `parley`
+# added to `editor-layout`'s dependencies, it fails ("crate 'parley =
+# 0.13.0' is explicitly banned"); with `fontique` added there, it fails
+# the same way on `fontique`. `fontique`'s wrappers name two of Parley's
+# own crates, which depend on it themselves. For the wrapper
+# `editor-shape-parley` of `editor-layout`'s entry: with it taken out, it
+# fails on the adapter's edge. That is how "no Parley or fontique type
+# outside the adapter" is held: no other crate can depend on either, and
+# the adapter's public items name neither.
+#
+# `editor-shape-parley` itself has no entry yet: nothing depends on it, and
+# an entry whose wrapper matches no edge fails under `-D unused-wrapper`.
+# Its entry comes in the commit in which its first user comes to depend on
+# it, as `editor-fs-std`'s did.
+#
 # One rule has no entry: "no crate depends on `editor-ffi`", the one crate
 # that knows about Lean. No entry for it passes the gate. With
 # `wrappers = ["editor-ffi"]` the wrapper matches nothing and
@@ -54,7 +70,9 @@ deny = [
   { crate = "editor-platform", wrappers = ["editor-ffi", "editor-platform-winit"], reason = "the window port has two users today, its adapter and the crate that runs it onto the event queue; a third is a decision, so it is made here" },
   { crate = "ropey", wrappers = ["editor-text"], reason = "the rope stays behind editor-text's own types: only that crate may name the library's" },
   { crate = "editor-text", wrappers = ["editor-ffi", "editor-fs-std", "editor-layout"], reason = "text storage has two users, the crate that puts a text behind a handle for Lean and layout, which reads its snapshots, patches and selections as plain values; and the file port it defines has one adapter, which implements it; another is a decision, so it is made here" },
-  { crate = "editor-layout", wrappers = ["editor-ffi"], reason = "layout is reached by the crate that puts it behind a handle for Lean and wires it to text; the renderer takes its frames as plain data (the display pipeline's phase 4 decides where its port goes), so another user is a decision, made here" },
+  { crate = "editor-layout", wrappers = ["editor-ffi", "editor-shape-parley"], reason = "layout is reached by the crate that puts it behind a handle for Lean and wires it to text, and the Shaper port it defines has one real adapter, which implements it; the renderer takes its frames as plain data (the display pipeline's phase 4 decides where its port goes), so another user is a decision, made here" },
+  { crate = "parley", wrappers = ["editor-shape-parley"], reason = "Parley stays behind the Shaper port: only its adapter crate may name its types" },
+  { crate = "fontique", wrappers = ["editor-shape-parley", "parley", "parley_engine"], reason = "fontique is Parley's font library and stays behind the Shaper port with it: beside Parley's own crates, only the adapter may name its types" },
   { crate = "editor-fs-std", wrappers = ["editor-ffi"], reason = "the file adapter is linked only by the crate that wires the library together; everything else reaches a file through the port, and editor-text's tests through its fake" },
   { crate = "tempfile", wrappers = ["editor-fs-std", "editor-ffi"], reason = "a temporary directory is for a test that touches real files: the file adapter's contract test and editor-ffi's wiring test; editor-text's tests run on the fake and make no file" },
 ]
