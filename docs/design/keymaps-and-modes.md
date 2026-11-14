@@ -1647,7 +1647,11 @@ each with one rule:
   every line leaves the empty text.
 - **A put below the last line of a text with no final line feed** puts the
   buffer's line ending and then the register's lines without their last
-  line break, so `yyp` on `ab` leaves `ab⏎ab`.
+  line break, so `yyp` on `ab` leaves `ab⏎ab`. The line break left out is
+  the whole one, a carriage return and line feed included, and the one put
+  first is the buffer's: both are pinned on a buffer whose lines end in a
+  carriage return and line feed, for the unnamed register and for a text
+  read from the clipboard.
 
 **A motion that fails cancels the operator** (`Evil.cannotMove`). Vim
 cancels the operator: nothing is deleted or yanked, the register is as it

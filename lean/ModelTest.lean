@@ -15354,6 +15354,17 @@ def evilClipped (fixture typed : String) (clipboard : ClipboardModel := {}) :
     let after := evilFed driver typed
     (evilLeft after, after.model.clipboard.held)
 
+/-- A driver of the evil checks over a buffer holding `contents` whose lines
+end in a carriage return and line feed (`Buffer.lineEnding`), with the
+cursor at `head`, on the models `model`. -/
+def evilCrlfDriver (contents : String) (head : Nat) (model : EditorModel := editorModel) :
+    Option EvilDriver :=
+  (Loop.Driver.over evilHanded (fun _ => none)
+      (do
+        let state ← evilState contents head
+        return { state with buffers := state.buffers.map (·.map ({ · with lineEnding := .crlf })) })
+      model).toOption
+
 /-- The checks of evil's registers and of the commands that read and set
 them without an operator's key (`Editor/Evil/Registers.lean`,
 `Editor/Evil/Operators.lean`), by key, as `evilOperatorChecks` are. -/
@@ -15483,17 +15494,33 @@ def evilRegisterChecks : List Check :=
           | some driver =>
             let put := evilFed driver "y w p"
             evilHistory put == some (2, false) && evilText put == some "aab b cd" &&
-              evilText (evilUndone put) == some "ab cd" }]
-
-/-- A driver of the evil checks over a buffer holding `contents` whose lines
-end in a carriage return and line feed (`Buffer.lineEnding`), with the
-cursor at `head`. -/
-def evilCrlfDriver (contents : String) (head : Nat) : Option EvilDriver :=
-  (Loop.Driver.over evilHanded (fun _ => none)
-      (do
-        let state ← evilState contents head
-        return { state with buffers := state.buffers.map (·.map ({ · with lineEnding := .crlf })) })
-      editorModel).toOption
+              evilText (evilUndone put) == some "ab cd" },
+    { name :=
+        "in a buffer whose lines end in a carriage return and line feed, a line-wise put keeps that line break: y y p on a middle line puts the line below it, y y P above it, and below a last line with no line break the buffer's line break goes before the lines and their last one is left out whole, with a count too"
+      run :=
+        pure <|
+          let put (contents : String) (head : Nat) (typed : String) :
+            Option (String × Option Register) :=
+            (evilCrlfDriver contents head).map fun driver =>
+              let after := evilFed driver typed
+              (evilShown after, after.loop.state.register? Evil.unnamed)
+          put "ab\r\ncd" 5 "y y p" == some ("ab\r\ncd\r\n|cd", linewise "cd\r\n") &&
+            put "ab\r\ncd\r\nef" 5 "y y p" == some ("ab\r\ncd\r\n|cd\r\nef", linewise "cd\r\n") &&
+            put "ab\r\ncd" 5 "y y P" == some ("ab\r\n|cd\r\ncd", linewise "cd\r\n") &&
+            put "ab\r\ncd" 5 "y y 2 p" == some ("ab\r\ncd\r\n|cd\r\ncd", linewise "cd\r\n") &&
+            put "ab\r\n  cd" 6 "y y p" == some ("ab\r\n  cd\r\n  |cd", linewise "  cd\r\n") },
+    { name :=
+        "in such a buffer a put from the clipboard register of a text that ends in a carriage return and line feed is line-wise: below a middle line and above a line the text goes in as it is, and below a last line with no line break the buffer's line break goes first and the text's own is left out whole; a text that ends in a line feed alone is put below the last line after the buffer's line break"
+      run :=
+        pure <|
+          let put (contents : String) (head : Nat) (typed held : String) : Option String :=
+            (evilCrlfDriver contents head
+                  { editorModel with clipboard := { held := some held } }).map
+              fun driver => evilShown (evilFed driver typed)
+          put "ab\r\ncd" 5 "\" + p" "xy\r\n" == some "ab\r\ncd\r\n|xy" &&
+            put "ab\r\ncd" 0 "\" + p" "xy\r\n" == some "ab\r\n|xy\r\ncd" &&
+            put "ab\r\ncd" 5 "\" + P" "xy\r\n" == some "ab\r\n|xy\r\ncd" &&
+            put "ab\r\ncd" 5 "\" + p" "xy\n" == some "ab\r\ncd\r\n|xy" }]
 
 /-- The checks of the two commands that open a line (`Evil.openBelow`,
 `Evil.openAbove`), by key, as `evilOperatorChecks` are. -/
