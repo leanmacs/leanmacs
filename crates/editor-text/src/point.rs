@@ -107,7 +107,7 @@ impl Snapshot {
 
     /// The row that holds the position `offset`, and the offset that row
     /// starts at. `None` when `offset` is not a position.
-    fn row_of_position(&self, offset: usize) -> Option<(usize, usize)> {
+    pub(crate) fn row_of_position(&self, offset: usize) -> Option<(usize, usize)> {
         if !self.is_char_boundary(offset) {
             return None;
         }

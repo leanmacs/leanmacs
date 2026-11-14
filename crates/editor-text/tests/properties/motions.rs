@@ -62,6 +62,21 @@ struct Reference {
     /// Where every cell starts: a character, or a carriage return and the
     /// line feed after it together.
     cell_starts: Vec<usize>,
+    /// The character of each cell, in the order of `cell_starts`; `None`
+    /// for a line break.
+    cell_characters: Vec<Option<char>>,
+    /// Every row.
+    rows: Vec<Row>,
+}
+
+/// One row of a string.
+#[derive(Debug, Clone, Copy)]
+struct Row {
+    /// Where it starts.
+    start: usize,
+    /// Where its content ends: where its line break starts, or the end of
+    /// the string.
+    content: usize,
 }
 
 /// The first of `sorted`, which is in rising order, after `offset`.
@@ -81,19 +96,56 @@ fn last_before(sorted: &[usize], offset: usize) -> Option<usize> {
 impl Reference {
     /// The reference for `string`.
     fn of(string: &str) -> Self {
-        let mut cell_starts = Vec::new();
+        let (mut cell_starts, mut cell_characters) = (Vec::new(), Vec::new());
+        let mut rows = Vec::new();
+        let mut row_start = 0;
         let mut characters = string.char_indices().peekable();
         while let Some((start, character)) = characters.next() {
             cell_starts.push(start);
             // A carriage return and the line feed after it are one cell.
-            if character == '\r' && characters.peek().is_some_and(|&(_, next)| next == '\n') {
+            let paired =
+                character == '\r' && characters.peek().is_some_and(|&(_, next)| next == '\n');
+            if paired {
                 characters.next();
             }
+            if paired || character == '\n' {
+                cell_characters.push(None);
+                rows.push(Row {
+                    start: row_start,
+                    content: start,
+                });
+                row_start = start + 1 + usize::from(paired);
+            } else {
+                cell_characters.push(Some(character));
+            }
         }
+        rows.push(Row {
+            start: row_start,
+            content: string.len(),
+        });
         Self {
             len: string.len(),
             cell_starts,
+            cell_characters,
+            rows,
         }
+    }
+
+    /// The row the position `offset` is in: the last that starts at or
+    /// before it.
+    fn row_of(&self, offset: usize) -> Row {
+        let after = self.rows.partition_point(|row| row.start <= offset);
+        self.rows[after - 1]
+    }
+
+    /// The cells of the content of `row`, each as where it starts and its
+    /// character.
+    fn content_of(&self, row: Row) -> impl Iterator<Item = (usize, Option<char>)> + '_ {
+        let first = self.cell_starts.partition_point(|&start| start < row.start);
+        let after = self
+            .cell_starts
+            .partition_point(|&start| start < row.content);
+        (first..after).map(|index| (self.cell_starts[index], self.cell_characters[index]))
     }
 
     /// What `motion` answers from the position `offset`.
@@ -101,6 +153,14 @@ impl Reference {
         match motion {
             Motion::NextCell => first_after(&self.cell_starts, offset).unwrap_or(self.len),
             Motion::PreviousCell => last_before(&self.cell_starts, offset).unwrap_or(0),
+            Motion::LineStart => self.row_of(offset).start,
+            Motion::LineEnd => self.row_of(offset).content,
+            Motion::LineFirstNonBlank => {
+                let row = self.row_of(offset);
+                self.content_of(row)
+                    .find(|&(_, character)| !matches!(character, Some(' ' | '\t')))
+                    .map_or(row.content, |(start, _)| start)
+            }
             Motion::TextStart => 0,
             Motion::TextEnd => self.len,
         }
@@ -112,6 +172,9 @@ fn motions() -> Vec<Motion> {
     vec![
         Motion::NextCell,
         Motion::PreviousCell,
+        Motion::LineStart,
+        Motion::LineEnd,
+        Motion::LineFirstNonBlank,
         Motion::TextStart,
         Motion::TextEnd,
     ]

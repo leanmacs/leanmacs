@@ -192,7 +192,11 @@
 //!   return and the line feed after it, and not the end of the text. The
 //!   next cell is the first cell start after a position, or the end of the
 //!   text; the previous cell the last before it, or 0. The line break is a
-//!   cell like any other, so both cross lines. A motion walks the rope
+//!   cell like any other, so both cross lines. The start of a line is
+//!   where the position's row starts, its end where the row's content
+//!   ends, before its line break, and its first non-blank the first
+//!   position of that content whose character is neither a space nor a
+//!   tab, or the content's end when there is none. A motion walks the rope
 //!   from the position and builds nothing. No answer is clamped: which
 //!   motion a key runs, counts and keeping a cursor on a line are the
 //!   editor's rules.
@@ -364,6 +368,7 @@ mod selection;
 mod snapshot;
 mod text;
 mod transaction;
+mod word;
 
 pub use anchor::Anchor;
 pub use bytes::ByteChunks;
