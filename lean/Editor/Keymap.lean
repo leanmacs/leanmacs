@@ -17,7 +17,8 @@ is bound to (`Keymap.bindings`). A sequence is a prefix when some binding
 begins with it and is longer; no entry stands for a prefix by itself. The
 list is its own specification: what is proved of a keymap is stated over
 `bindings`. A lookup is linear in the bindings. The list is made only by
-`Keymap.bind`, whose constructor is private, and read through
+`Keymap.bind`, whose constructor is private, narrowed only by
+`Keymap.filter`, which removes bindings and adds none, and read through
 `Keymap.find?` and `Keymap.continues`, so another map can replace it behind
 them.
 
@@ -52,6 +53,7 @@ caller looks a key up by its chord, so a keymap never holds anything else.
 |---|---|
 | A new attribute of a key that a binding does not name | Dropped in `Key.chord` |
 | A new way to ask what a sequence is bound to | A function over `Keymap.find?` and `Keymap.continues`, not over `bindings` |
+| A new way to make a keymap from another, such as keeping the bindings a predicate keeps (`Keymap.filter`) | A function here that only removes or rebinds through `Keymap.bind`, so the invariants hold |
 | A new outcome of a lookup, such as a timeout | A variant of `Lookup`, and its case in `Keymap.walk` |
 | What a key is bound to | The input scheme's `Binding`; nothing here |
 
@@ -76,7 +78,7 @@ theorem Key.chord_chord (key : Key) : key.chord.chord = key.chord := by
   | mk logical physical modifiers repeated => cases logical <;> rfl
 
 /-- Bound key sequences, each with what it is bound to. Made with
-`Keymap.empty`, `Keymap.bind` and `Keymap.ofList` only, so every key in it
+`Keymap.empty`, `Keymap.bind`, `Keymap.ofList` and `Keymap.filter` only, so every key in it
 is a chord and no sequence is bound twice. -/
 structure Keymap (β : Type) where private mk ::
   /-- The bound sequences, in the order each was last bound: none is empty,
@@ -114,6 +116,12 @@ def bind (keymap : Keymap β) (keys : List Key) (binding : β) : Keymap β :=
 replaces an earlier one of the same sequence. -/
 def ofList (bindings : List (List Key × β)) : Keymap β :=
   bindings.foldl (fun keymap (keys, binding) => keymap.bind keys binding) empty
+
+/-- `keymap` with only the bindings whose binding `keep` keeps, in their
+order. Nothing is added, so every key is still a chord and no sequence is
+bound twice. -/
+def filter (keymap : Keymap β) (keep : β → Bool) : Keymap β :=
+  ⟨keymap.bindings.filter (keep ·.2)⟩
 
 /-- What exactly `keys` is bound to. The keys are compared as they are: look
 a key from a window up by its chord. -/

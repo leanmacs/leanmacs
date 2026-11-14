@@ -4338,7 +4338,22 @@ def keymapChecks : List Check :=
         pure
           (Keymap.walk [save] [controlKey "x"] typed == ([], some 1) &&
             Keymap.walk [save] [] { controlKey "x" with physical := .code "KeyX" } ==
-              ([controlKey "x"], none)) }]
+              ([controlKey "x"], none)) },
+    { name :=
+        "filtering a keymap keeps exactly the bindings whose binding is kept, in order, and what it binds is found by find? and continues"
+      run :=
+        let keymap : Keymap Nat :=
+          Keymap.ofList
+            [([charKey "a"], 1), ([controlKey "x", charKey "b"], 2), ([charKey "c"], 3),
+              ([controlKey "x", charKey "d"], 4)]
+        let odd := keymap.filter (· % 2 == 1)
+        pure
+          (odd.bindings == [([charKey "a"], 1), ([charKey "c"], 3)] &&
+            odd.find? [charKey "c"] == some 3 &&
+            odd.find? [controlKey "x", charKey "b"] == none &&
+            !odd.continues [controlKey "x"] &&
+            (keymap.filter (· > 3)).continues [controlKey "x"] &&
+            (keymap.filter fun _ => true).bindings == keymap.bindings) }]
 
 /-- Whether `text` is a key string that names exactly `keys`. -/
 def parses (text : String) (keys : List Key) : Bool :=
