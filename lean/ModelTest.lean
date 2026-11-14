@@ -4051,6 +4051,56 @@ def stateChecks : List Check :=
             sampleSizes.all fun size =>
               let laid := tree.rects (frameRect size)
               tiles (frameRect size) (laid.map (·.2)) && laid.map (·.1) == tree.windows },
+    { name :=
+        "with the minibuffer's view given, the views of a split tree that has the minibuffer's place still tile the frame, the minibuffer's view among them once and the windows in drawing order, at even, odd and zero sizes; a tree with no such place is laid out as with no view"
+      run :=
+        pure <|
+          sampleTrees.all fun tree =>
+            sampleSizes.all fun size =>
+              let view : ViewId := ⟨9⟩
+              let laid := tree.rects (frameRect size) (some view)
+              if tree.minibuffers == 0 then laid == tree.rects (frameRect size)
+              else
+                tiles (frameRect size) (laid.map (·.2)) &&
+                  (laid.map (·.1)).filter (· != view) == tree.windows &&
+                  laid.size == tree.windows.size + 1 },
+    { name :=
+        "the minibuffer's place takes a strip of its split, the minibuffer's height along the split's axis, or the whole extent where that is less, and its sibling the rest: below a window, in the left of two columns, and first along columns; a tree that is the place alone gives the view the whole rectangle"
+      run :=
+        pure <|
+          let view : ViewId := ⟨9⟩
+          let window (index : Nat) : Split := .window ⟨index⟩
+          let below : Split := .split .rows (window 0) .minibuffer
+          let strip := Split.minibufferHeight
+          let laid (tree : Split) (width height : Nat) :=
+            tree.rects (frameRect ⟨width, height⟩) (some view)
+          strip > 0 && strip < 240 &&
+            laid below 640 480 ==
+              #[(⟨0⟩, { x := 0, y := 0, width := 640, height := 480 - strip }),
+                (view, { x := 0, y := 480 - strip, width := 640, height := strip })] &&
+            laid below 7 3 ==
+              #[(⟨0⟩, { x := 0, y := 0, width := 7, height := 0 }),
+                (view, { x := 0, y := 0, width := 7, height := 3 })] &&
+            laid below 0 0 ==
+              #[(⟨0⟩, { x := 0, y := 0, width := 0, height := 0 }),
+                (view, { x := 0, y := 0, width := 0, height := 0 })] &&
+            laid (.split .columns below (.split .rows (window 1) (window 2))) 640 480 ==
+              #[(⟨0⟩, { x := 0, y := 0, width := 320, height := 480 - strip }),
+                (view, { x := 0, y := 480 - strip, width := 320, height := strip }),
+                (⟨1⟩, { x := 320, y := 0, width := 320, height := 240 }),
+                (⟨2⟩, { x := 320, y := 240, width := 320, height := 240 })] &&
+            laid (.split .columns .minibuffer (window 0)) 640 480 ==
+              #[(view, { x := 0, y := 0, width := strip, height := 480 }),
+                (⟨0⟩, { x := strip, y := 0, width := 640 - strip, height := 480 })] &&
+            laid .minibuffer 640 480 == #[(view, frameRect ⟨640, 480⟩)] },
+    { name :=
+        "with no minibuffer's view given the minibuffer's place takes nothing: a window above it has the whole frame, and the place alone has no view"
+      run :=
+        pure <|
+          let whole := frameRect ⟨640, 480⟩
+          (Split.split .rows (.window ⟨0⟩) .minibuffer).rects whole == #[(⟨0⟩, whole)] &&
+            (Split.split .rows (.window ⟨0⟩) .minibuffer).rects whole none == #[(⟨0⟩, whole)] &&
+            Split.minibuffer.rects whole == #[] },
     { name := "removing the only window is refused with onlyWindow, and the state is as it was"
       run :=
         pure <|

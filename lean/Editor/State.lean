@@ -41,10 +41,21 @@ The split tree is a binary tree. A leaf is a window, by its `ViewId`, or the
 minibuffer's place; a split divides its rectangle along an axis, rows
 (stacked) or columns (side by side), between its two children
 (`Split.rects`): the first takes half the extent, rounded down, and the
-second the rest. A subtree with no window takes no space and its sibling
+second the rest. A subtree with no view takes no space and its sibling
 takes all of it. So the minibuffer's place takes none while no prompt is
-open (the command loop's phase 10 gives it some), and the views tile the
-frame.
+open, and the views tile the frame.
+
+**While a prompt is open the minibuffer's place takes a strip.**
+`Split.rects` is handed the minibuffer's view, or none. With a view, a
+split one of whose children is the minibuffer's place gives that place
+`Split.minibufferHeight` physical pixels along its axis, or the whole
+extent when that is less, and the sibling the rest; the view's rectangle
+is the place's, where the leaf is in drawing order, and the views still
+tile the frame. A tree that is the place alone gives the view the whole
+rectangle. The height is 32: two rows of a 16-pixel cell, one for the
+input and one for the status line that carries the prompt text
+(`Editor/Loop.lean`). It is a placeholder with no font behind it: nothing
+in Lean knows the height of a row, since layout is the display's.
 
 The invariants are part of the model (`EditorState.wellFormed`). They are
 stated over the state's views (`EditorState.views`): the tree's windows,
@@ -541,34 +552,72 @@ def minibuffers : Split → Nat
   | .minibuffer => 1
   | .split _ first second => first.minibuffers + second.minibuffers
 
+/-- The extent of `rect` along `axis`: its height for rows, and its width for
+columns. -/
+def extent (axis : Axis) (rect : Rect) : Nat :=
+  match axis with
+  | .rows => rect.height
+  | .columns => rect.width
+
+/-- `rect` cut in two along `axis`: the first part takes `first` of its
+extent along the axis, or all of it when that is less, and the second the
+rest. -/
+def cut (axis : Axis) (rect : Rect) (first : Nat) : Rect × Rect :=
+  let first := min first (extent axis rect)
+  match axis with
+  | .rows =>
+    ({ rect with height := first },
+      { rect with
+        y := rect.y + first, height := rect.height - first })
+  | .columns =>
+    ({ rect with width := first },
+      { rect with
+        x := rect.x + first, width := rect.width - first })
+
 /-- `rect` cut in two along `axis`: the first part takes half its extent
 along the axis, rounded down, and the second the rest. -/
 def halve (axis : Axis) (rect : Rect) : Rect × Rect :=
-  match axis with
-  | .rows =>
-    let top := rect.height / 2
-    ({ rect with height := top },
-      { rect with
-        y := rect.y + top, height := rect.height - top })
-  | .columns =>
-    let left := rect.width / 2
-    ({ rect with width := left },
-      { rect with
-        x := rect.x + left, width := rect.width - left })
+  cut axis rect (extent axis rect / 2)
 
-/-- The rectangle of each window of the tree laid out in `rect`, in drawing
-order. A split halves its rectangle along its axis; a subtree with no window
-takes nothing, and its sibling takes all of it. -/
-def rects : Split → Rect → Array (ViewId × Rect)
-  | .window id, rect => #[(id, rect)]
-  | .minibuffer, _ => #[]
-  | .split axis first second, rect =>
-    if first.windows.isEmpty then second.rects rect
+/-- How much of its split's extent the minibuffer's place takes while a
+prompt is open, in physical pixels: two rows of a 16-pixel cell, one for
+the input and one for the status line that carries the prompt text. It is a
+placeholder: nothing here knows the height of a row. -/
+def minibufferHeight : Nat :=
+  32
+
+/-- Whether the subtree is the minibuffer's place and nothing else: it has
+the minibuffer leaf and no window. -/
+def isMinibufferPlace (tree : Split) : Bool :=
+  tree.windows.isEmpty && tree.minibuffers > 0
+
+/-- The rectangle of each view of the tree laid out in `rect`, in drawing
+order: its windows, and `minibuffer`, the minibuffer's view while a prompt
+is open, where the minibuffer's place is. A split halves its rectangle
+along its axis; a subtree with no view takes nothing, and its sibling takes
+all of it. So with no minibuffer's view the minibuffer's place takes
+nothing. With one, a split one of whose children is the minibuffer's place
+gives that place `minibufferHeight` along its axis, or the whole extent
+when that is less, and the sibling the rest. -/
+def rects (tree : Split) (rect : Rect) (minibuffer : Option ViewId := none) :
+    Array (ViewId × Rect) :=
+  match tree with
+  | .window id => #[(id, rect)]
+  | .minibuffer => (minibuffer.map (·, rect)).toArray
+  | .split axis first second =>
+    let empty (child : Split) : Bool :=
+      child.windows.isEmpty && !(minibuffer.isSome && child.isMinibufferPlace)
+    if empty first then second.rects rect minibuffer
     else
-      if second.windows.isEmpty then first.rects rect
+      if empty second then first.rects rect minibuffer
       else
-        let (one, other) := halve axis rect
-        first.rects one ++ second.rects other
+        let (one, other) :=
+          if first.isMinibufferPlace then cut axis rect minibufferHeight
+          else
+            if second.isMinibufferPlace then
+              cut axis rect (extent axis rect - min minibufferHeight (extent axis rect))
+            else halve axis rect
+        first.rects one minibuffer ++ second.rects other minibuffer
 
 /-- The tree without the window `id`, whose sibling takes the place of the
 split that held both, and that sibling; `none` when `id` is not a leaf of the
