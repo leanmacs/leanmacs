@@ -196,7 +196,18 @@
 //!   where the position's row starts, its end where the row's content
 //!   ends, before its line break, and its first non-blank the first
 //!   position of that content whose character is neither a space nor a
-//!   tab, or the content's end when there is none. A motion walks the rope
+//!   tab, or the content's end when there is none.
+//! - **A word** is a longest run of neighbouring cells that are all word
+//!   characters or all punctuation, and **a WORD** a longest run of cells
+//!   that are not blank ([`WordKind`]). A blank is a space or a tab. A
+//!   word character is an ASCII letter, an ASCII digit, an underscore, or
+//!   any character from U+0080 up, and every other character is
+//!   punctuation; the private module `word` is the one place that says so.
+//!   A line break separates words as a blank does, but the line break of
+//!   an empty line, a row with no content that has a line break, is a word
+//!   alone. A word starts where its first cell starts. The next word start
+//!   is the first after a position, or the end of the text; the previous
+//!   one the last before it, or 0. A motion walks the rope
 //!   from the position and builds nothing. No answer is clamped: which
 //!   motion a key runs, counts and keeping a cursor on a line are the
 //!   editor's rules.
@@ -347,6 +358,7 @@
 //! | Another shape of selection | A variant of [`Shape`], with its overlap rule and its biases in `selection`, and what it covers in `extent` | The unit tests of both, and the properties in `tests/properties/selections.rs`, whose generator and reference gain the shape |
 //! | Another kind of marker | A variant of [`Marker`], with its check in [`Text::mark`] and its ends in the private `marker::Markers` | The unit tests of `text`, and a property in `tests/properties/anchors.rs` that compares it with mapping it by hand |
 //! | A change to what a cell is | The private module `cell`, and nowhere else | Its unit tests, and `extents_agree_with_a_reference_on_a_string` and the reference of `tests/properties/motions.rs`, which change with it |
+//! | A change to what a word character or a blank is | The private module `word`, and nowhere else | Its unit tests on named characters, and the reference of `tests/properties/motions.rs`, which states the rule again and changes with it |
 //! | Another motion | A variant of [`Motion`], with its arm in [`Snapshot::motion`] | Its unit tests beside it, on the fixture's table, and the reference of `tests/properties/motions.rs`, which gains the motion |
 //! | Another thing the crate needs of a file system | A method of [`fs::Fs`], as the module docs of [`fs`] say | Its rule in [`fs::contract::check`], with a fake written to break it, which the fake and every real adapter are then held to |
 
@@ -383,3 +395,4 @@ pub use selection::{Selection, SelectionRange, Shape};
 pub use snapshot::{Chunks, Revision, Snapshot};
 pub use text::{BadRange, Text};
 pub use transaction::{ApplyError, Transaction};
+pub use word::WordKind;

@@ -1,12 +1,13 @@
 //! Properties of the motions: every motion from every position of a
 //! generated text, compared with a reference on the `String`.
 //!
-//! The reference goes by another route than the crate. It lists the cells
-//! of the whole string first, and then picks from the list: the first after
-//! a position, the last before it. The crate lists nothing and walks from
-//! the position.
+//! The reference goes by another route than the crate. It lists the cells,
+//! the rows and the words of the whole string first, and then picks from a
+//! list: the first after a position, the last before it. The crate lists
+//! nothing and walks from the position. What a word character is is stated
+//! here again, in the reference's own words.
 
-use editor_text::{Motion, Selection, SelectionRange, Shape, Snapshot};
+use editor_text::{Motion, Selection, SelectionRange, Shape, Snapshot, WordKind};
 use proptest::collection::vec;
 use proptest::prelude::*;
 use proptest::sample::select;
@@ -67,6 +68,28 @@ struct Reference {
     cell_characters: Vec<Option<char>>,
     /// Every row.
     rows: Vec<Row>,
+    /// Its words.
+    words: Words,
+    /// Its WORDs.
+    big_words: Words,
+}
+
+/// The words of one kind of a string.
+#[derive(Debug, Default)]
+struct Words {
+    /// Where each starts: at its first cell.
+    starts: Vec<usize>,
+}
+
+/// Whether `character`, which is no blank, is a word character; for a
+/// WORD every such character is of the one class.
+fn is_word_character(kind: WordKind, character: char) -> bool {
+    match kind {
+        WordKind::Word => {
+            character.is_ascii_alphanumeric() || character == '_' || u32::from(character) >= 0x80
+        }
+        WordKind::BigWord => true,
+    }
 }
 
 /// One row of a string.
@@ -123,11 +146,53 @@ impl Reference {
             start: row_start,
             content: string.len(),
         });
-        Self {
+        let mut reference = Self {
             len: string.len(),
             cell_starts,
             cell_characters,
             rows,
+            words: Words::default(),
+            big_words: Words::default(),
+        };
+        reference.words = reference.list(WordKind::Word);
+        reference.big_words = reference.list(WordKind::BigWord);
+        reference
+    }
+
+    /// The words of `kind`, listed in one walk over the cells: a longest
+    /// run of cells of one class, or the line break of a row with no
+    /// content, alone. A blank and any other line break are in none.
+    fn list(&self, kind: WordKind) -> Words {
+        let mut words = Words::default();
+        // The class of the word the cell before is in, when it is in a
+        // run.
+        let mut open = None;
+        for (&start, &character) in self.cell_starts.iter().zip(&self.cell_characters) {
+            match character {
+                None => {
+                    if self.row_of(start).start == start {
+                        words.starts.push(start);
+                    }
+                    open = None;
+                }
+                Some(' ' | '\t') => open = None,
+                Some(character) => {
+                    let class = is_word_character(kind, character);
+                    if open != Some(class) {
+                        words.starts.push(start);
+                    }
+                    open = Some(class);
+                }
+            }
+        }
+        words
+    }
+
+    /// The words of `kind`.
+    fn words(&self, kind: WordKind) -> &Words {
+        match kind {
+            WordKind::Word => &self.words,
+            WordKind::BigWord => &self.big_words,
         }
     }
 
@@ -153,6 +218,12 @@ impl Reference {
         match motion {
             Motion::NextCell => first_after(&self.cell_starts, offset).unwrap_or(self.len),
             Motion::PreviousCell => last_before(&self.cell_starts, offset).unwrap_or(0),
+            Motion::NextWordStart(kind) => {
+                first_after(&self.words(kind).starts, offset).unwrap_or(self.len)
+            }
+            Motion::PreviousWordStart(kind) => {
+                last_before(&self.words(kind).starts, offset).unwrap_or(0)
+            }
             Motion::LineStart => self.row_of(offset).start,
             Motion::LineEnd => self.row_of(offset).content,
             Motion::LineFirstNonBlank => {
@@ -172,6 +243,10 @@ fn motions() -> Vec<Motion> {
     vec![
         Motion::NextCell,
         Motion::PreviousCell,
+        Motion::NextWordStart(WordKind::Word),
+        Motion::PreviousWordStart(WordKind::Word),
+        Motion::NextWordStart(WordKind::BigWord),
+        Motion::PreviousWordStart(WordKind::BigWord),
         Motion::LineStart,
         Motion::LineEnd,
         Motion::LineFirstNonBlank,

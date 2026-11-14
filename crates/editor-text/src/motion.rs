@@ -14,15 +14,24 @@
 use std::ops::Range;
 
 use crate::snapshot::Snapshot;
-use crate::word;
+use crate::word::{self, WordKind};
 
 /// A motion: a way from one position of a text to another
-/// ([`Snapshot::motion`]). In each row of the tables, `p` is the position
-/// the motion is asked from and `n` the length of the text.
+/// ([`Snapshot::motion`]). Below, `p` is the position the motion is asked
+/// from and `n` the length of the text.
 ///
 /// A *cell start* is a position where a cell starts: every position but the
 /// one between a carriage return and the line feed after it. The end of the
 /// text is no cell start.
+///
+/// A *word* is a longest run of neighbouring cells that are all word
+/// characters or all punctuation, and a *WORD* a longest run of cells that
+/// are not blank ([`WordKind`]). A blank is a space or a tab, and a line
+/// break separates words as a blank does; but the line break of an *empty
+/// line*, a row with no content that has a line break, is a word alone, of
+/// either kind. A word *starts* where its first cell starts. "After" and
+/// "before" are strict, so from a word's start the next start is the next
+/// word's.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Motion {
     /// The first cell start after `p`, or `n`. It is where the cell at `p`
@@ -30,6 +39,11 @@ pub enum Motion {
     NextCell,
     /// The last cell start before `p`, or 0.
     PreviousCell,
+    /// The first start of a word of the kind after `p`, or `n`. The line
+    /// break of an empty line is a word alone, and so a start.
+    NextWordStart(WordKind),
+    /// The last start of a word of the kind before `p`, or 0.
+    PreviousWordStart(WordKind),
     /// Where `p`'s row starts.
     LineStart,
     /// Where the content of `p`'s row ends: where its line break starts, or
@@ -61,6 +75,8 @@ impl Snapshot {
         Some(match motion {
             Motion::NextCell => self.cell_end(offset),
             Motion::PreviousCell => self.cell_start_before(offset),
+            Motion::NextWordStart(kind) => self.next_word_start(kind, offset),
+            Motion::PreviousWordStart(kind) => self.previous_word_start(kind, offset),
             Motion::LineStart => self.row_of_position(offset)?.1,
             Motion::LineEnd => self.content_at(offset)?.end,
             Motion::LineFirstNonBlank => self.first_non_blank(self.content_at(offset)?),
@@ -87,6 +103,83 @@ impl Snapshot {
             }
         }
         at
+    }
+
+    /// What the cell that starts at the cell start `start` is to a word
+    /// motion of `kind`. `None` at the end of the text, where no cell
+    /// starts.
+    fn cell_at(&self, kind: WordKind, start: usize) -> Option<Cell> {
+        let character = self.char_at(start)?;
+        let line_break = character == '\n'
+            || (character == '\r' && self.char_at(start.saturating_add(1)) == Some('\n'));
+        Some(if !line_break {
+            word::class(kind, character).map_or(Cell::Separator, Cell::Of)
+        } else if start == 0 || self.char_before(start) == Some('\n') {
+            // The line break starts its row, so the row has no content.
+            Cell::EmptyLine
+        } else {
+            Cell::Separator
+        })
+    }
+
+    /// The first start of a word of `kind` after the position `offset`, or
+    /// the end of the text.
+    fn next_word_start(&self, kind: WordKind, offset: usize) -> usize {
+        // The first cell start after the position, and the cell before it:
+        // the one the position is at or, between a carriage return and its
+        // line feed, inside.
+        let mut at = self.cell_end(offset);
+        let mut before = self.cell_at(kind, self.cell_start_before(at));
+        while let Some(here) = self.cell_at(kind, at) {
+            if here.starts_word_after(before) {
+                return at;
+            }
+            before = Some(here);
+            at = self.cell_end(at);
+        }
+        self.len()
+    }
+
+    /// The last start of a word of `kind` before the position `offset`, or
+    /// 0.
+    fn previous_word_start(&self, kind: WordKind, offset: usize) -> usize {
+        let mut at = self.cell_start_before(offset);
+        let mut here = self.cell_at(kind, at);
+        // At 0 the answer is 0 whether a word starts there or not.
+        while at > 0 {
+            let start = self.cell_start_before(at);
+            let before = self.cell_at(kind, start);
+            if here.is_some_and(|here| here.starts_word_after(before)) {
+                return at;
+            }
+            (at, here) = (start, before);
+        }
+        0
+    }
+}
+
+/// What a cell is to a word motion.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Cell {
+    /// It is in no word: a blank, or the line break of a row that has
+    /// content.
+    Separator,
+    /// The line break of an empty line: a word alone.
+    EmptyLine,
+    /// A character of a word, with its class: neighbours of one class are
+    /// in one word.
+    Of(word::Class),
+}
+
+impl Cell {
+    /// Whether a word starts at this cell, which comes after the cell
+    /// `before`, or after none at the start of the text.
+    fn starts_word_after(self, before: Option<Cell>) -> bool {
+        match self {
+            Cell::Separator => false,
+            Cell::EmptyLine => true,
+            Cell::Of(_) => before != Some(self),
+        }
     }
 }
 
@@ -134,9 +227,13 @@ mod tests {
     }
 
     /// Every motion, to ask what holds of them all.
-    const MOTIONS: [Motion; 7] = [
+    const MOTIONS: [Motion; 11] = [
         Motion::NextCell,
         Motion::PreviousCell,
+        Motion::NextWordStart(WordKind::Word),
+        Motion::PreviousWordStart(WordKind::Word),
+        Motion::NextWordStart(WordKind::BigWord),
+        Motion::PreviousWordStart(WordKind::BigWord),
         Motion::LineStart,
         Motion::LineEnd,
         Motion::LineFirstNonBlank,
@@ -181,6 +278,145 @@ mod tests {
             [0, 0, 1, 1, 3, 3, 5]
         );
         assert_eq!(answers("a😀b", Motion::PreviousCell), [0, 0, 1, 5]);
+    }
+
+    /// What the motion `motion` makes for a word and for a WORD answers
+    /// from every position of `text`.
+    fn answers_of_both(text: &str, motion: fn(WordKind) -> Motion) -> [Vec<usize>; 2] {
+        [
+            answers(text, motion(WordKind::Word)),
+            answers(text, motion(WordKind::BigWord)),
+        ]
+    }
+
+    #[test]
+    fn the_next_word_start_is_the_first_start_of_a_word_after_the_position() {
+        // The words: `foo` at 0, `.` at 3, `bar` at 4, `x` at 9, the empty
+        // line at 12, `s`, `e`, the combining acute and "😀" at 15, `!` at
+        // 23, `y` at 25 and `end` at 27.
+        assert_eq!(
+            answers(FIXTURE, Motion::NextWordStart(WordKind::Word)),
+            [
+                3, 3, 3, 4, 9, 9, 9, 9, 9, 12, 12, 12, 15, 15, 15, 23, 23, 23, 23, 25, 25, 27, 27,
+                30, 30, 30, 30
+            ]
+        );
+    }
+
+    #[test]
+    fn the_next_big_word_start_passes_over_punctuation_inside_a_run_that_has_no_blank() {
+        // The WORDs: `foo.bar` at 0, `x` at 9, the empty line at 12, the
+        // run from `s` to `!` at 15, `y` at 25 and `end` at 27.
+        assert_eq!(
+            answers(FIXTURE, Motion::NextWordStart(WordKind::BigWord)),
+            [
+                9, 9, 9, 9, 9, 9, 9, 9, 9, 12, 12, 12, 15, 15, 15, 25, 25, 25, 25, 25, 25, 27, 27,
+                30, 30, 30, 30
+            ]
+        );
+    }
+
+    #[test]
+    fn the_previous_word_start_is_the_last_start_of_a_word_before_the_position() {
+        assert_eq!(
+            answers(FIXTURE, Motion::PreviousWordStart(WordKind::Word)),
+            [
+                0, 0, 0, 0, 3, 4, 4, 4, 4, 4, 9, 9, 9, 12, 12, 12, 15, 15, 15, 15, 23, 23, 25, 25,
+                27, 27, 27
+            ]
+        );
+        assert_eq!(
+            answers(FIXTURE, Motion::PreviousWordStart(WordKind::BigWord)),
+            [
+                0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 9, 9, 9, 12, 12, 12, 15, 15, 15, 15, 15, 15, 25, 25,
+                27, 27, 27
+            ]
+        );
+    }
+
+    #[test]
+    fn a_line_of_blanks_holds_no_word_and_an_empty_line_is_one() {
+        // Rows: `a`, a space and a tab, an empty line, `b`, and the empty
+        // last row, which has no cell.
+        let text = "a\n \t\n\nb\n";
+        let starts = vec![5, 5, 5, 5, 5, 6, 8, 8, 8];
+        assert_eq!(
+            answers_of_both(text, Motion::NextWordStart),
+            [starts.clone(), starts]
+        );
+        let starts = vec![0, 0, 0, 0, 0, 0, 5, 6, 6];
+        assert_eq!(
+            answers_of_both(text, Motion::PreviousWordStart),
+            [starts.clone(), starts]
+        );
+    }
+
+    #[test]
+    fn each_of_two_empty_lines_in_a_row_is_a_word() {
+        let starts = vec![2, 2, 3, 4, 5, 5];
+        assert_eq!(
+            answers_of_both("a\n\n\nb", Motion::NextWordStart),
+            [starts.clone(), starts]
+        );
+        let starts = vec![0, 0, 0, 2, 3, 4];
+        assert_eq!(
+            answers_of_both("a\n\n\nb", Motion::PreviousWordStart),
+            [starts.clone(), starts]
+        );
+        // With a carriage return and a line feed, and from between the two.
+        assert_eq!(
+            answers("\r\n\r\n", Motion::NextWordStart(WordKind::Word)),
+            [2, 2, 4, 4, 4]
+        );
+        assert_eq!(
+            answers("\r\n\r\n", Motion::PreviousWordStart(WordKind::Word)),
+            [0, 0, 0, 2, 2]
+        );
+        assert_eq!(
+            answers("a\r\n\r\nb", Motion::NextWordStart(WordKind::Word)),
+            [3, 3, 3, 5, 5, 6, 6]
+        );
+    }
+
+    #[test]
+    fn a_text_that_is_one_line_break_holds_one_word_and_its_empty_last_row_none() {
+        assert_eq!(
+            answers_of_both("\n", Motion::NextWordStart),
+            [[1, 1], [1, 1]]
+        );
+        assert_eq!(
+            answers_of_both("\n", Motion::PreviousWordStart),
+            [[0, 0], [0, 0]]
+        );
+    }
+
+    #[test]
+    fn a_text_of_blanks_only_has_no_word_start() {
+        for text in ["  ", " \t\n \n"] {
+            let positions = positions(text).len();
+            assert_eq!(
+                answers_of_both(text, Motion::NextWordStart),
+                [vec![text.len(); positions], vec![text.len(); positions]],
+                "{text:?}"
+            );
+            assert_eq!(
+                answers_of_both(text, Motion::PreviousWordStart),
+                [vec![0; positions], vec![0; positions]],
+                "{text:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_carriage_return_with_no_line_feed_after_it_is_punctuation() {
+        assert_eq!(
+            answers_of_both("x\r", Motion::NextWordStart),
+            [[1, 2, 2], [2, 2, 2]]
+        );
+        assert_eq!(
+            answers_of_both("x\r", Motion::PreviousWordStart),
+            [[0, 0, 1], [0, 0, 0]]
+        );
     }
 
     #[test]
