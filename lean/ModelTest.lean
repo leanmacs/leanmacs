@@ -349,7 +349,10 @@ registers for evil (`Editor/Evil/Compiled.lean`), on the loop's driver:
 - `evilUndoChecks`: `u` and `C-r` after one change of each kind
   (`undoRows`): the text and the cursor from before the change, and those
   the change left. They are the phase's rule and are not compared with
-  Vim, which leaves the cursor at the start of the changed text.
+  Vim, which leaves the cursor at the start of the changed text;
+- `evilRepeatChecks`: `.` after a change of each kind (`repeatRows`), a
+  count before it, a change with an insert session and its typed and
+  committed text, and what is not repeated.
 
 Each expected text of a row is written by hand from Vim's documented
 behaviour (`docs/design/keymaps-and-modes.md`, "Motions as built"). No
@@ -15450,6 +15453,98 @@ def evilUndoChecks : List Check :=
             let again := evilFed (evilFed undone "j") "C-r"
             (wanted moved).isSome && (wanted undone).isNone && (wanted again).isNone }]
 
+/-- The oracle table's rows for `.`: the keys, the text before with the
+cursor as a bar, and the text after. A count before `.` replaces the
+change's; a change with an insert session is replayed with the text typed
+in it, and leaves the cursor where `<Escape>` would; a yank is not the last
+change. -/
+def repeatRows : List (String × String × String) :=
+  [("d w .", "|a b c d e f", "|c d e f"), ("d w 3 .", "|a b c d e f g", "|e f g"),
+    ("d w 3 . .", "|a b c d e f g h i", "|h i"), ("d 2 w 3 .", "|a b c d e f g", "|f g"),
+    ("2 d d .", "|a\nb\nc\nd\ne", "|e"), ("x .", "|abcd", "|cd"), ("x 3 .", "|abcdefgh", "|efgh"),
+    ("c w X Y <Escape> w .", "|foo bar baz", "XY X|Y baz"),
+    ("c w X Y <Escape> w w .", "|foo bar baz", "XY bar X|Y"),
+    ("c w X Y <Escape> w 2 .", "|foo bar baz qux", "XY X|Y qux"),
+    ("c w <Escape> w .", "|foo bar baz", "|  baz"),
+    ("c c X <Escape> j .", "|ab\ncd\nef", "X\n|X\nef"), ("o X <Escape> .", "|ab", "ab\nX\n|X"),
+    ("O X <Escape> .", "|ab", "|X\nX\nab"), ("i X <Escape> .", "a|b", "a|XXb"),
+    ("a X <Escape> .", "a|b", "abX|X"), ("A X <Escape> j .", "|ab\ncd", "abX\ncd|X"),
+    ("y w P .", "|ab cd", "abab|  ab cd"), ("y y p .", "|ab", "ab\nab\n|ab"),
+    ("d w y w .", "|a b c d", "|c d")]
+
+/-- The checks of evil's dot repeat (`Editor/Evil/Repeat.lean`), by key, on
+the loop's driver over the editor's models, under the Vim scheme that ships
+with evil's commands. -/
+def evilRepeatChecks : List Check :=
+  [{  name :=
+        ". replays the last change: after d w it deletes the next word, and after c w, typed text and <Escape> it makes the same change with the same text at the cursor; a count before it replaces the change's and is kept; x, the doubled operator, o, O, i, a, A, p and P are replayed, and a yank is not the last change"
+      run := evilRows repeatRows },
+    { name :=
+        "a replayed change with an insert session is one step of the history and leaves the view in normal state: after c w X Y <Escape> w . the tree has one node more and nothing pending, and one u takes the whole replay back, with the cursor where it was"
+      run :=
+        pure <|
+          match evilDriver "|foo bar baz" with
+          | none => false
+          | some driver =>
+            let changed := evilFed driver "c w X Y <Escape> w"
+            let replayed := evilFed changed "."
+            evilHistory changed == some (2, false) && evilHistory replayed == some (3, false) &&
+              evilShown replayed == "XY X|Y baz" &&
+              (evilSeen replayed).map (·.status) ==
+                some
+                  ((evilLooks "").2.push
+                    { text := Loop.modifiedMark, face := Loop.modifiedFace }) &&
+              evilShown (evilFed replayed "u") == "XY |bar baz" },
+    { name :=
+        ". with no change to repeat says nothing and changes nothing, and the repeat command run by its name, which is handed no change, gives up with the sentence its function makes"
+      run :=
+        pure <|
+          let named :=
+            (evilRegistered "a|bc").map fun driver =>
+              evilLeft
+                (driver.stepped
+                    (driver.loop.invoke driver.handed { command := Vim.repeatCommand })).1
+          evilEdited "a|bc" "." == some ⟨"a|bc", asItWas, false, ""⟩ &&
+            evilEdited "a|bc" "y l ." == some ⟨"a|bc", charwise "b", false, ""⟩ &&
+            evilGaveUp named "a|bc" Evil.nothingToRepeat },
+    { name :=
+        "what is not repeated gives the command up and changes nothing: a change over a visual selection, and a change whose command the table of changes does not have"
+      run :=
+        pure <|
+          let unknown :=
+            (evilRegistered "a|bc").map fun driver =>
+              evilLeft
+                (driver.stepped
+                    (driver.loop.invoke driver.handed
+                      { command := Vim.repeatCommand
+                        arguments :=
+                          [.bool false, .str "", .str "frobnicate", .nat 0, .str ""] })).1
+          let selected :=
+            (evilDriver "foo |bar baz qux").map fun driver =>
+              let deleted := evilFed driver "v e d w"
+              let repeated := evilFed deleted "."
+              (evilShown deleted, evilShown repeated,
+                repeated.loop.state.echo.endsWith (Evil.notRepeated Evil.overSelection),
+                evilHistory deleted == evilHistory repeated)
+          !(Evil.notRepeated "frobnicate").isEmpty &&
+            evilGaveUp unknown "a|bc" (Evil.notRepeated "frobnicate") &&
+            selected == some ("foo  |baz qux", "foo  |baz qux", true, true) },
+    { name :=
+        "a text committed in the session a change began is replayed with it: after c w, a committed text, <Escape> and w, . changes the next word to that text"
+      run :=
+        pure <|
+          match evilDriver "|foo bar baz" with
+          | none => false
+          | some driver =>
+            let changing := evilFed driver "c w"
+            let committed := (changing.feed { event := .commit "かな", stamp := 0 }).1
+            evilShown (evilFed committed "X <Escape> w .") == "かなX かな|X baz" },
+    { name := "every command of the table of changes is one evil registers, under the same name"
+      run :=
+        pure <|
+          !Evil.changes.isEmpty &&
+            Evil.changes.all fun (name, _) => Evil.commands.any (·.name == name) }]
+
 /-- Every check, in the order they run.
 
 The order matters where the process's one pool is measured. `poolChecks` run
@@ -15514,7 +15609,8 @@ def checks : List Check :=
     evilSelectionChecks ++
     evilRegisterChecks ++
     evilOpenChecks ++
-    evilUndoChecks
+    evilUndoChecks ++
+    evilRepeatChecks
 
 /-- Runs `checks` and returns the names of those that failed. A check that
 throws has failed, and its error is reported with its name. -/
