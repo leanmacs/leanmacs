@@ -1,5 +1,6 @@
 import Editor.Command
 import Editor.Command.Call
+import Editor.Command.Guard
 import Editor.Config.Stores
 import Editor.Event
 import Editor.InputScheme
@@ -116,6 +117,37 @@ they were before it (`docs/design/concurrency.md`, "Foreground: commands").
 An event's own handler, such as the commit's (`Loop.insert`), is one
 transaction, which the store accepts whole or refuses whole, and is not
 routed through this.
+
+## The interrupt
+
+The Rust library raises a flag as the interrupt key arrives, before the key
+is queued, and marks that event. What the loop does with the flag is here
+(`Editor/Watch.lean` has the port):
+
+- **A command the loop runs is guarded** (`EditorM.guarded`,
+  `Editor/Command/Guard.lean`): the flag is asked before each of its
+  requests, and once it is up the command makes no further request. It is
+  then rolled back like a command that was refused, and the echo area reads
+  `<name>: interrupted`.
+- **Only the command is guarded.** The loop's own requests (keeping,
+  rolling back, publishing) are not, so a flag that is up stops neither a
+  rollback nor a scene.
+- **The flag comes down when the loop takes the interrupt key off the
+  queue** (`Loop.take`): for an event the library marked
+  (`Received.interrupt`), the loop makes the request `Watch.lower`, and for
+  no other event. The library decided once, at arrival, which event is an
+  interrupt key, so the two cannot disagree. The flag is a count, so with
+  two interrupt keys queued it stays up until the second is taken.
+- **The interrupt key is then stepped like any key**, after the flag is
+  lowered, so a scheme can bind it, and what it is bound to is not
+  interrupted by it.
+- **Consequences.** A command for a key queued ahead of the interrupt key
+  finds the flag up at its first check and makes no request. An interrupt
+  key that arrives while nothing runs interrupts nothing: the flag is down
+  again before the next key's command starts. The echo of an interrupted
+  command is still there after the interrupt key is stepped and found
+  bound to nothing, since a key that yields nothing leaves the echo. A
+  command that makes no request is not interruptible.
 
 ## What each event does
 
@@ -544,10 +576,15 @@ def said (state : EditorState) (name what : String) : EditorState :=
 
 /-- Runs `invocation`, which the keys `typed` yielded, from `state` ("Running
 an invocation", in the module docs): clears the echo area, looks the
-command up, and runs it with the focused window, the invocation's arguments
-and the keys. It is not refused: a name with no command and a refusal of
-the command are each said in the echo area, and a command that was refused
-is rolled back, with what could not be said after its error. -/
+command up, and runs it, guarded (`EditorM.guarded`), with the focused
+window, the invocation's arguments and the keys. It is not refused: a name
+with no command, a refusal of the command and an interrupt are each said in
+the echo area, and a command that was refused or interrupted is rolled back,
+with what could not be said after it.
+
+Only the command is guarded. What this makes of its own requests, keeping
+before it and rolling back after it, is not, so a flag that is up does not
+stop a rollback. -/
 def run (keys : Keys scheme) (state : EditorState) (invocation : Invocation) (typed : List Key) :
     EditorM Ran := do
   let state := { state with echo := "" }
@@ -557,13 +594,16 @@ def run (keys : Keys scheme) (state : EditorState) (invocation : Invocation) (ty
   let some target :=
     state.focusedTarget? | return { state := said state name "no window is focused", finished := false }
   let kept ← keep state
-  match ← observing (command { target, arguments := invocation.arguments, keys := typed }) with
-  | .ok write =>
-    return { state, finished := true, write }
-  | .error refusal =>
+  let failed (what : String) : EditorM Ran := do
     let (state, unrestored) ← kept.restore state
-    return { state := said state name s!"refused: {refusal.describe}{unrestored}",
-             finished := false }
+    return { state := said state name (what ++ unrestored), finished := false }
+  match ← (command { target, arguments := invocation.arguments, keys := typed }).guarded with
+  | .finished write =>
+    return { state, finished := true, write }
+  | .refused refusal =>
+    failed s!"refused: {refusal.describe}"
+  | .interrupted =>
+    failed "interrupted"
 
 /-- One key through the scheme, for the focused view, and the invocation it
 yields, if it yields one, run (`run`): the loop after them, and what the
@@ -614,6 +654,20 @@ def step (keys : Keys scheme) (loop : Loop scheme) (event : Event) : EditorM (St
       catch refusal =>
         pure (loop.state.refused refusal)
     return { loop := ← { loop with state }.publish, next := .continue }
+
+/-- Takes what arrived off the queue: lowers the interrupt flag when the
+library marked the event as a press of the interrupt key
+(`Received.interrupt`), and then steps the event like any other (`step`),
+so a scheme can bind the interrupt key. This is what a host calls for each
+event it pulls.
+
+The flag is lowered first: the key has been taken off the queue, so what
+its own binding runs is not interrupted by it. -/
+def take (keys : Keys scheme) (loop : Loop scheme) (received : Received) :
+    EditorM (Stepped scheme) := do
+  if received.interrupt then
+    Watch.lower
+  loop.step keys received.event
 
 end Loop
 

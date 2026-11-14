@@ -322,6 +322,11 @@ structure Received where
   event : Event
   /-- When. -/
   stamp : UInt64
+  /-- Whether the library counted this event as a press of the interrupt
+  key when it arrived, and raised the interrupt flag for it. The loop that
+  takes the event off the queue lowers the flag, for these events and for
+  no other (`Loop.take`, `Editor/Loop.lean`). -/
+  interrupt : Bool := false
   deriving BEq, Repr
 
 end Editor

@@ -4994,11 +4994,125 @@ def dispatchRollbackChecks : List Check :=
           (program.runModel editorModel).1.toOption ==
             some ("x", "", "; the command moved in the history", "one") }]
 
+/-- The events of `events` as they arrive, none of them marked as an
+interrupt key. -/
+def arriving (events : List Event) : List Received :=
+  events.map fun event => { event, stamp := 0 }
+
+/-- A press of the interrupt key as it arrives, marked as one: the event
+the loop lowers the flag for. -/
+def interruptArrives : Received :=
+  { event := press Watch.interruptKey, stamp := 0, interrupt := true }
+
+/-- Feeds `loop` what arrived, in order, as a host does (`Loop.take`), each
+step handed `keys`: the loop after them. -/
+def takes {scheme : InputScheme} (keys : Loop.Keys scheme) (loop : Loop scheme)
+    (received : List Received) : EditorM (Loop scheme) := do
+  let mut loop := loop
+  for one in received do
+    loop := (← loop.take keys one).loop
+  return loop
+
+/-- What a run of the loop over the buffer holding `abcd`, its selection
+over `bc`, came to when it was fed what arrived, on the editor's models
+with the watch model `watch`: the buffer's text, the selection's ranges, the
+echo of each scene, and the watch model after. `none` when it was
+refused. -/
+def tookFrom (keys : Loop.Keys TestScheme.scheme) (received : List Received) (watch : WatchModel) :
+    Option (String × Array SelectionRange × Array String × WatchModel) :=
+  let program : EditorM (String × Array SelectionRange) := do
+    let loop ← takes keys { state := ← holding "abcd" #[⟨1, 3⟩] } received
+    return (← (← focusedOf loop).buffer.text.read, ← cursorsOf loop)
+  match program.runModel { editorModel with watch } with
+  | (.ok (text, cursors), model) =>
+    some (text, cursors, model.display.scenes.map (·.echo), model.watch)
+  | (.error _, _) => none
+
+/-- The command `spin` of the interrupt checks: it replaces what the
+selection covers with `spin`, and then asks the text its revision a thousand
+times. -/
+def spin : Dispatched := fun call => do
+  Loop.insert call.target "spin"
+  for _ in [0:1000] do
+    discard <| call.target.buffer.text.revision
+  return none
+
+/-- The checks of the interrupt in the loop (`Editor/Loop.lean`), on the
+editor's models: a command the loop runs stops once the flag is up, and the
+flag comes down when the loop takes the interrupt key off the queue. -/
+def dispatchInterruptChecks : List Check :=
+  let keys :=
+    dispatchKeys [("C-c l", invoke "spin"), ("C-c s", invoke "stamp"), ("C-g", invoke "stamp")]
+      [("spin", spin), ("stamp", stamp)]
+  let unbound := dispatchKeys [("C-c s", invoke "stamp")] [("stamp", stamp)]
+  [{  name :=
+        "when the interrupt key arrives while a command is looping over requests, the command stops: the buffer's text and the selection are those before it, the echo area says it was interrupted, and the flag is still up"
+      run :=
+        pure <|
+          match tookFrom keys (arriving (presses "C-c l")) { arrivesAfter := some 20 } with
+          | some (text, cursors, echoes, watch) =>
+            text == "abcd" && cursors == #[⟨1, 3⟩] && echoes == #["", "spin: interrupted"] &&
+              watch.arrived == 1
+          | none => false },
+    { name := "with no interrupt key arriving the same command runs to its end, and its edit stays"
+      run :=
+        pure <|
+          match tookFrom keys (arriving (presses "C-c l")) {} with
+          | some (text, _, echoes, _) => text == "aspind" && echoes == #["", ""]
+          | none => false },
+    { name :=
+        "the event the library marked as the interrupt key lowers the flag and is then stepped like any key: the command bound to it runs to its end; the same key unmarked lowers nothing, and its command is interrupted"
+      run :=
+        pure <|
+          (match tookFrom keys [interruptArrives] { arrived := 1 } with
+            | some (text, _, echoes, watch) =>
+              text == "aC-gd" && echoes == #[""] && watch.arrived == 0
+            | none => false) &&
+            match tookFrom keys (arriving [press Watch.interruptKey]) { arrived := 1 } with
+            | some (text, _, echoes, watch) =>
+              text == "abcd" && echoes == #["stamp: interrupted"] && watch.arrived == 1
+            | none => false },
+    { name :=
+        "an interrupt key that arrived while no command was running interrupts nothing: once the loop has taken it off the queue, the next key's command runs to its end"
+      run :=
+        pure <|
+          match
+            tookFrom unbound (interruptArrives :: arriving (presses "C-c s")) { arrived := 1 } with
+          | some (text, _, echoes, watch) =>
+            text == "aC-c sd" && echoes == #["", "", ""] && watch.arrived == 0
+          | none => false },
+    { name :=
+        "a command for a key queued ahead of the interrupt key is interrupted before its first request, and its echo is still there after the interrupt key is stepped and found bound to nothing; the key after it runs its command"
+      run :=
+        pure <|
+          let queued := arriving (presses "C-c s") ++ [interruptArrives]
+          (match tookFrom unbound queued { arrived := 1 } with
+            | some (text, cursors, echoes, watch) =>
+              text == "abcd" && cursors == #[⟨1, 3⟩] &&
+                echoes == #["", "stamp: interrupted", "stamp: interrupted"] &&
+                watch.arrived == 0
+            | none => false) &&
+            match tookFrom unbound (queued ++ arriving (presses "C-c s")) { arrived := 1 } with
+            | some (text, _, echoes, _) => text == "aC-c sd" && echoes.back? == some ""
+            | none => false },
+    { name :=
+        "with two interrupt keys arrived, the command of a key between them is interrupted, and the one after the second runs to its end"
+      run :=
+        pure <|
+          let between := interruptArrives :: arriving (presses "C-c s") ++ [interruptArrives]
+          (match tookFrom unbound between { arrived := 2 } with
+            | some (text, _, echoes, watch) =>
+              text == "abcd" && echoes.back? == some "stamp: interrupted" && watch.arrived == 0
+            | none => false) &&
+            match tookFrom unbound (between ++ arriving (presses "C-c s")) { arrived := 2 } with
+            | some (text, _, echoes, _) => text == "aC-c sd" && echoes.back? == some ""
+            | none => false }]
+
 /-- The checks of key dispatch in the loop (`Editor/Loop.lean`), on the
-editor's models: keys through the scheme and the commands they run, and
-rollback. -/
+editor's models: keys through the scheme and the commands they run,
+rollback, and the interrupt. -/
 def dispatchChecks : List Check :=
-  dispatchKeyChecks ++ dispatchRollbackChecks
+  dispatchKeyChecks ++ dispatchRollbackChecks ++ dispatchInterruptChecks
 
 /-- A scheme written for the test that breaks the contract: it yields the
 first binding that the keys so far begin, so it emits on a strict prefix. -/
