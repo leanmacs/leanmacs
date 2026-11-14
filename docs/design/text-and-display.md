@@ -1411,13 +1411,37 @@ decided 2026-11-13 by its phase 2):
   minibuffer's place is in drawing order: its snapshot is the input typed
   so far, its selection the cursor in it, and it is the focused view while
   it has the focus.
-  - **The prompt text is its status line**: one field, the prompt's label,
+  - **The prompt text is its status line**: the prompt's label,
     in the face `minibuffer.prompt` (`Loop.statusOf`, `Loop.promptFace`),
     with no name, no modified field and none of the scheme's fields. Its
     cursor is the one the scheme reports of it. A view's status line is the
     loop's to fill, so the scene's shape did not change, and neither did
     the Rust scene on the display pipeline's branch, which lays a view's
     status out as one row at the bottom of its rectangle.
+  - **A prompt's candidates are fields of that status line** (built by the
+    command loop's phase 14; `Loop.promptStatus`). After the label comes
+    one field for each candidate the typed text matches, every one, in
+    the fuzzy matcher's order, in the face `minibuffer.candidate`
+    (`Loop.candidateFace`); the chosen one, if one is chosen, is in
+    `minibuffer.chosen` (`Loop.chosenFace`) instead. With nothing listed,
+    and for a prompt with no candidates, the line is the label alone.
+    - So which candidates match, their order and which is chosen are in
+      the scene as data that exists: no field was added to the scene, and
+      nothing of the Rust scene, its wire form or the display's binding
+      changed.
+    - A face nothing defines sets nothing, so the fields draw as the rest
+      of the line does until a theme or config defines the two names. No
+      theme defines them yet.
+    - **How a line of many fields draws in a window has not been seen**:
+      it is one row, and a list longer than the row is wide is cut by
+      whatever lays the row out (the display pipeline's phase 6).
+    - Set aside: a field of the scene for the candidates, which is the
+      display contract, with a Rust half that is the display pipeline's;
+      and a view of their own over generated text, which is where a long
+      list should go ("Tables, lists and pickers"), and needs a buffer, a
+      window and a place in the split tree made and unmade with the
+      prompt. The listing in the editor state is what such a view would
+      show.
   - **The input is the whole text of the minibuffer's buffer.** So the
     answer is that text, the initial value is what the text is made with,
     and a motion to the start of the line is the start of the input. The

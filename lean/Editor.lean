@@ -39,10 +39,16 @@ and saves a buffer to its file with `Files.save`, which starts the job that
 writes it. Their registrations as compiled commands and jobs
 (`Editor/Files/Compiled.lean`) name the registry, which is the config
 session's, and are not imported. A command of config's asks for a string
-with `prompt` (`Editor/Api.lean`), and the commands that accept and cancel
-a prompt and the minibuffer's mode are here as well
+with `prompt` (`Editor/Api.lean`), with candidates the answer may be
+chosen from when it gives a function that answers them
+(`prompt … (candidates := function)`), and the commands that accept and
+cancel a prompt and move through its candidates and the minibuffer's mode
+are here as well
 (`Editor/Minibuffer.lean`); their registrations
-(`Editor/Minibuffer/Compiled.lean`) are not, for the same reason. The ex
+(`Editor/Minibuffer/Compiled.lean`) are not, for the same reason. The
+fuzzy matcher is a sub-port of the editor's port, so a command of
+config's asks which candidates a pattern matches with `Fuzzy.rank`
+(`Editor/Fuzzy.lean`), as it asks a text. The ex
 command line is here too (`Editor/Ex.lean`, with an ex line as data in
 `Editor/Ex/Line.lean`): a command of config's runs a line with `Ex.run`,
 and `setup` binds an ex name to a command with `exCommand`

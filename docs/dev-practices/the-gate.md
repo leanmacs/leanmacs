@@ -168,6 +168,24 @@ made by `tools/fonts/subset.sh`, by hand and never by the gate. The
 system's fonts have a check of their own, outside the gate
 ([`on-demand-checks.md`](on-demand-checks.md)).
 
+Fuzzy matching is tested there too. The rule that orders the candidates a
+pattern matches (`crates/editor-fuzzy`) reaches a matching library only
+through the `Scorer` port it defines, and is tested on a scorer written
+in its tests that answers canned scores: a candidate that is the pattern
+first, then by score, then in the order the candidates came. The port's
+published fake and its contract are tested there, the contract on
+scorers written to break each of its rules. The port's real adapter,
+over `nucleo-matcher` (`crates/editor-fuzzy-nucleo`), is held to that
+contract, which sweeps generated texts from a fixed seed, and to its own
+two cases: a pattern whose characters are in a candidate in order but
+apart matches it, and one with a character the candidate lacks does not.
+No test pins a score. One test runs the rule over the real adapter
+through the C function, for the wiring alone
+(`crates/editor-ffi/tests/fuzzy.rs`). `mise run deny` holds that only the
+adapter depends on the library. It checks no licence: the library's is
+MPL-2.0, and whether that is acceptable in this workspace is the owner's
+to confirm.
+
 Rendering is tested there too, on a machine with no GPU, and the gate
 needs none. What it checks:
 
@@ -288,7 +306,17 @@ open; the scene shows the prompt text and the input after each key; and a
 command that fails around a prompt, or is interrupted as it accepts, is
 rolled back with the prompt as it was. The accept key and the cancel key
 are read from the test scheme's role table, since the minibuffer's mode
-fills two roles. The state's side (opening and closing a prompt, the
+fills those roles. A prompt's candidates are checked on that driver as
+well (`ModelTest.candidateChecks`), with commands written in the test:
+after the asking step and after each key the prompt's listing is the one
+for the minibuffer's text; the scene's minibuffer status line is the
+label and then a field for each candidate the fuzzy model answers for the
+text, a candidate that is the text first; the keys of the roles
+`next-item` and `previous-item` move a choice, which the scene shows in a
+face of its own; the accept key gives the continuation the chosen
+candidate, and the typed text when nothing is chosen or nothing matches;
+and a command that fails is rolled back to the listing and the choice
+from before it. The state's side (opening and closing a prompt, the
 layout invariants with the minibuffer's window, the strip its place
 takes) is checked with the state's operations, the scene's side with the
 loop's, the notice a scheme is told with the loop's dispatch, and the
@@ -389,6 +417,16 @@ checks:
   a check sets and takes away. The clipboard interface's contract
   (`lean/Editor/Clipboard/Contract.lean`) runs on its model here, and
   `contract-test` runs it on the clipboard a host with no window keeps.
+  The fuzzy matching interface's contract
+  (`lean/Editor/Fuzzy/Contract.lean`) runs on its model here
+  (`fuzzyFailures`), and `contract-test` runs it on its real binding:
+  which candidates a pattern matches, and that a candidate that is the
+  pattern is first. `fuzzyChecks` are what only the model shows, its
+  order after the exact matches, and the contract seen to report a
+  matcher that ignores case and one that does not put an exact match
+  first. **The model and the binding are not held to agree on the order
+  past the exact matches**, so every check above the port computes what
+  it expects with the model.
   `textModelStepChecks` hold a premise of the theorem about undo where it
   is not proved: every live text of the model is in step after each
   request of a sample sequence.
@@ -407,7 +445,7 @@ whatever `LEAN_NUM_THREADS` says: a bare `lake test` is enough.
 
 `mise run ffi-test` runs `lean/.lake/build/bin/ffi-test`, the test executable
 linked against the real library, then `contract-test`, `config-test`, and
-then the editor: once with no arguments, eight times in its headless
+then the editor: once with no arguments, nine times in its headless
 mode on the fixtures under `tests/headless`, and twice more on a real file
 in a temporary directory (below): with `script`, whose output must
 be exactly `expected`; with `keys-script`, which sends keys with their
@@ -441,9 +479,21 @@ evil's wiring on the real library: every command its keys run is one the
 editor ships. A whole evil session on a real file is a process check of
 its own, below (`session/script`). The eighth is `ex/script`, which also
 has no `reload`: it
-runs the ex line three times, with a name nobody bound, with `w` in the
-scratch buffer and with `q`, which ends the loop, so that the `scene` line
-after it prints nothing; its output must be exactly `ex/expected`.
+runs the ex line four times, with a name nobody bound, with `w` in the
+scratch buffer, with `e`, where the scene lists the ex names the text
+matches, `e` and then `reload`, and `<Tab>` and `<Enter>` run `e`, which
+asks for a path with a prompt that lists none, and with `q`, which ends
+the loop, so that the `scene` line
+after it prints nothing; its output must be exactly `ex/expected`. The
+ninth is `candidates/script` on the config in `candidates/config`, under
+the Vim scheme and with the library's fuzzy matcher: a command of
+config's asks with the candidates `wq`, `edit` and `w`; `w` is typed and
+the scene lists `w` and then `wq` after the prompt's label, which only
+the rule that a candidate that is the text is first orders, since the
+library scores the two the same; `<Tab>` twice chooses `wq`, which the
+scene shows in the chosen face; `<Enter>` gives config's command `wq`;
+and with `z` typed the scene lists none and the command receives `z`. Its
+output must be exactly `candidates/expected`.
 
 Two more entries of the task run the executable on a real file, and read
 what a fixture's output cannot show: the process's exit status and the
@@ -630,7 +680,12 @@ arrive at a known request of a command. It runs the clipboard interface's
 contract against the clipboard a host with no window keeps
 (`lean/Editor/Clipboard/InProcess.lean`), and checks that a command run
 against the library with no clipboard handed in is answered
-`unavailable`, and that one handed a clipboard reaches it.
+`unavailable`, and that one handed a clipboard reaches it. It runs the
+fuzzy matching interface's contract against its real binding
+(`lean/Editor/Fuzzy/Real.lean`), so against the library's matcher, and
+checks that a command run against the library that asks for a ranking is
+answered by it. `ffi-test`'s own `fuzzyChecks` pin that a pattern, a list
+of strings and the ranking cross the boundary.
 
 `config-test` (`lean/ConfigTest.lean`) is linked like the editor, with
 Lean's elaborator, and is given the toolchain's directory and the package's

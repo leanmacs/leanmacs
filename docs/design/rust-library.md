@@ -405,7 +405,107 @@ interface in Lean:
 |---|---|
 | **Diff** | Line and word diff between two texts or snapshots, producing hunks; apply or revert a hunk. Used for gutter marks, for turning an agent's whole-file "old text / new text" into reviewable hunks, and for external reloads. |
 | **Search** | Regex and literal search over a rope without copying it; project-wide search on worker threads with streamed results. |
-| **Fuzzy matching** | Scoring candidates against a query, for pickers. |
+| **Fuzzy matching** | Which candidates a pattern matches, and in what order, for a prompt's candidates and for pickers. Built: "Fuzzy matching, as built", below. |
+
+### Fuzzy matching, as built
+
+Built by the command loop's phase 14, for the candidates of a prompt
+(`concurrency.md`, "Prompts").
+
+**The port is a scorer, and the order is core logic** (`crates/editor-fuzzy`,
+no dependencies).
+
+- `Scorer::scores(pattern, candidates)` answers one entry for each
+  candidate, in order: a score, higher for a better match, or none where
+  the pattern does not match. It is asked for the whole list at once, so
+  an implementation reads the pattern once and reuses its scratch memory.
+- `rank(scorer, pattern, candidates)` is what the editor asks: the indices
+  of the candidates that match, best first. Its rule: **a candidate that
+  is the pattern, byte for byte, first; then the higher score; then the
+  order the candidates came in.** A scorer that answers too few entries
+  leaves the rest unmatched, and extra entries are ignored.
+- **Why the order is not the adapter's.** The library does not rank an
+  exact match first: it scores `w` the same in `w` and in `wq`. In the
+  core the rule is written once and tested on a scorer that answers canned
+  scores.
+
+**What matches** is one rule, which the port's contract holds every scorer
+to: the pattern's Unicode scalar values all occur in the candidate, in the
+pattern's order, adjacent or apart.
+
+- Case is kept: `a` does not match `A`.
+- A scalar value matches itself alone: an accented letter is not its base
+  letter, and a composed character is not its decomposed form.
+- No character of a pattern is syntax: a space is a character to find, so
+  an ex line with an argument is matched whole.
+- The empty pattern matches every candidate, and no other pattern matches
+  the empty candidate.
+
+It is this small so that the Lean model can agree with the library on
+every input, with no table of Unicode's: a Lean `String` is a list of
+scalar values, and the model is a subsequence test
+(`lean-runtime.md`, "The editor's port is a composite"). The cost is
+stated: `Re`
+does not match `reload`, and a decomposed `é` does not match a precomposed
+one. Folding ASCII case is possible later, in the core and the model in
+one commit.
+
+**The fake and the contract.** `InOrder` is the port's fake: the rule
+above, every match scored 0. `contract::check` names each property a
+scorer breaks. Every property is about which candidates match and none is
+about a score: one answer for each candidate; a pattern in order matches;
+a character the candidate lacks, another order or one repeat too many do
+not; the empty pattern and the empty candidate; case; scalar values,
+composed or not; no pattern syntax; and a sweep of 20,000 generated pairs
+from a fixed seed over four alphabets, against the contract's own
+statement of the rule. The contract is seen to bite on scorers written in
+its tests that each break a rule.
+
+**The adapter** is `crates/editor-fuzzy-nucleo`, over `nucleo-matcher`,
+pinned `=0.3.1`. It keeps one matcher of the library's (about 135 KB of
+scratch memory) and makes one fuzzy atom of the pattern, with case kept,
+nothing normalised and no pattern syntax read. No nucleo type is public,
+and `deny.toml` lets no other crate depend on the library.
+
+- **Its features.** Two of the library's three are on,
+  `unicode-casefold` and `unicode-normalization`, only because 0.3.1 does
+  not compile without them; the adapter asks for neither. Its grapheme
+  segmentation is off: with it only the first scalar value of each
+  cluster is looked at.
+- **Its licence** is MPL-2.0, in a workspace that is GPL-3.0-or-later. It
+  is used unmodified. Nothing in the gate checks licences, and whether
+  the combination is acceptable is the owner's to confirm.
+- **Set aside**: `nucleo` 0.5.0, the same matcher behind an injector and a
+  worker pool, which answers later through a snapshot that is polled;
+  `frizbee`, which forgives typing errors, so a pattern with a character
+  the candidate lacks can match; `fuzzy-matcher` and `sublime_fuzzy`, not
+  looked into; and a matcher of our own, since the scores are what the
+  library is for.
+
+**Across the boundary** there is one stateless call
+(`crates/editor-ffi/src/fuzzy.rs`): `editor_ffi_fuzzy_rank` takes the
+pattern and the candidates and fills a record with the indices of the
+candidates that match, best first, as words. The candidates cross as lists
+do, with one string beside the words: their count and the byte length of
+each, and every candidate end to end, borrowed for the call. It makes the
+adapter for the call and keeps nothing: no handle, no static. Candidates
+that cannot be read are one refusal, never a panic.
+
+- **Matching answers in the call, on the thread that asked.** That is the
+  editor thread, inside the publish of a scene. Measured once, in a
+  release build: 100,000 candidates of about 40 bytes scored in 7.4 ms.
+  Each call also copies the candidates' bytes once, in Lean. The lists
+  that ship are the ex names, five of them.
+- **Not built**: a handle that keeps the candidates in the library, with
+  the library's worker pool and a result that arrives as an event. That
+  is what a list of every file in a tree wants, and what the Workers row
+  of `concurrency.md` means. Nor case folding, normalisation, or
+  highlighting the characters that matched.
+
+Tests: the ranking rule on a canned scorer, and the fake and the contract,
+in `editor-fuzzy`; the adapter's own cases and the port's contract on it,
+in `editor-fuzzy-nucleo`; the C function's decoding and one wiring case,
+in `editor-ffi`. No test pins a score.
 
 ## Terminal
 

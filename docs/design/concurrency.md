@@ -23,7 +23,7 @@ process, its runtime is the only one that schedules editor code.
 | **Completion pump** | Lean, a dedicated task | Pulling the completion queue and ending the wait each completion names | Run a job; mutate editor state |
 | **Render** | Rust | Turning the published scene into frames and drawing them. Shares the layout cache with the editor thread's layout queries (the design; what is built, and the decision it awaits, are under "Sharing state"). As built it owns the renderer alone (the device, the surface, the glyph atlas, the quads kept per row), takes frames from a mailbox, and never lays out. `editor-ffi` starts it when a window opens and ends it when the window closes; idle, it is blocked with no deadline | Run Lean code; call layout or a shaper; hold a lock while it draws; touch the window's loop |
 | **Services** | Rust | Timers, loading and saving files, child-process pipes, pseudo-terminals, file watches | Hold editor state; call Lean |
-| **Workers** | Rust | Tree-sitter parsing, diff, fuzzy matching | Hold editor state |
+| **Workers** | Rust | Tree-sitter parsing, diff, fuzzy matching over long lists. None is built. The fuzzy matcher that is built answers in the call, on the thread that asked, which is the editor thread (`rust-library.md`, "Fuzzy matching, as built") | Hold editor state |
 
 Rust never calls Lean. The main thread and the services push events onto a
 queue, and the editor thread pulls them with a blocking call. Measured in
@@ -822,7 +822,8 @@ transaction through. Where those come from is open.
 
 ### Prompts
 
-Status: decided 2026-11-14 and built, by the command loop's phase 10.
+Status: decided 2026-11-14 and built, by the command loop's phase 10; a
+prompt's candidates by its phase 14 ("Candidates", below).
 
 | Built | Where |
 |---|---|
@@ -834,15 +835,23 @@ Status: decided 2026-11-14 and built, by the command loop's phase 10.
 | `open-file` asking for its path | `lean/Editor/Files.lean` (`openCommand`) |
 | An invocation a command asks to be run after it, with no prompt | `lean/Editor/State/Request.lean` (`StateRequest.invoke`), `lean/Editor/Api.lean` (`invoke`) |
 | `ex` asking for its line, and running the answer's command | `lean/Editor/Ex.lean` (`exCommand`, `run`) |
+| A prompt's candidates, their listing and the choice; setting them and choosing | `lean/Editor/State.lean` ("Prompts": `Candidates`), `lean/Editor/State/Request.lean` |
+| `prompt` with candidates from a function, `setCandidates`, `chooseCandidate`; accepting the chosen candidate | `lean/Editor/Api.lean` ("Prompts") |
+| The listing, made before each scene from what the fuzzy matcher answers | `lean/Editor/Loop.lean` ("Prompts": `Loop.listed`), `lean/Editor/Fuzzy.lean` |
+| `minibuffer-next`, `minibuffer-previous` and the roles the mode fills with them | `lean/Editor/Minibuffer.lean` |
+| The ex names as the ex line's candidates | `lean/Editor/Ex.lean` (`exCommand`), `lean/Editor/Api.lean` (`exNames`) |
 
 Pinned on the models by `ModelTest.stateChecks` and `stateRequestChecks`
 (the state's operations), `promptChecks` (the loop, its host on the
-models, the commands and the mode: the acceptance criteria) and
+models, the commands and the mode: the acceptance criteria),
+`candidateChecks` (the listing, the scene's fields for it, and choosing
+and accepting by keys) and
 `dispatchGiveUpChecks` (what is given up); on the models and the real text
 binding by the cases of `lean/Editor/Api/Cases.lean`; through the headless
 host over the real library and the real elaborator by
-`ConfigTest.promptChecks`; and on the executable by the fixture
-`tests/headless/prompt`.
+`ConfigTest.promptChecks`; and on the executable by the fixtures
+`tests/headless/prompt` and, for candidates with the library's matcher,
+`tests/headless/candidates`.
 
 A command can need a string from the user: a file name, an ex command. It
 cannot wait for one. A command may not block, and while a command runs no
@@ -1083,11 +1092,88 @@ prompt.** Built by the command loop's phase 12.
 - **A reload leaves the prompt open.** It is compiled state. Its
   continuation is a name, looked up when the answer arrives.
 
+**Candidates.** A prompt may be asked with candidates: strings the answer
+may be chosen from. While it is open the scene lists the candidates the
+typed text matches, two commands move a choice through that list, and
+accepting hands the continuation the chosen candidate.
+
+- **They come from a function the asking command's `prompt` runs once**:
+  `prompt label continuation initial (candidates := …)`, where the
+  function is a program over the editor's port that answers the strings.
+  It may ask what a command may: the state's buffers, the bound ex names.
+  - It is run inside the asking command, after the two refusals that make
+    nothing and before the minibuffer's text is made, and what it answers
+    is what the open prompt holds, as plain data. If it is refused the
+    asking command is refused and rolled back like any, and no prompt
+    opens.
+  - It has no `IO` and cannot wait. A list that needs the file system is
+    made by a job, whose command asks with the result
+    (`candidates := pure names`).
+  - This is how a function supplies candidates though a prompt holds no
+    function ("A function kept by the loop or by the registry", above):
+    the function is the asking command's, and is gone when the prompt is
+    open.
+- **The list is then fixed**, but for `setCandidates`, which replaces an
+  open prompt's candidates and forgets its listing and its choice. A job's
+  command can bring a list that way.
+- **The candidates, the listing and the choice are fields of the open
+  prompt**, so they are editor state. A command that fails is rolled back
+  to the listing and the choice from before it. A reload leaves them: they
+  are strings, not config's code.
+- **The loop brings the listing up to date before each scene, and nothing
+  else asks the matcher.** While a prompt is open and has candidates, the
+  publish reads the minibuffer's text; when it is not the text the listing
+  is for, it asks the fuzzy matcher and keeps the candidates it answers,
+  in its order, with nothing chosen
+  ([lean-runtime.md](lean-runtime.md), "The editor's port is a
+  composite").
+  - The first listing is made by the scene of the asking step, for the
+    initial text. Every event ends in a scene, so a command always finds
+    the listing of the text the last scene showed.
+  - A text that did not change costs one read and no ranking. A prompt
+    with no candidates costs what it cost before.
+  - It is the loop's own request: it is not guarded, so the interrupt flag
+    never stops a scene. The ranking runs on the editor thread, in the
+    call ([rust-library.md](rust-library.md), "Fuzzy matching, as built").
+  - Set aside: listing in the command that typed. That command is the
+    scheme's self-insert, which knows no prompt, and an undo, a put and a
+    committed text change the text too. Set aside too: asking again at
+    each use, with no listing kept. The list a key steps through could
+    then differ from the one shown.
+- **The choice** is an index of the listing, or none. `chooseCandidate`
+  moves it one step, next or previous. From nothing chosen, next chooses
+  the first and previous the last; next from the last and previous from
+  the first choose nothing. So the text as typed is one stop of the
+  round. The minibuffer's text is not changed by a choice, and a change of
+  the text forgets the choice, since the next scene lists again.
+- **What accepting gives the continuation**:
+  - a candidate is chosen, and the listing is for the minibuffer's text:
+    that candidate;
+  - nothing is chosen, whatever is listed: the typed text;
+  - nothing matches: nothing can be chosen, so the typed text.
+
+  So every prompt that shipped before candidates behaves as it did, and a
+  user who types and accepts gets what was typed. Set aside: the first
+  match when nothing is chosen. `:r` and the accept key would then run
+  `reload`.
+- **Set aside: a completer registered by name and called at each change**
+  of the text, as a continuation is named. It needs a fourth kind of
+  registration by owner, a rule for running config's code inside the
+  publish, and what a refusal or an interrupt there means. Nothing built
+  needs a list that changes with the text. File names do, since they
+  depend on the directory typed so far: `open-file` has no candidates.
+
+How the scene shows the candidates is in
+[text-and-display.md](text-and-display.md), "Views as built", and the keys
+that move through them in [keymaps-and-modes.md](keymaps-and-modes.md),
+"The minibuffer".
+
 **What ships that asks.** `open-file`, run with no path as its first
 argument, asks `Open file: ` with itself as the continuation, so the
 answer is the path it opens, in the view it was asked from ("Getting
 results back"). `ex`, run with no line as its first argument, asks `:`
-with itself as the continuation, so the answer is the line it runs
+with itself as the continuation and the bound ex names as its candidates,
+so the answer is the line it runs
 ([keymaps-and-modes.md](keymaps-and-modes.md), "The ex command line").
 `save-buffer` does not ask: a buffer with a file needs no
 name, and one with no file needs a file that is not there yet, which is

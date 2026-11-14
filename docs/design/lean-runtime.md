@@ -620,9 +620,48 @@ editor state's buffers and windows through one port, whose shape is:
   `EditorRequest.text` carries a request of the text port,
   `EditorRequest.display` one of the display port, `EditorRequest.watch`
   one of the watch port, `EditorRequest.clipboard` one of the clipboard
-  port and `EditorRequest.state` a request about the editor state: five
+  port, `EditorRequest.fuzzy` one of the fuzzy port
+  and `EditorRequest.state` a request about the editor state: six
   sub-ports. The reply to each is its sub-port's reply. `editorPort` is
   an `abbrev`, as every port is.
+- **The fuzzy port** (`lean/Editor/Fuzzy.lean`, added by the command
+  loop's phase 14) is what the editor asks of a fuzzy matcher:
+  `rank pattern candidates` answers the indices of the candidates the
+  pattern matches, best first, each once. It refuses nothing.
+  - **What matches** is one rule: the pattern's Unicode scalar values all
+    occur in the candidate, in order, with case kept. A Lean `String` is
+    a list of scalar values, so the model (`FuzzyModel.matches`) is a
+    subsequence test and needs no table. That is what lets the model and
+    the library agree on every input
+    ([rust-library.md](rust-library.md), "Fuzzy matching, as built").
+  - **The order** an asker may rest on is one thing: a candidate that is
+    the pattern is first. After those the model's order is the
+    candidates' own and the binding's is the library's scores.
+  - **The contract** (`lean/Editor/Fuzzy/Contract.lean`) asks those two
+    things and no more: which candidates match, on a table of cases
+    compared with the reply sorted, and that an exact match is first,
+    which reads the first index only. `lake test` runs it on the model
+    and `contract-test` on the real binding. **The known gap**: the two
+    are not held to agree on the order past the exact matches. So logic
+    above the port is tested on the model, and a check of it computes
+    what it expects with `FuzzyModel.rank` and never writes an order out.
+  - **How the two sides are held together.** The Lean model and the Lean
+    binding by this contract. The Rust fake and the library's adapter by
+    the Rust port's contract, which also sweeps generated texts. The
+    binding is the Rust ranking rule over that adapter. So the model
+    cannot drift from the library without one of the two contracts
+    failing.
+  - **As a sub-port**: `Fuzzy.rank` is used in a command as it is, and
+    config can call it. On the models it is answered by the fuzzy model,
+    which has no state, and moves the watch model's clock, as every
+    request that reaches the library does. Against the library it is
+    answered by `Fuzzy.real`, one call, as a text request is by the text
+    binding: the matcher needs nothing a host could hand in, so no runner
+    takes a handler for it and no host changed. It is guarded like any
+    request that is not the state's.
+  - Set aside: a function handed to the loop. The loop's publish and a
+    command would then reach the matcher two ways, and config not at
+    all.
 - **The clipboard port** (`lean/Editor/Clipboard.lean`, added by the
   command loop's phase 13) is what a command asks of the system
   clipboard: the text it holds, and to hold another. The clipboard is
@@ -655,9 +694,9 @@ editor state's buffers and windows through one port, whose shape is:
   program over the text port alone is `TextM`, and every text operation and
   all logic over text alone (the undo tree, the text contract, `append`)
   stays at it; the display's is `DisplayM`, the watch port's `WatchM` and
-  the clipboard's `ClipboardM`.
-  `TextM.lift`, `DisplayM.lift`, `Watch.lift` and `Clipboard.lift` embed
-  each in a command,
+  the clipboard's `ClipboardM` and the fuzzy port's `FuzzyM`.
+  `TextM.lift`, `DisplayM.lift`, `Watch.lift`, `Clipboard.lift` and
+  `Fuzzy.lift` embed each in a command,
   and they are `MonadLift` instances, so an operation of any sub-port is
   used in a command as it is. That is why every config source and fixture written before the port
   became a composite elaborates unchanged. There is no lift from `JobM`, so
@@ -731,15 +770,19 @@ editor state's buffers and windows through one port, whose shape is:
 
 | Piece | Where |
 |---|---|
-| The composite port, `EditorM`, the four embeddings and lifts, and the mapping of the display's refusals | `lean/Editor/Command.lean` |
+| The composite port, `EditorM`, the five embeddings and lifts, and the mapping of the display's refusals | `lean/Editor/Command.lean` |
+| The fuzzy port: its one request, which refuses nothing; `FuzzyHandler` | `lean/Editor/Fuzzy.lean` |
+| Its pure model, with no state: a subsequence test, and the candidates that are the pattern first | `lean/Editor/Fuzzy/Model.lean` |
+| Its contract, imported from the port alone, run against the model by `lake test` and against the real binding by `contract-test` | `lean/Editor/Fuzzy/Contract.lean` |
+| Its real binding: one call into the library | `lean/Editor/Fuzzy/Real.lean` |
 | The clipboard port: its two requests, each refused as a value; `ClipboardHandler`; `Clipboard.unavailable` | `lean/Editor/Clipboard.lean` |
 | Its pure model: the text held, and a clipboard a test takes away | `lean/Editor/Clipboard/Model.lean` |
 | Its contract, imported from the port alone, run against the model by `lake test` and against the in-process clipboard by `contract-test` | `lean/Editor/Clipboard/Contract.lean` |
 | The clipboard where there is no window (the headless host): a cell of the process that answers with the model's rule | `lean/Editor/Clipboard/InProcess.lean` |
 | The state requests and their pure handler: one read of the whole state, and a request a write (a buffer, its history, values and modes; a window; the echo; a job to start), each refused with a value | `lean/Editor/State/Request.lean`, over the operations of `lean/Editor/State.lean` |
 | A dispatched command: its state requests answered from the loop's state, every other request guarded, so that it stops at its next one once the flag is up, a major mode's on-enter actions run inside it; `Guarded`, how it ended; and `Loop.Registered`, what the loop is told of the registry. The guard has this one definition | `lean/Editor/Command/Dispatch.lean` |
-| The composite's model runner, over the four models side by side | `lean/Editor/Command/Model.lean` |
-| The composite's real runner, over the text binding, a display handler, a watch handler and a clipboard handler | `lean/Editor/Command/Real.lean` |
+| The composite's model runner, over the four models side by side, and the fuzzy model, which has no state | `lean/Editor/Command/Model.lean` |
+| The composite's real runner, over the text binding, a display handler, a watch handler, a clipboard handler and the fuzzy port's real binding | `lean/Editor/Command/Real.lean` |
 | `DisplayHandler`, and running a display program against one | `lean/Editor/Display.lean` |
 | The watch port: the interrupt flag, lowering it, and the clock; `WatchHandler`; `Watch.idle`; the interrupt key, `C-g` | `lean/Editor/Watch.lean` |
 | Its pure model: the interrupt keys that arrived, one that arrives at a command's n-th request, and a clock with a pace | `lean/Editor/Watch/Model.lean` |
@@ -771,6 +814,9 @@ made of state requests and text requests. Config sees it through
 | Break a line with the buffer's line ending, and ask whether a buffer is modified | `ViewId.insertLineBreak`, `Target.insertLineBreak`; `BufferId.isModified` | Yes: `apply`, and the text's revision |
 | Open a file into a buffer and save a buffer to its file | `Files.open`, `Files.save` (`lean/Editor/Files.lean`), each of which starts a compiled job | For the snapshot a save writes; the file is the job's to load or save |
 | Ask for a string, without waiting for it, and accept or cancel the open prompt | `prompt label continuation initial`, which names the command that receives the answer as an invocation; `acceptPrompt`, `cancelPrompt` | To make the minibuffer's text and its markers, and to read the answer; a cancel reaches nothing |
+| Ask with candidates the answer may be chosen from, replace an open prompt's, and move a choice through the ones it has listed | `prompt … (candidates := function)`, where the function is a program over the editor's port that `prompt` runs once; `setCandidates`; `chooseCandidate step`. Accepting gives the continuation the chosen candidate, and the typed text when nothing is chosen ([concurrency.md](concurrency.md), "Prompts") | Whatever the function asks; `setCandidates` and `chooseCandidate` reach nothing. The listing is the loop's, made before each scene |
+| Which candidates a pattern matches, best first | `Fuzzy.rank pattern candidates`, the fuzzy port's own, lifted | Yes: one call, which keeps nothing in the library |
+| Which ex names are bound | `exNames`, answered by the loop from the registry | No |
 | Ask which command an ex name is bound to, and what the name takes | `exBinding name`, answered by the loop from the registry as it is at that step | No |
 | Have another command run after it, as a step of its own | `invoke invocation` | No: the host runs it once the command has ended |
 | Have the command registered under a name run inside it, as part of it, and learn whether there was one | `runCommand name call`, answered by the loop from the lookup a key's invocation goes through ([concurrency.md](concurrency.md), "Prompts") | Whatever the command run makes |
@@ -826,6 +872,8 @@ made of state requests and text requests. Config sees it through
   closes the prompt and records the invocation with the answer as its
   first argument, which the loop's host runs as a step of its own. The
   commands a key runs for it, `minibuffer-accept` and `minibuffer-cancel`,
+  and `minibuffer-next` and `minibuffer-previous`, which move a choice
+  through a prompt's candidates (the command loop's phase 14),
   and the minibuffer's mode are compiled (`lean/Editor/Minibuffer.lean`),
   registered by `lean/Editor/Minibuffer/Compiled.lean`, the one module of
   the two that names the registry.
@@ -911,7 +959,7 @@ made of state requests and text requests. Config sees it through
 | The registers: a text and whether it is line-wise, by name. Evil keeps the unnamed one, which every yank and deletion sets | Compiled Lean, a field of the editor state (`EditorState.registers`, `lean/Editor/State.lean`), set by a command (`setRegister`), so it is rolled back with a command that does not run to its end | Untouched | Lost |
 | The system clipboard | Outside the editor: reached through the clipboard port. A host with no window keeps one of its own in the process (`lean/Editor/Clipboard/InProcess.lean`) | Untouched | The window system's is the system's; the in-process one is lost |
 | Compiled commands, jobs, key bindings, modes and ex bindings | Compiled Lean, in the registry, for the owner `compiled`. The executable ships the ex line's four commands, `ex`, `quit`, `save-and-quit` and `reload-config`, and the ex names `w`, `e`, `q`, `wq` and `reload` (`lean/Editor/Ex/Compiled.lean`), the file commands, `open-file` and `save-buffer`, and their jobs, `load-file` and `save-file` (`lean/Editor/Files/Compiled.lean`), the minibuffer's commands, `minibuffer-accept` and `minibuffer-cancel`, and its mode, `minibuffer` (`lean/Editor/Minibuffer/Compiled.lean`), and evil's eighteen commands, `move`, `normal`, `visual`, `visual-line`, `insert`, `append`, `insert-line-start`, `append-line-end`, `self-insert`, `operate`, `delete-char`, `put-after`, `put-before`, `open-below`, `open-above`, `undo`, `redo` and `repeat`, over its compiled tables of motions, operators and changes (`lean/Editor/Evil/Compiled.lean`) | Untouched: a reload replaces config's, and cancels config's jobs only, so a compiled job that is running goes on | Registered again when the host starts |
-| An open prompt: its label, the minibuffer's view, the asking view and the continuation, with the minibuffer's buffer and window | Compiled Lean, a field of the editor state (`EditorState.prompt`, `lean/Editor/State.lean`) and a buffer and a window of it, from the command that asks until the one that accepts or cancels | Untouched: the prompt stays open, and its continuation is a name, looked up in the registry as it is when the answer arrives | Lost |
+| An open prompt: its label, the minibuffer's view, the asking view and the continuation, its candidates with what it has listed of them and the choice, all plain data, with the minibuffer's buffer and window | Compiled Lean, a field of the editor state (`EditorState.prompt`, `lean/Editor/State.lean`) and a buffer and a window of it, from the command that asks until the one that accepts or cancels | Untouched: the prompt stays open, and its continuation is a name, looked up in the registry as it is when the answer arrives | Lost |
 | A save in flight: the snapshot a save writes and the state its text was in | Compiled Lean, with the buffer's file in the editor state, from the save command until the save's result is delivered | Untouched | Lost with the buffer |
 | Asked to quit: whether a command asked the editor to quit | Compiled Lean, a field of the editor state (`EditorState.quitting`), from the command that asks until the step that says stop, or until the scene that withdraws it because a buffer has unsaved changes | Untouched: a quit that is waiting for a save still waits | Not kept: the process has ended |
 | A view's wanted column: the column its vertical motions aim for, with the offset the cursor was left at | Compiled Lean, a field of the view's window in the editor state (`Window.wanted`), set by a command (`ViewId.setWanted`) | Untouched | Lost |

@@ -102,13 +102,23 @@ answer, as its first argument.
 
 | Command | Does |
 |---|---|
-| `minibuffer-accept` | Accepts the open prompt with the minibuffer's text as the answer: the prompt is closed, the focus goes back to the window it was asked from, and the command the prompt named runs with the answer. With no prompt open it says so in the echo area. |
+| `minibuffer-accept` | Accepts the open prompt: it is closed, the focus goes back to the window it was asked from, and the command the prompt named runs with the answer. The answer is the chosen candidate, when one is chosen, and otherwise the minibuffer's text. With no prompt open it says so in the echo area. |
 | `minibuffer-cancel` | Cancels the open prompt: it is closed, the focus goes back, and the command it named does not run. With no prompt open it says so. |
+| `minibuffer-next` | Moves the choice to the next of the candidates the open prompt has listed: from nothing chosen to the first, and from the last to nothing chosen. The minibuffer's text is not changed. With nothing listed it does nothing, and with no prompt open it says so. |
+| `minibuffer-previous` | The same, backward: from nothing chosen to the last, and from the first to nothing chosen. |
 
 The mode `minibuffer` is the major mode of the minibuffer's buffer. It
-puts the two commands on the keys the input scheme has for the roles
-`activate` and `quit`; under the Vim scheme, where typing in the minibuffer
-is text, they are on `<Enter>` and `<Escape>`.
+puts the four commands on the keys the input scheme has for the roles
+`activate`, `quit`, `next-item` and `previous-item`; under the Vim scheme,
+where typing in the minibuffer is text, they are on `<Enter>`, `<Escape>`,
+`<Tab>` and `C-n`, and Shift with `<Tab>` and `C-p`.
+
+A prompt may be asked with candidates
+(`prompt label continuation initial (candidates := function)`). The
+scene's `status` line of the minibuffer's view then has, after the
+prompt's label in the face `minibuffer.prompt`, one field for each
+candidate the typed text matches, best first, in the face
+`minibuffer.candidate`, and the chosen one in `minibuffer.chosen`.
 
 And it ships evil, compiled in (`lean/Editor/Evil.lean` and the modules
 beside it): the commands the Vim scheme's keys run, so the editor moves,
@@ -255,12 +265,12 @@ $ .lake/build/bin/editor headless "$(lean --print-prefix)" .lake/build/lib/lean 
 reload 1: installed, 2 chunks, 1 commands
 run greet: ok
 run missing: no such command
-commands: open-file save-buffer minibuffer-accept minibuffer-cancel move normal visual visual-line insert append insert-line-start append-line-end self-insert ex quit save-and-quit reload-config greet
+commands: open-file save-buffer minibuffer-accept minibuffer-cancel minibuffer-next minibuffer-previous move normal visual visual-line insert append insert-line-start append-line-end self-insert ex quit save-and-quit reload-config greet
 text 0: ""
 text 1: "hello, world"
 spawn count: job 1
 job 1 count: ok
-commands: open-file save-buffer minibuffer-accept minibuffer-cancel move normal visual visual-line insert append insert-line-start append-line-end self-insert ex quit save-and-quit reload-config greet
+commands: open-file save-buffer minibuffer-accept minibuffer-cancel minibuffer-next minibuffer-previous move normal visual visual-line insert append insert-line-start append-line-end self-insert ex quit save-and-quit reload-config greet
 text 0: ""
 text 1: "hello, world"
 text 2: "counted 42"
@@ -268,7 +278,8 @@ text 2: "counted 42"
 
 Text 0 is the scratch buffer's: the editor loop makes its frame, and that
 buffer, for the first command it runs. `open-file`, `save-buffer`,
-`minibuffer-accept`, `minibuffer-cancel`, evil's eighteen, from `move` to
+`minibuffer-accept`, `minibuffer-cancel`, `minibuffer-next`,
+`minibuffer-previous`, evil's eighteen, from `move` to
 `repeat`, and the ex line's four, from `ex` to `reload-config`, are
 the commands the editor ships, compiled in: `show` lists them before
 config's.
@@ -478,7 +489,12 @@ the prompt opened, a `commit` of the line, and `<Enter>`. The first and
 the last open it as a user does, with the `:` key (`key : Semicolon
 shift`), which the Vim scheme's normal state binds to `ex` and hands a
 count and a register; the second opens it with `run ex`. `bogus` is a name nobody bound; `w` runs `save-buffer`, and the
-scratch buffer has no file; `q` quits the editor. The loop ends at that
+scratch buffer has no file. The third line is `e`, and a scene is printed
+with the prompt open: the ex line's candidates are the bound ex names, so
+the minibuffer's status line lists `e`, which is the text, and then
+`reload`. `<Tab>` chooses the first and `<Enter>` runs it: `e` with no
+path asks for one, with a prompt of its own that lists none, which
+`<Escape>` cancels. `q` quits the editor. The loop ends at that
 last `<Enter>`, so the `scene` line the script has after it is not run,
 and the exit status is 0. Its output must be exactly
 `tests/headless/ex/expected`:
@@ -496,12 +512,73 @@ scene 0x0, focused 0, echo "scratch has no file to save to", preedit -, publishe
 view 0 0,0 0x0: "", scroll 0, selections 0..0
 status 0: status.state "normal", status.name "scratch"
 key arrived: : Semicolon shift
+scene 0x0, focused 3, echo "", preedit -, published 13
+view 0 0,0 0x0: "", scroll 0, selections 0..0
+status 0: status.state "normal", status.name "scratch"
+view 3 0,0 0x0: "e", scroll 0, selections 1..1
+status 3: minibuffer.prompt ":", minibuffer.candidate "e", minibuffer.candidate "reload"
+key arrived: <Tab> Tab -
+key arrived: <Enter> Enter -
+scene 0x0, focused 4, echo "", preedit -, published 18
+view 0 0,0 0x0: "", scroll 0, selections 0..0
+status 0: status.state "normal", status.name "scratch"
+view 4 0,0 0x0: "", scroll 0, selections 0..0
+status 4: minibuffer.prompt "Open file: "
+key arrived: <Escape> Escape -
+key arrived: : Semicolon shift
 key arrived: <Enter> Enter -
 ```
 
 Four scenes are published between the first `:` key and the first
 `scene`: for `ex`, for the commit, for the accept command and for `ex`
 with the line. The second line adds a fifth, for `save-buffer`.
+
+A ninth, `tests/headless/candidates/script`, asks for a prompt with
+candidates and chooses one, on the config in
+`tests/headless/candidates/config`, with the library's fuzzy matcher.
+Config's `pick` asks `Pick: ` with the candidates `wq`, `edit` and `w`.
+With `w` typed, the minibuffer's status line lists `w` and then `wq`: the
+library scores the two the same and `wq` came first, so only the rule
+that a candidate that is the text is first orders them. `<Tab>` twice
+chooses `wq`, which is then in the face `minibuffer.chosen`, and `<Enter>`
+gives config's `picked` that candidate and not the typed text. With `z`
+typed nothing is listed, `<Tab>` chooses nothing, and `picked` receives
+`z`. Its output must be exactly `tests/headless/candidates/expected`:
+
+```console
+$ .lake/build/bin/editor headless "$(lean --print-prefix)" .lake/build/lib/lean ../tests/headless/candidates/config ../tests/headless/candidates/script
+reload 1: installed, 1 chunks, 2 commands
+run pick: ok
+key arrived: w KeyW -
+scene 0x0, focused 1, echo "", preedit -, published 2
+view 0 0,0 0x0: "", scroll 0, selections 0..0
+status 0: status.state "normal", status.name "scratch"
+view 1 0,0 0x0: "w", scroll 0, selections 1..1
+status 1: minibuffer.prompt "Pick: ", minibuffer.candidate "w", minibuffer.candidate "wq"
+key arrived: <Tab> Tab -
+key arrived: <Tab> Tab -
+scene 0x0, focused 1, echo "", preedit -, published 5
+view 0 0,0 0x0: "", scroll 0, selections 0..0
+status 0: status.state "normal", status.name "scratch"
+view 1 0,0 0x0: "w", scroll 0, selections 1..1
+status 1: minibuffer.prompt "Pick: ", minibuffer.candidate "w", minibuffer.chosen "wq"
+key arrived: <Enter> Enter -
+scene 0x0, focused 0, echo "picked wq", preedit -, published 8
+view 0 0,0 0x0: "", scroll 0, selections 0..0
+status 0: status.state "normal", status.name "scratch"
+run pick: ok
+key arrived: z KeyZ -
+scene 0x0, focused 2, echo "", preedit -, published 11
+view 0 0,0 0x0: "", scroll 0, selections 0..0
+status 0: status.state "normal", status.name "scratch"
+view 2 0,0 0x0: "z", scroll 0, selections 1..1
+status 2: minibuffer.prompt "Pick: "
+key arrived: <Tab> Tab -
+key arrived: <Enter> Enter -
+scene 0x0, focused 0, echo "picked z", preedit -, published 15
+view 0 0,0 0x0: "", scroll 0, selections 0..0
+status 0: status.state "normal", status.name "scratch"
+```
 
 Two more runs of the gate are on a real file, and so on a script that
 cannot be checked in whole: the file port takes absolute paths only. Each

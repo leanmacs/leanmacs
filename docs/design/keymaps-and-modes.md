@@ -29,7 +29,7 @@ registers, undo and dot repeat, on the editor API:
 | Defining a mode from `setup`, and its refusals | `lean/Editor/Setup.lean` (`defineMode`), `lean/Editor/Config/Registry.lean` (`Registrations.problem?`) |
 | A buffer's major and minor modes, and the state operations that set them | `lean/Editor/State.lean` |
 | The notice a scheme is told when the minibuffer's view opens, and the contract's property that a key that prints is text there | `lean/Editor/InputScheme.lean` (`openMinibuffer`), `lean/Editor/InputScheme/Contract.lean` (`minibufferTakesText`), `lean/Editor/Loop.lean` (`Loop.toldViews`) |
-| The minibuffer's mode and its two commands, and their registrations | `lean/Editor/Minibuffer.lean`, `lean/Editor/Minibuffer/Compiled.lean` |
+| The minibuffer's mode and its four commands (accept, cancel, and the next and the previous candidate), and their registrations | `lean/Editor/Minibuffer.lean`, `lean/Editor/Minibuffer/Compiled.lean` |
 | The Vim state of the minibuffer's view, and its default keys | `lean/Editor/InputScheme/Vim.lean` (`States.minibuffer`, `State.openMinibuffer`), `lean/Editor/InputScheme/Vim/Default.lean` (`minibufferCommands`) |
 | What a scheme reports of a view, and the contract's property that a key that yields nothing leaves it as it was | `lean/Editor/InputScheme.lean` (`InputScheme.Report`, `report`), `lean/Editor/InputScheme/Contract.lean` (`quietKeyKeepsReport`) |
 | A Vim state's selection shape, and the Vim scheme's report of a view's state | `lean/Editor/InputScheme/Vim.lean` (`StateRecord.shape`, `State.report`), `lean/Editor/InputScheme/Vim/Default.lean` |
@@ -1823,7 +1823,7 @@ Which names have something behind them:
 | The fifteen motions of `motions` | Built: entries of `Evil.motions`, run by the command `move`. One check presses every key of the table and holds that none says `no such motion`, without restating either table |
 | `insert`, `append`, `insert-line-start`, `append-line-end`; `visual`, `visual-line`; `normal` | Built and registered (`Evil.commands`) |
 | `self-insert`, which no table names: typed text | Built and registered |
-| `minibuffer-accept`, `minibuffer-cancel` | Built and registered (`Minibuffer.commands`) |
+| `minibuffer-accept`, `minibuffer-cancel`, `minibuffer-next`, `minibuffer-previous` | Built and registered (`Minibuffer.commands`) |
 | The operators (`delete`, `change`, `yank`) | Built: entries of `Evil.operators`, run by the command `operate`, which is registered (`Evil.commands`) |
 | `open-below`, `open-above`, `delete-char`, `put-after`, `put-before`, `undo`, `redo` | Built and registered (`Evil.commands`) |
 | `repeat`, which no table names: the repeat key's invocation | Built and registered |
@@ -1838,7 +1838,7 @@ Which names have something behind them:
 | `insertCommands` | `<Escape>` normal (enters normal) |
 | `visualCommands` | `<Escape>` and `v` normal, `V` visual-line, `"` |
 | `visualLineCommands` | `<Escape>` and `V` normal, `v` visual, `"` |
-| `minibufferCommands` | `RET` minibuffer-accept, `<Escape>` minibuffer-cancel (each changes no text and enters no state) |
+| `minibufferCommands` | `RET` minibuffer-accept, `<Escape>` minibuffer-cancel, `TAB` and `C-n` minibuffer-next, `S-TAB` and `C-p` minibuffer-previous (each changes no text and enters no state) |
 
 | State | Keymaps, in precedence order | Cursor | Selection | The grammar reads |
 |---|---|---|---|---|
@@ -2154,8 +2154,10 @@ own, and that window has the focus.
   The active keymaps of that view are its buffer's modes' and then the
   global keymap ("Active keymaps"), as for any view.
 - **"Its own keymap" is a compiled major mode**, `minibuffer`
-  (`Minibuffer.mode`), which fills two roles: `activate` with the command
-  `minibuffer-accept`, and `quit` with `minibuffer-cancel`. So any scheme
+  (`Minibuffer.mode`), which fills four roles: `activate` with the command
+  `minibuffer-accept`, `quit` with `minibuffer-cancel`, and `next-item`
+  and `previous-item` with the two commands that move through a prompt's
+  candidates ("A prompt's candidates", below). So any scheme
   has an accept key and a cancel key from its role table, with no binding
   written for the scheme, which is what roles are for. Under the test
   scheme they are the keys of those two roles. With no prompt open each
@@ -2211,7 +2213,8 @@ own.**
 - **The default registry has a fifth state, `minibuffer`**: typing is
   text (so a digit is text too), the cursor is a bar, and its one keymap
   (`Vim.Default.minibufferCommands`) binds `RET` to `minibuffer-accept`
-  and `<Escape>` to `minibuffer-cancel`. This is Vim's own command-line
+  and `<Escape>` to `minibuffer-cancel`, and four keys to the commands
+  that move through a prompt's candidates. This is Vim's own command-line
   mode.
 - **Why a state of its own and not `insert`.** In `insert`, `<Escape>`
   enters normal state and `RET` is bound to nothing, so answering would
@@ -2251,6 +2254,52 @@ written for the checks and on the defaults), `ConfigTest.promptChecks`
 and `<Enter>` and `<Escape>` are pressed, under the Vim scheme the
 executable runs.
 
+**A prompt's candidates** (built by the command loop's phase 14). A prompt
+may be asked with candidates, strings the answer may be chosen from
+([concurrency.md](concurrency.md), "Prompts", has where they come from and
+what accepting gives).
+
+- **The scene lists them in the minibuffer's status line.** After the
+  prompt's label comes one field for each candidate the typed text
+  matches, every one, in the fuzzy matcher's order, in the face
+  `minibuffer.candidate`; the chosen one is in `minibuffer.chosen`
+  ([text-and-display.md](text-and-display.md), "Views as built"). A
+  candidate that is the typed text is first. With nothing listed the line
+  is the label alone.
+- **Two commands move a choice through the list**, `minibuffer-next` and
+  `minibuffer-previous` (`lean/Editor/Minibuffer.lean`).
+  - From nothing chosen, next chooses the first and previous the last;
+    next from the last and previous from the first choose nothing. So the
+    typed text is one stop of the round, as in Vim's wild menu.
+  - The minibuffer's text is not changed by a choice. Accepting takes the
+    chosen candidate, and the typed text when nothing is chosen.
+  - A change of the text forgets the choice: the next scene lists again.
+  - With nothing listed each changes nothing, and with no prompt open
+    each says so, as accept and cancel do.
+- **The mode fills the roles `next-item` and `previous-item` with them**,
+  so any scheme whose role keys hold in the minibuffer has the two keys
+  from its role table, as it has the accept key and the cancel key. Under
+  the test scheme they are the keys of those roles.
+- **Under the Vim scheme the keys are in the minibuffer state's table**,
+  for the reason the accept and cancel keys are: the state inserts text,
+  and the Vim keys of the two roles are `j` and `k`, which must be text.
+  `Vim.Default.minibufferCommands` binds `TAB` and `C-n` to
+  `minibuffer-next` and `S-TAB` and `C-p` to `minibuffer-previous`, Vim's
+  own keys in its command line. A window system may report Shift and Tab
+  under another name than `S-TAB`; that has not been checked on a window,
+  and `C-p` is bound beside it.
+- **Set aside**: putting the chosen candidate's text into the minibuffer;
+  a limit on how many candidates the scene lists, or a window of them
+  round the choice, which a long list wants; a popup or a view of their
+  own for them; and highlighting the characters that matched.
+
+Pinned by `ModelTest.candidateChecks` (the listing, the scene's fields and
+the two commands, on the models and the test scheme, with the keys read
+from its role table), `vimDefaultChecks` (the four keys of the Vim state),
+and the fixture `tests/headless/candidates`, which is where `<Tab>` and
+`<Enter>` are pressed under the Vim scheme the executable runs, with the
+library's matcher.
+
 ## The ex command line
 
 Status: decided 2026-11-14 and built, by the command loop's phase 12
@@ -2280,6 +2329,27 @@ that name, so the key opens the line.
   replaces it there.
 - **Set aside: a leading colon or a count.** Neither is dropped: `:w`
   typed on the ex line is the unknown name `:w`.
+
+**The ex line's candidates are the ex names that are bound** (built by the
+command loop's phase 14; "A prompt's candidates", under "The minibuffer").
+
+- `ex` asks for its line with the bound ex names as the prompt's
+  candidates: each name once, in the order they were first bound. A
+  command asks for them (`exNames`), and the loop answers from the
+  registry as it is when the line is asked for.
+- So while a name is typed the scene lists the names it matches, a key of
+  the minibuffer chooses one, and accepting runs the chosen name. With the
+  names that ship, `e` lists `e` and then `reload`.
+- **The typed line is the pattern, whole.** A line with an argument
+  matches no name, so nothing is listed, and accepting runs the line as
+  typed. A name is completed; an argument is not.
+- **Nothing is chosen unless a key chooses it**, so a typed name and the
+  accept key run what was typed, as before: `r` and the accept key is the
+  unknown name `r`, not `reload`.
+- **`open-file` has no candidates.** File names depend on the directory
+  typed so far and need the file system: a job, and a list that changes
+  with the text, neither of which is built
+  ([concurrency.md](concurrency.md), "Prompts").
 
 **An ex name is a binding to a command's name, held in the registry by
 owner.**
@@ -2535,6 +2605,19 @@ the headless host. The keys the Vim scheme has for it are pinned by the
 Vim scheme's own lists, above, and pressed in the executable's fixture
 (`tests/headless/prompt`).
 
+A prompt's candidates are checked by `candidateChecks`, on the loop's
+driver over the editor's models and the test scheme: the listing the loop
+makes before each scene, the fields the scene has for it, and the two
+commands that move through it, with their keys read from the test
+scheme's role table through the minibuffer's mode. Each listing a check
+expects is what the fuzzy model answers for the same pattern
+(`FuzzyModel.rank`): no check writes an order out, since after the
+candidates that are the pattern the model's order and the library's are
+not held to agree. On the executable, with the library's matcher, they
+are checked by the fixture `tests/headless/candidates`, whose one ordered
+pair is one the rule for an exact match fixes. The ex line's candidates
+are in `exChecks` and in the fixture `tests/headless/ex`.
+
 The ex command line is checked by one pure list, one list on the models
 and two through the host:
 
@@ -2738,6 +2821,24 @@ every build). The second is proved on the text model
   minibuffer"). Binding it to `minibuffer-cancel` in the minibuffer under
   each scheme is the alternative, and under the Vim scheme whether `C-c`
   should cancel as well as `<Escape>`.
+- **How many candidates the scene lists.** Every one the text matches, in
+  the minibuffer's status line ("A prompt's candidates"). The lists that
+  ship are five names. A list of thousands would put thousands of fields
+  in the scene at each key: a limit, or a window of about ten round the
+  choice, is the better design for it, and a view of their own for the
+  candidates once the display pipeline has popups.
+- **Case in fuzzy matching.** Case is kept, so `Re` does not match
+  `reload`, and a decomposed character does not match its composed form
+  ([rust-library.md](rust-library.md), "Fuzzy matching, as built").
+  Folding ASCII case, in the Rust core and the Lean model in one commit,
+  is the alternative.
+- **Whether the choice should wrap** from the last candidate to the first.
+  As built it passes through "nothing chosen", which is the typed text.
+- **Whether accepting with nothing chosen should take the first match.**
+  As built it takes the typed text, so no prompt that shipped before
+  candidates changed.
+- **`S-TAB` on a real window.** Whether Shift and Tab arrive from every
+  window system as the key `S-TAB` names has not been checked.
 - **The empty last row is not a line for a cursor** ("Where a cursor
   rests"). This follows Vim on files. The alternative is Emacs's: the end
   of a text that ends in a line feed is a place a normal-state cursor may
