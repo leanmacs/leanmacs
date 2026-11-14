@@ -24,6 +24,11 @@ editor-text = { path = "../editor-text" }
 # queries with it, over its published fake shaper until a real adapter
 # exists (the display pipeline's phase 3).
 editor-layout = { path = "../editor-layout" }
+# The render loop: this is the crate that starts the render thread, turns
+# what a window tells whatever draws in it into words left with the loop,
+# and lends the loop the clock that stamps input (`src/render.rs`). It
+# brings the `Renderer` port and its fakes, and no drawing library.
+editor-render = { path = "../editor-render" }
 # The real file system, for the process's file service. This is the crate
 # that wires the library together, so it is the one that links the adapter;
 # `clippy.toml` here keeps the adapter out of everything but that one static

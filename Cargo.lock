@@ -457,6 +457,7 @@ dependencies = [
  "editor-layout",
  "editor-platform",
  "editor-platform-winit",
+ "editor-render",
  "editor-text",
  "tempfile",
 ]

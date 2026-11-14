@@ -67,6 +67,11 @@
 # on that edge too. `editor-render-wgpu` itself has no entry: nothing
 # depends on it yet.
 #
+# For the wrapper `editor-ffi` of `editor-render`'s entry (2026-11-14, the
+# display pipeline's phase 5), added in the commit in which `editor-ffi`
+# came to start the render thread: with the wrapper not yet there, it fails
+# on that edge ("crate 'editor-render = 0.1.0' is explicitly banned").
+#
 # For the libraries behind the `Renderer` port, each with
 # `editor-render-wgpu` its one wrapper, each added in the commit that
 # added its edge. `etagere` (2026-11-14): with the entry's wrapper naming
@@ -121,7 +126,7 @@ deny = [
   { crate = "ropey", wrappers = ["editor-text"], reason = "the rope stays behind editor-text's own types: only that crate may name the library's" },
   { crate = "editor-text", wrappers = ["editor-ffi", "editor-fs-std", "editor-layout"], reason = "text storage has two users, the crate that puts a text behind a handle for Lean and layout, which reads its snapshots, patches and selections as plain values; and the file port it defines has one adapter, which implements it; another is a decision, so it is made here" },
   { crate = "editor-layout", wrappers = ["editor-ffi", "editor-shape-parley", "editor-render", "editor-render-wgpu"], reason = "layout is reached by the crate that puts it behind a handle for Lean and wires it to text; the Shaper port it defines has one real adapter, which implements it; and the Renderer port's crate and the crate of its real adapters take its frames as plain data; another user is a decision, so it is made here" },
-  { crate = "editor-render", wrappers = ["editor-render-wgpu"], reason = "the Renderer port has one user today, the crate of its real adapters, which implements it and runs its contract; the crate that starts the render thread is the next, and that is a decision, so it is made here" },
+  { crate = "editor-render", wrappers = ["editor-render-wgpu", "editor-ffi"], reason = "the Renderer port and the render loop have two users: the crate of the port's real adapters, which implements it and runs its contract, and the crate that wires the library together, which starts the render thread and turns what a window tells into words left with the loop; a third is a decision, so it is made here" },
   { crate = "etagere", wrappers = ["editor-render-wgpu"], reason = "the atlas packer stays behind the Renderer port: only the crate of the port's real adapters may name its types" },
   { crate = "swash", wrappers = ["editor-render-wgpu"], reason = "the glyph rasteriser stays behind the Renderer port: only the crate of the port's real adapters may name its types" },
   { crate = "png", wrappers = ["editor-render-wgpu"], reason = "an image file is read and written only by the renderer's reference-image test and the example that makes the image" },
