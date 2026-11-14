@@ -8,7 +8,12 @@
 //!
 //! The rules leave the breaking policy open: a shaper may break at
 //! characters, as the fake does, or at words, and may reorder glyphs for
-//! bidirectional text. They shape only in the default font, [`FontId`] 0,
+//! bidirectional text: a line's glyphs are in the order they are drawn
+//! in, from its left edge ([`ORDERED`]), whatever the order of their
+//! clusters. What is not open is that nothing in a text forces a break
+//! ([`UNBROKEN`]): a segment has no line feed, and every other character,
+//! a carriage return and the Unicode line and paragraph separators among
+//! them, is content. They shape only in the default font, [`FontId`] 0,
 //! which every adapter has. Of the other fonts they say only how ids stand
 //! for specs ([`FONTS`]): what a spec's glyphs measure is each adapter's.
 //! Which font a glyph is drawn in is the adapter's too (a fallback font, a
@@ -46,14 +51,20 @@ pub const FONTS: &str =
 /// what it said.
 pub const RESOLVED: &str = "every glyph is drawn in a font the shaper describes, and a description stays as given for the generation";
 
+/// A line's glyphs are in the order they are drawn in, left to right.
+pub const ORDERED: &str =
+    "a line's glyphs are in order from its left edge, none starting before the one before it";
+
 /// Every property, by name.
-pub const PROPERTIES: [&str; 8] = [
-    COVER, FIT, UNBROKEN, KEPT, CLUSTERS, HEIGHTS, FONTS, RESOLVED,
+pub const PROPERTIES: [&str; 9] = [
+    COVER, FIT, UNBROKEN, KEPT, CLUSTERS, HEIGHTS, FONTS, RESOLVED, ORDERED,
 ];
 
 /// The texts the properties are run over: empty, one character, a long
-/// run of one script, characters of two to four bytes, and words with
-/// spaces.
+/// run of one script, characters of two to four bytes, words with spaces,
+/// and the characters a paragraph layout breaks at that are content here:
+/// a carriage return alone, U+2028 and U+2029 ([`UNBROKEN`]; a row is
+/// split at line feeds only, so they reach a shaper).
 pub fn texts() -> Vec<&'static str> {
     vec![
         "",
@@ -61,6 +72,7 @@ pub fn texts() -> Vec<&'static str> {
         "abcdefghijklmnopqrstuvwxyz",
         "aé😀b€c\u{10dc80}",
         "one two three four five six seven",
+        "a\rb\u{2028}c\u{2029}d",
     ]
 }
 
@@ -115,6 +127,9 @@ pub fn check<S: Shaper>(shaper: &S) -> Vec<&'static str> {
                     .iter()
                     .all(|glyph| usize::try_from(glyph.font.0).is_ok_and(|font| font < known))
             });
+            failed[8] |= !lines
+                .iter()
+                .all(|line| line.glyphs.windows(2).all(|pair| pair[0].x <= pair[1].x));
             // Broken at every other width first, then at this one.
             for other in widths() {
                 kept.break_lines(other);
@@ -248,13 +263,14 @@ fn fits(lines: &[VisualLine], width: f32) -> bool {
 
 #[cfg(test)]
 mod tests {
+    use std::ops::Range;
     use std::sync::{Arc, Mutex};
 
-    use super::{CLUSTERS, COVER, FIT, FONTS, HEIGHTS, KEPT, RESOLVED, UNBROKEN, check};
+    use super::{CLUSTERS, COVER, FIT, FONTS, HEIGHTS, KEPT, ORDERED, RESOLVED, UNBROKEN, check};
     use crate::shaper::fake::{CellLine, CellShaper};
     use crate::shaper::{
-        FontId, FontSpec, Metrics, ResolvedFont, ResolvedFontId, ShapeInput, ShapedLine, Shaper,
-        VisualLine,
+        FontId, FontSpec, Glyph, Metrics, ResolvedFont, ResolvedFontId, ShapeInput, ShapedLine,
+        Shaper, VisualLine,
     };
 
     /// How a [`Wrong`] shaper breaks the contract.
@@ -279,6 +295,46 @@ mod tests {
         /// It forgets what it said of a font: each time its table is asked
         /// for, every entry is a pixel larger.
         ForgetsFonts,
+        /// Its lines list their glyphs from the right edge to the left.
+        Reverses,
+        /// It breaks after a carriage return, U+2028 and U+2029, as a
+        /// paragraph layout does, even with no width.
+        BreaksAtReturns,
+    }
+
+    /// `line` cut after each of its glyphs that is a carriage return,
+    /// U+2028 or U+2029 and not its last: each piece a line of its own,
+    /// its glyphs placed from its left edge.
+    fn cut_at_returns(line: &VisualLine) -> Vec<VisualLine> {
+        let piece = |bytes: Range<usize>, glyphs: Vec<Glyph>, width: f32| VisualLine {
+            bytes,
+            glyphs,
+            width,
+            height: line.height,
+            baseline: line.baseline,
+        };
+        let mut pieces = Vec::new();
+        let mut glyphs = Vec::new();
+        let (mut start, mut left) = (line.bytes.start, 0.0);
+        for (index, glyph) in line.glyphs.iter().enumerate() {
+            glyphs.push(Glyph {
+                x: glyph.x - left,
+                ..*glyph
+            });
+            // The fake's glyph id is its character.
+            let breaks = ['\r', '\u{2028}', '\u{2029}']
+                .map(u32::from)
+                .contains(&glyph.id);
+            if let Some(next) = line.glyphs.get(index + 1)
+                && breaks
+            {
+                let done = std::mem::take(&mut glyphs);
+                pieces.push(piece(start..next.cluster, done, next.x - left));
+                (start, left) = (next.cluster, next.x);
+            }
+        }
+        pieces.push(piece(start..line.bytes.end, glyphs, line.width - left));
+        pieces
     }
 
     /// A shaper that is the fake with one fault.
@@ -305,8 +361,12 @@ mod tests {
                 _ => width,
             };
             let mut lines = self.line.break_lines(width);
+            if self.fault == Fault::BreaksAtReturns {
+                lines = lines.iter().flat_map(cut_at_returns).collect();
+            }
             for line in &mut lines {
                 match self.fault {
+                    Fault::Reverses => line.glyphs.reverse(),
                     Fault::ShiftsClusters => {
                         for glyph in &mut line.glyphs {
                             glyph.cluster += 1;
@@ -390,6 +450,16 @@ mod tests {
     #[test]
     fn a_shaper_whose_description_of_a_font_changes_fails_the_resolved_rule() {
         assert_eq!(failures(Fault::ForgetsFonts), vec![RESOLVED]);
+    }
+
+    #[test]
+    fn a_shaper_whose_glyphs_are_listed_from_the_right_is_not_ordered() {
+        assert_eq!(failures(Fault::Reverses), vec![ORDERED]);
+    }
+
+    #[test]
+    fn a_shaper_that_breaks_at_a_return_or_a_separator_is_not_one_line() {
+        assert_eq!(failures(Fault::BreaksAtReturns), vec![UNBROKEN]);
     }
 
     #[test]

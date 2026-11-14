@@ -9,8 +9,11 @@
 //!
 //! What a shaper is handed is one segment of one buffer row, after the
 //! display layers below it: no tab (the tab layer has expanded it into
-//! spaces, `docs/design/text-and-display.md`) and no line break. Byte
-//! offsets in and out are offsets of [`ShapeInput::text`].
+//! spaces, `docs/design/text-and-display.md`) and no line feed. Every
+//! other character is content and forces no break, a carriage return and
+//! the Unicode line and paragraph separators among them: a row is split at
+//! line feeds only. Byte offsets in and out are offsets of
+//! [`ShapeInput::text`].
 //!
 //! # Where an addition goes
 //!
@@ -230,7 +233,10 @@ pub struct FontRun {
 /// What a shaper is asked to shape: one segment of a buffer row.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Default)]
 pub struct ShapeInput {
-    /// The text: no tab and no line break.
+    /// The text: no tab and no line feed. Any other character is content,
+    /// and none forces a break: a carriage return, U+2028 and U+2029 stay
+    /// on their visual line like any other character, and byte offsets in
+    /// and out count them as they are.
     pub text: String,
     /// Its font runs, in order. A byte no run covers is in the default
     /// font, and so is an empty text with no run; an empty text with a run
@@ -265,7 +271,11 @@ pub struct Glyph {
 pub struct VisualLine {
     /// The bytes of [`ShapeInput::text`] it holds.
     pub bytes: Range<usize>,
-    /// Its glyphs, left to right.
+    /// Its glyphs, in order from its left edge, whatever the order of
+    /// their clusters: none starts before the one before it. In
+    /// right-to-left text a later glyph draws an earlier cluster, and a
+    /// cluster may be drawn by several glyphs or one glyph draw several
+    /// characters.
     pub glyphs: Vec<Glyph>,
     /// How far across its glyphs reach.
     pub width: f32,
