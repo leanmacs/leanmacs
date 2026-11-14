@@ -1427,7 +1427,10 @@ window is still run with nothing drawing in it. The threads are in
   modifier.
 - **The pointer.** A press and a release are where the pointer last was.
   A move with a button held is a drag, carrying the button held longest;
-  a move with none held is remembered and not reported. A wheel carries
+  a move with none held is remembered and not reported. Being told the
+  pointer is where it already was is no move and so no drag: winit on
+  macOS says where the pointer is before every press and every release,
+  and a click there arrived as a press, a drag and a release. A wheel carries
   winit's delta as it is, in lines or pixels, positive when the content
   moves right and down. Touch is not mapped.
 - **Size and scale.** A resize is the new size at the scale last known,

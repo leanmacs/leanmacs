@@ -41,6 +41,10 @@
 //! - **A move with a button held is a drag**, carrying the button held
 //!   longest. A move with none held is remembered and not reported: the
 //!   port has no input for it.
+//! - **Being told the pointer is where it already was is no move**, and
+//!   so no drag. winit on macOS says where the pointer is before every
+//!   press and every release, moved or not (seen: a click arrived as a
+//!   press, a drag and a release, all at one place).
 //! - **A wheel carries winit's delta as it is**, in lines or in pixels, with
 //!   no button. Positive is the content moving right and down.
 //!
@@ -230,8 +234,12 @@ impl Seen {
                 Ime::Disabled => Composition::Disabled,
             })),
             WindowEvent::CursorMoved { position, .. } => {
-                self.position = (position.x, position.y);
-                let dragged = self.held.first().copied()?;
+                let at = (position.x, position.y);
+                // winit on macOS says where the pointer is before every
+                // press and every release, whether or not it moved.
+                let moved = at != self.position;
+                self.position = at;
+                let dragged = self.held.first().copied().filter(|_| moved)?;
                 Some(self.pointer(PointerAction::Drag, Some(dragged)))
             }
             WindowEvent::MouseInput { state, button, .. } => {
@@ -612,6 +620,43 @@ mod tests {
             seen.input(&button(ElementState::Pressed, MouseButton::Middle)),
             pointer(PointerAction::Press, (50.0, 60.0), Some(Button::Middle))
         );
+    }
+
+    #[test]
+    fn a_move_to_where_the_pointer_already_is_is_not_a_drag() {
+        // What winit on macOS says of a click: where the pointer is, then
+        // the press; and where it is again, unmoved, then the release.
+        let mut seen = Seen::default();
+        assert_eq!(seen.input(&moved(10.0, 20.0)), None);
+        assert_eq!(
+            seen.input(&button(ElementState::Pressed, MouseButton::Left)),
+            pointer(PointerAction::Press, (10.0, 20.0), Some(Button::Primary))
+        );
+        assert_eq!(seen.input(&moved(10.0, 20.0)), None);
+        assert_eq!(
+            seen.input(&button(ElementState::Released, MouseButton::Left)),
+            pointer(PointerAction::Release, (10.0, 20.0), Some(Button::Primary))
+        );
+
+        // A drag, and then where it ended said again before the release:
+        // one drag.
+        seen.input(&button(ElementState::Pressed, MouseButton::Left));
+        assert_eq!(
+            seen.input(&moved(10.0, 21.0)),
+            pointer(PointerAction::Drag, (10.0, 21.0), Some(Button::Primary))
+        );
+        assert_eq!(seen.input(&moved(10.0, 21.0)), None);
+        // Along either axis alone it is a move.
+        assert_eq!(
+            seen.input(&moved(11.0, 21.0)),
+            pointer(PointerAction::Drag, (11.0, 21.0), Some(Button::Primary))
+        );
+
+        // A press before winit has said where the pointer is is at the
+        // origin, and so a move to the origin is no move from it.
+        let mut unsaid = Seen::default();
+        unsaid.input(&button(ElementState::Pressed, MouseButton::Left));
+        assert_eq!(unsaid.input(&moved(0.0, 0.0)), None);
     }
 
     #[test]

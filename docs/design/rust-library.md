@@ -262,7 +262,8 @@ built"):
   names. The modifiers are those winit last reported, so on X11 the press
   of Control carries no `control`. A press and a release are where the
   pointer last was; a move with a button held is a drag, carrying the
-  button held longest, and a move with none is not reported; a wheel
+  button held longest, a move with none is not reported, and being told
+  the pointer is where it already was is no move at all; a wheel
   carries winit's delta, in lines or pixels, positive when the content
   moves right and down. A resize is the new size at the scale last known,
   a change of scale a resize at the size last known, and a window reports
