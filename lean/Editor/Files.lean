@@ -51,6 +51,16 @@ are in `Editor/Files/Compiled.lean`.
 - **The window** is the asking view while it still has a window, and the
   focused view otherwise. When the command runs they are the same view;
   they differ only if the asking view was closed while the file loaded.
+- **The minibuffer's view shows no file** (`shownIn`). While a prompt is
+  open its view can be the one chosen: the focused view, when the asking
+  view was closed and the result is delivered with the prompt open, or
+  the asking view itself, when the command was called with a path while
+  the minibuffer had the focus. The state refuses to show another buffer
+  there. So the buffer is shown in the window of the tree the prompt was
+  asked from, or in the first window of the tree when that one was closed
+  too, the window the focus goes to when the prompt closes
+  (`EditorState.askedFrom`), and the prompt stays open with the focus.
+  This holds for a path that is already open as for one that is loaded.
 - **Nothing is made before the result.** An empty buffer made when the
   command runs and filled later would change the window before the file is
   known to exist, and a refusal would have to undo it. So events that
@@ -235,6 +245,15 @@ name. -/
 def notAsking (refusal : PromptRefusal) : String :=
   s!"{openName}: {refusal.describe}"
 
+/-- The view a buffer is shown in when it is to be shown in `view`: `view`,
+or, when `view` is the minibuffer's, which shows no other buffer, the
+window of the tree the open prompt was asked from
+(`EditorState.askedFrom`). -/
+def shownIn (state : EditorState) (view : ViewId) : ViewId :=
+  match state.prompt with
+  | some asked => if asked.view == view then state.askedFrom asked else view
+  | none => view
+
 /-- The command a finished load job hands the loop: what the reply to the
 load of `order.path` becomes ("Open", in the module docs). -/
 def opened (order : LoadOrder) (reply : Except FileError File.Loaded) : EditorM Unit := do
@@ -244,7 +263,8 @@ def opened (order : LoadOrder) (reply : Except FileError File.Loaded) : EditorM 
   | .ok loaded =>
     let path := order.path
     let state ← editorState
-    let view := if (state.window? order.view).isSome then order.view else state.frame.focused
+    let view :=
+      shownIn state (if (state.window? order.view).isSome then order.view else state.frame.focused)
     -- Another open of the path may have been delivered while this one's
     -- file loaded: the path is matched again, and nothing is taken in.
     if let some buffer := state.findFile path then
@@ -270,11 +290,14 @@ def loadWork (limit : Nat := Files.limit) (arguments : List Argument) : Work := 
 /-- Opens the file at `path` in `view`. When a buffer holds the path
 (`EditorState.findFile`), it shows that buffer and starts nothing.
 Otherwise it starts the job that loads the file, whose result makes the
-buffer and shows it ("Open", in the module docs). Where no load job is
-registered it says so in the echo area. -/
+buffer and shows it ("Open", in the module docs). For the minibuffer's
+view the buffer is shown in the window of the tree the prompt was asked
+from (`shownIn`). Where no load job is registered it says so in the echo
+area. -/
 def «open» (view : ViewId) (path : System.FilePath) : EditorM Unit := do
-  if let some buffer := (← editorState).findFile path then
-    let .ok () ← view.show buffer | message (notShown path)
+  let state ← editorState
+  if let some buffer := state.findFile path then
+    let .ok () ← (shownIn state view).show buffer | message (notShown path)
     return
   if let .error refusal← startJob loadJob (LoadOrder.arguments { path, view }) then
     message (notOpening path refusal)

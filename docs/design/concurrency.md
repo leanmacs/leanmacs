@@ -476,7 +476,10 @@ transaction through. Where those come from is open.
     again when the result is delivered, so two opens of one path in flight
     make one buffer: the second delivery shows it and takes nothing in;
   - the buffer is shown in the view the command was called in, or in the
-    focused view if that view was closed while the file loaded;
+    focused view if that view was closed while the file loaded. When the
+    view so chosen is the minibuffer's, which shows no other buffer, it is
+    shown in the window the open prompt was asked from, and the prompt
+    stays open ("Prompts");
   - the command as it is registered (`open-file`) opens the path that is
     its first argument, and with no path asks for one with a prompt
     ("Prompts"), naming itself as the command that receives the answer.
@@ -712,6 +715,19 @@ event.**
 - **A job's result is delivered while a prompt is open.** Nothing blocks:
   the loop runs the job's command as always, on whatever it names, and the
   prompt stays open.
+- **A command that would show a buffer in the minibuffer's view shows it
+  behind the prompt.** The minibuffer's view shows no other buffer, and
+  while a prompt is open it can be the view a command has in hand: the
+  focused view, or the view the command was called in. `open-file` meets
+  both. A load whose asking view was closed is delivered with the prompt
+  focused, and the command can be called with a path while the minibuffer
+  has the focus. It then shows the file in the window the focus goes to
+  when the prompt closes: the asking view of the prompt, or the first
+  window of the tree when that view was closed
+  (`EditorState.askedFrom`, the one definition of that rule;
+  `Files.shownIn`). The prompt stays open with the focus. Before this the
+  show was refused, and a loaded file was left in a buffer no window
+  showed. Pinned by `ModelTest.fileCommandChecks`.
 - **A reload leaves the prompt open.** It is compiled state. Its
   continuation is a name, looked up when the answer arrives.
 

@@ -132,8 +132,9 @@ editor's models and the job model (`Editor/Loop/Driver.lean`):
 - `fileCommandChecks`: the file commands (`Editor/Files.lean`) on that
   driver, over the model of files (`Editor/File/Model.lean`), with keys
   bound to the commands and jobs registered as the test says: opening a
-  file into a buffer, a path that is open, a file that is not there, and
-  what is typed while a load is in flight; saving a buffer, a file that
+  file into a buffer, a path that is open, a file that is not there, what
+  is typed while a load is in flight, and a file that would be shown in
+  the minibuffer's view; saving a buffer, a file that
   changed on disk, a save that reports late, a forced save, and what each
   command says when it starts nothing; and the commands and jobs as
   compiled code registers them (`Editor/Files/Compiled.lean`). They touch
@@ -10114,19 +10115,20 @@ command with `true` as its argument, and `C-o v` to the save command with
 the arguments the Vim scheme gives a command a key is bound to, a count
 and a register.
 
-Five more commands, written here: `scratch` (`C-o 0`) shows the scratch
+Six more commands, written here: `scratch` (`C-o 0`) shows the scratch
 buffer in the window it is called with, `split` (`C-o s`) splits that
-window and focuses the new one, `close` (`C-o k`) closes it, `undo`
-(`C-o u`) undoes one step of its buffer's history, `drop` (`C-o d`) removes
-the buffer 1, the first a file is opened into, and `save-absent` (`C-o x`)
-saves a buffer there is none of. -/
+window and focuses the new one, `close` (`C-o k`) closes it, `shut`
+(`C-o K`) closes the view 1, the first a split makes, whichever window it
+is called with, `undo` (`C-o u`) undoes one step of its buffer's history,
+`drop` (`C-o d`) removes the buffer 1, the first a file is opened into, and
+`save-absent` (`C-o x`) saves a buffer there is none of. -/
 def fileKeys : Loop.Keys TestScheme.scheme :=
   dispatchKeys
     (openKeys.map (fun (text, path) => (text, opens path)) ++
       [("C-o o", invoke Files.openName),
         ("C-o V", { command := Files.openName, arguments := [.nat 0, .str ""] }),
         ("C-o 0", invoke "scratch"), ("C-o s", invoke "split"), ("C-o k", invoke "close"),
-        ("C-o w", invoke Files.saveName),
+        ("C-o K", invoke "shut"), ("C-o w", invoke Files.saveName),
         ("C-o f", { command := Files.saveName, arguments := [.bool true] }),
         ("C-o v", { command := Files.saveName, arguments := [.nat 0, .str ""] }),
         ("C-o u", invoke "undo"), ("C-o d", invoke "drop"), ("C-o x", invoke "save-absent")])
@@ -10154,6 +10156,9 @@ def fileKeys : Loop.Keys TestScheme.scheme :=
         return none),
       ("close", fun call => do
         discard <| call.target.window.id.close
+        return none),
+      ("shut", fun _ => do
+        discard <| (⟨1⟩ : ViewId).close
         return none)]
 
 /-- The jobs of the file command checks, by name: the load job, whose loads
@@ -10412,6 +10417,91 @@ def fileCommandChecks : List Check :=
               (showing opened).map (·.id) == some ⟨1⟩ &&
               (showing opened).bind (·.text) == some FileCases.noteText &&
               opened.loop.state.wellFormed },
+    { name :=
+        "a file whose asking view was closed while it loaded, delivered while a prompt has the focus, is shown in the view the prompt was asked from, which is not the first window: the prompt is still open with the focus, the first window shows what it showed, and nothing is said"
+      run :=
+        pure <|
+          match filesDriver with
+          | none => false
+          | some driver =>
+            let path := inFiles "note.txt"
+            -- Views 0, 1 and 2; the open command is called in view 2, which
+            -- is then closed, and the prompt is asked from view 1.
+            let (asked, _) := fedTo driver (presses "C-o s C-o s C-o n")
+            let (prompted, _) := fedTo asked (presses "C-o k C-o o")
+            let (opened, delivered) := prompted.finish 1
+            let state := opened.loop.state
+            asked.loop.state.frame.focused == ⟨2⟩ && (showing prompted ⟨2⟩).isNone &&
+              prompted.loop.state.prompt.map (·.asker) == some ⟨1⟩ &&
+              (delivered.map (·.ended)) == some (some .finished) &&
+              state.prompt.isSome &&
+              state.prompt == prompted.loop.state.prompt &&
+              some state.frame.focused == state.minibufferView? &&
+              (state.findFile path).isSome &&
+              (showing opened ⟨1⟩).map (·.id) == state.findFile path &&
+              (showing opened ⟨1⟩).bind (·.text) == some FileCases.noteText &&
+              (showing opened).map (·.id) == some ⟨0⟩ &&
+              echoOf opened == some "" &&
+              state.wellFormed },
+    { name :=
+        "a file delivered while a prompt has the focus, whose asking view and the view the prompt was asked from were both closed, is shown in the first window of the tree, with the prompt still open"
+      run :=
+        pure <|
+          match filesDriver with
+          | none => false
+          | some driver =>
+            let path := inFiles "note.txt"
+            -- Views 0 and 1; the open command is called in view 1, the
+            -- prompt is asked from it, and it is closed with the prompt open.
+            let (asked, _) := fedTo driver (presses "C-o s C-o n C-o o")
+            let (closed, _) := fedTo asked (presses "C-o K")
+            let (opened, delivered) := closed.finish 1
+            let state := opened.loop.state
+            asked.loop.state.prompt.map (·.asker) == some ⟨1⟩ && (showing closed ⟨1⟩).isNone &&
+              closed.loop.state.prompt == asked.loop.state.prompt &&
+              (delivered.map (·.ended)) == some (some .finished) &&
+              state.prompt.isSome &&
+              state.prompt == asked.loop.state.prompt &&
+              some state.frame.focused == state.minibufferView? &&
+              (state.findFile path).isSome &&
+              (showing opened).map (·.id) == state.findFile path &&
+              (showing opened).bind (·.text) == some FileCases.noteText &&
+              echoOf opened == some "" &&
+              state.wellFormed },
+    { name :=
+        "the open command called in the minibuffer's view, with a path, shows the file in the view the prompt was asked from and leaves the prompt open: a file that is not open once its job is finished, and one that is open at once, with no job started"
+      run :=
+        pure <|
+          match filesDriver, noteOpen with
+          | some driver, some noted =>
+            let path := inFiles "note.txt"
+            let behind (before after : TestDriver) : Bool :=
+              let state := after.loop.state
+              state.prompt.isSome && state.prompt == before.loop.state.prompt &&
+                some state.frame.focused == state.minibufferView? &&
+                (state.findFile path).isSome &&
+                (showing after).map (·.id) == state.findFile path &&
+                (showing after).bind (·.text) == some FileCases.noteText &&
+                echoOf after == some "" &&
+                state.wellFormed
+            let (prompted, _) := fedTo driver (presses "C-o o")
+            let (asked, steps) := fedTo prompted (presses "C-o n")
+            let (opened, delivered) := asked.finish 1
+            -- The file is open in view 0, which then shows the scratch
+            -- buffer again.
+            let (shown, _) := fedTo noted (presses "C-o 0 C-o o")
+            let (again, repeated) := fedTo shown (presses "C-o n")
+            started steps ==
+                #[{ name := Files.loadJob
+                    arguments := Files.LoadOrder.arguments { path, view := ⟨1⟩ } }] &&
+              prompted.loop.state.minibufferView? == some ⟨1⟩ &&
+              (delivered.map (·.ended)) == some (some .finished) &&
+              behind prompted opened &&
+              (showing shown).map (·.id) == some ⟨0⟩ &&
+              started repeated == #[] &&
+              again.pending.isEmpty &&
+              behind shown again
+          | _, _ => false },
     { name :=
         "a file loaded where no window can show it is said in the echo area as loaded and not shown: in a state whose focused view has no window, for an order whose view has none either, the buffer is there and holds the file, and the windows show what they showed"
       run :=

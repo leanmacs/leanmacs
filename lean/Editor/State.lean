@@ -150,7 +150,9 @@ A prompt is a request for one string, with a text to show beside the input
     so the answer's command runs with the window the prompt was asked in.
     When that view is no longer a window of the tree, it goes to the first
     window of the tree, in drawing order. A view's id is never used again,
-    so the asker cannot have come to mean another view.
+    so the asker cannot have come to mean another view. The rule is one
+    definition (`askedFrom`), for a command that was handed the
+    minibuffer's view and needs a window of the tree in its place.
   - **Given an answer it records the continuation**, with the answer as
     its first argument and the continuation's own after it
     (`EditorState.answered`), until the loop hands it to its host
@@ -1046,22 +1048,29 @@ def openPrompt (label : String) (continuation : Invocation) (text : TextId) (his
           nextView := view.index + 1
           prompt := some { label, view, asker := asker.id, continuation } })
 
+/-- The window of the tree that stands for the view the prompt `asked` was
+asked from: the asking view while it is a window of the tree, and the first
+window of the tree, in drawing order, otherwise. For a tree with no window
+it is the asking view. The focus goes there when the prompt closes
+(`closePrompt`), and a command that was handed the minibuffer's view to
+show a buffer in shows it there (`Editor/Files.lean`, "Open"). -/
+def askedFrom (state : EditorState) (asked : Prompt) : ViewId :=
+  let windows := state.frame.tree.windows
+  if windows.contains asked.asker then asked.asker else windows[0]?.getD asked.asker
+
 /-- Closes the open prompt: the minibuffer's window is removed, its buffer's
 slot is emptied, and the focus goes to the asking view, or, when that view
 is no longer a window of the tree, to the first window of the tree, in
-drawing order. The tree is as it was. Given an answer, the prompt's
-continuation is recorded with the answer as its first argument, before its
-own (`answered`). The minibuffer's markers and text are the caller's to
-give up. Refused, with the state unchanged, with `notOpen` when no prompt
-is open. -/
+drawing order (`askedFrom`). The tree is as it was. Given an answer, the
+prompt's continuation is recorded with the answer as its first argument,
+before its own (`answered`). The minibuffer's markers and text are the
+caller's to give up. Refused, with the state unchanged, with `notOpen` when
+no prompt is open. -/
 def closePrompt (answer : Option String) (state : EditorState) :
     Except PromptRefusal Unit × EditorState :=
   match state.prompt with
   | none => (.error .notOpen, state)
   | some asked =>
-    let windows := state.frame.tree.windows
-    let focused :=
-      if windows.contains asked.asker then asked.asker else windows[0]?.getD asked.asker
     (.ok (),
       { state with
         buffers :=
@@ -1069,7 +1078,7 @@ def closePrompt (answer : Option String) (state : EditorState) :
           | some buffer => state.buffers.set! buffer.index none
           | none => state.buffers
         windows := state.windows.filter (·.id != asked.view)
-        frame := { state.frame with focused }
+        frame := { state.frame with focused := state.askedFrom asked }
         prompt := none
         answered :=
           match answer with
