@@ -28,10 +28,15 @@ mapping a position); that compare what the edit log records, the one
 patch a subscriber gets and the trace of a range with references computed
 from the strings; that keep the anchors a text holds in bounds and in
 order through random transactions, merge selections that overlap, and
-compare what a selection covers with a reference read off the string; and
+compare what a selection covers with a reference read off the string; that
+ask every motion from every position of a text and compare the answer with
+a reference that lists the string's cells, rows and words first and picks
+one, and read every row; and
 that apply the inverses of random runs of revisions and drop them, against
 the strings the text held at every revision. The property tests run from a
-fixed seed and write no file.
+fixed seed and write no file. What a motion and a read of one row or a
+range allocate on a megabyte of text is counted there too, in bytes
+(`crates/editor-text/tests/snapshot_cost.rs`).
 
 Loading and saving a file are tested there too, and make no real file: the
 logic (`crates/editor-text/src/file.rs`) reaches a file system only through
@@ -93,11 +98,14 @@ read status 1 with a line on stderr that says why. `contract-test` runs the
 text interface's contract, the same list of properties the model tests run,
 against the real binding, so the model cannot drift from the library: edits
 and their refusals, revisions, snapshots that later edits leave alone, rows
-and points in bytes and in UTF-16 against a table written out by hand,
-releasing a text or a snapshot, applying a transaction and each way one is
-refused, what changed since a revision and who wrote a range against tables
-written out by hand, forgetting the start of a text's edit log, and applying
-the inverse of a run of revisions and dropping kept inverses. It runs the
+and points in bytes, in UTF-16 and in cells against a table written out by
+hand, releasing a text or a snapshot, applying a transaction and each way
+one is refused, what changed since a revision and who wrote a range against
+tables written out by hand, forgetting the start of a text's edit log,
+applying the inverse of a run of revisions and dropping kept inverses,
+reading one row and a range, and every motion from every position of one
+text against a table written out by hand, with each way a motion and a read
+are refused. It runs the
 cases of the undo tree through the same binding. It also
 checks what only the real binding
 shows: the binding's table is the only holder of its documents and
@@ -139,7 +147,9 @@ says why. Its config directories are temporary directories of its own.
 With no arguments `ffi-test` runs its checks of handles, plain data, the
 event queues, the timer service, the document, the snapshot of a document,
 a document's transactions and edit log, and the window: a snapshot reads
-what its document held after the document is edited, and outlives it; a
+what its document held after the document is edited, and outlives it; each
+motion of a snapshot crosses under its own tag, and one row and a range
+come back as text; a
 transaction, a patch and a trace, which are lists, cross as words and come
 back as the values that were sent; the scripted
 platform's inputs arrive on the editor queue, each stamped with the instant

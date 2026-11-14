@@ -53,8 +53,9 @@ the text port: the undo tree (`lean/Editor/UndoTree.lean`, decided
   and a carriage return alone starts no row. This is tree-sitter's rule,
   which the edit log needs.
 - A *point* is a row and a column counted from the row's start: in bytes
-  (`Point`) or in UTF-16 code units (`PointUtf16`). They are two types, so
-  the units cannot be mixed.
+  (`Point`), in UTF-16 code units (`PointUtf16`) or in cells (`PointCells`;
+  "Motions, words and WORDs", below). They are three types, so the units
+  cannot be mixed.
 - A conversion answers only for a position and clamps nothing: clamping is
   Lean's policy. An offset inside a character or past the end has no point.
   A point in a row the text does not have, past the end of its row, inside
@@ -364,8 +365,7 @@ the text port: the undo tree (`lean/Editor/UndoTree.lean`, decided
   has four requests for markers and one question for extents, with thirteen
   and ten properties in its contract.
 
-**Motions, words and WORDs** (decided 2026-11-13; to be built by the
-command loop's phase on text motions).
+**Motions, words and WORDs** (decided and built 2026-11-13).
 
 - A *motion* is a question of a text or a snapshot: from a position to a
   position. The library answers it by walking the rope from the position, so
@@ -470,7 +470,42 @@ command loop's phase on text motions).
   the buffer, `cw` acting as `ce`, `dw` on a line's last word not taking
   the line break, and a motion's type for an operator.
 - Two reads beside the motions, so that a caller need not read the whole
-  text: one row's content, and the text between two positions.
+  text: one row's content, which is the row without its line break, and the
+  text between two positions. A row the text does not have is refused as no
+  position, and a range that is not two positions in order as a bad range.
+- As built. In the library a motion is a value of one enum and one method
+  of a snapshot answers it; a motion walks the rope from the position, a
+  cell at a time, and builds no string and no list. Measured: none of the
+  seventeen motions allocates a byte from the middle of a megabyte of text,
+  nor does a word motion across a megabyte of blanks in one row; reading
+  one row of 36 bytes allocates 164 and a range of 100 bytes 228, the
+  string returned as it grows. A column in cells is counted by walking the
+  row, so it costs the cells before the position in its row; a row motion
+  whose column is not below the row's length in bytes answers the end of
+  its content without a walk.
+- Across the boundary a motion is a tag, with a count and a column for the
+  two motions by rows, a row and a range come back as options of a string,
+  and the cells unit of a point's column is a third tag. The text port has
+  one question that carries every motion and two for the reads, with seven
+  and five properties in its contract, and a property for the column in
+  cells of a row that ends in a carriage return and a line feed. The
+  contract holds the model and the library to one table written out by
+  hand: every motion from every position of one text of four rows.
+- The model answers a motion by another route than the library: it lists
+  every cell or every word of the text and picks one. Proved on the model:
+  a conversion between an offset and a point that answers is undone by the
+  other, and so the line start of a line start is itself
+  (`TextModel.offsetOf_pointOf`, `TextModel.lineStart_idempotent`).
+- What the command loop registers under each of the Vim scheme's motion
+  names is a composition of these: `left` and `right` are the previous and
+  the next cell kept on the line by the line's start and end; `down` and
+  `up` the row motions with the wanted column from a point in cells;
+  `word-forward`, `word-backward` and `word-end` the next start, the
+  previous start and the next end of a word, and the `bigword` names the
+  same for a WORD; `line-start`, `line-first-non-blank` and `line-end` the
+  three line motions; `first-line` and `last-line` a row motion or the
+  offset of a point, then the first non-blank. The previous end of a word
+  has no default key yet (`ge`, `gE`).
 - Why this rule for a word character. The pure Lean model answers every
   question of the port without the Rust library, so a character's class has
   to be a rule both sides can state in a line. Rust's
@@ -643,18 +678,22 @@ command loop's phase on text motions).
 | An anchor | `crates/editor-text/src/anchor.rs` |
 | The markers a text holds and moves | `crates/editor-text/src/marker.rs`, and `Text::mark`, `marker`, `place` and `unmark` in `text.rs` |
 | A selection: its shape, its form, and mapping it | `crates/editor-text/src/selection.rs` |
-| The cell, and a row's content | `crates/editor-text/src/cell.rs` |
+| The cell, forward and back, a row's content, and reading one row | `crates/editor-text/src/cell.rs` |
 | What a selection covers | `crates/editor-text/src/extent.rs` |
+| What a blank and a word character are | `crates/editor-text/src/word.rs` |
+| The motions, and the walks that answer them | `crates/editor-text/src/motion.rs` |
+| A point with its column in cells | `PointCells` in `crates/editor-text/src/point.rs` |
 | The edit log: entries, origins, tracing, forgetting | `crates/editor-text/src/log.rs` |
 | Edits and patches, and composing them | `crates/editor-text/src/patch.rs` |
 | Kept inverses: what is kept, the names of states, the inverse of a run | `crates/editor-text/src/inverse.rs`, and `Text::apply_inverse` and `drop_inverses` in `text.rs` |
-| The properties, against a `String` | `crates/editor-text/tests/properties/`: the text in `main.rs`, the laws of change sets in `changes.rs`, the log in `log.rs`, anchors and markers in `anchors.rs`, the selection's form, its mapping and its extents in `selections.rs`, kept inverses in `inverses.rs` |
-| What a snapshot, a transaction, a pull, moving markers, keeping an inverse and applying one cost, counted in bytes allocated | `crates/editor-text/tests/snapshot_cost.rs` |
+| The properties, against a `String` | `crates/editor-text/tests/properties/`: the text in `main.rs`, the laws of change sets in `changes.rs`, the log in `log.rs`, anchors and markers in `anchors.rs`, the selection's form, its mapping and its extents in `selections.rs`, kept inverses in `inverses.rs`, every motion at every position and the row read in `motions.rs` |
+| What a snapshot, a transaction, a pull, moving markers, keeping an inverse, applying one, a motion and a read of a row or a range cost, counted in bytes allocated | `crates/editor-text/tests/snapshot_cost.rs` |
 | That moving markers is one walk of the change set, counted in looks at it (a counter that exists in tests only), bounded by the ends held plus the changes | The unit tests of `crates/editor-text/src/change.rs` (a mapper asked in rising order) and `marker.rs` (markers held out of order) |
 | The text and the snapshot as handles for Lean | `crates/editor-ffi/src/document.rs`, `crates/editor-ffi/src/snapshot.rs` |
 | A transaction and the log across the boundary, as words | `crates/editor-ffi/src/transaction.rs`, `crates/editor-ffi/src/log.rs`, `crates/editor-ffi/src/words.rs` |
 | Markers and extents across the boundary, as words | `crates/editor-ffi/src/marker.rs`, and `editor_ffi_snapshot_extents` in `snapshot.rs` |
 | Applying an inverse and dropping inverses across the boundary | `crates/editor-ffi/src/inverse.rs` |
+| A motion across the boundary, as a tag, a count and a column; one row and a range as strings; the cells unit | `crates/editor-ffi/src/motion.rs`, and `editor_ffi_snapshot_motion`, `editor_ffi_snapshot_row`, `editor_ffi_snapshot_slice` and `ColumnUnit::Cells` in `snapshot.rs` |
 | The Lean text port, its model, real binding and contract | `lean/Editor/Text.lean`, `lean/Editor/Text/` ([lean-runtime.md](lean-runtime.md)) |
 | The undo tree, and its cases | `lean/Editor/UndoTree.lean`, `lean/Editor/UndoTree/Cases.lean` ([lean-runtime.md](lean-runtime.md)) |
 | A text made from a snapshot | `Text::from_snapshot` in `crates/editor-text/src/text.rs` |
