@@ -50,7 +50,8 @@ order out.
 | A rule of what matches, or of the order, that every implementation keeps | The model and a case of the contract, in one commit with the Rust port's fake and contract (`crates/editor-fuzzy`) |
 | A binding to a matching library | A handler of these requests, which runs the contract; nothing here |
 
-Pinned by the contract, which `model-test` runs against the model, and by
+Pinned by the contract, which `model-test` runs against the model and
+`contract-test` against the real binding (`Editor/Fuzzy/Real.lean`), and by
 `ModelTest.fuzzyChecks` for what only the model shows.
 -/
 

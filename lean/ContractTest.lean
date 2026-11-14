@@ -8,6 +8,8 @@ import Editor.Display.Real
 import Editor.Display.Recorder
 import Editor.Event.Queue
 import Editor.File.Cases
+import Editor.Fuzzy.Contract
+import Editor.Fuzzy.Real
 import Editor.InputScheme.Test
 import Editor.Job.Contract
 import Editor.Job.Fake
@@ -97,6 +99,14 @@ what the contract cannot: that a new one holds no text, and, with a command
 run against the library, that the command's clipboard requests go to the
 handler it was handed, and are each answered `unavailable` when it was
 handed none.
+
+The fuzzy matching interface's contract (`Editor/Fuzzy/Contract.lean`) is
+run against its real binding (`Editor/Fuzzy/Real.lean`), so against the
+library's matcher (`fuzzyFailures`): which candidates a pattern matches,
+and that a candidate that is the pattern is first. `model-test` runs the
+same list against the model. Nothing more is asked of the two: after the
+candidates that are the pattern, the binding's order is the library's
+scores and the model's is the candidates' own.
 
 The watch port's contract (`Editor/Watch/Contract.lean`) is run against its
 real binding (`Editor/Watch/Real.lean`), over the library's interrupt flag
@@ -930,6 +940,16 @@ def clipboardChecks : List Check :=
             | .ok (.ok (some "kept")) => true
             | _ => false }]
 
+/-- The names of the fuzzy matching interface's contract properties that do
+not hold of its real binding. The binding keeps nothing, so each property
+is run against the same handler. -/
+def fuzzyFailures : IO (List String) := do
+  let failed ←
+    FuzzyContract.failures
+        (fun property => Program.runM (port := fuzzyPort) Fuzzy.real property.holds)
+        FuzzyContract.properties
+  return failed.map (s!"the real fuzzy binding: {·}")
+
 /-- Runs a property of the watch port's contract against the real binding
 over `timers`. The library is told the interrupt key, and the property's
 interrupt keys arrive through the library's window input, as a window's
@@ -1122,6 +1142,7 @@ def main : IO UInt32 := do
   let clipboardFailed ← ContractTest.clipboardFailures
   let clipboardChecks := ContractTest.clipboardChecks
   let clipboardCheckFailed ← ContractTest.checkFailures clipboardChecks
+  let fuzzyFailed ← ContractTest.fuzzyFailures
   let watchFailed ← ContractTest.watchFailures services.timers
   let watchChecks := ContractTest.watchChecks services.timers
   let watchCheckFailed ← ContractTest.checkFailures watchChecks
@@ -1137,6 +1158,7 @@ def main : IO UInt32 := do
       recorderFailed ++
       clipboardFailed ++
       clipboardCheckFailed ++
+      fuzzyFailed ++
       watchFailed ++
       watchCheckFailed ++
       apiFailed ++
@@ -1146,6 +1168,6 @@ def main : IO UInt32 := do
   unless failed.isEmpty do
     IO.Process.exit 1
   IO.println
-      s!"contract-test: {properties.length + adoptProperties.length} properties hold of the real text binding, {cases.length} cases of the undo tree hold over it, and its documents and snapshots are freed when released and with its table; {Editor.JobContract.properties.length} properties hold of the job runner over the timer service, and {Editor.JobContract.fileProperties.length} file properties over the file service, on real files; {checks.length} checks of the timer service passed, {fileChecks.length} of the file service, {Editor.FileCases.cases.length} cases across the text port and the job port hold of the binding and the file service; {(Editor.DisplayContract.properties { advance := 1, lineHeight := 1 }).length} properties of the display interface hold of its real binding in cells of {ContractTest.displayCells.length} sizes, and of the recorder over real snapshots in cells of the same sizes, and {recorderChecks.length} checks of the recorder passed; {Editor.ClipboardContract.properties.length} properties of the clipboard interface hold of the in-process clipboard, and {clipboardChecks.length} checks of it passed; {Editor.WatchContract.properties.length} properties of the watch port hold of its real binding, and {watchChecks.length} checks of it passed; {Editor.ApiCases.cases.length} cases of the editor API hold of the real text binding; and quit ended the pump"
+      s!"contract-test: {properties.length + adoptProperties.length} properties hold of the real text binding, {cases.length} cases of the undo tree hold over it, and its documents and snapshots are freed when released and with its table; {Editor.JobContract.properties.length} properties hold of the job runner over the timer service, and {Editor.JobContract.fileProperties.length} file properties over the file service, on real files; {checks.length} checks of the timer service passed, {fileChecks.length} of the file service, {Editor.FileCases.cases.length} cases across the text port and the job port hold of the binding and the file service; {(Editor.DisplayContract.properties { advance := 1, lineHeight := 1 }).length} properties of the display interface hold of its real binding in cells of {ContractTest.displayCells.length} sizes, and of the recorder over real snapshots in cells of the same sizes, and {recorderChecks.length} checks of the recorder passed; {Editor.ClipboardContract.properties.length} properties of the clipboard interface hold of the in-process clipboard, and {clipboardChecks.length} checks of it passed; {Editor.FuzzyContract.properties.length} properties of the fuzzy matching interface hold of its real binding; {Editor.WatchContract.properties.length} properties of the watch port hold of its real binding, and {watchChecks.length} checks of it passed; {Editor.ApiCases.cases.length} cases of the editor API hold of the real text binding; and quit ended the pump"
   (← IO.getStdout).flush
   IO.Process.exit 0

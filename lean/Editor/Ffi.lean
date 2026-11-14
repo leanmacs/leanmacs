@@ -99,7 +99,8 @@ refusals in `InverseRefusal`); and a run in and a refusal as a `Bool`
 (`Document.dropInverses`). Fuzzy ranking is the example of a list of strings,
 and of a call that keeps nothing in the library: a pattern and candidates
 in, and the indices of the candidates the pattern matches out, best first,
-as words (`fuzzyRank`). A length or an offset in words is a `UInt64`, and the
+as words (`fuzzyRank`), whose one caller is the fuzzy matching interface's
+real binding (`Editor/Fuzzy/Real.lean`). A length or an offset in words is a `UInt64`, and the
 largest one is a number no text accepts: a caller with a number no word
 holds sends that, so the library refuses it and nothing is cut down. Tests:
 the `find` and event checks of `ffi-test` (`FfiTest.dataChecks`), its
