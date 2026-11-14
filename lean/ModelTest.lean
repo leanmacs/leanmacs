@@ -163,7 +163,8 @@ The config session's decisions are tested here too, with no elaborator:
   double-register, a store value survives a reload), and `config-test` runs
   them again with the real elaborator, queue and text binding. The reducer
   also says when the old config's jobs are cancelled: when a reload
-  installs, and only then.
+  installs, and only then. An install replaces config's key bindings and
+  modes and keeps the compiled ones.
 
 How a key becomes an invocation is pure Lean with no port, so its checks
 need no model and no fake of a collaborator:
@@ -2485,7 +2486,32 @@ def reloadChecks : List Check :=
             reloaded.registry.bindings.size == 2 &&
             effects == #[.start (some #[]) #["a"], .cancelJobs "config", .report 2 true #[] 1 0] &&
             boundTo kept.registry "C-c t" == some (invoke "one") &&
-            boundTo kept.registry "C-c o" == some (invoke "old")) }]
+            boundTo kept.registry "C-c o" == some (invoke "old")) },
+    { name :=
+        "an accepted outcome replaces the config's modes and leaves compiled ones; a rejected outcome keeps config's"
+      run :=
+        let compiled : Config.State Elaborated :=
+          { registry := ({} : Config.Registry).replaceModes .compiled #[{ name := "kept" }] }
+        let first : SetupM Unit := do
+          defineMode { name := "listing", parent := some "first" }
+          defineMode { name := "gone" }
+        let (loaded, _) := reduceFrom compiled [.requested, .finished (accepted ["a"] first)]
+        let (reloaded, _) :=
+          reduceFrom loaded
+            [.requested,
+              .finished
+                (accepted ["a"] (defineMode { name := "listing", parent := some "second" }))]
+        let (kept, _) := reduceFrom loaded [.requested, .finished (rejected "a")]
+        let names (state : Config.State Elaborated) : Array String :=
+          state.registry.modes.map (·.mode.name)
+        let parentOf (state : Config.State Elaborated) : Option String :=
+          (state.registry.mode? "listing").bind (·.parent)
+        pure
+          (names loaded == #["kept", "listing", "gone"] && parentOf loaded == some "first" &&
+            names reloaded == #["kept", "listing"] &&
+            parentOf reloaded == some "second" &&
+            names kept == names loaded &&
+            parentOf kept == some "first") }]
 
 /-- A key press that produced `text`. -/
 def pressed (text : String) : WindowCheck.Input :=

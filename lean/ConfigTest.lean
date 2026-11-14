@@ -49,6 +49,13 @@ fakes. The checks here pin what only real collaborators can show:
   arrives when the frame cannot be made, still has the flag lowered for it.
   Those last two run no loop: each pulls the key off the queue and hands it
   to the host's handler on its own thread (`withRunning`);
+- `modeChecks`: modes through the host, with the test scheme: a role's key
+  runs the command of a mode config defines, a store command among them,
+  in a view of a buffer that has the mode, and once a reload drops the mode
+  it runs the global binding. The host's frame is made with the scratch
+  buffer's major mode set (`Compiled.major`), since no command can set one
+  yet, and the key pressed is the test scheme's for the role
+  (`Session.pressKeys`), so no check names a scheme's key;
 - `fileChecks`: a job from config that loads a file through the host, over
   the library's file service, and whose handler makes a text of it. It is
   the one check whose host is over a real service, so it is the one that
@@ -334,15 +341,21 @@ structure Stage (σ : Type) where
   /-- Every entry the host has logged, oldest first. -/
   log : IO.Ref (Array String)
 
-/-- What compiled code hands a host: its commands, its key bindings, and how
-long a command may take before it is logged. -/
+/-- What compiled code hands a host: its commands, its key bindings, its
+modes, how long a command may take before it is logged, and the major mode
+the scratch buffer starts in. -/
 structure Compiled where
   /-- The compiled commands. -/
   commands : Array Config.Registration := #[]
   /-- The compiled key bindings. -/
   bindings : Array Config.KeyBinding := #[]
+  /-- The compiled modes. -/
+  modes : Array Mode := #[]
   /-- How long a command may take before it is logged, in milliseconds. -/
   slowAfter : Nat := Loop.slowAfter
+  /-- The major mode the scratch buffer starts in, if any. No command can
+  set one yet, so the host's frame is made with it set. -/
+  major : Option String := none
 
 /-- A stage for a host over `elaborator` and `source`, with what `compiled`
 hands it. Hosts follow one another on one queue: each gets source ids of its
@@ -363,8 +376,15 @@ def Stage.new {σ : Type} (context : Context) (elaborator : Config.Elaborator σ
             output.modify (·.push line),
           services := { completions, timers := clock.timers }, published := ← Snapshots.new,
           held := ← Job.HeldSnapshots.new, requests, wakeups := requests + 1, jobs := requests + 2,
-          commands := compiled.commands, bindings := compiled.bindings,
-          log := fun entry => log.modify (·.push entry), slowAfter := compiled.slowAfter },
+          commands := compiled.commands, bindings := compiled.bindings, modes := compiled.modes,
+          log := fun entry => log.modify (·.push entry), slowAfter := compiled.slowAfter,
+          start := do
+            let loop ← Loop.start TestScheme.scheme ⟨0, 0⟩
+            match compiled.major with
+            | some name =>
+              return { loop with state := (loop.state.setMajorMode ⟨0⟩ name).2 }
+            | none =>
+              return loop },
       output, threads, clock, log }
 
 /-- A host running for one check: the headless loop on the real queue and the
@@ -1586,6 +1606,13 @@ def typed (session : Session) (text : String) : IO Unit := do
   session.type text
   session.ask []
 
+/-- Sends a press of each of `keys`, in order, and waits until the editor
+thread has handled them. Throws if that takes longer than `patience`. -/
+def pressKeys (session : Session) (keys : List Key) : IO Unit := do
+  for key in keys do
+    session.host.press key
+  session.ask []
+
 /-- Asks the host for the scene, and returns what it printed of it: the echo
 area's text, quoted as the scene line has it, and each view's line. -/
 def scene (session : Session) : IO (String × Array String) := do
@@ -1922,12 +1949,65 @@ def dispatchChecks (context : Context) : List Check :=
               (← stage.output.get).back? == some "loop: refused: no such text" &&
               !(← Ffi.interruptRaised) }]
 
+/-- A chunk with a store of one number and a command `bump` over it that
+adds one, and a `setup` that declares both and, when `withMode`, defines the
+mode `listing`, which fills the role `next-item` with `bump`. -/
+def listingChunk (withMode : Bool) : String :=
+  "def counter : Store Nat :=
+  { name := \"counter\", version := 1, initial := 0, encode := .nat,
+    decode := fun
+      | .nat n => some n
+      | _ => none }
+
+def setup : SetupM Unit := do
+  counter.declare
+  counter.command \"bump\" fun n => pure (n + 1)
+" ++
+    if withMode then "  defineMode { name := \"listing\", roles := [(Role.nextItem, \"bump\")] }\n"
+    else ""
+
+/-- The keys of the role `next-item` under the test scheme. -/
+def nextItemKeys : List Key :=
+  (TestScheme.scheme.roleKey Role.nextItem).getD []
+
+/-- What compiled code hands the host of the mode checks: `global`, which
+makes a text holding `compiled`, bound to the keys of `next-item`, and the
+scratch buffer in the major mode `listing`, which only config defines. -/
+def listingCompiled : Compiled :=
+  { commands := #[making "global" "compiled"]
+    bindings := #[{ keys := nextItemKeys, command := "global" }]
+    major := some "listing" }
+
+/-- The checks of modes through the headless host, with the test scheme and
+the real elaborator: a mode config defines holds while config defines it.
+The key a check presses is the test scheme's for a role, so no check names
+a scheme's key. -/
+def modeChecks (context : Context) : List Check :=
+  [{  name :=
+        "a role's key runs the command of the mode config defines in a view of a buffer that has the mode, a store command among them; once a reload drops the mode it runs the global binding, and the store is as it was"
+      run :=
+        withHost context [("10-listing.lean", listingChunk true)]
+          (fun session => do
+            session.ask [.reload]
+            session.pressKeys nextItemKeys
+            let first ← session.shown
+            session.write "10-listing.lean" (listingChunk false)
+            session.ask [.reload]
+            session.pressKeys nextItemKeys
+            let second ← session.shown
+            return nextItemKeys.length > 0 && first.contains "store counter v1: 1" &&
+                !first.any (·.endsWith "\"compiled\"") &&
+                second.contains "store counter v1: 1" &&
+                second.any (·.endsWith "\"compiled\""))
+          listingCompiled }]
+
 /-- Every check, in the order they run. -/
 def checks (context : Context) : List Check :=
   elaboratorChecks context ++ directoryChecks () ++ hostChecks context ++ threadChecks context ++
     jobChecks context ++
     scriptChecks context ++
     dispatchChecks context ++
+    modeChecks context ++
     fileChecks context
 
 /-- Runs `checks` and returns the names of those that failed. A check that

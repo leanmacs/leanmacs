@@ -18,8 +18,9 @@ the model tests run it with outcomes built by hand
   what was just installed, and two reloads cannot install out of order.
 - **Installing is the only place config changes anything.** An accepted
   outcome replaces the chunks, replaces the config's entries in the registry,
-  commands, jobs and key bindings (`Registry.replace`,
-  `Registry.replaceJobs`, `Registry.replaceBindings`, never an append) and
+  commands, jobs, key bindings and modes (`Registry.replace`,
+  `Registry.replaceJobs`, `Registry.replaceBindings`,
+  `Registry.replaceModes`, never an append) and
   meets the config's stores with the cells there are
   (`Cells.install`). A rejected outcome changes none of them: the config that
   was loaded stays.
@@ -132,9 +133,10 @@ def install (state : State σ) (outcome : Outcome σ) : State σ × Report :=
       { state with
         chunks := built.chunks,
         registry :=
-          ((state.registry.replace .config built.registrations.commands).replaceJobs .config
-                built.registrations.jobs).replaceBindings
-            .config built.registrations.bindings,
+          (((state.registry.replace .config built.registrations.commands).replaceJobs .config
+                    built.registrations.jobs).replaceBindings
+                .config built.registrations.bindings).replaceModes
+            .config built.registrations.modes,
         cells }
     (state,
       { number := state.finished, installed := true, diagnostics := outcome.diagnostics ++ lost,
