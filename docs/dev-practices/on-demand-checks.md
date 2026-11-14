@@ -129,12 +129,10 @@ and checks there what each option asks for.
 mise run window-contract
 ```
 
-**The second of its two programs, the window that draws, has not been run
-on any desktop**, and the first has not been run since the contract gained
-its rules about the drawer. Both ran in the container, under Xvfb, as parts
-1 and 4 of `linux-window`, below. On macOS nothing of the window that draws
-has run at all: a surface on Metal, made on the main thread and drawn on
-from the render thread, is read and compiled, never run. These are the
+**Its first run on a desktop failed, and what was changed for it has not
+been confirmed by a person at the keyboard.** "What the first desktop run
+showed", below, says what failed and why. Both programs also run in the
+container, under Xvfb, as parts 1 and 4 of `linux-window`. These are the
 steps for the owner.
 
 It opens two windows on this desktop, one after the other, so it is not
@@ -176,6 +174,11 @@ The steps:
    - `window: the renderer is on <the adapter> (<the back end>), blending
      by a coverage for each channel: <true or false>`;
    - `window: <n> frames presented, each with a journal entry; …`;
+   - perhaps, once or twice, `window: a draw was not presented: the
+     window's surface gave no texture: Occluded`: a window that was not
+     yet on the screen when its first frame was drawn. More than a few
+     is a finding: a draw refused so is not tried again until the window
+     says more;
    - for each frame, `window: frame <n>: read back from the surface, <d>
      of <p> pixels differ from the headless renderer's, the worst by <w>
      of 255`, with `<w>` at most 3; or, on a surface that says it does
@@ -236,6 +239,95 @@ What to write down here when it has been run on a desktop: the machine,
 its GPU and the back end; the lines of step 6; and, on macOS, what the
 window looked like while it was resized and whether anything was drawn
 while it was covered.
+
+### What the first desktop run showed
+
+The owner ran it on 2026-11-14 on macOS (aarch64, Apple M5 Max, Metal, a
+display at scale 2). The first program passed. The second failed:
+
+```
+window: 2 frames presented, each with a journal entry; the first 586.7 ms after the size it answers arrived, 3 rows built
+window: frame 1: read back from the surface, 31 of 1920000 pixels differ from the headless renderer's, the worst by 1 of 255
+window: frame 2: read back from the surface, 31 of 1920000 pixels differ from the headless renderer's, the worst by 1 of 255
+window: idle: over 1 s in which nothing was published, 1 frames were drawn and the window asked for 0
+window: over the whole run, 2 draws for 8 things that asked for one
+window: FAILED: 1 frames were drawn while idle and 0 were asked for
+```
+
+The picture held, on Metal, on a surface that lets its texture be copied
+from. The failure was the check's, not the window's. Four things were
+found, the first three since changed:
+
+- **The idle second was measured wrongly.** On macOS the system asks for
+  a window's content a few milliseconds after it opens (`drawRect:`,
+  which the adapter tells as damage). The example's first draw had begun
+  by then, and it takes hundreds of milliseconds in this check, read back
+  and compared as it is; so the damage was answered by a second draw as
+  soon as the first ended. The idle second began at that same moment, and
+  counted a draw whose asking was before it. Under Xvfb the damage comes
+  before the first frame is published, and one draw answers both. The
+  example now enters what asks and what is drawn in one ledger and judges
+  each draw by what it was for, begins the idle second once what was
+  asked as the window opened is drawn, and prints the ledger
+  (`crates/editor-ffi/examples/window.rs`, "The ledger").
+- **A window that opens is not on the screen at once, and does not say
+  so.** Seen when the example was started from a process that was not in
+  front: the surface answered `Occluded` for the window's first 140 ms,
+  the window told nothing until `Hidden(false)`, and the render loop
+  tried the refused draw again every refresh meanwhile, nine times, which
+  failed the count over the whole run (10 draws for 8 things that asked).
+  A draw refused because nobody can see its target now says so, and the
+  loop waits to be told more (`editor-render`'s `render_loop`, "A hidden
+  target"). The owner's run did not meet this: its first draw presented.
+- **A click arrived as a press, a drag and a release, all at one place.**
+  winit on macOS says where the pointer is before every press and every
+  release. Being told the pointer is where it already was is no longer a
+  drag.
+- **The window said its size four times as it opened, the same each
+  time**: once from the adapter, straight after `Opened`, and three times
+  from winit, which says the size at each step of building the window,
+  before it is shown. They are reported as winit says them. Nothing is
+  drawn for them: the same size is no demand to the render loop, and a
+  frame equal to the one shown is none either (2 draws for 8 things that
+  asked). An editor that lays out at every resize lays out four times as
+  it opens there.
+
+The second program was then run on that desktop three more times, each
+for two seconds and each started by a tool and not from a terminal in
+front, so that its window was not on the screen at once. The first, with
+the check as it was, failed on the count over the whole run; the second,
+with the ledger, showed the nine refused draws; the last, on the tree
+with all three changes, exited 0:
+
+```
+window: at       0.0 ms: the window told its drawer it opened, 1600 by 1200 at scale 2, on a display that refreshes 120000 thousandths of a hertz
+window: at      28.8 ms: frame 1 was published
+window: at      28.8 ms: draw 1 began, of frame 1 on 1600 by 1200 at scale 2, for a frame not yet shown
+window: at      35.4 ms: the window told its drawer it is damaged
+window: at      37.6 ms: the window told its drawer it is 1600 by 1200 at scale 2
+window: at      37.7 ms: the window told its drawer it is 1600 by 1200 at scale 2
+window: at      37.7 ms: frame 1 was published again
+window: at      37.8 ms: frame 1 was published again
+window: at      37.8 ms: the window told its drawer it is 1600 by 1200 at scale 2
+window: at      37.9 ms: frame 1 was published again
+window: at      64.4 ms: draw 1 ended, not presented
+window: at      64.4 ms: draw 2 began, of frame 1 on 1600 by 1200 at scale 2, for a frame not yet shown and damage
+window: at      64.6 ms: draw 2 ended, not presented
+window: at     147.9 ms: the window told its drawer Hidden(false)
+window: at     147.9 ms: draw 3 began, of frame 1 on 1600 by 1200 at scale 2, for a frame not yet shown and damage
+window: at     721.8 ms: draw 3 ended, presented
+window: at     731.6 ms: the idle second began
+window: at    1736.6 ms: the idle second ended
+window: idle: over 1 s in which nothing was published, 0 frames were drawn and the window asked for 0
+window: over the whole run, 3 draws for 8 things that asked for one
+```
+
+A click in that run arrived as a press and a release, with no drag
+between. **Not seen since the changes**: a run started from a terminal in
+front, where the first draw presents and a second answers the damage
+(the timeline should then show `draw 2 began, … for damage` before the
+idle second begins); the whole task, both programs; input checked line
+by line; a resize by hand; the window covered and uncovered.
 
 ## The system's fonts, on demand
 
@@ -357,7 +449,14 @@ frame); the idle second, with a render loop
 that marks its frame dirty after every draw (10 frames drawn, 0 asked for)
 and with a window that asks for a redraw whenever it is asked for one
 (270139 asked for); an input's line, with Escape named `Esc`; and the
-input itself, with nothing sent. Before the example failed a picture
+input itself, with nothing sent. Those two mutations of the idle second
+were made again once the example judged each draw by what asked for it,
+and each still fails the task: the first with `334 of the 336 draws were
+asked for by nothing: the first is draw 2, which began 256.1 ms after
+the window opened` and `336 draws were made and 5 were asked for`, each
+such draw `for nothing that was asked` in the timeline; the second with
+`the window asked to be drawn 273961 times while idle: more than 5 is a
+timer`. Before the example failed a picture
 that could not be read back, the first of those two mutations left this
 task at exit 0 with three frames presented and no picture compared: a
 journal entry shows that a present call returned, and only the
@@ -375,8 +474,11 @@ a coverage for each channel; three frames were presented, of 800 by 600
 and, after the resize, of 300 by 120 twice; each was read back from the
 surface and differed from the headless renderer's picture by 1 of 255 at
 the worst; no frame was drawn in the idle second; and the eight inputs
-came off the queue as documented. It has not been run on x86_64, and
-nothing here runs a Wayland compositor.
+came off the queue as documented. In the timeline the window said it was
+shown and damaged before the first frame was published, so the first
+draw was for both; the resize drew the frame shown on the new size and
+then the frame laid out for it; and no draw was refused. It has not been
+run on x86_64, and nothing here runs a Wayland compositor.
 
 ## The clipboard, on demand
 
@@ -504,8 +606,9 @@ mode on a window. They are written down now because the decision was
 taken first, by reading: `Fifo` at a frame latency of 1 on every platform
 ([`rendering-prior-art.md`](../design/rendering-prior-art.md), "Present
 mode and pacing"). A measurement needs a window on a display. A window
-that draws exists since the display pipeline's phase 5, and has run only
-under Xvfb, which has no display to pace against; these steps are how
+that draws exists since the display pipeline's phase 5, and has run under
+Xvfb, which has no display to pace against, and for a few seconds at a
+time on one macOS desktop, where nothing was measured; these steps are how
 that decision is borne out or overturned.
 
 Who runs it, and when: whoever builds phase 6, at a real window, on a

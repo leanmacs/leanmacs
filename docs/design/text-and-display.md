@@ -1440,7 +1440,12 @@ window is still run with nothing drawing in it. The threads are in
   and a change of scale a resize at the size last known. A window says
   its size as it opens, in a resize straight after `Opened`: the port has
   no other way to say how large a window is, and Lean must know before
-  it lays anything out.
+  it lays anything out. A size winit says again is reported again: on
+  macOS a window says its size four times as it opens, the same each
+  time (seen), since winit says it at each step of building the window.
+  A resize says how large the window is, not that it changed; the same
+  size is no demand to the render loop, and a frame equal to the one
+  shown is none either.
 - **The refresh rate is read after the events that can change it.** winit
   has no event for it. A window comes to be on another display by being
   moved, resized or rescaled, so after each the translation asks the

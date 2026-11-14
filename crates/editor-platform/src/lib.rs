@@ -39,8 +39,11 @@
 //! - **A window says how large it is in a [`Input::Resized`].** A platform
 //!   with a real window reports one straight after [`Input::Opened`], with
 //!   the size and scale it opened at: nothing else says so. A change of
-//!   scale alone is a `Resized` at the same size. The fake reports what its
-//!   script says and no more.
+//!   scale alone is a `Resized` at the same size. A platform may say a
+//!   size it has said already, as a window on macOS does three times more
+//!   as it opens: a `Resized` says how large the window is, not that it
+//!   is another size than before. The fake reports what its script says
+//!   and no more.
 //!
 //! # What a window tells whatever draws in it
 //!
@@ -127,7 +130,9 @@ pub enum Input {
     /// The pointer did something in the window: a button went down or up,
     /// it moved with a button held, or a wheel turned.
     Pointer(Pointer),
-    /// The window's drawable area changed size, or its scale factor did.
+    /// The window's drawable area changed size, or its scale factor did;
+    /// or the window says the size and scale it has, as it does when it
+    /// opens and may do again.
     Resized(Resize),
     /// The user asked for the window to be closed. The window stays open
     /// until [`Platform::close`] is called.

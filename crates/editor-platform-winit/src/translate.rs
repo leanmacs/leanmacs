@@ -65,6 +65,13 @@
 //! - **A window that opens says its size and scale** ([`Seen::opened`]),
 //!   which the handler reports straight after `Opened`: nothing else in
 //!   the port says how large a window is.
+//! - **A size winit says again is reported again.** winit on macOS says
+//!   a window's size at each step of building it, before the window is
+//!   shown, and those events arrive after the window has opened: a
+//!   window there reports its size four times as it opens, the same each
+//!   time (seen). Nothing is drawn for them: the same size is no demand
+//!   to the render loop, and a frame equal to the one shown is none
+//!   either. Whoever lays out at every resize lays out four times.
 //!
 //! # What the drawer is told
 //!
