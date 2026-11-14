@@ -162,6 +162,14 @@ the text store, and the scheme holds only which Vim state the view is in.
 - **A motion in such a state is the same move as anywhere.** That it
   extends the selection is the command's, when the edit runs.
 
+## Mode keys
+
+The scheme is given a role table and a leader beside its states
+(`ModeKeys`), and reports them to the core (`InputScheme.roles`,
+`InputScheme.leader`). The grammar reads neither: a mode's keys reach it as
+active keymaps. The tables that ship are data in
+`Editor/InputScheme/Vim/Default.lean`.
+
 ## Where an addition goes
 
 | Addition | Where |
@@ -527,12 +535,23 @@ def step (states : States) (maps : ViewId → List (Keymap Bound)) (view : ViewI
   | (next, .edit edit) => (next, some edit.compile)
   | (next, .text text) => (next, some (selfInsert text))
 
-/-- The Vim scheme over the registry `states`. Its bindings are parts of
-speech, and it reports every key of the edit begun as pending. A key bound
-to a command name is bound to the command of that name, which changes no
-text and enters no state: the grammar cannot look either up. -/
-def scheme (states : States) : InputScheme :=
+/-- What the Vim scheme says of modes' keys: its role table and its leader,
+each as chords. The grammar reads none of it. -/
+structure ModeKeys where
+  /-- The keys each role is on. -/
+  roles : List (Role × List Key) := []
+  /-- The prefix a mode's suffixes are bound under. -/
+  leader : List Key := []
+
+/-- The Vim scheme over the registry `states`, with the role table and
+leader `modes`. Its bindings are parts of speech, and it reports every key
+of the edit begun as pending. A key bound to a command name is bound to the
+command of that name, which changes no text and enters no state: the
+grammar cannot look either up. -/
+def scheme (states : States) (modes : ModeKeys := {}) : InputScheme :=
   { State, Binding := Bound, init := {}, step := step states, pending := (·.typed)
-    command := fun name => .command { name } }
+    command := fun name => .command { name }
+    roles := modes.roles
+    leader := modes.leader }
 
 end Editor.Vim

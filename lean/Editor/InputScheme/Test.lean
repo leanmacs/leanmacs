@@ -1,4 +1,5 @@
 import Editor.InputScheme
+import Editor.Key.Notation
 
 /-!
 # The test scheme
@@ -26,6 +27,11 @@ Its rules:
   logical key is a character and none of control, alt and super is held.
 - **A key bound to a command name is bound to its invocation with no
   arguments** (`scheme.command`).
+- **Its role table and leader** (`roles`, `leader`) put every registered
+  role on a key that prints nothing, so none is ever a self-insert, and the
+  leader on `C-c`, Emacs's prefix for a mode's keys. A mode's tests read
+  them through the scheme (`InputScheme.roleKey`, `InputScheme.leader`)
+  and name none of these keys.
 
 ## Where an addition goes
 
@@ -68,9 +74,27 @@ def step (maps : ViewId → List (Keymap Binding)) (view : ViewId) (state : Stat
     if state.pending.isEmpty && pending.isEmpty then ({}, key.printed?.map selfInsert)
     else ({ pending }, none)
 
+/-- The keys a key string names, as chords; none for one `Key.parse`
+refuses. -/
+private def parsed (text : String) : List Key :=
+  (Key.parse text).toOption.getD []
+
+/-- The test scheme's role table, each role on keys that print nothing, so
+that none is ever a self-insert. -/
+def roles : List (Role × List Key) :=
+  [(Role.nextItem, "C-n"), (Role.previousItem, "C-p"), (Role.activate, "RET"), (Role.quit, "C-q"),
+        (Role.refresh, "<F5>"), (Role.toggle, "TAB"), (Role.mark, "C-SPC")].map
+    fun (role, text) => (role, parsed text)
+
+/-- The test scheme's leader: `C-c`, Emacs's prefix for a mode's keys. -/
+def leader : List Key :=
+  parsed "C-c"
+
 /-- The test scheme. -/
 def scheme : InputScheme :=
   { State, Binding, init := {}, step, pending := (·.pending)
-    command := fun name => { command := name } }
+    command := fun name => { command := name }
+    roles
+    leader }
 
 end Editor.TestScheme

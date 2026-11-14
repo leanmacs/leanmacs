@@ -34,11 +34,32 @@ a name does.
 | `visual` | `visualCommands`, `operators`, `motions` | Block | Operators act on the selection |
 | `visual-line` | `visualLineCommands`, `operators`, `motions` | Block | Operators act on the selection |
 
+## The role table and the leader
+
+`roles` puts each registered role (`Editor/Role.lean`) on evil-collection's
+usual key for list buffers, and `leader` is `\`, Vim's own default
+`maplocalleader`, which begins no binding of any default state:
+
+| Role | Key |
+|---|---|
+| `next-item` | `j` |
+| `previous-item` | `k` |
+| `activate` | `RET` |
+| `quit` | `q` |
+| `refresh` | `g r`, under the `g g` prefix |
+| `toggle` | `TAB` |
+| `mark` | `m` |
+
+`j` and `k` replace the motions only in buffers whose modes fill those
+roles. A string `Key.parse` refuses puts its role on no key, which the
+scheme contract reports.
+
 ## Where an addition goes
 
 | Addition | Where |
 |---|---|
 | A new default key | A row of the table for its part of speech and its state |
+| A new role | A row of `roles` |
 | A new default Vim state | A record in `states`, with a table of its own for the keys that leave it |
 | What a name in a table does | The vocabulary or the command registry, under that name; nothing here |
 
@@ -130,8 +151,28 @@ def states : States :=
           keymaps := [visualLineCommands, operators, motions].map keymap
           operatesOnSelection := true }] }
 
-/-- The Vim scheme that ships: the grammar over the default states. -/
+/-- The role table: each registered role and the key string it is on. -/
+def roles : List (Role × String) :=
+  [(Role.nextItem, "j"), (Role.previousItem, "k"), (Role.activate, "RET"), (Role.quit, "q"),
+    (Role.refresh, "g r"), (Role.toggle, "TAB"), (Role.mark, "m")]
+
+/-- The leader, as a key string: `\`. -/
+def leader : String :=
+  "\\"
+
+/-- The role table and the leader as the scheme takes them, as chords. A
+string `Key.parse` refuses puts its role on no key. -/
+def modeKeys : ModeKeys :=
+  { roles :=
+      roles.filterMap fun (role, text) =>
+        match Key.parse text with
+        | .ok keys => some (role, keys)
+        | .error _ => none
+    leader := (Key.parse leader).toOption.getD [] }
+
+/-- The Vim scheme that ships: the grammar over the default states, with the
+default role table and leader. -/
 def scheme : InputScheme :=
-  Vim.scheme states
+  Vim.scheme states modeKeys
 
 end Editor.Vim.Default

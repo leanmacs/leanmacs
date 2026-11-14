@@ -1,4 +1,5 @@
 import Editor.InputScheme
+import Editor.Role
 
 /-!
 # The contract of an input scheme
@@ -38,6 +39,12 @@ the pending keys the scheme reports. Nothing here knows what a binding is.
   of that name when typed from the initial state, and leaves nothing
   pending. It is what lets a registry bind a key sequence to a command name
   under a scheme whose binding type it does not know.
+- `everyRoleHasKey`: every registered role (`Role.registered`) has a key
+  sequence, not empty, in the scheme's role table.
+- `leaderAndRolesApart`: the leader is not empty, no two roles are on one
+  key sequence, and no role's keys begin with the leader or are a prefix of
+  it. A role key that collided with a leader suffix would make one of them
+  unreachable, and no check of one mode can see it.
 
 The contract compares no states: a scheme's state may hold what a reset
 must keep, such as its last edit, and the record carries no equality on it.
@@ -155,10 +162,34 @@ def namedCommandRuns : Property :=
           subject.scheme.init subject.unbound
       yielded.map (·.command) == some namedCommand && (subject.scheme.pending state).isEmpty }
 
+/-- Every registered role has a key in the scheme's role table: a row, on a
+sequence that is not empty. -/
+def everyRoleHasKey : Property :=
+  { name := "every registered role has a key in the scheme's role table"
+    holds := fun subject =>
+      Role.registered.all fun role =>
+        match subject.scheme.roleKey role with
+        | some keys => !keys.isEmpty
+        | none => false }
+
+/-- The leader is not empty, no two rows of the role table are on one key
+sequence, and no role's keys begin with the leader or are a prefix of it. A
+role key that collided with a leader suffix would make one of them
+unreachable. -/
+def leaderAndRolesApart : Property :=
+  { name :=
+      "the scheme has a leader, no two roles are on one key sequence, and no role's keys begin with the leader or begin it"
+    holds := fun subject =>
+      let leader := subject.scheme.leader.map Key.chord
+      let sequences :=
+        (subject.scheme.roles.map fun (_, keys) => keys.map Key.chord).filter (!·.isEmpty)
+      !leader.isEmpty && sequences.eraseDups.length == sequences.length &&
+        sequences.all fun keys => !leader.isPrefixOf keys && !keys.isPrefixOf leader }
+
 /-- Every property of the contract. -/
 def properties : List Property :=
   [hasPrefixes, strictPrefixEmitsNothing, strictPrefixIsPending, completeEmits, unboundResets,
-    namedCommandRuns]
+    namedCommandRuns, everyRoleHasKey, leaderAndRolesApart]
 
 /-- The names of the properties that do not hold of `subject`; none when the
 scheme keeps the contract. -/

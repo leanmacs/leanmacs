@@ -1,5 +1,6 @@
 import Editor.Invocation
 import Editor.Keymap
+import Editor.Role
 import Editor.Scene
 
 /-!
@@ -39,6 +40,16 @@ binding, of its own type, that runs the command of that name. So whoever
 holds key sequences bound to command names, as the registry does for config
 (`Editor/Config/Registry.lean`), makes a keymap for any scheme without
 naming its binding type.
+
+## What a scheme reports for modes
+
+A mode names roles and suffixes, never keys (`Editor/Role.lean`,
+`docs/design/keymaps-and-modes.md`, "Modes"). Each scheme says once where
+they go: its role table (`roles`, read through `roleKey`), the keys each
+registered role is on, and its leader (`leader`), the prefix a mode's
+suffixes are bound under. Both default to empty, which the scheme contract
+reports for a scheme that is run: every registered role has a key, and the
+leader and the roles are apart.
 
 ## What every scheme must do
 
@@ -89,6 +100,16 @@ structure InputScheme where
   bound to a command name is bound to under this scheme. Completing a
   sequence bound to it yields an invocation of that command. -/
   command : String → Binding
+  /-- The role table: the keys, as chords, each role is on under this
+  scheme (`Editor/Role.lean`). A mode that fills a role is bound there. -/
+  roles : List (Role × List Key) := []
+  /-- The leader, as chords: the prefix a mode's suffixes are bound
+  under. -/
+  leader : List Key := []
+
+/-- The keys `role` is on in `scheme`'s role table, if it has a row. -/
+def InputScheme.roleKey (scheme : InputScheme) (role : Role) : Option (List Key) :=
+  (scheme.roles.find? (·.1 == role)).map (·.2)
 
 /-- The text `key` prints, if it is printable: its logical key is a
 character, and none of control, alt and super is held. It is the key's own,

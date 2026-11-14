@@ -5235,7 +5235,9 @@ def eager : InputScheme :=
       | some binding => ([], some binding.2)
       | none => ([], none)
     pending := id
-    command := fun name => { command := name } }
+    command := fun name => { command := name }
+    roles := TestScheme.roles
+    leader := TestScheme.leader }
 
 /-- A scheme written for the test that breaks the contract: the test scheme,
 except that an unbound key leaves the pending keys as they were. -/
@@ -5248,7 +5250,9 @@ def sticky : InputScheme :=
       | (next, some invocation) => (next, some invocation)
       | (next, none) => (if next.pending.isEmpty then state else next, none)
     pending := (·.pending)
-    command := fun name => { command := name } }
+    command := fun name => { command := name }
+    roles := TestScheme.roles
+    leader := TestScheme.leader }
 
 /-- A scheme written for the test that breaks the contract: the test scheme,
 except that it reports no pending keys. -/
@@ -5258,7 +5262,9 @@ def silent : InputScheme :=
     init := {}
     step := TestScheme.step
     pending := fun _ => []
-    command := fun name => { command := name } }
+    command := fun name => { command := name }
+    roles := TestScheme.roles
+    leader := TestScheme.leader }
 
 /-- A scheme written for the test that breaks the contract: the test scheme,
 except that an unbound key after a prefix hides the prefix and does not drop
@@ -5277,7 +5283,9 @@ def masking : InputScheme :=
         if !state.1.pending.isEmpty && next.pending.isEmpty && !state.2 then ((state.1, true), none)
         else ((next, false), none)
     pending := fun state => if state.2 then [] else state.1.pending
-    command := fun name => { command := name } }
+    command := fun name => { command := name }
+    roles := TestScheme.roles
+    leader := TestScheme.leader }
 
 /-- A scheme written for the test that breaks the contract: the test scheme,
 except that an unbound key after a prefix yields an invocation. -/
@@ -5292,7 +5300,9 @@ def noisy : InputScheme :=
         if !state.pending.isEmpty && next.pending.isEmpty then (next, some (invoke "noise"))
         else (next, none)
     pending := (·.pending)
-    command := fun name => { command := name } }
+    command := fun name => { command := name }
+    roles := TestScheme.roles
+    leader := TestScheme.leader }
 
 /-- A scheme written for the test that breaks the contract: the test scheme,
 except that after a key that yields an invocation it reports the keys of the
@@ -5307,13 +5317,29 @@ def lingering : InputScheme :=
       | (next, some invocation) => ((next, state.1.pending ++ [key.chord]), some invocation)
       | (next, none) => ((next, next.pending), none)
     pending := (·.2)
-    command := fun name => { command := name } }
+    command := fun name => { command := name }
+    roles := TestScheme.roles
+    leader := TestScheme.leader }
 
 /-- A scheme written for the test that breaks the contract: the test scheme,
 except that what it says runs a named command runs a command of another
 name. -/
 def misnaming : InputScheme :=
   { TestScheme.scheme with command := fun name => { command := name ++ "-not" } }
+
+/-- A scheme written for the test that breaks the contract: the test scheme,
+with a role table that lacks the role `mark`. -/
+def roleless : InputScheme :=
+  { TestScheme.scheme with roles := TestScheme.roles.filter (·.1 != Role.mark) }
+
+/-- A scheme written for the test that breaks the contract: the test scheme,
+with the role `previous-item` put on the keys of `next-item` as well. -/
+def crowded : InputScheme :=
+  { TestScheme.scheme with
+    roles :=
+      TestScheme.roles.map fun (role, keys) =>
+        if role == Role.previousItem then (role, (TestScheme.scheme.roleKey Role.nextItem).getD [])
+        else (role, keys) }
 
 /-- The subject the scheme contract is run on: `scheme` over the scheme
 checks' keymaps for view 0, the sequences those bind, and a key none of
@@ -5395,7 +5421,31 @@ def schemeContractChecks : List Check :=
             (subject.feed (keys "C-x C-s")).2.getLast? == some (some (invoke "save"))) },
     { name :=
         "the scheme contract reports a scheme whose binding for a command name runs a command of another name, for that property alone"
-      run := pure (failsOnly (subjectOf misnaming schemeMaps) [SchemeContract.namedCommandRuns]) }]
+      run := pure (failsOnly (subjectOf misnaming schemeMaps) [SchemeContract.namedCommandRuns]) },
+    { name :=
+        "the scheme contract reports a scheme whose role table lacks a registered role, for that property alone"
+      run := pure (failsOnly (subjectOf roleless schemeMaps) [SchemeContract.everyRoleHasKey]) },
+    { name :=
+        "the scheme contract reports a scheme that puts two roles on one key, for that property alone"
+      run := pure (failsOnly (subjectOf crowded schemeMaps) [SchemeContract.leaderAndRolesApart]) },
+    { name :=
+        "the scheme contract reports a scheme with no leader, and one with a role on keys that begin with the leader or begin it, for that property alone"
+      run :=
+        let leader := TestScheme.leader
+        let quit := (TestScheme.scheme.roleKey Role.quit).getD []
+        let underLeader :=
+          TestScheme.roles.map fun (role, keys) =>
+            if role == Role.quit then (role, leader ++ keys) else (role, keys)
+        let tables : List (List (Role × List Key) × List Key) :=
+          [(TestScheme.roles, []), (underLeader, leader), (TestScheme.roles, quit ++ leader)]
+        pure
+          (tables.all fun (roles, leader) =>
+            failsOnly
+              (subjectOf
+                { TestScheme.scheme with
+                  roles, leader }
+                schemeMaps)
+              [SchemeContract.leaderAndRolesApart]) }]
 
 /-- The delete operator of the Vim checks: it changes text and names no
 state. -/
@@ -5655,10 +5705,21 @@ the register prefix, by naming the register. -/
 def vimUnbound : Key :=
   namedKey ⟨"F12"⟩
 
+/-- The role table and leader the Vim checks give the scheme, written here
+so that no check names a default: each registered role on a key of its own,
+and the leader on `SPC`. -/
+def vimModeKeys : Vim.ModeKeys :=
+  { roles :=
+      Role.registered.zip
+        ([["n"], ["N"], ["RET"], ["Q"], ["z", "r"], ["TAB"], ["M"]].map fun strokes =>
+          keys (" ".intercalate strokes))
+    leader := keys "SPC" }
+
 /-- The subject the scheme contract is run on for the Vim scheme: the
-scheme over `vimStates`, with no active keymaps, for view 0. -/
+scheme over `vimStates`, with the checks' role table and leader and no
+active keymaps, for view 0. -/
 def vimSubject : SchemeContract.Subject :=
-  { scheme := Vim.scheme vimStates
+  { scheme := Vim.scheme vimStates vimModeKeys
     maps := vimNoMaps
     view := ⟨0⟩
     sequences := vimSequences.map keys
