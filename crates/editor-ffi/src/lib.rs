@@ -75,6 +75,7 @@
 //! | Byte range | Two scalars | A record of two `u64`: a start and an end, half-open, in bytes ([`text::ByteRange`]) |
 //! | List | *Words*: a buffer of 64-bit numbers, eight bytes each, least significant first, as a pointer and a byte length borrowed for the call. A checked reader takes it apart and refuses a length that is not whole words, a count that runs past the buffer and words left over (the private module `words`) | Words in an owned buffer, pointer and length, in the result record ([`log::RawWords`]); the glue copies it and hands it back with one call to [`text::editor_ffi_text_free`], which frees any buffer the library lent |
 //! | List of handles | A C array of handle pointers and its count, borrowed for the call, which the glue builds from a Lean `Array` of handles; words name a handle by its index in it ([`display::editor_ffi_display_publish`]) | None yet |
+//! | List of strings | Words, the count and then the byte length of each string, and one string of all of them end to end, both borrowed for the call. Lengths that do not add up to the string, and one that ends inside a character, are refused with the words that cannot be read ([`fuzzy::editor_ffi_fuzzy_rank`]) | None yet |
 //!
 //! Prefer a few scalar arguments or one record to many calls. No
 //! `extern "C"` function panics: failure is a return value. A function that
@@ -125,12 +126,18 @@
 //! hands back, if there is one, out
 //! ([`inverse::editor_ffi_document_apply_inverse`], with its refusals in
 //! [`inverse::InverseStatus`]); and a run in and a refusal as a `bool`
-//! ([`inverse::editor_ffi_document_drop_inverses`]). In words, a
+//! ([`inverse::editor_ffi_document_drop_inverses`]). Fuzzy ranking is the
+//! example of a list of strings, and of a call that keeps nothing: a
+//! pattern and candidates in, and the indices of the candidates the
+//! pattern matches out, best first, as words
+//! ([`fuzzy::editor_ffi_fuzzy_rank`], with its one refusal in
+//! [`fuzzy::FuzzyStatus`]). In words, a
 //! length or an offset the other side cannot hold is sent as the largest it
 //! can, which no text accepts, so it too is refused and never cut down.
 //! Tests: the unit tests in `text.rs`, `document.rs`, `snapshot.rs`,
-//! `motion.rs`, `words.rs`, `transaction.rs`, `log.rs`, `marker.rs` and
-//! `inverse.rs`, and, for a scene's words, in `display/wire.rs`;
+//! `motion.rs`, `words.rs`, `transaction.rs`, `log.rs`, `marker.rs`,
+//! `inverse.rs` and `fuzzy.rs`, and, for a scene's words, in
+//! `display/wire.rs`;
 //! the tag tests in `events.rs`;
 //! `find_fills_the_range_it_found_and_reports_whether_it_found_one` and the
 //! document test in `tests/c_api.rs`; the snapshot test in
@@ -141,7 +148,11 @@
 //! `tests/markers.rs` and
 //! `the_inverse_of_a_run_is_applied_and_inverses_are_dropped_through_c` in
 //! `tests/inverse.rs`, integration tests of their own for the reason
-//! `tests/snapshot.rs` is one; for a list of handles,
+//! `tests/snapshot.rs` is one; for a list of strings,
+//! `candidates_are_ranked_through_c_as_the_ranking_rule_ranks_them`,
+//! `no_candidates_are_ranked_as_none` and
+//! `candidates_that_cannot_be_read_are_refused_with_no_words` in
+//! `tests/fuzzy.rs`; for a list of handles,
 //! `a_scene_published_through_c_is_laid_out_as_layout_lays_it_out`,
 //! `words_that_spell_no_scene_are_refused_and_the_last_frame_is_kept`,
 //! `a_display_nothing_was_published_to_has_no_scene` and, for the faces,
@@ -381,6 +392,7 @@ pub mod display;
 pub mod document;
 pub mod events;
 pub mod files;
+pub mod fuzzy;
 pub mod interrupt;
 pub mod inverse;
 pub mod log;

@@ -129,8 +129,13 @@
 # is explicitly banned"). `editor-fuzzy`, the port's crate, which had no
 # entry while nothing depended on it: with the entry's wrapper naming
 # another crate, it fails on the adapter's edge ("crate 'editor-fuzzy =
-# 0.1.0' is explicitly banned"). `editor-fuzzy-nucleo` itself has no entry
-# yet: nothing depends on it.
+# 0.1.0' is explicitly banned"). `editor-fuzzy-nucleo` itself got its
+# entry in the commit in which `editor-ffi` came to depend on it, for the
+# one C function that ranks candidates: with the entry's wrapper naming
+# another crate, it fails ("crate 'editor-fuzzy-nucleo = 0.1.0' is
+# explicitly banned"). `editor-ffi` joined the wrappers of `editor-fuzzy`'s
+# entry in that commit: with the wrapper not yet there, it fails on that
+# edge ("crate 'editor-fuzzy = 0.1.0' is explicitly banned").
 #
 # One rule has no entry: "no crate depends on `editor-ffi`", the one crate
 # that knows about Lean. No entry for it passes the gate. With
@@ -167,5 +172,6 @@ deny = [
   { crate = "editor-fs-std", wrappers = ["editor-ffi"], reason = "the file adapter is linked only by the crate that wires the library together; everything else reaches a file through the port, and editor-text's tests through its fake" },
   { crate = "tempfile", wrappers = ["editor-fs-std", "editor-ffi"], reason = "a temporary directory is for a test that touches real files: the file adapter's contract test and editor-ffi's wiring test; editor-text's tests run on the fake and make no file" },
   { crate = "nucleo-matcher", wrappers = ["editor-fuzzy-nucleo"], reason = "the matching library stays behind the Scorer port: only its adapter crate may name its types" },
-  { crate = "editor-fuzzy", wrappers = ["editor-fuzzy-nucleo"], reason = "the Scorer port and the ranking rule have one user, the port's adapter, which implements it and runs its contract; another is a decision, so it is made here" },
+  { crate = "editor-fuzzy", wrappers = ["editor-fuzzy-nucleo", "editor-ffi"], reason = "the Scorer port and the ranking rule have two users: the port's adapter, which implements it and runs its contract, and the crate that wires the library together, whose one C function asks the ranking rule over the adapter; a third is a decision, so it is made here" },
+  { crate = "editor-fuzzy-nucleo", wrappers = ["editor-ffi"], reason = "the scorer's real adapter is linked only by the crate that wires the library together; everything else reaches a scorer through the port, and its tests through the port's fake" },
 ]

@@ -34,6 +34,14 @@ editor-render = { path = "../editor-render" }
 # `clippy.toml` here keeps the adapter out of everything but that one static
 # and the wiring test.
 editor-fs-std = { path = "../editor-fs-std" }
+# Fuzzy matching: the ranking rule, which the one C function of
+# `src/fuzzy.rs` asks, and the Scorer port it asks it over.
+editor-fuzzy = { path = "../editor-fuzzy" }
+# The real scorer. This is the crate that wires the library together, so
+# it is the one that links the adapter: that C function makes one for each
+# call. Through it the static library Lean links holds nucleo-matcher,
+# which has no system dependency.
+editor-fuzzy-nucleo = { path = "../editor-fuzzy-nucleo" }
 
 [dev-dependencies]
 # The temporary directory the wiring test (`tests/files.rs`) owns: the one
