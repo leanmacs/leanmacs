@@ -82,6 +82,15 @@ fakes. The checks here pin what only real collaborators can show:
   the scene's echo, with the editor going on. Each line is committed into
   the minibuffer and accepted with the test scheme's key for the role the
   minibuffer's mode fills;
+- `exScriptChecks`: scripts that a command ends, with `Headless.run` on
+  scripts built here, over the library's file service, so they run after
+  `fileChecks` and share their table of waits and pump: `e` on a file in a
+  temporary directory, a commit, `w`, a join and `q`, and the same with
+  `wq` and a join after it, each leave the file holding the buffer's text
+  and end the script with no failure and the `show` line after the quit
+  not run; a `q` that is refused leaves the script running; and a wait on
+  a host whose loop a command ended answers `ended`. They are apart from
+  `scriptChecks`, which are defined before what these hosts are handed;
 - `evilChecks`: evil from config through the host, with the test scheme:
   a config that the real elaborator loads names the vocabulary the editor
   ships (`Evil.motions`) and hands it to evil's move command, as it is and
@@ -2994,6 +3003,108 @@ def fileChecks (context : Context) : List Check :=
                   echo == "".quote &&
                   lines == #[viewLine noteText 0, statusOf (name := "note.txt")] }]
 
+/-- The directives of one ex line of a script: the ex command run by its
+name, which asks, `line` committed into the minibuffer, and the accept
+key. -/
+def exLineDirectives (line : String) : List Headless.Directive :=
+  [.request (.run Ex.name), .commit line] ++ acceptKeys.map .key
+
+/-- A script of `directives`, one a line, numbered from 1. -/
+def scriptOf (directives : List Headless.Directive) : Array Headless.Line :=
+  (directives.zipIdx.map fun (directive, index) => ⟨index + 1, directive⟩).toArray
+
+/-- Runs `directives` as a script (`Headless.run`) against a host of its own
+over the library's file service (`Stage.overFiles`), with an empty config
+directory, that is handed what the executable is handed for the ex line:
+the ex line's commands and the ex names that ship, the minibuffer's
+commands and its mode, and the file commands with their jobs. What `run`
+answered, and every line the host printed. -/
+def ranScript (context : Context) (directives : List Headless.Directive) :
+    IO (Option Headless.Failure × Array String) :=
+  IO.FS.withTempDir fun directory => do
+    let stage ←
+      Stage.overFiles context (Config.Directory.source directory)
+          { commands := Ex.commands ++ Minibuffer.commands ++ Files.commands
+            jobs := Files.jobs
+            modes := Minibuffer.modes
+            ex := Ex.bindings }
+    let failure ← Headless.run stage.collaborators (scriptOf directives) patience
+    return (failure, ← stage.output.get)
+
+/-- The checks of a script that a command ends (`Editor/Headless.lean`,
+"The driver, and the command line"), with `Headless.run` on scripts built
+here, over the real elaborator, the real queue, the real text binding and
+the library's file service, on a file each check writes in a temporary
+directory of its own: the phase's first two acceptance criteria through the
+host. They share the file checks' table of waits and completion pump, so
+they run after them.
+
+Each script that opens a file has a `join` after the `e` line: the open is
+a job, and without the wait the text would be committed into the scratch
+buffer. The `wq` script has a `join` after the `wq` line too: the quit it
+asks for waits for the save, so without the wait the `show` line would be
+handled while the save runs, and the end of the script would stop the loop,
+which cancels the save. -/
+def exScriptChecks (context : Context) : List Check :=
+  let listed (output : Array String) : Bool := output.any (·.startsWith "commands:")
+  [{  name :=
+        "criterion 1 through the host: a script that runs e on a file, joins, commits text, runs w, joins, runs q, and then has a show line: the script has no failure, the file holds the committed text before what it held, and the show line was not run"
+      run :=
+        IO.FS.withTempDir fun files => do
+          let path := files / "note.txt"
+          IO.FS.writeBinFile path noteText.toUTF8
+          let (failure, output) ←
+            ranScript context
+                (exLineDirectives s!"e {path}" ++ [.join, .commit "x"] ++ exLineDirectives "w" ++
+                  [.join] ++
+                  exLineDirectives "q" ++
+                  [.request .show])
+          return failure == none && (← IO.FS.readBinFile path) == ("x" ++ noteText).toUTF8 &&
+              output.contains s!"job 2 {Files.saveJob}: ok" &&
+              !listed output },
+    { name :=
+        "criterion 2 through the host: the same script with wq in place of w, the join and q, and a join after it: the script has no failure, the file holds the buffer's text, and the show line was not run"
+      run :=
+        IO.FS.withTempDir fun files => do
+          let path := files / "note.txt"
+          IO.FS.writeBinFile path noteText.toUTF8
+          let (failure, output) ←
+            ranScript context
+                (exLineDirectives s!"e {path}" ++ [.join, .commit "x"] ++ exLineDirectives "wq" ++
+                  [.join, .request .show])
+          return failure == none && (← IO.FS.readBinFile path) == ("x" ++ noteText).toUTF8 &&
+              output.contains s!"job 2 {Files.saveJob}: ok" &&
+              !listed output },
+    { name :=
+        "a script whose q is refused, for a file's buffer that was edited, runs its later lines: the show line prints the commands, the script has no failure, and the file is as it was"
+      run :=
+        IO.FS.withTempDir fun files => do
+          let path := files / "note.txt"
+          IO.FS.writeBinFile path noteText.toUTF8
+          let (failure, output) ←
+            ranScript context
+                (exLineDirectives s!"e {path}" ++ [.join, .commit "x"] ++ exLineDirectives "q" ++
+                  [.request .show])
+          return failure == none && listed output &&
+              (← IO.FS.readBinFile path) == noteText.toUTF8 },
+    { name :=
+        "a wait on a host whose loop a command ended answers that the loop has ended, a settle and a join alike, which is no failure of a script, and halting the host then answers that it stopped"
+      run := do
+        let stage ← Stage.new context context.elaborator { chunks := pure #[] } exCompiled
+        let host ← Headless.start stage.collaborators
+        try
+          host.send (.run Ex.quitName)
+          let ended ← eventually (IO.hasFinished host.thread)
+          let awaited ← host.await patience
+          let joined ← host.join patience
+          return ended && awaited == .ended && joined == .ended &&
+              Headless.Wait.ended.failure (some 3) == none &&
+              (← host.halt patience) &&
+              (← stage.output.get) == #[s!"run {Ex.quitName}: ok"]
+        catch error =>
+          discard <| host.halt patience
+          throw error }]
+
 /-- Every check, in the order they run. -/
 def checks (context : Context) : List Check :=
   elaboratorChecks context ++ directoryChecks () ++ hostChecks context ++ threadChecks context ++
@@ -3005,7 +3116,8 @@ def checks (context : Context) : List Check :=
     promptChecks context ++
     exChecks context ++
     evilChecks context ++
-    fileChecks context
+    fileChecks context ++
+    exScriptChecks context
 
 /-- Runs `checks` and returns the names of those that failed. A check that
 throws has failed, and its error is reported with its name. -/

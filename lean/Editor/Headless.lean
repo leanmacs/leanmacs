@@ -95,7 +95,9 @@ as before, so reload and job completion work as they did.
   against the library with the recorder as the display, handles it and
   publishes a scene. A key press is still printed with its identity, as the
   host's own output. A close request ends the loop, as the driver's `stop`
-  does. A window event that cannot be read is ignored.
+  does, and so does any step that says stop: a command asked the editor
+  to quit and it can leave (`Editor/Loop.lean`, "Quit"). A window event
+  that cannot be read is ignored.
 - **A key press is dispatched.** The loop steps it through the host's
   scheme and runs the command it yields (`Editor/Loop.lean`, "Running an
   invocation"). What the keys are looked up in is made for each window
@@ -300,9 +302,37 @@ lines that start with `#` are skipped.
 A script that cannot run to its end is data too. `Host.await` and `Host.join`
 say what a wait came to (`Wait`): settled, or run out with a reload or a job
 still running, or run out before the editor thread had handled everything
-sent to it. `run` returns a `Failure` for a wait that did not settle, with
-the line of the `settle` or the `join`, or with no line for the wait at the
-end of the script and for a loop that did not stop.
+sent to it, or ended, because the loop has. `run` returns a `Failure` for a
+wait that ran out, with the line of the `settle` or the `join`, or with no
+line for the wait at the end of the script and for a loop that did not stop.
+
+**A command that quits the editor ends the script.** When a step says stop
+(`Editor/Loop.lean`, "Quit") the host ends its loop, as it does for a close
+request: it runs no further invocation of that step (`Running.took`),
+cancels the jobs that are left, and prints nothing more.
+
+- **The driver sees it.** A wait answers `ended` as soon as the editor
+  thread's task has finished (`Host.waitWhile`), in place of running out
+  its patience. `run` stops reading the script at a wait that answered
+  `ended`, and before each line when the task has finished, and that is no
+  failure. A loop that ended with an error is still thrown, by
+  `Host.halt`.
+- **So the lines of a script after the quit are not run.** A line that was
+  already posted when the loop ended, a request or a key, stays on the
+  queue unread.
+- **A quit that is refused leaves the script running**, and so does one
+  that is still waiting for a save: the loop has not ended.
+- **A script waits where its commands start a job.** A script's lines are
+  posted without waiting, and a job's result is queued when the job ends.
+  So a script that opens a file has a `join` after that line, or the lines
+  after it are handled in the buffer the window still shows; and a script
+  that runs `wq` has a `join` after it. The quit `wq` asks for waits for
+  the save, so the loop is still running: without the wait, the lines
+  after `wq` would be handled while the save runs, and the end of the
+  script would stop the loop, which cancels the save, leaving the file's
+  contents to timing. The `join` answers `ended` once the delivery of the
+  save's result has stopped the loop, and the end of the script then stops
+  nothing.
 
 `main` is the executable's headless mode,
 `editor headless <sysroot> <olean dir> <config dir> <script file>`: `run`
@@ -311,7 +341,8 @@ the library's timer service and file service for the jobs, and the file
 commands with their jobs and the minibuffer's commands with its mode as
 its compiled ones, then the quit and the explicit exit. Before the loop starts it warms the pool (`Editor/Job/Pool.lean`) and
 starts the completion pump on a dedicated task (`Editor/Job/Real.lean`),
-which the quit ends. Its exit status is 0 when the script ran to its end and
+which the quit ends. Its exit status is 0 when the script ran to its end, or
+a command quit the editor before it, and
 1 when it could not, and then it says why on stderr: the script cannot be
 read, a wait ran out (after 30 seconds) with a reload or a job still
 running, or the editor thread did not answer. A rejected reload is something
@@ -347,7 +378,12 @@ is open, and the continuation is looked up across a reload.
 `ConfigTest.exChecks` are hosts handed the ex line's commands and the ex
 names that ship: the ex line `reload` reloads the config, an ex name config
 binds runs config's command until a reload drops the binding, and a name
-nobody bound is said in the echo area.
+nobody bound is said in the echo area. `ConfigTest.exScriptChecks` run
+scripts a command ends, over the library's file service on files in
+temporary directories: `e`, an edit, `w` and `q`, and the same with `wq`,
+leave the file with the buffer's text and end the script with no failure,
+with the lines after the quit not run; a `q` that is refused leaves the
+script running; and a wait on a loop a command ended answers `ended`.
 `ConfigTest.fileChecks` are hosts over the
 library's file service, handed the file commands and their jobs as compiled
 code registers them, on real files in temporary directories.
@@ -742,6 +778,9 @@ partial def took (collaborators : Collaborators σ scheme) (running : Running σ
     -- What the driver's `reload` request does: one job at a time.
     running ← running.reduce collaborators .requested
   for invocation in stepped.answered do
+    -- A step that said stop has ended the loop: nothing more is run.
+    if running.stopped then
+      break
     let some frame := running.frame | break
     let (answered, attempted) ←
       running.attempt collaborators (frame.invoke (running.keys collaborators) invocation)
@@ -1049,8 +1088,11 @@ inductive Wait where
   running. -/
   | working
   /-- The wait ran out before the editor thread had handled everything sent
-  to it: it is still inside an event, or it has ended. -/
+  to it: it is still inside an event. -/
   | unanswered
+  /-- The editor thread's loop has ended: a command quit the editor, or the
+  window was asked to close. Nothing more will be handled. -/
+  | ended
   deriving DecidableEq, Repr
 
 /-- Polls `condition` until it holds; `false` if it still does not after
@@ -1097,14 +1139,26 @@ def commit (_ : Host) (text : String) : IO Unit := do
 /-- Waits until the editor thread has handled everything sent so far and
 `busy` no longer holds of its progress, for at most `patience` milliseconds.
 Says what the wait came to: `still` if it ran out with the editor thread up
-to date and `busy` still holding. -/
+to date and `busy` still holding.
+
+A loop that has ended, or ends while the wait runs, is answered `ended` as
+soon as it is seen: its task has finished, so nothing it was waited for
+will happen, and the wait does not run out its patience. The loop's last
+progress is not read then: the loop does not publish it once it has ended,
+so it may still say a job is running. -/
 def waitWhile (host : Host) (patience : Nat) (busy : Progress → Bool) (still : Wait) : IO Wait := do
+  if ← IO.hasFinished host.thread then
+    return .ended
   let marker ← host.posted.modifyGet fun posted => (posted + 1, posted + 1)
   host.post .marker
   let settled ←
     within patience do
+        if ← IO.hasFinished host.thread then
+          return true
         let progress ← host.progress.get
         return progress.markers >= marker && !busy progress
+  if ← IO.hasFinished host.thread then
+    return .ended
   if settled then
     return .settled
   -- The marker was posted after everything sent so far: a loop that has
@@ -1144,11 +1198,12 @@ def halt (host : Host) (patience : Nat) : IO Bool := do
   return true
 
 /-- Ends the loop once no reload is running; `false` if it did not settle or
-did not end, each within `patience` milliseconds. -/
+did not end, each within `patience` milliseconds. A loop that had ended by
+itself, because a command quit the editor, has nothing to settle. -/
 def stop (host : Host) (patience : Nat) : IO Bool := do
-  let settled ← host.settle patience
+  let wait ← host.await patience
   let ended ← host.halt patience
-  return settled && ended
+  return (wait == .settled || wait == .ended) && ended
 
 end Host
 
@@ -1310,12 +1365,19 @@ def Wait.failure (line : Option Nat) : Wait → Option Failure
   | .reloading => some (.reloading line)
   | .working => some (.working line)
   | .unanswered => some (.unanswered line)
+  | .ended => none
 
 /-- Runs `script` against a host of its own, as its driver, and stops the
 host: sends each request in order and waits at each `settle` and each
-`join`. `none` when the script ran to its end, and otherwise why it could
-not: the editor thread did not settle, a job did not end, or the loop did not
-stop, within `patience` milliseconds.
+`join`. `none` when the script ran to its end, or a command quit the editor
+before it, and otherwise why it could not: the editor thread did not
+settle, a job did not end, or the loop did not stop, within `patience`
+milliseconds.
+
+Once the loop has ended by itself, because a command quit the editor, the
+lines that are left are not run: the script is read no further at a wait
+that answered `ended`, and before each line when the loop's task has
+finished.
 
 A `settle` or a `join` that runs out ends the loop at once, whether a reload
 or a job is running or not. A rejected reload is something to print, not a
@@ -1325,6 +1387,9 @@ def run {σ : Type} {scheme : InputScheme} (collaborators : Collaborators σ sch
     (script : Array Line) (patience : Nat) : IO (Option Failure) := do
   let host ← start collaborators
   for line in script do
+    -- A command quit the editor: the lines after it are not run.
+    if ← IO.hasFinished host.thread then
+      break
     let wait ←
       match line.directive with
       | .request request =>
@@ -1340,11 +1405,14 @@ def run {σ : Type} {scheme : InputScheme} (collaborators : Collaborators σ sch
         host.await patience
       | .join =>
         host.join patience
+    if wait == .ended then
+      break
     if let some failure := wait.failure (some line.number) then
       discard <| host.halt patience
       return some failure
   -- The end of the script: wait for a reload that is still running, then
-  -- stop the loop.
+  -- stop the loop. A loop that has ended by itself is neither waited for
+  -- nor stopped, and `halt` throws the error it ended with, if it did.
   let unsettled := (← host.await patience).failure none
   let stopped ← host.halt patience
   return unsettled <|> (if stopped then none else some (.unanswered none))
@@ -1364,7 +1432,8 @@ def warmPatience : Nat :=
 `editor headless <sysroot> <olean dir> <config dir> <script file>`. Loads the
 config in `configDir` with the real elaborator, runs the script as `run`
 does, with the output on stdout, then quits the queues and exits explicitly:
-with status 0 when the script ran to its end, and with 1 when it could not,
+with status 0 when the script ran to its end or a command quit the editor
+before it, and with 1 when it could not,
 after saying why on stderr (the script cannot be read, a wait ran out with a
 reload or a job still running, or the editor thread did not answer).
 
