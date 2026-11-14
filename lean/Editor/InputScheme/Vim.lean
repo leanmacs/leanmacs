@@ -135,6 +135,13 @@ A Vim state (normal, insert, a visual state) is a record in a registry
 - **A state is entered by an edit that names it** (`Edit.enters`): a
   command bound in a keymap, or an operator. The view that enters is the
   one the completing key is for.
+- **The minibuffer's view enters the state the registry names for it**
+  (`States.minibuffer`, a name or none), when the scheme is told the view
+  is the minibuffer's (`State.openMinibuffer`, which the scheme reports as
+  `InputScheme.openMinibuffer`). It is entered as an edit's state is, so
+  the entry is dropped when the view is closed. With none named the view
+  stays in the initial state. Nothing matches on the state's name: which
+  state it is, and what it binds, is the registry's.
 - **A name the registry does not have is the initial state**, when it is
   read and when it is entered, so a registry that loses a state strands no
   view.
@@ -344,6 +351,9 @@ structure States where
   initial : StateRecord
   /-- Every other state, in the order each was last registered. -/
   others : List StateRecord := []
+  /-- The name of the state the minibuffer's view is put in when a prompt
+  opens; with `none` it stays in the initial state. -/
+  minibuffer : Option String := none
   deriving Repr
 
 namespace States
@@ -460,6 +470,17 @@ private def State.enter (states : States) (state : State) (view : ViewId) (name 
   let entered := (states.get name).name
   { state with
     current := if entered == states.initial.name then others else others ++ [(view, entered)] }
+
+/-- The state once `view` is opened as the minibuffer's: the view is in the
+Vim state the registry names for the minibuffer (`States.minibuffer`),
+entered as an edit that names a state enters it, so a name the registry
+does not have is the initial state. With none named, the state is as it
+was. The edit begun and the last change are the scheme's, not the view's,
+and stay. -/
+def State.openMinibuffer (states : States) (view : ViewId) (state : State) : State :=
+  match states.minibuffer with
+  | some name => state.enter states view name
+  | none => state
 
 /-- The edit begun, completed as `edit` by a key for `view`: the edit begun
 is dropped, the edit is the last change if it changes text, and the view
@@ -585,7 +606,9 @@ reports every key of the edit begun as pending. A key bound to a command
 name is bound to the command of that name, which changes no text and enters
 no state: the grammar cannot look either up. A key a mode binds, and a
 hand-tuned key, is marked as a mode's (`Bound.mode`). Its own keymaps are
-every state's. A view that is closed has its Vim state forgotten. -/
+every state's. A view that is closed has its Vim state forgotten, and a
+view that is opened as the minibuffer's is put in the state the registry
+names for it. -/
 def scheme (states : States) (modes : ModeKeys := {}) : InputScheme :=
   { State, Binding := Bound, init := {}, step := step states, pending := (·.typed)
     command := fun name => .command { name }
@@ -594,6 +617,7 @@ def scheme (states : States) (modes : ModeKeys := {}) : InputScheme :=
     modeCommand := fun name => .mode (.command { name })
     defaults := states.initial.keymaps ++ states.others.flatMap (·.keymaps)
     tuned := modes.tuned.map fun (name, keys, bound) => (name, keys, .mode bound)
-    closeView := State.closeView }
+    closeView := State.closeView
+    openMinibuffer := State.openMinibuffer states }
 
 end Editor.Vim

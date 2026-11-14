@@ -8360,7 +8360,42 @@ def vimStateChecks : List Check :=
             closed == { both with current := [(⟨1⟩, "test")] } &&
             closed.stateOf vimWithTest ⟨0⟩ == "normal" &&
             closed.stateOf vimWithTest ⟨1⟩ == "test" &&
-            other == both) }]
+            other == both) },
+    { name :=
+        "told that a view is the minibuffer's, the Vim scheme puts it in the state its registry names and leaves the other views in theirs: a key that prints and a digit typed for it are text, and the same keys for another view are not; told that the view is closed, its state is the scheme's initial state again"
+      run :=
+        let states : Vim.States := { vimStates with minibuffer := some "insert" }
+        let scheme := Vim.scheme states
+        let told : Vim.State := scheme.openMinibuffer ⟨5⟩ vimInit
+        let closed : Vim.State := scheme.closeView ⟨5⟩ told
+        let typed (view : ViewId) (text : String) : List (Option Invocation) :=
+          (vimFedFrom told text (view := view) (states := states)).2
+        pure
+          (told.current == [(⟨5⟩, "insert")] && told.stateOf states ⟨5⟩ == "insert" &&
+            told.stateOf states ⟨0⟩ == "normal" &&
+            typed ⟨5⟩ "w 2" == [some (Vim.selfInsert "w"), some (Vim.selfInsert "2")] &&
+            (typed ⟨0⟩ "w").all
+              (fun yielded => yielded.isSome && yielded != some (Vim.selfInsert "w")) &&
+            typed ⟨0⟩ "2" == [none] &&
+            closed == vimInit) },
+    { name :=
+        "with no state named for the minibuffer, and with a name the registry does not have, a view the Vim scheme is told is the minibuffer's is in the initial state, and the scheme's state is as it was"
+      run :=
+        let nowhere : Vim.States := { vimStates with minibuffer := some "nowhere" }
+        let unnamed : Vim.State := (Vim.scheme vimStates).openMinibuffer ⟨5⟩ vimInit
+        let unknown : Vim.State := (Vim.scheme nowhere).openMinibuffer ⟨5⟩ vimInit
+        pure
+          (vimStates.minibuffer == none && unnamed == vimInit && unknown == vimInit &&
+            unknown.stateOf nowhere ⟨5⟩ == "normal") },
+    { name :=
+        "the notice of the minibuffer's view keeps the edit begun and the last change, and the other views' states"
+      run :=
+        let states : Vim.States := { vimStates with minibuffer := some "insert" }
+        let (begun, _) := vimFedFrom (vimFed "x i" (states := states)).1 "d" (view := ⟨1⟩)
+        let told : Vim.State := (Vim.scheme states).openMinibuffer ⟨5⟩ begun
+        pure
+          (begun.current == [(⟨0⟩, "insert")] && begun.lastChange.isSome && !begun.typed.isEmpty &&
+            told == { begun with current := [(⟨0⟩, "insert"), (⟨5⟩, "insert")] }) }]
 
 /-- The default Vim scheme's grammar folded from its initial state through
 the keys the key string `text` names, keys for view 0 with no active
