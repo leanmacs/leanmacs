@@ -1,0 +1,27 @@
+# A template of a script, used as `save-quit-script` is: `@FILE@` stands for
+# the absolute path of a copy of `note.txt` in a temporary directory. The
+# run must exit with status 0, leave the copy holding the bytes of
+# `note-expected`, and print no `commands:` line.
+
+# `e` opens the file, and `join` waits for the load's result.
+run ex
+commit e @FILE@
+key <Enter> Enter -
+join
+
+# The buffer is modified.
+key i KeyI -
+commit zero
+key <Escape> Escape -
+
+# `wq` starts the save and asks the editor to quit. The quit waits for the
+# save, so the loop is still running after the accept key: `join` waits for
+# the save's result, whose delivery ends the loop. Without the wait the
+# `show` line would be handled while the save runs and print a `commands:`
+# line, and the end of the script would stop the loop, which cancels the
+# save.
+run ex
+commit wq
+key <Enter> Enter -
+join
+show

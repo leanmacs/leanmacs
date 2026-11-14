@@ -1,0 +1,29 @@
+# The script `mise run ffi-test` has the editor's headless mode run against
+# the config in `../config/`, of which it loads nothing: there is no
+# `reload`. So every command and every ex name it runs is one the editor
+# ships, compiled in. What it prints must be exactly `expected`. It touches
+# no file.
+
+# `ex` is the compiled command that opens the ex line: a prompt labelled
+# `:`, whose answer is run as an ex command. A committed text goes into the
+# minibuffer, and `<Enter>` accepts. `bogus` is a name nobody bound: the
+# echo area says so, and the editor goes on.
+run ex
+commit bogus
+key <Enter> Enter -
+scene
+
+# `w` is bound to `save-buffer`. The scratch buffer shows no file, which
+# that command says.
+run ex
+commit w
+key <Enter> Enter -
+scene
+
+# `q` is bound to `quit`. Nothing has unsaved changes, so the editor quits:
+# the loop ends at the accept key, and the `scene` line after it is not
+# run. The exit status is 0.
+run ex
+commit q
+key <Enter> Enter -
+scene

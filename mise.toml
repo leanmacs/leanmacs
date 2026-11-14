@@ -190,6 +190,29 @@ run = [
   # start: the scenes show the text, the cursor and the state's name in the
   # status line (`evil-expected`).
   "out=$(.lake/build/bin/editor headless \"$(lean --print-prefix)\" .lake/build/lib/lean ../tests/headless/config ../tests/headless/evil-script) && printf '%s\\n' \"$out\" | diff ../tests/headless/evil-expected -",
+  # The ex command line, with no config (tests/headless/ex): the script has
+  # no `reload`, so the ex command and every ex name are the ones the
+  # editor ships. A name nobody bound is said in the echo area, `w` in the
+  # scratch buffer says it has no file, and `q` quits the editor: the loop
+  # ends, the `scene` line after it is not run, and the status is 0
+  # (`ex/expected`). It touches no file.
+  "out=$(.lake/build/bin/editor headless \"$(lean --print-prefix)\" .lake/build/lib/lean ../tests/headless/config ../tests/headless/ex/script) && printf '%s\\n' \"$out\" | diff ../tests/headless/ex/expected -",
+  # `e`, an edit, `w` and `q` on a real file, as a process. Lean spawns no
+  # child (docs/design/overview.md), so the check is here: this entry is one
+  # shell, which makes a temporary directory and removes it by a trap when
+  # the shell ends, whether the check passed or failed. It copies the
+  # fixture file `ex/note.txt` there, and writes the script there from the
+  # template `ex/save-quit-script`, with the copy's absolute path in place
+  # of `@FILE@`: the file port takes absolute paths only. The editor must
+  # exit with status 0, the copy must hold the bytes of `ex/note-expected`,
+  # and no line of the output may start with `commands:`, which the `show`
+  # line after the quit would print. Nothing outside the temporary
+  # directory is written, and the task's time limit ends a run that hangs.
+  "dir=$(mktemp -d) && trap 'rm -rf \"$dir\"' EXIT && cp ../tests/headless/ex/note.txt \"$dir/note.txt\" && sed \"s|@FILE@|$dir/note.txt|\" ../tests/headless/ex/save-quit-script > \"$dir/script\" && out=$(.lake/build/bin/editor headless \"$(lean --print-prefix)\" .lake/build/lib/lean ../tests/headless/config \"$dir/script\") && printf '%s\\n' \"$out\" && cmp \"$dir/note.txt\" ../tests/headless/ex/note-expected && ! printf '%s\\n' \"$out\" | grep -q '^commands:'",
+  # The same with `wq` in place of `w` and `q` (`ex/wq-script`): the quit
+  # waits for the save, so the script has a `join` after the `wq` line,
+  # which ends when the save's result has ended the loop.
+  "dir=$(mktemp -d) && trap 'rm -rf \"$dir\"' EXIT && cp ../tests/headless/ex/note.txt \"$dir/note.txt\" && sed \"s|@FILE@|$dir/note.txt|\" ../tests/headless/ex/wq-script > \"$dir/script\" && out=$(.lake/build/bin/editor headless \"$(lean --print-prefix)\" .lake/build/lib/lean ../tests/headless/config \"$dir/script\") && printf '%s\\n' \"$out\" && cmp \"$dir/note.txt\" ../tests/headless/ex/note-expected && ! printf '%s\\n' \"$out\" | grep -q '^commands:'",
   # The editor's failure statuses. A command line it does not understand is
   # status 2, with the usage on stderr.
   "status=0; .lake/build/bin/editor bogus || status=$?; test \"$status\" -eq 2",

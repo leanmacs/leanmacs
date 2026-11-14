@@ -4,6 +4,7 @@ import Editor.Config.Reload
 import Editor.Display.Recorder
 import Editor.Event.Queue
 import Editor.Evil.Compiled
+import Editor.Ex.Compiled
 import Editor.Files.Compiled
 import Editor.InputScheme.Vim.Default
 import Editor.Job.Jobs
@@ -131,10 +132,15 @@ as before, so reload and job completion work as they did.
   the three that enter normal state and the visual states, the four that
   begin an insert, and `self-insert`, which a key that prints runs in
   insert state and in the minibuffer. So with no config the editor moves
-  and inserts. It is handed no binding: the Vim scheme's keys are its
-  states' own keymaps. A default key whose command is not built yet (an
-  operator, `x`, `p`, `u`, `:`, `o`) says `<name>: no such command` in the
-  echo area.
+  and inserts. And it is handed the ex line's commands and the ex names
+  that ship (`Ex.commands`, `Ex.bindings`, `Editor/Ex/Compiled.lean`):
+  `ex`, which opens the ex line and runs its answer, `quit`,
+  `save-and-quit` and `reload-config`, and the ex names `w`, `e`, `q`,
+  `wq` and `reload`. The Vim scheme's default table binds `:` to the name
+  `ex`, so that key opens the ex line. It is handed no key binding: the
+  Vim scheme's keys are its states' own keymaps. A default key whose
+  command is not built yet (an operator, `x`, `p`, `u`, `o`) says
+  `<name>: no such command` in the echo area.
 - **The interrupt key.** When the loop starts the host tells the library
   which key raises the interrupt flag (`Collaborators.interruptKey`, `C-g`),
   and leaves it with none when the loop ends. The loop's programs are run
@@ -338,7 +344,8 @@ cancels the jobs that are left, and prints nothing more.
 `editor headless <sysroot> <olean dir> <config dir> <script file>`: `run`
 with the real elaborator, a directory as the source, stdout as the output,
 the library's timer service and file service for the jobs, and the file
-commands with their jobs and the minibuffer's commands with its mode as
+commands with their jobs, the minibuffer's commands with its mode, evil's
+commands and the ex line's commands with the ex names that ship as
 its compiled ones, then the quit and the explicit exit. Before the loop starts it warms the pool (`Editor/Job/Pool.lean`) and
 starts the completion pump on a dedicated task (`Editor/Job/Real.lean`),
 which the quit ends. Its exit status is 0 when the script ran to its end, or
@@ -402,7 +409,17 @@ config's that opens a path the library refuses before it asks the file
 system, and a sixth on `tests/headless/prompt`, under the Vim scheme the
 executable runs: a command of config's asks for a prompt, a committed text
 goes into the minibuffer, `<Enter>` accepts and config's command receives
-the answer, and `<Escape>` cancels.
+the answer, and `<Escape>` cancels. An eighth run is on
+`tests/headless/ex/script`, with no config: a name nobody bound, `w` in the
+scratch buffer, and `q`, which ends the loop before the script's last line.
+Two more entries of the task run the executable on a real file, each in a
+shell of its own that makes a temporary directory, removes it by a trap,
+and writes the script there from a template with the file's path put in:
+`e`, an edit, `w`, `q` (`tests/headless/ex/save-quit-script`) and the same
+with `wq` (`tests/headless/ex/wq-script`), each checked by the exit status,
+the file's bytes and the absence of a `commands:` line. They are shell and
+not Lean because Lean spawns no child process
+(`docs/design/overview.md`).
 -/
 
 namespace Editor.Headless
@@ -1468,9 +1485,10 @@ def main (sysroot oleanDir configDir scriptPath : String) : IO UInt32 := do
             { completions, timers := Job.realTimers completions,
               files := Job.realFiles completions published.reader held },
           published, held, requests := 1, wakeups := 2, jobs := 3
-          commands := Files.commands ++ Minibuffer.commands ++ Evil.commands
+          commands := Files.commands ++ Minibuffer.commands ++ Evil.commands ++ Ex.commands
           compiledJobs := Files.jobs
-          modes := Minibuffer.modes, log := IO.eprintln } directives settlePatience
+          modes := Minibuffer.modes, ex := Ex.bindings, log := IO.eprintln } directives
+        settlePatience
   (← IO.getStdout).flush
   if let some failure := failure then
     IO.eprintln s!"editor: {failure.describe settlePatience}"

@@ -1,0 +1,34 @@
+# A template of a script: `mise run ffi-test` copies `note.txt` into a
+# temporary directory, writes this file there with `@FILE@` replaced by the
+# copy's absolute path, and has the editor's headless mode run it against
+# the config in `../config/`, of which it loads nothing. The run must exit
+# with status 0, leave the copy holding the bytes of `note-expected`, and
+# print no `commands:` line.
+
+# `e` opens the file. The open is a job: `join` waits for its result, which
+# makes the buffer and shows it. Without the wait the text below would be
+# typed into the scratch buffer.
+run ex
+commit e @FILE@
+key <Enter> Enter -
+join
+
+# `i` begins an insert at the file's start, and the committed text is typed
+# text. `<Escape>` returns to normal state.
+key i KeyI -
+commit zero
+key <Escape> Escape -
+
+# `w` saves. The save is a job: `join` waits for its result, so the host's
+# lines are in one order.
+run ex
+commit w
+key <Enter> Enter -
+join
+
+# `q` quits: the buffer is saved, so the loop ends at the accept key. The
+# `show` line after it is not run, so no `commands:` line is printed.
+run ex
+commit q
+key <Enter> Enter -
+show
