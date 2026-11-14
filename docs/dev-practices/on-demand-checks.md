@@ -519,8 +519,16 @@ display asleep, so that no window could be seen and no draw presented:
   showed what was laid out for it`: the idle second, and the seconds
   after xdotool's resize.
 
-So the scale reaching the shaper is seen at scale 2 and at scale 1, each
-on one display. **Not seen by anyone**: a draw at scale 2 presented with
+- With the example changed by hand so that it does not tell its layout
+  the scale, and changed back: on the same desktop it printed `window:
+  frame 1 is laid out for 1600 by 1200 at scale 2: 14 points are 14
+  pixels` and failed with `frame 1 is laid out for a window at scale 2,
+  where 14 points are 28 pixels, and its glyphs are drawn at 14 pixels`.
+
+So the window's scale reaching the shaper through layout is seen at scale
+2, on one display, and seen to fail the run when it does not. The
+container's scale of 1 does not show it: there a layout told nothing lays
+out the same. **Not seen by anyone**: a draw at scale 2 presented with
 these changes, and the masks it says; a change of scale; fullscreen;
 another Space; the size beside another app.
 
@@ -611,14 +619,24 @@ fails:
    are not drawn at 14 points times the window's scale; no frame
    presented; a frame whose picture was not read back from the surface
    and compared, whatever the reason; a picture more than 3 of 255 from
-   the headless renderer's; a frame drawn that nothing asked for; no
-   input), if any of those eight inputs did not come off the queue as the
-   port documents it, and if no frame printed `14 points are 14 pixels`:
-   Xvfb's display is at scale 1, so that line is the window's scale
-   reaching the shaper through layout, on a real window. The timeline
-   there ends each presented draw `its glyphs as subpixel masks, red
-   first`: scale 1, on llvmpipe, which blends by a coverage for each
-   channel;
+   the headless renderer's; a frame drawn that nothing asked for; a
+   window left alone for a second with a frame not laid out for the size
+   and scale it last said; no input), if any of those eight inputs did
+   not come off the queue as the port documents it, and if no frame
+   printed `14 points are 14 pixels`. **That line shows less here than
+   on a display at another scale.** Xvfb's display is at scale 1, where
+   a layout that was told the scale and one that was not lay out alike:
+   the line shows that the fixture's 14 points reach the real shaper and
+   come back in the frame's fonts, and not that the window's scale
+   reached layout. That is shown only at a scale other than 1: on a
+   desktop at scale 2 the line reads `14 points are 28 pixels` (seen),
+   and with the example made not to tell its layout the scale it reads
+   `14 points are 14 pixels` there and the run fails with `frame 1 is
+   laid out for a window at scale 2, where 14 points are 28 pixels, and
+   its glyphs are drawn at 14 pixels` (seen once by hand, on 2026-11-14).
+   The timeline in the container ends each presented draw `its glyphs as
+   subpixel masks, red first`: scale 1, on llvmpipe, which blends by a
+   coverage for each channel;
 5. the clipboard adapter's example, as `clipboard-contract` runs it: that
    display's clipboard held to the clipboard port's contract, in one
    process;

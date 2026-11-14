@@ -1619,9 +1619,13 @@ window is still run with nothing drawing in it. The threads are in
   "The window on Linux, on demand"). That task, and not the gate, is
   what confirms a window draws and a clipboard round-trips. There the
   example also fails unless each frame's glyphs are drawn at 14 points
-  times the scale the window said, which at Xvfb's scale of 1 is 14
-  pixels, and unless the window, each time it is left alone for a
-  second, shows a frame laid out for the size and scale it last said.
+  times the scale the window said, and unless the window, each time it
+  is left alone for a second, shows a frame laid out for the size and
+  scale it last said. At Xvfb's scale of 1 the first of those cannot
+  tell a layout that was told the scale from one that was not: that the
+  window's scale reaches layout is shown only at another scale, and has
+  been seen on one desktop at scale 2, where 14 points were 28 pixels
+  and, with the example made not to tell its layout, 14 and a failure.
   What the gate holds of the scale is layout's arithmetic and its cost,
   on the fake shaper, and what the example makes of what it saw, in its
   unit tests. What neither holds is for a person: an apparent size

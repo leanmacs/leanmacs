@@ -221,9 +221,12 @@ inside_drawing_window() {
   # The display is at scale 1 and the fixture's text is 14 points: a frame
   # laid out at the scale the window said has glyphs of 14 pixels. The
   # example fails by itself on any other size; this is that it said so of
-  # a frame at all.
+  # a frame at all. At scale 1 a layout never told the scale gives the
+  # same line, so this shows the fixture's 14 points reaching the shaper,
+  # and not the window's scale reaching layout: only a display at another
+  # scale shows that.
   grep -qF -- ": 14 points are 14 pixels" "$log" ||
-    die "no frame was laid out at the window's scale: no line says 14 points are 14 pixels"
+    die "no frame said its 14 points are 14 pixels: the fixture's size did not reach the shaper as it was stated"
   # Each input as the port documents it, read back from its event. The key
   # with modifiers is matched up to its text, which the X server decides.
   for wanted in \

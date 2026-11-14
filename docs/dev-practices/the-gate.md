@@ -99,8 +99,10 @@ texture, and the few lines that forward to them
 (`crates/editor-render-wgpu`, `gpu`, `OnSurface`); and anything a real
 clipboard does. Of the scale and of fullscreen it cannot see anything a
 window or a display does: that a window's scale reaches layout (the
-example's line `14 points are <p> pixels`, checked by `mise run
-linux-window` at scale 1 and by a person at scale 2); an apparent size
+example's line `14 points are <p> pixels`, which shows it only on a
+display at a scale other than 1: `mise run linux-window` runs at scale
+1, where a layout never told the scale gives the same line, and a
+desktop at scale 2 has shown `28 pixels`); an apparent size
 beside another app; a second display and a window moved to it; the
 system's fullscreen; another Space; or what a window shows between two
 sizes. Those are a person's to see
