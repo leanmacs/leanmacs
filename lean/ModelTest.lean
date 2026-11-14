@@ -14275,13 +14275,60 @@ def deleteAlongRows : List OperatorRow :=
     .rests bareEndText "d 0" "ab cd\n|h" (charwise "  ef g"),
     .rests bareEndText "d ^" "ab cd\n  |h" (charwise "ef g")]
 
+/-- The oracle table's rows for `c` and `y` over `h`, `l`, `0` and `^`, in
+its five situations. A yank leaves the cursor at the start of what it took,
+and a change leaves the bar there, in insert state. Over no cell `y`
+empties the register and `c` leaves it as it was. -/
+def yankChangeAlongRows : List OperatorRow :=
+  [.inserts plainText "c h" "ab\ncd\n  ef|gh.ij kl\nmn\nop\n" (charwise " "),
+    .rests plainText "y h" "ab\ncd\n  ef| gh.ij kl\nmn\nop\n" (charwise " "),
+    .inserts plainText "c l" "ab\ncd\n  ef |h.ij kl\nmn\nop\n" (charwise "g"),
+    .rests plainText "y l" "ab\ncd\n  ef |gh.ij kl\nmn\nop\n" (charwise "g"),
+    .inserts plainText "c 0" "ab\ncd\n|gh.ij kl\nmn\nop\n" (charwise "  ef "),
+    .rests plainText "y 0" "ab\ncd\n|  ef gh.ij kl\nmn\nop\n" (charwise "  ef "),
+    .inserts plainText "c ^" "ab\ncd\n  |gh.ij kl\nmn\nop\n" (charwise "ef "),
+    .rests plainText "y ^" "ab\ncd\n  |ef gh.ij kl\nmn\nop\n" (charwise "ef "),
+    .inserts plainText "c 2 h" "ab\ncd\n  e|gh.ij kl\nmn\nop\n" (charwise "f "),
+    .rests plainText "y 2 h" "ab\ncd\n  e|f gh.ij kl\nmn\nop\n" (charwise "f "),
+    .inserts plainText "c 2 l" "ab\ncd\n  ef |.ij kl\nmn\nop\n" (charwise "gh"),
+    .rests plainText "y 2 l" "ab\ncd\n  ef |gh.ij kl\nmn\nop\n" (charwise "gh"),
+    .inserts plainText "2 c 0" "ab\ncd\n|gh.ij kl\nmn\nop\n" (charwise "  ef "),
+    .rests plainText "2 y 0" "ab\ncd\n|  ef gh.ij kl\nmn\nop\n" (charwise "  ef "),
+    .inserts plainText "c 2 ^" "ab\ncd\n  |gh.ij kl\nmn\nop\n" (charwise "ef "),
+    .rests plainText "y 2 ^" "ab\ncd\n  |ef gh.ij kl\nmn\nop\n" (charwise "ef "),
+    .inserts emptyLineText "c h" "ab cd\n|\n  ef gh\n" asItWas,
+    .rests emptyLineText "y h" "ab cd\n|\n  ef gh\n" (charwise ""),
+    .inserts emptyLineText "c l" "ab cd\n|\n  ef gh\n" asItWas,
+    .rests emptyLineText "y l" "ab cd\n|\n  ef gh\n" (charwise ""),
+    .inserts emptyLineText "c 0" "ab cd\n|\n  ef gh\n" asItWas,
+    .rests emptyLineText "y 0" "ab cd\n|\n  ef gh\n" (charwise ""),
+    .inserts emptyLineText "c ^" "ab cd\n|\n  ef gh\n" asItWas,
+    .rests emptyLineText "y ^" "ab cd\n|\n  ef gh\n" (charwise ""),
+    .inserts endText "c h" "ab cd\n  ef |h\n" (charwise "g"),
+    .rests endText "y h" "ab cd\n  ef |gh\n" (charwise "g"),
+    .inserts endText "c l" "ab cd\n  ef g|\n" (charwise "h"),
+    .rests endText "y l" "ab cd\n  ef g|h\n" (charwise "h"),
+    .inserts endText "c 0" "ab cd\n|h\n" (charwise "  ef g"),
+    .rests endText "y 0" "ab cd\n|  ef gh\n" (charwise "  ef g"),
+    .inserts endText "c ^" "ab cd\n  |h\n" (charwise "ef g"),
+    .rests endText "y ^" "ab cd\n  |ef gh\n" (charwise "ef g"),
+    .inserts bareEndText "c h" "ab cd\n  ef |h" (charwise "g"),
+    .rests bareEndText "y h" "ab cd\n  ef |gh" (charwise "g"),
+    .inserts bareEndText "c l" "ab cd\n  ef g|" (charwise "h"),
+    .rests bareEndText "y l" "ab cd\n  ef g|h" (charwise "h"),
+    .inserts bareEndText "c 0" "ab cd\n|h" (charwise "  ef g"),
+    .rests bareEndText "y 0" "ab cd\n|  ef gh" (charwise "  ef g"),
+    .inserts bareEndText "c ^" "ab cd\n  |h" (charwise "ef g"),
+    .rests bareEndText "y ^" "ab cd\n  |ef gh" (charwise "ef g")]
+
 /-- The rows of the operator × motion table, in the order the motions were
 built. -/
 def operatorTable : List OperatorRow :=
-  deleteAlongRows
+  deleteAlongRows ++ yankChangeAlongRows
 
-/-- Whether `echo`, what the echo area says after a command gave up, ends
-with `reason`, the sentence the command gave. -/
+/-- Whether `left` is what a command that gave up with `reason` leaves: the
+text and the cursor `shown`, the register as it was, the view not in insert
+state, and an echo area that ends with the reason and says no refusal. -/
 def evilGaveUp (left : Option EvilEdited) (shown reason : String) : Bool :=
   !reason.isEmpty &&
     match left with
@@ -14310,6 +14357,44 @@ def evilOperatorChecks : List Check :=
           [.rests "|   " "d ^" "| " (charwise "  "), .rests "  | " "d ^" "  | " asItWas,
             .rests "|abc" "d h" "|abc" asItWas, .rests "ab\n|abc" "d h" "ab\n|abc" asItWas,
             .rests "ab\n|\ncd" "d l" "ab\n|\ncd" asItWas] },
+    { name :=
+        "over no cell a yank empties the register and leaves the cursor, and a change leaves the register as it was and begins an insert where the cursor is: y h and c h at a line's start, y l and c l on an empty line"
+      run :=
+        operatorRows
+          [.rests "|abc" "y h" "|abc" (charwise ""), .inserts "|abc" "c h" "|abc" asItWas,
+            .rests "ab\n|abc" "y h" "ab\n|abc" (charwise ""),
+            .inserts "ab\n|abc" "c h" "ab\n|abc" asItWas,
+            .rests "ab\n|\ncd" "y l" "ab\n|\ncd" (charwise ""),
+            .inserts "ab\n|\ncd" "c l" "ab\n|\ncd" asItWas] },
+    { name :=
+        "a change and the text typed after it are one step of the history: c l deletes the cell and leaves its group open, the typed text joins it, <Escape> closes it as one node, and one undo request gives the text from before the change"
+      run :=
+        pure <|
+          match evilDriver "a|bc" with
+          | none => false
+          | some driver =>
+            let changed := evilFed driver "c l"
+            let typed := evilFed changed "X Y"
+            let ended := evilFed typed "<Escape>"
+            evilHistory changed == some (1, true) && evilShown changed == "a|c" &&
+              evilHistory typed == some (1, true) &&
+              evilShown typed == "aXY|c" &&
+              evilHistory ended == some (2, false) &&
+              evilShown ended == "aX|Yc" &&
+              evilText (evilUndone ended) == some "abc" },
+    { name :=
+        "a change begins an insert only when a key that enters insert state runs it: operate with the operator change, run by its name in normal state, deletes the cell into the register and leaves the cursor resting there, in normal state"
+      run :=
+        pure <|
+          evilOperated "a|bc"
+                [.str Evil.change.name, .str "motion", .str Evil.right.name, .nat 0, .str ""] ==
+              some ⟨"a|c", charwise "b", false, ""⟩ &&
+            evilOperated "ab|c"
+                [.str Evil.change.name, .str "motion", .str Evil.right.name, .nat 0, .str ""] ==
+              some ⟨"a|b", charwise "c", false, ""⟩ &&
+            evilOperated "a|bc"
+                [.str Evil.yank.name, .str "motion", .str Evil.right.name, .nat 2, .str ""] ==
+              some ⟨"a|bc", charwise "bc", false, ""⟩ },
     { name :=
         "operate gives up, with the sentence its function makes and nothing changed, when it names an operator no entry has, a motion no entry has, a text object, a kind there is none of, and when its arguments are not an operator's"
       run :=

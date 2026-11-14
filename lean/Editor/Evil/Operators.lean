@@ -54,7 +54,19 @@ order:
 | | Cells that are not empty | No cell |
 |---|---|---|
 | `delete` | The register is the cells' text. They are deleted. The cursor goes to their start, rested | Nothing is done, and the register is as it was |
+| `yank` | The register is the cells' text. The cursor goes to their start, rested | The register is the empty text. The cursor stays |
+| `change` | The register is the cells' text. They are deleted. The selection is a bar at their start | Nothing is deleted, and the register is as it was. The selection is a bar where the cells would start |
 
+- **The no-cell column is Vim's**: `yh` at a line's start empties the
+  register, and `dh` and `ch` there leave it.
+- **`change` begins an insert only when a key that enters insert state
+  runs it.** It leaves one range of the shape its call's report says, at
+  the start of what it took, put where the report's state lets a cursor
+  rest (`settle`): under insert state's report that is a bar there. Run by
+  its name in normal state it is told normal state's report: it deletes,
+  and the cursor rests there. The deletion and the text typed after it are
+  one step of the history, which is the loop's rule for an insert session
+  (`Editor/Loop.lean`, "Insert sessions"); nothing here sets a boundary.
 - **An edit carries the selection from before the command and the cursor
   it leaves**, before that cursor is rested, in the shape of the call's
   report (`Target.replaceCarrying`).
@@ -114,10 +126,46 @@ def delete : Vocabulary.Operator :=
       | .lines .. =>
         pure () }
 
+/-- The operator that puts an insert in place of what it is handed, which
+goes into the register ("What an operator does", in the module docs). It
+leaves the selection as its call's report says a view's is, at the start of
+what it took: a bar there when a key that enters insert state ran it, and
+the cursor resting there otherwise. -/
+def change : Vocabulary.Operator :=
+  { name := "change"
+    replaces := true
+    act := fun call operand => do
+      match operand.stretch with
+      | .cells extent _ =>
+        if extent.start == extent.stop then
+          settle call extent.start
+        else
+          let taken ← call.target.buffer.text.slice extent.start extent.stop
+          call.target.replaceCarrying extent "" operand.before
+              { ranges := #[⟨extent.start, extent.start⟩], shape := call.report.shape }
+          settle call extent.start
+          store operand.register { text := taken }
+      | .lines .. =>
+        pure () }
+
+/-- The operator that copies what it is handed into the register and
+changes no text ("What an operator does", in the module docs). -/
+def yank : Vocabulary.Operator :=
+  { name := "yank"
+    act := fun call operand => do
+      match operand.stretch with
+      | .cells extent _ =>
+        let taken ← call.target.buffer.text.slice extent.start extent.stop
+        unless extent.start == extent.stop do
+          settle call extent.start
+        store operand.register { text := taken }
+      | .lines .. =>
+        pure () }
+
 /-- The table the operate command looks an operator's name up in: one entry
 for each name the Vim scheme's default tables bind a key to. -/
 def operators : Array Vocabulary.Operator :=
-  #[delete]
+  #[delete, change, yank]
 
 /-- The operate command over the vocabulary `operators` and `motions`, as it
 is called ("The operate command", in the module docs): its arguments name
