@@ -71,6 +71,10 @@ What a selection covers (`TextModel.extents`) is read off the string's rows
 of its characters. A block's columns are indexes into a row's cells. The
 library walks its rope a cell at a time and keeps no such table.
 
+One row's content and a range of a text are read as the characters that
+start between two offsets (`TextModel.between`), found by walking the whole
+string; the library reads the pieces of the range and no others.
+
 The contract (`Editor/Text/Contract.lean`) is what says the model and the real
 binding agree. A clause added to `TextModel.handle`, to `TextModel.answer` or
 to `TextModel.answerLog` needs its property there.
@@ -516,6 +520,35 @@ def extents (text : String) (selection : Selection) : Array Extent :=
       | none => merged.push extent)
     #[]
 
+/-- The characters of `text` that start at a byte offset from `start` up to,
+not including, `stop`. -/
+def between (text : String) (start stop : Nat) : String :=
+  String.ofList (go text.toList 0)
+where
+  /-- Walks the characters that are left. `here` is the byte offset
+  reached. -/
+  go : List Char → Nat → List Char
+    | [], _ => []
+    | c :: rest, here =>
+      if start ≤ here ∧ here < stop then c :: go rest (here + c.utf8Size)
+      else go rest (here + c.utf8Size)
+
+/-- The content of the row `row` of `text`: its characters from where the
+row starts up to where its line break does. `none` when the text has no such
+row. -/
+def rowContent (text : String) (row : Nat) : Option String :=
+  (rowsOf text)[row]?.map fun found => between text found.start found.content
+
+/-- The text of `text` from the byte offset `start` up to, not including,
+`stop`. `none` unless both offsets are character boundaries of `text`,
+within it, and `start ≤ stop`: the ranges an edit refuses. -/
+def slice (text : String) (start stop : Nat) : Option String :=
+  if
+      (String.Pos.Raw.mk start).IsValid text ∧
+        (String.Pos.Raw.mk stop).IsValid text ∧ start ≤ stop then
+    some (between text start stop)
+  else none
+
 /-- The model's answer to `query` about `content`. -/
 def answer (content : TextContent) : (query : TextQuery) → Except TextError query.Answer
   | .revision => .ok content.revision
@@ -534,6 +567,14 @@ def answer (content : TextContent) : (query : TextQuery) → Except TextError qu
     if isSelection (some selection) && selectionFits content.contents (some selection) then
       .ok (extents content.contents (normal selection))
     else .error .badSelection
+  | .rowContent row =>
+    match rowContent content.contents row with
+    | some read => .ok read
+    | none => .error .badPosition
+  | .slice start stop =>
+    match slice content.contents start stop with
+    | some read => .ok read
+    | none => .error .badRange
 
 end TextModel
 
@@ -684,19 +725,6 @@ def drop (history : TextHistory) (first last : Nat) : TextHistory :=
     dropped :=
       history.dropped.mapIdx fun revision was => was || (first ≤ revision && revision ≤ last) }
 
-/-- The characters of `text` that start at a byte offset from `start` up to,
-not including, `stop`. -/
-def between (text : String) (start stop : Nat) : String :=
-  String.ofList (go text.toList 0)
-where
-  /-- Walks the characters that are left. `here` is the byte offset
-  reached. -/
-  go : List Char → Nat → List Char
-    | [], _ => []
-    | c :: rest, here =>
-      if start ≤ here ∧ here < stop then c :: go rest (here + c.utf8Size)
-      else go rest (here + c.utf8Size)
-
 /-- What an inverse changes: the ranges of a text whose bytes had the
 identities `oldIds` that are replaced to make the text that held `new`,
 whose bytes had the identities `newIds`.
@@ -728,7 +756,7 @@ where
       let oldStop := skipOld shared oldHere (oldIds.size - oldHere)
       let runs :=
         if oldStop > oldHere ∨ newStop > newHere then
-          runs.push ⟨oldHere, oldStop, between new newHere newStop⟩
+          runs.push ⟨oldHere, oldStop, TextModel.between new newHere newStop⟩
         else runs
       if shared.isNone then runs else go fuel (oldStop + 1) (newStop + 1) runs
   /-- The offset of the first byte of the new text at or after `here` that the

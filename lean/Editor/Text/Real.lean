@@ -444,7 +444,7 @@ def unit : ColumnUnit → Ffi.ColumnUnit
 The port's offsets, rows and columns are `Nat` and the library's are machine
 words. One that no word holds is not a position of any text, so it is
 refused here: converted, it would wrap round to one the library might
-answer. -/
+answer. For a range read that is `badRange`, as for an edit. -/
 def answer (snapshot : Ffi.Snapshot) : (query : TextQuery) → IO (Except TextError query.Answer)
   | .revision => return .ok (← snapshot.info).revision.toNat
   | .byteLength => return .ok (← snapshot.info).byteLength.toNat
@@ -467,6 +467,18 @@ def answer (snapshot : Ffi.Snapshot) : (query : TextQuery) → IO (Except TextEr
     -- refuses as it would any other that is no position.
     let some extents ← snapshot.extents (selection ranges) | return .error .badSelection
     return .ok (extents.map fun extent => ⟨extent.start.toNat, extent.stop.toNat⟩)
+  | .rowContent row => do
+    -- A row no word holds is one no text has.
+    unless row < UInt64.size do
+      return .error .badPosition
+    let some content ← snapshot.row row.toUInt64 | return .error .badPosition
+    return .ok content
+  | .slice start stop => do
+    -- An offset no word holds is past the end of any text.
+    unless start < USize.size ∧ stop < USize.size do
+      return .error .badRange
+    let some read ← snapshot.slice start.toUSize stop.toUSize | return .error .badRange
+    return .ok read
 
 /-- The library's snapshot of `source`: the snapshot it names, or a new one
 of the text it names, as the text is now. The refusal when it names nothing,

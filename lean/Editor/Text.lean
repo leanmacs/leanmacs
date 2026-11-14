@@ -233,6 +233,14 @@ operations as they are: they are lifted into it.
   the position between the two bytes, which the line break's cell starts
   before; column `k + 2` is refused. In `"ab\r\ncd"` the point `⟨0, 2⟩` is
   the offset 2, `⟨0, 3⟩` is 3, and `⟨0, 4⟩` names nothing.
+- One row and a range are read without reading the whole text. A row is
+  read as its content (`TextQuery.rowContent`): an empty row and the empty
+  last row read as nothing, and a carriage return with no line feed after
+  it is kept. A row the text does not have is refused with `badPosition`,
+  as the offset of a point in such a row is. A range (`TextQuery.slice`) is
+  the text from one position up to, not including, another; it is refused
+  with `badRange` unless both are positions and the start is not after the
+  stop, as an edit and a trace are.
 - `release` gives up a text or a snapshot. Its id is refused from then on,
   for good: an id is never used again. Releasing a text leaves its snapshots
   readable.
@@ -488,6 +496,10 @@ inductive TextQuery where
   | offsetOf (unit : ColumnUnit) (point : Point)
   /-- What `selection` covers, by its shape. -/
   | extents (selection : Selection)
+  /-- The content of the row `row`: the row without its line break. -/
+  | rowContent (row : Nat)
+  /-- The text from the byte offset `start` up to, not including, `stop`. -/
+  | slice (start stop : Nat)
 
 /-- The type of the answer to each question. It is an `abbrev` so that an
 answer's type unfolds where an instance is looked for: with a `def`,
@@ -500,6 +512,8 @@ abbrev TextQuery.Answer : TextQuery → Type
   | .pointOf .. => Point
   | .offsetOf .. => Nat
   | .extents _ => Array Extent
+  | .rowContent _ => String
+  | .slice .. => String
 
 /-- Who made an edit: a number the editor chooses and the text store keeps
 with the edit and never reads. What a number stands for is the editor's
@@ -954,6 +968,18 @@ selection that is none or has an end that is not a position. -/
 def TextId.extents (text : TextId) (selection : Selection) : TextM (Array Extent) :=
   (TextSource.text text).ask (.extents selection)
 
+/-- The content of the row `row` of `text`: the row without its line break.
+It reads that row and no more of the text. Refused with `badPosition` for a
+row the text does not have. -/
+def TextId.rowContent (text : TextId) (row : Nat) : TextM String :=
+  (TextSource.text text).ask (.rowContent row)
+
+/-- The text of `text` from the byte offset `start` up to, not including,
+`stop`. It reads that range and no more of the text. Refused with `badRange`
+unless both offsets are positions and `start ≤ stop`. -/
+def TextId.slice (text : TextId) (start stop : Nat) : TextM String :=
+  (TextSource.text text).ask (.slice start stop)
+
 /-- Gives `text` up. Its id is refused from then on; its snapshots still
 read. -/
 def TextId.release (text : TextId) : TextM Unit :=
@@ -995,6 +1021,18 @@ its shape: sorted, with those that overlap made one. Refused with
 position. -/
 def SnapshotId.extents (snapshot : SnapshotId) (selection : Selection) : TextM (Array Extent) :=
   (TextSource.snapshot snapshot).ask (.extents selection)
+
+/-- The content of the row `row` of the text `snapshot` holds: the row
+without its line break. Refused with `badPosition` for a row the text does
+not have. -/
+def SnapshotId.rowContent (snapshot : SnapshotId) (row : Nat) : TextM String :=
+  (TextSource.snapshot snapshot).ask (.rowContent row)
+
+/-- The text `snapshot` holds from the byte offset `start` up to, not
+including, `stop`. Refused with `badRange` unless both offsets are positions
+and `start ≤ stop`. -/
+def SnapshotId.slice (snapshot : SnapshotId) (start stop : Nat) : TextM String :=
+  (TextSource.snapshot snapshot).ask (.slice start stop)
 
 /-- Gives `snapshot` up. Its id is refused from then on. -/
 def SnapshotId.release (snapshot : SnapshotId) : TextM Unit :=

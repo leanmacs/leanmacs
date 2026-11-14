@@ -1788,6 +1788,87 @@ def copyProperties : List Property :=
         return never && gone && neverTaken && goneSnapshot && next.index == released.index + 1 &&
             (← next.read) == "next" }]
 
+/-- The properties of reading a part of a text: one row, and a range. -/
+def readProperties : List Property :=
+  [{
+      name :=
+        "a row is read as its content, without its line break: without its line feed and without the carriage return before that line feed, with an empty row and the empty last row read as nothing and a carriage return alone kept",
+      holds := do
+        let text ← createText rows
+        let three :=
+          (← text.rowContent 0) == "héllo" && (← text.rowContent 1) == "wörld" &&
+            (← text.rowContent 2) == "😀x"
+        -- Rows: "a", an empty one, "b", and the empty last row.
+        let gaps ← createText "a\n\nb\n"
+        let empty :=
+          (← gaps.rowContent 0) == "a" && (← gaps.rowContent 1) == "" &&
+            (← gaps.rowContent 2) == "b" &&
+            (← gaps.rowContent 3) == ""
+        let alone ← createText "a\rb\r"
+        let nothing ← createText ""
+        return three && empty && (← alone.rowContent 0) == "a\rb\r" &&
+            (← nothing.rowContent 0) == "" },
+    -- Cut down to a 64-bit word, `2 ^ 64` is row 0 and `2 ^ 64 + 1` row 1:
+    -- an implementation that converted without looking would read them.
+    { name :=
+        "a row the text does not have, and one no machine word holds, is refused as no position and reads nothing"
+      holds := do
+        let text ← createText rows
+        let snapshot ← text.snapshot
+        let past ← refusedWith .badPosition (discard <| text.rowContent 3)
+        let far ← refusedWith .badPosition (discard <| text.rowContent 99)
+        let huge ← refusedWith .badPosition (discard <| text.rowContent (2 ^ 64))
+        let hugeNext ← refusedWith .badPosition (discard <| text.rowContent (2 ^ 64 + 1))
+        let ofSnapshot ← refusedWith .badPosition (discard <| snapshot.rowContent 3)
+        let empty ← createText ""
+        let none ← refusedWith .badPosition (discard <| empty.rowContent 1)
+        return past && far && huge && hugeNext && ofSnapshot && none },
+    { name :=
+        "a range is read exactly: nothing for an empty one, the characters of several bytes and the line break in one, and the whole text, which is its contents"
+      holds := do
+        let text ← createText rows
+        let empty := (← text.slice 4 4) == "" && (← text.slice 20 20) == ""
+        let across := (← text.slice 1 9) == "éllo\r\nw" && (← text.slice 15 20) == "😀x"
+        let lineBreak := (← text.slice 6 8) == "\r\n" && (← text.slice 7 8) == "\n"
+        return empty && across && lineBreak && (← text.slice 0 20) == rows &&
+            (← text.slice 0 20) == (← text.read) },
+    -- Cut down to a 64-bit word, `2 ^ 64 + 1` is 1 and `2 ^ 64` is 0, both
+    -- positions of the text: an implementation that converted without
+    -- looking would read "h" and "hé".
+    { name :=
+        "a range that is backwards, splits a character, runs past the end or that no machine word holds is refused as a bad range"
+      holds := do
+        let text ← createText rows
+        let snapshot ← text.snapshot
+        let backwards ← refusedWith .badRange (discard <| text.slice 9 1)
+        let splitStop ← refusedWith .badRange (discard <| text.slice 0 2)
+        let splitStart ← refusedWith .badRange (discard <| text.slice 16 20)
+        let pastEnd ← refusedWith .badRange (discard <| text.slice 0 21)
+        let hugeStop ← refusedWith .badRange (discard <| text.slice 0 (2 ^ 64 + 1))
+        let hugeStart ← refusedWith .badRange (discard <| text.slice (2 ^ 64) 3)
+        let ofSnapshot ← refusedWith .badRange (discard <| snapshot.slice 9 1)
+        return backwards && splitStop && splitStart && pastEnd && hugeStop && hugeStart &&
+            ofSnapshot },
+    { name :=
+        "a text and a snapshot of it read a row and a range alike, after an edit the snapshot still reads what it held, and a source that names nothing is refused"
+      holds := do
+        let text ← createText rows
+        let snapshot ← text.snapshot
+        let mut alike := true
+        for row in [0:3] do
+          alike := alike && (← text.rowContent row) == (← snapshot.rowContent row)
+        for (start, stop) in [(0, 20), (1, 9), (8, 8), (15, 19)] do
+          alike := alike && (← text.slice start stop) == (← snapshot.slice start stop)
+        -- The text gains a row before its first.
+        text.insert 0 "X\n"
+        let kept := (← snapshot.rowContent 0) == "héllo" && (← snapshot.slice 0 6) == "héllo"
+        let moved := (← text.rowContent 0) == "X" && (← text.slice 0 6) == "X\nhél"
+        let noText ← refusedWith .noSuchText (discard <| (TextId.mk 99).rowContent 0)
+        let noTextRange ← refusedWith .noSuchText (discard <| (TextId.mk 99).slice 0 0)
+        let noSnapshot ← refusedWith .noSuchSnapshot (discard <| (SnapshotId.mk 99).rowContent 0)
+        let noSnapshotRange ← refusedWith .noSuchSnapshot (discard <| (SnapshotId.mk 99).slice 0 0)
+        return alike && kept && moved && noText && noTextRange && noSnapshot && noSnapshotRange }]
+
 /-- The properties every implementation of the text port has. -/
 def properties : List Property :=
   editProperties ++ revisionProperties ++ snapshotProperties ++ positionProperties ++
@@ -1798,7 +1879,8 @@ def properties : List Property :=
     markerProperties ++
     extentProperties ++
     inverseProperties ++
-    copyProperties
+    copyProperties ++
+    readProperties
 
 /-- Runs each of `properties` with `run`, which must start every command from
 an empty store, and returns the names of those that did not hold. A property
