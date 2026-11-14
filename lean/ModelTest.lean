@@ -8447,7 +8447,7 @@ def vimDefaultChecks : List Check :=
         pure <|
           [Vim.Default.motions, Vim.Default.operators, Vim.Default.normalCommands,
                 Vim.Default.insertCommands, Vim.Default.visualCommands,
-                Vim.Default.visualLineCommands].all
+                Vim.Default.visualLineCommands, Vim.Default.minibufferCommands].all
             fun table =>
             !table.isEmpty && (Vim.Default.keymap table).bindings.length == table.length },
     { name :=
@@ -8567,7 +8567,29 @@ def vimDefaultChecks : List Check :=
         pure
           ((vimDefaultRecord "").cursor == .block && Vim.Default.states.initial.cursor == .block &&
             (vimDefaultRecord "i").cursor == .bar &&
-            (vimDefaultRecord "i").name != (vimDefaultRecord "").name) }]
+            (vimDefaultRecord "i").name != (vimDefaultRecord "").name) },
+    { name :=
+        "under the default Vim scheme a view opened as the minibuffer's is in a state of its own, where typing is text and the cursor is a bar: a letter, a digit and a key the initial state binds to a motion are text there; RET and <Escape> each run a command, of two different names, that enters no state and leaves nothing pending; a view that was not opened as the minibuffer's is in the initial state"
+      run :=
+        let states := Vim.Default.states
+        let told : Vim.State := Vim.Default.scheme.openMinibuffer ⟨5⟩ (Vim.scheme states).init
+        let record := told.record states ⟨5⟩
+        let parsed (text : String) : Vim.State × List Vim.Parsed :=
+          vimParsedFrom told text (view := ⟨5⟩) (states := states)
+        let command (text : String) : Option String :=
+          match (parsed text).2 with
+          | [.edit (.run command none none)] => some command.name
+          | _ => none
+        pure
+          (record.insertsText && record.cursor == .bar && record.name != states.initial.name &&
+            record.name != (vimDefaultRecord "i").name &&
+            (parsed "a 7 w").2 == [.text "a", .text "7", .text "w"] &&
+            (vimDefaultEdit "w").isSome &&
+            (command "RET").isSome &&
+            (command "<Escape>").isSome &&
+            command "RET" != command "<Escape>" &&
+            (["RET", "<Escape>"].all fun text => (parsed text).1 == told) &&
+            told.stateOf states ⟨0⟩ == states.initial.name) }]
 
 /-- The checks that the Vim scheme keeps the scheme contract
 (`Editor/InputScheme/Contract.lean`). -/

@@ -4,7 +4,7 @@ import Editor.Key.Notation
 /-!
 # The Vim scheme's default states and bindings
 
-The Vim scheme that ships: the four Vim states and what their keymaps bind,
+The Vim scheme that ships: the five Vim states and what their keymaps bind,
 as data, and the scheme over them (`scheme`). The grammar is
 `Editor/InputScheme/Vim.lean`, which knows none of these keys
 (`docs/design/keymaps-and-modes.md`, "Default bindings").
@@ -24,6 +24,7 @@ a name does.
 | `normalCommands` | Normal state's commands: those that begin an insert, those that change text, undo, redo, repeat and the command line, the two that enter a visual state, and the register prefix |
 | `insertCommands` | Insert state's: the key that returns to normal state |
 | `visualCommands`, `visualLineCommands` | A visual state's: the keys that return to normal state, the key that enters the other visual state, and the register prefix |
+| `minibufferCommands` | The minibuffer state's: `RET`, which accepts the prompt, and `<Escape>`, which cancels it |
 
 ## The states
 
@@ -33,6 +34,23 @@ a name does.
 | `insert` | `insertCommands` | Bar | Typing is text |
 | `visual` | `visualCommands`, `operators`, `motions` | Block | Operators act on the selection |
 | `visual-line` | `visualLineCommands`, `operators`, `motions` | Block | Operators act on the selection |
+| `minibuffer`, the state of the minibuffer's view | `minibufferCommands` | Bar | Typing is text |
+
+**The minibuffer's view is in a state of its own** (`states.minibuffer`
+names it), Vim's own command-line mode: no key enters it, and the scheme
+puts a view in it when it is told the view is the minibuffer's
+(`Editor/InputScheme/Vim.lean`, "Vim states").
+
+- **Why not `insert`.** There `<Escape>` enters normal state and `RET` is
+  bound to nothing, so answering a prompt would take `<Escape>` and then a
+  key of normal state.
+- **Why the accept and cancel keys are in the state's table**, though the
+  minibuffer's mode fills the roles `activate` and `quit`
+  (`Editor/Minibuffer.lean`). The state inserts text, so a mode's role
+  keys do not hold there, and the key for `quit` is `q`, which must be
+  text. A binding meant for one state belongs in that state's keymaps.
+- **The interrupt key is not bound there**, as it is not in Vim's command
+  line.
 
 ## The role table and the leader
 
@@ -127,6 +145,11 @@ def visualLineCommands : List (String × Bound) :=
   [("<Escape>", entering "normal"), ("V", entering "normal"), ("v", entering "visual"),
     ("\"", .register)]
 
+/-- The commands of the state the minibuffer's view is in: the key that
+accepts the prompt and the key that cancels it. -/
+def minibufferCommands : List (String × Bound) :=
+  [("RET", running "minibuffer-accept"), ("<Escape>", running "minibuffer-cancel")]
+
 /-- The keymap that binds each key string of `table` to what is beside it.
 A string `Key.parse` refuses binds nothing. -/
 def keymap (table : List (String × Bound)) : Keymap Bound :=
@@ -149,7 +172,12 @@ def states : States :=
           operatesOnSelection := true },
         { name := "visual-line"
           keymaps := [visualLineCommands, operators, motions].map keymap
-          operatesOnSelection := true }] }
+          operatesOnSelection := true },
+        { name := "minibuffer"
+          keymaps := [keymap minibufferCommands]
+          cursor := .bar
+          insertsText := true }]
+    minibuffer := some "minibuffer" }
 
 /-- The role table: each registered role and the key string it is on. -/
 def roles : List (Role × String) :=
