@@ -31,7 +31,7 @@ The operators' entries are `Evil.operators`
 | `normalCommands` | Normal state's commands: those that begin an insert, those that change text, undo, redo and the command line, the two that enter a visual state, the register prefix, and the repeat key, `.`, which is a part of speech of its own and no command's key (`Bound.repeat`) |
 | `insertCommands` | Insert state's: the key that returns to normal state |
 | `visualCommands`, `visualLineCommands` | A visual state's: the keys that return to normal state, the key that enters the other visual state, and the register prefix |
-| `minibufferCommands` | The minibuffer state's: `RET`, which accepts the prompt, and `<Escape>`, which cancels it |
+| `minibufferCommands` | The minibuffer state's: `RET`, which accepts the prompt, `<Escape>`, which cancels it, `TAB` and `C-n`, which move to the next of its candidates, and `S-TAB` and `C-p`, which move to the previous |
 
 ## The states
 
@@ -65,6 +65,12 @@ puts a view in it when it is told the view is the minibuffer's
   (`Editor/Minibuffer.lean`). The state inserts text, so a mode's role
   keys do not hold there, and the key for `quit` is `q`, which must be
   text. A binding meant for one state belongs in that state's keymaps.
+- **The keys that move through a prompt's candidates are in the table
+  too**, for the same reason: the mode fills `next-item` and
+  `previous-item`, whose keys here are `j` and `k`, which must be text.
+  They are Vim's own keys in its command line: `TAB` and `C-n` for the
+  next candidate, `S-TAB` and `C-p` for the previous. A window system may
+  report Shift and Tab under another name than `S-TAB`; `C-p` is beside it.
 - **The interrupt key is not bound there**, as it is not in Vim's command
   line.
 
@@ -161,9 +167,12 @@ def visualLineCommands : List (String × Bound) :=
     ("\"", .register)]
 
 /-- The commands of the state the minibuffer's view is in: the key that
-accepts the prompt and the key that cancels it. -/
+accepts the prompt, the key that cancels it, and the keys that move to the
+next and to the previous of its candidates. -/
 def minibufferCommands : List (String × Bound) :=
-  [("RET", running "minibuffer-accept"), ("<Escape>", running "minibuffer-cancel")]
+  [("RET", running "minibuffer-accept"), ("<Escape>", running "minibuffer-cancel"),
+    ("TAB", running "minibuffer-next"), ("C-n", running "minibuffer-next"),
+    ("S-TAB", running "minibuffer-previous"), ("C-p", running "minibuffer-previous")]
 
 /-- The keymap that binds each key string of `table` to what is beside it.
 A string `Key.parse` refuses binds nothing. -/

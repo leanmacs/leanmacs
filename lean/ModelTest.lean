@@ -10908,6 +10908,23 @@ def vimDefaultChecks : List Check :=
             (["RET", "<Escape>"].all fun text => (parsed text).1 == told) &&
             told.stateOf states ⟨0⟩ == states.initial.name) },
     { name :=
+        "under the default Vim scheme the minibuffer's state binds the keys that move through a prompt's candidates: TAB and C-n each run the minibuffer's command that moves to the next, S-TAB and C-p the one that moves to the previous; each enters no state and leaves nothing pending, and none of the four is text"
+      run :=
+        let states := Vim.Default.states
+        let told : Vim.State := Vim.Default.scheme.openMinibuffer ⟨5⟩ (Vim.scheme states).init
+        let parsed (text : String) : Vim.State × List Vim.Parsed :=
+          vimParsedFrom told text (view := ⟨5⟩) (states := states)
+        let command (text : String) : Option String :=
+          match (parsed text).2 with
+          | [.edit (.run command none none)] => some command.name
+          | _ => none
+        pure
+          (command "TAB" == some Minibuffer.nextName && command "C-n" == some Minibuffer.nextName &&
+            command "S-TAB" == some Minibuffer.previousName &&
+            command "C-p" == some Minibuffer.previousName &&
+            Minibuffer.nextName != Minibuffer.previousName &&
+            ["TAB", "C-n", "S-TAB", "C-p"].all fun text => (parsed text).1 == told) },
+    { name :=
         "the default Vim scheme reports a fresh view as a block with an inclusive selection, no selecting and no insert session; after i a bar, an exclusive selection, an insert session and a view that takes text; and after i and <Escape> what it reported first"
       run :=
         let fresh := vimDefaultReport ""

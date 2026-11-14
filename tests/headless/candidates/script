@@ -1,0 +1,41 @@
+# The script `mise run ffi-test` has the editor's headless mode run against
+# the config in `config/`, under the editor's input scheme and with the
+# library's fuzzy matcher, to ask for a prompt with candidates, to choose
+# one with the keys the editor ships and to accept it. What it prints must
+# be exactly `expected`.
+
+reload
+settle
+
+# `pick` is config's: it asks `Pick: ` with the candidates `wq`, `edit` and
+# `w`. A `w` is typed into the minibuffer. The scene lists the candidates
+# the text matches after the prompt's label, in the minibuffer's status
+# line: `w` and then `wq`. The library's matcher scores the two the same,
+# and `wq` came first, so only the rule that a candidate that is the text
+# is first puts `w` before it. `edit` holds no `w` and is not listed.
+run pick
+key w KeyW -
+scene
+
+# `<Tab>` moves to the next candidate, with the compiled command
+# `minibuffer-next`: under the Vim scheme the minibuffer's view is in a Vim
+# state of its own, which binds the key. Once chooses `w`, twice `wq`,
+# whose field is then in the face of the chosen candidate. The minibuffer's
+# text is still `w`.
+key <Tab> Tab -
+key <Tab> Tab -
+scene
+
+# `<Enter>` accepts, and config's `picked` receives the chosen candidate,
+# not the typed text.
+key <Enter> Enter -
+scene
+
+# A text no candidate matches: the scene lists none, `<Tab>` chooses
+# nothing, and `<Enter>` gives `picked` the typed text.
+run pick
+key z KeyZ -
+scene
+key <Tab> Tab -
+key <Enter> Enter -
+scene
