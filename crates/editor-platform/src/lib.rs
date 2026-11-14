@@ -8,6 +8,9 @@
 //! real adapter; `editor-ffi` runs a platform and puts what it reports on the
 //! editor's event queue.
 //!
+//! The system clipboard is a port of its own beside it, [`clipboard`], with
+//! its own fake and contract: it needs no window.
+//!
 //! # What a window reports
 //!
 //! A key with its identity: its logical key ([`LogicalKey`], what the layout
@@ -70,6 +73,7 @@
 //! - `mise run window-contract` runs the same example on the desktop it is
 //!   started from.
 
+pub mod clipboard;
 pub mod contract;
 pub mod scripted;
 
