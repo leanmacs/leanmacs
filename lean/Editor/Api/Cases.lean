@@ -496,9 +496,84 @@ def lineBreakCases : List Case :=
         return refusedAs broken (.noSuchWindow view) && after.index == before.index + 1 &&
             (← scratch.revision) == 0 }]
 
+/-- The continuation the prompts of these cases are asked with: a command's
+name and an argument of the asker's own. -/
+def greeting : Invocation :=
+  { command := "greet", arguments := [.nat 7] }
+
+/-- The cases of prompts: asking for one, and what the layout operations do
+with the minibuffer's window while it is open. -/
+def promptCases : List Case :=
+  [{  name :=
+        "asking for a prompt with an initial value replies the minibuffer's view, a new one, and leaves the prompt open with its label, its continuation and the view it was asked from: the minibuffer's buffer holds the initial value, with the minibuffer's mode and a new tree over its text, its window has a scroll anchor at the start and one exclusive cursor after the initial value, and it has the focus; the state is well formed"
+      run := do
+        let .ok view ← prompt "Name: " greeting "hé" | return false
+        let state ← editorState
+        let some target := state.target? view | return false
+        let .ok selected ← view.selection | return false
+        let scroll ← target.buffer.text.marker target.window.scroll
+        return view == ⟨1⟩ &&
+            state.prompt ==
+              some { label := "Name: ", view, asker := ⟨0⟩, continuation := greeting } &&
+            (← target.buffer.text.read) == "hé" &&
+            target.buffer.major == some Prompt.mode &&
+            target.buffer.history == (← UndoTree.over target.buffer.text) &&
+            selected == selection #[(3, 3)] &&
+            scroll == .anchor { offset := 0, bias := .before } &&
+            state.frame.focused == view &&
+            (← scratch.read) == "" &&
+            state.wellFormed },
+    { name :=
+        "a prompt asked for with no initial value has an empty minibuffer, with its cursor at the start"
+      run := do
+        let .ok view ← prompt "Name: " greeting | return false
+        let some target := (← editorState).target? view | return false
+        let .ok selected ← view.selection | return false
+        return (← target.buffer.text.read) == "" && selected == selection #[(0, 0)] },
+    { name :=
+        "asking for a prompt while one is open is refused with alreadyOpen and the open prompt's view, a value, makes no text, the next text made having the id it would have had, and leaves the state as it was"
+      run := do
+        let .ok view ← prompt "Name: " greeting "hé" | return false
+        let state ← editorState
+        let before ← createText ""
+        let refused ← prompt "Again: " { command := "other" } "lost"
+        let after ← createText ""
+        return refusedAs refused (.alreadyOpen view) && after.index == before.index + 1 &&
+            (← editorState) == state },
+    { name :=
+        "splitting, closing and showing another buffer in the minibuffer's view, and showing the minibuffer's buffer in another view, are each refused with ofMinibuffer and the minibuffer's view, a value, and make no marker: the next marker made on each text has the number it would have had"
+      run := do
+        let .ok view ← prompt "Name: " greeting "hé" | return false
+        let state ← editorState
+        let some target := state.target? view | return false
+        let text := target.buffer.text
+        let marked := (← nextMarker scratch, ← nextMarker text)
+        let split ← view.split .rows
+        let closed ← view.close
+        let shown ← view.show ⟨0⟩
+        let elsewhere ← (⟨0⟩ : ViewId).show target.window.buffer
+        return refusedAs split (.ofMinibuffer view) && refusedAs closed (.ofMinibuffer view) &&
+            refusedAs shown (.ofMinibuffer view) &&
+            refusedAs elsewhere (.ofMinibuffer view) &&
+            (← nextMarker scratch) == marked.1 + 1 &&
+            (← nextMarker text) == marked.2 + 1 &&
+            (← editorState) == state },
+    { name :=
+        "the focus leaves the minibuffer's view for the view the prompt was asked from and comes back, each focus replying ok, and the prompt stays open"
+      run := do
+        let .ok view ← prompt "Name: " greeting | return false
+        let away ← (⟨0⟩ : ViewId).focus
+        let onWindow := (← editorState).frame.focused
+        let back ← view.focus
+        let state ← editorState
+        return away matches .ok () && onWindow == ⟨0⟩ && back matches .ok () &&
+            state.frame.focused == view &&
+            state.prompt.isSome &&
+            state.wellFormed }]
+
 /-- Every case of the editor API, in the order they run. -/
 def cases : List Case :=
-  bufferCases ++ selectionCases ++ undoCases ++ windowCases ++ lineBreakCases
+  bufferCases ++ selectionCases ++ undoCases ++ windowCases ++ lineBreakCases ++ promptCases
 
 /-- Plays `cases` with `run`, each from a store with no text, and returns
 the names of those that did not hold: one that returned `false`, and one

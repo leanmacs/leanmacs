@@ -210,6 +210,32 @@ arrived before it (`Editor/Loop.lean`, "Jobs from commands").
 
 Pinned by `ModelTest.driverChecks`.
 
+## Prompts
+
+A command asks for a string without waiting for it
+(`docs/design/concurrency.md`, "Prompts").
+
+- `prompt label continuation initial` opens a prompt and returns the
+  minibuffer's view at once: a new text holding `initial`, empty by
+  default, a buffer over it with the minibuffer's mode, and a window on
+  it, with a scroll anchor at the start and one exclusive cursor after the
+  initial value, which has the focus (`Editor/State.lean`, "Prompts"). The
+  asking command runs to its end like any command.
+- **The continuation is an invocation**: the name of the command that
+  receives the answer, and plain arguments of the asker's own. When the
+  prompt is accepted that command is run with the answer, a string, as its
+  first argument and the continuation's own after it. The name is looked
+  up then, not here.
+- **One prompt at a time.** Asking while a prompt is open is refused, as a
+  value, with `alreadyOpen` and the open prompt's view. The state is read
+  first, so the refusal makes no text. A command run where no window is
+  focused is refused with `noWindow`.
+- **The minibuffer's window is not a window command's.** `ViewId.split`,
+  `ViewId.close` and `ViewId.show` on it, and `ViewId.show` of the
+  minibuffer's buffer in another view, are refused with `ofMinibuffer` and
+  the minibuffer's view, with no marker made. `ViewId.focus` takes it, so
+  the focus can leave the minibuffer and come back.
+
 ## Files
 
 Opening a file and saving a buffer are not operations here: each is a
@@ -260,6 +286,26 @@ later, as the command its handler makes. Refused with `noSuchJob` for a
 name no job is registered under. -/
 def startJob (name : String) (arguments : List Argument := []) : EditorM (Except JobRefusal Unit) :=
   EditorState.ask (.startJob name arguments)
+
+/-- Asks for a string: opens a prompt labelled `label`, whose minibuffer
+holds `initial`, with the cursor after it, and returns the minibuffer's
+view at once ("Prompts", in the module docs). When the prompt is accepted,
+the command of `continuation` is run with the answer as its first
+argument, before the continuation's own. Refused, with no text made, with
+`alreadyOpen` while a prompt is open, and with `noWindow` where no window
+is focused to ask from. -/
+def prompt (label : String) (continuation : Invocation) (initial : String := "") :
+    EditorM (Except PromptRefusal ViewId) := do
+  let state ← editorState
+  if let some asked := state.prompt then
+    return .error (.alreadyOpen asked.view)
+  if state.focusedTarget?.isNone then
+    return .error .noWindow
+  let text ← createText initial
+  let scroll ← text.mark (.anchor { offset := 0, bias := .before })
+  let cursor := initial.utf8ByteSize
+  let selection ← text.mark (.selection { ranges := #[⟨cursor, cursor⟩], shape := .exclusive })
+  EditorState.ask (.openPrompt label continuation text (← UndoTree.over text) scroll selection)
 
 /-- Replaces the bytes of `text` from `start` up to, not including, `stop`
 with `s`, as one transaction made by the user. Refused, changing nothing,
@@ -581,8 +627,11 @@ def insertLineBreak (view : ViewId) : EditorM (Except LayoutRefusal Unit) :=
 buffer, below it for rows and to its right for columns, whose markers are
 copies of the window's scroll anchor and selection as they are, and returns
 the new view. The focus stays. Refused with `noSuchWindow` for a view with
-no window. -/
+no window, and with `ofMinibuffer` for the minibuffer's view, each with no
+marker made. -/
 def split (view : ViewId) (axis : Axis) : EditorM (Except LayoutRefusal ViewId) := do
+  if (← editorState).minibufferView? == some view then
+    return .error (.ofMinibuffer view)
   match ← view.target with
   | .error refusal =>
     return .error refusal
@@ -606,10 +655,15 @@ def focus (view : ViewId) : EditorM (Except LayoutRefusal Unit) :=
 /-- Has the window of `view` show the buffer `buffer`, with a scroll anchor
 at its start and one cursor at its start, of the shape the window's
 selection had. Showing the buffer the window shows already changes nothing
-and marks nothing. Refused with `noSuchWindow` for a view with no window,
-and with `noSuchBuffer` for a buffer there is none of. -/
+and marks nothing. Refused with `ofMinibuffer`, and the minibuffer's view,
+for the minibuffer's view and for the minibuffer's buffer in another view,
+with `noSuchWindow` for a view with no window, and with `noSuchBuffer` for
+a buffer there is none of, each with no marker made. -/
 def «show» (view : ViewId) (buffer : BufferId) : EditorM (Except LayoutRefusal Unit) := do
   let state ← editorState
+  if let some minibuffer := state.minibufferView? then
+    if minibuffer == view || state.minibufferBuffer? == some buffer then
+      return .error (.ofMinibuffer minibuffer)
   let some target := state.target? view | return .error (.noSuchWindow view)
   if target.window.buffer == buffer then
     return .ok ()
