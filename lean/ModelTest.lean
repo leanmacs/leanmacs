@@ -1,4 +1,6 @@
 import Editor.Api.Cases
+import Editor.Clipboard.Contract
+import Editor.Clipboard.Model
 import Editor.Command.Append
 import Editor.Command.Dispatch
 import Editor.Command.Model
@@ -75,6 +77,13 @@ run commands on those models as the loop runs one
 (`Editor/Command/Dispatch.lean`, "The guard"): a command stops at its next
 request once the flag is up, and cannot catch it.
 
+The clipboard interface's contract (`Editor/Clipboard/Contract.lean`) is
+run against its model here (`clipboardFailures`). `clipboardChecks` are
+what only the model shows: a clipboard that is not available refuses and
+keeps what it held, and one that holds nothing answers no text. They also
+show the contract biting: a clipboard written here that drops every write
+is reported.
+
 The editor state (`Editor/State.lean`) is checked on the text model
 (`stateChecks`): the initial state, that a split tree's views tile the
 frame, and the two layout operations, each refused with the state as it
@@ -117,7 +126,11 @@ registered command:
 - `dispatchUndoChecks`: undo from a command, and that what is edited while
   a view is in an insert session is one step of the history;
 - `dispatchReportChecks`: a command is called with what the scheme reports
-  of its view, in the scheme's state after its key.
+  of its view, in the scheme's state after its key;
+- `dispatchCommandGivesUpChecks`: a command that gives up (`giveUp`,
+  `Editor/Api.lean`) is rolled back, its reason is in the echo area with
+  no `refused:`, and the scheme is back at rest. It is another thing than
+  `dispatchGiveUpChecks`, which is what the loop gives up after a command.
 
 What the loop does with a scheme's report of a view is checked with a
 scheme written here, `switching`: the test scheme, with a report of each
@@ -3961,6 +3974,62 @@ def watchChecks : List Check :=
         let paced := (command.runModel { editorModel with watch := { clock := 100, pace := 10 } }).1
         let still := (command.runModel editorModel).1
         return resulted paced == .inr [100, 110, 120, 130] && resulted still == .inr [0, 0, 0, 0] }]
+
+/-- Runs a program over the clipboard port against the clipboard model
+`model`: its value and the model after its last request. -/
+def clipped {α : Type} (program : ClipboardM α) (model : ClipboardModel := {}) :
+    α × ClipboardModel :=
+  Program.run (port := clipboardPort) ClipboardModel.handle program model
+
+/-- A clipboard written for the test that breaks the contract: it accepts
+every write and keeps none, so a read answers what it held before. -/
+def droppingWrites : (request : ClipboardRequest) → ClipboardModel → request.Reply × ClipboardModel
+  | .read, model => (.ok model.held, model)
+  | .write _, model => (.ok (), model)
+
+/-- The checks of the clipboard interface's model
+(`Editor/Clipboard/Model.lean`): what only the model shows, a clipboard
+that is not available and one that holds nothing, and the contract
+(`Editor/Clipboard/Contract.lean`) seen to report a clipboard that breaks
+it. -/
+def clipboardChecks : List Check :=
+  [{  name :=
+        "a clipboard model that is not available refuses a read and a write, each with unavailable, and holds what it held: the refused write replaces nothing, and once it is available again a read answers the text from before"
+      run :=
+        pure <|
+          let away : ClipboardModel := { held := some "kept", available := false }
+          let (read, afterRead) := clipped Clipboard.read away
+          let (written, afterWrite) := clipped (Clipboard.write "lost") away
+          let (back, _) := clipped Clipboard.read { afterWrite with available := true }
+          replied read == .inl .unavailable && afterRead == away &&
+            replied written == .inl .unavailable &&
+            afterWrite == away &&
+            replied back == .inr (some "kept") },
+    { name :=
+        "a clipboard model that holds nothing answers a read with no text, which is another answer than the empty text, and a read changes nothing"
+      run :=
+        pure <|
+          let (read, after) := clipped Clipboard.read
+          let (empty, _) :=
+            clipped do
+              discard <| Clipboard.write ""
+              Clipboard.read
+          replied read == .inr none && after == {} && replied empty == .inr (some "") &&
+            replied read != replied empty },
+    { name :=
+        "the clipboard contract reports a clipboard that drops every write: its first property, that a text written is the text read, does not hold of it, and every property holds of the model"
+      run := do
+        let dropped ←
+          ClipboardContract.failures
+              (fun property =>
+                pure (Program.run (port := clipboardPort) droppingWrites property.holds {}).1)
+              ClipboardContract.properties
+        let held ←
+          ClipboardContract.failures (fun property => pure (clipped property.holds).1)
+              ClipboardContract.properties
+        return (ClipboardContract.properties.head?.map (·.name)).any dropped.contains &&
+            held.isEmpty &&
+            !ClipboardContract.properties.isEmpty }]
 
 /-- The editor's models with a watch model that counts: its clock, at 0,
 moves on by 1 at each text request and each display request, so its reading
@@ -14001,6 +14070,7 @@ def checks : List Check :=
     displayChecks ++
     commandPortChecks ++
     watchChecks ++
+    clipboardChecks ++
     guardChecks ++
     originChecks ++
     stateChecks ++
@@ -14117,6 +14187,15 @@ def watchFailures : IO (List String) := do
         WatchContract.properties
   return failed.map (s!"the watch model: {·}")
 
+/-- The names of the clipboard interface's contract properties that do not
+hold of the clipboard model, each run from a model that is available and
+holds nothing. -/
+def clipboardFailures : IO (List String) := do
+  let failed ←
+    ClipboardContract.failures (fun property => pure (clipped property.holds).1)
+        ClipboardContract.properties
+  return failed.map (s!"the clipboard model: {·}")
+
 /-- The names of the cases of the editor API (`Editor/Api/Cases.lean`) that
 do not hold of the editor's models, each played from models with no
 text. -/
@@ -14129,9 +14208,9 @@ end ModelTest
 /-- Runs the checks, then the text port's contract against its model, the
 job port's contract against its model and against the runner over the fake
 clock, the display interface's contract against its model, the watch
-port's against its model and the cases of the editor API on the editor's
-models: exits 0 when all hold, and 1 after naming on stderr the ones that
-do not.
+port's against its model, the clipboard interface's against its model and
+the cases of the editor API on the editor's models: exits 0 when all hold,
+and 1 after naming on stderr the ones that do not.
 
 It exits explicitly. A check of the job runner that failed may have left a
 task that never ends, and returning from `main` would wait for it for ever:
@@ -14146,6 +14225,7 @@ def main : IO UInt32 := do
       (← ModelTest.caseFailures) ++
       (← ModelTest.displayFailures) ++
       (← ModelTest.watchFailures) ++
+      (← ModelTest.clipboardFailures) ++
       (← ModelTest.apiCaseFailures)
   for name in failed do
     IO.eprintln s!"FAILED: {name}"
@@ -14154,6 +14234,6 @@ def main : IO UInt32 := do
     -- returning from `main` would wait for it for ever.
     IO.Process.exit 1
   IO.println
-      s!"model-test: {ModelTest.checks.length} checks passed, {Editor.TextContract.properties.length + Editor.TextContract.adoptProperties.length + ModelTest.commandProperties.length} properties hold of the text model, {Editor.UndoTreeCases.cases.length} cases of the undo tree hold over it, and {Editor.JobContract.properties.length} properties of the job model and of the job runner over the fake clock, and {Editor.JobContract.fileProperties.length} file properties of the job model and of the job runner over the fake file service; {Editor.FileCases.cases.length} cases across the text port and the job port hold of the two models; {(Editor.DisplayContract.properties { advance := 1, lineHeight := 1 }).length} properties of the display interface hold of its model in cells of {ModelTest.displayCells.length} sizes; {Editor.WatchContract.properties.length} properties of the watch port hold of its model; {Editor.ApiCases.cases.length} cases of the editor API hold of the editor's models"
+      s!"model-test: {ModelTest.checks.length} checks passed, {Editor.TextContract.properties.length + Editor.TextContract.adoptProperties.length + ModelTest.commandProperties.length} properties hold of the text model, {Editor.UndoTreeCases.cases.length} cases of the undo tree hold over it, and {Editor.JobContract.properties.length} properties of the job model and of the job runner over the fake clock, and {Editor.JobContract.fileProperties.length} file properties of the job model and of the job runner over the fake file service; {Editor.FileCases.cases.length} cases across the text port and the job port hold of the two models; {(Editor.DisplayContract.properties { advance := 1, lineHeight := 1 }).length} properties of the display interface hold of its model in cells of {ModelTest.displayCells.length} sizes; {Editor.WatchContract.properties.length} properties of the watch port hold of its model; {Editor.ClipboardContract.properties.length} properties of the clipboard interface hold of its model; {Editor.ApiCases.cases.length} cases of the editor API hold of the editor's models"
   (← IO.getStdout).flush
   IO.Process.exit 0
