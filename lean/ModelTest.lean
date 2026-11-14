@@ -92,10 +92,10 @@ service.
 
 The config session's decisions are tested here too, with no elaborator:
 
-- `setupChecks`: what a `setup` registers, commands, stores and jobs, and
-  when it is refused;
-- `registryChecks`: the registry, its commands and its jobs, replaced by
-  owner;
+- `setupChecks`: what a `setup` registers, commands, stores, jobs and
+  faces, and when it is refused;
+- `registryChecks`: the registry, its commands, its jobs and its faces,
+  replaced by owner;
 - `storeChecks`: the rule that meets a new config's stores with the cells
   there are, one check for each case;
 - `sessionChecks`: one reload (`Config.build`), on a fake elaborator that
@@ -106,7 +106,9 @@ The config session's decisions are tested here too, with no elaborator:
   double-register, a store value survives a reload), and `config-test` runs
   them again with the real elaborator, queue and text binding. The reducer
   also says when the old config's jobs are cancelled: when a reload
-  installs, and only then.
+  installs, and only then; and what the theme is: the built-in one then the
+  installed config's faces, replaced as a set by an install and kept by a
+  rejected reload.
 -/
 
 namespace ModelTest
@@ -1317,6 +1319,14 @@ def counter : Store Nat :=
       | .nat n => some n
       | _ => none }
 
+/-- A face that sets a foreground of the red `red` and nothing else. -/
+def coloured (red : UInt8) : Face :=
+  { foreground := some (Color.rgb red 0 0) }
+
+/-- The definition of the face `name` as `attributes`. -/
+def defined (name : String) (attributes : Face) : FaceDefinition :=
+  { name := ⟨name⟩, face := attributes }
+
 /-- The message a `setup` was refused with, if it was. -/
 def refusal (setup : SetupM Unit) : Option String :=
   match Config.Registrations.ofSetup setup with
@@ -1414,7 +1424,34 @@ def setupChecks : List Check :=
           command "count" (makes "1")
           job "count" (fun _ => pure 1) fun n => makes (toString n)
         pure
-          (refusal twice == some "the job `count` is registered twice" && refusal shared == none) }]
+          (refusal twice == some "the job `count` is registered twice" && refusal shared == none) },
+    { name :=
+        "a setup's faces are collected in the order it set them, each with what it sets, beside its commands"
+      run :=
+        let setup : SetupM Unit := do
+          command "first" (makes "1")
+          face "keyword" (coloured 200)
+          face "default" { size := some 14, weight := some 500 }
+          command "second" (makes "2")
+        match Config.Registrations.ofSetup setup with
+        | .error _ => pure false
+        | .ok collected =>
+          pure
+            (collected.faces ==
+                #[defined "keyword" (coloured 200),
+                  defined "default" { size := some 14, weight := some 500 }] &&
+              collected.commands.map (·.name) == #["first", "second"]) },
+    { name :=
+        "a setup that sets a face twice is refused with a message that names the face, and a face may have the name of a command"
+      run :=
+        let twice : SetupM Unit := do
+          face "keyword" (coloured 1)
+          face "comment" (coloured 2)
+          face "keyword" (coloured 3)
+        let shared : SetupM Unit := do
+          command "keyword" (makes "1")
+          face "keyword" (coloured 1)
+        pure (refusal twice == some "the face `keyword` is set twice" && refusal shared == none) }]
 
 /-- A registration of the plain command `name`, which makes the text `text`. -/
 def registration (name text : String) : Config.Registration :=
@@ -1486,7 +1523,22 @@ def registryChecks : List Check :=
             registeredWork replaced "theirs" == some (.finished #["t"]) &&
             registeredWork replaced "old" == none &&
             replaced.names == #["greet"] &&
-            (replaced.find? "count").isNone) }]
+            (replaced.find? "count").isNone) },
+    { name :=
+        "an owner's faces are replaced as a set, in their order, and another owner's are left: the definitions are every owner's, oldest first, and the commands are untouched"
+      run :=
+        let theirs := defined "keyword" (coloured 1)
+        let registry : Config.Registry :=
+          ((({} : Config.Registry).replace .config #[registration "greet" "1"]).replaceFaces other
+                #[theirs]).replaceFaces
+            .config #[defined "keyword" (coloured 2), defined "comment" (coloured 3)]
+        let replaced := registry.replaceFaces .config #[defined "string" (coloured 4)]
+        pure
+          (registry.definitions ==
+              #[theirs, defined "keyword" (coloured 2), defined "comment" (coloured 3)] &&
+            replaced.definitions == #[theirs, defined "string" (coloured 4)] &&
+            (replaced.replaceFaces .config #[]).definitions == #[theirs] &&
+            replaced.names == #["greet"]) }]
 
 /-- A declaration of the store `name` at `version`, which starts at the
 number 0 and accepts any number. It migrates a number written at version 1 by
@@ -1929,6 +1981,43 @@ def reloadChecks : List Check :=
         pure
           ((reduce [.requested, .finished (rejected "a"), .requested]).2 ==
             #[.start none #[], .report 1 false #["a"] 0 0, .start (some #[]) #[]]) },
+    { name :=
+        "the theme is the built-in one then the installed config's definitions, in the order its setup made them, and the built-in one alone before any config"
+      run :=
+        let setup : SetupM Unit := do
+          face "keyword" (coloured 1)
+          greets "1"
+          face "default" (coloured 2)
+        let (state, effects) := reduce [.requested, .finished (accepted ["a"] setup)]
+        pure
+          ((reduce []).1.theme == Theme.builtin &&
+            state.theme ==
+              Theme.builtin ++ #[defined "keyword" (coloured 1), defined "default" (coloured 2)] &&
+            -- The report's line is what it was: faces are no commands.
+            effects == #[.start none #[], .cancelJobs "config", .report 1 true #[] 1 1]) },
+    { name :=
+        "an install replaces config's faces as a set: a face the new config does not set is the theme's again, one it sets again is there once, and a config that sets none leaves the built-in theme"
+      run :=
+        let first : SetupM Unit := do
+          face "keyword" (coloured 1)
+          face "comment" (coloured 2)
+        let (loaded, _) := reduce [.requested, .finished (accepted ["a"] first)]
+        let (again, _) :=
+          reduceFrom loaded [.requested, .finished (accepted ["a"] (face "keyword" (coloured 3)))]
+        let (bare, _) := reduceFrom again [.requested, .finished (accepted ["a"] (greets "1"))]
+        pure
+          (again.theme == Theme.builtin ++ #[defined "keyword" (coloured 3)] &&
+            bare.theme == Theme.builtin) },
+    { name := "a rejected reload keeps config's faces, and the theme with them"
+      run :=
+        let (loaded, _) :=
+          reduce [.requested, .finished (accepted ["a"] (face "keyword" (coloured 1)))]
+        let (state, _) :=
+          reduceFrom loaded
+            [.requested, .finished (rejected "a"), .requested, .finished (rejected "setup")]
+        pure
+          (state.theme == Theme.builtin ++ #[defined "keyword" (coloured 1)] &&
+            state.theme == loaded.theme) },
     { name :=
         "an outcome with no base leaves the base as it was: with none known the next job imports again, and a known one is not forgotten"
       run :=

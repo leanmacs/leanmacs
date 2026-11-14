@@ -1,3 +1,4 @@
+import Editor.Face
 import Editor.Job
 import Editor.Store
 
@@ -44,6 +45,13 @@ could never run), a store name declared twice, or a command over a store the
 `setup` does not declare. The diagnostic names the command, the job or the
 store.
 
+Config sets faces the same way (`Editor/Face.lean`): `face "keyword"
+{ foreground := some (Color.rgb 200 0 0) }` sets the attributes it names of
+the face `keyword`, over the theme's, and leaves the rest to the theme. A
+face a config stops setting is the theme's again when the config is
+installed. One `setup` sets a name once: a second `face` of a name is
+refused like a second command of a name, and the diagnostic names the face.
+
 A request of this port can carry an `EditorM`, which a request of the
 editor's own port could not: the setup port is not the port `EditorM` runs
 over, so the type does not refer to itself. A job's handler is carried the
@@ -76,6 +84,9 @@ inductive SetupRequest where
   /-- Register `work` as the job called `name`: a job that finishes with the
   command that takes its result to the editor (`Editor/Job.lean`). -/
   | job (name : String) (work : Work)
+  /-- Set the attributes `attributes` sets of the face called `name`, over
+  the theme's (`Editor/Face.lean`). -/
+  | face (name : FaceName) (attributes : Face)
 
 /-- The type of the reply to each request: nothing, for all of them. -/
 def SetupRequest.Reply : SetupRequest → Type
@@ -83,6 +94,7 @@ def SetupRequest.Reply : SetupRequest → Type
   | .store _ => Unit
   | .storeCommand .. => Unit
   | .job .. => Unit
+  | .face .. => Unit
 
 /-- The setup port: `SetupRequest` and the reply to each request. -/
 abbrev setupPort : Port :=
@@ -118,5 +130,12 @@ the handler makes on the editor thread when the job has finished.
 def job {α : Type} (name : String) (run : Unit → JobM α) (handler : α → EditorM Unit) :
     SetupM Unit :=
   ExceptT.lift (Program.request (port := setupPort) (.job name (Work.of run handler)))
+
+/-- Sets the attributes `attributes` sets of the face called `name`: each is
+over the theme's, and an attribute left unset stays the theme's. It changes
+what the face looks like from the first frame after the config is
+installed. -/
+def face (name : String) (attributes : Face) : SetupM Unit :=
+  ExceptT.lift (Program.request (port := setupPort) (.face ⟨name⟩ attributes))
 
 end Editor
