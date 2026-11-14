@@ -7532,6 +7532,31 @@ def mute : InputScheme :=
     roles := TestScheme.roles
     leader := TestScheme.leader }
 
+/-- A scheme written for the test that breaks the contract: the test scheme,
+except that it reports a view as in an insert session while keys are
+pending, so a key that yields nothing changes its report. -/
+def fidgeting : InputScheme :=
+  { TestScheme.scheme with
+    report := fun (state : TestScheme.State) _ => { session := !state.pending.isEmpty } }
+
+/-- A scheme written for the test that breaks the contract: the test scheme,
+except that once an unbound key has dropped a prefix it reports every view
+as in an insert session. Its state is the test scheme's, and whether a
+prefix was dropped. -/
+def startled : InputScheme :=
+  { State := TestScheme.State × Bool
+    Binding := Invocation
+    init := ({}, false)
+    step := fun maps view state key =>
+      let (next, yielded) := TestScheme.step maps view state.1 key
+      ((next, state.2 || !state.1.pending.isEmpty && next.pending.isEmpty && yielded.isNone),
+        yielded)
+    pending := (·.1.pending)
+    command := fun name => { command := name }
+    roles := TestScheme.roles
+    leader := TestScheme.leader
+    report := fun state _ => { session := state.2 } }
+
 /-- The subject the scheme contract is run on: `scheme` over the scheme
 checks' keymaps for view 0, the sequences those bind, a key none of them
 goes on with, and that same key as the one that prints and that nothing
@@ -7652,7 +7677,23 @@ def schemeContractChecks : List Check :=
                 { TestScheme.scheme with
                   roles, leader }
                 schemeMaps)
-              [SchemeContract.leaderAndRolesApart]) }]
+              [SchemeContract.leaderAndRolesApart]) },
+    { name :=
+        "the scheme contract reports a scheme whose report of a view changes while keys are pending, for that property alone"
+      run :=
+        let subject := subjectOf fidgeting schemeMaps
+        pure
+          (failsOnly subject [SchemeContract.quietKeyKeepsReport] &&
+            (subject.scheme.report (subject.feed (keys "C-x")).1 ⟨0⟩).session &&
+            !(subject.scheme.report (subject.feed (keys "C-x z")).1 ⟨0⟩).session) },
+    { name :=
+        "the scheme contract reports a scheme whose report of a view changes at the unbound key that resets a prefix, for that property alone"
+      run :=
+        let subject := subjectOf startled schemeMaps
+        pure
+          (failsOnly subject [SchemeContract.quietKeyKeepsReport] &&
+            !(subject.scheme.report (subject.feed (keys "C-x")).1 ⟨0⟩).session &&
+            (subject.scheme.report (subject.feed (keys "C-x z")).1 ⟨0⟩).session) }]
 
 /-- The delete operator of the Vim checks: it changes text and names no
 state. -/

@@ -54,6 +54,13 @@ the pending keys the scheme reports. Nothing here knows what a binding is.
   and leaves nothing pending. So a prompt can be typed into under any
   scheme. The contract says nothing of which invocation: the name of a
   self-insert is the scheme's own.
+- `quietKeyKeepsReport`: a key that yields nothing leaves the scheme's
+  report of its view (`InputScheme.report`) as it was before the input:
+  after each strict prefix of a sequence, and after the unbound key that
+  resets it. Whoever runs the scheme reads the report after every key, to
+  decide whether a buffer's undo group stays open, so a key that ran no
+  command must not begin or end an insert session, nor change what the
+  scene shows of the view.
 
 The contract compares no states: a scheme's state may hold what a reset
 must keep, such as its last edit, and the record carries no equality on it.
@@ -226,10 +233,24 @@ def minibufferTakesText : Property :=
       let (state, yielded) := subject.scheme.step subject.maps subject.view told subject.printable
       yielded.isSome && (subject.scheme.pending state).isEmpty }
 
+/-- A key that yields nothing leaves the scheme's report of the subject's
+view (`InputScheme.report`) as it was before the input: after each strict
+prefix of a sequence, and after the unbound key that resets it. -/
+def quietKeyKeepsReport : Property :=
+  { name :=
+      "a key that yields nothing leaves the scheme's report of its view as it was: after a strict prefix of a complete input, and after the unbound key that resets it"
+    holds := fun subject =>
+      let before := subject.scheme.report subject.scheme.init subject.view
+      subject.allPrefixes fun _ typed =>
+        subject.scheme.report (subject.feed typed).1 subject.view == before &&
+          subject.scheme.report (subject.feed (typed ++ [subject.unbound])).1 subject.view ==
+            before }
+
 /-- Every property of the contract. -/
 def properties : List Property :=
   [hasPrefixes, strictPrefixEmitsNothing, strictPrefixIsPending, completeEmits, unboundResets,
-    namedCommandRuns, everyRoleHasKey, leaderAndRolesApart, modeCommandRuns, minibufferTakesText]
+    namedCommandRuns, everyRoleHasKey, leaderAndRolesApart, modeCommandRuns, minibufferTakesText,
+    quietKeyKeepsReport]
 
 /-- The names of the properties that do not hold of `subject`; none when the
 scheme keeps the contract. -/
