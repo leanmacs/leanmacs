@@ -25,10 +25,21 @@
 //! A new field of Lean's scene is a field here, decoded by the binding.
 //! Drawing it is the frame's ([`frame`](crate::frame)). A new attribute
 //! of a face is [`face`](crate::face)'s.
+//!
+//! # Builders for tests
+//!
+//! [`Scene::of_text`] and [`Scene::selecting`] make a scene of one view
+//! of a text from a string and byte offsets alone. They are published for
+//! the tests of other crates: a `Shaper` adapter's wiring test lays a
+//! text out through them without depending on text storage
+//! ([`shaper`](crate::shaper), "Where layout is run over a real
+//! adapter").
 
+use std::hash::{DefaultHasher, Hash, Hasher};
+use std::ops::Range;
 use std::sync::Arc;
 
-use editor_text::{Patch, Revision, Selection, Snapshot};
+use editor_text::{Patch, Revision, Selection, SelectionRange, Snapshot, Text};
 
 use crate::face::FaceDef;
 
@@ -194,4 +205,122 @@ pub struct Scene {
     /// the definitions of the last scene that carried any, and none before
     /// the first.
     pub faces: Option<Vec<FaceDef>>,
+}
+
+/// Builders for tests, this crate's and other crates': a scene made
+/// without naming a type of `editor-text`, so the test of a `Shaper`
+/// adapter lays a text out without depending on text storage.
+impl Scene {
+    /// A scene of one view, view 1, showing `text` in `rect` from its
+    /// start, with no selection, no decoration, no status field and no
+    /// faces.
+    ///
+    /// The text never changes and has nothing to pull. Its key is made
+    /// from its bytes, so two scenes of one text name one text and layout
+    /// keeps what it laid out of it, and a scene of another text names
+    /// another.
+    pub fn of_text(text: &str, rect: Rect) -> Self {
+        let mut hasher = DefaultHasher::new();
+        text.hash(&mut hasher);
+        let key = TextKey(hasher.finish());
+        Self {
+            views: vec![View {
+                id: ViewId(1),
+                rect,
+                text: Some(TextRef::fixed(key, Text::from(text).snapshot())),
+                ..View::default()
+            }],
+            ..Self::default()
+        }
+    }
+
+    /// This scene with its first view given one exclusive selection, from
+    /// `bytes.start` to its head at `bytes.end`: a cursor when the two are
+    /// equal. A scene with no view is left as it is.
+    #[must_use]
+    pub fn selecting(mut self, bytes: Range<usize>) -> Self {
+        if let Some(view) = self.views.first_mut() {
+            let range = SelectionRange::new(bytes.start, bytes.end);
+            view.selections = Selection::new(vec![range], 0).into_iter().collect();
+        }
+        self
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use editor_text::{Revision, Shape};
+
+    use super::{Rect, Scene, ViewId};
+    use crate::Layout;
+    use crate::shaper::fake::CellShaper;
+
+    /// A rectangle 200 pixels across and 64 down, off the frame's corner.
+    const RECT: Rect = Rect {
+        x: 3,
+        y: 4,
+        width: 200,
+        height: 64,
+    };
+
+    #[test]
+    fn a_scene_of_a_text_is_one_view_of_it_in_the_rectangle() {
+        let scene = Scene::of_text("ab\ncd", RECT);
+        assert_eq!(scene.views.len(), 1);
+        let view = &scene.views[0];
+        assert_eq!((view.id, view.rect, view.scroll), (ViewId(1), RECT, 0));
+        let text = view.text.as_ref().expect("a text");
+        assert_eq!(
+            text.snapshot.slice_to_string(0..text.snapshot.len()),
+            Some("ab\ncd".to_owned())
+        );
+        // Nothing else is set: no selection, decoration or status field,
+        // and no faces.
+        assert!(view.selections.is_empty());
+        assert!(view.decorations.is_empty() && view.status.is_empty());
+        assert!(scene.faces.is_none());
+        // The text has nothing to pull.
+        assert!(text.changes.since(Revision::default()).is_none());
+        // One text is one key, and another text another.
+        let key = |text: &str| {
+            Scene::of_text(text, RECT).views[0]
+                .text
+                .as_ref()
+                .unwrap()
+                .key
+        };
+        assert_eq!(key("ab\ncd"), text.key);
+        assert_ne!(key("ab\ncde"), text.key);
+        // It lays out: two rows on the fake, and none shaped again for
+        // the same text in another scene.
+        let mut layout = Layout::new(CellShaper::new(10.0, 16.0));
+        assert_eq!(layout.frame(&scene).views[0].rows.len(), 2);
+        let shaped = layout.counters().shaped;
+        layout.frame(&Scene::of_text("ab\ncd", RECT));
+        assert_eq!(layout.counters().shaped, shaped);
+    }
+
+    #[test]
+    fn selecting_gives_the_first_view_one_exclusive_selection() {
+        let scene = Scene::of_text("abcdef", RECT).selecting(1..4);
+        let selections = &scene.views[0].selections;
+        assert_eq!(selections.len(), 1);
+        assert_eq!(selections[0].shape(), Shape::Exclusive);
+        let ranges: Vec<(usize, usize)> = selections[0]
+            .ranges()
+            .iter()
+            .map(|range| (range.anchor, range.head))
+            .collect();
+        assert_eq!(ranges, vec![(1, 4)]);
+        // Selecting again replaces it, and equal ends are a cursor: one
+        // cursor box and no selection area.
+        let cursor = scene.selecting(2..2);
+        assert_eq!(cursor.views[0].selections.len(), 1);
+        let mut layout = Layout::new(CellShaper::new(10.0, 16.0));
+        let frame = layout.frame(&cursor);
+        assert_eq!(frame.views[0].cursors.len(), 1);
+        assert!(frame.views[0].selections.is_empty());
+        // A scene with no view stays as it is.
+        assert!(Scene::default().selecting(0..1).views.is_empty());
+    }
 }

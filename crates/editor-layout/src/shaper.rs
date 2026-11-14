@@ -39,7 +39,26 @@
 //!
 //! [`fake::CellShaper`] gives every glyph of a font the same advance, so
 //! layout's tests are exact. [`contract`] is the list of rules the fake and
-//! every real adapter (Parley, the display pipeline's phase 3) are held to.
+//! every real adapter are held to; the real adapter is
+//! `editor-shape-parley`, over Parley.
+//!
+//! # Where layout is run over a real adapter
+//!
+//! Layout's rules are pinned in this crate, on the fake, and an adapter's
+//! in the adapter's crate, on the contract and its own tests. A test that
+//! runs layout over a real adapter covers wiring only, and lives in the
+//! adapter's crate (`crates/editor-shape-parley/tests/layout.rs`). It may
+//! compare the adapter's own counters with [`Layout::counters`] and with
+//! [`SEGMENT_BYTES`] by name: that the adapter did as much work as layout
+//! says it asked for, and that nothing it was handed is longer than a
+//! segment. It states no row, no width and no number of layout's. It
+//! builds its scenes with [`Scene::of_text`] and [`Scene::selecting`], so
+//! it does not depend on text storage.
+//!
+//! [`Layout::counters`]: crate::Layout::counters
+//! [`SEGMENT_BYTES`]: crate::tabs::SEGMENT_BYTES
+//! [`Scene::of_text`]: crate::scene::Scene::of_text
+//! [`Scene::selecting`]: crate::scene::Scene::selecting
 
 use std::fmt;
 use std::ops::Range;

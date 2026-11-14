@@ -106,7 +106,13 @@
 //!   no fixture font has a ligature in a right-to-left script.
 //!
 //! It pins no rule of layout's: which segments are shaped, and when, is
-//! `editor-layout`'s, pinned there on the port's fake.
+//! `editor-layout`'s, pinned there on the port's fake. One file runs
+//! layout over this adapter, for the wiring alone (`tests/layout.rs`):
+//! the adapter builds as many Parley layouts as layout's own counters say
+//! it shaped segments, none for a break, a reuse or a cursor, and of a
+//! very long row no layout holds more than the longest segment layout
+//! cuts. So a row costs one Parley layout for each segment of it that is
+//! shaped, and never a layout of the whole row or of the document.
 //!
 //! # When the pin moves
 //!
