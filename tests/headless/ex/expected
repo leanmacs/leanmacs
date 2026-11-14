@@ -9,4 +9,18 @@ scene 0x0, focused 0, echo "scratch has no file to save to", preedit -, publishe
 view 0 0,0 0x0: "", scroll 0, selections 0..0
 status 0: status.state "normal", status.name "scratch"
 key arrived: : Semicolon shift
+scene 0x0, focused 3, echo "", preedit -, published 13
+view 0 0,0 0x0: "", scroll 0, selections 0..0
+status 0: status.state "normal", status.name "scratch"
+view 3 0,0 0x0: "e", scroll 0, selections 1..1
+status 3: minibuffer.prompt ":", minibuffer.candidate "e", minibuffer.candidate "reload"
+key arrived: <Tab> Tab -
+key arrived: <Enter> Enter -
+scene 0x0, focused 4, echo "", preedit -, published 18
+view 0 0,0 0x0: "", scroll 0, selections 0..0
+status 0: status.state "normal", status.name "scratch"
+view 4 0,0 0x0: "", scroll 0, selections 0..0
+status 4: minibuffer.prompt "Open file: "
+key arrived: <Escape> Escape -
+key arrived: : Semicolon shift
 key arrived: <Enter> Enter -

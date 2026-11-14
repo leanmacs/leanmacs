@@ -23,6 +23,20 @@ commit w
 key <Enter> Enter -
 scene
 
+# The ex line's candidates are the ex names that are bound. With `e` in the
+# minibuffer the scene lists, after the line's label, `e`, which is the
+# text, and then `reload`, which holds an `e`; no other name does. `<Tab>`
+# chooses the first, and `<Enter>` runs it: `e` with no path asks for one,
+# with a prompt of its own, which has no candidates, so its status line is
+# its label alone. `<Escape>` cancels that prompt.
+key : Semicolon shift
+commit e
+scene
+key <Tab> Tab -
+key <Enter> Enter -
+scene
+key <Escape> Escape -
+
 # `q` is bound to `quit`. Nothing has unsaved changes, so the editor quits:
 # the loop ends at the accept key, and the `scene` line after it is not
 # run. The exit status is 0. The line is opened with the `:` key again.

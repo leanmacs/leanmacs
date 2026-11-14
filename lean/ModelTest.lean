@@ -14136,19 +14136,38 @@ def exTestBindings : Array Ex.Binding :=
   #[{ name := "say", command := "greet", takes := .text }, { name := "plain", command := "greet" },
     { name := "ghost", command := "nobody" }, { name := "burst", command := "boom" }]
 
+/-- The names of `bindings`, each once, in the order they are first bound:
+what a step of the ex checks is told the bound ex names are. -/
+def exNamesOf (bindings : Array Ex.Binding) : Array String :=
+  bindings.foldl
+    (fun names binding => if names.contains binding.name then names else names.push binding.name)
+    #[]
+
+/-- What the ex prompt of a driver told of `bindings` holds once its
+candidates are listed for `pattern`, with `chosen` as its choice: the
+bound names, and of them what the fuzzy model answers for the pattern. -/
+def exListed (pattern : String) (chosen : Option Nat := none)
+    (bindings : Array Ex.Binding := exTestBindings) : Candidates :=
+  let names := exNamesOf bindings
+  { all := names, listedFor := some pattern
+    listed := (FuzzyModel.rank pattern names).filterMap (names[·]?), chosen }
+
 /-- What a step of the ex checks is handed. The commands are the ones
 compiled code registers for the ex line, the minibuffer and files
 (`Ex.commands`, `Minibuffer.commands`, `Files.commands`), each under the
 name it is registered under, and then the commands of the prompt checks:
 `greet`, which says what it was called with, `boom`, `other` and the test
 scheme's self-insert. The ex bindings a command is told of are `bindings`,
-the latest of a name.
+the latest of a name, and the ex names it is told of are theirs
+(`exNamesOf`): both are filled from the one list, so that no name is told
+without its binding.
 
 One keymap, the same for every view: `C-e e` runs the ex command, `C-e V`
 runs it with the arguments the Vim scheme gives a command a key is bound
 to, a count and a register, `C-e l` runs it with the line `say hello there`
 as its first argument, `C-e y` and `C-e n` run the minibuffer's accept and
-cancel commands, and `C-e o` runs `other`. -/
+cancel commands, `C-e t` runs its command that moves to the next
+candidate, and `C-e o` runs `other`. -/
 def exKeys (bindings : Array Ex.Binding := exTestBindings) : Loop.Keys TestScheme.scheme :=
   let compiled : List (String × Dispatched) :=
     (Ex.commands ++ Minibuffer.commands ++ Files.commands).toList.filterMap fun registration =>
@@ -14164,9 +14183,10 @@ def exKeys (bindings : Array Ex.Binding := exTestBindings) : Loop.Keys TestSchem
       [("C-e e", invoke Ex.name), ("C-e V", { command := Ex.name, arguments := [.nat 0, .str ""] }),
         ("C-e l", { command := Ex.name, arguments := [.str "say hello there"] }),
         ("C-e y", invoke Minibuffer.acceptName), ("C-e n", invoke Minibuffer.cancelName),
-        ("C-e o", invoke "other")]
+        ("C-e t", invoke Minibuffer.nextName), ("C-e o", invoke "other")]
       (compiled ++ promptCommands) with
-    registered := { ex := fun name => bindings.findRev? (·.name == name) } }
+    registered :=
+      { ex := fun name => bindings.findRev? (·.name == name), exNames := exNamesOf bindings } }
 
 /-- A driver of the ex checks over the initial state, told of the ex
 bindings `bindings`, with the file commands' jobs and the files of the file
@@ -14586,7 +14606,73 @@ def exChecks : List Check :=
               !twice.stopped &&
               promptEcho once == "" &&
               promptEcho refused == Ex.noArgument "reload" &&
-              refused.reloads == 0 }]
+              refused.reloads == 0 },
+    { name :=
+        "the ex prompt's candidates are the ex names that are bound, each once, listed for the empty line when it opens; a typed letter lists the names the fuzzy model answers for it, and the scene shows them after the ex line's label"
+      run :=
+        pure <|
+          match exDriver with
+          | none => false
+          | some driver =>
+            let (asking, _) := fedTo driver (presses "C-e e")
+            let (typed, _) := fedTo asking (presses "s")
+            let names := exTestBindings.map (·.name)
+            candidatesOf asking == some (exListed "") &&
+              (candidatesOf asking).map (·.all) == some names &&
+              (candidatesOf asking).map (·.listed.size) == some names.size &&
+              candidatesOf typed == some (exListed "s") &&
+              (candidatesOf typed).map (·.listed.size) == some 3 &&
+              ((pickStatus typed).map fun fields => fields.map (·.text)) ==
+                some (#[Ex.label] ++ (exListed "s").listed) },
+    { name :=
+        "in the ex prompt, text that is no name is typed, the key that moves to the next candidate and the accept key are pressed: the command the first listed name is bound to runs, as the whole name typed and accepted runs it, and not as the typed text alone does, which is no ex name"
+      run :=
+        pure <|
+          match exDriver with
+          | none => false
+          | some driver =>
+            let (typed, _) := fedTo driver (presses "C-e e p l")
+            let (chosen, _) := fedTo typed (presses "C-e t")
+            let (ran, _) := fedTo chosen (presses "C-e y")
+            let (whole, _) := fedTo driver (exLine "plain")
+            let (bare, _) := fedTo typed (presses "C-e y")
+            candidatesOf typed == some (exListed "pl") &&
+              (candidatesOf typed).map (·.listed) == some #["plain"] &&
+              candidatesOf chosen == some (exListed "pl" (some 0)) &&
+              minibufferText chosen == some "pl" &&
+              promptEcho ran == promptEcho whole &&
+              promptEcho ran == greeted [] &&
+              closed ran &&
+              promptEcho bare == Ex.unknown "pl" },
+    { name :=
+        "an ex line with an argument matches no name, so the scene lists none, and the accept key runs the line as typed"
+      run :=
+        pure <|
+          match exDriver with
+          | none => false
+          | some driver =>
+            let (typed, _) := fedTo driver (presses "C-e e" ++ [.commit "say hello there"])
+            let (moved, _) := fedTo typed (presses "C-e t")
+            let (ran, _) := fedTo moved (presses "C-e y")
+            candidatesOf typed == some (exListed "say hello there") &&
+              (candidatesOf typed).map (·.listed) == some #[] &&
+              ((pickStatus typed).map fun fields => fields.map (·.text)) == some #[Ex.label] &&
+              candidatesOf moved == candidatesOf typed &&
+              promptEcho ran == greeted hello &&
+              closed ran },
+    { name :=
+        "with the ex names that ship, the letter e lists the name e first, which is the letter, and then reload, and no other; the prompt the name e then asks for a path with has no candidates"
+      run :=
+        pure <|
+          match exDriver Ex.bindings with
+          | none => false
+          | some driver =>
+            let (typed, _) := fedTo driver (presses "C-e e e")
+            let (opening, _) := fedTo typed (presses "C-e t C-e y")
+            candidatesOf typed == some (exListed "e" none Ex.bindings) &&
+              (candidatesOf typed).map (·.listed) == some #["e", "reload"] &&
+              opening.loop.state.prompt.map (·.label) == some Files.openPrompt &&
+              candidatesOf opening == some {} }]
 
 /-- Texts of the resting rule's checks, each with every position it has, in
 order, and where each rests under `onCell` and under `offLineBreak`,

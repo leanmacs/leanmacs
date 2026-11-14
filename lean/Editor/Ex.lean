@@ -29,6 +29,18 @@ names that ship, are in `Editor/Ex/Compiled.lean`.
 - **Where the prompt is refused**, because one is open, the echo area says
   so (`notAsking`): the command's name, then the refusal's sentence. The
   open prompt stays.
+- **The prompt's candidates are the ex names that are bound** (`exNames`,
+  `Editor/Api.lean`), which the loop answers from the registry as it is
+  when the line is asked for. So while a name is being typed the scene
+  lists the names it matches, a key of the minibuffer chooses one, and
+  accepting runs the chosen name (`Editor/Minibuffer.lean`).
+  - **The typed line is the pattern, whole.** A line with an argument
+    matches no name, so nothing is listed, and accepting runs the line as
+    typed. A name is completed, an argument is not.
+  - **Nothing is chosen unless a key chooses it.** A typed name and the
+    accept key run what was typed, as before there were candidates: `r`
+    and the accept key is the name `r`, which nobody bound, and not
+    `reload`.
 - **Running a line** (`run`):
   1. the line is parsed into its name and its argument (`Ex.parse`,
      `Editor/Ex/Line.lean`). A line that is empty or all white space runs
@@ -171,7 +183,8 @@ def run (line : String) : EditorM Unit := do
 
 /-- The ex command as it is called: runs the line that is its first
 argument, a string (`run`). With anything else first, or nothing, it asks
-for the line (`prompt`, labelled `label`), with itself as the continuation:
+for the line (`prompt`, labelled `label`), with itself as the continuation
+and the ex names that are bound as the candidates:
 the answer is then its first argument, and it runs in the view it was asked
 from. Where the prompt is refused, because one is open, it says so in the
 echo area (`notAsking`). -/
@@ -180,7 +193,7 @@ def exCommand (call : Call) : EditorM Unit := do
   | .str line :: _ =>
     run line
   | _ =>
-    if let .error refusal← prompt label { command := name } then
+    if let .error refusal← prompt label { command := name } (candidates := exNames) then
       message (notAsking refusal)
 
 /-- The name the quit command is registered under. -/
