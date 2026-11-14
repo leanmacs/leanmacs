@@ -13,8 +13,11 @@ a scene of it after each.
 
 - **A buffer** (`Buffer`) is a text of the text store, a name, the text's
   undo tree, the buffer's local values (`Value` trees, as a store's cell
-  holds) and the names of its modes. What a mode means is the command
-  loop's phase 7; here it is only a name.
+  holds), and the names of its modes: one major mode or none, and its
+  minor modes, the one added last first. A name here is only a name: what
+  a mode is, and what its keys and its `onEnter` are, is the registry's
+  (`Editor/Mode.lean`, `Editor/Config/Registry.lean`), and a name no
+  registered mode has contributes nothing.
 - **A window** (`Window`) is a view of a buffer: its `ViewId`, which names it
   in every scene, the buffer it shows, its scroll position as an anchor
   marker of the buffer's text, and its selections as one selection marker
@@ -65,6 +68,22 @@ The minibuffer's place has no `ViewId`, so no operation here can remove it.
 adds an operation able to remove the minibuffer's place adds its
 constructor.
 
+## A buffer's modes
+
+Three operations set a buffer's modes, of the same shape and with no
+command bound to them either (phase 8 offers them as requests). Each is
+refused, with the state as it was, with `BufferRefusal.noSuchBuffer` for a
+buffer there is none of. They take any name: whether a mode of that name
+is registered is the registry's to ask (`Config.Registry.setMajorMode`,
+which also runs the mode's `onEnter`).
+
+- `setMajorMode` makes a mode the buffer's major mode, and says whether it
+  became it: `false`, with nothing changed, when the buffer already had it.
+- `addMinorMode` puts a minor mode first; one the buffer has already
+  changes nothing.
+- `removeMinorMode` takes a minor mode away; one the buffer does not have
+  changes nothing.
+
 ## Smaller rules
 
 - A new state's frame is focused, on view 0, with one window over a buffer
@@ -108,8 +127,10 @@ structure Buffer where
   history : UndoTree
   /-- Its local values, by name. -/
   locals : Array (String × Value) := #[]
-  /-- The names of its modes. -/
-  modes : Array String := #[]
+  /-- The name of its major mode, if it has one. -/
+  major : Option String := none
+  /-- The names of its minor modes, the one added last first. -/
+  minors : Array String := #[]
   deriving BEq, Repr
 
 /-- A window: a view of a buffer. -/
@@ -185,6 +206,12 @@ inductive LayoutRefusal where
   | onlyWindow
   /-- The window is not in the frame's tree. -/
   | noSuchWindow (id : ViewId)
+  deriving DecidableEq, Repr
+
+/-- Why an operation on a buffer was refused. -/
+inductive BufferRefusal where
+  /-- The state has no buffer of this name. -/
+  | noSuchBuffer (id : BufferId)
   deriving DecidableEq, Repr
 
 namespace Split
@@ -325,6 +352,48 @@ def focusWindow (id : ViewId) (state : EditorState) : Except LayoutRefusal Unit 
   if state.frame.tree.windows.contains id then
     (.ok (), { state with frame := { state.frame with focused := id } })
   else (.error (.noSuchWindow id), state)
+
+/-- `state` with the buffer `id` changed by `change`, and what `change`
+said. Refused, with the state unchanged, with `noSuchBuffer` for a buffer
+there is none of. -/
+private def changeBuffer {α : Type} (id : BufferId) (change : Buffer → α × Buffer)
+    (state : EditorState) : Except BufferRefusal α × EditorState :=
+  match state.buffer? id with
+  | some buffer =>
+    let (said, changed) := change buffer
+    (.ok said, { state with buffers := state.buffers.set! id.index changed })
+  | none => (.error (.noSuchBuffer id), state)
+
+/-- Makes the mode `name` the major mode of the buffer `id`, and says
+whether it became the major mode: `false`, with nothing changed, when the
+buffer already had it. Any name is taken. Refused, with the state
+unchanged, with `noSuchBuffer` for a buffer there is none of. -/
+def setMajorMode (id : BufferId) (name : String) (state : EditorState) :
+    Except BufferRefusal Bool × EditorState :=
+  changeBuffer id
+    (fun buffer =>
+      if buffer.major == some name then (false, buffer)
+      else (true, { buffer with major := some name }))
+    state
+
+/-- Adds the minor mode `name` to the buffer `id`, first; a minor mode the
+buffer already has changes nothing. Refused, with the state unchanged,
+with `noSuchBuffer` for a buffer there is none of. -/
+def addMinorMode (id : BufferId) (name : String) (state : EditorState) :
+    Except BufferRefusal Unit × EditorState :=
+  changeBuffer id
+    (fun buffer =>
+      if buffer.minors.contains name then ((), buffer)
+      else ((), { buffer with minors := #[name] ++ buffer.minors }))
+    state
+
+/-- Removes the minor mode `name` from the buffer `id`; one the buffer does
+not have changes nothing. Refused, with the state unchanged, with
+`noSuchBuffer` for a buffer there is none of. -/
+def removeMinorMode (id : BufferId) (name : String) (state : EditorState) :
+    Except BufferRefusal Unit × EditorState :=
+  changeBuffer id (fun buffer => ((), { buffer with minors := buffer.minors.filter (· != name) }))
+    state
 
 end EditorState
 

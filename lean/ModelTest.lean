@@ -3844,7 +3844,63 @@ def stateChecks : List Check :=
             | (.ok (), after) =>
               after.frame.focused == ⟨1⟩ &&
                 after == { state with frame := { state.frame with focused := ⟨1⟩ } }
-            | _ => false }]
+            | _ => false },
+    { name :=
+        "setting a buffer's major mode names it and says it became the major mode, leaving the other buffers; setting it again changes nothing and says not; another mode replaces it"
+      run :=
+        pure <|
+          match onTextModel twoBuffers with
+          | none => false
+          | some state =>
+            let major (state : EditorState) (index : Nat) : Option String :=
+              (state.buffer? ⟨index⟩).bind (·.major)
+            match state.setMajorMode ⟨1⟩ "listing" with
+            | (.ok true, listed) =>
+              major state 1 == none && major listed 1 == some "listing" && major listed 0 == none &&
+                listed ==
+                  { state with
+                    buffers := state.buffers.modify 1 ({ · with major := some "listing" }) } &&
+                (match listed.setMajorMode ⟨1⟩ "listing" with
+                | (.ok false, again) => again == listed
+                | _ => false) &&
+                match listed.setMajorMode ⟨1⟩ "other" with
+                | (.ok true, other) => major other 1 == some "other"
+                | _ => false
+            | _ => false },
+    { name :=
+        "a minor mode added is first and added once, and removing one takes it away; removing one not there changes nothing"
+      run :=
+        pure <|
+          match onTextModel twoBuffers with
+          | none => false
+          | some state =>
+            let minors (state : EditorState) : Array String :=
+              ((state.buffer? ⟨0⟩).map (·.minors)).getD #[]
+            let (_, one) := state.addMinorMode ⟨0⟩ "one"
+            let (_, two) := one.addMinorMode ⟨0⟩ "two"
+            let (added, again) := two.addMinorMode ⟨0⟩ "one"
+            let (removed, without) := two.removeMinorMode ⟨0⟩ "one"
+            let (absent, unchanged) := two.removeMinorMode ⟨0⟩ "three"
+            minors state == #[] && minors one == #["one"] && minors two == #["two", "one"] &&
+              added matches .ok () &&
+              again == two &&
+              removed matches .ok () &&
+              minors without == #["two"] &&
+              absent matches .ok () &&
+              unchanged == two &&
+              ((two.buffer? ⟨1⟩).map (·.minors)) == some #[] },
+    { name :=
+        "setting a major mode, adding a minor mode and removing one each refuse a buffer there is none of with noSuchBuffer, and the state is as it was"
+      run :=
+        pure <|
+          match onTextModel twoBuffers with
+          | none => false
+          | some state =>
+            let refused {α : Type} : Except BufferRefusal α × EditorState → Bool
+              | (.error (.noSuchBuffer id), after) => id == ⟨5⟩ && after == state
+              | _ => false
+            refused (state.setMajorMode ⟨5⟩ "listing") && refused (state.addMinorMode ⟨5⟩ "one") &&
+              refused (state.removeMinorMode ⟨5⟩ "one") }]
 
 /-- The loop the model tests run: one over the test scheme. -/
 abbrev TestLoop :=
