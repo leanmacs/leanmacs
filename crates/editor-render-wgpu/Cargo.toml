@@ -28,8 +28,25 @@ etagere = "=0.3.0"
 # Parley's. Checked in a spike on three fixture fonts, on macOS and on
 # Linux (`docs/design/rendering-prior-art.md`).
 swash = "=0.2.10"
+# The GPU, on every platform: the device, the atlas's textures, one
+# pipeline of instanced quads and its shader, an offscreen target and its
+# read-back. Pinned exactly, with its default features, as winit is; no
+# type of it is public here, and `deny.toml` lets no other crate depend
+# on it. On Linux it opens Vulkan and EGL at run time, so the build needs
+# cargo alone. Checked in a spike on Metal, in the Linux container with
+# and without Mesa, and on its no-op back end
+# (`docs/design/rendering-prior-art.md`).
+wgpu = "=30.0.2"
+# Blocks on wgpu's futures: asking for an adapter and a device, taking an
+# error scope's answer, and mapping the read-back buffer. Pinned exactly;
+# `deny.toml` lets no other crate depend on it.
+pollster = "=1.0.1"
 
 [dev-dependencies]
+# wgpu's no-op back end, for this crate's own tests and no other build:
+# it validates every call and draws nothing, so the gate checks the
+# shader, the pipeline and every draw on a machine with no GPU.
+wgpu = { version = "=30.0.2", features = ["noop"] }
 # Reads the reference image in `tests/reference.rs`, and writes it in the
 # example that makes it (`examples/reference.rs`). Pinned exactly; a
 # dev-dependency only, so no build of the library links it. `deny.toml`

@@ -73,7 +73,12 @@
 # another crate, it fails ("crate 'etagere = 0.3.0' is explicitly
 # banned"). `swash` (2026-11-14): the same way ("crate 'swash = 0.2.10'
 # is explicitly banned"). `png` (2026-11-14), a dev-dependency: the same
-# way ("crate 'png = 0.18.1' is explicitly banned").
+# way ("crate 'png = 0.18.1' is explicitly banned"). `wgpu` and
+# `pollster` (2026-11-14): the same way ("crate 'wgpu = 30.0.2' is
+# explicitly banned", "crate 'pollster = 1.0.1' is explicitly banned").
+# wgpu's own crates (`wgpu-core`, `wgpu-hal`, `wgpu-types`, `naga`) have
+# no entry: they are reached only through `wgpu`, and an entry for each
+# would name wgpu's internals here.
 #
 # One rule has no entry: "no crate depends on `editor-ffi`", the one crate
 # that knows about Lean. No entry for it passes the gate. With
@@ -100,6 +105,8 @@ deny = [
   { crate = "swash", wrappers = ["editor-render-wgpu"], reason = "the glyph rasteriser stays behind the Renderer port: only the crate of the port's real adapters may name its types" },
   { crate = "png", wrappers = ["editor-render-wgpu"], reason = "an image file is read and written only by the renderer's reference-image test and the example that makes the image" },
   { crate = "editor-shape-parley", wrappers = ["editor-render-wgpu"], reason = "the real shaper has one user today, a dev-dependency: the renderer's two wiring tests and its examples lay real text out with it; the crate that wires the library together is the next, and that is a decision, so it is made here" },
+  { crate = "wgpu", wrappers = ["editor-render-wgpu"], reason = "wgpu stays behind the Renderer port: only the crate of the port's real adapters may name its types" },
+  { crate = "pollster", wrappers = ["editor-render-wgpu"], reason = "blocking on wgpu's futures is the renderer's own business: only the crate of the Renderer port's real adapters does it" },
   { crate = "parley", wrappers = ["editor-shape-parley"], reason = "Parley stays behind the Shaper port: only its adapter crate may name its types" },
   { crate = "fontique", wrappers = ["editor-shape-parley", "parley", "parley_engine"], reason = "fontique is Parley's font library and stays behind the Shaper port with it: beside Parley's own crates, only the adapter may name its types" },
   { crate = "editor-fs-std", wrappers = ["editor-ffi"], reason = "the file adapter is linked only by the crate that wires the library together; everything else reaches a file through the port, and editor-text's tests through its fake" },

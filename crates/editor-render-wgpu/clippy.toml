@@ -20,6 +20,15 @@
 # fails with "use of a disallowed method `std::fs::read`". With the test
 # taken out it passes.
 #
+# This machine's GPU comes through one function,
+# `WgpuRenderer::on_this_machine`, which is on the list: no test may call
+# it. The tests of the wgpu adapter run it on wgpu's no-op back end,
+# through a constructor private to the crate (`src/gpu/tests.rs`). Seen
+# to bite once by hand, on 2026-11-14: with a test added to
+# `tests/contract.rs` that calls `WgpuRenderer::on_this_machine`,
+# `mise run lint` fails with "use of a disallowed method
+# `editor_render_wgpu::WgpuRenderer::on_this_machine`".
+#
 # The exceptions. This file governs the crate's examples too, and each
 # example exists to do one thing no test may. Each call of a listed name
 # in an example is under its own `#[expect(clippy::disallowed_methods,
@@ -79,6 +88,8 @@ disallowed-methods = [
   { path = "std::time::Instant::now", reason = "the renderer reads no clock: a cost is counted (`Drawn`), never timed" },
   # The file port's real adapter, which this crate does not depend on.
   { path = "editor_fs_std::StdFs::system", reason = "the renderer touches no file system, real or fake" },
+  # This machine's GPU: what it finds depends on the machine.
+  { path = "editor_render_wgpu::WgpuRenderer::on_this_machine", reason = "no test asks for this machine's adapter: the gate runs the wgpu adapter on wgpu's no-op back end, and the example `gpu` is the one place a real adapter is asked for" },
 ]
 
 disallowed-types = [

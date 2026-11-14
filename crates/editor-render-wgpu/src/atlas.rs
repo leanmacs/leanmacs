@@ -50,6 +50,8 @@ struct Page {
     pixels: Vec<u8>,
     /// How many images it holds.
     images: u32,
+    /// How many images have been written to it.
+    written: u64,
 }
 
 /// A page, as what draws from it reads it.
@@ -63,6 +65,10 @@ pub struct PageView<'a> {
     pub size: u32,
     /// Its pixels, row by row: `size * size` times the kind's bytes.
     pub pixels: &'a [u8],
+    /// How many images have been written to it since it was added: a
+    /// device that keeps a copy of the page sends it again when this has
+    /// moved on.
+    pub written: u64,
 }
 
 /// The pages.
@@ -121,6 +127,7 @@ impl Atlas {
             allocator: AtlasAllocator::new(size2(size, size)),
             pixels: vec![0; self.page_bytes(kind) as usize],
             images: 0,
+            written: 0,
         });
         number
     }
@@ -148,6 +155,7 @@ impl Atlas {
                 id: allocation.id,
             };
             page.images += 1;
+            page.written += 1;
             let bytes = kind.bytes() as usize;
             let (stride, row) = (page_size as usize * bytes, width as usize * bytes);
             for (index, line) in data.chunks_exact(row.max(1)).enumerate() {
@@ -181,6 +189,7 @@ impl Atlas {
             kind: page.kind,
             size: self.page_size,
             pixels: &page.pixels,
+            written: page.written,
         })
     }
 
@@ -336,6 +345,27 @@ mod tests {
                 (Kind::Color, pixels as usize * 4)
             ]
         );
+    }
+
+    #[test]
+    fn a_page_counts_the_images_written_to_it() {
+        let mut atlas = Atlas::new(PAGE);
+        let page = atlas.add_page(Kind::Mask);
+        let written = |atlas: &Atlas| atlas.page(page).map(|page| page.written);
+        assert_eq!(written(&atlas), Some(0));
+        let data = image(Kind::Mask, 6, 10, 7);
+        let first = atlas.place(Kind::Mask, 6, 10, &data).expect("room");
+        assert_eq!(written(&atlas), Some(1));
+        atlas.place(Kind::Mask, 6, 10, &data);
+        assert_eq!(written(&atlas), Some(2));
+        // Freeing a rectangle writes nothing; using it again does. A page
+        // of another kind counts its own.
+        atlas.free(first);
+        assert_eq!(written(&atlas), Some(2));
+        atlas.place(Kind::Mask, 6, 10, &data);
+        assert_eq!(written(&atlas), Some(3));
+        let other = atlas.add_page(Kind::Color);
+        assert_eq!(atlas.page(other).map(|page| page.written), Some(0));
     }
 
     #[test]

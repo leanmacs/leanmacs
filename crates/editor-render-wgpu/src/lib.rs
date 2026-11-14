@@ -18,12 +18,16 @@ mod atlas;
 mod blend;
 mod cpu;
 mod glyphs;
+mod gpu;
 mod painter;
 mod quads;
 mod raster;
 
 #[cfg(test)]
 mod settings_tests;
+
+use std::error::Error;
+use std::fmt;
 
 use editor_render::port::{DrawRequest, Drawn, Renderer};
 
@@ -80,6 +84,123 @@ impl HeadlessRenderer {
     /// The picture of the frame last drawn, the size of its target.
     pub fn image(&self) -> &Image {
         &self.image
+    }
+}
+
+/// Why there is no GPU renderer: this machine has no adapter wgpu can
+/// use, or the adapter refused the device or the pipeline.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NoAdapter {
+    /// What wgpu said.
+    reason: String,
+}
+
+impl fmt::Display for NoAdapter {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(formatter, "no GPU renderer: {}", self.reason)
+    }
+}
+
+impl Error for NoAdapter {}
+
+/// The GPU adapter of the `Renderer` port: it draws a frame with wgpu, to
+/// a target of its own that can be read back.
+///
+/// It is the same painter as [`HeadlessRenderer`]'s, down to the list of
+/// quads and the bytes of the atlas; what it does of its own is send the
+/// atlas to textures and draw the quads through one pipeline (the module
+/// `gpu`). It presents to no window: the surface is the display
+/// pipeline's phase 6.
+///
+/// The gate runs it on wgpu's no-op back end only, which checks every
+/// call and draws nothing. Its picture is compared with the reference
+/// image on demand, on a real adapter (`mise run render-gpu`).
+pub struct WgpuRenderer {
+    /// What turns a frame into quads.
+    painter: Painter<SwashRasterizer>,
+    /// The GPU.
+    device: gpu::Device,
+    /// What wgpu said of the last draw it refused.
+    refused: Option<String>,
+}
+
+impl WgpuRenderer {
+    /// A renderer on an adapter of this machine, with no window.
+    ///
+    /// What it finds depends on the machine, so no test calls it: the
+    /// crate's `clippy.toml` forbids it to them, and its one caller is
+    /// the example `gpu`.
+    pub fn on_this_machine(settings: Settings) -> Result<Self, NoAdapter> {
+        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
+        Self::over(&instance, settings, true)
+    }
+
+    /// A renderer on an adapter of `instance`, which blends by a coverage
+    /// for each channel when the adapter can and `allow_per_channel` says
+    /// it may.
+    fn over(
+        instance: &wgpu::Instance,
+        settings: Settings,
+        allow_per_channel: bool,
+    ) -> Result<Self, NoAdapter> {
+        let device = gpu::Device::new(instance, allow_per_channel)
+            .map_err(|gpu::Unavailable(reason)| NoAdapter { reason })?;
+        let painter = Painter::new(
+            SwashRasterizer::new(),
+            &settings,
+            device.per_channel(),
+            PAGE_SIZE,
+        );
+        Ok(Self {
+            painter,
+            device,
+            refused: None,
+        })
+    }
+
+    /// The adapter's name and back end, for a person.
+    pub fn adapter(&self) -> String {
+        self.device.adapter().to_owned()
+    }
+
+    /// Whether the adapter blends by a coverage for each channel. When it
+    /// cannot, glyphs are antialiased with one coverage a pixel whatever
+    /// the settings say.
+    pub fn per_channel(&self) -> bool {
+        self.device.per_channel()
+    }
+
+    /// What wgpu said of the last draw, when it refused it: that draw
+    /// answered `presented: false`.
+    pub fn refused(&self) -> Option<&str> {
+        self.refused.as_deref()
+    }
+
+    /// The picture of the frame last drawn, read back from the GPU; a
+    /// picture of no size before a first draw, or when it cannot be read.
+    pub fn read_back(&mut self) -> Image {
+        self.device.read_back().unwrap_or_else(|refused| {
+            self.refused = Some(refused);
+            cpu::cleared(0, 0)
+        })
+    }
+}
+
+impl Renderer for WgpuRenderer {
+    fn draw(&mut self, request: &DrawRequest<'_>) -> Drawn {
+        let target = request.target;
+        let drawn = self.painter.paint(request.frame, target);
+        let sent = self.device.draw(
+            self.painter.quads(),
+            self.painter.atlas(),
+            target.width,
+            target.height,
+        );
+        self.refused = sent.err();
+        Drawn {
+            presented: self.refused.is_none(),
+            ..drawn
+        }
     }
 }
 
