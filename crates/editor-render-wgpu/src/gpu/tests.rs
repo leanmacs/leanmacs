@@ -243,6 +243,43 @@ fn the_target_read_back_is_the_size_last_drawn_at() {
 }
 
 #[test]
+fn a_target_of_no_size_is_drawn_on_and_not_refused() {
+    // A window made as small as it goes has a side of no pixels, and wgpu
+    // makes no texture of none: the device draws on one pixel in its
+    // place.
+    let mut device = device(true);
+    let atlas = Atlas::new(64);
+    for (width, height) in [(0, 0), (0, 64), (200, 0)] {
+        assert_eq!(
+            device.draw(&[], &atlas, width, height),
+            Ok(()),
+            "{width} by {height}"
+        );
+        let image = device.read_back().expect("the target read back");
+        assert_eq!(
+            (image.width, image.height),
+            (width.max(1), height.max(1)),
+            "{width} by {height}"
+        );
+    }
+    // So the adapter presents a frame on such a target, and the loop has
+    // no draw to try again at every refresh.
+    let mut renderer =
+        WgpuRenderer::over(&noop(), Settings::default(), true).expect("the no-op adapter");
+    let none = Target {
+        width: 0,
+        height: 0,
+        scale: 1.0,
+    };
+    let drawn = renderer.draw(&DrawRequest {
+        frame: &std::sync::Arc::new(dressed()),
+        target: none,
+    });
+    assert!(drawn.presented, "{:?}", renderer.refused());
+    assert_eq!(renderer.refused(), None);
+}
+
+#[test]
 fn a_page_the_atlas_drops_is_dropped_by_the_device() {
     let mut device = device(true);
     let mut painter = painter(Antialiasing::Grayscale, true);

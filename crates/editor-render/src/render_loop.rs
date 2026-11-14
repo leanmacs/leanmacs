@@ -578,7 +578,7 @@ mod tests {
     use super::{CondvarPark, Park, RecordingPark, RenderHandle, RenderLoop, Step};
     use crate::clock::{Clock, FakeClock};
     use crate::fake::RecordingRenderer;
-    use crate::journal::{Counters, Entry};
+    use crate::journal::{Counters, Entry, JOURNAL_CAPACITY};
     use crate::port::Target;
     use crate::schedule::DEFAULT_REFRESH_NS;
 
@@ -947,6 +947,27 @@ mod tests {
     }
 
     #[test]
+    fn a_size_left_and_come_back_to_before_a_draw_leaves_no_stamp_behind() {
+        let mut rig = Rig::showing(&frame_of("one"));
+        let wider = Target {
+            width: 800,
+            ..TARGET
+        };
+        // There and back with no draw between: nothing to answer.
+        rig.handle.resize(wider);
+        rig.handle.resize(TARGET);
+        assert_eq!(rig.render.step(), Step::Wait(None));
+        // A second later the size changes for good: the draw answers that
+        // change, and not the one that came to nothing.
+        rig.clock.advance(1_000_000_000);
+        let asked = rig.clock.peek();
+        rig.handle.resize(wider);
+        let entry = rig.drew();
+        assert_eq!(entry.input_ns, asked);
+        assert_eq!(rig.render.renderer().requests()[1].target, wider);
+    }
+
+    #[test]
     fn a_frame_and_a_new_size_are_one_draw_of_the_frame_on_the_size() {
         let mut rig = Rig::showing(&frame_of("one"));
         let next = frame_of("two");
@@ -1130,6 +1151,29 @@ mod tests {
         assert_eq!(counters.draws, 3);
         assert_eq!(counters.rows_rebuilt, rebuilt);
         assert!(rebuilt > 0);
+    }
+
+    #[test]
+    fn the_counters_say_how_many_entries_the_journal_let_go() {
+        // One draw, and then as many as the journal keeps: none let go.
+        let mut rig = Rig::showing(&frame_of("one"));
+        let mut redraw = |times: usize| {
+            for _ in 0..times {
+                rig.handle.mark_dirty();
+                rig.drew();
+                rig.clock.advance(REFRESH);
+            }
+            (rig.handle.counters(), rig.handle.journal())
+        };
+        let (counters, kept) = redraw(JOURNAL_CAPACITY - 1);
+        assert_eq!(kept.len() as u64, counters.draws);
+        assert_eq!(counters.journal_dropped, 0);
+        // Ten more: the journal keeps the last of them, and the counters
+        // say how many presented frames have no entry any more.
+        let (counters, kept) = redraw(10);
+        assert_eq!(counters.journal_dropped, 10);
+        assert_eq!(kept.len() as u64 + counters.journal_dropped, counters.draws);
+        assert_eq!(kept.first().map(|entry| entry.serial), Some(11));
     }
 
     #[test]

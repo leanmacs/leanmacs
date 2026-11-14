@@ -125,6 +125,41 @@ fn the_image_is_the_targets_size() {
 }
 
 #[test]
+fn a_target_of_no_size_is_presented_as_a_picture_of_no_size() {
+    // A window made as small as it goes has a side of no pixels. The
+    // frame is presented all the same, so the loop has no draw to try
+    // again, and the picture has no pixel.
+    let mut renderer = HeadlessRenderer::new(Settings::default());
+    for (width, height) in [(0, 0), (0, 48), (120, 0)] {
+        let target = Target {
+            width,
+            height,
+            scale: 1.0,
+        };
+        let drawn = renderer.draw(&DrawRequest {
+            frame: &fixture(),
+            target,
+        });
+        assert!(drawn.presented, "{width} by {height}");
+        let image = renderer.image();
+        assert_eq!((image.width, image.height), (width, height));
+        assert!(image.rgba.is_empty(), "{width} by {height}");
+    }
+    // And the renderer draws as before on a target with a size again.
+    let target = Target {
+        width: 120,
+        height: 48,
+        scale: 1.0,
+    };
+    let drawn = renderer.draw(&DrawRequest {
+        frame: &fixture(),
+        target,
+    });
+    assert!(drawn.presented);
+    assert_eq!(renderer.image(), &self::drawn(120, 48, 1.0));
+}
+
+#[test]
 fn an_underline_and_a_bar_cursor_are_twice_as_thick_at_scale_two() {
     let (one, two) = (drawn(120, 48, 1.0), drawn(120, 48, 2.0));
     // The underline: as wide at both scales, and twice as many rows.
