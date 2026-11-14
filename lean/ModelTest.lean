@@ -12209,6 +12209,29 @@ def insertRows : List (String × String × String) :=
     ("i x SPC A <Escape>", "a|b", "ax |Ab"), ("i é <Escape>", "a|b", "a|éb"),
     ("i X <Escape> l l", "|abc", "Xa|bc"), ("j i <Escape> j", "abc|d\nx\nabcd", "abcd\nx\n|abcd")]
 
+/-- The rows of the oracle table for `a`, `I` and `A`: `a` begins the insert
+after the cursor's cell, also on a line's last character, and where the
+cursor is on an empty line; `I` at the line's first character that is not
+a blank, which on a line of blanks only is after the blanks; `A` at the
+line's end, before the line break. -/
+def appendRows : List (String × String × String) :=
+  [("a X <Escape>", "a|bc", "ab|Xc"), ("a X <Escape>", "ab|c\ndef", "abc|X\ndef"),
+    ("a X <Escape>", "|\nabc", "|X\nabc"), ("a X <Escape>", "|", "|X"),
+    ("a <Escape>", "ab|c", "ab|c"), ("a <Escape>", "a|bc", "a|bc"),
+    ("a X <Escape>", "a|b\r\ncd", "ab|X\r\ncd"), ("I X <Escape>", "  ab|c", "  |Xabc"),
+    ("I X <Escape>", "ab|c", "|Xabc"), ("I X <Escape>", "| \t ", " \t |X"),
+    ("I X <Escape>", "ab\n|\ncd", "ab\n|X\ncd"), ("I <Escape>", "  ab|c", " | abc"),
+    ("A X <Escape>", "a|bc", "abc|X"), ("A X <Escape>", "a|bc\ndef", "abc|X\ndef"),
+    ("A X <Escape>", "ab\n|\ncd", "ab\n|X\ncd"), ("A <Escape>", "a|bc", "ab|c"),
+    ("A X <Escape>", "a|b\r\ncd", "ab|X\r\ncd")]
+
+/-- Rows for a count typed before a key that begins an insert, which
+changes nothing: the text is inserted once. Vim repeats it, which is not
+built. -/
+def countedInsertRows : List (String × String × String) :=
+  [("3 i X <Escape>", "ab|c", "ab|Xc"), ("3 a X <Escape>", "a|bc", "ab|Xc"),
+    ("2 I X <Escape>", "  ab|c", "  |Xabc"), ("2 A X <Escape>", "a|bc", "abc|X")]
+
 /-- The checks of evil's insert state (`Editor/Evil.lean`) on the loop's
 driver over the editor's models, under the Vim scheme that ships with
 evil's commands: the keys that begin an insert, typed text, and `<Escape>`,
@@ -12217,6 +12240,12 @@ def evilInsertChecks : List Check :=
   [{  name :=
         "i begins an insert before the cursor's cell, a key that prints is inserted at the bar, and <Escape> leaves the cursor one cell back from the bar, or where it is at a line's start; a digit and a key a motion is bound to are text in the session"
       run := evilRows insertRows },
+    { name :=
+        "a, I and A each begin the insert at the documented position: a after the cursor's cell, I at the line's first character that is not a blank, A at the line's end"
+      run := evilRows appendRows },
+    { name :=
+        "a count typed before i, a, I or A changes nothing: the text typed is inserted once, where the key with no count inserts it"
+      run := evilRows countedInsertRows },
     { name :=
         "i, typed text and <Escape>: the text is inserted at the cursor, the history has gained one node for the whole session and none inside it, one undo request gives the text from before the session, and a second finds nothing to undo"
       run :=

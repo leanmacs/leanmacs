@@ -86,9 +86,16 @@ typed in one session is one step of the history is the loop's
 group open while the scheme reports the view as in a session. Nothing here
 sets or clears a boundary.
 
-- **`insert`** begins an insert before the cursor's cell: the head stays,
-  and entering the state ("Entering a state") makes the selection one bar
-  there.
+- **Four commands begin an insert**, each by moving the head and then
+  entering the state ("Entering a state"; `enterAt`), which makes the
+  selection one bar there:
+
+  | Command | Where the insert begins |
+  |---|---|
+  | `insert` | Before the cursor's cell: the head stays |
+  | `append` | After the cursor's cell: one cell on, and not past where the line's content ends, so on an empty line the head stays |
+  | `insertLineStart` | At the line's first character that is not a blank, which on a line of blanks only is where the content ends |
+  | `appendLineEnd` | Where the line's content ends, before its line break |
 - **`selfInsert`** is the command typed text runs: it inserts its first
   argument, a string, at the head of each range of its target's selection
   (`Target.insertAtSelections`, `Editor/Api.lean`), one transaction that
@@ -237,25 +244,27 @@ def move (motions : Array Vocabulary.Motion) (call : Call) : EditorM Unit := do
   let keeps := if head == range.head then raw.unmoved else raw.wanted
   discard <| window.id.setWanted (keeps.map fun column => { column, head })
 
-/-- The command that enters a Vim state, as it is called ("Entering a
-state", in the module docs): the selection of the target's window becomes
-one range of the shape the call's report says, with both its ends kept
-where the report says a motion extends the selection and collapsed onto its
-head otherwise. A head that leaves an exclusive selection for another shape
-first steps back one cell on its line, and each end kept is put where the
-report's state lets a cursor rest. Once the selection is collapsed the
-window keeps no wanted column. -/
-def enter (call : Call) : EditorM Unit := do
+/-- Enters the Vim state the call's report says, with the head first put
+where `place` leads from where it is ("Entering a state", in the module
+docs): the selection of the target's window becomes one range of the shape
+the report says, with both its ends kept where the report says a motion
+extends the selection and collapsed onto its head otherwise. A head that
+leaves an exclusive selection for another shape first steps back one cell
+on its line, and each end kept is put where the report's state lets a
+cursor rest. Once the selection is collapsed the window keeps no wanted
+column. -/
+def enterAt (place : TextId → Nat → TextM Nat) (call : Call) : EditorM Unit := do
   let text := call.target.buffer.text
   let report := call.report
   let selection ← call.target.selection
   let some range := selection.ranges[selection.primary]? | throw .badSelection
+  let placed ← place text range.head
   let leavesInsert := selection.shape == .exclusive && report.shape != .exclusive
   let back ←
-    if leavesInsert && (← text.motion .lineStart range.head) < range.head then
-      text.motion .previousCell range.head
+    if leavesInsert && (← text.motion .lineStart placed) < placed then
+      text.motion .previousCell placed
     else
-      pure range.head
+      pure placed
   let head ← rested (restOf report) text back
   let anchor ←
     if report.selecting then
@@ -266,12 +275,45 @@ def enter (call : Call) : EditorM Unit := do
   unless report.selecting do
     discard <| call.target.window.id.setWanted none
 
+/-- The command that enters a Vim state, as it is called: the state the
+call's report says is entered with the head where it is (`enterAt`). It
+ignores its count and its register. -/
+def enter (call : Call) : EditorM Unit :=
+  enterAt (fun _ head => pure head) call
+
 /-- The command that begins an insert before the cursor's cell, as it is
 called ("Insert state", in the module docs): the head stays where it is,
 and the view's state is entered (`enter`), which makes the selection one
 bar there. It ignores its count and its register. -/
 def insert (call : Call) : EditorM Unit :=
   enter call
+
+/-- The command that begins an insert after the cursor's cell, as it is
+called: the head goes one cell on, and not past where its line's content
+ends, so on an empty line it stays, and the view's state is entered there.
+It ignores its count and its register. -/
+def append (call : Call) : EditorM Unit :=
+  enterAt
+    (fun text head => do
+      if head < (← text.motion .lineEnd head) then
+        text.motion .nextCell head
+      else
+        pure head)
+    call
+
+/-- The command that begins an insert at the line's first character that is
+not a blank, as it is called: the head goes there, which on a line of
+blanks only is where the line's content ends, and the view's state is
+entered there. It ignores its count and its register. -/
+def insertLineStart (call : Call) : EditorM Unit :=
+  enterAt (fun text head => text.motion .lineFirstNonBlank head) call
+
+/-- The command that begins an insert at the line's end, as it is called:
+the head goes to where the line's content ends, before its line break, and
+the view's state is entered there. It ignores its count and its
+register. -/
+def appendLineEnd (call : Call) : EditorM Unit :=
+  enterAt (fun text head => text.motion .lineEnd head) call
 
 /-- The command typed text runs, as it is called ("Insert state", in the
 module docs): its first argument, a string, is inserted at the head of each
