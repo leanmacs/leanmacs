@@ -14520,6 +14520,73 @@ def operatorTable : List OperatorRow :=
     changeWordRows ++
     lineMotionRows
 
+/-- The five situations of the operator × motion table: the text and the
+cursor of each, and whether its rows have a count. -/
+def operatorSituations : List (String × Bool) :=
+  [(plainText, false), (plainText, true), (emptyLineText, false), (endText, false),
+    (bareEndText, false)]
+
+/-- The pairs of an operator's key and a motion's key that the rows of
+`operatorTable` have for the situation of the text `before`, with a count
+when `counted`: a row's keys without its count, the first being the
+operator's and the rest the motion's. -/
+def operatorPairs (before : String) (counted : Bool) : List (String × String) :=
+  operatorTable.filterMap fun row =>
+    let tokens := row.keys.splitOn " "
+    if row.before == before && tokens.contains "2" == counted then
+      match tokens.filter (· != "2") with
+      | operator :: motion => some (operator, " ".intercalate motion)
+      | [] => none
+    else none
+
+/-- Every pair of an operator's key and a motion's key of the default
+tables (`Vim.Default.operators`, `Vim.Default.motions`). -/
+def defaultPairs : List (String × String) :=
+  Vim.Default.operators.flatMap fun (operator, _) =>
+    Vim.Default.motions.map fun (motion, _) => (operator, motion)
+
+/-- What is wrong, if anything, with each operator key of the default tables
+pressed with each motion key, with no count and with a count of 2, from
+every position of a text holding `contents` where a normal-state cursor may
+rest. For each: the echo area says no refusal; after an operator that
+enters no state the cursor is where normal state lets one rest; an operator
+that changes no text leaves the text; and when the text changed, one undo
+request, after `<Escape>` for an operator that enters a state, gives the
+text back. It reads the tables, so it covers a key added later. -/
+def operatorSweep (contents : String) : List String :=
+  ((List.range (contents.utf8ByteSize + 1)).filter (restsWell contents)).flatMap fun position =>
+    Vim.Default.operators.flatMap fun (operatorKey, bound) =>
+      match bound with
+      | .operator operator =>
+        Vim.Default.motions.flatMap fun (motionKey, _) =>
+          [false, true].filterMap fun counted =>
+            let typed := (if counted then "2 " else "") ++ operatorKey ++ " " ++ motionKey
+            let what := s!"{typed} at {position} of {repr contents}"
+            match
+              (Loop.Driver.over evilHanded (fun _ => none) (evilState contents position)
+                  editorModel).toOption with
+            | none => some s!"{what}: no driver"
+            | some driver =>
+              let after := evilFed driver typed
+              let text := evilText after
+              let head :=
+                (evilSelection after).bind fun selection =>
+                  selection.ranges[selection.primary]?.map (·.head)
+              let refused := (after.loop.state.echo.splitOn "refused").length != 1
+              let rests :=
+                operator.enters.isSome ||
+                  match text, head with
+                  | some text, some head => restsWell text head
+                  | _, _ => false
+              let kept := operator.changes || text == some contents
+              let ended := if operator.enters.isSome then evilFed after "<Escape>" else after
+              let undone := text == some contents || evilText (evilUndone ended) == some contents
+              if !refused && rests && kept && undone then none
+              else
+                some
+                  s!"{what}: left {repr (evilShown after)}, echo {repr after.loop.state.echo}, undone to {repr (evilText (evilUndone ended))}"
+      | _ => []
+
 /-- Whether `left` is what a command that gave up with `reason` leaves: the
 text and the cursor `shown`, the register as it was, the view not in insert
 state, and an echo area that ends with the reason and says no refusal. -/
@@ -14544,6 +14611,50 @@ def evilOperatorChecks : List Check :=
     { name :=
         "each operator over each motion, in five situations (no count, a count of 2, on an empty line, on the buffer's last character with and without a final line feed), leaves the text, the cursor and the unnamed register Vim leaves"
       run := operatorRows operatorTable },
+    { name :=
+        "the table is complete: in each of its five situations, the pairs of an operator's key and a motion's key its rows have are exactly those of the default tables, each once"
+      run :=
+        pure <|
+          !defaultPairs.isEmpty &&
+            operatorTable.length == operatorSituations.length * defaultPairs.length &&
+            operatorSituations.all fun (before, counted) =>
+              let pairs := operatorPairs before counted
+              pairs.length == defaultPairs.length && defaultPairs.all pairs.contains },
+    { name :=
+        "a sweep of every default operator key over every default motion key, with no count and with a count of 2, from every position a cursor may rest at in a few texts: nothing is refused, after an operator that enters no state the cursor is where normal state lets one rest, an operator that changes no text leaves the text, and one undo request gives back a text that changed"
+      run := do
+        let wrong := sweepTexts.flatMap operatorSweep
+        unless wrong.isEmpty do
+          throw
+              (IO.userError s!"{wrong.length} cases, the first: {"; ".intercalate (wrong.take 5)}")
+        return true },
+    { name :=
+        "the doubled operator acts on whole lines, and with a count on that many, stopped at the last line: d d leaves the cursor on the first non-blank of the line now there, or of the last line; c c leaves one line break and the bar at the line's start; y y leaves the cursor; and the counts of 2 d 3 d multiply"
+      run :=
+        operatorRows
+          [.rests "ab\n  cd\n|ef\n  gh" "d d" "ab\n  cd\n  |gh" (linewise "ef\n"),
+            .rests "a\n|b" "d d" "|a" (linewise "b\n"),
+            .rests "a\n|b\n" "d d" "|a\n" (linewise "b\n"),
+            .rests "|a\n" "d d" "|" (linewise "a\n"),
+            .rests "|ab\ncd\nef" "2 d d" "|ef" (linewise "ab\ncd\n"),
+            .rests "ab\n|cd\nef" "3 d d" "|ab" (linewise "cd\nef\n"),
+            .inserts "ab\n c|d\nef" "c c" "ab\n|\nef" (linewise " cd\n"),
+            .inserts "ab\n c|d\nef" "2 c c" "ab\n|" (linewise " cd\nef\n"),
+            .inserts "ab\n|cd" "c c" "ab\n|" (linewise "cd\n"),
+            .rests "ab\nc|d\nef" "y y" "ab\nc|d\nef" (linewise "cd\n"),
+            .rests "ab\nc|d" "y y" "ab\nc|d" (linewise "cd\n"),
+            .rests "ab\nc|d\nef" "2 y y" "ab\nc|d\nef" (linewise "cd\nef\n"),
+            .rests "ab\nc|d\nef" "5 y y" "ab\nc|d\nef" (linewise "cd\nef\n"),
+            .rests "|a\nb\nc\nd\ne\nf" "2 d 3 d" "|" (linewise "a\nb\nc\nd\ne\nf\n")] },
+    { name :=
+        "in the empty text d and c change neither the text nor the register, c still begins an insert, and y y yanks one line break, line-wise; and the counts before and after an operator multiply: 2 d 3 w deletes six words"
+      run :=
+        operatorRows
+          [.rests "|" "d d" "|" asItWas, .inserts "|" "c c" "|" asItWas,
+            .rests "|" "d G" "|" asItWas, .inserts "|" "c G" "|" asItWas,
+            .rests "|" "d w" "|" asItWas, .inserts "|" "c $" "|" asItWas,
+            .rests "|" "y y" "|" (linewise "\n"),
+            .rests "|a b c d e f g" "2 d 3 w" "|g" (charwise "a b c d e f ")] },
     { name :=
         "d ^ on a line of blanks only deletes from the cursor up to the line's last blank, and nothing from the last blank; d h at a line's start and d l on an empty line delete nothing and leave the register as it was"
       run :=

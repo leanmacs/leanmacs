@@ -26,8 +26,10 @@ one (`Editor/Evil.lean`), so the caller supplies the vocabulary.
   is worked out from, and the selection every edit of the operator carries
   as the one before (`Operand.before`), so an undo hands back the cursor
   the user saw.
-- **It works the stretch out and hands it to the operator** (`stretch`),
-  then has the window keep no wanted column.
+- **It works the stretch out and hands it to the operator**: for the kind
+  `motion`, from where the motion leads (`stretch`); for the kind `lines`,
+  which is the doubled key, the head's line and `count - 1` lines below,
+  stopped at the last line. The window then keeps no wanted column.
 - **A call that cannot be made gives up** (`giveUp`, `Editor/Api.lean`),
   each with a sentence a function here makes: an operator no entry has
   (`noSuchOperator`), a motion no entry has (`noSuchMotion`), a text
@@ -76,6 +78,9 @@ order:
 | `yank` | The register is the cells' text. The cursor goes to their start, rested | The register is the empty text. The cursor stays | The register is the lines, line-wise. The cursor goes to the operand's `rest`, rested |
 | `change` | The register is the cells' text. They are deleted. The selection is a bar at their start | Nothing is deleted. The register is as it was, unless the reach is `inclusive` and the text is not empty, when it is the empty text. The selection is a bar where the cells would start | The register is the lines, line-wise. The text from the first line's start to where the last line's content ends is deleted, so one line break stays. The selection is a bar at that line's start |
 
+- **In the empty text `delete` and `change` do nothing to the text or the
+  register**, and `change` still leaves its bar; `yank` follows the table,
+  so `yy` there yanks one line break, line-wise.
 - **A line-wise register's text** is the lines from the first line's start
   through the last line's line break (`linesOf`), and the buffer's line
   ending (`Buffer.lineEnding`) is added when the last line has none.
@@ -244,6 +249,9 @@ def delete : Vocabulary.Operator :=
           store operand.register { text := taken }
       | .lines first last =>
         let text := call.target.buffer.text
+        -- The empty text has no line to delete.
+        if (← text.byteLength) == 0 then
+          return
         let lines ← linesOf call.target first last
         -- The first non-blank of the line that follows, in the text the
         -- deletion leaves; of the line before when none follows; and 0 when
@@ -280,6 +288,11 @@ def change : Vocabulary.Operator :=
           settle call extent.start
           store operand.register { text := taken }
       | .lines first last =>
+        -- The empty text has no line to change: the insert begins, and the
+        -- register is as it was.
+        if (← call.target.buffer.text.byteLength) == 0 then
+          settle call 0
+          return
         let lines ← linesOf call.target first last
         -- One line break stays: the lines' content goes, and not the last
         -- line's line break.
@@ -338,6 +351,13 @@ def operate (operators : Array Vocabulary.Operator) (motions : Array Vocabulary.
       pure
           { stretch := ← stretch operator text head taken, head, rest := min head taken.head,
             register, before }
+    | "lines" =>
+      -- The doubled operator: the head's line and `count - 1` lines below,
+      -- stopped at the last line.
+      let first ← rowOf text head
+      pure
+          { stretch := .lines first (max first (min (first + count - 1) (← lastLine text))), head,
+            rest := head, register, before }
     | "text-object" =>
       giveUp noTextObject
     | _ =>
