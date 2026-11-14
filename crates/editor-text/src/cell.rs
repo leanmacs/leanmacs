@@ -54,6 +54,15 @@ impl Snapshot {
         Some(start..end - usize::from(ends_in_a_return))
     }
 
+    /// A copy of the content of the row `row`: the row without its line
+    /// break, so without its line feed and without the carriage return
+    /// before that line feed. A carriage return with no line feed after it
+    /// is content. `None` when the text has no such row. It reads the
+    /// row's pieces and no more of the text.
+    pub fn row_to_string(&self, row: usize) -> Option<String> {
+        self.slice_to_string(self.row_content(row)?)
+    }
+
     /// The character that starts at the position `offset`. `None` at the
     /// end of the text and past it, and for an offset inside a character.
     pub(crate) fn char_at(&self, offset: usize) -> Option<char> {
@@ -223,5 +232,51 @@ mod tests {
         assert_eq!(snapshot.row_content(4), Some(13..15));
         assert_eq!(snapshot.row_content(5), None);
         assert_eq!(Text::new().snapshot().row_content(0), Some(0..0));
+    }
+
+    #[test]
+    fn a_row_is_read_as_its_content_without_its_line_break() {
+        let snapshot = Text::from("ab\ncd\r\n\r\n\re\r\nf\r").snapshot();
+
+        assert_eq!(snapshot.row_to_string(0).as_deref(), Some("ab"));
+        assert_eq!(snapshot.row_to_string(1).as_deref(), Some("cd"));
+        // A row that is only its line break.
+        assert_eq!(snapshot.row_to_string(2).as_deref(), Some(""));
+        // A carriage return alone is read, where it does not end a row and
+        // where it ends the text.
+        assert_eq!(snapshot.row_to_string(3).as_deref(), Some("\re"));
+        assert_eq!(snapshot.row_to_string(4).as_deref(), Some("f\r"));
+    }
+
+    #[test]
+    fn a_row_with_characters_of_several_bytes_and_the_empty_last_row_are_read() {
+        let snapshot = Text::from("héllo 😀\r\nwörld\n").snapshot();
+
+        assert_eq!(snapshot.row_to_string(0).as_deref(), Some("héllo 😀"));
+        assert_eq!(snapshot.row_to_string(1).as_deref(), Some("wörld"));
+        assert_eq!(snapshot.row_to_string(2).as_deref(), Some(""));
+        assert_eq!(Text::new().snapshot().row_to_string(0).as_deref(), Some(""));
+    }
+
+    #[test]
+    fn a_row_the_text_does_not_have_is_not_read() {
+        let snapshot = Text::from("ab\ncd").snapshot();
+
+        assert_eq!(snapshot.row_to_string(2), None);
+        assert_eq!(snapshot.row_to_string(usize::MAX), None);
+        assert_eq!(Text::new().snapshot().row_to_string(1), None);
+    }
+
+    #[test]
+    fn a_row_of_a_text_held_in_many_pieces_is_read_across_the_pieces() {
+        // One row longer than a piece, between two short ones.
+        let long = "héllo wörld 😀 ".repeat(2_000);
+        let string = format!("first\r\n{long}\r\nlast");
+        let snapshot = Text::from(string.as_str()).snapshot();
+
+        assert!(snapshot.chunks().count() > 4);
+        assert_eq!(snapshot.row_to_string(0).as_deref(), Some("first"));
+        assert_eq!(snapshot.row_to_string(1).as_deref(), Some(long.as_str()));
+        assert_eq!(snapshot.row_to_string(2).as_deref(), Some("last"));
     }
 }

@@ -319,6 +319,12 @@
 //! without a copy: search, shaping, a parser. A piece ends on a character
 //! boundary; where is the rope's business.
 //!
+//! A part of the text is copied out without reading the rest of it: the
+//! text between two positions ([`Snapshot::slice_to_string`]), and the
+//! content of one row, which is the row without its line break
+//! ([`Snapshot::row_to_string`]). Each reads the pieces of its range and
+//! no others.
+//!
 //! # Not here yet
 //!
 //! - A second row rule, in which a carriage return alone ends a line, which

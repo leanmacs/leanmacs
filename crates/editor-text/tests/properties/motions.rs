@@ -406,6 +406,36 @@ fn the_next_cell_is_where_what_an_inclusive_cursor_covers_ends() {
 }
 
 #[test]
+fn every_row_is_read_without_its_line_break_and_the_rows_joined_by_their_breaks_are_the_text() {
+    check(128, text_and_edits(), |(initial, steps)| {
+        let (snapshot, string) = edited(initial, &steps);
+        let reference = Reference::of(&string);
+
+        let mut joined = String::new();
+        for (index, row) in reference.rows.iter().enumerate() {
+            let read = snapshot.row_to_string(index);
+            prop_assert_eq!(
+                read.as_deref(),
+                Some(&string[row.start..row.content]),
+                "row {}",
+                index
+            );
+            joined.push_str(&read.unwrap_or_default());
+            // The row's line break: from where its content ends to where
+            // the next row starts, or nothing in the last row.
+            let next = reference
+                .rows
+                .get(index + 1)
+                .map_or(string.len(), |next| next.start);
+            joined.push_str(&string[row.content..next]);
+        }
+        prop_assert_eq!(&joined, &string);
+        prop_assert_eq!(snapshot.row_to_string(reference.rows.len()), None);
+        Ok(())
+    });
+}
+
+#[test]
 fn a_row_motion_of_no_rows_at_a_positions_own_column_gives_the_position_back() {
     // A column in cells is counted by walking the row, so asking every
     // position of a row costs the square of its length, and a generated
