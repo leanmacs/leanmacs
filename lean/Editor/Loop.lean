@@ -212,6 +212,42 @@ loop has little of its own to do.
 
 Pinned by `ModelTest.promptChecks`.
 
+## Quit
+
+A command asks the editor to quit (`quit`, `Editor/Api.lean`), and the
+request sets a flag of the editor state (`EditorState.quitting`,
+`Editor/State.lean`, "Quit"). The loop turns the flag into "stop"
+(`docs/design/concurrency.md`, "Quit").
+
+- **The step says stop once the editor can leave.** Every step that
+  publishes a scene, an event's, an invocation's and a delivered
+  command's, says stop when the state it left leaves
+  (`EditorState.leaves`: asked to quit, no buffer with unsaved changes, no
+  save in flight) and to go on otherwise (`Loop.nextOf`,
+  `Stepped.published`). The scene is published first, so the scene of the
+  step that says stop is the last one. A host ends its loop at a stop, as
+  it does for a close request; nothing else crosses to it.
+- **A quit waits for a save in flight.** Asked to quit while a save is in
+  flight, the step says to go on, and the editor goes on handling events.
+  The step that delivers the save's result finds the buffer saved and says
+  stop. The order is fixed by the wait, not by timing.
+- **A quit that cannot go ahead is withdrawn when the scene is made**
+  (`Loop.publish`, `EditorState.settleQuit`), after the histories were
+  told their texts' revisions, so that "unsaved" is right: asked to quit
+  with a buffer that has unsaved changes, the state is no longer asked. A
+  command's own `quit` is refused in that case and never asks, so this is
+  where a quit that was waiting ends without quitting: the save it waited
+  for was refused, and the delivery's scene finds the buffer still
+  modified, with the save's refusal in the echo area; or the buffer was
+  edited while the quit waited.
+- **A command that asks and does not run to its end has not asked.** The
+  flag is editor state, and the loop's state is then the one from before
+  the command ("Rollback").
+- **A close request is not this.** It stops the loop whatever is unsaved,
+  and publishes nothing ("What each event does").
+
+Pinned by `ModelTest.dispatchQuitChecks`.
+
 **The scheme after a command that failed.** The loop keeps two states of
 the scheme: the one after the last key (`Loop.input`), and the last one at
 rest (`Loop.atRest`), in which nothing was pending. When an invocation does
@@ -414,6 +450,7 @@ changed the state or not (`Loop.publish`):
    is at, and its group is closed (`EditorState.recordHistories`): what an
    event edited is one step of the history. **But for a buffer in an
    insert session**, whose group is left open ("Insert sessions", below).
+   Then a quit that cannot go ahead is withdrawn ("Quit", above).
 2. **The scene** (`Loop.views`, `Loop.scene`). Each window in the tree, in
    drawing order, is a view in the rectangle `Split.rects` gives it in the
    frame. While a prompt is open the minibuffer's window is a view too, in
@@ -580,7 +617,9 @@ structure Loop (scheme : InputScheme) where
 inductive Loop.Next where
   /-- Pull the next event. -/
   | continue
-  /-- End: the window was asked to close, or the queue was quit. -/
+  /-- End: the window was asked to close, the queue was quit, or a command
+  asked the editor to quit and it can leave ("Quit", in the module
+  docs). -/
   | stop
   deriving DecidableEq, Repr
 
@@ -803,14 +842,24 @@ def sessions (loop : Loop scheme) : Array BufferId :=
   loop.state.windows.filterMap fun window =>
     if (scheme.report loop.input window.id).session then some window.buffer else none
 
+/-- What the loop does after a step whose scene has been published: stop
+when the editor leaves (`EditorState.leaves`: a command asked it to quit,
+no buffer has unsaved changes and no save is in flight), and go on
+otherwise ("Quit", in the module docs). -/
+def nextOf (loop : Loop scheme) : Next :=
+  if loop.state.leaves then .stop else .continue
+
 /-- Records the histories, leaving open the group of each buffer in an insert
-session (`sessions`), publishes a scene of the state, and releases each
+session (`sessions`), withdraws a quit that cannot go ahead
+(`EditorState.settleQuit`), publishes a scene of the state, and releases each
 snapshot the last scene named that this one does not. It is not refused
 ("When publishing is refused", in the module docs): a refusal of a buffer's
 text is in the echo area of the scene it publishes, and one of a release in
 the echo area of the state it returns. -/
 def publish (loop : Loop scheme) : EditorM (Loop scheme) := do
   let (state, unrecorded) ← loop.state.recordHistories loop.sessions
+  -- The histories know their texts' revisions now, so "unsaved" is right.
+  let state := state.settleQuit
   let (views, shown, unshown) ← ({ loop with state } : Loop scheme).views
   let state := state.refusedBy (unrecorded <|> unshown)
   Display.publish (scene state views loop.pending)
@@ -1176,6 +1225,15 @@ def key (keys : Keys scheme) (loop : Loop scheme) (key : Key) : EditorM (Stepped
   else
     return ({ loop with input := loop.atRest } : Loop scheme).ranInto ran
 
+/-- `stepped`, a step whose scene is not yet published, once it is
+(`publish`): its loop is the one the publish left, and it says stop when
+the editor then leaves (`nextOf`) and to go on otherwise. The scene comes
+first, so the scene of the step that says stop is the last one. -/
+def Stepped.published (stepped : Stepped scheme) : EditorM (Stepped scheme) := do
+  let loop ← stepped.loop.publish
+  return { stepped with
+      loop, next := nextOf loop }
+
 /-- Runs `invocation`, which no key yielded (`run`), and publishes a scene of
 the state after it: the echo area is cleared, the command is looked up, and
 it is called with the focused window, the invocation's arguments, no keys,
@@ -1184,8 +1242,7 @@ scheme's states are left as they are, but for a view the command closed. -/
 def invoke (keys : Keys scheme) (loop : Loop scheme) (invocation : Invocation) :
     EditorM (Stepped scheme) := do
   let report := scheme.report loop.input loop.state.frame.focused
-  let stepped := loop.ranInto (← run keys loop.state invocation [] report)
-  return { stepped with loop := ← stepped.loop.publish }
+  (loop.ranInto (← run keys loop.state invocation [] report)).published
 
 /-- Runs the command registered under `name` as an invocation with no
 arguments that no key yielded (`invoke`), and publishes a scene of the
@@ -1205,20 +1262,18 @@ def deliver (keys : Keys scheme) (loop : Loop scheme) (label : String) (command 
     dispatch keys loop.state label do
         command
         return none
-  let stepped := loop.ranInto ran
-  return { stepped with loop := ← stepped.loop.publish }
+  (loop.ranInto ran).published
 
 /-- Handles `event` and publishes a scene of the state after it, and says
-whether to go on. A close request and a quit stop the loop and publish
-nothing. A key press is stepped through the scheme, and the invocation it
+whether to go on: stop, once the editor leaves ("Quit", in the module
+docs). A close request and a quit stop the loop and publish nothing. A key press is stepped through the scheme, and the invocation it
 yields is run (`stepped?`, `key`). A handler that is refused leaves the
 state as it was, with the refusal in the echo area. The step itself is not
 refused: the publish puts a refusal of its own in the echo area too ("When
 publishing is refused", in the module docs). -/
 def step (keys : Keys scheme) (loop : Loop scheme) (event : Event) : EditorM (Stepped scheme) := do
   if let some pressed := stepped? event then
-    let stepped ← loop.key keys pressed
-    return { stepped with loop := ← stepped.loop.publish }
+    return ← (← loop.key keys pressed).published
   match event with
   | .closeRequested | .quit =>
     return { loop, next := .stop }
@@ -1228,7 +1283,7 @@ def step (keys : Keys scheme) (loop : Loop scheme) (event : Event) : EditorM (St
         handle loop.state (scheme.report loop.input loop.state.frame.focused) event
       catch refusal =>
         pure (loop.state.refused refusal)
-    return { loop := ← { loop with state }.publish, next := .continue }
+    ({ loop := { loop with state }, next := .continue } : Stepped scheme).published
 
 /-- Lowers the interrupt flag for an event taken off the queue when the
 library marked it as a press of the interrupt key (`interrupt`), and for no

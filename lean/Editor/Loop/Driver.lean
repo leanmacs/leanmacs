@@ -44,6 +44,11 @@ handled after the answer's command.
   the queue's order guarantees a host: each of them handled before the
   result's command.
 - **One job model for every job**, whose clock each job's waits move on.
+- **A step that says stop is recorded** (`stopped`), whichever step it
+  was: one fed, a delivery, or one the driver ran for an invocation a
+  command asked for. A host ends its loop there (`Editor/Loop.lean`,
+  "Quit"), so the driver runs no further invocation of that step. It does
+  not refuse what a test feeds it afterwards: a test reads `stopped`.
 - **A step that is refused changes the models and not the loop.** No
   program of the loop is refused today (`Editor/Loop.lean`, "When
   publishing is refused"); one that is hands back the refusal.
@@ -113,6 +118,9 @@ structure Loop.Driver (scheme : InputScheme) where
   pending : Array Loop.Driver.Pending := #[]
   /-- The id the next job started gets. -/
   next : Nat := 1
+  /-- Whether a step the driver took in said stop (`Loop.Next.stop`): a
+  host ends its loop then. -/
+  stopped : Bool := false
 
 namespace Loop.Driver
 
@@ -177,7 +185,8 @@ as `model`, as a host does: the driver with the loop the step left, the
 jobs it asked for started, and each invocation it answered run as a step
 of its own (`Loop.invoke`), which is taken in the same way, before anything
 else is fed. An answer's step that is refused changes the models and not
-the loop.
+the loop. A step that said stop is recorded (`stopped`), and no invocation
+is run once one has.
 
 It has no termination proof: an answer's command can ask and accept again,
 for ever, which is runaway code (`docs/design/concurrency.md`, "Runaway
@@ -186,13 +195,17 @@ partial def took (driver : Loop.Driver scheme) (stepped : Loop.Stepped scheme)
     (model : EditorModel) : Loop.Driver scheme :=
   let driver :=
     ({ driver with
-          loop := stepped.loop, model }).started
+          loop := stepped.loop, model
+          stopped := driver.stopped || stepped.next == Loop.Next.stop }).started
       stepped.starts
   stepped.answered.foldl
     (fun driver invocation =>
-      match (driver.loop.invoke driver.handed invocation).runModel driver.model with
-      | (.ok answered, model) => driver.took answered model
-      | (.error _, model) => { driver with model })
+      -- A host whose loop has ended runs nothing more.
+      if driver.stopped then driver
+      else
+        match (driver.loop.invoke driver.handed invocation).runModel driver.model with
+        | (.ok answered, model) => driver.took answered model
+        | (.error _, model) => { driver with model })
     driver
 
 /-- Runs `step`, a program of the loop that hands back a step, on the

@@ -153,6 +153,14 @@ editor's models and the job model (`Editor/Loop/Driver.lean`):
   command says when it starts nothing; and the commands and jobs as
   compiled code registers them (`Editor/Files/Compiled.lean`). They touch
   no file;
+- `dispatchQuitChecks`: quitting in the loop (`Editor/Loop.lean`, "Quit")
+  on that driver and the model of files, with commands written here that
+  ask the editor to quit: the step says stop once the editor can leave,
+  after its scene; a quit waits for a save in flight and stops at the
+  delivery of its result; and a quit that cannot go ahead is withdrawn,
+  when the save is refused and when the buffer is edited meanwhile. They
+  name no ex name. They are apart from `dispatchChecks`, which are
+  defined before the driver;
 - `exChecks`: the ex command line (`Editor/Ex.lean`) on that driver, with
   the commands compiled code registers for it, for the minibuffer and for
   files, keys of the test scheme bound to the ex command and to the accept
@@ -12037,6 +12045,165 @@ def fileCommandChecks : List Check :=
               bytesOf saved path == some (FileModel.encode text) &&
               echoOf saved == some (Files.wrote path) }]
 
+/-- What the command `leave` of the quit checks says in the echo area when
+it is refused, for a buffer called `name`. -/
+def notLeaving (name : String) : String :=
+  s!"not leaving: {name}"
+
+/-- What a step of the quit checks is handed: the open command with the
+path of `note.txt` (`C-o n`) and the save command (`C-o w`), as the file
+command checks have them, and five commands written here, under `C-l`:
+`leave` (`l`) asks the editor to quit and says a refusal (`notLeaving`),
+`leave-then-fail` (`f`) asks and is then refused, `stamp` (`s`) edits its
+buffer, `other` (`o`) says `other`, and `hand-leave` (`h`) asks for `leave`
+to be run after it. -/
+def quitKeys : Loop.Keys TestScheme.scheme :=
+  dispatchKeys
+    [("C-o n", opens (inFiles "note.txt")), ("C-o w", invoke Files.saveName),
+      ("C-l l", invoke "leave"), ("C-l f", invoke "leave-then-fail"), ("C-l s", invoke "stamp"),
+      ("C-l o", invoke "other"), ("C-l h", invoke "hand-leave")]
+    [(Files.openName, fun call => do
+        Files.openCommand call
+        return none),
+      (Files.saveName, fun call => do
+        Files.saveCommand call
+        return none),
+      ("leave", fun _ => do
+        if let .error (.unsaved name)← quit then
+          message (notLeaving name)
+        return none),
+      ("leave-then-fail", failingAfter fun _ => discard quit), ("stamp", stamp),
+      ("other", fun _ => do
+        message "other"
+        return none),
+      ("hand-leave", fun _ => do
+        Editor.invoke { command := "leave" }
+        return none)]
+
+/-- A driver of the quit checks over the files `files`, with the file
+`note.txt` open in view 0: the open command, and its job finished. The load
+is job 1. -/
+def quitDriver (files : FileModel := commandFiles) : Option TestDriver :=
+  (Loop.Driver.over quitKeys fileJobs (EditorState.initial ⟨640, 480⟩) editorModel).toOption.map
+    fun driver => ((fedTo { driver with jobs := { files } } (presses "C-o n")).1.finish 1).1
+
+/-- The checks of quitting in the loop (`Editor/Loop.lean`, "Quit"), on the
+loop's driver over the editor's models and the model of files, with
+commands written here: the step says stop once the editor can leave, a quit
+waits for a save in flight, and a quit that cannot go ahead is withdrawn.
+They name no ex name. -/
+def dispatchQuitChecks : List Check :=
+  let next (steps : Array (Option (Loop.Stepped TestScheme.scheme))) : Array (Option Loop.Next) :=
+    steps.map (·.map (·.next))
+  let path := inFiles "note.txt"
+  [{  name :=
+        "a key whose command asks the editor to quit: the step publishes a scene, the last, and says stop, and the driver has stopped; a step that ran another command says continue"
+      run :=
+        pure <|
+          match quitDriver with
+          | none => false
+          | some driver =>
+            let (other, went) := fedTo driver (presses "C-l o")
+            let (left, steps) := fedTo other (presses "C-l l")
+            next went == #[some .continue, some .continue] && !other.stopped &&
+              next steps == #[some .continue, some .stop] &&
+              left.stopped &&
+              left.loop.state.quitting &&
+              left.model.display.scenes.size == other.model.display.scenes.size + 2 },
+    { name :=
+        "a command that asks the editor to quit and is then refused says continue, and the state is not asked to quit"
+      run :=
+        pure <|
+          match quitDriver with
+          | none => false
+          | some driver =>
+            let (failed, steps) := fedTo driver (presses "C-l f")
+            next steps == #[some .continue, some .continue] && !failed.stopped &&
+              !failed.loop.state.quitting &&
+              promptEcho failed == "leave-then-fail: refused: bad range" },
+    { name :=
+        "asked to quit while a save is in flight, the step says continue and the editor waits: a key fed meanwhile is handled, the delivery of the save's result says stop, and the file then holds the buffer's text"
+      run :=
+        pure <|
+          match quitDriver with
+          | none => false
+          | some driver =>
+            let text := "x" ++ FileCases.noteText
+            let (saving, _) := fedTo driver ([.commit "x"] ++ presses "C-o w")
+            let (asked, steps) := fedTo saving (presses "C-l l")
+            let (meanwhile, went) := fedTo asked (presses "C-l o")
+            let (left, delivered) := meanwhile.finish 2
+            next steps == #[some .continue, some .continue] && promptEcho asked == "" &&
+              asked.loop.state.quitting &&
+              !asked.stopped &&
+              next went == #[some .continue, some .continue] &&
+              promptEcho meanwhile == "other" &&
+              meanwhile.loop.state.quitting &&
+              !meanwhile.stopped &&
+              delivered.map (·.next) == some .stop &&
+              left.stopped &&
+              bytesOf left path == some (FileModel.encode text) &&
+              (showing left).map (·.buffer.isModified) == some false },
+    { name :=
+        "asked to quit while a save is in flight that is then refused, the file having changed behind the editor: the delivery says continue, the state is no longer asked to quit, the echo area has the save's refusal, and the buffer is still modified"
+      run :=
+        pure <|
+          match quitDriver with
+          | none => false
+          | some driver =>
+            let changed := rewritten driver path JobContract.otherFile
+            let (asked, _) := fedTo changed ([.commit "x"] ++ presses "C-o w C-l l")
+            let (refused, delivered) := asked.finish 2
+            asked.loop.state.quitting && delivered.map (·.next) == some .continue &&
+              !refused.stopped &&
+              !refused.loop.state.quitting &&
+              echoOf refused == some (Files.notSaved path (.changed (stampOf changed path))) &&
+              (showing refused).map (·.buffer.isModified) == some true &&
+              bytesOf refused path == some JobContract.otherFile },
+    { name :=
+        "an edit made while a quit waits for a save withdraws it: the state is no longer asked to quit after the edit's step, and the delivery of the save's result says continue, with the file written and the buffer still modified"
+      run :=
+        pure <|
+          match quitDriver with
+          | none => false
+          | some driver =>
+            let (asked, _) := fedTo driver ([.commit "x"] ++ presses "C-o w C-l l")
+            let (edited, steps) := fedTo asked [.commit "y"]
+            let (saved, delivered) := edited.finish 2
+            asked.loop.state.quitting && next steps == #[some .continue] &&
+              !edited.loop.state.quitting &&
+              delivered.map (·.next) == some .continue &&
+              !saved.stopped &&
+              !saved.loop.state.quitting &&
+              bytesOf saved path == some (FileModel.encode ("x" ++ FileCases.noteText)) &&
+              (showing saved).map (·.buffer.isModified) == some true },
+    { name :=
+        "a command that asks to quit with a file's buffer modified is refused and the editor goes on; once the buffer is saved the same key stops it"
+      run :=
+        pure <|
+          match quitDriver with
+          | none => false
+          | some driver =>
+            let (refused, steps) := fedTo driver ([.commit "x"] ++ presses "C-l l")
+            let (saved, _) := fedTo refused (presses "C-o w")
+            let (saved, _) := saved.finish 2
+            let (left, last) := fedTo saved (presses "C-l l")
+            promptEcho refused == notLeaving "note.txt" && !refused.loop.state.quitting &&
+              steps.all (·.all (·.next == .continue)) &&
+              !saved.stopped &&
+              next last == #[some .continue, some .stop] &&
+              left.stopped },
+    { name :=
+        "the driver records that a step said stop when the step was one it ran for an invocation a command asked for: the fed step says continue and the driver has stopped"
+      run :=
+        pure <|
+          match quitDriver with
+          | none => false
+          | some driver =>
+            let (left, steps) := fedTo driver (presses "C-l h")
+            next steps == #[some .continue, some .continue] && left.stopped &&
+              left.loop.state.quitting }]
+
 /-- The ex bindings of the ex line's own checks, written here: `say` runs
 the command `greet` of the prompt checks with the rest of the line, and
 `plain` runs it and takes nothing; `ghost` is bound to a command nobody
@@ -13339,6 +13506,7 @@ def checks : List Check :=
     driverChecks ++
     promptChecks ++
     fileCommandChecks ++
+    dispatchQuitChecks ++
     exChecks ++
     evilRestChecks ++
     evilMotionChecks ++
