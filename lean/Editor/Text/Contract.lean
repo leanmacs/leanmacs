@@ -1924,6 +1924,47 @@ def lineAnswers : List (Motion × List Nat) :=
         30]),
     (.rowsDown 9 99, List.replicate 27 30), (.rowsUp 9 0, List.replicate 27 0)]
 
+/-- What each motion by words and by WORDs answers from each position of
+`lines`, in the order of `linePositions`, written out by hand from the
+port's rules.
+
+The words of `lines` are `foo` (0 to 2), `.` (3), `bar` (4 to 6), `x` (9),
+the empty line (12), `s`, `e`, the combining mark and "😀" (15 to 19), `!`
+(23), `y` (25) and `end` (27 to 29). Its WORDs are `foo.bar` (0 to 6), `x`
+(9), the empty line (12), the run from `s` to `!` (15 to 23), `y` (25) and
+`end` (27 to 29). -/
+def wordAnswers : List (Motion × List Nat) :=
+  [(.nextWordStart .word,
+      [3, 3, 3, 4, 9, 9, 9, 9, 9, 12, 12, 12, 15, 15, 15, 23, 23, 23, 23, 25, 25, 27, 27, 30, 30,
+        30, 30]),
+    -- The empty line at 12 is passed over.
+    (.nextWordEnd .word,
+      [2, 2, 3, 6, 6, 6, 9, 9, 9, 19, 19, 19, 19, 19, 19, 19, 19, 19, 23, 25, 25, 29, 29, 29, 29,
+        30, 30]),
+    (.previousWordStart .word,
+      [0, 0, 0, 0, 3, 4, 4, 4, 4, 4, 9, 9, 9, 12, 12, 12, 15, 15, 15, 15, 23, 23, 25, 25, 27, 27,
+        27]),
+    -- The empty line at 12 is an end here.
+    (.previousWordEnd .word,
+      [0, 0, 0, 2, 3, 3, 3, 6, 6, 6, 9, 9, 9, 12, 12, 12, 12, 12, 12, 19, 23, 23, 25, 25, 25, 25,
+        29]),
+    (.nextWordStart .bigWord,
+      [9, 9, 9, 9, 9, 9, 9, 9, 9, 12, 12, 12, 15, 15, 15, 25, 25, 25, 25, 25, 25, 27, 27, 30, 30,
+        30, 30]),
+    (.nextWordEnd .bigWord,
+      [6, 6, 6, 6, 6, 6, 9, 9, 9, 23, 23, 23, 23, 23, 23, 23, 23, 23, 23, 25, 25, 29, 29, 29, 29,
+        30, 30]),
+    (.previousWordStart .bigWord,
+      [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 9, 9, 9, 12, 12, 12, 15, 15, 15, 15, 15, 15, 25, 25, 27, 27,
+        27]),
+    (.previousWordEnd .bigWord,
+      [0, 0, 0, 0, 0, 0, 0, 6, 6, 6, 9, 9, 9, 12, 12, 12, 12, 12, 12, 12, 23, 23, 25, 25, 25, 25,
+        29])]
+
+/-- Every motion the tables have a row for. -/
+def tabledMotions : List Motion :=
+  (lineAnswers ++ wordAnswers).map (·.1)
+
 /-- What `motion` answers from each of `offsets` in `source`, in order. -/
 def answersFrom (source : TextSource) (motion : Motion) (offsets : List Nat) : TextM (List Nat) :=
   offsets.mapM fun offset => source.ask (.motion motion offset)
@@ -1956,10 +1997,49 @@ def motionProperties : List Property :=
               (← answersFrom (.text text) motion linePositions) == answers
         return held },
     { name :=
+        "each motion by words and by WORDs answers, from every position of a text, what a table written out by hand says: mid-word, at a word boundary, on an empty line, at the start and the end of the text, and beside a character of several bytes and a combining mark"
+      holds := do
+        let text ← createText lines
+        let mut held := wordAnswers.length == 8
+        for (motion, answers) in wordAnswers do
+          held :=
+            held && answers.length == linePositions.length &&
+              (← answersFrom (.text text) motion linePositions) == answers
+        return held },
+    { name :=
+        "in small texts the word motions answer as the rules say: an empty line is a word alone, a line of blanks and the empty last row hold none, the next word end passes over an empty line where the other three stop on one, and a carriage return alone is punctuation"
+      holds := do
+        let mut held := true
+        for (initial, motion, answers) in
+          ([("\n", .nextWordStart .word, [1, 1]), ("\n", .previousWordStart .word, [0, 0]),
+              ("a\n \t\n\nb\n", .nextWordStart .word, [5, 5, 5, 5, 5, 6, 8, 8, 8]),
+              ("a\n \t\n\nb\n", .nextWordEnd .word, [6, 6, 6, 6, 6, 6, 8, 8, 8]),
+              ("a\n \t\n\nb\n", .previousWordStart .word, [0, 0, 0, 0, 0, 0, 5, 6, 6]),
+              ("a\n \t\n\nb\n", .previousWordEnd .word, [0, 0, 0, 0, 0, 0, 5, 6, 6]),
+              ("a\n \t\n\nb\n", .nextWordStart .bigWord, [5, 5, 5, 5, 5, 6, 8, 8, 8]),
+              ("a\r\n\r\nb", .nextWordStart .word, [3, 3, 3, 5, 5, 6, 6]),
+              ("a\r\n\r\nb", .previousWordEnd .word, [0, 0, 0, 0, 3, 3, 5]),
+              ("a\n\nb", .nextWordEnd .word, [3, 3, 3, 4, 4]),
+              ("a\n\nb", .previousWordEnd .word, [0, 0, 0, 2, 3]),
+              ("a\n\n\nb", .nextWordStart .word, [2, 2, 3, 4, 5, 5]),
+              ("a\n\n\nb", .previousWordStart .bigWord, [0, 0, 0, 2, 3, 4]),
+              ("x\r", .nextWordStart .word, [1, 2, 2]), ("x\r", .nextWordStart .bigWord, [2, 2, 2]),
+              ("x\r", .previousWordEnd .word, [0, 0, 1]), ("  ", .nextWordStart .word, [2, 2, 2]),
+              ("  ", .previousWordEnd .bigWord, [0, 0, 0]),
+              ("ab cd", .nextWordEnd .word, [1, 4, 4, 4, 5, 5]),
+              ("ab cd", .previousWordEnd .word, [0, 0, 1, 1, 1, 4]),
+              -- An underscore and a digit are word characters; the rest of
+              -- ASCII is punctuation, NUL included.
+              ("a_1-+b\x00c", .nextWordStart .word, [3, 3, 3, 5, 5, 6, 7, 8, 8]),
+              ("a_1-+b\x00c", .nextWordStart .bigWord, [8, 8, 8, 8, 8, 8, 8, 8, 8])] :
+            List (String × Motion × List Nat)) do
+          held := held && (← answersIn initial motion answers)
+        return held },
+    { name :=
         "in small texts the motions answer as the rules say: an empty text, a text that is one line break, a line of blanks, empty lines, a carriage return alone, and a row that ends in a carriage return and a line feed"
       holds := do
         let mut held := true
-        for motion in lineAnswers.map (·.1) do
+        for motion in tabledMotions do
           held := held && (← answersIn "" motion [0])
         for (initial, motion, answers) in
           ([("\n", .lineEnd, [0, 1]), ("\n", .rowsDown 1 1, [1, 1]),
@@ -2012,7 +2092,7 @@ def motionProperties : List Property :=
         let snapshot ← text.snapshot
         let mut refused := true
         for source in [TextSource.text text, TextSource.snapshot snapshot] do
-          for motion in lineAnswers.map (·.1) do
+          for motion in tabledMotions do
             for offset in [18, 20, 31, 2 ^ 64, 2 ^ 64 + 1] do
               refused := refused && (← motionRefused source motion offset)
         let huge := 2 ^ 64 + 1
@@ -2027,7 +2107,7 @@ def motionProperties : List Property :=
         let text ← createText lines
         let snapshot ← text.snapshot
         let mut alike := true
-        for (motion, answers) in lineAnswers do
+        for (motion, answers) in lineAnswers ++ wordAnswers do
           alike := alike && (← answersFrom (.snapshot snapshot) motion linePositions) == answers
         -- The text loses its first row: every row is one earlier.
         text.delete 0 12

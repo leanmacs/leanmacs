@@ -439,6 +439,11 @@ def unit : ColumnUnit → Ffi.ColumnUnit
   | .utf16 => .utf16
   | .cells => .cells
 
+/-- The library's name for a kind of word of the port. -/
+def wordKind : WordKind → Ffi.WordKind
+  | .word => .word
+  | .bigWord => .bigWord
+
 /-- The library's form of a motion of the port. A count of rows and a column
 that no word holds go as the largest word (`word`), which the library reads
 as past any text's rows or cells: the motion stops at the first or the last
@@ -447,6 +452,10 @@ that large. -/
 def motionOf : Motion → Ffi.Motion
   | .nextCell => .nextCell
   | .previousCell => .previousCell
+  | .nextWordStart kind => .nextWordStart (wordKind kind)
+  | .nextWordEnd kind => .nextWordEnd (wordKind kind)
+  | .previousWordStart kind => .previousWordStart (wordKind kind)
+  | .previousWordEnd kind => .previousWordEnd (wordKind kind)
   | .lineStart => .lineStart
   | .lineEnd => .lineEnd
   | .lineFirstNonBlank => .lineFirstNonBlank

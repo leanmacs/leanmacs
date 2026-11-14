@@ -584,13 +584,80 @@ content ends when it has fewer. -/
 def atColumn (row : Row) (column : Nat) : Nat :=
   (row.cells[column]?.map (·.start)).getD row.content
 
+/-- What a cell is to a word motion. -/
+inductive WordClass where
+  /-- It is in no word: a blank, or the line break of a row that has
+  content. -/
+  | blank
+  /-- The line break of an empty line: a word alone. -/
+  | emptyLine
+  /-- A word character; for a WORD, any character that is not a blank. -/
+  | word
+  /-- Any other character. A WORD has none. -/
+  | punctuation
+  deriving DecidableEq, Repr
+
+/-- The class of the character `c` for words of `kind`, in the model's own
+words: a blank is a space or a tab; a word character is an ASCII letter, an
+ASCII digit, an underscore, or any character from U+0080 up; every other
+character is punctuation. For a WORD every character that is not a blank is
+of one class. `Char.isAlphanum` is ASCII only. -/
+def classOf (kind : WordKind) (c : Char) : WordClass :=
+  if c == ' ' || c == '\t' then .blank
+  else
+    match kind with
+    | .bigWord => .word
+    | .word => if c.isAlphanum || c == '_' || c.val ≥ 0x80 then .word else .punctuation
+
+/-- Every cell of `text` with its class for words of `kind`, in order: the
+cells of each row's content, and then the row's line break, when it has one,
+which is an empty line's when the row has no content. -/
+def classedCells (kind : WordKind) (text : String) : Array (Nat × WordClass) :=
+  (rowsOf text).flatMap fun row =>
+    let content :=
+      row.cells.map fun cell =>
+        (cell.start, ((characterAt text cell.start).map (classOf kind)).getD .blank)
+    if row.content < row.stop then
+      content.push (row.content, if row.cells.isEmpty then .emptyLine else .blank)
+    else content
+
+/-- One word of a text. -/
+structure WordSpan where
+  /-- Where its first cell starts. -/
+  start : Nat
+  /-- Where its last cell starts. -/
+  last : Nat
+  /-- Whether it is the line break of an empty line. -/
+  empty : Bool
+  deriving Repr
+
+/-- The words of `kind` of `text`, in order: each a longest run of
+neighbouring cells of one class, or the line break of an empty line,
+alone. -/
+def wordsOf (kind : WordKind) (text : String) : Array WordSpan :=
+  -- The class of the run the cell before is in, when it is in one.
+  let (words, _) :=
+    (classedCells kind text).foldl
+      (fun ((words, running) : Array WordSpan × Option WordClass) (start, found) =>
+        match found with
+        | .blank => (words, none)
+        | .emptyLine => (words.push ⟨start, start, true⟩, none)
+        | found =>
+          match words.back? with
+          | some word =>
+            if running == some found then (words.pop.push { word with last := start }, some found)
+            else (words.push ⟨start, start, false⟩, some found)
+          | none => (words.push ⟨start, start, false⟩, some found))
+      (#[], none)
+  words
+
 /-- Where `motion` leads from the byte offset `offset` of `text`. `none`
 unless the offset is a position.
 
-Each answer is picked from a list of the whole text: its cell starts, or its
-rows with their cells. The library lists nothing and walks from the
-position. The line start is the offset of column 0 of the position's row,
-by the model's own conversions. -/
+Each answer is picked from a list of the whole text: its cell starts, its
+words, or its rows with their cells. The library lists nothing and walks
+from the position. The line start is the offset of column 0 of the
+position's row, by the model's own conversions. -/
 def motion? (text : String) (motion : Motion) (offset : Nat) : Option Nat :=
   (pointOf .bytes text offset).bind fun point =>
     let rows := rowsOf text
@@ -598,6 +665,17 @@ def motion? (text : String) (motion : Motion) (offset : Nat) : Option Nat :=
     match motion with
     | .nextCell => some (((cellStarts text).find? (· > offset)).getD text.utf8ByteSize)
     | .previousCell => some (((cellStarts text).filter (· < offset)).back?.getD 0)
+    | .nextWordStart kind =>
+      some ((((wordsOf kind text).find? (·.start > offset)).map (·.start)).getD text.utf8ByteSize)
+    | .nextWordEnd kind =>
+      some
+        ((((wordsOf kind text).find? fun word => word.last > offset && !word.empty).map
+              (·.last)).getD
+          text.utf8ByteSize)
+    | .previousWordStart kind =>
+      some ((((wordsOf kind text).filter (·.start < offset)).back?.map (·.start)).getD 0)
+    | .previousWordEnd kind =>
+      some ((((wordsOf kind text).filter (·.last < offset)).back?.map (·.last)).getD 0)
     | .lineStart => offsetOf .bytes text ⟨point.row, 0⟩
     | .lineEnd => some row.content
     | .lineFirstNonBlank =>

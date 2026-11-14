@@ -268,6 +268,37 @@ operations as they are: they are lifted into it.
   cross lines. The position of a line feed belongs to the row it ends: from
   between a carriage return and its line feed, `lineEnd` is the position
   before.
+- A *line break* is the cell that ends a row: a line feed, or a carriage
+  return and the line feed after it. It separates words as a blank does. A
+  *word character* is an ASCII letter, an ASCII digit, an underscore, or any
+  character from U+0080 up. Every other character is *punctuation*: the
+  rest of ASCII, its control characters and NUL included, and so a carriage
+  return with no line feed after it. An *empty line* is a row with no
+  content that has a line break; the empty last row of a text that ends in
+  a line feed has no cell and is not one.
+- A *word* is a longest run of neighbouring cells that are all word
+  characters or all punctuation; or the line break of an empty line, alone.
+  A *WORD* is a longest run of cells that are not blank; or the line break
+  of an empty line, alone (`WordKind`). A line of blanks only holds no
+  word. A word *starts* where its first cell starts and *ends* where its
+  last cell starts: the position of a cursor on its last character, not
+  the position after it.
+
+  | Motion, for a word or a WORD | Answers |
+  |---|---|
+  | `nextWordStart kind` | The first start of a word after `p`, or `n` |
+  | `nextWordEnd kind` | The first end of a word after `p`, empty lines not counted, or `n` |
+  | `previousWordStart kind` | The last start of a word before `p`, or 0 |
+  | `previousWordEnd kind` | The last end of a word before `p`, or 0 |
+
+  "After" and "before" are strict, so from a word's start the next start is
+  the next word's. `nextWordEnd` passes over empty lines, and the other
+  three stop on one. Where there is no such word the answer is the end of
+  the text going forward and 0 going back.
+- What a word character is is this short so that the model can state the
+  rule the library walks by. It is Vim's on ASCII and not beyond it
+  (`docs/design/text-and-display.md`, "Character classes for words outside
+  ASCII").
 - A motion by rows counts its column as `ColumnUnit.cells` does, and never
   answers past a row's content, whatever the column. A count of 0 stays in
   the position's row. The empty last row of a text that ends in a line feed
@@ -351,8 +382,11 @@ new request: `ask` carries every question.
 A new motion is a constructor of `Motion`, with its clause in the model
 (`TextModel.motion?`), its case in the real binding's encoder
 (`RealTexts.motionOf`, and a tag in the library), and its rows in the
-contract's tables (`TextContract.lineAnswers`). It is not a new question:
-`motion` carries every one.
+contract's tables (`TextContract.lineAnswers`, `TextContract.wordAnswers`).
+It is not a new question: `motion` carries every one. A change to what a
+word character is is one function in the model (`TextModel.classOf`) and
+one private module in the library, and the contract's tables say whether
+the two still agree.
 
 A new question about a text's edit log is a constructor of `LogQuery` with
 its case in `LogQuery.Answer`, and an operation here that asks it. It needs
@@ -518,6 +552,15 @@ structure Extent where
   stop : Nat
   deriving DecidableEq, Repr
 
+/-- Which words a motion goes by. -/
+inductive WordKind where
+  /-- Words: a word is a longest run of word characters, or of
+  punctuation. -/
+  | word
+  /-- WORDs: a WORD is a longest run of characters that are not blank. -/
+  | bigWord
+  deriving DecidableEq, Repr
+
 /-- A motion: a way from one position of a text to another. The rules of the
 port say what each answers. A new motion is a constructor here, not a
 question. -/
@@ -527,6 +570,16 @@ inductive Motion where
   | nextCell
   /-- The last cell start before the position, or 0. -/
   | previousCell
+  /-- The first start of a word of `kind` after the position, or the end of
+  the text. -/
+  | nextWordStart (kind : WordKind)
+  /-- The first end of a word of `kind` after the position, empty lines not
+  counted, or the end of the text. -/
+  | nextWordEnd (kind : WordKind)
+  /-- The last start of a word of `kind` before the position, or 0. -/
+  | previousWordStart (kind : WordKind)
+  /-- The last end of a word of `kind` before the position, or 0. -/
+  | previousWordEnd (kind : WordKind)
   /-- Where the position's row starts. -/
   | lineStart
   /-- Where the content of the position's row ends: where its line break
