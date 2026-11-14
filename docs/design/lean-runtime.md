@@ -656,7 +656,7 @@ editor state's buffers and windows through one port, whose shape is:
 |---|---|
 | The composite port, `EditorM`, the three embeddings and lifts, and the mapping of the display's refusals | `lean/Editor/Command.lean` |
 | The state requests and their pure handler: one read of the whole state, and a request a write (a buffer, its history, values and modes; a window; the echo; a job to start), each refused with a value | `lean/Editor/State/Request.lean`, over the operations of `lean/Editor/State.lean` |
-| A dispatched command: its state requests answered from the loop's state, every other request guarded, a major mode's on-enter actions run inside it; and `Loop.Registered`, what the loop is told of the registry | `lean/Editor/Command/Dispatch.lean` |
+| A dispatched command: its state requests answered from the loop's state, every other request guarded, so that it stops at its next one once the flag is up, a major mode's on-enter actions run inside it; `Guarded`, how it ended; and `Loop.Registered`, what the loop is told of the registry. The guard has this one definition | `lean/Editor/Command/Dispatch.lean` |
 | The composite's model runner, over the three models side by side | `lean/Editor/Command/Model.lean` |
 | The composite's real runner, over the text binding, a display handler and a watch handler | `lean/Editor/Command/Real.lean` |
 | `DisplayHandler`, and running a display program against one | `lean/Editor/Display.lean` |
@@ -664,7 +664,6 @@ editor state's buffers and windows through one port, whose shape is:
 | Its pure model: the interrupt keys that arrived, one that arrives at a command's n-th request, and a clock with a pace | `lean/Editor/Watch/Model.lean` |
 | Its contract, imported from the port alone, run against the model by `lake test` and against the real binding by `contract-test` | `lean/Editor/Watch/Contract.lean` |
 | Its real binding, over the library's interrupt flag and the job port's clock | `lean/Editor/Watch/Real.lean` |
-| A guarded command: one that stops at its next request once the flag is up | `lean/Editor/Command/Guard.lean` |
 | What the model runner does with each sub-port, pinned | `ModelTest.commandPortChecks` |
 
 ### The editor API

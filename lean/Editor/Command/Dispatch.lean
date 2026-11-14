@@ -1,16 +1,55 @@
-import Editor.Command.Guard
+import Editor.Command
 import Editor.Mode
 
 /-!
 # A dispatched command
 
-How the command loop runs a command: `EditorM.dispatched`. It is the guard
-(`Editor/Command/Guard.lean`) and one thing more: the command's state
-requests (`Editor/State/Request.lean`) are answered here, from the editor
-state the loop hands in, and what comes back is how the command ended and
-the state it left.
+How the command loop runs a command: `EditorM.dispatched`. It is one
+transformation of the command's program that does two things. It guards the
+command, so that the user can stop it: the watch port's interrupt flag
+(`Editor/Watch.lean`) is asked before each of the command's requests that
+reaches the library, and once the flag is up the command makes no further
+request. And it answers the command's state requests
+(`Editor/State/Request.lean`), from the editor state the loop hands in.
+What comes back is how the command ended (`Guarded`) and the state it left.
 
-## The rules
+## The guard
+
+The rule has one definition, the last case of `Program.dispatched`: nothing
+else guards a program, and every command a host runs goes through it.
+
+- **A command stops at its next request.** One question, whether the flag
+  is up, is put before each request of the program that is not a state
+  request. When the answer is yes the program is finished there: the
+  request is not made, and the continuation is not applied.
+- **A command cannot catch an interrupt.** Being interrupted is not a reply
+  to the command's request and nothing is thrown: the rest of the command is
+  dropped, as the job runner drops a cancelled job's
+  (`docs/design/concurrency.md`, "Cancellation"). So a `try`/`catch` round a
+  request does not go on. What a command made before it stopped is the
+  loop's to roll back.
+- **A dispatched command is not refused.** How it ended is its value
+  (`Guarded`): it finished, it was refused, or it was interrupted. So the
+  loop that runs it goes on to roll back and to publish whichever it was.
+- **A state request is not guarded.** It is pure Lean, not a call into the
+  library, and what the guard bounds is the requests that reach the library
+  (`docs/design/concurrency.md`, "When it is asked"). It also keeps a move
+  in the history whole towards the guard: the last text request of an undo
+  drops the inverses it crossed, and the request after it is the state
+  request that records the moved tree. A check between the two could stop a
+  command with the inverses dropped and the move unrecorded, which no
+  rollback could then take back. A check before the drop stops it with
+  nothing dropped.
+- **A command that makes no request is not interruptible**, nor is one that
+  makes state requests alone: there is no request to stop it at. That is
+  accepted (`docs/design/concurrency.md`, "Runaway code is not a design
+  driver").
+- **The flag is only asked, never lowered, here.** It comes down when the
+  loop takes the interrupt key off the queue (`Loop.take`).
+- **What it costs**: one request of the watch port, a call into the
+  library, for each request of the command that reaches the library.
+
+## The state requests
 
 - **A state request is answered in place.** The transformation holds the
   editor state, answers each state request of the command with the
@@ -23,20 +62,9 @@ the state it left.
   (`Editor/Loop.lean`, "Rollback"), so the state a refused or interrupted
   command had reached is handed back with how it ended, and the loop decides
   what to keep of it.
-- **Every other request is guarded** as `EditorM.guarded` guards it: the
-  interrupt flag is asked before it, and once the flag is up the command
-  makes no further request.
-- **A state request is not guarded.** It is pure Lean, not a call into the
-  library, and what the guard bounds is the requests that reach the library
-  (`docs/design/concurrency.md`, "When it is asked"). It also keeps a move
-  in the history whole towards the guard: the last text request of an undo
-  drops the inverses it crossed, and the request after it is the state
-  request that records the moved tree. A check between the two could stop a
-  command with the inverses dropped and the move unrecorded, which no
-  rollback could then take back. A check before the drop stops it with
-  nothing dropped.
-- **Only the command is dispatched.** The loop's own requests round it are
-  neither guarded nor answered here.
+- **Only the command is dispatched.** The transformation is applied to the
+  command alone. The loop's own requests round it are neither guarded nor
+  answered here, so a flag that is up never stops a rollback or a scene.
 
 ## Requests that name something registered
 
@@ -78,11 +106,23 @@ design driver").
 It is a pure transformation of the program, so it runs on the models as it
 runs against the library.
 
-Pinned by `ModelTest.dispatchStateChecks` and `ModelTest.modeEnterChecks`;
-`EditorM.guarded` stays, pinned by `ModelTest.guardChecks`.
+Pinned by `ModelTest.guardChecks` (the guard, on commands that make no
+state request), `ModelTest.dispatchStateChecks` and
+`ModelTest.modeEnterChecks`.
 -/
 
 namespace Editor
+
+/-- How a dispatched command ended. -/
+inductive Guarded (α : Type) where
+  /-- It ran to its end, with `value`. -/
+  | finished (value : α)
+  /-- It was refused, with `error`. -/
+  | refused (error : TextError)
+  /-- The interrupt flag was up before one of its requests, which it did not
+  make, nor any after. -/
+  | interrupted
+  deriving BEq, Repr
 
 /-- What the loop is told of the registry for the state requests that name
 something registered. A step is handed one, made from the registry as it

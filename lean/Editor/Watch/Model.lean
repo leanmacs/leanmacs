@@ -14,9 +14,10 @@ Two things are the model's own, for the tests of the loop:
   happens between two requests, so an interrupt key cannot arrive "while a
   command runs" unless the model makes it. With `arrivesAfter := some n`,
   the flag is asked `n` times and answers as it stands, and the time after
-  that one more key has arrived before it answers. A guarded command asks
-  before each of its requests (`Editor/Command/Guard.lean`), so with
-  `some n` it makes exactly `n` requests.
+  that one more key has arrived before it answers. A command the loop
+  dispatched asks before each of its requests but a state request
+  (`Editor/Command/Dispatch.lean`, "The guard"), so with `some n` it makes
+  exactly `n` of them.
 - **A clock a command's requests move** (`pace`). The model does not move
   the clock itself: the editor's models (`EditorModel.handle`,
   `Editor/Command/Model.lean`) move it on by `pace` at each text request

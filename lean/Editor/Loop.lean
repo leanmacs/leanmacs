@@ -258,11 +258,11 @@ is queued, and marks that event. What the loop does with the flag is here
 (`Editor/Watch.lean` has the port):
 
 - **A command the loop runs is guarded** (`EditorM.dispatched`,
-  `Editor/Command/Dispatch.lean`, as `EditorM.guarded` guards one): the
-  flag is asked before each of its requests that reaches the library, and
-  once it is up the command makes no further request. A state request is
-  answered without asking. The command is then rolled back like one that
-  was refused, and the echo area reads `<name>: interrupted`.
+  `Editor/Command/Dispatch.lean`, "The guard", the rule's one definition):
+  the flag is asked before each of its requests that reaches the library,
+  and once it is up the command makes no further request. A state request
+  is answered without asking. The command is then rolled back like one
+  that was refused, and the echo area reads `<name>: interrupted`.
 - **Only the command is guarded.** The loop's own requests (keeping,
   rolling back, publishing) are not, so a flag that is up stops neither a
   rollback nor a scene.

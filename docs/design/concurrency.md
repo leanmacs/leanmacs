@@ -111,8 +111,8 @@ time, in order, on the editor thread.
   library as the key arrives, before the key is queued. Built: the flag in
   `crates/editor-ffi/src/interrupt.rs` ([rust-library.md](rust-library.md),
   "Platform"), what the loop does with it in `lean/Editor/Loop.lean` ("The
-  interrupt") and `lean/Editor/Command/Guard.lean`, and the loop reaches the
-  flag through the watch port (`lean/Editor/Watch.lean`,
+  interrupt") and `lean/Editor/Command/Dispatch.lean` ("The guard"), and the
+  loop reaches the flag through the watch port (`lean/Editor/Watch.lean`,
   [lean-runtime.md](lean-runtime.md), "The editor's port is a composite").
   - **The primitive is the library's, the policy Lean's.** The library
     raises the flag on the arrival path of the editor queue
@@ -145,7 +145,11 @@ time, in order, on the editor thread.
     dispatched that reaches the library: a text request, a display request
     and a watch request (`EditorM.dispatched`,
     `lean/Editor/Command/Dispatch.lean`, a pure transformation of the
-    command's program, so it runs on the models). Once the flag is up the
+    command's program, so it runs on the models). That transformation is
+    the guard's one definition, and its checks run it
+    (`ModelTest.guardChecks`): a guard of its own for a program with no
+    state request was removed on 2026-11-14, since no host ran it and its
+    checks then pinned a rule nothing used. Once the flag is up the
     command's continuation is dropped: the command makes no further
     request, it is rolled back, and the echo area reads
     `<name>: interrupted`. This is the job runner's rule for cancellation

@@ -21,7 +21,8 @@ interrupt key that arrived has not been taken off the queue. The primitive
 is the library's and the policy is here:
 
 - **`interrupted`** asks whether the flag is up. The loop asks before each
-  request of a command it dispatched (`Editor/Command/Guard.lean`).
+  request of a command it dispatched that reaches the library
+  (`Editor/Command/Dispatch.lean`, "The guard").
 - **`lower`** says that an interrupt key was taken off the queue. The loop
   makes it for the events the library marked as interrupt keys, and for no
   other (`Loop.take`, `Editor/Loop.lean`). The flag is a count of such keys,
