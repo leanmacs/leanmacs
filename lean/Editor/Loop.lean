@@ -1,4 +1,6 @@
 import Editor.Command
+import Editor.Command.Call
+import Editor.Config.Stores
 import Editor.Event
 import Editor.InputScheme
 import Editor.Key.Notation
@@ -35,6 +37,33 @@ of each view, which the caller makes for each step.
   completes and after a key that goes on with no binding, since the scheme
   then reports none.
 
+## Running an invocation
+
+When a key completes a sequence the scheme yields an invocation, a
+command's name and plain arguments, and the loop runs it (`Loop.run`):
+
+1. **The echo area is cleared.** It is what the last command left: a key
+   that yields nothing leaves it as it was.
+2. **The command is looked up** by its name (`Loop.Keys.command?`), in the
+   registry as it is at this step. A name no command is registered under is
+   said in the echo area: `<name>: no such command`.
+3. **It is run with a `Call`** (`Editor/Command/Call.lean`): the focused
+   window and its buffer, the invocation's arguments, which hold the count
+   where the scheme laid it out, and the keys that yielded it, which are
+   what the scheme reported as pending before the last key, then that key's
+   chord.
+4. **A refusal is said in the echo area**, `<name>: refused: ` and the
+   refusal (`TextError.describe`), and the editor keeps running: the step
+   is not refused, and the next key is handled.
+5. **What the command asked to be written** (a command over a store) is
+   handed back with the step (`Loop.Stepped.write`), for whoever holds the
+   cells.
+
+A call into a config command is not guarded against the interpreter: an
+exception thrown by interpreted code ends the process
+(`docs/design/lean-runtime.md`, "An exception from the interpreter ends the
+process").
+
 ## What each event does
 
 | Event | What it does to the state |
@@ -45,7 +74,7 @@ of each view, which the caller makes for each step.
 | `resize` | Sets the frame's size; the views are laid out in it when the scene is made. Its scale is not kept: the scene has no field for it |
 | `focus gained` | Sets whether the frame has the keyboard focus |
 | `closeRequested`, `quit` | Nothing: the step says stop, and publishes nothing |
-| a key press | Nothing to the editor state. It is stepped through the scheme, whose state the loop keeps ("The scheme") |
+| a key press | It is stepped through the scheme, whose state the loop keeps ("The scheme"), and the invocation it yields, if it yields one, is run ("Running an invocation") |
 | a key release, the press of a modifier by itself, a pointer, `windowOpened`, `compositionEnabled`, a message, a completion | Nothing |
 
 A handler is given what it acts on (a `Target`: the window and its buffer),
@@ -170,11 +199,16 @@ inductive Loop.Next where
   deriving DecidableEq, Repr
 
 /-- What a step is handed beside the loop and the event: what the keys are
-looked up in. It is rebuilt by the caller for each step, from the registry
-as it then is, so a reload changes it between two events. -/
+looked up in, and what an invocation runs. It is rebuilt by the caller for
+each step, from the registry as it then is, so a reload changes it between
+two events. -/
 structure Loop.Keys (scheme : InputScheme) where
   /-- The active keymaps of each view, in precedence order. -/
   maps : ViewId → List (Keymap scheme.Binding) := fun _ => []
+  /-- What an invocation of the command of a name runs: given what it is
+  called with, the program, whose value is what the command asks to be
+  written; `none` for a name no command is registered under. -/
+  command? : String → Option (Call → EditorM (Option Config.Write)) := fun _ => none
 
 /-- What a step hands back: the loop after it, and what to do next. A
 one-shot output of a step is a field here. -/
@@ -183,6 +217,11 @@ structure Loop.Stepped (scheme : InputScheme) where
   loop : Loop scheme
   /-- Whether to pull the next event. -/
   next : Loop.Next
+  /-- What the command the step ran asked to be written: the new tree of a
+  store's cell, for whoever holds the cells to write back. `none` for a
+  step that ran no command, and for one whose command did not run to its
+  end. -/
+  write : Option Config.Write := none
 
 namespace EditorState
 
@@ -350,23 +389,63 @@ def stepped? : Event → Option Key
   | .key key true _ => if key.isModifier then none else some key
   | _ => none
 
-/-- One key through the scheme, for the focused view: the loop with the
-scheme's state after the key, and the invocation the key completed, if it
-completed one. -/
-def key (keys : Keys scheme) (loop : Loop scheme) (key : Key) : Loop scheme × Option Invocation :=
+/-- What running an invocation came to. -/
+structure Ran where
+  /-- The editor state after it, with what it left in the echo area. -/
+  state : EditorState
+  /-- Whether the command ran to its end. -/
+  finished : Bool
+  /-- What the command asked to be written, when it ran to its end. -/
+  write : Option Config.Write := none
+
+/-- `state` with what became of the command called `name` in the echo
+area: its name, then `what`. -/
+def said (state : EditorState) (name what : String) : EditorState :=
+  { state with echo := s!"{name}: {what}" }
+
+/-- Runs `invocation`, which the keys `typed` yielded, from `state` ("Running
+an invocation", in the module docs): clears the echo area, looks the
+command up, and runs it with the focused window, the invocation's arguments
+and the keys. It is not refused: a name with no command and a refusal of
+the command are each said in the echo area. -/
+def run (keys : Keys scheme) (state : EditorState) (invocation : Invocation) (typed : List Key) :
+    EditorM Ran := do
+  let state := { state with echo := "" }
+  let name := invocation.command
+  let some command :=
+    keys.command? name | return { state := said state name "no such command", finished := false }
+  let some target :=
+    state.focusedTarget? | return { state := said state name "no window is focused", finished := false }
+  match ← observing (command { target, arguments := invocation.arguments, keys := typed }) with
+  | .ok write =>
+    return { state, finished := true, write }
+  | .error refusal =>
+    return { state := said state name s!"refused: {refusal.describe}", finished := false }
+
+/-- One key through the scheme, for the focused view, and the invocation it
+yields, if it yields one, run (`run`): the loop after them, and what the
+command asked to be written. The keys the command is told of are what the
+scheme reported as pending before the key, then the key's chord. -/
+def key (keys : Keys scheme) (loop : Loop scheme) (key : Key) :
+    EditorM (Loop scheme × Option Config.Write) := do
+  let before := scheme.pending loop.input
   let (input, yielded) := scheme.step keys.maps loop.state.frame.focused loop.input key
-  ({ loop with input }, yielded)
+  let loop := { loop with input }
+  let some invocation := yielded | return (loop, none)
+  let ran ← run keys loop.state invocation (before ++ [key.chord])
+  return ({ loop with state := ran.state }, ran.write)
 
 /-- Handles `event` and publishes a scene of the state after it, and says
 whether to go on. A close request and a quit stop the loop and publish
-nothing. A key press is stepped through the scheme (`stepped?`, `key`). A
-handler that is refused leaves the state as it was, with the refusal in the
-echo area. The step itself is not refused: the publish puts a refusal of its
-own in the echo area too ("When publishing is refused", in the module
-docs). -/
+nothing. A key press is stepped through the scheme, and the invocation it
+yields is run (`stepped?`, `key`). A handler that is refused leaves the
+state as it was, with the refusal in the echo area. The step itself is not
+refused: the publish puts a refusal of its own in the echo area too ("When
+publishing is refused", in the module docs). -/
 def step (keys : Keys scheme) (loop : Loop scheme) (event : Event) : EditorM (Stepped scheme) := do
   if let some pressed := stepped? event then
-    return { loop := ← (loop.key keys pressed).1.publish, next := .continue }
+    let (loop, write) ← loop.key keys pressed
+    return { loop := ← loop.publish, next := .continue, write }
   match event with
   | .closeRequested | .quit =>
     return { loop, next := .stop }

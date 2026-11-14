@@ -4584,13 +4584,30 @@ def press (key : Key) : Event :=
 def presses (text : String) : List Event :=
   (keys text).map press
 
+/-- What a command of the dispatch checks is: given its call, a program
+whose value is what to write back. -/
+abbrev Dispatched :=
+  Call → EditorM (Option Config.Write)
+
 /-- What a step of the dispatch checks is handed: one keymap, the same for
 every view, that binds each key string of `bindings` to the invocation
-beside it. -/
-def dispatchKeys (bindings : List (String × Invocation)) : Loop.Keys TestScheme.scheme :=
-  {
-    maps := fun _ =>
-      [Keymap.ofList (bindings.map fun (text, invocation) => (keys text, invocation))] }
+beside it, and the commands `commands`, by name. -/
+def dispatchKeys (bindings : List (String × Invocation))
+    (commands : List (String × Dispatched) := []) : Loop.Keys TestScheme.scheme :=
+  { maps := fun _ =>
+      [Keymap.ofList (bindings.map fun (text, invocation) => (keys text, invocation))]
+    command? := fun name => (commands.find? (·.1 == name)).map (·.2) }
+
+/-- What a command was called with, as one line: its arguments, then its
+keys as a key string. -/
+def calledWith (call : Call) : String :=
+  " ".intercalate (call.arguments.map argumentText ++ [Key.notations call.keys])
+
+/-- The command `stamp` of the dispatch checks: it inserts what it was
+called with (`calledWith`) at the cursors of the window it is handed. -/
+def stamp : Dispatched := fun call => do
+  Loop.insert call.target (calledWith call)
+  return none
 
 /-- Feeds `loop` the `events` in order, each step handed `keys`: the loop
 after them and what each step handed back. -/
@@ -4625,6 +4642,17 @@ def pendingShown (keys : Loop.Keys TestScheme.scheme) (events : List Event)
   match dispatched keys events start with
   | some (_, scenes, _) => scenes.map (·.pending)
   | none => #[]
+
+/-- What the last scene of a run showed: its echo, its pending keys, and the
+text of each of its views. `none` when the run was refused or published
+nothing. -/
+def lastScene (keys : Loop.Keys TestScheme.scheme) (events : List Event)
+    (start : TextM EditorState := EditorState.initial ⟨640, 480⟩)
+    (model : EditorModel := editorModel) : Option (String × String × Array (Option String)) :=
+  match dispatched keys events start model with
+  | some (_, scenes, model) =>
+    scenes.back?.map fun scene => (scene.echo, scene.pending, scene.views.map (shownText model))
+  | none => none
 
 /-- The checks of key dispatch in the loop (`Editor/Loop.lean`), on the
 editor's models and the test scheme, with keymaps written here: which keys
@@ -4685,7 +4713,87 @@ def dispatchChecks : List Check :=
             !(namedKey .escape).isModifier &&
             !(namedKey ⟨"F5"⟩).isModifier &&
             !({ logical := .dead none } : Key).isModifier &&
-            !({ logical := .unidentified } : Key).isModifier) }]
+            !({ logical := .unidentified } : Key).isModifier) },
+    { name :=
+        "a bound key sequence runs its command once, with the count the binding gives and the keys typed: the scene after the prefix shows the text unchanged, the scene after the last key shows the command's effect, and a further key that is bound to nothing adds nothing"
+      run :=
+        let keys :=
+          dispatchKeys [("C-x i", { command := "stamp", arguments := [.nat 3] })] [("stamp", stamp)]
+        pure
+          (lastScene keys (presses "C-x") == some ("", "C-x", #[some ""]) &&
+            lastScene keys (presses "C-x i") == some ("", "", #[some "3 C-x i"]) &&
+            lastScene keys (presses "C-x i" ++ [pressF5]) == some ("", "", #[some "3 C-x i"])) },
+    { name :=
+        "a command is handed the focused window and its buffer, the arguments of the invocation in order, and every key of the sequence as a chord, though the keys came from a window with their physical codes"
+      run :=
+        let seen : Dispatched := fun call => do
+          let editor := (← call.target.buffer.text.read)
+          makes
+              s!"{call.target.window.id.index} {call.target.buffer.name} {editor.length} {calledWith call}"
+          return none
+        let keys :=
+          dispatchKeys
+            [("C-x r t", { command := "seen", arguments := [.str "w", .int (-2), .bool true] })]
+            [("seen", seen)]
+        let fromWindow : List Event :=
+          (Editor.Key.parse "C-x r t" |>.toOption.getD []).map fun key =>
+            press
+              { key with
+                physical := .code "KeyQ", repeated := true }
+        let focusedOn : TextM EditorState := do
+          return ((← threeWindows).focusWindow ⟨2⟩).2
+        pure <|
+          match dispatched keys fromWindow focusedOn with
+          | some (_, _, model) => model.texts.contents.back? == some "2 scratch 0 w -2 true C-x r t"
+          | none => false },
+    { name :=
+        "an invocation of a name no command is registered under says so in the echo area, and the next key is handled: a key that yields nothing leaves the echo, and the next command that runs clears it"
+      run :=
+        let keys :=
+          dispatchKeys [("C-c n", invoke "nope"), ("C-c s", invoke "stamp")] [("stamp", stamp)]
+        pure
+          (lastScene keys (presses "C-c n") == some ("nope: no such command", "", #[some ""]) &&
+            lastScene keys (presses "C-c n" ++ [pressF5] ++ presses "C-c") ==
+              some ("nope: no such command", "C-c", #[some ""]) &&
+            lastScene keys (presses "C-c n C-c s") == some ("", "", #[some "C-c s"])) },
+    { name :=
+        "a command that is refused says so in the echo area, with its name and the refusal, and the step is not refused: the next key runs its command"
+      run :=
+        let gone : Dispatched := fun _ => do
+          (⟨7⟩ : TextId).insert 0 "x"
+          return none
+        let keys :=
+          dispatchKeys [("C-c g", invoke "gone"), ("C-c s", invoke "stamp")]
+            [("gone", gone), ("stamp", stamp)]
+        pure
+          (lastScene keys (presses "C-c g") ==
+              some ("gone: refused: no such text", "", #[some ""]) &&
+            lastScene keys (presses "C-c g C-c s") == some ("", "", #[some "C-c s"])) },
+    { name :=
+        "under the test scheme a key that prints and is bound to nothing yields its self-insert, which no command is registered under: the echo area says so"
+      run :=
+        pure
+          (lastScene (dispatchKeys []) (presses "a") ==
+            some ("self-insert: no such command", "", #[some ""])) },
+    { name :=
+        "a step hands back what the command it ran asked to be written, and nothing for a step that ran no command or whose command was refused"
+      run :=
+        let writes : Dispatched := fun _ =>
+          return some { owner := .config, store := "counter", value := .nat 5 }
+        let refuses : Dispatched := fun _ => do
+          (⟨7⟩ : TextId).insert 0 "x"
+          return some { owner := .config, store := "counter", value := .nat 9 }
+        let keys :=
+          dispatchKeys [("C-c w", invoke "writes"), ("C-c r", invoke "refuses")]
+            [("writes", writes), ("refuses", refuses)]
+        pure <|
+          match dispatched keys (presses "C-c w C-c r" ++ [pressF5, .focus true]) with
+          | some ((_, steps), _, _) =>
+            steps.map
+                (fun step =>
+                  step.write.map fun write => (write.owner.name, write.store, write.value)) ==
+              #[none, some ("config", "counter", Value.nat 5), none, none, none, none]
+          | none => false }]
 
 /-- A scheme written for the test that breaks the contract: it yields the
 first binding that the keys so far begin, so it emits on a strict prefix. -/
