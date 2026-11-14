@@ -371,6 +371,10 @@ inductive JobRefusal where
   | noSuchJob (name : String)
   deriving DecidableEq, Repr
 
+/-- Why a job was not started, as a sentence for the echo area. -/
+def JobRefusal.describe : JobRefusal → String
+  | .noSuchJob name => s!"no job is registered under {name}"
+
 /-- Why setting a mode was refused. -/
 inductive ModeRefusal where
   /-- The state has no window of this view. -/

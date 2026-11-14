@@ -7,6 +7,7 @@ import Editor.Display.Contract
 import Editor.Display.Model
 import Editor.File.Cases
 import Editor.File.Model
+import Editor.Files
 import Editor.InputScheme.Contract
 import Editor.InputScheme.Test
 import Editor.InputScheme.Vim.Default
@@ -3971,6 +3972,11 @@ def stateChecks : List Check :=
             ((state.buffer? ⟨0⟩).map fun buffer => (buffer.file, buffer.lineEnding)) ==
                 some (none, .lf) &&
               state.findFile "/files/note.txt" == none },
+    { name := "why a job was not started names the job, as a sentence for the echo area"
+      run :=
+        pure
+          (((JobRefusal.noSuchJob "load-it").describe.splitOn "load-it").length == 2 &&
+            (JobRefusal.noSuchJob "a").describe != (JobRefusal.noSuchJob "b").describe) },
     { name :=
         "a free name is the name itself when no buffer has it, and otherwise the name followed by <2>, <3> and so on, the first no buffer has"
       run :=
@@ -8619,6 +8625,275 @@ def driverChecks : List Check :=
               delivered.isNone &&
               finished.model.texts.contents == #[""] }]
 
+/-- A file of three lines of which two end in CRLF and one in a line
+feed. -/
+def mostlyCrlf : ByteArray :=
+  "a\r\nb\r\nc\n".toUTF8
+
+/-- A file of three lines of which two end in a line feed and one in
+CRLF. -/
+def mostlyLf : ByteArray :=
+  "a\nb\nc\r\n".toUTF8
+
+/-- A file with no line break. -/
+def unbroken : ByteArray :=
+  "no break".toUTF8
+
+/-- The files of the file command checks, in `fileRoot`: `note.txt`, with a
+two-byte character, a four-byte one and a byte that is not UTF-8
+(`FileCases.noteBytes`), and three files that differ in their line
+endings. -/
+def commandFiles : FileModel :=
+  fileModelOf
+    #[("note.txt", FileCases.noteBytes), ("crlf.txt", mostlyCrlf), ("lf.txt", mostlyLf),
+      ("plain.txt", unbroken)]
+
+/-- The path of a file of the file command checks, by its name. -/
+def inFiles (name : String) : System.FilePath :=
+  fileRoot / name
+
+/-- The keys of the file command checks that open a file, and the path each
+opens: `missing.txt` is not there, and `relative.txt` is not an absolute
+path. -/
+def openKeys : List (String × System.FilePath) :=
+  [("C-o n", inFiles "note.txt"), ("C-o c", inFiles "crlf.txt"), ("C-o l", inFiles "lf.txt"),
+    ("C-o p", inFiles "plain.txt"), ("C-o m", inFiles "missing.txt"), ("C-o r", "relative.txt")]
+
+/-- The invocation that opens `path`: the open command, with the path as
+its argument. -/
+def opens (path : System.FilePath) : Invocation :=
+  { command := Files.openName, arguments := [.str path.toString] }
+
+/-- What a step of the file command checks is handed: the keys of
+`openKeys`, each bound to the open command with its path, `C-o o` bound to
+the open command with no argument, and the open command under its name. -/
+def fileKeys : Loop.Keys TestScheme.scheme :=
+  dispatchKeys
+    (openKeys.map (fun (text, path) => (text, opens path)) ++ [("C-o o", invoke Files.openName)])
+    [(Files.openName, fun call => do
+        Files.openCommand call
+        return none)]
+
+/-- The jobs of the file command checks, by name: the load job, whose loads
+are refused over `limit` bytes. -/
+def fileJobs (limit : Nat := Files.limit) (name : String) : Option (List Argument → Work) :=
+  if name == Files.loadJob then some (Files.loadWork limit) else none
+
+/-- A driver over the initial state with the keys of the file command
+checks, the jobs `registered`, and `files` as the files its jobs reach;
+`none` if making the state was refused. -/
+def filesDriver (registered : String → Option (List Argument → Work) := fileJobs)
+    (files : FileModel := commandFiles) : Option TestDriver :=
+  (Loop.Driver.over fileKeys registered (EditorState.initial ⟨640, 480⟩) editorModel).toOption.map
+    fun driver => { driver with jobs := { files } }
+
+/-- What a view of a driver shows. -/
+structure Showing where
+  /-- The buffer's id. -/
+  id : BufferId
+  /-- The buffer. -/
+  buffer : Buffer
+  /-- What the buffer's text holds in the text model; `none` if it was
+  released. -/
+  text : Option String
+  /-- The ranges of the window's selection, as the text model has them;
+  `none` if the marker was given up. -/
+  cursors : Option (Array SelectionRange)
+
+/-- What the view `view` of `driver` shows; `none` if it has no window. -/
+def showing (driver : TestDriver) (view : ViewId := ⟨0⟩) : Option Showing := do
+  let target ← driver.loop.state.target? view
+  return {
+      id := target.window.buffer
+      buffer := target.buffer
+      text := (driver.model.texts.texts[target.buffer.text.index]?).join.map (·.contents)
+      cursors := (target.selection.runModel driver.model.texts).1.toOption.map (·.ranges) }
+
+/-- The echo area of the last scene `driver`'s display recorded. -/
+def echoOf (driver : TestDriver) : Option String :=
+  driver.model.display.scenes.back?.map (·.echo)
+
+/-- The status line of the view `view` in the last scene `driver`'s display
+recorded. -/
+def statusOf (driver : TestDriver) (view : ViewId := ⟨0⟩) : Option (Array StatusField) :=
+  driver.model.display.scenes.back?.bind fun scene =>
+    (scene.views.find? (·.id == view)).map (·.status)
+
+/-- The status line of a view of a buffer called `name` that is not
+modified: the name alone, in the name's face. -/
+def named (name : String) : Array StatusField :=
+  #[{ text := name, face := Loop.nameFace }]
+
+/-- The checks of the file commands (`Editor/Files.lean`), on the loop's
+driver over the editor's models and the model of files: opening a file into
+a buffer. No file is touched. -/
+def fileCommandChecks : List Check :=
+  let started (steps : Array (Option (Loop.Stepped TestScheme.scheme))) : Array JobStart :=
+    steps.flatMap fun step => (step.map (·.starts)).getD #[]
+  [{  name :=
+        "the open command on a file: once its job is finished, the view the command was called in shows a new buffer whose text is the file's, a byte that is not UTF-8 as its escape, named by the file's base name, with one cursor at its start, not modified, holding the file's path and the stamp the files have for it; the view's status line is that name alone"
+      run :=
+        pure <|
+          match filesDriver with
+          | none => false
+          | some driver =>
+            let path := inFiles "note.txt"
+            let (asked, steps) := fedTo driver (presses "C-o n")
+            let (opened, delivered) := asked.finish 1
+            match showing opened with
+            | none => false
+            | some shown =>
+              started steps ==
+                  #[{ name := Files.loadJob
+                      arguments := Files.LoadOrder.arguments { path, view := ⟨0⟩ } }] &&
+                (delivered.map (·.ended)) == some (some .finished) &&
+                shown.id == ⟨1⟩ &&
+                shown.buffer.name == "note.txt" &&
+                shown.text == some FileCases.noteText &&
+                shown.cursors == some #[⟨0, 0⟩] &&
+                !shown.buffer.isModified &&
+                (shown.buffer.file.map fun file => (file.path, some file.stamp, file.saving)) ==
+                  some (path, (opened.jobs.files.file? path).map (·.stamp), none) &&
+                statusOf opened == some (named "note.txt") &&
+                opened.loop.state.wellFormed &&
+                opened.loop.state.buffers.size == 2 &&
+                opened.model.texts.contents == #["", FileCases.noteText] },
+    { name :=
+        "a buffer's line ending is its file's dominant one: CRLF for a file most of whose lines end in CRLF, a line feed for one most of whose lines end in a line feed, and a line feed for a file with no line break"
+      run :=
+        pure <|
+          match filesDriver with
+          | none => false
+          | some driver =>
+            let ending (key : String) : Option File.LineEnding :=
+              let (asked, _) := fedTo driver (presses key)
+              (showing (asked.finish 1).1).bind fun shown =>
+                shown.buffer.file.map fun _ => shown.buffer.lineEnding
+            ending "C-o c" == some .crlf && ending "C-o l" == some .lf &&
+              ending "C-o p" == some .lf },
+    { name :=
+        "events that arrive while a load is in flight are handled before the load's result: after the open command the view still shows the scratch buffer, two commits fed before the job is finished are each in the scratch buffer's text after their own steps, and the file's buffer is there, and shown, only once the job is finished"
+      run :=
+        pure <|
+          match filesDriver with
+          | none => false
+          | some driver =>
+            let (asked, _) := fedTo driver (presses "C-o n")
+            let (first, _) := fedTo asked [.commit "a"]
+            let (second, _) := fedTo first [.commit "b"]
+            let (opened, _) := second.finish 1
+            (showing asked).map (·.id) == some ⟨0⟩ && asked.pending.size == 1 &&
+              driverText first == some "a" &&
+              driverText second == some "ab" &&
+              (showing second).map (·.id) == some ⟨0⟩ &&
+              second.loop.state.buffers.size == 1 &&
+              second.model.texts.contents == #["ab"] &&
+              (showing opened).map (·.id) == some ⟨1⟩ &&
+              (showing opened).bind (·.text) == some FileCases.noteText &&
+              opened.model.texts.contents == #["ab", FileCases.noteText] },
+    { name :=
+        "the open command on a path with no file: the echo area says the refusal, the view still shows the buffer it showed, with its cursor, and there is no new buffer and no new text"
+      run :=
+        pure <|
+          match filesDriver with
+          | none => false
+          | some driver =>
+            let (asked, _) := fedTo driver ([.commit "kept"] ++ presses "C-o m")
+            let (refused, delivered) := asked.finish 1
+            (delivered.map (·.ended)) == some (some .finished) &&
+              echoOf refused == some (Files.notOpened (inFiles "missing.txt") .notFound) &&
+              (showing refused).map (fun shown => (shown.id, shown.text, shown.cursors)) ==
+                some (⟨0⟩, some "kept", some #[⟨4, 4⟩]) &&
+              refused.loop.state.buffers.size == 1 &&
+              refused.model.texts.texts.size == 1 &&
+              refused.model.texts.snapshots.size == asked.model.texts.snapshots.size &&
+              refused.jobs.files == asked.jobs.files },
+    { name :=
+        "a file longer than the limit the load job is registered with is refused as too large, with its size and the limit, and a path that is not absolute as a relative path: each is said in the echo area by the same route, and nothing is opened"
+      run :=
+        pure <|
+          match filesDriver (fileJobs 4), filesDriver with
+          | some small, some driver =>
+            let (large, _) := fedTo small (presses "C-o n")
+            let (large, _) := large.finish 1
+            let (relative, _) := fedTo driver (presses "C-o r")
+            let (relative, _) := relative.finish 1
+            echoOf large ==
+                some
+                  (Files.notOpened (inFiles "note.txt") (.tooLarge FileCases.noteBytes.size 4)) &&
+              large.loop.state.buffers.size == 1 &&
+              echoOf relative == some (Files.notOpened "relative.txt" .relativePath) &&
+              relative.loop.state.buffers.size == 1
+          | _, _ => false },
+    { name :=
+        "a load order's arguments are read back as the order, and arguments that are no order as none; the load job started with arguments that are no order fails"
+      run :=
+        pure <|
+          let orders : List Files.LoadOrder :=
+            [{ path := inFiles "note.txt", view := ⟨0⟩ }, { path := "relative.txt", view := ⟨7⟩ },
+              { path := "/a b/é.txt", view := ⟨12⟩ }]
+          orders.all (fun order => Files.LoadOrder.ofArguments? order.arguments == some order) &&
+            [[], [.str "/a"], [.nat 0, .str "/a"], [.str "/a", .nat 0, .nat 1]].all
+              (fun arguments => Files.LoadOrder.ofArguments? arguments == none) &&
+            ((Files.loadWork Files.limit [.nat 1] ()).runModel { files := commandFiles }).1 matches
+              .failed _ },
+    { name :=
+        "the markers of the window that showed the scratch buffer are given up once the file's buffer is shown in it, and not before: they answer while the load is in flight and refuse noSuchMarker after the delivery"
+      run :=
+        pure <|
+          match filesDriver with
+          | none => false
+          | some driver =>
+            let (asked, _) := fedTo driver (presses "C-o n")
+            let (opened, _) := asked.finish 1
+            match driver.loop.state.window? ⟨0⟩ with
+            | none => false
+            | some old =>
+              ((markerRefusals old).runModel asked.model.texts).1.toOption == some [none, none] &&
+                ((markerRefusals old).runModel opened.model.texts).1.toOption ==
+                  some [some .noSuchMarker, some .noSuchMarker] },
+    { name :=
+        "a file loaded for a view that has no window is said in the echo area as loaded and not shown: its buffer is there and holds the file, and the windows show what they showed"
+      run :=
+        pure <|
+          match filesDriver with
+          | none => false
+          | some driver =>
+            let path := inFiles "note.txt"
+            let asked :=
+              driver.started
+                #[{ name := Files.loadJob
+                    arguments := Files.LoadOrder.arguments { path, view := ⟨9⟩ } }]
+            let (opened, _) := asked.finish 1
+            echoOf opened == some (Files.notShown path) &&
+              Files.notShown path != Files.notOpened path .notFound &&
+              (showing opened).map (·.id) == some ⟨0⟩ &&
+              opened.loop.state.findFile path == some ⟨1⟩ },
+    { name :=
+        "the open command where no load job is registered says so in the echo area, by the job's name, starts nothing and leaves the view as it was"
+      run :=
+        pure <|
+          match filesDriver (fun _ => none) with
+          | none => false
+          | some driver =>
+            let path := inFiles "note.txt"
+            let (asked, steps) := fedTo driver (presses "C-o n")
+            started steps == #[] && asked.pending.isEmpty &&
+              echoOf asked == some (Files.notOpening path (.noSuchJob Files.loadJob)) &&
+              Files.notOpening path (.noSuchJob Files.loadJob) != Files.notOpened path .notFound &&
+              (showing asked).map (·.id) == some ⟨0⟩ &&
+              asked.loop.state.buffers.size == 1 },
+    { name :=
+        "the open command with no path among its arguments says so in the echo area and starts nothing"
+      run :=
+        pure <|
+          match filesDriver with
+          | none => false
+          | some driver =>
+            let (asked, steps) := fedTo driver (presses "C-o o")
+            started steps == #[] && asked.pending.isEmpty && echoOf asked == some Files.noPath &&
+              asked.loop.state.buffers.size == 1 }]
+
 /-- Every check, in the order they run.
 
 The order matters where the process's one pool is measured. `poolChecks` run
@@ -8667,7 +8942,8 @@ def checks : List Check :=
     modeDispatchChecks ++
     modeEnterChecks ++
     apiStateChecks ++
-    driverChecks
+    driverChecks ++
+    fileCommandChecks
 
 /-- Runs `checks` and returns the names of those that failed. A check that
 throws has failed, and its error is reported with its name. -/

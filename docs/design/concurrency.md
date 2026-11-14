@@ -438,6 +438,28 @@ transaction through. Where those come from is open.
   does: a job reads the snapshots commands took, its command is handed
   what the job loaded and nothing else, and what a job held is released
   once its command has run, or when the job fails.
+- **Opening a file is a command, a job and the job's command**
+  (`lean/Editor/Files.lean`, built by the command loop's phase 9), the
+  first use of this route by compiled code:
+  - the command (`Files.open`) starts the job `load-file` with an order,
+    plain arguments: the path and the view it was called in. It makes
+    nothing and judges nothing;
+  - the job loads the file, under the editor's limit of 1 GiB, and
+    finishes with the order and the reply. A refusal is a value in the
+    reply;
+  - the job's command makes the buffer when the result is delivered: a
+    text of the snapshot the job loaded, a buffer over it called by the
+    path's base name, the file attached, and the buffer shown. On a
+    refusal it says `cannot open <path>: ` and the refusal's sentence in
+    the echo area, and the window still shows what it showed.
+
+  An empty buffer made when the command runs and filled later was set
+  aside: the window would change before the file is known to exist, and a
+  refusal would have to undo it. So what the user types while a load is in
+  flight goes to the buffer the window still shows, and is handled before
+  the load's result, by the queue's order. Every refusal of the file port
+  takes that one route to the echo area. A start that is refused, where no
+  job is registered under the name, is said there too.
 
 ### Structured lifetimes
 
