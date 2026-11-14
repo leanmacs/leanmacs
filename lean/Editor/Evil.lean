@@ -85,6 +85,11 @@ scheme's state after its key (`Editor/Command/Call.lean`). The rule
   (`ViewId.setWanted`), as Vim's escape resets it; entering a state that
   keeps both ends leaves it.
 - **It ignores its count and its register.**
+- **No default key enters a state that keeps both ends from an insert
+  session**, or with an anchor that is not on a cell, so rule 3 with both
+  ends kept, and the anchor's part of rule 4, are pinned by calling
+  `enter` with a report written by hand (`ModelTest.evilStateChecks`), as
+  a state config registers would have it called.
 
 ## Insert state
 

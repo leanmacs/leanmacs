@@ -282,7 +282,10 @@ registers for evil (`Editor/Evil/Compiled.lean`), on the loop's driver:
   and that every default motion key has a motion of its name;
 - `evilStateChecks`: `v`, `V` and `<Escape>`: the selection the scene
   shows, its shape and what it covers, and the scene's cursor and status
-  field in each state;
+  field in each state; and, by the entering command called with a report
+  written by hand (`evilEntered`), a state that keeps both ends entered
+  from an exclusive selection, which no default key does: where the anchor
+  rests, and that the head steps back;
 - `evilInsertChecks`: `i a I A`, typed text and `<Escape>`; that an insert
   session is one step of the history, by an undo request; a key typed into
   a prompt; and a committed text in normal state and inside a session.
@@ -12238,11 +12241,39 @@ def evilLooks (typed : String) : Cursor × Array StatusField :=
   let report := vimDefaultReport typed
   (report.cursor, report.status ++ #[{ text := "scratch", face := Loop.nameFace }])
 
+/-- What the scheme reports of a view in a state that keeps both ends of
+the selection, of the shape `shape`, written by hand: what a visual state
+reports, as far as entering a state reads a report. -/
+def evilKeeping (shape : Shape) : InputScheme.Report :=
+  { shape, selecting := true }
+
+/-- The selection the scene shows once the command that enters a Vim state
+(`Evil.enter`) has been called with the report `report`, written by hand,
+on a selection written by hand: one range from `anchor` to `head`, of the
+shape `was`, in a text holding `contents`. Its ranges, as an anchor and a
+head each, its shape, and the text each range covers. A command the loop
+is handed places the selection and calls `Evil.enter`, since no key of the
+default tables enters a state that keeps both ends from an insert session,
+or with an anchor that is not on a cell; a state config registers may. -/
+def evilEntered (contents : String) (was : Shape) (anchor head : Nat)
+    (report : InputScheme.Report) : Option (List (Nat × Nat) × Shape × List String) := do
+  let enter : Dispatched := fun call => do
+    call.target.select { ranges := #[⟨anchor, head⟩], shape := was }
+    Evil.enter { call with report }
+    return none
+  let driver ← evilDriver contents (evilHanded (commands := [("enter", enter)]))
+  let (entered, _) := driver.stepped (driver.loop.runNamed driver.handed "enter")
+  let seen ← evilSeen entered
+  return ((seen.selection.ranges.map fun range => (range.anchor, range.head)).toList,
+      seen.selection.shape, seen.covered.toList)
+
 /-- The checks of evil's states (`Editor/Evil.lean`) on the loop's driver
 over the editor's models, under the Vim scheme that ships with evil's
 commands: what entering a visual state and leaving one does to the view's
 selection, read from the selection marker the scene names, and what the
-scene then shows of the state. -/
+scene then shows of the state; and, by the entering command called with a
+report written by hand, a state that keeps both ends entered from an
+exclusive selection. -/
 def evilStateChecks : List Check :=
   [{  name :=
         "v and then a motion: the scene shows one inclusive selection from the cell the cursor started on to the cell the motion leads to, which covers both cells and what is between them"
@@ -12293,6 +12324,34 @@ def evilStateChecks : List Check :=
             evilSelected "foo |bar baz" "V w v" == some ([(4, 8)], .inclusive, ["bar b"]) &&
             evilSelected "foo |bar baz" "v w v" == some ([(8, 8)], .inclusive, ["b"]) &&
             evilSelected "foo |bar baz" "V w V" == some ([(8, 8)], .inclusive, ["b"])) },
+    { name :=
+        "a state that keeps both ends, entered with the anchor where no cursor of it may rest, puts the anchor where the head would rest: from an exclusive selection whose anchor is at the end of a text that ends in a line feed, on the line feed, which is the last cell, for the inclusive shape and for the line shape; with both ends in the empty last row, both on the line feed; at the end of a text with no line feed, on the last character; and an anchor on a cell, a line break among them, stays"
+      run :=
+        pure
+          (evilEntered "ab\n" .exclusive 3 1 (evilKeeping .inclusive) ==
+              some ([(2, 0)], .inclusive, ["ab\n"]) &&
+            evilEntered "ab\n" .exclusive 3 1 (evilKeeping .line) ==
+              some ([(2, 0)], .line, ["ab\n"]) &&
+            evilEntered "ab\n" .exclusive 3 3 (evilKeeping .inclusive) ==
+              some ([(2, 2)], .inclusive, ["\n"]) &&
+            evilEntered "ab" .exclusive 2 0 (evilKeeping .inclusive) ==
+              some ([(1, 0)], .inclusive, ["ab"]) &&
+            evilEntered "ab\ncd" .exclusive 2 5 (evilKeeping .inclusive) ==
+              some ([(2, 4)], .inclusive, ["\ncd"])) },
+    { name :=
+        "a state that keeps both ends, entered from an exclusive selection, keeps the anchor and steps the head back one cell, as leaving an insert session does, whichever end is first and for the line shape too; a head at its line's start stays; and from a selection that was not exclusive the head does not step back"
+      run :=
+        pure
+          (evilEntered "abcd" .exclusive 1 3 (evilKeeping .inclusive) ==
+              some ([(1, 2)], .inclusive, ["bc"]) &&
+            evilEntered "abcd" .exclusive 3 1 (evilKeeping .inclusive) ==
+              some ([(3, 0)], .inclusive, ["abcd"]) &&
+            evilEntered "abcd" .exclusive 1 3 (evilKeeping .line) ==
+              some ([(1, 2)], .line, ["abcd"]) &&
+            evilEntered "ab\ncd" .exclusive 0 3 (evilKeeping .inclusive) ==
+              some ([(0, 3)], .inclusive, ["ab\nc"]) &&
+            evilEntered "abcd" .inclusive 1 3 (evilKeeping .inclusive) ==
+              some ([(1, 3)], .inclusive, ["bcd"])) },
     { name :=
         "a departure from Vim, recorded in keymaps-and-modes.md under Where a cursor rests: on a last line with no line feed the head of a visual selection stops on the last character, where Vim's goes one past it, since there is no cell there"
       run := pure (evilSelected "foo |bar" "v w" == some ([(4, 6)], .inclusive, ["bar"])) },
