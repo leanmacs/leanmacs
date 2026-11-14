@@ -5,6 +5,7 @@ import Editor.Files.Compiled
 import Editor.Headless
 import Editor.InputScheme.Test
 import Editor.Job.Fake
+import Editor.Minibuffer.Compiled
 
 /-!
 # Checks of the config session against the real elaborator
@@ -59,6 +60,17 @@ fakes. The checks here pin what only real collaborators can show:
   with the scratch buffer's major mode set (`Compiled.major`), since no
   command can set one yet, and the key pressed is the test scheme's for the
   role (`Session.pressKeys`), so no check names a scheme's key;
+- `promptChecks`: prompts through the host, with the test scheme, the
+  minibuffer's commands and its mode as compiled code hands them
+  (`Minibuffer.commands`, `Minibuffer.modes`) and commands written here: a
+  command asks, a commit is typed into the minibuffer and the scene shows
+  it; the accept key runs the continuation's command with the answer and
+  the cancel key does not; a job's result is delivered while a prompt is
+  open, on the fake clock; the continuation is looked up when the answer
+  arrives, across a reload; the answer's command runs before the next key;
+  and it is looked up after the accepting command's write to a store was
+  written back. The accept key and the cancel key are the test scheme's
+  for the roles the minibuffer's mode fills;
 - `fileChecks`: files through the host, over the library's file service.
   They are the checks whose hosts are over a real service, so they share
   one table of waits and the one completion pump, which the first of them
@@ -2225,6 +2237,246 @@ def hostLoopChecks (context : Context) : List Check :=
                 (← session.scene) == ("".quote, #[viewLine "napped" 6]))
           nappingCompiled }]
 
+/-- The keys of the role `activate` under the test scheme: the minibuffer's
+accept key, since its mode fills that role with the accept command. -/
+def acceptKeys : List Key :=
+  (TestScheme.scheme.roleKey Role.activate).getD []
+
+/-- The keys of the role `quit` under the test scheme: the minibuffer's
+cancel key. -/
+def cancelKeys : List Key :=
+  (TestScheme.scheme.roleKey Role.quit).getD []
+
+/-- What compiled code hands every host of the prompt checks: the
+minibuffer's commands and its mode, as the executable is handed them
+(`Editor/Minibuffer/Compiled.lean`). -/
+def minibufferCompiled : Compiled :=
+  { commands := Minibuffer.commands, modes := Minibuffer.modes }
+
+/-- What compiled code hands the hosts of the prompt checks that load no
+config: the minibuffer's commands and its mode, and commands written here.
+
+- `ask` asks `Name: ` with the initial value `Ada` and the continuation
+  `greet`.
+- `greet` is given its call: it inserts its first argument at the cursor of
+  the window it is called with and says `hello ` and that argument in the
+  echo area.
+- `other`, on `C-c o`, says `other`.
+- `rest-and-ask` starts the job `nap` of `nappingCompiled`, whose command
+  inserts `napped` in view 0, and then asks as `ask` does. -/
+def promptCompiled : Compiled :=
+  let asks : EditorM Unit := discard <| prompt "Name: " { command := "greet" } "Ada"
+  { minibufferCompiled with
+    commands :=
+      Minibuffer.commands ++
+        #[{ name := "ask", action := .plain asks },
+          { name := "greet"
+            action :=
+              .call fun call => do
+                let name :=
+                  match call.arguments with
+                  | .str name :: _ => name
+                  | _ => "nobody"
+                call.target.insertAtSelections name
+                message s!"hello {name}" },
+          { name := "other", action := .plain (message "other") },
+          { name := "rest-and-ask"
+            action :=
+              .plain do
+                discard <| startJob "nap"
+                asks }]
+    jobs := nappingCompiled.jobs
+    bindings := #[bound "C-c o" "other"] }
+
+/-- A chunk whose `setup` registers `greet` as a command that is given its
+call, which says `label` and its first argument in the echo area, and
+`ask`, which asks `Name: ` with the initial value `Ada` and the continuation
+`greet`. -/
+def greetWithChunk (label : String) : String :=
+  "def setup : SetupM Unit := do
+  commandWith \"greet\" fun call =>
+    match call.arguments with
+    | .str name :: _ => message s!\"" ++
+    label ++
+    " {name}\"
+    | _ => message \"" ++
+    label ++
+    "\"
+  command \"ask\" (discard <| prompt \"Name: \" { command := \"greet\" } \"Ada\")
+"
+
+/-- A chunk whose `setup` registers `ask` as in `greetWithChunk`, and no
+`greet`. -/
+def askOnlyChunk : String :=
+  "def setup : SetupM Unit := do
+  command \"ask\" (discard <| prompt \"Name: \" { command := \"greet\" } \"Ada\")
+"
+
+/-- A chunk with a store of one number and three commands: `bump`, over the
+store, adds one; `bump-accept`, over the store, accepts the open prompt and
+adds one; and `ask` asks `Name: ` with the continuation `bump`. -/
+def bumpAcceptChunk : String :=
+  "def counter : Store Nat :=
+  { name := \"counter\", version := 1, initial := 0, encode := .nat,
+    decode := fun
+      | .nat n => some n
+      | _ => none }
+
+def setup : SetupM Unit := do
+  counter.declare
+  counter.command \"bump\" fun n => pure (n + 1)
+  counter.command \"bump-accept\" fun n => do
+    discard acceptPrompt
+    pure (n + 1)
+  command \"ask\" (discard <| prompt \"Name: \" { command := \"bump\" })
+"
+
+/-- Asks the host for the scene, and returns every line it printed for it:
+the scene's line, then each view's line followed by its status line. -/
+def Session.sceneLines (session : Session) : IO (Array String) := do
+  let before := (← session.output.get).size
+  session.ask [.scene]
+  return (← session.output.get).extract before
+
+/-- The line of the minibuffer's view, view 1 in a frame of no size, showing
+`text` with its one cursor at `cursor`. -/
+def minibufferLine (text : String) (cursor : Nat) : String :=
+  s!"view 1 0,0 0x0: {text.quote}, scroll 0, selections {cursor}..{cursor}"
+
+/-- The status line of the minibuffer's view, view 1, while a prompt
+labelled `label` is open: what the host prints (`Headless.statusLine`) of
+the one field the loop gives that view, the label in the prompt's face
+(`Loop.promptFace`). So a check repeats neither the face nor the host's
+form. -/
+def promptStatus (label : String := "Name: ") : String :=
+  Headless.statusLine ⟨1⟩ #[{ text := label, face := Loop.promptFace }]
+
+/-- Whether the scene line `line` names `view` as the focused view. -/
+def focuses (line : String) (view : Nat) : Bool :=
+  (line.splitOn s!", focused {view}, ").length == 2
+
+/-- The checks of prompts through the headless host (`Editor/Headless.lean`),
+on the real queue, the real text binding and the real elaborator, with the
+test scheme: the host is handed the minibuffer's commands and its mode
+(`Editor/Minibuffer/Compiled.lean`), and runs the answer's command of an
+accepted prompt before its next event. The accept key and the cancel key
+are the test scheme's keys for the roles the minibuffer's mode fills, so no
+check names a scheme's key. -/
+def promptChecks (context : Context) : List Check :=
+  [{  name :=
+        "a command asks for a prompt and a text is committed: the scene has the window's view and the minibuffer's, whose line holds the initial value and the committed text and whose status line is the prompt text, the minibuffer's view is the focused one, and show lists the minibuffer's text; after the accept key the echo area is the continuation's with the answer, which it inserted in the asking window, there is one view, with the focus, and the minibuffer's text is listed no more"
+      run :=
+        withHost context []
+          (fun session => do
+            session.ask [.run "ask"]
+            unless ← Event.post (.commit "!") do
+              return false
+            let asking ← session.sceneLines
+            let listed ← session.shown
+            session.pressKeys acceptKeys
+            let accepted ← session.sceneLines
+            let after ← session.shown
+            return !acceptKeys.isEmpty && (asking[0]?.map (focuses · 1)) == some true &&
+                asking.extract 1 ==
+                  #[viewLine "" 0, statusOf, minibufferLine "Ada!" 4, promptStatus] &&
+                listed.contains "text 1: \"Ada!\"" &&
+                (accepted[0]?.map fun line =>
+                    focuses line 0 &&
+                      (line.splitOn s!", echo {"hello Ada!".quote}, ").length == 2) ==
+                  some true &&
+                accepted.extract 1 == #[viewLine "Ada!" 4, statusOf (modified := true)] &&
+                !after.any (·.startsWith "text 1: ") &&
+                !(← session.output.get).any (·.startsWith "loop: refused"))
+          promptCompiled },
+    { name :=
+        "the cancel key in place of the accept key: the continuation's command does not run, the echo area is empty, there is one view, the window's, as it was and with the focus, and the minibuffer's text is listed no more"
+      run :=
+        withHost context []
+          (fun session => do
+            session.ask [.run "ask"]
+            unless ← Event.post (.commit "!") do
+              return false
+            session.pressKeys cancelKeys
+            let cancelled ← session.sceneLines
+            let after ← session.shown
+            return !cancelKeys.isEmpty && cancelKeys != acceptKeys &&
+                (cancelled[0]?.map fun line =>
+                    focuses line 0 && (line.splitOn s!", echo {"".quote}, ").length == 2) ==
+                  some true &&
+                cancelled.extract 1 == #[viewLine "" 0, statusOf] &&
+                !after.any (·.startsWith "text 1: ") &&
+                !(← session.output.get).any (·.startsWith "loop: refused"))
+          promptCompiled },
+    { name :=
+        "a job completes while a prompt is open, on the fake clock: once the clock lets it go the host prints that its command ran, the window shows what that command inserted, and the scene still has the minibuffer's view, with the focus; the accept key afterwards runs the continuation's command"
+      run :=
+        withHost context []
+          (fun session => do
+            session.ask [.run "rest-and-ask"]
+            unless ← eventually (return (← session.clock.waiting) == 1) do
+              return false
+            let before ← session.output.get
+            session.clock.advance 10
+            let joined ← session.host.join patience
+            let delivered := (← session.output.get).extract before.size
+            let waiting ← session.sceneLines
+            session.pressKeys acceptKeys
+            let (echo, views) ← session.scene
+            return before == #["run rest-and-ask: ok", "job 1 nap: started"] &&
+                joined == .settled &&
+                delivered == #["job 1 nap: ok"] &&
+                (waiting[0]?.map (focuses · 1)) == some true &&
+                waiting.extract 1 ==
+                  #[viewLine "napped" 6, statusOf (modified := true), minibufferLine "Ada" 3,
+                    promptStatus] &&
+                echo == "hello Ada".quote &&
+                views == #[viewLine "nappedAda" 9])
+          promptCompiled },
+    { name :=
+        "the continuation is looked up when the answer arrives: config registers it as a command that is given its call, a prompt is asked for, config is reloaded with another command of the name, and the accept key runs the new one with the answer; asked for again and reloaded with a config that registers none, the accept key leaves no such command in the echo area, by the continuation's name, and the prompt closed"
+      run :=
+        withHost context [("10-greet.lean", greetWithChunk "one")]
+          (fun session => do
+            session.ask [.reload]
+            session.ask [.run "ask"]
+            session.write "10-greet.lean" (greetWithChunk "two")
+            session.ask [.reload]
+            let asking ← session.scene
+            session.pressKeys acceptKeys
+            let renamed ← session.scene
+            session.ask [.run "ask"]
+            session.write "10-greet.lean" askOnlyChunk
+            session.ask [.reload]
+            session.pressKeys acceptKeys
+            let dropped ← session.scene
+            return asking == ("".quote, #[viewLine "" 0, minibufferLine "Ada" 3]) &&
+                renamed == ("two Ada".quote, #[viewLine "" 0]) &&
+                dropped == ("greet: no such command".quote, #[viewLine "" 0]))
+          minibufferCompiled },
+    { name :=
+        "the accept key and a key bound to another command, sent one after the other with no wait between: the continuation's command ran, since the window holds what it inserted, and it ran before the second key was handled, since the echo area is the other command's"
+      run :=
+        withHost context []
+          (fun session => do
+            session.ask [.run "ask"]
+            for key in acceptKeys do
+              session.host.press key
+            session.type "C-c o"
+            session.ask []
+            return (← session.scene) == ("other".quote, #[viewLine "Ada" 3]))
+          promptCompiled },
+    { name :=
+        "the answer's command is a step of its own, looked up after the accepting command's write was written back: with a store, a command over it that accepts the open prompt and adds one, and a continuation over it that adds one, the store holds two after the accept"
+      run :=
+        withHost context [("10-bump.lean", bumpAcceptChunk)]
+          (fun session => do
+            session.ask [.reload]
+            session.ask [.run "ask", .run "bump-accept"]
+            let shown ← session.shown
+            return shown.contains "store counter v1: 2" &&
+                (← session.scene) == ("".quote, #[viewLine "" 0]))
+          minibufferCompiled }]
+
 /-- A chunk whose `setup` registers two jobs that each load a file and whose
 handler makes a text of what was loaded: `open`, of `note.txt` in
 `directory`, and `missing`, of a file that is not there. A load that is
@@ -2495,6 +2747,7 @@ def checks (context : Context) : List Check :=
     dispatchChecks context ++
     hostLoopChecks context ++
     modeChecks context ++
+    promptChecks context ++
     fileChecks context
 
 /-- Runs `checks` and returns the names of those that failed. A check that

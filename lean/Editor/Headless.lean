@@ -68,6 +68,17 @@ as before, so reload and job completion work as they did.
   flag, has its state requests answered, is rolled back if it does not run
   to its end, and is followed by a scene. What the step handed back is
   taken in the same way for all three (`Running.took`).
+- **A prompt's answer is run before the next event.** A step whose command
+  accepted a prompt hands back the continuation with the answer
+  (`Loop.Stepped.answered`). When the step is taken in, the host runs each
+  as a step of its own (`Loop.invoke`), with keys made anew
+  (`Running.keys`), and takes that step in the same way, before it pulls
+  another event from the queue: so a key sent after the accept key is
+  handled after the answer's command, and the answer's command is looked
+  up in the registry as it is then, over the stores as the accepting
+  command's write left them. That is why the host runs it and not the
+  accepting command's step: the host holds the cells of the stores
+  (`Editor/Loop.lean`, "Prompts").
 - **The jobs a command asked for are started** when its step is taken in:
   each for the owner that registered it, printed
   `job <id> <name>: started`.
@@ -229,7 +240,12 @@ A command a key runs prints nothing: what became of it is in the echo area
 of the scene, `<name>: no such command`, `<name>: refused: <error>` or
 `<name>: interrupted`, and a slow one is on the log. A command run by name
 and a job's command are printed and are in the echo area too, a job's under
-its label, `job <id> <name>`.
+its label, `job <id> <name>`. The command that receives a prompt's answer
+prints nothing either, whatever accepted the prompt: what became of it is
+in the echo area, under the continuation's name. While a prompt is open
+`scene` prints the minibuffer's view after the windows', with the input
+typed so far as its text and the prompt text as its status line, in the
+face `minibuffer.prompt`.
 
 `commands`, `text` and `store` answer `show`, which lists commands, the
 compiled ones among them, not jobs. The loop keeps
@@ -300,7 +316,13 @@ stopped by the interrupt key; a key's command starts a job, whose result
 comes back as a command after the keys sent meanwhile; and a job's command
 that loops is stopped by the interrupt key; and a host is handed a compiled
 job, which a compiled command starts before any config is loaded and a
-reload does not cancel. `ConfigTest.fileChecks` are hosts over the
+reload does not cancel. `ConfigTest.promptChecks` are hosts handed the
+minibuffer's commands and its mode: a command asks for a prompt, a commit
+is typed into the minibuffer, the accept key runs the answer's command
+before the next key and after the accepting command's write to a store,
+the cancel key runs nothing, a job's result is delivered while the prompt
+is open, and the continuation is looked up across a reload.
+`ConfigTest.fileChecks` are hosts over the
 library's file service, handed the file commands and their jobs as compiled
 code registers them, on real files in temporary directories.
 The `ffi-test` task runs the real executable
@@ -652,8 +674,21 @@ def describeEnding : Loop.Ending → String
 frame, what the step has to log is logged, what its command asked to be
 written is written back to the stores, and each job its command asked for
 is started, for the owner that registered it, and printed,
-`job <id> <name>: started`. A step that said stop ends the loop. -/
-def took (collaborators : Collaborators σ scheme) (running : Running σ scheme)
+`job <id> <name>: started`. A step that said stop ends the loop.
+
+Then each invocation the step answered, the continuation of a prompt its
+command accepted, is run as a step of its own (`Loop.invoke`), with keys
+made anew, so after the write above was written back, and that step is
+taken in the same way, before the host pulls another event
+(`Editor/Loop.lean`, "Prompts"). An answer's command prints nothing, as a
+key's command prints nothing: what became of it is in the echo area. One
+whose step is refused is printed (`attempt`), and the frame stays as it
+was.
+
+It has no termination proof: an answer's command can ask and accept again,
+for ever, which is runaway code, and the interrupt key stops it at its next
+request of the library. -/
+partial def took (collaborators : Collaborators σ scheme) (running : Running σ scheme)
     (stepped : Loop.Stepped scheme) : IO (Running σ scheme) := do
   for entry in stepped.log do
     collaborators.log entry
@@ -668,6 +703,13 @@ def took (collaborators : Collaborators σ scheme) (running : Running σ scheme)
     -- asked, from the registry as it is in this event: one is found.
     if let some id := id? then
       collaborators.emit s!"job {id} {start.name}: started"
+  for invocation in stepped.answered do
+    let some frame := running.frame | break
+    let (answered, attempted) ←
+      running.attempt collaborators (frame.invoke (running.keys collaborators) invocation)
+    running := attempted
+    if let some answered := answered then
+      running ← running.took collaborators answered
   return running
 
 /-- Handles an event from the window input: prints a key press with its
