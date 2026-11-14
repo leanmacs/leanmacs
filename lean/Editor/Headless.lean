@@ -84,6 +84,13 @@ as before, so reload and job completion work as they did.
 - **The jobs a command asked for are started** when its step is taken in:
   each for the owner that registered it, printed
   `job <id> <name>: started`.
+- **A reload a command asked for is asked of the config session** when its
+  step is taken in (`Loop.Stepped.reload`, `reloadConfig`,
+  `Editor/Api.lean`): the host feeds the reload reducer a request, which is
+  what its driver's `reload` does, so the reducer's rules hold unchanged:
+  one job at a time, and a request made while one runs makes one
+  follow-up. The reload's report is printed as the driver's is. Nothing
+  puts it in the echo area.
 - **A window event goes to the loop** (`Running.input`): `Loop.take`, run
   against the library with the recorder as the display, handles it and
   publishes a scene. A key press is still printed with its identity, as the
@@ -99,10 +106,11 @@ as before, so reload and job completion work as they did.
   name. So a reload's modes, bindings and commands hold from the next key.
   What a command over a store asked to be written is written back to the
   stores.
-- **Compiled commands, jobs, bindings and modes are registered when the
-  loop starts** (`compiled`), for the owner `compiled`, before any config:
-  they are what the host's collaborators hand it. A reload replaces
-  config's commands, jobs, bindings and modes and never these, so they run
+- **Compiled commands, jobs, bindings, modes and ex bindings are registered
+  when the loop starts** (`compiled`), for the owner `compiled`, before any
+  config: they are what the host's collaborators hand it. A reload replaces
+  config's commands, jobs, bindings, modes and ex bindings and never these,
+  so they run
   when config fails to load, and config's command of a compiled command's
   name runs in its place until a reload drops it. A compiled job is
   started by a command, by its name, as config's is, for the owner
@@ -336,6 +344,10 @@ is typed into the minibuffer, the accept key runs the answer's command
 before the next key and after the accepting command's write to a store,
 the cancel key runs nothing, a job's result is delivered while the prompt
 is open, and the continuation is looked up across a reload.
+`ConfigTest.exChecks` are hosts handed the ex line's commands and the ex
+names that ship: the ex line `reload` reloads the config, an ex name config
+binds runs config's command until a reload drops the binding, and a name
+nobody bound is said in the echo area.
 `ConfigTest.fileChecks` are hosts over the
 library's file service, handed the file commands and their jobs as compiled
 code registers them, on real files in temporary directories.
@@ -415,6 +427,9 @@ structure Collaborators (σ : Type) (scheme : InputScheme) where
   /-- The compiled modes: registered for the owner `compiled` when the loop
   starts, before any config. -/
   modes : Array Mode := #[]
+  /-- The compiled ex bindings (`Editor/Ex/Line.lean`): registered for the
+  owner `compiled` when the loop starts, before any config. -/
+  ex : Array Ex.Binding := #[]
   /-- Where a log entry goes: a command that took longer than `slowAfter`.
   The editor thread calls it. It is not `emit`: the output is what a test
   compares, and a log entry depends on how long the machine took. -/
@@ -660,7 +675,8 @@ view's buffer, then every owner's key bindings), which the loop applies to
 its own state; the lookup an invocation uses (`Config.State.command?`);
 the host's threshold for a slow command; and what a command's state
 requests are told of the registry (`Config.Registry.registered`: the modes
-whose on-enter actions a major mode runs). It is made for each window
+whose on-enter actions a major mode runs, the jobs' names and the ex
+bindings). It is made for each window
 event, so a reload changes it between two events. -/
 def keys (collaborators : Collaborators σ scheme) (running : Running σ scheme) : Loop.Keys scheme :=
   { maps := running.config.registry.activeMaps scheme, command? := running.config.command?
@@ -691,7 +707,9 @@ def describeEnding : Loop.Ending → String
 frame, what the step has to log is logged, what its command asked to be
 written is written back to the stores, and each job its command asked for
 is started, for the owner that registered it, and printed,
-`job <id> <name>: started`. A step that said stop ends the loop.
+`job <id> <name>: started`. A step whose command asked for the config to be
+reloaded (`Loop.Stepped.reload`) feeds the reload reducer a request, as the
+driver's `reload` does. A step that said stop ends the loop.
 
 Then each invocation the step answered, the continuation of a prompt its
 command accepted, is run as a step of its own (`Loop.invoke`), with keys
@@ -720,6 +738,9 @@ partial def took (collaborators : Collaborators σ scheme) (running : Running σ
     -- asked, from the registry as it is in this event: one is found.
     if let some id := id? then
       collaborators.emit s!"job {id} {start.name}: started"
+  if stepped.reload then
+    -- What the driver's `reload` request does: one job at a time.
+    running ← running.reduce collaborators .requested
   for invocation in stepped.answered do
     let some frame := running.frame | break
     let (answered, attempted) ←
@@ -949,14 +970,15 @@ def cells : Display.Cells :=
   { advance := 8, lineHeight := 16 }
 
 /-- The registry a host starts with: what compiled code hands it, its
-commands, jobs, key bindings and modes, for the owner `compiled`, before any
-config. -/
+commands, jobs, key bindings, modes and ex bindings, for the owner
+`compiled`, before any config. -/
 def compiled {σ : Type} {scheme : InputScheme} (collaborators : Collaborators σ scheme) :
     Config.Registry :=
-  (((({} : Config.Registry).replace .compiled collaborators.commands).replaceJobs .compiled
-            collaborators.compiledJobs).replaceBindings
-        .compiled collaborators.bindings).replaceModes
-    .compiled collaborators.modes
+  ((((({} : Config.Registry).replace .compiled collaborators.commands).replaceJobs .compiled
+                collaborators.compiledJobs).replaceBindings
+            .compiled collaborators.bindings).replaceModes
+        .compiled collaborators.modes).replaceEx
+    .compiled collaborators.ex
 
 /-- What the editor thread holds as its loop starts: the compiled registry
 (`compiled`), no texts, a recorder in `cells` over the table of snapshots
