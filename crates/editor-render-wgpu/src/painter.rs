@@ -64,11 +64,23 @@
 //!
 //! # What the scale changes
 //!
-//! A frame is in physical pixels, so nothing is multiplied by the scale.
-//! What the painter itself sizes is as many pixels thick as the scale,
-//! rounded, and never less than one: an underline, a strike-through, a
-//! bar cursor, an underline cursor and the edge of a hollow cursor. Rows
-//! built at one scale are built again at another.
+//! A frame is in physical pixels: layout has already multiplied a theme's
+//! lengths by the scale it was told (`editor_layout::face`, "Units"), so
+//! the painter multiplies nothing in a frame by the scale, and nothing is
+//! scaled twice. The scale of the target changes two things, both the
+//! painter's own:
+//!
+//! - what the painter itself sizes is as many pixels thick as the scale,
+//!   rounded, and never less than one: an underline, a strike-through, a
+//!   bar cursor, an underline cursor and the edge of a hollow cursor;
+//! - the kind of mask glyph images are asked in ([`stripes`]), which
+//!   [`Painter::masks`] says of the last paint.
+//!
+//! Rows built at one scale are built again at another. A frame laid out
+//! at one scale may be painted once for a target at another, between a
+//! window saying its new scale and the frame laid out for it arriving:
+//! its glyphs are the size they were laid out at, and its lines and masks
+//! are the target's.
 //!
 //! # What is not tuned
 //!
@@ -90,7 +102,7 @@ use crate::atlas::Atlas;
 use crate::blend::stripes;
 use crate::glyphs::{GlyphCache, GlyphImage, GlyphKey, GlyphRequest, Kind, Rasterize, bin_of};
 use crate::quads::{Clip, Quad, QuadKind, pixel};
-use crate::{Antialiasing, Settings, SubpixelOrder};
+use crate::{Antialiasing, Masks, Settings, SubpixelOrder};
 
 /// How many pixels thick a line the painter sizes is at `scale`: the
 /// scale rounded, and never less than one.
@@ -164,6 +176,8 @@ pub struct Painter<Z> {
     rows: RowCache<RowQuads>,
     /// The generation of the frame last painted.
     generation: Option<u64>,
+    /// The kind of mask the last paint asked its glyph images in.
+    masks: Option<Masks>,
     /// The glyphs of the frame last painted that name no font of it.
     unknown: u64,
     /// The quads of the frame last painted, in drawing order.
@@ -202,6 +216,7 @@ impl<Z: Rasterize> Painter<Z> {
             glyphs: GlyphCache::new(page_size, settings.atlas_budget),
             rows: RowCache::new(),
             generation: None,
+            masks: None,
             unknown: 0,
             quads: Vec::new(),
             last: None,
@@ -239,6 +254,7 @@ impl<Z: Rasterize> Painter<Z> {
         // built again at another scale: a kept row never holds the other
         // kind.
         let order = stripes(self.antialiasing, target.scale, self.per_channel);
+        self.masks = Some(order.map_or(Masks::Plain, Masks::Subpixel));
         let mut ordered = Ordered {
             inner: rasterizer,
             order,
@@ -311,6 +327,13 @@ impl<Z: Rasterize> Painter<Z> {
     /// The quads of the frame last painted, in drawing order.
     pub fn quads(&self) -> &[Quad] {
         &self.quads
+    }
+
+    /// The kind of mask the last paint asked its glyph images in; none
+    /// before a first paint. It is what that paint did, kept as it did
+    /// it, whether or not its draw was then presented.
+    pub fn masks(&self) -> Option<Masks> {
+        self.masks
     }
 
     /// The pages the glyph quads read.

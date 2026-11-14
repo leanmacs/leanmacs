@@ -1,10 +1,14 @@
-//! The headless adapter at two scales: what the picture's size is, and
-//! what is thicker.
+//! The headless adapter at two scales: what the picture's size is, what
+//! is thicker, and which masks it says it asked for.
 //!
-//! A frame is in physical pixels, so one frame is drawn at both scales:
-//! what changes is the target's scale, and with it the thickness of the
-//! lines the renderer itself sizes. The frames are of layout's fake
-//! shaper, whose glyphs have no image: the lines are what is looked at.
+//! A frame is in physical pixels: layout has already multiplied a theme's
+//! lengths by the scale it was laid out for, and the renderer multiplies
+//! nothing in it. So one frame is drawn here at both scales, to show what
+//! the target's scale alone changes: the thickness of the lines the
+//! renderer itself sizes, and the kind of mask. (A window's frames are
+//! laid out again at a new scale, and this is what would be seen if one
+//! were not.) The frames are of layout's fake shaper, whose glyphs have no
+//! image: the lines are what is looked at.
 
 use std::collections::BTreeSet;
 use std::sync::Arc;
@@ -15,7 +19,7 @@ use editor_layout::frame::Frame;
 use editor_layout::scene::{Cursor, CursorShape, Decoration, Rect, Scene};
 use editor_layout::shaper::fake::CellShaper;
 use editor_render::port::{DrawRequest, Renderer, Target};
-use editor_render_wgpu::{HeadlessRenderer, Image, Settings};
+use editor_render_wgpu::{HeadlessRenderer, Image, Masks, Settings, SubpixelOrder};
 
 /// The colour of the fixture's underline.
 const RED: [u8; 4] = [0xff, 0, 0, 0xff];
@@ -157,6 +161,29 @@ fn a_target_of_no_size_is_presented_as_a_picture_of_no_size() {
     });
     assert!(drawn.presented);
     assert_eq!(renderer.image(), &self::drawn(120, 48, 1.0));
+}
+
+#[test]
+fn the_headless_renderer_says_the_masks_of_its_last_draw() {
+    let mut renderer = HeadlessRenderer::new(Settings::default());
+    assert_eq!(renderer.masks(), None);
+    let mut draw_at = |scale: f32| {
+        let target = Target {
+            width: 120,
+            height: 48,
+            scale,
+        };
+        renderer.draw(&DrawRequest {
+            frame: &fixture(),
+            target,
+        });
+        renderer.masks()
+    };
+    // As the settings come, the kind follows the target's scale. Which
+    // scale it changes at is the renderer's rule, and its own tests'.
+    assert_eq!(draw_at(1.0), Some(Masks::Subpixel(SubpixelOrder::Rgb)));
+    assert_eq!(draw_at(2.0), Some(Masks::Plain));
+    assert_eq!(draw_at(1.0), Some(Masks::Subpixel(SubpixelOrder::Rgb)));
 }
 
 #[test]

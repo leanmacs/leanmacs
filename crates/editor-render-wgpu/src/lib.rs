@@ -104,6 +104,12 @@ impl HeadlessRenderer {
     pub fn image(&self) -> &Image {
         &self.image
     }
+
+    /// The kind of mask the last draw asked its glyph images in; none
+    /// before a first draw ([`Masks`]).
+    pub fn masks(&self) -> Option<Masks> {
+        self.painter.masks()
+    }
 }
 
 /// Why there is no GPU renderer: this machine has no adapter wgpu can
@@ -279,6 +285,12 @@ impl WgpuRenderer {
         self.device.per_channel()
     }
 
+    /// The kind of mask the last draw asked its glyph images in, whether
+    /// or not it was presented; none before a first draw ([`Masks`]).
+    pub fn masks(&self) -> Option<Masks> {
+        self.painter.masks()
+    }
+
     /// Why the last draw was not presented, when it was not: what wgpu
     /// said in refusing it, or that the window's surface gave no texture.
     /// That draw answered `presented: false`. It is also why the last
@@ -384,6 +396,24 @@ impl Default for Settings {
             atlas_budget: DEFAULT_ATLAS_BUDGET,
         }
     }
+}
+
+/// The kind of mask a draw asked its glyph images in: what was done, as
+/// the renderer that did it says ([`HeadlessRenderer::masks`],
+/// [`WgpuRenderer::masks`]).
+///
+/// It is the answer for one draw of what [`Antialiasing`] leaves to the
+/// display and to the device: a setting of [`Antialiasing::Auto`] comes to
+/// one kind on a target at one scale and to the other at another, and a
+/// device that cannot blend by a coverage for each channel is given plain
+/// masks whatever the setting. A glyph whose font has an image of its own
+/// (a colour glyph) is drawn from that image under either.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Masks {
+    /// One coverage a pixel.
+    Plain,
+    /// A coverage for each colour stripe, in this order.
+    Subpixel(SubpixelOrder),
 }
 
 /// The order of the colour stripes of a display's pixels, from left to

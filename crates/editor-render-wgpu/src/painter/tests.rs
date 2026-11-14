@@ -22,7 +22,7 @@ use super::{Painter, thickness};
 use crate::glyphs::fake::{FakeRasterizer, font};
 use crate::glyphs::{GlyphKey, bin_of};
 use crate::quads::{Quad, QuadKind};
-use crate::{Antialiasing, Settings, SubpixelOrder};
+use crate::{Antialiasing, Masks, Settings, SubpixelOrder};
 
 /// The page size of the painters here.
 const PAGE: u32 = 64;
@@ -1206,4 +1206,51 @@ fn the_kind_of_mask_asked_for_follows_the_scale_and_the_device() {
     );
     plain.paint(&shown, target(1.0));
     assert_eq!(kinds(&plain), vec![QuadKind::Mask; 2]);
+}
+
+#[test]
+fn a_painter_says_which_masks_its_last_paint_asked_for() {
+    let shown = frame_of(vec![plain_row(0.0, &[1, 2], 1)]);
+    let rgb = Some(Masks::Subpixel(SubpixelOrder::Rgb));
+    // Left to the display, on a device that blends by a coverage for each
+    // channel.
+    let mut painter = painter_with(Antialiasing::Auto);
+    // Nothing painted, nothing to say.
+    assert_eq!(painter.masks(), None);
+    // Subpixel masks, red first, at scale 1; plain ones at scale 2; and
+    // it is the last paint's that is said.
+    painter.paint(&shown, target(1.0));
+    assert_eq!(painter.masks(), rgb);
+    painter.paint(&shown, target(2.0));
+    assert_eq!(painter.masks(), Some(Masks::Plain));
+    painter.paint(&shown, target(1.0));
+    assert_eq!(painter.masks(), rgb);
+    // A paint whose draw the device then refuses asked for its masks all
+    // the same.
+    painter.paint(&shown, target(2.0));
+    painter.refused();
+    assert_eq!(painter.masks(), Some(Masks::Plain));
+    // The order a setting names, at any scale.
+    let bgr = SubpixelOrder::Bgr;
+    let mut named = painter_with(Antialiasing::Subpixel(bgr));
+    for scale in [1.0, 2.0] {
+        named.paint(&shown, target(scale));
+        assert_eq!(named.masks(), Some(Masks::Subpixel(bgr)), "at {scale}");
+    }
+    // Plain masks where a setting says so, and on a device that cannot
+    // blend by a coverage for each channel whatever the setting says.
+    let mut grey = painter_with(Antialiasing::Grayscale);
+    let stripes = Antialiasing::Subpixel(SubpixelOrder::Rgb);
+    let mut cannot = Painter::new(
+        FakeRasterizer::new(),
+        &settings(stripes, u64::MAX),
+        false,
+        PAGE,
+    );
+    for scale in [1.0, 2.0] {
+        grey.paint(&shown, target(scale));
+        assert_eq!(grey.masks(), Some(Masks::Plain), "at {scale}");
+        cannot.paint(&shown, target(scale));
+        assert_eq!(cannot.masks(), Some(Masks::Plain), "at {scale}");
+    }
 }
