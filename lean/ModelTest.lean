@@ -5945,7 +5945,22 @@ def schemeChecks : List Check :=
       run :=
         let (pending, _) := fed ⟨0⟩ "C-x"
         let told : TestScheme.State := TestScheme.scheme.openMinibuffer ⟨1⟩ pending
-        pure (decide (told = pending) && TestScheme.scheme.pending told == keys "C-x") }]
+        pure (decide (told = pending) && TestScheme.scheme.pending told == keys "C-x") },
+    { name :=
+        "a scheme that says nothing of a view reports the default: a bar in the face cursor, no status field, an exclusive selection, no selecting, no insert session, and a view that takes text; the test scheme reports it of every view, before a key, while keys are pending and after a sequence completes"
+      run :=
+        let plain : InputScheme.Report := {}
+        let reported (text : String) (view : ViewId) : InputScheme.Report :=
+          TestScheme.scheme.report (fed ⟨0⟩ text).1 view
+        pure
+          (plain ==
+              { cursor := { shape := .bar, face := ⟨"cursor"⟩ }, status := #[], shape := .exclusive
+                selecting := false, session := false, takesText := true } &&
+            TestScheme.scheme.report schemeInit ⟨0⟩ == plain &&
+            reported "C-x" ⟨0⟩ == plain &&
+            reported "C-x" ⟨1⟩ == plain &&
+            reported "C-x C-s" ⟨0⟩ == plain &&
+            reported "a" ⟨0⟩ == plain) }]
 
 /-- A press of `key` with no text, as a window reports one. -/
 def press (key : Key) : Event :=

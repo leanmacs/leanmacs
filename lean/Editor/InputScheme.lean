@@ -58,6 +58,27 @@ view. It is a notice for the minibuffer alone and not a general one with a
 kind of view: there is one kind of view a scheme must treat apart today.
 The notice resets nothing the scheme keeps of a sequence begun.
 
+## What a scheme reports of a view
+
+A scheme says what it knows of a view in a state (`report`, an
+`InputScheme.Report`), because nothing else can: its state is of its own
+type, which the core does not know
+(`docs/design/keymaps-and-modes.md`, "What a scheme reports of a view").
+
+| Field | Default | Who reads it |
+|---|---|---|
+| `cursor` | A bar in the face `cursor` | The scene: how the view's cursors are drawn |
+| `status` | None | The scene: the view's status line begins with these fields |
+| `shape` | `exclusive` | Whoever places the view's selection: the shape it has |
+| `selecting` | `false` | A command: a motion moves the head and keeps the anchor |
+| `session` | `false` | Whoever sets the boundaries of the history: the view is in an insert session |
+| `takesText` | `true` | Whoever handles a committed text: it is inserted in the view |
+
+The defaults are what a scheme that says nothing of a view reports, so a
+scheme with no states of its own, as the test scheme is, leaves the field
+out. The report is data: a new fact every scheme can say of a view is a
+field of it, with a default.
+
 ## What a scheme reports for modes
 
 A mode names roles and suffixes, never keys (`Editor/Role.lean`,
@@ -99,6 +120,7 @@ the test scheme, published for other modules' tests.
 |---|---|
 | A new scheme | A value of `InputScheme` in a module of its own, which runs the contract check |
 | Something every scheme must report to the core | A field of `InputScheme`, and a property of the contract |
+| Something a scheme says of one view, for the scene, the loop or a command | A field of `InputScheme.Report`, with the default a scheme that says nothing reports |
 | Something one scheme remembers between keys | That scheme's `State`; nothing here |
 | A fact about a key that more than one scheme reads | A function of `Key` here, as `Key.printed?` is |
 
@@ -106,6 +128,27 @@ Pinned by `ModelTest.schemeChecks`, on the test scheme.
 -/
 
 namespace Editor
+
+/-- What an input scheme says of one view ("What a scheme reports of a
+view", in the module docs). The defaults are what a scheme that says
+nothing of a view reports. -/
+structure InputScheme.Report where
+  /-- How the view's cursors are drawn. -/
+  cursor : Cursor := { shape := .bar, face := ⟨"cursor"⟩ }
+  /-- The scheme's fields of the view's status line, which come before the
+  buffer's. -/
+  status : Array StatusField := #[]
+  /-- The shape the view's selection has. -/
+  shape : Shape := .exclusive
+  /-- Whether a motion in the view moves the selection's head and keeps its
+  anchor. -/
+  selecting : Bool := false
+  /-- Whether the view is in an insert session: what is edited in its
+  buffer meanwhile is one step of the history. -/
+  session : Bool := false
+  /-- Whether a committed text is inserted in the view. -/
+  takesText : Bool := true
+  deriving DecidableEq, Repr
 
 /-- An input scheme: a state machine over keys, with its own state and
 binding types. -/
@@ -149,6 +192,11 @@ structure InputScheme where
   scheme keeps for a view that typed text goes into. A scheme that treats
   no view apart leaves it as it was. -/
   openMinibuffer : ViewId → State → State := fun _ state => state
+  /-- What the scheme says of a view in a state: how its cursor is drawn,
+  its fields of the status line, the shape of its selection, and what the
+  loop and a command act on. A scheme that says nothing of a view reports
+  the default. -/
+  report : State → ViewId → InputScheme.Report := fun _ _ => {}
   /-- The scheme's hand-tuned keys: each a mode's name, a key sequence as
   chords, and its binding, consulted with that mode ahead of its roles and
   suffixes. -/
