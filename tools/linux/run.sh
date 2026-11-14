@@ -179,9 +179,10 @@ inside_clipboard_across() {
 # software Vulkan driver, and xdotool giving it input once it says it is
 # ready: a key, a named key, a key with modifiers, a press, a drag, a
 # release, a turn of the wheel and a resize. Fails if the example fails
-# (no frame presented, a picture that is not the frame's, a frame drawn
-# that nothing asked for, no input), or if any of those inputs did not
-# come off the queue as the port documents it.
+# (a frame not laid out at the window's scale, no frame presented, a
+# picture that is not the frame's, a frame drawn that nothing asked for,
+# no input), if no frame said its 14 points are 14 pixels, or if any of
+# those inputs did not come off the queue as the port documents it.
 #
 # `--require-picture`: every frame's picture must have been read back from
 # the surface and compared, or the example fails. Without it the example
@@ -217,6 +218,12 @@ inside_drawing_window() {
   wait "$pid" || status=$?
   cat "$log"
   [ "$status" -eq 0 ] || die "the window that draws exited $status"
+  # The display is at scale 1 and the fixture's text is 14 points: a frame
+  # laid out at the scale the window said has glyphs of 14 pixels. The
+  # example fails by itself on any other size; this is that it said so of
+  # a frame at all.
+  grep -qF -- ": 14 points are 14 pixels" "$log" ||
+    die "no frame was laid out at the window's scale: no line says 14 points are 14 pixels"
   # Each input as the port documents it, read back from its event. The key
   # with modifiers is matched up to its text, which the X server decides.
   for wanted in \

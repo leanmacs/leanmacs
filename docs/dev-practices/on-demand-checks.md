@@ -152,10 +152,12 @@ and it prints one line.
 `crates/editor-ffi` (`examples/window.rs`). The real window is run onto a
 queue with a render session as its drawer, and the session's renderer is
 the wgpu renderer on the window's surface, on this machine's GPU. A second
-thread stands in for the editor: when it learns the window's size it lays
-out a fixture frame with the real shaper over the fixture fonts and
-publishes it. The window stays for 20 seconds once it is ready, or until
-it is closed.
+thread stands in for the editor: when it learns the window's size and
+scale it tells its layout the scale, lays out a fixture frame with the
+real shaper over the fixture fonts, and publishes it. The fixture's text
+is 14 points, so it is 14 physical pixels on a display at scale 1 and 28
+at scale 2. The window stays for 20 seconds once it is ready, or until it
+is closed.
 
 The steps:
 
@@ -165,7 +167,14 @@ The steps:
 3. A second window opens. Look at it: two rows of text on a light
    background, `fine שלום 日` with part of it selected and `the window
    draws this`, and a dark status row at the bottom. The text is legible
-   and upright.
+   and upright. Expected in the terminal as it opens, after `input:
+   resized <w> by <h> at scale <s>`: `window: frame 1 is laid out for <w>
+   by <h> at scale <s>: 14 points are <p> pixels`, with `<p>` 14 times
+   `<s>`: 28 on a display at scale 2. The same line is printed for each
+   frame published that is not the one before it, so again after a
+   resize. Any other `<p>` fails the run (`window: FAILED: frame <n> is
+   laid out for a window at scale <s>, where 14 points are <e> pixels,
+   and its glyphs are drawn at <p> pixels`).
 4. Leave it alone until the terminal prints `window: ready for input`.
 5. In the window: press `a`, Escape and Control-A; click, drag and scroll;
    resize it. Each is printed on a line beginning `input:`, as it read
@@ -200,8 +209,14 @@ The steps:
      `frame <n> was published`, with `again` when it is equal to the one
      before; `draw <n> began, of frame <f> on <w> by <h> at scale <s>,
      for <a frame not yet shown, a size not yet drawn at, damage>`;
-     `draw <n> ended, presented` or `not presented`; `the idle second
-     began` and `ended`. No draw may say `for nothing that was asked`;
+     `draw <n> ended, presented, its glyphs as <plain masks, or subpixel
+     masks, red first>` or `draw <n> ended, not presented`; `the idle
+     second began` and `ended`. No draw may say `for nothing that was
+     asked`. The masks are what the renderer says it drew that frame's
+     glyphs with: as the settings come, plain ones on a display at scale
+     2 and up and subpixel ones below it, on an adapter that blends by a
+     coverage for each channel, and plain ones always on one that does
+     not;
    - for each frame presented, `window: the journal's frame <n> answers
      something asked <t> ms after the window opened: its draw began at
      <t> ms and it was presented at <t> ms`: the render loop's own
@@ -231,9 +246,11 @@ hand: `cargo run --locked --package editor-ffi --example window --
 | `--seconds <n>` | Closes the window that many seconds after it is ready, if nobody has (20 by default). |
 | `--require-picture` | Fails the run unless every frame's picture was read back and compared: a surface that does not let its texture be copied from is then a failure too. `linux-window` gives it; this task does not, since a desktop's surface may be such a one. |
 
-What the example makes of what it saw (how these options are read, and
-which findings of a picture fail which run) is tested in the gate, by the
-example's own unit tests, which open no window.
+What the example makes of what it saw (how these options are read, which
+findings of a picture fail which run, which sizes a frame's glyphs are
+drawn at and which of them fail, and what the timeline says of a draw's
+masks) is tested in the gate, by the example's own unit tests, which open
+no window.
 
 What to write down here when it has been run on a desktop: the machine,
 its GPU and the back end; the lines of step 6; and, on macOS, what the
@@ -406,12 +423,18 @@ fails:
    driver, llvmpipe, and with `--require-picture`, which that task does
    not give. Once it says it is ready, xdotool gives it `a`, Escape,
    Control-Shift-A, a press, a drag, a release, a turn of the wheel and
-   a resize. The part fails if the example fails (no frame presented; a
-   frame whose picture was not read back from the surface and compared,
-   whatever the reason; a picture more than 3 of 255 from the headless
-   renderer's; a frame drawn that nothing asked for; no input), and if
-   any of those eight inputs did not come off the queue as the port
-   documents it;
+   a resize. The part fails if the example fails (a frame whose glyphs
+   are not drawn at 14 points times the window's scale; no frame
+   presented; a frame whose picture was not read back from the surface
+   and compared, whatever the reason; a picture more than 3 of 255 from
+   the headless renderer's; a frame drawn that nothing asked for; no
+   input), if any of those eight inputs did not come off the queue as the
+   port documents it, and if no frame printed `14 points are 14 pixels`:
+   Xvfb's display is at scale 1, so that line is the window's scale
+   reaching the shaper through layout, on a real window. The timeline
+   there ends each presented draw `its glyphs as subpixel masks, red
+   first`: scale 1, on llvmpipe, which blends by a coverage for each
+   channel;
 5. the clipboard adapter's example, as `clipboard-contract` runs it: that
    display's clipboard held to the clipboard port's contract, in one
    process;
@@ -479,6 +502,17 @@ shown and damaged before the first frame was published, so the first
 draw was for both; the resize drew the frame shown on the new size and
 then the frame laid out for it; and no draw was refused. It has not been
 run on x86_64, and nothing here runs a Wayland compositor.
+
+It was run again that day once the fixture's text was 14 points and the
+example told its layout the window's scale: all six parts passed. Part 4
+printed `window: frame 1 is laid out for 800 by 600 at scale 1: 14 points
+are 14 pixels` and, after the resize, `window: frame 2 is laid out for 300
+by 120 at scale 1: 14 points are 14 pixels`; three frames were presented
+and each was read back and differed from the headless renderer's picture
+by 1 of 255 at the worst; each draw ended `presented, its glyphs as
+subpixel masks, red first`; and no frame was drawn in the idle second.
+The container has one display, at scale 1: no other scale and no change
+of scale is seen there.
 
 ## The clipboard, on demand
 

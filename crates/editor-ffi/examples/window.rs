@@ -14,10 +14,12 @@
 //! session's renderer made on the window (`WgpuRenderer::on_window`). A
 //! second thread stands in for the editor: it pulls the queue, prints each
 //! input as it reads back from its event, and publishes a frame when it
-//! learns the window's size. The frame is a scene built with layout's
-//! builders and laid out by the real shaper over the fixture fonts of
-//! `tests/fonts`, compiled in: no file is read and no font of the machine
-//! is used.
+//! learns the window's size and scale. The frame is a scene built with
+//! layout's builders and laid out by the real shaper over the fixture
+//! fonts of `tests/fonts`, compiled in: no file is read and no font of the
+//! machine is used. Its text is 14 points, and that thread tells its
+//! layout the scale the window says before it lays out, so the text is 14
+//! physical pixels on a window at scale 1 and 28 on one at scale 2.
 //!
 //! ```text
 //! window [--seconds <n>] [--require-picture]
@@ -27,7 +29,17 @@
 //! --require-picture    fail unless every frame's picture was compared
 //! ```
 //!
-//! What it checks, and its exit status is 0 only when all four hold:
+//! What it checks, and its exit status is 0 only when all of it holds.
+//! Four checks are numbered, and one more is made of every frame as it is
+//! published:
+//!
+//! - **Each frame is laid out at the window's scale.** For each frame
+//!   published that is not the one before it, it prints `window: frame <n>
+//!   is laid out for <w> by <h> at scale <s>: 14 points are <p> pixels`:
+//!   the size and scale are the ones the window said, and `<p>` is the
+//!   size the frame's glyphs are drawn at, read from the fonts they name.
+//!   The run fails unless `<p>` is 14 times `<s>`, to within a 64th of a
+//!   pixel ([`laid_out`]).
 //!
 //! 1. **A frame was presented**, with an entry in the frame journal.
 //! 2. **The picture is the frame's.** Each frame presented is read back
@@ -65,7 +77,10 @@
 //! What asked for a draw and what was drawn are entered in one ledger
 //! ([`Ledger`]), in the order they happened and stamped on the clock that
 //! stamps the input: each thing the window tells its drawer, each frame
-//! published, each draw as the renderer is entered and as it answers, and
+//! published, each draw as the renderer is entered and as it answers (with
+//! the kind of mask the renderer says it drew its glyphs with: plain ones
+//! or subpixel ones, which is how a change of antialiasing between two
+//! displays is seen), and
 //! the idle second's two ends. What asks is entered before its word is
 //! left with the render loop, so no draw is entered before what asked for
 //! it. [`Tally`] is what the ledger comes to, and the run prints all of
@@ -82,9 +97,13 @@
 //!
 //! What it makes of what it saw is tested in the gate, by the unit tests
 //! at the foot of this file, which open no window: how the command line
-//! is read, what is made of each thing found of a picture, what each draw
-//! of a ledger was for, and which ledgers fail (`cargo test` runs them:
-//! the manifest says `test = true` of this example).
+//! is read, what is made of each thing found of a picture, which sizes a
+//! frame's glyphs are drawn at and which of them fail, what each draw of a
+//! ledger was for, and which ledgers fail (`cargo test` runs them: the
+//! manifest says `test = true` of this example). They state no size of
+//! layout's and no rule of the renderer's: the frames they read are
+//! written by hand, and a kind of mask is printed in the renderer's own
+//! words.
 
 use std::process::ExitCode;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -99,6 +118,7 @@ use editor_layout::Layout;
 use editor_layout::face::{Color, Face, FaceDef};
 use editor_layout::frame::Frame;
 use editor_layout::scene::{Rect, Scene, StatusField};
+use editor_layout::shaper::Length;
 use editor_platform::{
     Button, Canvas, Composition, Drawer, Input, Key, LogicalKey, Modifiers, NativeWindow,
     PhysicalKey, Platform, Pointer, PointerAction, Resize, WheelDelta, WindowOptions,
@@ -107,7 +127,7 @@ use editor_platform_winit::WinitPlatform;
 use editor_render::clock::Clock;
 use editor_render::journal::Entry;
 use editor_render::port::{DrawRequest, Drawn, Renderer, Target};
-use editor_render_wgpu::{Antialiasing, HeadlessRenderer, Image, Settings, WgpuRenderer};
+use editor_render_wgpu::{Antialiasing, HeadlessRenderer, Image, Masks, Settings, WgpuRenderer};
 use editor_shape_parley::{FontSet, ParleyShaper};
 
 /// Noto Sans: the default family.
@@ -120,6 +140,10 @@ const JP: &[u8] = include_bytes!("../../../tests/fonts/NotoSansJP-Regular.subset
 /// The text of the fixture: a ligature (`fi`), a right-to-left run and a
 /// character of the CJK fallback, in two rows.
 const TEXT: &str = "fine שלום 日\nthe window draws this";
+
+/// The size the fixture's default face states, in points: what a person
+/// compares with the same size in another app.
+const POINTS: u32 = 14;
 
 /// How far any channel of any pixel the window's surface holds may be from
 /// the headless renderer's: 3 of 255, as the renderer's own check on a real
@@ -284,6 +308,85 @@ fn judged(number: usize, picture: &Picture, require_picture: bool) -> Verdict {
     }
 }
 
+/// The sizes the glyphs of `frame` are drawn at, in pixels, smallest first
+/// and each once: the size of each font a glyph of a row or of a status
+/// row names. A font of the frame's table that no glyph names is not
+/// among them: the table is the shaper's, and keeps the fonts of every
+/// scale it was asked at. A glyph that names no font of the table has no
+/// size.
+fn drawn_at(frame: &Frame) -> Vec<f32> {
+    let lines = frame.views.iter().flat_map(|view| {
+        let rows = view.rows.iter().map(|row| &row.line);
+        rows.chain(view.status.iter().map(|status| &status.line))
+    });
+    let mut sizes: Vec<f32> = lines
+        .flat_map(|line| line.glyphs.iter())
+        .filter_map(|glyph| frame.fonts.get(usize::try_from(glyph.font.0).ok()?))
+        .map(|font| font.size)
+        .collect();
+    sizes.sort_by(f32::total_cmp);
+    sizes.dedup();
+    sizes
+}
+
+/// `items` as a person lists them: `a`, `a and b`, `a, b and c`; nothing
+/// for none.
+fn listed(items: &[String]) -> String {
+    match items {
+        [] => String::new(),
+        [one] => one.clone(),
+        [first @ .., last] => format!("{} and {last}", first.join(", ")),
+    }
+}
+
+/// What is made of the sizes `sizes` that the glyphs of the frame published
+/// `number`th are drawn at ([`drawn_at`]), when it was laid out for a
+/// window that says it is `window`.
+///
+/// The fixture states one size, [`POINTS`] points, and a point is as many
+/// pixels as the window's scale. So the glyphs must be drawn at one size,
+/// that many pixels to within a 64th of one, which is what a length is
+/// kept in. This is the whole path from the scale a window says, through
+/// the layout that was told it, to the size the shaper made its glyphs at:
+/// a layout that was not told the scale fails here.
+fn laid_out(number: usize, window: Target, sizes: &[f32]) -> Verdict {
+    let Target {
+        width,
+        height,
+        scale,
+    } = window;
+    let laid = format!("frame {number} is laid out for {width} by {height} at scale {scale}");
+    match sizes {
+        [] => Verdict {
+            line: Some(format!("{laid}: it has no glyph")),
+            failure: Some(format!(
+                "frame {number} has no glyph, so nothing says what size {POINTS} points are drawn at"
+            )),
+        },
+        [size] => {
+            let expected = POINTS as f32 * scale;
+            Verdict {
+                line: Some(format!("{laid}: {POINTS} points are {size} pixels")),
+                failure: ((size - expected).abs() > 1.0 / 64.0).then(|| {
+                    format!(
+                        "frame {number} is laid out for a window at scale {scale}, where {POINTS} points are {expected} pixels, and its glyphs are drawn at {size} pixels"
+                    )
+                }),
+            }
+        }
+        several => {
+            let sizes: Vec<String> = several.iter().map(f32::to_string).collect();
+            let sizes = listed(&sizes);
+            Verdict {
+                line: Some(format!("{laid}: its glyphs are drawn at {sizes} pixels")),
+                failure: Some(format!(
+                    "frame {number}'s glyphs are drawn at {sizes} pixels, and the fixture states one size, {POINTS} points"
+                )),
+            }
+        }
+    }
+}
+
 /// One thing that bears on whether a draw was asked for, as the example
 /// saw it happen.
 #[derive(Debug, Clone, PartialEq)]
@@ -319,6 +422,9 @@ enum Happened {
     Ended {
         /// Whether it presented the frame.
         presented: bool,
+        /// The kind of mask it drew its glyphs with, as the renderer says;
+        /// `None` for a renderer that does not say.
+        masks: Option<Masks>,
     },
     /// The idle second began (`true`) or ended (`false`).
     Idle(bool),
@@ -479,7 +585,7 @@ impl Tally {
                     idle: self.idling,
                 });
             }
-            Happened::Ended { presented } => {
+            Happened::Ended { presented, .. } => {
                 let Some(drawing) = self.drawing.take() else {
                     return;
                 };
@@ -673,12 +779,13 @@ fn timeline(records: &[Record]) -> Vec<String> {
                     .last()
                     .map_or_else(String::new, |draw| reasons(draw.served))
             ),
-            Happened::Ended { presented } => format!(
+            Happened::Ended { presented, masks } => format!(
                 "draw {draw} ended, {}",
-                if *presented {
-                    "presented"
-                } else {
-                    "not presented"
+                match (presented, masks) {
+                    // The kind of mask in the renderer's own words for it.
+                    (true, Some(masks)) => format!("presented, its glyphs as {masks}"),
+                    (true, None) => "presented".to_owned(),
+                    (false, _) => "not presented".to_owned(),
                 }
             ),
             Happened::Idle(true) => format!(
@@ -698,18 +805,19 @@ fn timeline(records: &[Record]) -> Vec<String> {
 
 /// What a draw was for, for a person.
 fn reasons(served: Served) -> String {
-    let reasons: Vec<&str> = [
+    let reasons: Vec<String> = [
         (served.frame, "a frame not yet shown"),
         (served.size, "a size not yet drawn at"),
         (served.damage, "damage"),
     ]
     .into_iter()
-    .filter_map(|(served, reason)| served.then_some(reason))
+    .filter(|(served, _)| *served)
+    .map(|(_, reason)| reason.to_owned())
     .collect();
-    match reasons.as_slice() {
-        [] => "nothing that was asked".to_owned(),
-        [one] => (*one).to_owned(),
-        [first @ .., last] => format!("{} and {last}", first.join(", ")),
+    if reasons.is_empty() {
+        "nothing that was asked".to_owned()
+    } else {
+        listed(&reasons)
     }
 }
 
@@ -811,12 +919,16 @@ fn number_of(frames: &[Arc<Frame>], frame: &Arc<Frame>) -> Option<usize> {
 }
 
 /// A renderer whose every draw is entered in the ledger: as it begins,
-/// and as it ends with whether it presented.
+/// and as it ends with whether it presented and the kind of mask it says
+/// it drew its glyphs with.
 struct Entered<R> {
     /// The renderer.
     inner: R,
     /// Where its draws are entered.
     ledger: Arc<Ledger>,
+    /// The kind of mask the renderer says its last draw used, asked as
+    /// each draw ends; `None` of a renderer that does not say.
+    masks: fn(&R) -> Option<Masks>,
 }
 
 impl<R: Renderer> Renderer for Entered<R> {
@@ -825,6 +937,7 @@ impl<R: Renderer> Renderer for Entered<R> {
         let drawn = self.inner.draw(request);
         self.ledger.note(Happened::Ended {
             presented: drawn.presented,
+            masks: (self.masks)(&self.inner),
         });
         drawn
     }
@@ -851,6 +964,9 @@ struct Shared {
     pictures: Mutex<Vec<Picture>>,
     /// Why a draw was not presented, for each that was not.
     refusals: Mutex<Vec<String>>,
+    /// Why a frame published was not laid out at its window's scale, for
+    /// each that was not ([`laid_out`]).
+    mislaid: Mutex<Vec<String>>,
     /// What asked for a draw, and every draw.
     ledger: Arc<Ledger>,
     /// How many events of the window came off the queue.
@@ -867,6 +983,7 @@ impl Shared {
             adapter: Mutex::default(),
             pictures: Mutex::default(),
             refusals: Mutex::default(),
+            mislaid: Mutex::default(),
             ledger: Arc::new(Ledger::new(clock)),
             inputs: AtomicU64::new(0),
             touched: AtomicU64::new(0),
@@ -892,6 +1009,14 @@ struct Checked {
     headless: HeadlessRenderer,
     /// Where what it finds goes.
     shared: Arc<Shared>,
+}
+
+impl Checked {
+    /// The kind of mask the renderer on the window says its last draw
+    /// asked its glyph images in.
+    fn masks(&self) -> Option<Masks> {
+        self.gpu.masks()
+    }
 }
 
 impl Renderer for Checked {
@@ -994,7 +1119,10 @@ fn layout() -> Result<Layout<ParleyShaper>, String> {
 }
 
 /// The fixture scene in a window of `size`: [`TEXT`] in one view that
-/// fills it, a selection with its cursor, and a status row.
+/// fills it, a selection with its cursor, and a status row, in a default
+/// face of [`POINTS`] points. Its rectangle and the size its status row
+/// reads are physical pixels; the face's size is the one length here that
+/// is not.
 fn scene(size: Resize) -> Scene {
     let target = target(size);
     let rect = Rect {
@@ -1013,6 +1141,8 @@ fn scene(size: Resize) -> Scene {
         named(
             "default",
             Face {
+                // In points: layout puts it at the window's scale.
+                size: Some(Length::pixels(POINTS)),
                 foreground: rgb(0x20, 0x20, 0x20),
                 background: rgb(0xf8, 0xf8, 0xf8),
                 ..Face::default()
@@ -1148,9 +1278,19 @@ fn read_back(event: &Event) -> Option<Input> {
 
 /// The editor's part, on a thread of its own: pulls `queue` until it is
 /// quit, prints each input, publishes the fixture frame laid out for each
-/// size the window says it has, and closes the window when it is asked to.
+/// size and scale the window says it has, and closes the window when it is
+/// asked to.
+///
+/// It is this thread that tells layout the window's scale: the scale of
+/// the resize it read off the queue, before it lays the scene out for that
+/// resize's size. The render loop is told the same scale for its target,
+/// by the window, on another thread. Each frame that is not the one last
+/// published is printed with the scale it was laid out for and the size
+/// its glyphs are drawn at, and judged ([`laid_out`]).
 fn edit(queue: &Queue, session: &Session<Watched>, shared: &Shared) -> Result<(), String> {
     let mut layout = layout()?;
+    // The frame last published, by its number.
+    let mut last = None;
     loop {
         let event = queue.next();
         if event.kind == EventKind::Quit {
@@ -1169,11 +1309,24 @@ fn edit(queue: &Queue, session: &Session<Watched>, shared: &Shared) -> Result<()
                 // The window's size is known: the frame is laid out for it
                 // and published, stamped with the resize it answers.
                 if let Some(handle) = session.handle() {
+                    // A theme's lengths are points, and the window has
+                    // just said how many pixels a point is.
+                    let window = target(size);
+                    layout.set_scale(window.scale);
                     let frame: Arc<Frame> = Arc::new(layout.frame(&scene(size)));
                     // Entered before it is handed over: no draw of it is
                     // entered first.
-                    shared.ledger.published(&frame);
+                    let number = shared.ledger.published(&frame);
+                    let sizes = drawn_at(&frame);
                     handle.submit(frame, Some(event.stamp));
+                    if last != Some(number) {
+                        last = Some(number);
+                        let verdict = laid_out(number, window, &sizes);
+                        if let Some(line) = verdict.line {
+                            println!("window: {line}");
+                        }
+                        locked(&shared.mislaid).extend(verdict.failure);
+                    }
                 }
             }
             Input::CloseRequested => PLATFORM.close(),
@@ -1260,6 +1413,10 @@ fn report(session: &Session<Watched>, shared: &Shared, require_picture: bool) ->
     }
     drop(pictures);
 
+    // Each frame was laid out at its window's scale: said as each was
+    // published, and failed here.
+    failures.extend(locked(&shared.mislaid).iter().cloned());
+
     // 3. Nothing is drawn that nothing asked for.
     let (records, tally) = shared.ledger.read();
     let opened_ns = records.first().map_or(0, |(at_ns, _)| *at_ns);
@@ -1321,7 +1478,11 @@ fn main() -> ExitCode {
         Session::new(clock.clone(), move |window, _| {
             let inner = renderer(window, &shared)?;
             let ledger = Arc::clone(&shared.ledger);
-            Ok(Entered { inner, ledger })
+            Ok(Entered {
+                inner,
+                ledger,
+                masks: Checked::masks,
+            })
         })
     };
 
@@ -1377,19 +1538,22 @@ mod tests {
     use std::time::Duration;
 
     use editor_layout::Layout;
-    use editor_layout::frame::Frame;
-    use editor_layout::scene::{Rect, Scene};
+    use editor_layout::face::Color;
+    use editor_layout::frame::{Frame, FrameRow, StatusRow, ViewFrame};
+    use editor_layout::scene::{Rect, Scene, ViewId};
     use editor_layout::shaper::fake::CellShaper;
+    use editor_layout::shaper::{Glyph, ResolvedFont, ResolvedFontId, VisualLine};
     use editor_platform::{Canvas, Drawer, Resize};
     use editor_render::clock::FakeClock;
     use editor_render::fake::RecordingRenderer;
     use editor_render::journal::Entry;
     use editor_render::port::{DrawRequest, Renderer, Target};
+    use editor_render_wgpu::{Masks, SubpixelOrder};
 
     use super::{
         Draw, Entered, Findings, Happened, IDLE_ASKS, Idle, Ledger, Options, Picture, Served,
-        TOLERANCE, Tally, Verdict, entering, happened, journalled, judged, on_demand, options,
-        timeline, uncompared,
+        TOLERANCE, Tally, Verdict, drawn_at, entering, happened, journalled, judged, laid_out,
+        on_demand, options, timeline, uncompared,
     };
 
     /// A size a window has.
@@ -1417,11 +1581,26 @@ mod tests {
         }
     }
 
-    /// The draw last begun presented.
-    const PRESENTED: Happened = Happened::Ended { presented: true };
+    /// The draw last begun presented, by a renderer that does not say
+    /// which masks it used.
+    const PRESENTED: Happened = Happened::Ended {
+        presented: true,
+        masks: None,
+    };
 
     /// The draw last begun did not present.
-    const REFUSED: Happened = Happened::Ended { presented: false };
+    const REFUSED: Happened = Happened::Ended {
+        presented: false,
+        masks: None,
+    };
+
+    /// The draw last begun presented, with its glyphs as `masks`.
+    fn presented_as(masks: Masks) -> Happened {
+        Happened::Ended {
+            presented: true,
+            masks: Some(masks),
+        }
+    }
 
     /// `happened`, each a millisecond after the one before, the first at a
     /// millisecond.
@@ -1957,6 +2136,50 @@ mod tests {
     }
 
     #[test]
+    fn the_timeline_says_which_masks_a_presented_draw_used() {
+        // The kinds a renderer says, in the renderer's own words for each.
+        let kinds = [
+            Masks::Plain,
+            Masks::Subpixel(SubpixelOrder::Rgb),
+            Masks::Subpixel(SubpixelOrder::Bgr),
+        ];
+        for masks in kinds {
+            let lines = timeline(&records(&[
+                Happened::Opened {
+                    size: SMALL,
+                    refresh: None,
+                },
+                Happened::Published(1),
+                began(1, SMALL),
+                presented_as(masks),
+                // A draw that did not present says nothing of its masks.
+                Happened::Damaged,
+                began(1, SMALL),
+                Happened::Ended {
+                    presented: false,
+                    masks: Some(masks),
+                },
+            ]));
+            assert_eq!(
+                lines[3],
+                format!("      3.0 ms: draw 1 ended, presented, its glyphs as {masks}")
+            );
+            assert_eq!(lines[6], "      6.0 ms: draw 2 ended, not presented");
+        }
+        // The masks of a draw change nothing of what it was for.
+        let tally = tallied(&and(
+            showing(),
+            &[
+                Happened::Damaged,
+                began(1, SMALL),
+                presented_as(Masks::Plain),
+            ],
+        ));
+        assert_eq!(served(&tally), [FRAME, DAMAGE]);
+        assert!(tally.settled());
+    }
+
+    #[test]
     fn a_journal_entry_says_when_what_it_answers_was_asked_and_when_it_was_drawn() {
         let entry = Entry {
             serial: 2,
@@ -2047,9 +2270,17 @@ mod tests {
     #[test]
     fn a_draw_is_entered_as_it_begins_and_as_it_ends_with_whether_it_presented() {
         let ledger = ledger();
+        // A renderer that says its masks by how many draws it was asked
+        // for: plain ones for the first, and from then on subpixel ones.
         let mut renderer = Entered {
             inner: RecordingRenderer::new(),
             ledger: Arc::clone(&ledger),
+            masks: |inner| {
+                Some(match inner.requests().len() {
+                    1 => Masks::Plain,
+                    _ => Masks::Subpixel(SubpixelOrder::Rgb),
+                })
+            },
         };
         let (one, two) = (frame_of("one"), frame_of("two"));
         ledger.published(&one);
@@ -2074,18 +2305,24 @@ mod tests {
             target: LARGE,
         });
 
+        // Each ends with what the renderer says of its masks once it has
+        // drawn, whether or not it presented.
+        let stripes = Masks::Subpixel(SubpixelOrder::Rgb);
         assert_eq!(
             entered(&ledger)[2..],
             [
                 began(2, SMALL),
-                PRESENTED,
+                presented_as(Masks::Plain),
                 began(1, LARGE),
-                REFUSED,
+                Happened::Ended {
+                    presented: false,
+                    masks: Some(stripes),
+                },
                 Happened::Began {
                     frame: None,
                     target: LARGE,
                 },
-                PRESENTED,
+                presented_as(stripes),
             ]
         );
         // The renderer was asked for each.
@@ -2120,6 +2357,183 @@ mod tests {
         assert_eq!(
             entered(&ledger),
             [Happened::Damaged, Happened::Told("Hidden(true)".to_owned())]
+        );
+    }
+
+    /// A line of one glyph for each of `fonts`, each naming that entry of
+    /// its frame's table.
+    fn line_in(fonts: &[u32]) -> Arc<VisualLine> {
+        let glyphs: Vec<Glyph> = (0..)
+            .zip(fonts)
+            .map(|(at, font)| Glyph {
+                id: 1,
+                font: ResolvedFontId(*font),
+                cluster: at,
+                x: at as f32 * 10.0,
+                dx: 0.0,
+                dy: 0.0,
+                advance: 10.0,
+            })
+            .collect();
+        Arc::new(VisualLine {
+            bytes: 0..glyphs.len(),
+            width: glyphs.len() as f32 * 10.0,
+            glyphs,
+            height: 16.0,
+            baseline: 12.0,
+        })
+    }
+
+    /// A frame written by hand, of one view: a row for each of `rows` and
+    /// a status row of `status` when there is one, each a line of one
+    /// glyph for each font it lists ([`line_in`]); and a table of one font
+    /// for each of `sizes`, of that size.
+    fn frame_in(rows: &[&[u32]], status: Option<&[u32]>, sizes: &[f32]) -> Frame {
+        let white = Color::rgb(0xff, 0xff, 0xff);
+        let rows = rows
+            .iter()
+            .map(|fonts| FrameRow {
+                y: 0.0,
+                height: 16.0,
+                baseline: 12.0,
+                bytes: 0..fonts.len(),
+                line: line_in(fonts),
+                runs: Vec::new(),
+                hash: 0,
+            })
+            .collect();
+        let status = status.map(|fonts| StatusRow {
+            y: 0.0,
+            height: 16.0,
+            baseline: 12.0,
+            line: line_in(fonts),
+            runs: Vec::new(),
+            background: white,
+            hash: 0,
+        });
+        let fonts = sizes
+            .iter()
+            .map(|size| ResolvedFont {
+                data: Arc::new([0_u8; 0]),
+                file: 0,
+                index: 0,
+                size: *size,
+                coords: Vec::new(),
+                embolden: false,
+                skew: None,
+            })
+            .collect();
+        Frame {
+            views: vec![ViewFrame {
+                id: ViewId(1),
+                rect: Rect::default(),
+                background: white,
+                rows,
+                status,
+                cursors: Vec::new(),
+                selections: Vec::new(),
+                selection: white,
+            }],
+            generation: 0,
+            fonts,
+        }
+    }
+
+    #[test]
+    fn the_sizes_a_frames_glyphs_are_drawn_at_are_those_of_the_fonts_they_name() {
+        // The table of a shaper that has been asked for fonts at several
+        // scales: within a generation it only grows, so the fonts of an
+        // earlier scale stay in it, and a frame names the ones it uses.
+        let table = [16.0, 14.0, 28.0, 21.0];
+        // One size, named by every row and by the status row.
+        let frame = frame_in(&[&[2, 2], &[2]], Some(&[2]), &table);
+        assert_eq!(drawn_at(&frame), [28.0]);
+        // Several: smallest first, each once, the status row's among them.
+        let frame = frame_in(&[&[3, 1], &[1]], Some(&[2]), &table);
+        assert_eq!(drawn_at(&frame), [14.0, 21.0, 28.0]);
+        // A view with no status row.
+        assert_eq!(drawn_at(&frame_in(&[&[0]], None, &table)), [16.0]);
+        // A frame with no glyph is drawn at no size, whatever its table
+        // holds, and a glyph that names no font of the table has no size.
+        let none: [f32; 0] = [];
+        assert_eq!(drawn_at(&frame_in(&[&[]], None, &table)), none);
+        assert_eq!(drawn_at(&frame_in(&[&[9]], None, &table)), none);
+        assert_eq!(drawn_at(&Frame::default()), none);
+    }
+
+    #[test]
+    fn fourteen_points_at_a_scale_are_that_many_pixels_and_any_other_size_fails_the_run() {
+        let at = |scale: f32| Target {
+            width: 1600,
+            height: 1200,
+            scale,
+        };
+        let passes = |line: &str| Verdict {
+            line: Some(line.to_owned()),
+            failure: None,
+        };
+        assert_eq!(
+            laid_out(1, at(2.0), &[28.0]),
+            passes("frame 1 is laid out for 1600 by 1200 at scale 2: 14 points are 28 pixels")
+        );
+        assert_eq!(
+            laid_out(3, SMALL, &[14.0]),
+            passes("frame 3 is laid out for 400 by 300 at scale 1: 14 points are 14 pixels")
+        );
+        // A fractional scale, and a size that is within a 64th of a pixel
+        // of the product: a length is kept in 64ths.
+        assert_eq!(
+            laid_out(2, at(1.25), &[17.5]),
+            passes("frame 2 is laid out for 1600 by 1200 at scale 1.25: 14 points are 17.5 pixels")
+        );
+        assert_eq!(laid_out(2, at(1.3333), &[18.671_875]).failure, None);
+        assert_eq!(laid_out(2, at(2.0), &[28.0 + 1.0 / 64.0]).failure, None);
+
+        // Any other size fails: a layout that was never told the scale
+        // draws 14 points at 14 pixels on a window at scale 2.
+        assert_eq!(
+            laid_out(1, at(2.0), &[14.0]),
+            Verdict {
+                line: Some(
+                    "frame 1 is laid out for 1600 by 1200 at scale 2: 14 points are 14 pixels"
+                        .to_owned()
+                ),
+                failure: Some(
+                    "frame 1 is laid out for a window at scale 2, where 14 points are 28 pixels, and its glyphs are drawn at 14 pixels"
+                        .to_owned()
+                ),
+            }
+        );
+        // Past a 64th, on either side.
+        for size in [28.0 + 2.0 / 64.0, 28.0 - 2.0 / 64.0] {
+            assert!(laid_out(1, at(2.0), &[size]).failure.is_some(), "{size}");
+        }
+        // The fixture states one size: a frame drawn at several fails, and
+        // so does one with no glyph to read a size from.
+        assert_eq!(
+            laid_out(1, at(2.0), &[14.0, 21.0, 28.0]),
+            Verdict {
+                line: Some(
+                    "frame 1 is laid out for 1600 by 1200 at scale 2: its glyphs are drawn at 14, 21 and 28 pixels"
+                        .to_owned()
+                ),
+                failure: Some(
+                    "frame 1's glyphs are drawn at 14, 21 and 28 pixels, and the fixture states one size, 14 points"
+                        .to_owned()
+                ),
+            }
+        );
+        assert_eq!(
+            laid_out(1, at(2.0), &[]),
+            Verdict {
+                line: Some(
+                    "frame 1 is laid out for 1600 by 1200 at scale 2: it has no glyph".to_owned()
+                ),
+                failure: Some(
+                    "frame 1 has no glyph, so nothing says what size 14 points are drawn at"
+                        .to_owned()
+                ),
+            }
         );
     }
 
