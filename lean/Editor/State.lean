@@ -259,6 +259,31 @@ A prompt is a request for one string, with a text to show beside the input
     mark. The snapshot is released by the loop, once that command has run
     to its end (`Editor/Loop.lean`, "What a finished command gave up").
 
+## Quit
+
+A command asks the editor to quit, and the editor quits once it can
+(`docs/design/concurrency.md`, "Quit").
+
+- **Asked to quit is editor state** (`EditorState.quitting`), set by one
+  request (`StateRequest.quit`). So a command that asks and then does not
+  run to its end is rolled back to a state that was not asked, and a quit
+  that waits for a save outlives the command that asked.
+- **A buffer has unsaved changes** (`Buffer.unsaved`) when it holds a
+  file, its text is in another state than the one last saved, and no save
+  in flight is writing the state it is in. A buffer with no file never
+  has: it cannot be saved. A buffer whose save in flight covers its text
+  has none; one edited since that save began has. Like "modified", the
+  answer is right once the history was told the text's revision;
+  `Buffer.unsavedAt` takes a tree a command told itself.
+- **The editor leaves** (`EditorState.leaves`) when it was asked to quit,
+  no buffer has unsaved changes, and no save is in flight. The loop asks
+  after each scene and says stop (`Editor/Loop.lean`, "Quit").
+- **A quit that cannot go ahead is withdrawn** (`settleQuit`): asked to
+  quit while a buffer has unsaved changes, the state is no longer asked.
+  The loop applies it when it makes a scene. So a quit that was waiting
+  for a save ends without quitting when the save is refused, or when the
+  buffer is edited meanwhile, and is not left to fire at some later save.
+
 ## A buffer's modes
 
 Three operations set a buffer's modes, of the same shape. Each is refused,
@@ -376,6 +401,22 @@ as its history knows it (`UndoTree.isModified`): right once the history was
 told the revision the text is at, which the loop does before each scene. -/
 def Buffer.isModified (buffer : Buffer) : Bool :=
   buffer.history.isModified
+
+/-- Whether the buffer has unsaved changes, its text being in the state
+`history` is in ("Quit", in the module docs): it holds a file, the text is
+in another state than the one last saved, and no save in flight is writing
+the state it is in. A buffer with no file never has. `history` is the
+buffer's undo tree, told the revision the text is at. -/
+def Buffer.unsavedAt (buffer : Buffer) (history : UndoTree) : Bool :=
+  match buffer.file with
+  | none => false
+  | some file => history.isModified && !file.saving.any (·.state == history.state)
+
+/-- Whether the buffer has unsaved changes, as its history knows it
+(`Buffer.unsavedAt`): right once the history was told the revision the text
+is at, which the loop does before each scene. -/
+def Buffer.unsaved (buffer : Buffer) : Bool :=
+  buffer.unsavedAt buffer.history
 
 /-- The column a view's vertical motions aim for. -/
 inductive WantedColumn where
@@ -511,6 +552,9 @@ structure EditorState where
   asked to be run after them (`StateRequest.invoke`,
   `Editor/State/Request.lean`). -/
   answered : Array Invocation := #[]
+  /-- Whether a command asked the editor to quit ("Quit", in the module
+  docs). -/
+  quitting : Bool := false
   deriving BEq, Repr
 
 /-- What a handler acts on: a window and the buffer it shows. -/
@@ -858,6 +902,26 @@ def removeMinorMode (id : BufferId) (name : String) (state : EditorState) :
     Except BufferRefusal Unit × EditorState :=
   changeBuffer id (fun buffer => ((), { buffer with minors := buffer.minors.filter (· != name) }))
     state
+
+/-- The first buffer with unsaved changes, in the order of the slots, if
+there is one (`Buffer.unsaved`). -/
+def unsaved (state : EditorState) : Option Buffer :=
+  (state.buffers.find? fun slot => slot.any (·.unsaved)).join
+
+/-- Whether a save of a buffer is in flight (`Buffer.File.saving`). -/
+def isSaving (state : EditorState) : Bool :=
+  state.buffers.any fun slot => slot.any (·.file.any (·.saving.isSome))
+
+/-- Whether the editor leaves ("Quit", in the module docs): a command asked
+it to quit, no buffer has unsaved changes, and no save is in flight. -/
+def leaves (state : EditorState) : Bool :=
+  state.quitting && state.unsaved.isNone && !state.isSaving
+
+/-- `state` with a quit that cannot go ahead withdrawn: asked to quit while
+a buffer has unsaved changes, it is no longer asked. Any other state is as
+it was. -/
+def settleQuit (state : EditorState) : EditorState :=
+  if state.quitting && state.unsaved.isSome then { state with quitting := false } else state
 
 /-- An editor with no buffer and no window, in a frame of no size whose tree
 is the minibuffer's place alone. It is not well formed: nothing is focused.

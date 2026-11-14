@@ -57,6 +57,11 @@ the models and against the library alike (`Editor/Command/Dispatch.lean`).
   hands them to its host once the command has run to its end
   (`Editor/Loop.lean`, "Prompts"). A command cannot run another command
   inside itself: this is how it has one run after it.
+- **The editor is asked to quit by one request**, `quit`, which sets the
+  state's flag and nothing else (`Editor/State.lean`, "Quit"). The handler
+  does not judge whether the editor may quit: the command that asks
+  checks first (`quit`, `Editor/Api.lean`), since that needs the text
+  store, and the loop decides when the editor leaves.
 - **A window's wanted column is set by one request**, `setWanted`, with
   the column and the offset it is kept at, or with none
   (`Editor/State.lean`, "The wanted column"). It is refused with a
@@ -142,6 +147,8 @@ inductive StateRequest where
   | ex (name : String)
   /-- Have `invocation` run after this command, as a step of its own. -/
   | invoke (invocation : Invocation)
+  /-- Ask the editor to quit. -/
+  | quit
 
 /-- The type of the reply to each request. -/
 abbrev StateRequest.Reply : StateRequest → Type
@@ -167,6 +174,7 @@ abbrev StateRequest.Reply : StateRequest → Type
   | .setWanted .. => Except LayoutRefusal Unit
   | .ex _ => Option Ex.Binding
   | .invoke _ => Unit
+  | .quit => Unit
 
 namespace EditorState
 
@@ -211,6 +219,7 @@ def handle : (request : StateRequest) → EditorState → request.Reply × Edito
   | .setWanted view wanted, state => state.setWanted view wanted
   | .ex _, state => (none, state)
   | .invoke invocation, state => ((), { state with answered := state.answered.push invocation })
+  | .quit, state => ((), { state with quitting := true })
 
 end EditorState
 

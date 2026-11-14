@@ -608,9 +608,28 @@ def promptCases : List Case :=
         return refusedAs (← acceptPrompt) .notOpen && refusedAs (← cancelPrompt) .notOpen &&
             (← editorState) == state }]
 
+/-- The cases of quitting: `quit` asks the text store for the revision of
+each buffer that holds a file. -/
+def quitCases : List Case :=
+  [{  name :=
+        "quit asks the editor to quit while the buffer that holds a file is in its saved state, and once the same command has edited that buffer it is refused with the buffer's name, a value, with the state as it was"
+      start := do
+        let state ← EditorState.initial ⟨640, 480⟩
+        return (state.attachFile ⟨0⟩ "/files/note.txt" { seconds := 0, nanoseconds := 0, size := 0 }
+              .lf).2
+      run := do
+        let clean ← quit
+        let asked := (← editorState).quitting
+        let .ok () ← (⟨0⟩ : BufferId).insertAt 0 "x" | return false
+        let before ← editorState
+        let refused ← quit
+        return clean matches .ok () && asked && refusedAs refused (.unsaved "scratch") &&
+            (← editorState) == before }]
+
 /-- Every case of the editor API, in the order they run. -/
 def cases : List Case :=
-  bufferCases ++ selectionCases ++ undoCases ++ windowCases ++ lineBreakCases ++ promptCases
+  bufferCases ++ selectionCases ++ undoCases ++ windowCases ++ lineBreakCases ++ promptCases ++
+    quitCases
 
 /-- Plays `cases` with `run`, each from a store with no text, and returns
 the names of those that did not hold: one that returned `false`, and one

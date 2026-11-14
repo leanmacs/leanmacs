@@ -225,6 +225,29 @@ command is looked up when its step runs, and a name no command is
 registered under is said then. A command that does not run to its end has
 nothing run after it. Pinned by `ModelTest.promptChecks`.
 
+## Quit
+
+`quit` asks the editor to quit (`docs/design/concurrency.md`, "Quit";
+`Editor/State.lean`, "Quit"). A command cannot end the process: it asks,
+the loop says stop once the editor can leave, and the host ends its loop.
+
+- **It is refused, as a value, while a buffer that holds a file has
+  unsaved changes** (`QuitRefusal.unsaved`, with the name of the first such
+  buffer), with nothing asked and the state as it was. The check tells a
+  copy of each file-holding buffer's undo tree the revision its text is
+  at, as a save does, so an edit made earlier in the same command counts.
+  What the text store refuses there is thrown, as everywhere.
+- **A buffer with no file never blocks**: it cannot be saved, so a rule
+  that counted it would leave no way to quit once anything was typed in
+  the scratch buffer.
+- **A save in flight does not refuse it.** A buffer whose text is in the
+  state its save in flight is writing has no unsaved changes; the editor
+  is asked, and leaves once that save's result has been delivered. A
+  buffer edited since its save began has unsaved changes.
+- It makes one text request for each buffer that holds a file, so it has
+  a case in `Editor/Api/Cases.lean`. Its rules are pinned by
+  `ModelTest.apiStateChecks`.
+
 ## Jobs
 
 `startJob name arguments` asks for the job registered under `name` to be
@@ -347,6 +370,25 @@ and is run as any command is, with the window that is then focused. A
 command that does not run to its end has nothing run after it. -/
 def invoke (invocation : Invocation) : EditorM Unit :=
   EditorState.ask (.invoke invocation)
+
+/-- Why the editor was not asked to quit. -/
+inductive QuitRefusal where
+  /-- The buffer called `name`, which holds a file, has unsaved changes. -/
+  | unsaved (name : String)
+  deriving DecidableEq, Repr
+
+/-- Asks the editor to quit ("Quit", in the module docs). Refused, with
+nothing asked, with `unsaved` and the name of the first buffer that holds a
+file and has unsaved changes, by its history once told the revision its
+text is at, so an edit made earlier in the same command counts. -/
+def quit : EditorM (Except QuitRefusal Unit) := do
+  for slot in (← editorState).buffers do
+    let some buffer := slot | continue
+    -- A buffer with no file never blocks, and its text is not asked.
+    if buffer.file.isSome then
+      if buffer.unsavedAt (← buffer.history.sync) then
+        return .error (.unsaved buffer.name)
+  return .ok (← EditorState.ask .quit)
 
 /-- Asks for a string: opens a prompt labelled `label`, whose minibuffer
 holds `initial`, with the cursor after it, and returns the minibuffer's

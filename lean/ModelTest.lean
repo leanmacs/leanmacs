@@ -4209,6 +4209,35 @@ so the ids are written out by hand. -/
 def prompted (state : EditorState) (text : Nat := 7) : Except PromptRefusal ViewId × EditorState :=
   state.openPrompt "Name: " asked ⟨text⟩ (UndoTree.new ⟨text⟩ 0) ⟨⟨text⟩, 0⟩ ⟨⟨text⟩, 1⟩
 
+/-- States of the quit checks, each `twoBuffers` with its histories set by
+hand. -/
+structure QuitStates where
+  /-- The scratch buffer, which holds no file, is modified. -/
+  bare : EditorState
+  /-- And the buffer `other` holds a file and is modified. -/
+  held : EditorState
+  /-- And a save of `other` is in flight, writing the state its text is
+  in. -/
+  saving : EditorState
+  /-- And `other` was edited since that save began. -/
+  moved : EditorState
+  /-- The save of `saving` ended with a stamp: `other` is saved. -/
+  saved : EditorState
+
+/-- The states of the quit checks. The operations ask the text store
+nothing, so a revision and a snapshot's id are written out by hand. -/
+def quitStates : TextM QuitStates := do
+  let state ← twoBuffers
+  let stamp : File.Stamp := { seconds := 3, nanoseconds := 0, size := 9 }
+  let edited := (UndoTree.new ⟨1⟩ 0).record 3
+  let (_, bare) := state.setHistory ⟨0⟩ ((UndoTree.new ⟨0⟩ 0).record 2)
+  let (_, held) := bare.attachFile ⟨1⟩ "/files/note.txt" stamp .lf
+  let (_, held) := held.setHistory ⟨1⟩ edited
+  let (_, saving) := held.beginSave ⟨1⟩ ⟨5⟩ edited.state
+  let (_, moved) := saving.setHistory ⟨1⟩ (edited.record 4)
+  let (_, saved) := saving.endSave ⟨1⟩ ⟨5⟩ (some stamp)
+  return { bare, held, saving, moved, saved }
+
 /-- The checks of the editor state and its layout invariants
 (`Editor/State.lean`), on the text model. -/
 def stateChecks : List Check :=
@@ -4748,7 +4777,60 @@ def stateChecks : List Check :=
             [none, some "a"].all fun answer =>
               match state.closePrompt answer with
               | (.error .notOpen, after) => after == state
-              | _ => false }]
+              | _ => false },
+    { name :=
+        "the initial state is not asked to quit, does not leave, has no buffer with unsaved changes and no save in flight"
+      run :=
+        pure <|
+          match onTextModel (EditorState.initial ⟨640, 480⟩) with
+          | none => false
+          | some state =>
+            !state.quitting && !state.leaves && state.unsaved.isNone && !state.isSaving },
+    { name :=
+        "a modified buffer with no file has no unsaved changes; one that holds a file has; one whose save in flight is writing the state its text is in has not; one edited since that save began has; and one whose save was ended with a stamp has not"
+      run :=
+        pure <|
+          match onTextModel quitStates with
+          | none => false
+          | some states =>
+            let unsaved (state : EditorState) := state.unsaved.map (·.name)
+            ((states.bare.buffer? ⟨0⟩).map (·.isModified)) == some true &&
+              unsaved states.bare == none &&
+              unsaved states.held == some "other" &&
+              unsaved states.saving == none &&
+              unsaved states.moved == some "other" &&
+              unsaved states.saved == none &&
+              [states.bare, states.held, states.saved].all (!·.isSaving) &&
+              states.saving.isSaving &&
+              states.moved.isSaving },
+    { name :=
+        "a state asked to quit leaves when no buffer has unsaved changes and no save is in flight, and not while a save is in flight or a buffer has unsaved changes; a state that was not asked never leaves"
+      run :=
+        pure <|
+          match onTextModel quitStates with
+          | none => false
+          | some states =>
+            let asked (state : EditorState) : EditorState := { state with quitting := true }
+            (asked states.bare).leaves && (asked states.saved).leaves &&
+              !(asked states.saving).leaves &&
+              !(asked states.held).leaves &&
+              !(asked states.moved).leaves &&
+              !states.bare.leaves &&
+              !states.saved.leaves },
+    { name :=
+        "a quit that cannot go ahead is withdrawn: a state asked to quit while a buffer has unsaved changes is no longer asked, and is otherwise as it was; one asked with nothing unsaved, a save in flight among them, stays asked; one that was not asked is as it was"
+      run :=
+        pure <|
+          match onTextModel quitStates with
+          | none => false
+          | some states =>
+            let asked (state : EditorState) : EditorState := { state with quitting := true }
+            (asked states.held).settleQuit == states.held &&
+              (asked states.moved).settleQuit == states.moved &&
+              (asked states.saving).settleQuit == asked states.saving &&
+              (asked states.bare).settleQuit == asked states.bare &&
+              (asked states.saved).settleQuit == asked states.saved &&
+              states.held.settleQuit == states.held }]
 
 /-- `twoBuffers` with a third buffer, `hidden`, over a text of its own that
 no window shows, and that text. -/
@@ -4789,7 +4871,7 @@ def stateRequests : List StateRequest :=
     .openPrompt "Name: " asked ⟨8⟩ (UndoTree.new ⟨8⟩ 0) (marker 0 0) (marker 8 1),
     .closePrompt none, .closePrompt (some "typed"),
     .setWanted ⟨0⟩ (some { column := .cells 3, head := 7 }), .setWanted ⟨1⟩ none,
-    .setWanted ⟨9⟩ (some { column := .lineEnd, head := 0 }), .ex "w", .invoke asked]
+    .setWanted ⟨9⟩ (some { column := .lineEnd, head := 0 }), .ex "w", .invoke asked, .quit]
 
 /-- The checks of the state requests' pure handler (`EditorState.handle`,
 `Editor/State/Request.lean`), on states made on the text model. The handler
@@ -5240,6 +5322,17 @@ def stateRequestChecks : List Check :=
               { twice with answered := #[] } == state &&
               after.answered == answered.answered.push second &&
               answered.answered.size == 1 },
+    { name :=
+        "the request to quit sets the state's flag that the editor was asked to quit and changes nothing else; asked again, the state is as it was"
+      run :=
+        pure <|
+          match onTextModel twoBuffers with
+          | none => false
+          | some state =>
+            let (_, asked) := state.handle .quit
+            let (_, again) := asked.handle .quit
+            !state.quitting && asked.quitting && { asked with quitting := false } == state &&
+              again == asked },
     { name :=
         "every kind of request, accepted and refused, leaves a well-formed state well formed, with no prompt open and with one open, and the state with nothing in it answers each without a buffer or a window"
       run := do
@@ -10073,9 +10166,24 @@ def dispatchedFrom {α : Type} (command : EditorM α) (start : TextM EditorState
   | .ok (.finished value, state) => some (value, state)
   | _ => none
 
+/-- `twoBuffers` whose buffer `other` holds a file, for the checks of
+`quit`. With `edited` its text was edited since, and its history told so:
+the buffer is modified. -/
+def quitStart (edited : Bool) : TextM EditorState := do
+  let state ← twoBuffers
+  let (_, state) :=
+    state.attachFile ⟨1⟩ "/files/note.txt" { seconds := 3, nanoseconds := 0, size := 9 } .lf
+  let some buffer := state.buffer? ⟨1⟩ | throw .noSuchText
+  if edited then
+    buffer.text.insert 0 "edited"
+    return (state.setHistory ⟨1⟩ (← buffer.history.sync)).2
+  else
+    return state
+
 /-- The checks of the operations of the editor API that are Lean state
 alone (`Editor/Api.lean`): they make no request of the library, so they are
-pinned here, once, on the editor's models. -/
+pinned here, once, on the editor's models; and of `quit`, on the same
+models, whose one case on the real binding is in `Editor/Api/Cases.lean`. -/
 def apiStateChecks : List Check :=
   let one : BufferId := ⟨1⟩
   let absent : BufferId := ⟨9⟩
@@ -10155,7 +10263,55 @@ def apiStateChecks : List Check :=
               state == (start.setWanted view (some kept)).2 &&
               before > 0 &&
               after == before
-          | _ => false }]
+          | _ => false },
+    { name :=
+        "quit from a command asks the editor to quit when no buffer has unsaved changes, and when the only modified buffer holds no file, though the command itself edited it"
+      run :=
+        pure <|
+          let clean := dispatchedFrom quit
+          let scratch :=
+            dispatchedFrom do
+              discard <| (⟨0⟩ : BufferId).insertAt 0 "typed"
+              quit
+          (clean.map fun (reply, state) => (replied reply, state.quitting)) ==
+              some (.inr (), true) &&
+            (scratch.map fun (reply, state) => (replied reply, state.quitting)) ==
+              some (.inr (), true) },
+    { name :=
+        "quit from a command is refused with the name of a buffer that holds a file and has unsaved changes, with the state as it was and the editor not asked: for a buffer that was modified before the command, and for an edit the command itself made before it asked"
+      run :=
+        pure <|
+          let before :=
+            dispatchedFrom (start := quitStart true) do
+              let state ← editorState
+              return (← quit, (← editorState) == state)
+          let during :=
+            dispatchedFrom (start := quitStart false) do
+              discard <| one.insertAt 0 "typed"
+              let state ← editorState
+              return (← quit, (← editorState) == state)
+          let refused (ran : Option ((Except QuitRefusal Unit × Bool) × EditorState)) : Bool :=
+            (ran.map fun ((reply, same), state) => (replied reply, same, state.quitting)) ==
+              some (.inl (.unsaved "other"), true, false)
+          refused before && refused during },
+    { name :=
+        "quit from a command asks when the modified buffer's save in flight is writing the state its text is in, and is refused once the command has edited the buffer since"
+      run :=
+        pure <|
+          let saving : TextM EditorState := do
+            let state ← quitStart true
+            let some buffer := state.buffer? one | throw .noSuchText
+            let snapshot ← buffer.text.snapshot
+            return (state.beginSave one snapshot buffer.history.state).2
+          let covered := dispatchedFrom quit saving
+          let since :=
+            dispatchedFrom (start := saving) do
+              discard <| one.insertAt 0 "more"
+              quit
+          (covered.map fun (reply, state) => (replied reply, state.quitting)) ==
+              some (.inr (), true) &&
+            (since.map fun (reply, state) => (replied reply, state.quitting)) ==
+              some (.inl (.unsaved "other"), false) }]
 
 /-- The driver the job checks run: one over the test scheme. -/
 abbrev TestDriver :=
