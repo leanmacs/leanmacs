@@ -1,0 +1,20 @@
+# The script `mise run ffi-test` has the editor's headless mode run against
+# the config in `config/`, under the editor's input scheme, to dispatch keys
+# to the commands config binds them to. What it prints must be exactly
+# `expected`.
+
+reload
+settle
+
+# `C-c s` runs `spin`, which loops; `C-g`, the interrupt key, stops it. The
+# command's insertion is rolled back, and the echo area says it was
+# interrupted.
+key c KeyC control
+key s KeyS -
+key g KeyG control
+scene
+
+# The next key is handled: `C-c m` runs `mark` to its end.
+key c KeyC control
+key m KeyM -
+scene

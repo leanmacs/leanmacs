@@ -156,6 +156,12 @@ run = [
   # (`scene-expected`). Its second half reloads and runs a job once the
   # frame exists, and each must be followed by a scene.
   "out=$(.lake/build/bin/editor headless \"$(lean --print-prefix)\" .lake/build/lib/lean ../tests/headless/config ../tests/headless/scene-script) && printf '%s\\n' \"$out\" | diff ../tests/headless/scene-expected -",
+  # Keys dispatched to commands, on a config of its own (tests/headless/
+  # dispatch): a key sequence config binds runs its command, the interrupt
+  # key stops one that loops over requests and rolls back its edit, and the
+  # next key's command runs to its end (`dispatch/expected`). A command that
+  # is not stopped loops for longer than the time limit.
+  "out=$(.lake/build/bin/editor headless \"$(lean --print-prefix)\" .lake/build/lib/lean ../tests/headless/dispatch/config ../tests/headless/dispatch/script) && printf '%s\\n' \"$out\" | diff ../tests/headless/dispatch/expected -",
   # The editor's failure statuses. A command line it does not understand is
   # status 2, with the usage on stderr.
   "status=0; .lake/build/bin/editor bogus || status=$?; test \"$status\" -eq 2",
