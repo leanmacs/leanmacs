@@ -1,0 +1,30 @@
+# What no test of `editor-platform-arboard` may name: the system clipboard.
+#
+# A real clipboard is the desktop's: a test that wrote to it would change
+# what the developer next pastes, and one that read it would pass or fail by
+# what happened to be there. The adapter's tests are handed arboard's
+# answers as values built in the test, and its run of the port's contract on
+# a real clipboard is on demand.
+#
+# Clippy reads the first `clippy.toml` it finds from a package's manifest
+# directory upwards, and the workspace root has none, so this file governs
+# every target of this crate and no other. `disallowed_methods` is on by
+# default at `warn`, and `mise run lint` denies warnings, so a line that
+# names the method below fails the gate.
+#
+# The system clipboard comes through one function, `SystemClipboard::open`,
+# which is on the list: no test may call it. Seen to bite once by hand, on
+# 2026-11-14: with a test added to `src/lib.rs` that calls
+# `SystemClipboard::open`, `mise run lint` fails with "use of a disallowed
+# method `editor_platform_arboard::SystemClipboard::open`". Clippy compiles
+# the test and does not run it, so no clipboard was opened to see it.
+#
+# What this does not hold is what `crates/editor-text/clippy.toml` says of
+# its own list: it is a list of names. `arboard::Clipboard::new` is on it
+# too, so that a test cannot go round the adapter's constructor; the one
+# call of it is inside `SystemClipboard::open`, under an `expect`.
+
+disallowed-methods = [
+  { path = "editor_platform_arboard::SystemClipboard::open", reason = "no test opens the system clipboard: it is the desktop's, and the adapter's run of the port's contract on it is on demand" },
+  { path = "arboard::Clipboard::new", reason = "the system clipboard is opened in one place, `SystemClipboard::open`, which no test calls" },
+]

@@ -80,6 +80,16 @@
 # no entry: they are reached only through `wgpu`, and an entry for each
 # would name wgpu's internals here.
 #
+# For the clipboard (2026-11-14, the display pipeline's phase 5), whose
+# entries came in the commit that added its adapter,
+# `editor-platform-arboard`. The clipboard port is in `editor-platform`,
+# so the adapter is a wrapper of that crate's entry: with the wrapper not
+# yet there, it fails on the adapter's edge ("crate 'editor-platform =
+# 0.1.0' is explicitly banned"). `arboard`: with the entry's wrapper
+# naming another crate, it fails ("crate 'arboard = 3.7.0' is explicitly
+# banned"). `editor-platform-arboard` itself has no entry: nothing depends
+# on it yet, and binding it is the display pipeline's phase 6.
+#
 # One rule has no entry: "no crate depends on `editor-ffi`", the one crate
 # that knows about Lean. No entry for it passes the gate. With
 # `wrappers = ["editor-ffi"]` the wrapper matches nothing and
@@ -96,7 +106,8 @@ multiple-versions = "allow"
 deny = [
   { crate = "winit", wrappers = ["editor-platform-winit"], reason = "winit stays behind the window port: only its adapter crate may name its types" },
   { crate = "editor-platform-winit", wrappers = ["editor-ffi"], reason = "the window adapter is linked only by the crate that wires the library together; everything else reaches a window through the port" },
-  { crate = "editor-platform", wrappers = ["editor-ffi", "editor-platform-winit"], reason = "the window port has two users today, its adapter and the crate that runs it onto the event queue; a third is a decision, so it is made here" },
+  { crate = "editor-platform", wrappers = ["editor-ffi", "editor-platform-winit", "editor-platform-arboard"], reason = "the window port has two users today, its adapter and the crate that runs it onto the event queue; the clipboard port beside it has one, its adapter; another is a decision, so it is made here" },
+  { crate = "arboard", wrappers = ["editor-platform-arboard"], reason = "arboard stays behind the clipboard port: only its adapter crate may name its types" },
   { crate = "ropey", wrappers = ["editor-text"], reason = "the rope stays behind editor-text's own types: only that crate may name the library's" },
   { crate = "editor-text", wrappers = ["editor-ffi", "editor-fs-std", "editor-layout"], reason = "text storage has two users, the crate that puts a text behind a handle for Lean and layout, which reads its snapshots, patches and selections as plain values; and the file port it defines has one adapter, which implements it; another is a decision, so it is made here" },
   { crate = "editor-layout", wrappers = ["editor-ffi", "editor-shape-parley", "editor-render", "editor-render-wgpu"], reason = "layout is reached by the crate that puts it behind a handle for Lean and wires it to text; the Shaper port it defines has one real adapter, which implements it; and the Renderer port's crate and the crate of its real adapters take its frames as plain data; another user is a decision, so it is made here" },
