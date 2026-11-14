@@ -343,12 +343,14 @@ structure Stage (σ : Type) where
   /-- Every entry the host has logged, oldest first. -/
   log : IO.Ref (Array String)
 
-/-- What compiled code hands a host: its commands, its key bindings, its
-modes, how long a command may take before it is logged, and the major mode
-the scratch buffer starts in. -/
+/-- What compiled code hands a host: its commands, its jobs, its key
+bindings, its modes, how long a command may take before it is logged, and
+the major mode the scratch buffer starts in. -/
 structure Compiled where
   /-- The compiled commands. -/
   commands : Array Config.Registration := #[]
+  /-- The compiled jobs. -/
+  jobs : Array Config.JobRegistration := #[]
   /-- The compiled key bindings. -/
   bindings : Array Config.KeyBinding := #[]
   /-- The compiled modes. -/
@@ -379,7 +381,8 @@ def Stage.new {σ : Type} (context : Context) (elaborator : Config.Elaborator σ
             output.modify (·.push line),
           services := { completions, timers := clock.timers }, published := ← Snapshots.new,
           held := ← Job.HeldSnapshots.new, requests, wakeups := requests + 1, jobs := requests + 2,
-          commands := compiled.commands, bindings := compiled.bindings, modes := compiled.modes,
+          commands := compiled.commands, compiledJobs := compiled.jobs,
+          bindings := compiled.bindings, modes := compiled.modes,
           log := fun entry => log.modify (·.push entry), slowAfter := compiled.slowAfter,
           start := do
             let loop ← Loop.start TestScheme.scheme ⟨0, 0⟩
@@ -2114,6 +2117,18 @@ def startingChunk : String :=
   bindKey \"C-c a\" \"ask\"
 "
 
+/-- What compiled code hands the host of the compiled job check: the job
+`nap`, which sleeps 10 ms on the job clock and whose command inserts
+`napped` at the cursor of view 0, and the command `rest`, which starts
+it. -/
+def nappingCompiled : Compiled :=
+  { commands := #[{ name := "rest", action := .plain (discard <| startJob "nap") }]
+    jobs :=
+      #[{ name := "nap"
+          work := fun _ =>
+            Work.of (fun _ => sleep 10) fun _ =>
+              discard <| (⟨0⟩ : ViewId).insertAtSelections "napped" }] }
+
 /-- The checks of commands the headless host runs through its loop that no
 key ran, and of the jobs commands start (`Editor/Headless.lean`), on the
 real queue, the real text binding, the library's interrupt flag and the
@@ -2220,7 +2235,26 @@ def hostLoopChecks (context : Context) : List Check :=
             return false
           return (← session.output.get).contains "job 1 spinner: interrupted" &&
               !(← Ffi.interruptRaised) &&
-              (← session.scene) == ("job 1 spinner: interrupted".quote, #[viewLine "ab" 2]) }]
+              (← session.scene) == ("job 1 spinner: interrupted".quote, #[viewLine "ab" 2]) },
+    { name :=
+        "a host is handed compiled jobs: a compiled command starts one before any config is loaded, a reload that installs does not cancel it, and once the clock lets it go its command runs"
+      run :=
+        withHost context [("10-empty.lean", emptyChunk)]
+          (fun session => do
+            session.ask [.run "rest"]
+            unless ← eventually (return (← session.clock.waiting) == 1) do
+              return false
+            session.ask [.reload]
+            let reloaded ← session.output.get
+            session.clock.advance 10
+            let joined ← session.host.join patience
+            return reloaded ==
+                  #["run rest: ok", "job 1 nap: started",
+                    "reload 1: installed, 1 chunks, 0 commands"] &&
+                joined == .settled &&
+                (← session.output.get).extract reloaded.size == #["job 1 nap: ok"] &&
+                (← session.scene) == ("".quote, #[viewLine "napped" 6]))
+          nappingCompiled }]
 
 /-- Every check, in the order they run. -/
 def checks (context : Context) : List Check :=

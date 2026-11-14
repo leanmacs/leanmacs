@@ -100,6 +100,12 @@ A compiled command may be given what it was called with (`Action.call`,
 `Editor/Command/Call.lean`): the window it acts on, the invocation's
 arguments and the keys. `setup` registers a plain command, which is told
 nothing of its call.
+
+Compiled jobs are registered the same way, with `replaceJobs .compiled …`
+when the host starts, and a command starts one by its name as it starts
+config's. The owner a job is started for is the one that registered it, and
+an install cancels the jobs of `config` alone, so a compiled job runs across
+a reload. The file commands' jobs are the first (`Editor/Files/Compiled.lean`).
 -/
 
 namespace Editor.Config

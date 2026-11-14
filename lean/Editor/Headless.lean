@@ -85,15 +85,18 @@ as before, so reload and job completion work as they did.
   name. So a reload's modes, bindings and commands hold from the next key.
   What a command over a store asked to be written is written back to the
   stores.
-- **Compiled commands, bindings and modes are registered when the loop
-  starts** (`compiled`), for the owner `compiled`, before any config: they
-  are what the host's collaborators hand it. A reload replaces config's
-  commands, bindings and modes and never these, so they run when config
-  fails to load, and config's command of a compiled command's name runs in
-  its place until a reload drops it. The executable is handed none: the
-  commands its scheme's keys name are not built yet, so a key of the Vim
-  scheme says `<name>: no such command` in the echo area, and no mode
-  ships.
+- **Compiled commands, jobs, bindings and modes are registered when the
+  loop starts** (`compiled`), for the owner `compiled`, before any config:
+  they are what the host's collaborators hand it. A reload replaces
+  config's commands, jobs, bindings and modes and never these, so they run
+  when config fails to load, and config's command of a compiled command's
+  name runs in its place until a reload drops it. A compiled job is
+  started by a command, by its name, as config's is, for the owner
+  `compiled`: a reload that installs cancels config's jobs only, so a
+  compiled job runs across a reload. The executable is handed no binding
+  and no mode: the commands its scheme's keys name are not built yet, so a
+  key of the Vim scheme says `<name>: no such command` in the echo area,
+  and no mode ships.
 - **The interrupt key.** When the loop starts the host tells the library
   which key raises the interrupt flag (`Collaborators.interruptKey`, `C-g`),
   and leaves it with none when the loop ends. The loop's programs are run
@@ -132,8 +135,9 @@ through, the services the loop's jobs wait on, which a test makes of a fake
 clock, and the two tables the host makes before those services: the table of
 snapshots the loop's text binding publishes, of which the loop is the one
 writer, and what the jobs hold. Beside them, each with a default: the
-compiled commands, bindings and modes, the log, the threshold for a slow command,
-the interrupt key and how the frame is made (`Collaborators.start`).
+compiled commands, jobs, bindings and modes, the log, the threshold for a
+slow command, the interrupt key and how the frame is made
+(`Collaborators.start`).
 
 ## Jobs
 
@@ -348,6 +352,10 @@ structure Collaborators (σ : Type) (scheme : InputScheme) where
   /-- The compiled commands: registered for the owner `compiled` when the
   loop starts, before any config. -/
   commands : Array Config.Registration := #[]
+  /-- The compiled jobs: registered for the owner `compiled` when the loop
+  starts, before any config. A command starts one by its name. `jobs` is
+  the name of a source id, above. -/
+  compiledJobs : Array Config.JobRegistration := #[]
   /-- The compiled key bindings: registered for the owner `compiled` when
   the loop starts, before any config. -/
   bindings : Array Config.KeyBinding := #[]
@@ -867,12 +875,14 @@ and 16 down, as the display contract's larger size. -/
 def cells : Display.Cells :=
   { advance := 8, lineHeight := 16 }
 
-/-- The registry a host starts with: what compiled code hands it, for the
-owner `compiled`, before any config. -/
+/-- The registry a host starts with: what compiled code hands it, its
+commands, jobs, key bindings and modes, for the owner `compiled`, before any
+config. -/
 def compiled {σ : Type} {scheme : InputScheme} (collaborators : Collaborators σ scheme) :
     Config.Registry :=
-  ((({} : Config.Registry).replace .compiled collaborators.commands).replaceBindings .compiled
-        collaborators.bindings).replaceModes
+  (((({} : Config.Registry).replace .compiled collaborators.commands).replaceJobs .compiled
+            collaborators.compiledJobs).replaceBindings
+        .compiled collaborators.bindings).replaceModes
     .compiled collaborators.modes
 
 /-- What the editor thread holds as its loop starts: the compiled registry
@@ -891,8 +901,8 @@ end, until the driver ends the loop or the queues are quit. After each event
 it publishes in `progress` how many markers it has reached, whether a reload
 is running, and how many jobs are.
 
-Before the first event it registers the compiled commands and bindings, and
-tells the library its interrupt key; when it ends it leaves the library with
+Before the first event it registers what compiled code hands it (`compiled`),
+and tells the library its interrupt key; when it ends it leaves the library with
 none, so that no key raises the flag while no loop takes keys off the
 queue. -/
 def loop {σ : Type} {scheme : InputScheme} (collaborators : Collaborators σ scheme)
