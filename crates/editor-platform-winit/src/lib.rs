@@ -37,16 +37,13 @@ mod translate;
 
 use std::sync::{Mutex, MutexGuard, PoisonError};
 
-use editor_platform::{
-    CannotOpen, Composition, Input, Modifiers, Platform, Pointer, PointerAction, Report,
-    WindowOptions,
-};
+use editor_platform::{CannotOpen, Input, Platform, Report, WindowOptions};
 use winit::application::ApplicationHandler;
-use winit::event::{ElementState, Ime, WindowEvent};
+use winit::event::WindowEvent;
 use winit::event_loop::{ActiveEventLoop, EventLoop, EventLoopProxy};
 use winit::window::{Window, WindowId};
 
-use crate::translate::KeyParts;
+use crate::translate::{KeyParts, Seen};
 
 /// The window port over winit. It opens one window, on the process's main
 /// thread, once in a process.
@@ -96,6 +93,7 @@ impl Platform for WinitPlatform {
         let mut app = App {
             options,
             report,
+            seen: Seen::default(),
             window: None,
             failure: None,
         };
@@ -118,35 +116,6 @@ impl Platform for WinitPlatform {
     }
 }
 
-/// What the port reports for `event`, if it reports anything for it. A key
-/// event goes through [`translate::key`]. A pressed button is a press at the
-/// origin with no button and no modifiers, and a resize is not reported:
-/// giving a pointer its position, button and modifiers, and reporting a
-/// resize, are still to come.
-fn translate(event: &WindowEvent) -> Option<Input> {
-    match event {
-        WindowEvent::Focused(gained) => Some(Input::Focus(*gained)),
-        WindowEvent::Ime(step) => Some(Input::Composition(match step {
-            Ime::Enabled => Composition::Enabled,
-            Ime::Preedit(text, _) => Composition::Preedit(text.clone()),
-            Ime::Commit(text) => Composition::Commit(text.clone()),
-            Ime::Disabled => Composition::Disabled,
-        })),
-        WindowEvent::MouseInput {
-            state: ElementState::Pressed,
-            ..
-        } => Some(Input::Pointer(Pointer {
-            action: PointerAction::Press,
-            x: 0.0,
-            y: 0.0,
-            button: None,
-            modifiers: Modifiers::default(),
-        })),
-        WindowEvent::CloseRequested => Some(Input::CloseRequested),
-        _ => None,
-    }
-}
-
 /// The window and its loop's handler: what [`WinitPlatform::run`] hands to
 /// winit.
 struct App {
@@ -154,6 +123,8 @@ struct App {
     options: WindowOptions,
     /// Where what the window reports goes.
     report: Report,
+    /// What winit has said of the window so far.
+    seen: Seen,
     /// The window, once the loop has made it.
     window: Option<Window>,
     /// Why the window could not be made, if it could not.
@@ -190,14 +161,14 @@ impl ApplicationHandler for App {
         let input = match &event {
             // winit's key event cannot be built in a test, so it is taken
             // apart here and translated from its parts.
-            WindowEvent::KeyboardInput { event, .. } => Some(translate::key(&KeyParts {
+            WindowEvent::KeyboardInput { event, .. } => Some(self.seen.key(&KeyParts {
                 state: event.state,
                 repeat: event.repeat,
                 logical: &event.logical_key,
                 physical: event.physical_key,
                 text: event.text.as_deref(),
             })),
-            other => translate(other),
+            other => self.seen.window_event(other),
         };
         if let Some(input) = input {
             (self.report)(input);
@@ -221,85 +192,6 @@ mod tests {
     use super::*;
     use std::sync::Arc;
     use std::sync::atomic::{AtomicUsize, Ordering};
-    use winit::dpi::PhysicalSize;
-    use winit::event::{DeviceId, MouseButton};
-
-    #[test]
-    fn each_step_of_a_composition_is_reported() {
-        let step = |ime| translate(&WindowEvent::Ime(ime));
-
-        assert_eq!(
-            step(Ime::Enabled),
-            Some(Input::Composition(Composition::Enabled))
-        );
-        assert_eq!(
-            step(Ime::Preedit("´".into(), Some((0, 2)))),
-            Some(Input::Composition(Composition::Preedit("´".into())))
-        );
-        assert_eq!(
-            step(Ime::Preedit(String::new(), None)),
-            Some(Input::Composition(Composition::Preedit(String::new())))
-        );
-        assert_eq!(
-            step(Ime::Commit("é".into())),
-            Some(Input::Composition(Composition::Commit("é".into())))
-        );
-        assert_eq!(
-            step(Ime::Disabled),
-            Some(Input::Composition(Composition::Disabled))
-        );
-    }
-
-    #[test]
-    fn focus_gained_and_lost_are_reported() {
-        assert_eq!(
-            translate(&WindowEvent::Focused(true)),
-            Some(Input::Focus(true))
-        );
-        assert_eq!(
-            translate(&WindowEvent::Focused(false)),
-            Some(Input::Focus(false))
-        );
-    }
-
-    #[test]
-    fn a_pressed_pointer_button_is_reported_as_a_press_at_the_origin_with_no_button_and_its_release_is_not()
-     {
-        let button = |state| WindowEvent::MouseInput {
-            device_id: DeviceId::dummy(),
-            state,
-            button: MouseButton::Left,
-        };
-
-        assert_eq!(
-            translate(&button(ElementState::Pressed)),
-            Some(Input::Pointer(Pointer {
-                action: PointerAction::Press,
-                x: 0.0,
-                y: 0.0,
-                button: None,
-                modifiers: Modifiers::default(),
-            }))
-        );
-        assert_eq!(translate(&button(ElementState::Released)), None);
-    }
-
-    #[test]
-    fn a_request_to_close_is_reported() {
-        assert_eq!(
-            translate(&WindowEvent::CloseRequested),
-            Some(Input::CloseRequested)
-        );
-    }
-
-    #[test]
-    fn an_event_the_port_has_no_input_for_is_not_reported() {
-        assert_eq!(
-            translate(&WindowEvent::Resized(PhysicalSize::new(800, 600))),
-            None
-        );
-        assert_eq!(translate(&WindowEvent::Destroyed), None);
-    }
 
     #[test]
     fn off_the_main_thread_a_run_is_refused_with_a_reason_and_reports_nothing() {

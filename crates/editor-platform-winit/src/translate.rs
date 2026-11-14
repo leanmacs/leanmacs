@@ -18,9 +18,21 @@
 //!   text U+001B, and Enter, Tab and Backspace theirs. Such a key produced
 //!   nothing to insert and is known by its name, so text that holds a
 //!   control character is no text.
+//!
+//! # What winit says once
+//!
+//! winit says which modifiers are held when they change, and the port wants
+//! them on every key. [`Seen`] remembers what winit last said and gives it
+//! to what comes after.
+//!
+//! **Modifiers are those winit last reported**, and are not put right. On
+//! X11 a modifier's own press arrives before the change that names it, so
+//! the press of Control does not carry `control`, and its release still
+//! does. No command binds a bare modifier, and the order on macOS has not
+//! been seen.
 
-use editor_platform::{Input, Key};
-use winit::event::ElementState;
+use editor_platform::{Composition, Input, Key, Modifiers, Pointer, PointerAction};
+use winit::event::{ElementState, Ime, WindowEvent};
 use winit::keyboard;
 
 use crate::names;
@@ -40,17 +52,64 @@ pub(crate) struct KeyParts<'a> {
     pub text: Option<&'a str>,
 }
 
-/// The key event winit reports with these parts, as the port's input.
-pub(crate) fn key(parts: &KeyParts<'_>) -> Input {
-    let pressed = parts.state == ElementState::Pressed;
-    Input::Key(Key {
-        pressed,
-        repeat: parts.repeat,
-        logical: names::logical(parts.logical),
-        physical: names::physical(parts.physical),
-        text: text(pressed, parts.text),
-        ..Key::unidentified()
-    })
+/// What winit has said of the window so far that the port wants on what
+/// comes after: winit says a thing once, when it changes, and the port
+/// carries it on every input.
+#[derive(Debug, Default)]
+pub(crate) struct Seen {
+    /// The modifiers held, as winit last reported them.
+    modifiers: Modifiers,
+}
+
+impl Seen {
+    /// The key event winit reports with these parts, as the port's input.
+    pub(crate) fn key(&self, parts: &KeyParts<'_>) -> Input {
+        let pressed = parts.state == ElementState::Pressed;
+        Input::Key(Key {
+            pressed,
+            repeat: parts.repeat,
+            logical: names::logical(parts.logical),
+            physical: names::physical(parts.physical),
+            modifiers: self.modifiers,
+            text: text(pressed, parts.text),
+        })
+    }
+
+    /// Takes in `event`, and gives what the port reports for it, if it
+    /// reports anything. A key event goes through [`Seen::key`].
+    pub(crate) fn window_event(&mut self, event: &WindowEvent) -> Option<Input> {
+        match event {
+            WindowEvent::ModifiersChanged(modifiers) => {
+                let state = modifiers.state();
+                self.modifiers = Modifiers {
+                    shift: state.shift_key(),
+                    control: state.control_key(),
+                    alt: state.alt_key(),
+                    super_key: state.super_key(),
+                };
+                None
+            }
+            WindowEvent::Focused(gained) => Some(Input::Focus(*gained)),
+            WindowEvent::Ime(step) => Some(Input::Composition(match step {
+                Ime::Enabled => Composition::Enabled,
+                Ime::Preedit(text, _) => Composition::Preedit(text.clone()),
+                Ime::Commit(text) => Composition::Commit(text.clone()),
+                Ime::Disabled => Composition::Disabled,
+            })),
+            WindowEvent::MouseInput {
+                state: ElementState::Pressed,
+                ..
+            } => Some(Input::Pointer(Pointer {
+                action: PointerAction::Press,
+                x: 0.0,
+                y: 0.0,
+                button: None,
+                modifiers: Modifiers::default(),
+            })),
+            WindowEvent::CloseRequested => Some(Input::CloseRequested),
+            _ => None,
+        }
+    }
 }
 
 /// The text a key produced, as the port documents it, from what winit says
@@ -65,16 +124,180 @@ fn text(pressed: bool, given: Option<&str>) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{KeyParts, key};
-    use editor_platform::{Input, Key, LogicalKey, PhysicalKey};
-    use winit::event::ElementState;
+    use super::{KeyParts, Seen};
+    use editor_platform::{Composition, Input, Key, LogicalKey, Modifiers, PhysicalKey};
+    use editor_platform::{Pointer, PointerAction};
+    use winit::dpi::PhysicalSize;
+    use winit::event::{DeviceId, ElementState, Ime, MouseButton, WindowEvent};
     use winit::keyboard::{
-        Key as WinitKey, KeyCode, NamedKey, NativeKeyCode, PhysicalKey as Physical,
+        Key as WinitKey, KeyCode, ModifiersState, NamedKey, NativeKeyCode, PhysicalKey as Physical,
     };
 
     /// The logical key for the character `text`.
     fn character(text: &str) -> WinitKey {
         WinitKey::Character(text.into())
+    }
+
+    /// What the port reports for a key with these parts in a window that
+    /// has said nothing else.
+    fn key(parts: &KeyParts<'_>) -> Input {
+        Seen::default().key(parts)
+    }
+
+    /// What the port reports for `event` in a window that has said nothing
+    /// else.
+    fn translate(event: &WindowEvent) -> Option<Input> {
+        Seen::default().window_event(event)
+    }
+
+    /// winit's word that the modifiers held are now `state`.
+    fn modifiers_changed(state: ModifiersState) -> WindowEvent {
+        WindowEvent::ModifiersChanged(state.into())
+    }
+
+    /// The port's modifiers with these held.
+    fn held(shift: bool, control: bool, alt: bool, super_key: bool) -> Modifiers {
+        Modifiers {
+            shift,
+            control,
+            alt,
+            super_key,
+        }
+    }
+
+    #[test]
+    fn a_key_carries_the_modifiers_winit_last_reported() {
+        let mut seen = Seen::default();
+        let logical = character("A");
+        let parts = press(&logical, KeyCode::KeyA, Some("A"));
+        let pressed = |modifiers| {
+            Input::Key(Key {
+                pressed: true,
+                logical: LogicalKey::Character("A".into()),
+                physical: code("KeyA"),
+                modifiers,
+                text: "A".into(),
+                ..Key::unidentified()
+            })
+        };
+        // Before winit has said anything, none is held.
+        assert_eq!(seen.key(&parts), pressed(Modifiers::default()));
+
+        // The change is nothing the port reports by itself.
+        let both = ModifiersState::SHIFT | ModifiersState::CONTROL;
+        assert_eq!(seen.window_event(&modifiers_changed(both)), None);
+        assert_eq!(seen.key(&parts), pressed(held(true, true, false, false)));
+        // And every key after it, until winit says otherwise.
+        assert_eq!(seen.key(&parts), pressed(held(true, true, false, false)));
+
+        // One released, then the other.
+        seen.window_event(&modifiers_changed(ModifiersState::CONTROL));
+        assert_eq!(seen.key(&parts), pressed(held(false, true, false, false)));
+        seen.window_event(&modifiers_changed(ModifiersState::empty()));
+        assert_eq!(seen.key(&parts), pressed(Modifiers::default()));
+    }
+
+    #[test]
+    fn each_modifier_winit_names_is_the_ports_own() {
+        for (state, modifiers) in [
+            (ModifiersState::SHIFT, held(true, false, false, false)),
+            (ModifiersState::CONTROL, held(false, true, false, false)),
+            (ModifiersState::ALT, held(false, false, true, false)),
+            (ModifiersState::SUPER, held(false, false, false, true)),
+            (ModifiersState::all(), held(true, true, true, true)),
+        ] {
+            let mut seen = Seen::default();
+            seen.window_event(&modifiers_changed(state));
+            let logical = WinitKey::Named(NamedKey::ArrowLeft);
+            assert_eq!(
+                seen.key(&press(&logical, KeyCode::ArrowLeft, None)),
+                Input::Key(Key {
+                    pressed: true,
+                    logical: named("ArrowLeft"),
+                    physical: code("ArrowLeft"),
+                    modifiers,
+                    ..Key::unidentified()
+                }),
+                "{state:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn each_step_of_a_composition_is_reported() {
+        let step = |ime| translate(&WindowEvent::Ime(ime));
+
+        assert_eq!(
+            step(Ime::Enabled),
+            Some(Input::Composition(Composition::Enabled))
+        );
+        assert_eq!(
+            step(Ime::Preedit("´".into(), Some((0, 2)))),
+            Some(Input::Composition(Composition::Preedit("´".into())))
+        );
+        assert_eq!(
+            step(Ime::Preedit(String::new(), None)),
+            Some(Input::Composition(Composition::Preedit(String::new())))
+        );
+        assert_eq!(
+            step(Ime::Commit("é".into())),
+            Some(Input::Composition(Composition::Commit("é".into())))
+        );
+        assert_eq!(
+            step(Ime::Disabled),
+            Some(Input::Composition(Composition::Disabled))
+        );
+    }
+
+    #[test]
+    fn focus_gained_and_lost_are_reported() {
+        assert_eq!(
+            translate(&WindowEvent::Focused(true)),
+            Some(Input::Focus(true))
+        );
+        assert_eq!(
+            translate(&WindowEvent::Focused(false)),
+            Some(Input::Focus(false))
+        );
+    }
+
+    #[test]
+    fn a_pressed_pointer_button_is_reported_as_a_press_at_the_origin_with_no_button_and_its_release_is_not()
+     {
+        let button = |state| WindowEvent::MouseInput {
+            device_id: DeviceId::dummy(),
+            state,
+            button: MouseButton::Left,
+        };
+
+        assert_eq!(
+            translate(&button(ElementState::Pressed)),
+            Some(Input::Pointer(Pointer {
+                action: PointerAction::Press,
+                x: 0.0,
+                y: 0.0,
+                button: None,
+                modifiers: Modifiers::default(),
+            }))
+        );
+        assert_eq!(translate(&button(ElementState::Released)), None);
+    }
+
+    #[test]
+    fn a_request_to_close_is_reported() {
+        assert_eq!(
+            translate(&WindowEvent::CloseRequested),
+            Some(Input::CloseRequested)
+        );
+    }
+
+    #[test]
+    fn an_event_the_port_has_no_input_for_is_not_reported() {
+        assert_eq!(
+            translate(&WindowEvent::Resized(PhysicalSize::new(800, 600))),
+            None
+        );
+        assert_eq!(translate(&WindowEvent::Destroyed), None);
     }
 
     /// The parts of a press of the key `logical` at `code` that produced
@@ -100,7 +323,7 @@ mod tests {
     }
 
     #[test]
-    fn a_key_press_is_a_key_with_its_logical_key_and_physical_key() {
+    fn a_key_press_is_a_key_with_its_logical_key_physical_key_and_modifiers() {
         assert_eq!(
             key(&press(&character("a"), KeyCode::KeyA, Some("a"))),
             Input::Key(Key {
@@ -109,6 +332,21 @@ mod tests {
                 physical: code("KeyA"),
                 text: "a".into(),
                 ..Key::unidentified()
+            })
+        );
+        // With shift held the layout makes `A` of the same key, and the
+        // modifier is carried beside it.
+        let mut shifted = Seen::default();
+        shifted.window_event(&modifiers_changed(ModifiersState::SHIFT));
+        assert_eq!(
+            shifted.key(&press(&character("A"), KeyCode::KeyA, Some("A"))),
+            Input::Key(Key {
+                pressed: true,
+                repeat: false,
+                logical: LogicalKey::Character("A".into()),
+                physical: code("KeyA"),
+                modifiers: held(true, false, false, false),
+                text: "A".into(),
             })
         );
         // The layout's character and the key's place are told apart: `é`
