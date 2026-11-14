@@ -12,10 +12,11 @@ mod common;
 use editor_layout::shaper::{
     FontId, FontSpec, Glyph, Length, LineHeight, ResolvedFont, Shaper, Slant, VisualLine, Weight,
 };
-use editor_shape_parley::ParleyShaper;
+use editor_shape_parley::{FontSet, ParleyShaper};
 
 use common::{
-    MONO_FAMILY, SANS, clusters, family, in_font, in_fonts, one_line, plain, shaper, sized,
+    EMOJI, HEBREW, HEBREW_FAMILY, JP, JP_FAMILY, MONO, MONO_FAMILY, SANS, SANS_FAMILY, clusters,
+    family, files, in_font, in_fonts, one_line, plain, shaper, sized,
 };
 
 /// The id of the one glyph `text` is shaped to in the default font.
@@ -190,6 +191,93 @@ fn a_resolved_font_says_what_a_rasteriser_needs() {
         ..FontSpec::default()
     });
     assert_eq!(spaced_id, plain_id);
+}
+
+#[test]
+fn a_character_the_primary_lacks_is_drawn_in_the_fallback_that_covers_it() {
+    let shaper = shaper();
+    // Every byte is in the default font, whose family is the primary: it
+    // has `a` and `b`, and neither the CJK character nor the emoji.
+    let text = "a日😀b";
+    let line = one_line(&shaper, &plain(text));
+    assert_eq!(clusters(&line), vec![0, 1, 4, 8]);
+    let fonts: Vec<ResolvedFont> = line
+        .glyphs
+        .iter()
+        .map(|glyph| font_of(&shaper, glyph))
+        .collect();
+    assert!(drawn_from(&fonts[0], SANS));
+    assert!(drawn_from(&fonts[1], JP));
+    assert!(drawn_from(&fonts[2], EMOJI));
+    assert!(drawn_from(&fonts[3], SANS));
+    // All at the size the spec asked for, and the fallbacks' glyphs are
+    // glyphs of theirs, not the missing glyph.
+    assert!(fonts.iter().all(|font| font.size == 16.0));
+    assert!(line.glyphs.iter().all(|glyph| glyph.id != 0));
+    // The two letters are one resolved font, and each fallback another.
+    assert_eq!(line.glyphs[0].font, line.glyphs[3].font);
+    assert_ne!(line.glyphs[1].font, line.glyphs[0].font);
+    assert_ne!(line.glyphs[2].font, line.glyphs[0].font);
+    assert_ne!(line.glyphs[1].font, line.glyphs[2].font);
+    // The line still starts each glyph where the one before it ends.
+    assert!(end_to_end(&line));
+    // At another size, the fallbacks are at that size.
+    let big = shaper.font(&sized(32));
+    let line = one_line(&shaper, &in_font(text, big));
+    let sizes: Vec<f32> = line
+        .glyphs
+        .iter()
+        .map(|glyph| font_of(&shaper, glyph).size)
+        .collect();
+    assert_eq!(sizes, vec![32.0; 4]);
+}
+
+#[test]
+fn the_primary_alone_has_neither() {
+    // The premise of the test above: with no fallback to turn to, both
+    // characters are the primary's missing glyph, which is glyph 0 of any
+    // font.
+    let alone = FontSet::only(SANS_FAMILY, &[], [SANS.to_vec()]).expect("the primary");
+    let shaper = ParleyShaper::new(alone);
+    let line = one_line(&shaper, &plain("a日😀b"));
+    assert_eq!(clusters(&line), vec![0, 1, 4, 8]);
+    let ids = ids(&line);
+    assert_eq!((ids[1], ids[2]), (0, 0));
+    assert!(ids[0] != 0 && ids[3] != 0);
+    for glyph in &line.glyphs {
+        assert!(drawn_from(&font_of(&shaper, glyph), SANS));
+    }
+}
+
+#[test]
+fn a_character_is_looked_for_in_the_specs_family_then_the_default_then_the_fallbacks_in_order() {
+    let shaper = shaper();
+    // A run in the monospace family, which has ASCII alone: `a` is its
+    // own, `é` is the default family's, and the CJK character a
+    // fallback's.
+    let mono = shaper.font(&family(MONO_FAMILY));
+    let line = one_line(&shaper, &in_font("aé日", mono));
+    let drawn_in: [&[u8]; 3] = [MONO, SANS, JP];
+    assert_eq!(line.glyphs.len(), 3);
+    for (glyph, file) in line.glyphs.iter().zip(drawn_in) {
+        assert!(drawn_from(&font_of(&shaper, glyph), file), "{glyph:?}");
+    }
+    // A family the set does not hold is no family: the default's.
+    let unknown = shaper.font(&family("No Such Family"));
+    let line = one_line(&shaper, &in_font("a", unknown));
+    assert!(drawn_from(&font_of(&shaper, &line.glyphs[0]), SANS));
+    // Among the fallbacks, the first in the set's order that has the
+    // character: the CJK font has no space, and both the Hebrew font and
+    // the primary have one.
+    let space_in = |fallbacks: &[&str]| {
+        let fonts = FontSet::only(JP_FAMILY, fallbacks, files()).expect("the fixture fonts");
+        let shaper = ParleyShaper::new(fonts);
+        let line = one_line(&shaper, &plain("日 "));
+        assert!(drawn_from(&font_of(&shaper, &line.glyphs[0]), JP));
+        font_of(&shaper, &line.glyphs[1])
+    };
+    assert!(drawn_from(&space_in(&[HEBREW_FAMILY, SANS_FAMILY]), HEBREW));
+    assert!(drawn_from(&space_in(&[SANS_FAMILY, HEBREW_FAMILY]), SANS));
 }
 
 #[test]

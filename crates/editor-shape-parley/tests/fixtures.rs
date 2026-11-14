@@ -3,11 +3,12 @@
 
 mod common;
 
+use editor_layout::shaper::Shaper;
 use editor_shape_parley::{FontSet, FontSetError};
 
 use common::{
     EMOJI_FAMILY, FALLBACKS, HEBREW_FAMILY, JP_FAMILY, MONO_FAMILY, SANS, SANS_FAMILY, files,
-    fixture_set,
+    fixture_set, one_line, plain, shaper,
 };
 
 #[test]
@@ -66,6 +67,31 @@ fn bytes_that_are_no_font_are_refused() {
     mixed.push(Vec::new());
     let refused = FontSet::only(SANS_FAMILY, &FALLBACKS, mixed).err();
     assert_eq!(refused, Some(FontSetError::NotAFont));
+}
+
+#[test]
+fn a_character_no_fixture_covers_is_the_primary_fonts_missing_glyph() {
+    // U+0E01, a Thai letter: no fixture font has it, and the fonts of any
+    // machine do. Were a system font consulted, it would be drawn in one;
+    // it is glyph 0, which the font format makes the missing glyph, of
+    // the primary fixture.
+    let shaper = shaper();
+    let line = one_line(&shaper, &plain("a\u{e01}"));
+    assert_eq!(line.glyphs.len(), 2);
+    assert_eq!(line.glyphs[1].cluster, 1);
+    assert_eq!(line.glyphs[1].id, 0);
+    assert_ne!(line.glyphs[0].id, 0);
+    let table = shaper.resolved();
+    for glyph in &line.glyphs {
+        let font = &table[glyph.font.0 as usize];
+        assert!((*font.data).as_ref() == SANS);
+    }
+    // Every font the shaper describes after it is one of the five files.
+    shaper.shape(&plain("a日😀 שלום"));
+    for font in shaper.resolved().iter() {
+        let bytes = (*font.data).as_ref();
+        assert!(files().iter().any(|file| file.as_slice() == bytes));
+    }
 }
 
 #[test]

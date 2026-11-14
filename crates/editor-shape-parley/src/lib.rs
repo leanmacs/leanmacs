@@ -29,6 +29,14 @@
 //!   about three quarters of the size) gives a line a little taller than
 //!   was asked, and a height of 0 pixels at a size that is not 0 is not a
 //!   line of no height. A font of size 0 is.
+//! - **A glyph is drawn in the font Parley picked for its cluster**, which
+//!   is the first of the families above that has the cluster's
+//!   characters, and the first of them when none has: the glyph is then
+//!   that font's missing glyph, glyph 0. Each font a run is drawn in is an
+//!   entry of [`resolved`]: the file's bytes, the face, the size, the
+//!   variation coordinates and what is synthesised, with fontique's
+//!   number for the file. `shape` adds a layout's fonts to the table
+//!   before it returns, and a break adds none.
 //! - **Runs are shaped whole, and only runs.** A ligature forms inside a
 //!   font run and never across two, a letter and its combining mark are
 //!   one cluster, and each family on a line has its own advances.
@@ -52,7 +60,15 @@
 //!
 //! - the port's contract, [`editor_layout::shaper::contract`]
 //!   (`tests/contract.rs`);
-//! - what a font set holds and refuses (`tests/fixtures.rs`);
+//! - what a font set holds and refuses, and that no font but the fixture
+//!   files' is drawn in: a character no fixture covers is the primary's
+//!   missing glyph (`tests/fixtures.rs`);
+//! - fallback: a character the primary lacks is drawn in the fallback
+//!   that covers it, at the spec's size, and a character is looked for in
+//!   the spec's family, then the default, then the fallbacks in the set's
+//!   order (`tests/shaping.rs`);
+//! - that shaping describes every font a line is drawn in before it
+//!   returns, so a break adds none (`tests/adapter.rs`);
 //! - the rules above (`tests/adapter.rs`, and the stand-ins in
 //!   `src/shaper.rs`);
 //! - what shaping whole runs gives on real fonts: the `fi` ligature as one
@@ -64,6 +80,7 @@
 //! `editor-layout`'s, pinned there on the port's fake.
 //!
 //! [`shape`]: editor_layout::shaper::Shaper::shape
+//! [`resolved`]: editor_layout::shaper::Shaper::resolved
 
 mod fonts;
 mod shaper;

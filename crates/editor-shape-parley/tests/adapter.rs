@@ -221,6 +221,34 @@ fn spaces_wider_than_the_view_wrap() {
 }
 
 #[test]
+fn breaking_a_kept_line_adds_no_resolved_font() {
+    let shaper = shaper();
+    // Shaping describes every font the line is drawn in, fallbacks among
+    // them, before it returns.
+    let before = shaper.resolved().len();
+    let kept = shaper.shape(&plain("ab 日 😀 cd"));
+    let described = shaper.resolved();
+    assert!(described.len() >= before + 3);
+    // Broken at any width, every glyph names a font described then, and
+    // the table is as it was.
+    for width in [None, Some(1.0), Some(30.0), Some(1000.0)] {
+        for line in kept.break_lines(width) {
+            for glyph in &line.glyphs {
+                assert!((glyph.font.0 as usize) < described.len(), "{glyph:?}");
+            }
+        }
+        assert_eq!(shaper.resolved(), described);
+    }
+    // Shaping the same text again adds none either.
+    shaper.shape(&plain("ab 日 😀 cd")).break_lines(Some(1.0));
+    assert_eq!(shaper.resolved(), described);
+    // Nor do a font's metrics, which are no line of a text.
+    let fresh = self::shaper();
+    fresh.metrics(FontId(0));
+    assert_eq!(fresh.resolved().len(), 0);
+}
+
+#[test]
 fn every_glyph_of_the_monospace_family_is_as_wide_as_its_metrics_say() {
     let shaper = shaper();
     let mono = shaper.font(&family(MONO_FAMILY));

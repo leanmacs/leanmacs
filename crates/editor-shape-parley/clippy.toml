@@ -18,9 +18,14 @@
 # What this list cannot hold: system fonts are turned on by a field of a
 # struct literal (`CollectionOptions { system_fonts: true, .. }`), which no
 # list of names forbids. What holds that instead is a test of behaviour,
-# `a_font_set_holds_exactly_the_families_it_was_given`
-# (`tests/fixtures.rs`): a set made of the fixture files holds their five
-# families and no other, which no machine's fonts would leave true.
+# `a_character_no_fixture_covers_is_the_primary_fonts_missing_glyph`
+# (`tests/fixtures.rs`): a Thai letter, which no fixture font has and the
+# fonts of any machine do, is the missing glyph of the primary fixture.
+# Seen to bite once by hand, on 2026-11-13: with `system_fonts: true` in
+# `FontSet::only`, that test fails on macOS (the letter is glyph 29 of a
+# system font), and so does `the_primary_alone_has_neither`
+# (`tests/shaping.rs`). The test of the families a set holds does not
+# fail under it: it lists what was registered, not what is reachable.
 #
 # Seen to bite once by hand, on 2026-11-13: with a test added to
 # `tests/fixtures.rs` that calls `parley::FontContext::new()`,
