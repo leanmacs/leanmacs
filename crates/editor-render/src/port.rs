@@ -89,7 +89,11 @@ pub struct DrawRequest<'a> {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct Drawn {
     /// Whether the frame was presented; `false` when the target could not
-    /// be drawn on this time, and the draw is to be tried again.
+    /// be drawn on this time, and the draw is to be tried again. Only a
+    /// draw that presented is counted
+    /// ([`Counters::count`](crate::journal::Counters::count)), so a
+    /// renderer that built rows or glyph images for a draw it then could
+    /// not present answers for them in the next draw it presents.
     pub presented: bool,
     /// The rows it built draw data for: those of the frame whose content
     /// hash it did not hold, once for each distinct hash.

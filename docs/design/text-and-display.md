@@ -1451,7 +1451,12 @@ frame journal and the renderer's counters.
   of the last 4096 entries, and counts those it let go.
 - **The counters** count work, never time: draws and failed draws,
   frames submitted and replaced, rows built and reused, glyph images
-  rasterised, reused, evicted and skipped, and the atlas's bytes.
+  rasterised, reused, evicted and skipped, and the atlas's bytes. A draw
+  that did not present is counted as failed and nothing more. The wgpu
+  adapter paints before wgpu can refuse a draw, so what it painted for a
+  refused draw is answered by its next draw that presents, as if the two
+  were one draw: the work is counted once, in that frame's entry, and a
+  row the refused draw built is there a row built, not a row reused.
 - **What is not built.** The journal's clock is a port with only a fake:
   for a latency to mean anything the journal must read the clock that
   stamped the input, which is `editor-ffi`'s, so the real one is written

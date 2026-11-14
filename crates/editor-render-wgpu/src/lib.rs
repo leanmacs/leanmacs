@@ -117,6 +117,11 @@ impl Error for NoAdapter {}
 /// `gpu`). It presents to no window: the surface is the display
 /// pipeline's phase 6.
 ///
+/// A draw wgpu refuses answers `presented: false`, when the frame is
+/// already painted. What was painted for it is not lost from the count:
+/// the next draw that presents answers for it too, as if the two were one
+/// draw (the module `painter`, "What a paint answers").
+///
 /// The gate runs it on wgpu's no-op back end only, which checks every
 /// call and draws nothing. Its picture is compared with the reference
 /// image on demand, on a real adapter (`mise run render-gpu`).
@@ -202,6 +207,11 @@ impl Renderer for WgpuRenderer {
             target.height,
         );
         self.refused = sent.err();
+        if self.refused.is_some() {
+            // What was painted is held, and answered by the draw that
+            // next presents.
+            self.painter.refused();
+        }
         Drawn {
             presented: self.refused.is_none(),
             ..drawn

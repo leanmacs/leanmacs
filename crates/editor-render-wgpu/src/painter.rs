@@ -48,6 +48,20 @@
 //! Each row pins the glyph images it draws, and lets them go when it is
 //! dropped ([`glyphs`](crate::glyphs), "In use is never evicted").
 //!
+//! # What a paint answers
+//!
+//! What it did, counted: the rows it built, the rows it took from what
+//! was kept, and what the glyph cache did for it. Presenting is the
+//! device's, and a device may refuse a draw when the paint is already
+//! done. Its adapter then says so ([`Painter::refused`]), and the next
+//! paint answers for both as if the two were one draw: the counts are
+//! added, and a row the refused draw built is a row built, not a row
+//! reused, whichever frame is painted next. So the work is counted once,
+//! by the draw that presents, and a frame presented at its second attempt
+//! is answered for as at its first. A row built for a frame that was
+//! never presented is counted as built all the same, though the frame
+//! presented does not show it.
+//!
 //! # What the scale changes
 //!
 //! A frame is in physical pixels, so nothing is multiplied by the scale.
@@ -63,12 +77,14 @@
 //! a strike-through three tenths of the font's size above it. A curly
 //! underline is a stepped line.
 
+use std::collections::HashSet;
+
 use editor_layout::face::{Color, Paint, UnderlineStyle};
 use editor_layout::frame::{CursorBox, Frame, ViewFrame};
 use editor_layout::scene::CursorShape;
 use editor_layout::shaper::ResolvedFont;
 use editor_render::port::{Drawn, Target};
-use editor_render::rows::{RowCache, RowRef};
+use editor_render::rows::{RowCache, RowRef, shown};
 
 use crate::atlas::Atlas;
 use crate::blend::stripes;
@@ -152,6 +168,22 @@ pub struct Painter<Z> {
     unknown: u64,
     /// The quads of the frame last painted, in drawing order.
     quads: Vec<Quad>,
+    /// What the last paint answered, until the next: what is carried if
+    /// its draw is refused.
+    last: Option<Unpresented>,
+    /// What was painted for draws that were refused, since the last draw
+    /// that was not: the next paint answers for it.
+    carried: Unpresented,
+}
+
+/// What was painted and not yet presented: the work, and the rows it
+/// built.
+#[derive(Debug, Default)]
+struct Unpresented {
+    /// What was done, counted.
+    done: Drawn,
+    /// The content hashes of the rows that were built.
+    built: HashSet<u64>,
 }
 
 impl<Z: Rasterize> Painter<Z> {
@@ -172,14 +204,23 @@ impl<Z: Rasterize> Painter<Z> {
             generation: None,
             unknown: 0,
             quads: Vec::new(),
+            last: None,
+            carried: Unpresented::default(),
         }
     }
 
     /// Paints `frame` for `target`: makes [`Painter::quads`] the list to
-    /// draw, and says what that cost. The answer's `presented` is
-    /// `false`: presenting is the device's.
+    /// draw, and says what that cost, with what the paints before it cost
+    /// whose draws were refused ([`Painter::refused`]). The answer's
+    /// `presented` is `false`: presenting is the device's.
     pub fn paint(&mut self, frame: &Frame, target: Target) -> Drawn {
         let before = self.glyphs.stats();
+        // What the refused draws before this one did: this paint answers
+        // for it, and is carried with it if its own draw is refused.
+        let Unpresented {
+            done: carried,
+            mut built,
+        } = std::mem::take(&mut self.carried);
         // A font id means another font under another generation: nothing
         // kept by one is of use, and the rows that pinned it are dropped
         // below without being unpinned, since their keys now name the
@@ -205,6 +246,7 @@ impl<Z: Rasterize> Painter<Z> {
         let (hint, subpixel) = (self.hint, order.is_some());
         let line = thickness(target.scale);
         let reuse = self.rows.update(frame, target.scale, |row| {
+            built.insert(row.hash);
             build_row(
                 &row,
                 &frame.fonts,
@@ -228,16 +270,39 @@ impl<Z: Rasterize> Painter<Z> {
             place_view(view, &self.rows, whole, line, &mut self.quads);
         }
 
+        // A row a refused draw built is built, not reused, in the draw
+        // that presents it: the rows reused are those of the frame that
+        // were held before any of that. With nothing carried they are the
+        // rows this paint did not build. A row built and no longer shown
+        // is forgotten: shown again, it is built again.
+        let reused = if carried.rows_rebuilt == 0 {
+            reuse.reused
+        } else {
+            let rows: HashSet<u64> = shown(frame).map(|row| row.hash).collect();
+            built.retain(|hash| rows.contains(hash));
+            (rows.len() - built.len()) as u64
+        };
         let after = self.glyphs.stats();
-        Drawn {
+        let done = Drawn {
             presented: false,
-            rows_rebuilt: reuse.rebuilt,
-            rows_reused: reuse.reused,
-            glyphs_rasterised: after.rasterised - before.rasterised,
-            glyphs_reused: after.reused - before.reused,
-            glyphs_evicted: after.evicted - before.evicted,
-            glyphs_skipped: after.skipped - before.skipped + self.unknown,
+            rows_rebuilt: carried.rows_rebuilt + reuse.rebuilt,
+            rows_reused: reused,
+            glyphs_rasterised: carried.glyphs_rasterised + after.rasterised - before.rasterised,
+            glyphs_reused: carried.glyphs_reused + after.reused - before.reused,
+            glyphs_evicted: carried.glyphs_evicted + after.evicted - before.evicted,
+            glyphs_skipped: carried.glyphs_skipped + after.skipped - before.skipped + self.unknown,
             atlas_bytes: self.glyphs.atlas().bytes(),
+        };
+        self.last = Some(Unpresented { done, built });
+        done
+    }
+
+    /// Says the draw of the frame last painted was refused: what that
+    /// paint answered is answered again by the next, as if the two were
+    /// one draw.
+    pub fn refused(&mut self) {
+        if let Some(last) = self.last.take() {
+            self.carried = last;
         }
     }
 

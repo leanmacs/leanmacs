@@ -224,6 +224,41 @@ fn a_draw_wgpu_refuses_is_not_presented_and_says_so_and_the_next_one_is() {
 }
 
 #[test]
+fn what_a_refused_draw_built_is_answered_by_the_draw_that_next_presents() {
+    let noop = noop();
+    let renderer = || WgpuRenderer::over(&noop, Settings::default(), true).expect("an adapter");
+    let frame = std::sync::Arc::new(dressed());
+    let on = |target: Target| DrawRequest {
+        frame: &frame,
+        target,
+    };
+    // What the frame costs a renderer that is never refused. Its glyphs
+    // are of layout's fake shaper and have no image: each is skipped.
+    let whole = renderer().draw(&on(target(1.0)));
+    assert!(whole.presented);
+    assert!(whole.rows_rebuilt > 0 && whole.glyphs_skipped > 0);
+    assert_eq!(whole.rows_reused, 0);
+    // A renderer whose first draw of it is refused, on a target wider
+    // than the device makes one: the rows are built all the same.
+    let mut renderer = renderer();
+    let limit = renderer.device.device.limits().max_texture_dimension_2d;
+    let wide = Target {
+        width: limit + 1,
+        ..target(1.0)
+    };
+    assert!(!renderer.draw(&on(wide)).presented);
+    // The draw that presents the frame answers for them: it cost what it
+    // costs a renderer that was not refused, and no row of it is reused.
+    assert_eq!(renderer.draw(&on(target(1.0))), whole);
+    // And once presented the frame costs nothing more.
+    let again = renderer.draw(&on(target(1.0)));
+    assert_eq!(
+        (again.rows_rebuilt, again.rows_reused, again.glyphs_skipped),
+        (0, whole.rows_rebuilt, 0)
+    );
+}
+
+#[test]
 fn the_target_read_back_is_the_size_last_drawn_at() {
     let mut device = device(true);
     // Before a first draw there is no picture.

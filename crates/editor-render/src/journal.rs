@@ -105,6 +105,9 @@ pub struct Counters {
 impl Counters {
     /// Counts one draw that answered `drawn`: a presented draw with what
     /// it cost, and one that did not present as failed and nothing more.
+    /// Work a renderer did for a draw it could not present is not lost
+    /// that way: the renderer answers for it in the next draw it presents
+    /// ([`Drawn::presented`]), and it is counted then, once.
     pub fn count(&mut self, drawn: &Drawn) {
         if !drawn.presented {
             self.draws_failed += 1;

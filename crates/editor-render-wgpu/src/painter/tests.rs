@@ -782,6 +782,68 @@ fn a_row_seen_again_takes_its_quads_from_the_row_cache_and_asks_the_rasteriser_n
 }
 
 #[test]
+fn what_a_paint_whose_draw_was_refused_did_is_answered_by_the_next_paint() {
+    // Two rows that share a glyph: four images for five glyphs.
+    let shown = frame_of(vec![
+        plain_row(0.0, &[1, 2, 3], 1),
+        plain_row(16.0, &[3, 4], 2),
+    ]);
+    // What the frame costs a painter none of whose draws is refused.
+    let whole = painter().paint(&shown, target(1.0));
+    assert_eq!((whole.rows_rebuilt, whole.rows_reused), (2, 0));
+    assert_eq!((whole.glyphs_rasterised, whole.glyphs_reused), (4, 1));
+
+    let mut painter = painter();
+    assert_eq!(painter.paint(&shown, target(1.0)), whole);
+    painter.refused();
+    // The frame is tried again. Nothing is done twice, and what was done
+    // for it is answered now: its rows are built, not reused.
+    assert_eq!(painter.paint(&shown, target(1.0)), whole);
+    assert_eq!(painter.rasterizer().asked.len(), 4);
+    // Refused once more, it is answered once more, and no more than once.
+    painter.refused();
+    assert_eq!(painter.paint(&shown, target(1.0)), whole);
+    // That draw is not refused: the frame costs nothing more.
+    let again = painter.paint(&shown, target(1.0));
+    assert_eq!((again.rows_rebuilt, again.rows_reused), (0, 2));
+    assert_eq!((again.glyphs_rasterised, again.glyphs_reused), (0, 0));
+}
+
+#[test]
+fn what_a_refused_draw_built_is_built_whatever_frame_is_presented_next() {
+    let (kept, lost, new) = (
+        plain_row(0.0, &[1, 2, 3], 1),
+        plain_row(16.0, &[3, 4], 2),
+        plain_row(32.0, &[5], 3),
+    );
+    // One row is presented. Then a frame with a second row, whose draw is
+    // refused: it built that row, with one image more and one it held.
+    let refused = |painter: &mut Painter<FakeRasterizer>| {
+        painter.paint(&frame_of(vec![kept.clone()]), target(1.0));
+        let drawn = painter.paint(&frame_of(vec![kept.clone(), lost.clone()]), target(1.0));
+        assert_eq!((drawn.rows_rebuilt, drawn.rows_reused), (1, 1));
+        assert_eq!((drawn.glyphs_rasterised, drawn.glyphs_reused), (1, 1));
+        painter.refused();
+    };
+    // A newer frame is presented in its place, with a third row. The row
+    // the refused draw built is built, and only the row held since a draw
+    // was presented is reused.
+    let mut painter = painter();
+    refused(&mut painter);
+    let all = frame_of(vec![kept.clone(), lost.clone(), new.clone()]);
+    let drawn = painter.paint(&all, target(1.0));
+    assert_eq!((drawn.rows_rebuilt, drawn.rows_reused), (2, 1));
+    assert_eq!((drawn.glyphs_rasterised, drawn.glyphs_reused), (2, 1));
+    // A newer frame that does not show the row the refused draw built:
+    // it was built all the same, for a frame that was never presented.
+    let mut painter = self::painter();
+    refused(&mut painter);
+    let drawn = painter.paint(&frame_of(vec![kept.clone(), new.clone()]), target(1.0));
+    assert_eq!((drawn.rows_rebuilt, drawn.rows_reused), (2, 1));
+    assert_eq!((drawn.glyphs_rasterised, drawn.glyphs_reused), (2, 1));
+}
+
+#[test]
 fn a_row_moved_is_drawn_from_what_was_kept_where_it_now_is() {
     let mut painter = painter();
     painter.paint(&frame_of(vec![plain_row(0.0, &[1, 2], 1)]), target(1.0));
