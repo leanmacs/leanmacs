@@ -108,6 +108,66 @@ impl Rasterize for SwashRasterizer {
 }
 
 #[cfg(test)]
+pub(crate) mod measure {
+    //! What the measurement of a run's weight (`crate::weight_tests`)
+    //! asks of swash, kept here so that swash is named by this module
+    //! alone: a glyph's id, and a glyph's plain mask with its outline
+    //! made thicker by an amount the measurement sweeps.
+
+    //!
+    //! The mask is made as [`SwashRasterizer`](super::SwashRasterizer)
+    //! makes a plain one at bin 0, which the measurement's first test
+    //! holds it to, and the outline made thicker as swash's `embolden`
+    //! does it: FreeType's `FT_Outline_EmboldenXY`, ported without that
+    //! function's halving of the strength, so that each edge of a stem
+    //! moves out by the whole strength. A stem `growth` pixels thicker is
+    //! a strength of half of `growth`.
+
+    use editor_layout::shaper::ResolvedFont;
+    use swash::FontRef;
+    use swash::scale::image::Content;
+    use swash::scale::{Render, ScaleContext, Source};
+    use swash::zeno::{Format, Vector};
+
+    use super::bytes;
+    use crate::glyphs::{GlyphImage, Kind};
+
+    /// The id of the glyph the font `bytes` draws `character` with, read
+    /// from the font's own character map.
+    pub fn glyph_of(bytes: &[u8], character: char) -> u32 {
+        let face = FontRef::from_index(bytes, 0).expect("a fixture font");
+        let glyph = face.charmap().map(character);
+        assert_ne!(glyph, 0, "the fixture has no glyph for {character:?}");
+        u32::from(glyph)
+    }
+
+    /// The plain mask, at bin 0, of `glyph` in face 0 of `font`, fitted
+    /// to the pixel grid or not as `hint` says, with each stem `growth`
+    /// pixels thicker than the font draws it.
+    pub fn mask(font: &ResolvedFont, glyph: u32, hint: bool, growth: f32) -> GlyphImage {
+        let face = FontRef::from_index(bytes(font), 0).expect("a fixture font");
+        let mut context = ScaleContext::new();
+        let mut scaler = context.builder(face).size(font.size).hint(hint).build();
+        let mut render = Render::new(&[Source::Outline]);
+        render.format(Format::Alpha).offset(Vector::new(0.0, 0.0));
+        if growth > 0.0 {
+            render.embolden(growth / 2.0);
+        }
+        let glyph = u16::try_from(glyph).expect("a glyph of 16 bits");
+        let image = render.render(&mut scaler, glyph).expect("an image");
+        assert_eq!(image.content, Content::Mask);
+        GlyphImage {
+            kind: Kind::Mask,
+            width: image.placement.width,
+            height: image.placement.height,
+            left: image.placement.left,
+            top: image.placement.top,
+            data: image.data,
+        }
+    }
+}
+
+#[cfg(test)]
 mod tests {
     //! On the fixture fonts under `tests/fonts`, compiled in. A glyph id
     //! is read from the font's own character map, through swash, for a

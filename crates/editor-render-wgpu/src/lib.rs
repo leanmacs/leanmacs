@@ -43,6 +43,8 @@ mod surface;
 
 #[cfg(test)]
 mod settings_tests;
+#[cfg(test)]
+mod weight_tests;
 
 use std::error::Error;
 use std::fmt;
