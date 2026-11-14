@@ -460,8 +460,10 @@ cursor's.
 
 An eighth, `tests/headless/ex/script`, runs the ex command line on the
 first fixture's config directory, of which it loads nothing. Each line is
-run with `run ex`, which opens the prompt, a `commit` of the line, and
-`<Enter>`. `bogus` is a name nobody bound; `w` runs `save-buffer`, and the
+the prompt opened, a `commit` of the line, and `<Enter>`. The first and
+the last open it as a user does, with the `:` key (`key : Semicolon
+shift`), which the Vim scheme's normal state binds to `ex` and hands a
+count and a register; the second opens it with `run ex`. `bogus` is a name nobody bound; `w` runs `save-buffer`, and the
 scratch buffer has no file; `q` quits the editor. The loop ends at that
 last `<Enter>`, so the `scene` line the script has after it is not run,
 and the exit status is 0. Its output must be exactly
@@ -469,7 +471,7 @@ and the exit status is 0. Its output must be exactly
 
 ```console
 $ .lake/build/bin/editor headless "$(lean --print-prefix)" .lake/build/lib/lean ../tests/headless/config ../tests/headless/ex/script
-run ex: ok
+key arrived: : Semicolon shift
 key arrived: <Enter> Enter -
 scene 0x0, focused 0, echo "bogus: not an ex command", preedit -, published 4
 view 0 0,0 0x0: "", scroll 0, selections 0..0
@@ -479,11 +481,11 @@ key arrived: <Enter> Enter -
 scene 0x0, focused 0, echo "scratch has no file to save to", preedit -, published 10
 view 0 0,0 0x0: "", scroll 0, selections 0..0
 status 0: status.state "normal", status.name "scratch"
-run ex: ok
+key arrived: : Semicolon shift
 key arrived: <Enter> Enter -
 ```
 
-Four scenes are published between the first `run ex` and the first
+Four scenes are published between the first `:` key and the first
 `scene`: for `ex`, for the commit, for the accept command and for `ex`
 with the line. The second line adds a fifth, for `save-buffer`.
 

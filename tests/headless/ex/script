@@ -5,16 +5,19 @@
 # no file.
 
 # `ex` is the compiled command that opens the ex line: a prompt labelled
-# `:`, whose answer is run as an ex command. A committed text goes into the
-# minibuffer, and `<Enter>` accepts. `bogus` is a name nobody bound: the
-# echo area says so, and the editor goes on.
-run ex
+# `:`, whose answer is run as an ex command. The first line is opened as a
+# user opens it, with the `:` key: Shift and the semicolon key, which the
+# Vim scheme's normal state binds to `ex` and hands a count and a register.
+# A committed text goes into the minibuffer, and `<Enter>` accepts. `bogus`
+# is a name nobody bound: the echo area says so, and the editor goes on.
+key : Semicolon shift
 commit bogus
 key <Enter> Enter -
 scene
 
 # `w` is bound to `save-buffer`. The scratch buffer shows no file, which
-# that command says.
+# that command says. This line is opened by the command's name, which is
+# no key.
 run ex
 commit w
 key <Enter> Enter -
@@ -22,8 +25,8 @@ scene
 
 # `q` is bound to `quit`. Nothing has unsaved changes, so the editor quits:
 # the loop ends at the accept key, and the `scene` line after it is not
-# run. The exit status is 0.
-run ex
+# run. The exit status is 0. The line is opened with the `:` key again.
+key : Semicolon shift
 commit q
 key <Enter> Enter -
 scene

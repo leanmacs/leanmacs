@@ -192,7 +192,8 @@ run = [
   "out=$(.lake/build/bin/editor headless \"$(lean --print-prefix)\" .lake/build/lib/lean ../tests/headless/config ../tests/headless/evil-script) && printf '%s\\n' \"$out\" | diff ../tests/headless/evil-expected -",
   # The ex command line, with no config (tests/headless/ex): the script has
   # no `reload`, so the ex command and every ex name are the ones the
-  # editor ships. A name nobody bound is said in the echo area, `w` in the
+  # editor ships. Two of its lines are opened with the `:` key, as a user
+  # opens them. A name nobody bound is said in the echo area, `w` in the
   # scratch buffer says it has no file, and `q` quits the editor: the loop
   # ends, the `scene` line after it is not run, and the status is 0
   # (`ex/expected`). It touches no file.

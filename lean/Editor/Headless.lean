@@ -411,7 +411,9 @@ executable runs: a command of config's asks for a prompt, a committed text
 goes into the minibuffer, `<Enter>` accepts and config's command receives
 the answer, and `<Escape>` cancels. An eighth run is on
 `tests/headless/ex/script`, with no config: a name nobody bound, `w` in the
-scratch buffer, and `q`, which ends the loop before the script's last line.
+scratch buffer, and `q`, which ends the loop before the script's last line;
+the first and the last line are opened with the `:` key, as a user opens
+them.
 Two more entries of the task run the executable on a real file, each in a
 shell of its own that makes a temporary directory, removes it by a trap,
 and writes the script there from a template with the file's path put in:

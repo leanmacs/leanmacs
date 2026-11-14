@@ -2064,7 +2064,7 @@ and two through the host:
   revisions, so it has a case in `lean/Editor/Api/Cases.lean`, played on
   the model and on the real binding.
 - **The wiring on the executable** is the fixture `tests/headless/ex`,
-  with no config, and two process checks of the `ffi-test` task, on a real
+  with no config, which opens two of its lines with the `:` key, and two process checks of the `ffi-test` task, on a real
   file in a temporary directory ([the gate](../dev-practices/the-gate.md)).
 
 ### Keys in, invocation out
