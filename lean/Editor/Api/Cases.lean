@@ -567,6 +567,19 @@ def promptCases : List Case :=
         let .ok selected ← view.selection | return false
         return (← target.buffer.text.read) == "" && selected == selection #[(0, 0)] },
     { name :=
+        "a prompt asked for with candidates from a function holds what the function answered, here the lines it read of the buffer the prompt was asked from, and its minibuffer holds the initial value and has the focus as with no candidates"
+      run := do
+        let .ok () ← (⟨0⟩ : BufferId).insertAt 0 "wq\nédit\nw" | return false
+        let lines : EditorM (Array String) := do
+          return ((← scratch.read).splitOn "\n").toArray
+        let .ok view ← prompt "Pick: " greeting "w" (candidates := lines) | return false
+        let state ← editorState
+        let some target := state.target? view | return false
+        return state.prompt.map (·.candidates) == some { all := #["wq", "édit", "w"] } &&
+            (← target.buffer.text.read) == "w" &&
+            state.frame.focused == view &&
+            state.wellFormed },
+    { name :=
         "asking for a prompt while one is open is refused with alreadyOpen and the open prompt's view, a value, makes no text, the next text made having the id it would have had, and leaves the state as it was"
       run := do
         let .ok view ← prompt "Name: " greeting "hé" | return false

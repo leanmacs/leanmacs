@@ -11440,6 +11440,17 @@ def dispatchedFrom {α : Type} (command : EditorM α) (start : TextM EditorState
   | .ok (.finished value, state) => some (value, state)
   | _ => none
 
+/-- `command` run dispatched from `twoBuffers` with nothing told of the
+registry, on the editor's models: how it ended, the state it left, and the
+texts the text model then holds. `none` when the run itself was refused. -/
+def dispatchedOn {α : Type} (command : EditorM α) :
+    Option (Guarded α × EditorState × Array String) :=
+  let program : EditorM (Guarded α × EditorState) := do
+    command.dispatched {} (← twoBuffers)
+  match program.runModel editorModel with
+  | (.ok (ended, state), model) => some (ended, state, model.texts.contents)
+  | (.error _, _) => none
+
 /-- `twoBuffers` whose buffer `other` holds a file, for the checks of
 `quit`. With `edited` its text was edited since, and its history told so:
 the buffer is modified. -/
@@ -11610,7 +11621,74 @@ def apiStateChecks : List Check :=
           (covered.map fun (reply, state) => (replied reply, state.quitting)) ==
               some (.inr (), true) &&
             (since.map fun (reply, state) => (replied reply, state.quitting)) ==
-              some (.inl (.unsaved "other"), false) }]
+              some (.inl (.unsaved "other"), false) },
+    { name :=
+        "a prompt asked for with a function for its candidates holds what the function answered, and the function is run once: the text it makes is in the store once, beside the minibuffer's"
+      run :=
+        pure <|
+          let made := "made by the function"
+          let candidates : EditorM (Array String) := do
+            discard <| createText made
+            return #["wq", "edit", "w"]
+          match dispatchedOn (prompt "Pick: " asked "w" (candidates := candidates)) with
+          | some (.finished (.ok view), state, texts) =>
+            state.prompt.map (·.candidates) == some { all := #["wq", "edit", "w"] } &&
+              state.prompt.map (·.view) == some view &&
+              (texts.filter (· == made)).size == 1 &&
+              texts.contains "w" &&
+              state.wellFormed
+          | _ => false },
+    { name :=
+        "a prompt whose function for its candidates is refused refuses the asking command: no prompt is open and no text was made for a minibuffer"
+      run :=
+        pure <|
+          let candidates : EditorM (Array String) := do
+            discard <| (⟨99⟩ : TextId).read
+            return #["a"]
+          match dispatchedOn (prompt "Pick: " asked "w" (candidates := candidates)),
+            dispatchedOn (pure () : EditorM Unit) with
+          | some (.refused .noSuchText, state, texts), some (_, _, before) =>
+            state.prompt == none && texts == before
+          | _, _ => false },
+    { name :=
+        "while a prompt is open, asking for another with a function for its candidates is refused with alreadyOpen and the function is not run: it makes no text, and the open prompt's candidates are as they were"
+      run :=
+        pure <|
+          let candidates : EditorM (Array String) := do
+            discard <| createText "ran"
+            return #["x"]
+          match
+            dispatchedOn do
+              let first ← prompt "A: " asked
+              return (first, ← prompt "B: " asked "" (candidates := candidates)) with
+          | some (.finished (.ok view, .error (.alreadyOpen held)), state, texts) =>
+            view == held && !texts.contains "ran" && state.prompt.map (·.candidates) == some {} &&
+              state.prompt.map (·.label) == some "A: "
+          | _ => false },
+    { name :=
+        "a prompt asked for with no function has no candidates, and leaves the state and the store as one asked for with a function that answers none"
+      run :=
+        pure <|
+          match dispatchedOn (prompt "Name: " asked "hé"),
+            dispatchedOn (prompt "Name: " asked "hé" (candidates := pure #[])) with
+          | some (.finished (.ok view), state, texts), some (.finished (.ok same), again, others) =>
+            view == same && state == again && texts == others &&
+              state.prompt.map (·.candidates) == some {}
+          | _, _ => false },
+    { name :=
+        "setting the candidates from a command replaces an open prompt's, and with no prompt open it is refused with notOpen, a value"
+      run :=
+        pure <|
+          match
+            dispatchedOn do
+              let closed ← setCandidates #["a"]
+              discard <| prompt "Pick: " asked (candidates := pure #["x", "y"])
+              let before := (← editorState).prompt.map (·.candidates)
+              return (closed, before, ← setCandidates #["a", "b"]) with
+          | some (.finished (.error .notOpen, before, .ok ()), state, _) =>
+            before == some { all := #["x", "y"] } &&
+              state.prompt.map (·.candidates) == some { all := #["a", "b"] }
+          | _ => false }]
 
 /-- The driver the job checks run: one over the test scheme. -/
 abbrev TestDriver :=

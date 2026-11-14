@@ -402,6 +402,23 @@ A command asks for a string without waiting for it
   value, with `alreadyOpen` and the open prompt's view. The state is read
   first, so the refusal makes no text. A command run where no window is
   focused is refused with `noWindow`.
+- **A prompt may be asked with candidates**, strings the answer may be
+  chosen from: `prompt label continuation initial (candidates := …)`.
+  - **They come from a function**: a program over the editor's port that
+    answers the strings. It may ask what a command may: the state, a text.
+    It has no `IO` and cannot wait. A list that needs the file system is
+    made by a job, whose command asks with the result
+    (`candidates := pure names`).
+  - **It is run once, by `prompt`**, inside the asking command: after the
+    two refusals above, which run nothing, and before the minibuffer's
+    text is made. What it answers is kept by the open prompt, as plain
+    data (`Editor/State.lean`, "Prompts"). If it is refused, the asking
+    command is refused, like any command, and no prompt opens.
+  - **The list is then fixed**, but for `setCandidates`, which replaces an
+    open prompt's candidates and forgets what it has listed and chosen. It
+    is refused, as a value, with `notOpen` when no prompt is open.
+  - A prompt asked with none, the default, makes the requests it made
+    before there were candidates.
 - `acceptPrompt` reads the minibuffer's text, which is the answer, and
   makes one state request that closes the prompt with it
   (`StateRequest.closePrompt`): the minibuffer's window is closed, the
@@ -552,19 +569,36 @@ view at once ("Prompts", in the module docs). When the prompt is accepted,
 the command of `continuation` is run with the answer as its first
 argument, before the continuation's own. Refused, with no text made, with
 `alreadyOpen` while a prompt is open, and with `noWindow` where no window
-is focused to ask from. -/
-def prompt (label : String) (continuation : Invocation) (initial : String := "") :
-    EditorM (Except PromptRefusal ViewId) := do
+is focused to ask from.
+
+`candidates` answers the strings the answer may be chosen from, none by
+default. It is run once, after those two refusals and before the
+minibuffer's text is made, and what it answers is kept by the prompt; if it
+is refused, so is this command, with no prompt open. -/
+def prompt (label : String) (continuation : Invocation) (initial : String := "")
+    (candidates : EditorM (Array String) := pure #[]) : EditorM (Except PromptRefusal ViewId) := do
   let state ← editorState
   if let some asked := state.prompt then
     return .error (.alreadyOpen asked.view)
   if state.focusedTarget?.isNone then
     return .error .noWindow
+  let all ← candidates
   let text ← createText initial
   let scroll ← text.mark (.anchor { offset := 0, bias := .before })
   let cursor := initial.utf8ByteSize
   let selection ← text.mark (.selection { ranges := #[⟨cursor, cursor⟩], shape := .exclusive })
-  EditorState.ask (.openPrompt label continuation text (← UndoTree.over text) scroll selection)
+  let opened ←
+    EditorState.ask (.openPrompt label continuation text (← UndoTree.over text) scroll selection)
+  -- A prompt with no candidates makes no request for them.
+  if opened.isOk && !all.isEmpty then
+    discard <| EditorState.ask (.setCandidates all)
+  return opened
+
+/-- Replaces the open prompt's candidates with `all`, and forgets what it
+has listed and chosen ("Prompts", in the module docs). Refused with
+`notOpen` when no prompt is open. -/
+def setCandidates (all : Array String) : EditorM (Except PromptRefusal Unit) :=
+  EditorState.ask (.setCandidates all)
 
 /-- Accepts the open prompt with the text of its minibuffer as the answer:
 the prompt is closed, and its continuation's command is run with the
