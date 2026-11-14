@@ -40,6 +40,21 @@
 //! - **Runs are shaped whole, and only runs.** A ligature forms inside a
 //!   font run and never across two, a letter and its combining mark are
 //!   one cluster, and each family on a line has its own advances.
+//! - **A line's glyphs are in visual order**, as the Unicode bidirectional
+//!   algorithm orders them: runs from the left edge, and the clusters of a
+//!   right-to-left run in the reverse of their order in the text. A
+//!   glyph's `x` is its pen position, counted from the left edge through
+//!   the advances before it, and its `dx` and `dy` are the offsets Parley
+//!   gives its outline. A ligature's glyph starts at the left edge of the
+//!   leftmost of its clusters.
+//! - **The base direction of every line is left to right**, whatever its
+//!   first character: a line that starts in Hebrew still starts at the
+//!   left edge, with its Hebrew run reordered, as a code editor shows it.
+//!   The fast path for a line that is left to right only is Parley's own:
+//!   with that base direction it skips bidirectional resolution for a
+//!   text with no right-to-left character. The adapter adds none, since it
+//!   reads clusters back the same way either way. No test here can show
+//!   the branch inside Parley ("When the pin moves").
 //! - **Heights and baselines are whole pixels and advances are the
 //!   font's own**: layouts are built with Parley's quantising on.
 //! - **Nothing in a text forces a break.** Parley breaks at a carriage
@@ -76,8 +91,33 @@
 //!   weight, slant and line height reaching the font a glyph is drawn in
 //!   and the line's height (`tests/shaping.rs`).
 //!
+//! - visual order: Latin then Hebrew in the order of the bidirectional
+//!   algorithm, written out by hand, the base direction, cluster order on
+//!   a left-to-right line, and a glyph's offset carried
+//!   (`tests/shaping.rs`); where a ligature's glyph starts in each
+//!   direction, on clusters written out by hand (`src/shaper.rs`), since
+//!   no fixture font has a ligature in a right-to-left script.
+//!
 //! It pins no rule of layout's: which segments are shaped, and when, is
 //! `editor-layout`'s, pinned there on the port's fake.
+//!
+//! # When the pin moves
+//!
+//! Parley changes its API and its behaviour between releases. On a bump
+//! of `parley` or `fontique`, in a commit of its own:
+//!
+//! 1. Run the gate: the contract and the tests above are what a new
+//!    version is held to.
+//! 2. Read again the two places that make the left-to-right fast path, as
+//!    they were at 0.13.0: `parley_engine/src/bidi.rs`, where a text with
+//!    no character that needs it and a base level of 0 returns before
+//!    resolving, and `parley_engine/src/analysis.rs`, where resolution is
+//!    run only when a character needs it or the base direction is right
+//!    to left.
+//! 3. Check that Parley still breaks at a carriage return, U+2028 and
+//!    U+2029 and at no other character short of a line feed (the
+//!    stand-ins), and still makes a line at least as tall as the default
+//!    style (the default style of no height).
 //!
 //! [`shape`]: editor_layout::shaper::Shaper::shape
 //! [`resolved`]: editor_layout::shaper::Shaper::resolved

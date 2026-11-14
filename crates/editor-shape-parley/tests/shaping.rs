@@ -309,3 +309,92 @@ fn a_line_height_is_a_multiple_of_the_fonts_own_or_pixels() {
     assert!(height(LineHeight::Multiple(96)) > own);
     assert!(height(LineHeight::Multiple(96)) < double);
 }
+
+/// Whether the glyph of `line` at `index` is drawn in the Hebrew fixture.
+fn hebrew(shaper: &ParleyShaper, line: &VisualLine, index: usize) -> bool {
+    drawn_from(&font_of(shaper, &line.glyphs[index]), HEBREW)
+}
+
+#[test]
+fn latin_then_hebrew_is_in_the_visual_order_of_the_bidirectional_algorithm() {
+    let shaper = shaper();
+    // `abc`, a space, then shin, lamed, vav, final mem: four letters of
+    // two bytes each, at bytes 4, 6, 8 and 10. In a left-to-right line the
+    // Hebrew word is one right-to-left run: read from the left edge, its
+    // letters are in reverse, so the last of the text is the leftmost.
+    let text = "abc שלום";
+    let line = one_line(&shaper, &plain(text));
+    assert_eq!(line.bytes, 0..12);
+    assert_eq!(clusters(&line), vec![0, 1, 2, 3, 10, 8, 6, 4]);
+    assert!(end_to_end(&line));
+    for index in 0..8 {
+        assert_eq!(hebrew(&shaper, &line, index), index >= 4, "glyph {index}");
+    }
+    // Latin after it: the neutral space between the two takes the line's
+    // direction, and the last word is back in order.
+    let text = "abc שלום def";
+    let line = one_line(&shaper, &plain(text));
+    assert_eq!(line.bytes, 0..16);
+    assert_eq!(
+        clusters(&line),
+        vec![0, 1, 2, 3, 10, 8, 6, 4, 12, 13, 14, 15]
+    );
+    assert!(end_to_end(&line));
+    for index in 0..12 {
+        let in_word = (4..8).contains(&index);
+        assert_eq!(hebrew(&shaper, &line, index), in_word, "glyph {index}");
+    }
+}
+
+#[test]
+fn a_line_that_starts_in_hebrew_still_starts_at_the_left() {
+    let shaper = shaper();
+    // The base direction of every line is left to right, whatever its
+    // first strong character: the Hebrew word is at the left edge, in its
+    // own order, and the Latin word is to the right of it. Were the
+    // direction taken from the text, the Latin word would be the
+    // leftmost.
+    let line = one_line(&shaper, &plain("שלום abc"));
+    assert_eq!(clusters(&line), vec![6, 4, 2, 0, 8, 9, 10, 11]);
+    assert!(end_to_end(&line));
+    assert_eq!(line.glyphs[0].x, 0.0);
+}
+
+#[test]
+fn a_left_to_right_lines_glyphs_are_in_cluster_order() {
+    let shaper = shaper();
+    for text in ["one two three", "aé€b", "a日😀b", "find the office"] {
+        let line = one_line(&shaper, &plain(text));
+        let clusters = clusters(&line);
+        assert!(
+            clusters.windows(2).all(|pair| pair[0] < pair[1]),
+            "{text:?}: {clusters:?}"
+        );
+        assert!(end_to_end(&line), "{text:?}");
+    }
+}
+
+#[test]
+fn a_glyph_drawn_off_its_pen_position_carries_its_offset() {
+    let shaper = shaper();
+    // The Hebrew fixture draws the vav of this word off its pen position,
+    // and the other three letters on theirs.
+    let line = one_line(&shaper, &plain("שלום"));
+    assert_eq!(clusters(&line), vec![6, 4, 2, 0]);
+    let offsets: Vec<bool> = line
+        .glyphs
+        .iter()
+        .map(|glyph| glyph.dx != 0.0 || glyph.dy != 0.0)
+        .collect();
+    assert_eq!(offsets, vec![false, true, false, false]);
+    // The offset moves the outline and not the pen: each glyph still
+    // starts where the one before it ends.
+    assert!(end_to_end(&line));
+    // A Latin line has none.
+    let line = one_line(&shaper, &plain("find"));
+    assert!(
+        line.glyphs
+            .iter()
+            .all(|glyph| glyph.dx == 0.0 && glyph.dy == 0.0)
+    );
+}

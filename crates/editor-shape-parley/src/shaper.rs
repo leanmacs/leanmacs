@@ -12,7 +12,7 @@ use editor_layout::shaper::{
 };
 use parley::fontique::SourceCache;
 use parley::{
-    BaseDirection, FontContext, FontFamily, FontFamilyName, FontStyle, FontWeight, Layout,
+    BaseDirection, Cluster, FontContext, FontFamily, FontFamilyName, FontStyle, FontWeight, Layout,
     LayoutContext, Line, OverflowWrap, Run, StyleProperty, WhiteSpaceCollapse,
 };
 
@@ -198,6 +198,85 @@ fn properties<'a>(
     ]
 }
 
+/// What placing a cluster's glyphs on a line needs of the cluster:
+/// Parley's own, or one written out by hand in a test.
+trait Placed {
+    /// The byte offset its text starts at.
+    fn start(&self) -> usize;
+    /// How far it moves the pen.
+    fn advance(&self) -> f32;
+    /// Whether it is a later character of a ligature. It has no glyph: the
+    /// ligature's first character holds the glyph, and the glyph's advance
+    /// is shared out among the ligature's clusters.
+    fn continues(&self) -> bool;
+    /// Its glyphs, each as its id, how far right of the pen and below the
+    /// baseline its outline is drawn, and how far it moves the pen.
+    fn drawn(&self) -> impl Iterator<Item = (u32, f32, f32, f32)>;
+}
+
+impl Placed for Cluster<'_, ()> {
+    fn start(&self) -> usize {
+        self.text_range().start
+    }
+
+    fn advance(&self) -> f32 {
+        Cluster::advance(self)
+    }
+
+    fn continues(&self) -> bool {
+        self.is_ligature_continuation()
+    }
+
+    fn drawn(&self) -> impl Iterator<Item = (u32, f32, f32, f32)> {
+        self.glyphs()
+            .map(|glyph| (glyph.id, glyph.x, glyph.y, glyph.advance))
+    }
+}
+
+/// Adds to `glyphs` the glyphs of `clusters`, the clusters of one run in
+/// the order they are drawn in, each drawn in `font`, from the pen
+/// position `x`, and moves `x` past them. `rtl` is whether the run reads
+/// right to left.
+///
+/// A cluster's glyphs start at its left edge, one after another. A
+/// ligature's glyph starts at the left edge of the leftmost of its
+/// clusters. Left to right that is the cluster that holds the glyph. Right
+/// to left the ligature's later characters are drawn first and hold no
+/// glyph, so the glyph starts where the first of them did.
+fn place<C: Placed>(
+    clusters: impl Iterator<Item = C>,
+    rtl: bool,
+    font: ResolvedFontId,
+    x: &mut f32,
+    glyphs: &mut Vec<Glyph>,
+) {
+    // Where a ligature starts whose later characters have been passed and
+    // whose glyph is still to come.
+    let mut ligature: Option<f32> = None;
+    for cluster in clusters {
+        if rtl && cluster.continues() {
+            ligature.get_or_insert(*x);
+        }
+        let mut pen = *x;
+        for (index, (id, dx, dy, advance)) in cluster.drawn().enumerate() {
+            if index == 0 {
+                pen = ligature.take().unwrap_or(pen);
+            }
+            glyphs.push(Glyph {
+                id,
+                font,
+                cluster: cluster.start(),
+                x: pen,
+                dx,
+                dy,
+                advance,
+            });
+            pen += advance;
+        }
+        *x += cluster.advance();
+    }
+}
+
 /// Whether `font` is the font `run` is drawn in: the same face of the same
 /// file at the same size, with the same variation and the same synthesis.
 fn is(font: &ResolvedFont, run: &Run<'_, ()>) -> bool {
@@ -312,23 +391,13 @@ impl ParleyLine {
         let mut x = 0.0;
         for run in line.runs() {
             let font = self.font_of(&run);
-            for cluster in run.visual_clusters() {
-                let start = cluster.text_range().start;
-                let mut pen = x;
-                for glyph in cluster.glyphs() {
-                    glyphs.push(Glyph {
-                        id: glyph.id,
-                        font,
-                        cluster: start,
-                        x: pen,
-                        dx: glyph.x,
-                        dy: glyph.y,
-                        advance: glyph.advance,
-                    });
-                    pen += glyph.advance;
-                }
-                x += cluster.advance();
-            }
+            place(
+                run.visual_clusters(),
+                run.is_rtl(),
+                font,
+                &mut x,
+                &mut glyphs,
+            );
         }
         let bytes: Range<usize> = line.text_range();
         VisualLine {
@@ -418,7 +487,9 @@ impl Shaper for ParleyShaper {
 mod tests {
     use std::borrow::Cow;
 
-    use super::stand_ins;
+    use editor_layout::shaper::ResolvedFontId;
+
+    use super::{Placed, place, stand_ins};
 
     #[test]
     fn a_return_and_the_separators_have_stand_ins_of_their_own_length() {
@@ -445,5 +516,126 @@ mod tests {
         ] {
             assert!(matches!(stand_ins(text), Cow::Borrowed(same) if same == text));
         }
+    }
+
+    /// A cluster written out by hand: where it starts, how far it moves
+    /// the pen, whether it is a later character of a ligature, and the
+    /// advance of each of its glyphs. A glyph's id is its cluster's start.
+    struct Written {
+        start: usize,
+        advance: f32,
+        continues: bool,
+        glyphs: Vec<f32>,
+    }
+
+    impl Placed for Written {
+        fn start(&self) -> usize {
+            self.start
+        }
+
+        fn advance(&self) -> f32 {
+            self.advance
+        }
+
+        fn continues(&self) -> bool {
+            self.continues
+        }
+
+        fn drawn(&self) -> impl Iterator<Item = (u32, f32, f32, f32)> {
+            let id = u32::try_from(self.start).unwrap();
+            self.glyphs
+                .iter()
+                .map(move |advance| (id, 0.0, 0.0, *advance))
+        }
+    }
+
+    /// A cluster of one character and the glyphs `glyphs`, as wide as
+    /// they are.
+    fn cluster(start: usize, glyphs: &[f32]) -> Written {
+        Written {
+            start,
+            advance: glyphs.iter().sum(),
+            continues: false,
+            glyphs: glyphs.to_vec(),
+        }
+    }
+
+    /// The two clusters of a ligature of two characters at `start` and
+    /// `start + 1` whose one glyph is `advance` across: the first holds
+    /// the glyph, the second none, and each moves the pen half the way.
+    fn ligature(start: usize, advance: f32) -> [Written; 2] {
+        let half = |start: usize, continues: bool, glyphs: Vec<f32>| Written {
+            start,
+            advance: advance / 2.0,
+            continues,
+            glyphs,
+        };
+        [
+            half(start, false, vec![advance]),
+            half(start + 1, true, vec![]),
+        ]
+    }
+
+    /// The cluster, the x and the advance of each glyph `clusters` are
+    /// placed as from x 100, and the x after them.
+    fn placed(clusters: Vec<Written>, rtl: bool) -> (Vec<(usize, f32, f32)>, f32) {
+        let mut glyphs = Vec::new();
+        let mut x = 100.0;
+        place(
+            clusters.into_iter(),
+            rtl,
+            ResolvedFontId(3),
+            &mut x,
+            &mut glyphs,
+        );
+        assert!(glyphs.iter().all(|glyph| glyph.font == ResolvedFontId(3)));
+        let glyphs = glyphs
+            .iter()
+            .map(|glyph| (glyph.cluster, glyph.x, glyph.advance))
+            .collect();
+        (glyphs, x)
+    }
+
+    #[test]
+    fn a_clusters_glyphs_start_at_its_left_edge_one_after_another() {
+        // A letter, a letter with a mark of no advance, and a letter.
+        let clusters = vec![
+            cluster(0, &[10.0]),
+            cluster(1, &[8.0, 0.0]),
+            cluster(4, &[6.0]),
+        ];
+        let (glyphs, x) = placed(clusters, false);
+        assert_eq!(
+            glyphs,
+            vec![
+                (0, 100.0, 10.0),
+                (1, 110.0, 8.0),
+                (1, 118.0, 0.0),
+                (4, 118.0, 6.0)
+            ]
+        );
+        assert_eq!(x, 124.0);
+    }
+
+    #[test]
+    fn a_ligatures_glyph_starts_at_the_left_edge_of_its_leftmost_cluster() {
+        // Left to right, the ligature's first character is the leftmost:
+        // `a`, the ligature, `b`.
+        let [first, later] = ligature(1, 12.0);
+        let clusters = vec![cluster(0, &[10.0]), first, later, cluster(3, &[5.0])];
+        let (glyphs, x) = placed(clusters, false);
+        let expected = vec![(0, 100.0, 10.0), (1, 110.0, 12.0), (3, 122.0, 5.0)];
+        assert_eq!(glyphs, expected);
+        assert_eq!(x, 127.0);
+        // Right to left, the clusters are drawn in the reverse of their
+        // order in the text, so the ligature's later character comes
+        // first, with no glyph: the glyph, which the first character
+        // holds, starts where that later character does.
+        let [first, later] = ligature(1, 12.0);
+        let clusters = vec![cluster(3, &[5.0]), later, first, cluster(0, &[10.0])];
+        let (glyphs, x) = placed(clusters, true);
+        let expected = vec![(3, 100.0, 5.0), (1, 105.0, 12.0), (0, 117.0, 10.0)];
+        assert_eq!(glyphs, expected);
+        assert_eq!(x, 127.0);
     }
 }
