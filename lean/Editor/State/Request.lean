@@ -51,6 +51,12 @@ the models and against the library alike (`Editor/Command/Dispatch.lean`).
   makes it cannot be interrupted between the two. The handler releases
   nothing: the loop gives up the minibuffer's markers and text once the
   command has run to its end.
+- **An invocation to run next is recorded by one request**, `invoke`: it
+  is put after the invocations already recorded
+  (`EditorState.answered`), a prompt's answer among them, and the loop
+  hands them to its host once the command has run to its end
+  (`Editor/Loop.lean`, "Prompts"). A command cannot run another command
+  inside itself: this is how it has one run after it.
 - **A window's wanted column is set by one request**, `setWanted`, with
   the column and the offset it is kept at, or with none
   (`Editor/State.lean`, "The wanted column"). It is refused with a
@@ -134,6 +140,8 @@ inductive StateRequest where
   | setWanted (view : ViewId) (wanted : Option Window.Wanted)
   /-- Which command the ex name `name` is bound to, and what it takes. -/
   | ex (name : String)
+  /-- Have `invocation` run after this command, as a step of its own. -/
+  | invoke (invocation : Invocation)
 
 /-- The type of the reply to each request. -/
 abbrev StateRequest.Reply : StateRequest → Type
@@ -158,6 +166,7 @@ abbrev StateRequest.Reply : StateRequest → Type
   | .closePrompt _ => Except PromptRefusal Unit
   | .setWanted .. => Except LayoutRefusal Unit
   | .ex _ => Option Ex.Binding
+  | .invoke _ => Unit
 
 namespace EditorState
 
@@ -201,6 +210,7 @@ def handle : (request : StateRequest) → EditorState → request.Reply × Edito
   | .closePrompt answer, state => state.closePrompt answer
   | .setWanted view wanted, state => state.setWanted view wanted
   | .ex _, state => (none, state)
+  | .invoke invocation, state => ((), { state with answered := state.answered.push invocation })
 
 end EditorState
 

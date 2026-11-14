@@ -293,6 +293,10 @@ registered is the loop's to ask, which also runs the mode's `onEnter`
 - The jobs a command asked to be started are kept, in order, until the
   loop hands them to its host (`EditorState.starts`, a `JobStart` each: a
   registered job's name and plain arguments).
+- The invocations to run next are kept the same way
+  (`EditorState.answered`): the continuation of a prompt that was
+  accepted ("Prompts", above), and an invocation a command asked to be run
+  after it. The field is named for the first, which came first.
 - `EditorState.none` is an editor with no buffer and no window. It is not
   well formed, and no loop holds it: it is what a command's state requests
   are answered from where no loop runs the command
@@ -501,9 +505,11 @@ structure EditorState where
   /-- The prompt that is open, if one is: its view is a window of `windows`
   that is not in the frame's tree. -/
   prompt : Option Prompt := none
-  /-- The continuations of the prompts commands accepted, each with its
-  answer as its first argument, in order, which the loop has not yet handed
-  to its host. -/
+  /-- The invocations to run next, in order, which the loop has not yet
+  handed to its host: the continuations of the prompts commands accepted,
+  each with its answer as its first argument, and the invocations commands
+  asked to be run after them (`StateRequest.invoke`,
+  `Editor/State/Request.lean`). -/
   answered : Array Invocation := #[]
   deriving BEq, Repr
 

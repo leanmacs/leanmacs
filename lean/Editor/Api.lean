@@ -214,6 +214,17 @@ runs the command answers from the registry as it is at that step
 the ex command (`Editor/Ex.lean`) finds what a line runs: a command is a
 program over the editor's port and cannot hold the registry.
 
+## Running another command
+
+`invoke invocation` asks for an invocation to be run once this command has
+run to its end, as a step of its own, before the next event
+(`Editor/Loop.lean`, "Prompts"). A command cannot run another inside
+itself: the other would be looked up before this one's write to a store
+was written back, and its failure would be said under this one's name. The
+command is looked up when its step runs, and a name no command is
+registered under is said then. A command that does not run to its end has
+nothing run after it. Pinned by `ModelTest.promptChecks`.
+
 ## Jobs
 
 `startJob name arguments` asks for the job registered under `name` to be
@@ -329,6 +340,13 @@ runs, and what the name takes (`Ex.Binding`, `Editor/Ex/Line.lean`). `none`
 for a name nobody bound, and where no loop runs the command. -/
 def exBinding (name : String) : EditorM (Option Ex.Binding) :=
   EditorState.ask (.ex name)
+
+/-- Asks for `invocation` to be run once this command has run to its end, as
+a step of its own, before the next event: the command is looked up then,
+and is run as any command is, with the window that is then focused. A
+command that does not run to its end has nothing run after it. -/
+def invoke (invocation : Invocation) : EditorM Unit :=
+  EditorState.ask (.invoke invocation)
 
 /-- Asks for a string: opens a prompt labelled `label`, whose minibuffer
 holds `initial`, with the cursor after it, and returns the minibuffer's

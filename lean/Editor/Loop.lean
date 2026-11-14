@@ -99,9 +99,11 @@ command's name and plain arguments, and the loop runs it (`Loop.run`):
    writes no log itself: the host does, with what the step hands back.
 8. **The jobs the command asked for are handed back** with the step
    (`Loop.Stepped.starts`), for the host to start ("Jobs from commands").
-9. **The prompts the command accepted are handed back** with the step
-   (`Loop.Stepped.answered`), each as the invocation to run with its
-   answer, for the host to run before its next event ("Prompts").
+9. **The invocations to run next are handed back** with the step
+   (`Loop.Stepped.answered`): each prompt the command accepted, as the
+   invocation to run with its answer, and each invocation the command
+   asked to be run after it, for the host to run before its next event
+   ("Prompts").
 10. **The step says how the command ended** (`Loop.Stepped.ended`, a
     `Loop.Ending`), for a host that prints it.
 
@@ -190,6 +192,14 @@ loop has little of its own to do.
   answer's command would be looked up before that step's write was
   written back. As a step of its own it is like every other command: one
   rollback, one scene, one log entry, one ending.
+- **A command has another run after it the same way** (`invoke`,
+  `Editor/Api.lean`): the invocation is recorded in the same field, after
+  what is there, with no prompt, and is handed back and run by the host
+  as an answered one is. So the answers a step hands back are the
+  invocations to run next: a prompt's continuation with its answer, and
+  what the command asked for. The ex command runs the command a line
+  names this way (`Editor/Ex.lean`). A name no command is registered
+  under is said by that step, `<name>: no such command`.
 - **Rollback needs no rule of its own.** A command that asks and then
   fails is rolled back to a state with no prompt; one that fails while a
   prompt is open, an accept among them, to a state in which it is open,
@@ -633,11 +643,13 @@ structure Loop.Stepped (scheme : InputScheme) where
   asked, for the host to start. None for a step that ran no command, and
   for one whose command did not run to its end. -/
   starts : Array JobStart := #[]
-  /-- The continuations of the prompts the command the step ran accepted,
-  each with its answer as its first argument, in order: invocations for the
-  host to run, each as a step of its own (`Loop.invoke`), before it pulls
-  another event. None for a step that ran no command, and for one whose
-  command did not run to its end. -/
+  /-- The invocations to run next, in order: the continuations of the
+  prompts the command the step ran accepted, each with its answer as its
+  first argument, and the invocations it asked to be run after it
+  (`invoke`, `Editor/Api.lean`). They are for the host to run, each as a
+  step of its own (`Loop.invoke`), before it pulls another event. None for
+  a step that ran no command, and for one whose command did not run to its
+  end. -/
   answered : Array Invocation := #[]
   /-- How the command the step ran ended; `none` for a step that ran no
   command. -/

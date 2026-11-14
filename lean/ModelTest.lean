@@ -4779,7 +4779,7 @@ def stateRequests : List StateRequest :=
     .openPrompt "Name: " asked ⟨8⟩ (UndoTree.new ⟨8⟩ 0) (marker 0 0) (marker 8 1),
     .closePrompt none, .closePrompt (some "typed"),
     .setWanted ⟨0⟩ (some { column := .cells 3, head := 7 }), .setWanted ⟨1⟩ none,
-    .setWanted ⟨9⟩ (some { column := .lineEnd, head := 0 }), .ex "w"]
+    .setWanted ⟨9⟩ (some { column := .lineEnd, head := 0 }), .ex "w", .invoke asked]
 
 /-- The checks of the state requests' pure handler (`EditorState.handle`,
 `Editor/State/Request.lean`), on states made on the text model. The handler
@@ -5212,6 +5212,24 @@ def stateRequestChecks : List Check :=
             ["w", "greet", ""].all fun name =>
               let (bound, after) := state.handle (.ex name)
               bound == none && after == state },
+    { name :=
+        "the request to have an invocation run next records it after what is recorded, the answer of a prompt that was closed among it, and changes nothing else"
+      run :=
+        pure <|
+          match onTextModel twoBuffers with
+          | none => false
+          | some state =>
+            let first : Invocation := { command := "one", arguments := [.str "a"] }
+            let second : Invocation := { command := "two" }
+            let (_, once) := state.handle (.invoke first)
+            let (_, twice) := once.handle (.invoke second)
+            let (_, asking) := prompted state
+            let (_, answered) := asking.handle (.closePrompt (some "typed"))
+            let (_, after) := answered.handle (.invoke second)
+            once.answered == #[first] && twice.answered == #[first, second] &&
+              { twice with answered := #[] } == state &&
+              after.answered == answered.answered.push second &&
+              answered.answered.size == 1 },
     { name :=
         "every kind of request, accepted and refused, leaves a well-formed state well formed, with no prompt open and with one open, and the state with nothing in it answers each without a buffer or a window"
       run := do
@@ -10439,6 +10457,11 @@ was told of. -/
 def greeted (arguments : List Argument) (view : Nat := 0) (keys : Nat := 0) : String :=
   s!"greet {arguments.map argumentText} in view {view} with {keys} keys"
 
+/-- The invocation the command `hand` of the prompt checks asks to be run
+after it: `greet`, with two arguments of its own. -/
+def handed : Invocation :=
+  { command := "greet", arguments := [.str "handed", .nat 3] }
+
 /-- The commands of the prompt checks, by name.
 
 - `ask` asks `Name: ` with the continuation `asked`, the command `greet`
@@ -10451,7 +10474,11 @@ def greeted (arguments : List Argument) (view : Nat := 0) (keys : Nat := 0) : St
 - The test scheme's self-insert inserts its argument at its target's
   cursors.
 - `boom` inserts and is then refused, `other` says `other`, and `start`
-  starts the job `double`. -/
+  starts the job `double`.
+- `hand` says `handing` and asks for `handed` to be run after it
+  (`invoke`, `Editor/Api.lean`), with no prompt; `hand-then-fail` asks the
+  same and is then refused; `hand-missing` asks for a command nobody
+  registered. -/
 def promptCommands : List (String × Dispatched) :=
   let asks (continuation : Invocation) : Dispatched := fun _ => do
     if let .error refusal← prompt "Name: " continuation then
@@ -10479,6 +10506,14 @@ def promptCommands : List (String × Dispatched) :=
     ("boom", boom), ("other", says "other"),
     ("start", fun _ => do
       discard <| startJob "double" [.nat 21]
+      return none),
+    ("hand", fun _ => do
+      message "handing"
+      Editor.invoke handed
+      return none),
+    ("hand-then-fail", failingAfter fun _ => Editor.invoke handed),
+    ("hand-missing", fun _ => do
+      Editor.invoke { command := "nobody" }
       return none)]
 
 /-- What a step of the prompt checks is handed: one keymap, the same for
@@ -10491,7 +10526,8 @@ def promptKeys : Loop.Keys TestScheme.scheme :=
     [("C-c a", invoke "ask"), ("C-c m", invoke "ask-missing"), ("C-c x", invoke "ask-boom"),
       ("C-c r", invoke "ask-again"), ("C-c j", invoke "ask-job"), ("C-c f", invoke "ask-then-fail"),
       ("C-c y", invoke "accept"), ("C-c n", invoke "cancel"), ("C-c b", invoke "boom"),
-      ("C-c o", invoke "other")]
+      ("C-c o", invoke "other"), ("C-c h", invoke "hand"), ("C-c g", invoke "hand-then-fail"),
+      ("C-c k", invoke "hand-missing")]
     promptCommands
 
 /-- A driver over the initial state, with the commands of the prompt checks
@@ -10587,6 +10623,42 @@ def promptLoopChecks : List Check :=
             promptEcho accepted == "boom: refused: bad range" && driverText accepted == some "" &&
               closed accepted &&
               (steps.back?.join.map (·.answered.map (·.command))) == some #["boom"] },
+    { name :=
+        "a command that asks for an invocation to be run after it, with no prompt: its step hands the invocation back, the invocation's command then runs as a step of its own, with the invocation's arguments, the focused view as its target and no keys, before a key fed next is handled, and the loop's state keeps nothing to run"
+      run :=
+        pure <|
+          match promptDriver with
+          | none => false
+          | some driver =>
+            let (ran, steps) := fedTo driver (presses "C-c h")
+            let (after, _) := fedTo ran (presses "C-c o")
+            steps.map (·.map (·.answered)) == #[some #[], some #[handed]] &&
+              promptEcho ran == greeted handed.arguments &&
+              closed ran &&
+              (after.model.display.scenes.map (·.echo)).extract driver.model.display.scenes.size ==
+                #["", "handing", greeted handed.arguments, greeted handed.arguments, "other"] },
+    { name :=
+        "a command that asks for an invocation to be run after it and is then refused has nothing run: its step hands back no invocation, and the echo area says the refusal under the command's name"
+      run :=
+        pure <|
+          match promptDriver with
+          | none => false
+          | some driver =>
+            let (failed, steps) := fedTo driver (presses "C-c g")
+            steps.map (·.map (·.answered)) == #[some #[], some #[]] &&
+              promptEcho failed == "hand-then-fail: refused: bad range" &&
+              closed failed },
+    { name :=
+        "a command that asks for a command nobody registered to be run after it: the echo area says there is no such command, by that name, and the next key's command runs"
+      run :=
+        pure <|
+          match promptDriver with
+          | none => false
+          | some driver =>
+            let (ran, _) := fedTo driver (presses "C-c k")
+            let (after, _) := fedTo ran (presses "C-c o")
+            promptEcho ran == "nobody: no such command" && closed ran &&
+              promptEcho after == "other" },
     { name :=
         "a command that asks and is then refused opens no prompt: there is one window, with the focus, and the echo area says the refusal under the command's name"
       run :=
