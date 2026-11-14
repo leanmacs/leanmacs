@@ -4943,6 +4943,17 @@ def looped (start : TextM EditorState) (events : List Event) :
   | (.ok result, model) => some (result, model.display.scenes, model)
   | (.error _, _) => none
 
+/-- The initial state at 640 by 480 with a prompt open, asked from view 0 with
+the label `Name: ` and the continuation `asked`: the minibuffer is view 1,
+over a text of its own holding `text`, with a scroll anchor at its start
+and one cursor after `text`. -/
+def promptedOver (text : String) : TextM EditorState := do
+  let state ← EditorState.initial ⟨640, 480⟩
+  let made ← createText text
+  let scroll ← made.mark (.anchor { offset := 0, bias := .before })
+  let selection ← made.mark (.selection { ranges := #[⟨text.utf8ByteSize, text.utf8ByteSize⟩] })
+  return (state.openPrompt "Name: " asked made (← UndoTree.over made) scroll selection).2
+
 /-- A press of a key that no keymap binds and that prints nothing, with its
 physical code as a window reports it: the loop steps it through its scheme,
 which yields nothing for it. -/
@@ -5223,6 +5234,50 @@ def loopChecks : List Check :=
           | (.ok loop, model) =>
             loop.state.echo == "" &&
               model.display.scenes.map (·.echo) == #["", "hi", "hi", "hi", "second", "second", ""]
+          | (.error _, _) => false },
+    { name :=
+        "with a prompt open the scene has the minibuffer's view after the window's, in the rectangles the tree gives with that view: its snapshot is the minibuffer's text, its scroll anchor and selection are its window's markers, its status line is one field, the label in the prompt's face, and it is the focused view; the window's status line is still its buffer's name"
+      run :=
+        pure <|
+          match looped (promptedOver "ab") [pressF5] with
+          | some ((loop, _), #[scene], model) =>
+            let state := loop.state
+            match scene.views, state.window? ⟨1⟩ with
+            | #[window, minibuffer], some held =>
+              window.id == ⟨0⟩ && minibuffer.id == ⟨1⟩ && shownText model minibuffer == some "ab" &&
+                shownText model window == some "" &&
+                minibuffer.scroll == held.scroll &&
+                minibuffer.selections == #[held.selection] &&
+                minibuffer.status == #[{ text := "Name: ", face := Loop.promptFace }] &&
+                window.status == #[{ text := "scratch", face := Loop.nameFace }] &&
+                Loop.promptFace != Loop.nameFace &&
+                scene.focused == some ⟨1⟩ &&
+                scene.views.map (fun view => (view.id, view.rect)) ==
+                  state.frame.tree.rects (frameRect state.frame.size) (some ⟨1⟩) &&
+                tiles (frameRect state.frame.size) (scene.views.map (·.rect))
+            | _, _ => false
+          | _ => false },
+    { name :=
+        "a text committed while a prompt is open is inserted in the minibuffer: its view shows the text so far, and the window's text is as it was"
+      run :=
+        pure <|
+          match looped (promptedOver "ab") [.commit "c"] with
+          | some (_, #[scene], model) => scene.views.map (shownText model) == #[some "", some "abc"]
+          | _ => false },
+    { name :=
+        "once the prompt is closed the next scene has one view, the window's, which has the whole frame"
+      run :=
+        pure <|
+          let program : EditorM TestLoop := do
+            let (loop, _) ← stepsFrom (promptedOver "ab") [pressF5]
+            let (_, closed) := loop.state.closePrompt none
+            return (← stepped { loop with state := closed } pressF5).1
+          match program.runModel editorModel with
+          | (.ok _, model) =>
+            model.display.scenes.map (·.views.map fun view => (view.id, view.rect)) ==
+              #[(Split.split .rows (.window ⟨0⟩) .minibuffer).rects (frameRect ⟨640, 480⟩)
+                  (some ⟨1⟩),
+                #[(⟨0⟩, frameRect ⟨640, 480⟩)]]
           | (.error _, _) => false }]
 
 /-- The focused window's buffer and window in `loop`'s state, or a refusal

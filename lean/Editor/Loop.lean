@@ -330,7 +330,11 @@ changed the state or not (`Loop.publish`):
    event edited is one step of the history.
 2. **The scene** (`Loop.views`, `Loop.scene`). Each window in the tree, in
    drawing order, is a view in the rectangle `Split.rects` gives it in the
-   frame. A view
+   frame. While a prompt is open the minibuffer's window is a view too, in
+   the strip the minibuffer's place then takes (`Editor/State.lean`, "The
+   split tree and its invariants"): its text is the input typed so far,
+   its selection the cursor in it, and it is the focused view while it has
+   the focus. A view
    whose buffer's text is at the revision it was last shown at keeps the
    same snapshot; otherwise a new snapshot is taken, and views of one
    buffer share it. A view's scroll anchor and selection are its window's
@@ -341,7 +345,13 @@ changed the state or not (`Loop.publish`):
    `Loop.modifiedMark` in the face `Loop.modifiedFace`. "Modified" is the
    presence of the second field: a buffer that is not has no such field.
    The answer is right because the histories were told their texts'
-   revisions in step 1. The focused view is named only while the frame has
+   revisions in step 1. The minibuffer's view has another status line
+   (`Loop.statusOf`): one field, the prompt's label, in the face
+   `Loop.promptFace`, with no name and no modified field. That is how the
+   scene shows the prompt text: the scene's shape is the display
+   contract, and it has no field for a prompt. The input is the whole text
+   of the minibuffer's buffer, so the label is no part of it: the text
+   store has no read-only range to keep a label in. The focused view is named only while the frame has
    the keyboard focus. The pending prefix is the scheme's pending keys
    (`Loop.pending`).
 3. **Publish** it through the display port.
@@ -569,6 +579,10 @@ def modifiedFace : FaceName :=
 def modifiedMark : String :=
   "[+]"
 
+/-- The face of the minibuffer's status line, which is the prompt's label. -/
+def promptFace : FaceName :=
+  ⟨"minibuffer.prompt"⟩
+
 /-- The status line of a view of `buffer`: the buffer's name, and, while the
 buffer is modified, the modified field after it. A buffer that is not
 modified has no such field, not an empty one. -/
@@ -576,11 +590,23 @@ def status (buffer : Buffer) : Array StatusField :=
   #[{ text := buffer.name, face := nameFace }] ++
     if buffer.isModified then #[{ text := modifiedMark, face := modifiedFace }] else #[]
 
+/-- The status line of the view `id` of `state`, which shows `buffer`: the
+prompt's label alone, in `promptFace`, for the minibuffer's view, and the
+buffer's (`status`) for any other. -/
+def statusOf (state : EditorState) (id : ViewId) (buffer : Buffer) : Array StatusField :=
+  match state.prompt with
+  | some asked =>
+    if asked.view == id then #[{ text := asked.label, face := promptFace }] else status buffer
+  | none => status buffer
+
 /-- The views of the loop's state, in drawing order, and the snapshots they
-name. A text at the revision it was last shown at keeps its snapshot; any
-other is given a new one. A view's status line is its buffer's (`status`). It is not refused: a view whose buffer's text
-refuses, because it was released, is left out, with nothing taken for it,
-and the first such refusal is handed back. -/
+name: its windows, and the minibuffer's view in the minibuffer's place
+while a prompt is open. A text at the revision it was last shown at keeps
+its snapshot; any other is given a new one. A view's status line is its
+buffer's, and the prompt's label for the minibuffer's view (`statusOf`). It
+is not refused: a view whose buffer's text refuses, because it was
+released, is left out, with nothing taken for it, and the first such
+refusal is handed back. -/
 def views (loop : Loop scheme) : TextM (Array View × Array Shown × Option TextError) := do
   let state := loop.state
   let frame := state.frame
@@ -588,7 +614,8 @@ def views (loop : Loop scheme) : TextM (Array View × Array Shown × Option Text
   let mut views : Array View := #[]
   let mut refusal := none
   for (id, rect) in
-    frame.tree.rects { x := 0, y := 0, width := frame.size.width, height := frame.size.height } do
+    frame.tree.rects { x := 0, y := 0, width := frame.size.width, height := frame.size.height }
+      state.minibufferView? do
     let some target := state.target? id | continue
     let text := target.buffer.text
     let taken ←
@@ -610,7 +637,7 @@ def views (loop : Loop scheme) : TextM (Array View × Array Shown × Option Text
         views.push
           { id, rect, snapshot, scroll := target.window.scroll,
             selections := #[target.window.selection]
-            cursor, decorations := #[], status := status target.buffer }
+            cursor, decorations := #[], status := statusOf state id target.buffer }
   return (views, shown, refusal)
 
 /-- The scene of `state` over `views`: what the state says of the frame, the
