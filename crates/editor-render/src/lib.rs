@@ -17,8 +17,10 @@
 //!   from what it kept.
 //! - [`fake`]: the port's published fake, which records what it is asked
 //!   to draw.
+//! - [`contract`]: the rules the fake and every real adapter are held to.
 
 pub mod clock;
+pub mod contract;
 pub mod fake;
 pub mod mailbox;
 pub mod port;
