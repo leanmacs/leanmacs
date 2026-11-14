@@ -15780,7 +15780,12 @@ def undoRows : List (String × String × String) :=
     ("a|bcde", "3 x", "a|bcde"), ("foo |bar baz", "y w p", "foo |bar baz"),
     ("ab\nc|d\nef", "y y p", "ab\nc|d\nef"), ("ab\nc|d\nef", "y y P", "ab\nc|d\nef"),
     ("foo |bar baz", "y w P", "foo |bar baz"), ("ab\nc|d\nef", "o X <Escape>", "ab\nc|d\nef"),
-    ("ab\nc|d\nef", "O X <Escape>", "ab\nc|d\nef")]
+    ("ab\nc|d\nef", "O X <Escape>", "ab\nc|d\nef"),
+    -- A session that typed nothing leaves its bar at a line's start, where
+    -- `<Escape>` does not step back and a redo must not either.
+    ("ab\nc|d\nef", "o <Escape>", "ab\nc|d\nef"), ("ab\nc|d\nef", "O <Escape>", "ab\nc|d\nef"),
+    ("ab\nc|d\nef", "c c <Escape>", "ab\nc|d\nef"), ("ab\n|cd ef", "c w <Escape>", "ab\n|cd ef"),
+    ("foo |bar baz", "v e c X <Escape>", "foo ba|r baz")]
 
 /-- The checks of evil's undo and redo (`Editor/Evil/Undo.lean`), by key,
 on the loop's driver over the editor's models, under the Vim scheme that
@@ -15788,7 +15793,7 @@ ships with evil's commands. What `u` leaves is the phase's rule and not
 Vim's, which leaves the cursor at the start of the changed text. -/
 def evilUndoChecks : List Check :=
   [{  name :=
-        "u after a change restores the text and the cursor from before the change's command, and C-r reapplies it, leaving the text and the cursor the change left: for d over a motion, lines and a selection, c with typed text, x, p, P, o and O"
+        "u after a change restores the text and the cursor from before the change's command, and C-r reapplies it, leaving the text and the cursor the change left: for d over a motion, lines and a selection, c with typed text, x, p, P, o and O; for c over a selection; and for o, O, c c and c w at a line's start with nothing typed, whose session leaves its bar at a line's start, where C-r does not step back across the line break"
       run := do
         let wrong :=
           undoRows.filterMap fun (fixture, typed, before) =>
