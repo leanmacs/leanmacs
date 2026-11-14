@@ -66,6 +66,12 @@
 //!   wider than the width breaks inside itself, so a line fits or holds
 //!   one cluster; and spaces at a wrap count toward the width and wrap.
 //! - **A font's metrics** are those of one space shaped in it.
+//! - **Setting the fonts again is another generation**
+//!   ([`ParleyShaper::set_fonts`]), whether or not they differ: the table
+//!   of resolved fonts starts again from nothing, so a resolved id of
+//!   before means nothing now, the metrics are asked of the new fonts,
+//!   and the id of every spec stays. Nothing calls it yet: watching the
+//!   system's fonts for changes is not built.
 //!
 //! # The rules this crate pins
 //!
@@ -83,7 +89,8 @@
 //!   the spec's family, then the default, then the fallbacks in the set's
 //!   order (`tests/shaping.rs`);
 //! - that shaping describes every font a line is drawn in before it
-//!   returns, so a break adds none (`tests/adapter.rs`);
+//!   returns, so a break adds none, and what setting the fonts again does
+//!   (`tests/adapter.rs`);
 //! - the rules above (`tests/adapter.rs`, and the stand-ins in
 //!   `src/shaper.rs`);
 //! - what shaping whole runs gives on real fonts: the `fi` ligature as one

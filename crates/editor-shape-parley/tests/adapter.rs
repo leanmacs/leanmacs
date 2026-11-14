@@ -12,9 +12,12 @@ use std::ops::Range;
 use editor_layout::shaper::{
     FontId, FontSpec, Length, LineHeight, ShapedLine, Shaper, VisualLine, Weight,
 };
-use editor_shape_parley::{ParleyLine, ParleyShaper, ShapeCounters};
+use editor_shape_parley::{FontSet, ParleyLine, ParleyShaper, ShapeCounters};
 
-use common::{MONO_FAMILY, clusters, family, in_font, in_fonts, one_line, plain, shaper, sized};
+use common::{
+    MONO, MONO_FAMILY, SANS, clusters, family, fixture_set, in_font, in_fonts, one_line, plain,
+    shaper, sized,
+};
 
 /// The bytes of each of `lines`.
 fn ranges(lines: &[VisualLine]) -> Vec<Range<usize>> {
@@ -246,6 +249,58 @@ fn breaking_a_kept_line_adds_no_resolved_font() {
     let fresh = self::shaper();
     fresh.metrics(FontId(0));
     assert_eq!(fresh.resolved().len(), 0);
+}
+
+/// Whether every font `shaper` describes is drawn from the bytes `file`.
+fn all_drawn_from(shaper: &ParleyShaper, file: &[u8]) -> bool {
+    let table = shaper.resolved();
+    !table.is_empty() && table.iter().all(|font| (*font.data).as_ref() == file)
+}
+
+#[test]
+fn setting_the_fonts_again_moves_the_generation_and_starts_the_table_again() {
+    let shaper = shaper();
+    let big = shaper.font(&sized(32));
+    let before = shaper.generation();
+    let kept = shaper.shape(&plain("a日"));
+    assert!(shaper.resolved().len() >= 2);
+    let metrics = shaper.metrics(FontId(0));
+    let counted = shaper.counters();
+    assert_eq!(shaper.generation(), before);
+
+    // Other fonts: the monospace file alone.
+    let mono = FontSet::only(MONO_FAMILY, &[], [MONO.to_vec()]).expect("one font");
+    shaper.set_fonts(mono);
+    let after = shaper.generation();
+    assert_ne!(after, before);
+    // The table starts again: nothing is described until something is
+    // shaped under the new generation, and then only fonts of the new set.
+    assert_eq!(shaper.resolved().len(), 0);
+    let line = one_line(&shaper, &plain("a日"));
+    assert!(all_drawn_from(&shaper, MONO));
+    assert!(line.glyphs.iter().all(|glyph| glyph.font.0 == 0));
+    // A font's metrics are asked of the new fonts.
+    assert_ne!(shaper.metrics(FontId(0)), metrics);
+    assert_eq!(
+        shaper.metrics(FontId(0)).advance,
+        one_line(&shaper, &plain(" ")).glyphs[0].advance
+    );
+    // Spec ids stay for the shaper's life, and the counters keep counting.
+    assert_eq!(shaper.font(&sized(32)), big);
+    assert_eq!(shaper.font(&FontSpec::default()), FontId(0));
+    assert_eq!(shaper.counters().layouts, counted.layouts + 2);
+    // A line kept from before still breaks, as it was shaped.
+    assert_eq!(ranges(&kept.break_lines(None)), vec![0..4]);
+
+    // The same fonts set again are another generation too: whoever keeps
+    // anything by resolved font id starts again.
+    shaper.set_fonts(fixture_set());
+    assert_ne!(shaper.generation(), after);
+    assert_ne!(shaper.generation(), before);
+    assert_eq!(shaper.resolved().len(), 0);
+    one_line(&shaper, &plain("a"));
+    assert!(all_drawn_from(&shaper, SANS));
+    assert_eq!(shaper.metrics(FontId(0)), metrics);
 }
 
 #[test]

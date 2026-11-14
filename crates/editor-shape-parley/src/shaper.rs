@@ -48,6 +48,8 @@ struct State {
     /// The metrics of each font asked about: a space is shaped once for
     /// each.
     metrics: HashMap<FontId, Metrics>,
+    /// The generation: how often the fonts were set again.
+    generation: u64,
     /// The work done so far.
     counters: ShapeCounters,
 }
@@ -344,9 +346,40 @@ impl ParleyShaper {
                 specs: vec![FontSpec::default()],
                 resolved: Arc::from(Vec::new()),
                 metrics: HashMap::new(),
+                generation: 0,
                 counters: ShapeCounters::default(),
             }),
         }
+    }
+
+    /// Draws in the fonts of `fonts` from now on. The generation moves on,
+    /// whether or not the fonts differ, so layout shapes again what it
+    /// kept. The table of resolved fonts starts again from nothing, so a
+    /// resolved id of before means nothing now; the metrics are asked of
+    /// the new fonts; and the id of every spec stays as it was given.
+    ///
+    /// A line shaped before still breaks as it was shaped: it holds its
+    /// own layout and the table it was shaped under.
+    pub fn set_fonts(&self, fonts: FontSet) {
+        let FontSet {
+            collection,
+            default,
+            fallbacks,
+            ..
+        } = fonts;
+        let mut state = self.state();
+        state.fonts = FontContext {
+            collection,
+            source_cache: SourceCache::default(),
+        };
+        // Parley's scratch space is kept: what it resolved of a family is
+        // dropped at the start of each layout, and what it keeps of a
+        // shaped font is keyed by the file's own number.
+        state.default = default;
+        state.fallbacks = fallbacks;
+        state.resolved = Arc::from(Vec::new());
+        state.metrics.clear();
+        state.generation += 1;
     }
 
     /// The work done so far.
@@ -439,7 +472,7 @@ impl Shaper for ParleyShaper {
     }
 
     fn generation(&self) -> u64 {
-        0
+        self.state().generation
     }
 
     fn resolved(&self) -> Arc<[ResolvedFont]> {
