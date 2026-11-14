@@ -1086,8 +1086,9 @@ Each view (`View`):
 
 Content is named only by handles, never by copied text, so an unchanged
 view is sent as the same handles. Faces are names; what they look like is
-the display pipeline's. Which cursor and which status fields a view has are
-chosen by the command loop's later phases; the scene only carries them.
+the display pipeline's. Which cursor a view has is chosen by the command
+loop's later phases, and which status fields by `Loop.status` (below); the
+scene only carries them.
 
 Lean publishes the scene and asks layout's two questions through the
 display interface (`lean/Editor/Display.lean`): the rows a view shows from
@@ -1135,9 +1136,17 @@ decided 2026-11-13 by its phase 2):
   host is not left with a refusal to drop. The state's layout is not
   touched: a well-formed state stays well formed.
 - Until later phases choose them, every view's cursor is a bar in the face
-  `cursor`, with no decorations and an empty status line. The focused view
-  is named only while the frame has the keyboard focus, and the preedit is
-  the input method's text for it.
+  `cursor`, with no decorations. The focused view is named only while the
+  frame has the keyboard focus, and the preedit is the input method's text
+  for it.
+- A view's status line is two fields at most (`Loop.status`, built by the
+  command loop's phase 9): its buffer's name in the face `status.name`,
+  and, while the buffer is modified, the text `[+]` in the face
+  `status.modified`. "Modified" is the presence of the second field: a
+  buffer that is not modified has no such field, not one with an empty
+  text. Whether a buffer is modified is its undo tree's answer, and it is
+  right in a scene because every tree is told its text's revision before
+  the scene is made. The scene's shape did not change.
 - The pending prefix is the keys the loop's input scheme reports as
   pending, as a key string (`C-x`): empty once a sequence completes and
   after an unbound key ([keymaps-and-modes.md](keymaps-and-modes.md), "The

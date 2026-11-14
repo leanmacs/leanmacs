@@ -124,6 +124,12 @@ at, does its part, and records the tree that comes back as the buffer's
 - **A command that moves and then fails** is rolled back from the tree it
   recorded: the edits it made after the move are taken back, and the move
   is not (`Editor/Loop.lean`, "Rollback").
+- `BufferId.isModified` says whether the buffer's text is in another state
+  than the one last saved. It tells the tree the text's revision first, so
+  an edit made earlier in the same command counts. A question of the state
+  alone (`Buffer.isModified` on a buffer read from `editorState`) answers
+  for the revision the tree was last told, which is the text's after each
+  event and may not be in the middle of a command.
 
 ## Windows
 
@@ -324,6 +330,13 @@ def synced (id : BufferId) : EditorM (Except BufferRefusal Buffer) := do
     return .ok { buffer with history := ← buffer.history.sync }
   | none =>
     return .error (.noSuchBuffer id)
+
+/-- Whether the buffer `id` is modified: whether its text is in another
+state than the one last saved, by its history once told the revision the
+text is at, so an edit made earlier in the same command counts. Refused
+with `noSuchBuffer` for a buffer there is none of. -/
+def isModified (id : BufferId) : EditorM (Except BufferRefusal Bool) :=
+  return (← id.synced).map (·.isModified)
 
 /-- Sets the boundary in the buffer `id`'s history: the edits since the last
 one become one step. With nothing pending it makes no node. A boundary set

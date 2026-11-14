@@ -126,8 +126,8 @@ constructor.
   decides only the line break a command inserts. Nothing is translated on
   the way in or out: the text holds every byte of the file.
 - **The saved state is the undo tree's** (`UndoTree.saved`, in
-  `Buffer.history`), and so is whether the buffer is modified. A second
-  copy here would be a second answer.
+  `Buffer.history`), and so is whether the buffer is modified
+  (`Buffer.isModified`). A second copy here would be a second answer.
 - **A path is matched as a string** (`findFile`): the buffer whose file's
   path is equal to it. Two spellings of one file (a symbolic link, `..`, a
   doubled slash) are two buffers. That is safe: once one is saved, a save
@@ -247,6 +247,12 @@ structure Buffer where
   break. Nothing else is decided by it. -/
   lineEnding : File.LineEnding := .lf
   deriving BEq, Repr
+
+/-- Whether the buffer's text is in another state than the one last saved,
+as its history knows it (`UndoTree.isModified`): right once the history was
+told the revision the text is at, which the loop does before each scene. -/
+def Buffer.isModified (buffer : Buffer) : Bool :=
+  buffer.history.isModified
 
 /-- A window: a view of a buffer. -/
 structure Window where

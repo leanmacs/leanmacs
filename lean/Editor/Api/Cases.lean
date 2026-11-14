@@ -346,7 +346,19 @@ def undoCases : List Case :=
             held.history.nodes.size == 1 &&
             refusedAs (← absent.undo) (.noSuchBuffer absent) &&
             refusedAs (← absent.redo) (.noSuchBuffer absent) &&
-            refusedAs (← absent.closeGroup) (.noSuchBuffer absent) }]
+            refusedAs (← absent.closeGroup) (.noSuchBuffer absent) },
+    { name :=
+        "a buffer says whether it is modified, from its history once told the revision its text is at: it is not when it is made, it is after an edit made in the same command, and it is not once that edit is undone; a buffer there is none of is refused with noSuchBuffer"
+      run := do
+        let .ok buffer ← createBuffer "fresh" "text" | return false
+        let made ← buffer.isModified
+        let .ok () ← buffer.insertAt 0 "x" | return false
+        let edited ← buffer.isModified
+        let .ok (some _) ← buffer.undo | return false
+        let undone ← buffer.isModified
+        let absent : BufferId := ⟨9⟩
+        return made matches .ok false && edited matches .ok true && undone matches .ok false &&
+            refusedAs (← absent.isModified) (.noSuchBuffer absent) }]
 
 /-- A cursor marker at the start of `text`, made and given up at once: its
 number says how many markers the text had given out before it. -/

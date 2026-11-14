@@ -4602,17 +4602,48 @@ def loopChecks : List Check :=
               second.views.all fun view => shownText model view == some ""
           | _ => false },
     { name :=
-        "a view shows its window's scroll anchor and selection marker, a bar cursor in the face cursor, and no decorations or status"
+        "a view shows its window's scroll anchor and selection marker, a bar cursor in the face cursor, no decorations, and a status line of one field, its buffer's name in the name's face"
       run :=
         pure <|
           match looped threeWindows [pressF5] with
           | some ((loop, _), #[scene], _) =>
+            let named :=
+              (loop.state.buffer? ⟨0⟩).map fun buffer =>
+                #[({ text := buffer.name, face := Loop.nameFace } : StatusField)]
             scene.views.map (·.scroll) == loop.state.windows.map (·.scroll) &&
               scene.views.map (·.selections) == loop.state.windows.map (#[·.selection]) &&
               scene.views.all fun view =>
                 view.cursor == { shape := .bar, face := ⟨"cursor"⟩ } && view.decorations.isEmpty &&
-                  view.status.isEmpty
+                  some view.status == named
           | _ => false },
+    { name :=
+        "a view's status line carries the modified field while its buffer is modified, and not otherwise: the first scene's views have the name alone, after a commit each view of the buffer has the name and then the modified mark in the modified face, and after a key whose command undoes the commit each has the name alone again"
+      run :=
+        pure <|
+          let undoKeys : Loop.Keys TestScheme.scheme :=
+            { maps := fun _ _ => [Keymap.ofList [(keys "C-z", invoke "undo")]]
+              command? := fun name =>
+                if name == "undo" then
+                  some fun call => do
+                    discard <| call.target.window.buffer.undo
+                    return none
+                else none }
+          let program : EditorM TestLoop := do
+            let mut loop : TestLoop := { state := ← threeWindows }
+            for event in [pressF5, .commit "x"] ++ (keys "C-z").map (Event.key · true "") do
+              loop := (← loop.step undoKeys event).loop
+            return loop
+          match program.runModel editorModel with
+          | (.ok loop, model) =>
+            match loop.state.buffer? ⟨0⟩ with
+            | none => false
+            | some buffer =>
+              let name : StatusField := { text := buffer.name, face := Loop.nameFace }
+              let modified : StatusField := { text := Loop.modifiedMark, face := Loop.modifiedFace }
+              model.texts.contents == #[""] &&
+                model.display.scenes.map (fun scene => scene.views.map (·.status)) ==
+                  #[.replicate 3 #[name], .replicate 3 #[name, modified], .replicate 3 #[name]]
+          | (.error _, _) => false },
     { name :=
         "a commit once the focused buffer's text was released is not refused: it publishes a scene with the refusal in its echo and no view of that buffer, and the loop keeps the state as it was, well formed, with that echo"
       run :=

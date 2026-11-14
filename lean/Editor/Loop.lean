@@ -316,10 +316,16 @@ changed the state or not (`Loop.publish`):
    whose buffer's text is at the revision it was last shown at keeps the
    same snapshot; otherwise a new snapshot is taken, and views of one
    buffer share it. A view's scroll anchor and selection are its window's
-   markers, its cursor a bar in the face `cursor`, with no decorations and
-   an empty status line: later phases choose those. The focused view is
-   named only while the frame has the keyboard focus. The pending prefix is
-   the scheme's pending keys (`Loop.pending`).
+   markers, its cursor a bar in the face `cursor`, with no decorations:
+   later phases choose those. Its status line is two fields at most
+   (`Loop.status`): its buffer's name, in the face `Loop.nameFace`, and,
+   while the buffer is modified (`Buffer.isModified`), the text
+   `Loop.modifiedMark` in the face `Loop.modifiedFace`. "Modified" is the
+   presence of the second field: a buffer that is not has no such field.
+   The answer is right because the histories were told their texts'
+   revisions in step 1. The focused view is named only while the frame has
+   the keyboard focus. The pending prefix is the scheme's pending keys
+   (`Loop.pending`).
 3. **Publish** it through the display port.
 4. **Release** each snapshot the previous scene named that this one does
    not. So a scene's handles are alive while it is the last one published,
@@ -533,9 +539,28 @@ def start (scheme : InputScheme) (size : Size) : TextM (Loop scheme) :=
 def cursor : Cursor :=
   { shape := .bar, face := ⟨"cursor"⟩ }
 
+/-- The face of the status line's first field, the buffer's name. -/
+def nameFace : FaceName :=
+  ⟨"status.name"⟩
+
+/-- The face of the status line's modified field. -/
+def modifiedFace : FaceName :=
+  ⟨"status.modified"⟩
+
+/-- What the status line's modified field says. -/
+def modifiedMark : String :=
+  "[+]"
+
+/-- The status line of a view of `buffer`: the buffer's name, and, while the
+buffer is modified, the modified field after it. A buffer that is not
+modified has no such field, not an empty one. -/
+def status (buffer : Buffer) : Array StatusField :=
+  #[{ text := buffer.name, face := nameFace }] ++
+    if buffer.isModified then #[{ text := modifiedMark, face := modifiedFace }] else #[]
+
 /-- The views of the loop's state, in drawing order, and the snapshots they
 name. A text at the revision it was last shown at keeps its snapshot; any
-other is given a new one. It is not refused: a view whose buffer's text
+other is given a new one. A view's status line is its buffer's (`status`). It is not refused: a view whose buffer's text
 refuses, because it was released, is left out, with nothing taken for it,
 and the first such refusal is handed back. -/
 def views (loop : Loop scheme) : TextM (Array View × Array Shown × Option TextError) := do
@@ -567,7 +592,7 @@ def views (loop : Loop scheme) : TextM (Array View × Array Shown × Option Text
         views.push
           { id, rect, snapshot, scroll := target.window.scroll,
             selections := #[target.window.selection]
-            cursor, decorations := #[], status := #[] }
+            cursor, decorations := #[], status := status target.buffer }
   return (views, shown, refusal)
 
 /-- The scene of `state` over `views`: what the state says of the frame, the
