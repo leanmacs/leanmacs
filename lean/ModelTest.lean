@@ -7,7 +7,7 @@ import Editor.Display.Contract
 import Editor.Display.Model
 import Editor.File.Cases
 import Editor.File.Model
-import Editor.Files
+import Editor.Files.Compiled
 import Editor.InputScheme.Contract
 import Editor.InputScheme.Test
 import Editor.InputScheme.Vim.Default
@@ -8946,6 +8946,28 @@ def filesDriver (registered : String → Option (List Argument → Work) := file
   (Loop.Driver.over fileKeys registered (EditorState.initial ⟨640, 480⟩) editorModel).toOption.map
     fun driver => { driver with jobs := { files } }
 
+/-- A driver whose commands and jobs are the ones compiled code registers
+(`Files.commands`, `Files.jobs`), each under the name it is registered
+under, over the files of the file command checks: `C-o n` is bound to the
+open command with the path of `note.txt`, `C-o o` to the open command with
+no argument, and `C-o w` to the save command. -/
+def compiledDriver : Option TestDriver :=
+  let keys : Loop.Keys TestScheme.scheme :=
+    dispatchKeys
+      [("C-o n", opens (inFiles "note.txt")), ("C-o o", invoke Files.openName),
+        ("C-o w", invoke Files.saveName)]
+      (Files.commands.toList.filterMap fun registration =>
+        match registration.action with
+        | .call run =>
+          some
+            (registration.name, fun call => do
+              run call
+              return none)
+        | _ => none)
+  (Loop.Driver.over keys (fun name => (Files.jobs.find? (·.name == name)).map (·.work))
+        (EditorState.initial ⟨640, 480⟩) editorModel).toOption.map
+    fun driver => { driver with jobs := { files := commandFiles } }
+
 /-- What a view of a driver shows. -/
 structure Showing where
   /-- The buffer's id. -/
@@ -9513,7 +9535,30 @@ def fileCommandChecks : List Check :=
               echoOf saved == some (Files.wrote path) &&
               bytesOf saved path == some (FileModel.encode ("x" ++ FileCases.noteText)) &&
               saved.loop.state.buffers == removed.loop.state.buffers &&
-              saved.loop.state.wellFormed }]
+              saved.loop.state.wellFormed },
+    { name :=
+        "the file commands and their jobs as compiled code registers them: the open command and the save command are registered under their names and the load job and the save job under theirs, the open command with a path opens the file and the save command saves the buffer, and the open command with no path says so in the echo area and starts nothing"
+      run :=
+        pure <|
+          match compiledDriver with
+          | none => false
+          | some driver =>
+            let path := inFiles "note.txt"
+            let text := "x" ++ FileCases.noteText
+            let (bare, steps) := fedTo driver (presses "C-o o")
+            let (asked, _) := fedTo driver (presses "C-o n")
+            let (opened, _) := asked.finish 1
+            let (saving, _) := fedTo opened ([.commit "x"] ++ presses "C-o w")
+            let (saved, _) := saving.finish 2
+            Files.commands.map (·.name) == #[Files.openName, Files.saveName] &&
+              Files.jobs.map (·.name) == #[Files.loadJob, Files.saveJob] &&
+              started steps == #[] &&
+              bare.pending.isEmpty &&
+              echoOf bare == some Files.noPath &&
+              (showing opened).bind (·.text) == some FileCases.noteText &&
+              (showing saved).bind (·.text) == some text &&
+              bytesOf saved path == some (FileModel.encode text) &&
+              echoOf saved == some (Files.wrote path) }]
 
 /-- Every check, in the order they run.
 

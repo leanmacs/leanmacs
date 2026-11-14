@@ -1,6 +1,7 @@
 import ConfigFixture
 import Editor.Config.Directory
 import Editor.Config.Elaborate
+import Editor.Files.Compiled
 import Editor.Headless
 import Editor.InputScheme.Test
 import Editor.Job.Fake
@@ -58,11 +59,24 @@ fakes. The checks here pin what only real collaborators can show:
   with the scratch buffer's major mode set (`Compiled.major`), since no
   command can set one yet, and the key pressed is the test scheme's for the
   role (`Session.pressKeys`), so no check names a scheme's key;
-- `fileChecks`: a job from config that loads a file through the host, over
-  the library's file service, and whose handler makes a text of it. It is
-  the one check whose host is over a real service, so it is the one that
-  starts a completion pump, and it runs last. Its file is in a temporary
-  directory of its own, whose path is written into the config it loads.
+- `fileChecks`: files through the host, over the library's file service.
+  They are the checks whose hosts are over a real service, so they share
+  one table of waits and the one completion pump, which the first of them
+  starts, and they run last. Each has temporary directories of its own and
+  writes its files' bytes itself.
+  - A job from config loads a file, and its handler makes a text of it:
+    the file's path is written into the config it loads.
+  - The file commands and their jobs as compiled code registers them
+    (`Files.commands`, `Files.jobs`): opening a file shows a buffer of its
+    text, named by its base name; saving a modified buffer writes the
+    buffer's text and clears the status line's modified field; opening a
+    path that is open starts no load; open then save with no edit leaves
+    the bytes of an LF file and of a CRLF file as they were, with the save
+    seen to have written; a save of a file changed on disk leaves it and
+    says so; and opening a path with no file says so and leaves the
+    window. The driver's `run` hands a command no argument, so each host
+    is handed a command, written here, that runs the compiled open command
+    with a path (`opening`).
 
 A check controls time through a port, never by sleeping and hoping: a
 decorator of the elaborator port (`Gate`) holds one chunk's elaboration open
@@ -1256,90 +1270,6 @@ def jobChecks (context : Context) : List Check :=
             working != Headless.Failure.describe 30000 (.reloading (some 12)) &&
             working != Headless.Failure.describe 30000 (.unanswered (some 12))) }]
 
-/-- A chunk whose `setup` registers two jobs that each load a file and whose
-handler makes a text of what was loaded: `open`, of `note.txt` in
-`directory`, and `missing`, of a file that is not there. A load that is
-refused is thrown, as the refusal's description. -/
-def openChunk (directory : System.FilePath) : String :=
-  "def openFile (path : String) : Unit → JobM JobSnapshotId := fun _ => do
-  match ← File.load path 1000 with
-  | .ok file => return file.snapshot
-  | .error error => throw error.describe
-
-def setup : SetupM Unit := do
-  job \"open\" (openFile " ++
-    (directory / "note.txt").toString.quote ++
-    ") fun loaded => discard loaded.toText
-  job \"missing\" (openFile " ++
-    (directory / "missing.txt").toString.quote ++
-    ") fun loaded => discard loaded.toText
-"
-
-/-- A stage for a host whose jobs reach real files: one over the real
-elaborator and `source`, with what `compiled` hands it, whose services have
-the library's file service, over the table of waits the file checks share
-(`Context.fileWaits`), which the one completion pump runs over. Its clock is
-still a fake one. -/
-def Stage.overFiles (context : Context) (source : Config.Source) (compiled : Compiled := {}) :
-    IO (Stage Config.Elaborate.State) := do
-  let completions ← context.fileWaits
-  let stage ← Stage.new context context.elaborator source compiled (some completions)
-  let collaborators := stage.collaborators
-  return { stage with
-      collaborators :=
-        { collaborators with
-          services :=
-            { collaborators.services with
-              files :=
-                Job.realFiles completions collaborators.published.reader collaborators.held } } }
-
-/-- The checks of files through the headless host (`Editor/Headless.lean`),
-with the real elaborator, the real queue, the real text binding and the
-library's file service: the checks of this executable whose hosts are over a
-real service. They share one table of waits and one completion pump over it
-(`Context.fileWaits`, `Stage.overFiles`), started by the first of them. No
-other check of the gated run starts a pump, so none takes these checks'
-completions. -/
-def fileChecks (context : Context) : List Check :=
-  [{
-      name :=
-        "a job loads a file through the host and its handler makes a text of it, with its two-byte character: the job's line says ok, show prints the text, and the library then holds no snapshot more than before but the one of the loop's scene; a job whose file is not there fails with the refusal's description",
-      run :=
-        IO.FS.withTempDir fun files =>
-          IO.FS.withTempDir fun config => do
-            IO.FS.writeBinFile (files / "note.txt") "héllo\n".toUTF8
-            writeFiles config [("10-open.lean", openChunk files)]
-            let stage ← Stage.overFiles context (Config.Directory.source config)
-            let snapshots ← Ffi.Snapshot.live
-            let host ← Headless.start stage.collaborators
-            try
-              let ask (requests : List Headless.Request) : IO Unit := do
-                for request in requests do
-                  host.send request
-                unless ← host.settle patience do
-                  throw (IO.userError "the editor thread did not settle")
-              ask [.reload]
-              ask [.spawn "open"]
-              let opened ← host.join patience
-              ask [.spawn "missing"]
-              let missed ← host.join patience
-              ask [.show]
-              -- The loop delivered the job's command, so it has a frame: the
-              -- one snapshot more is the one its scene holds of the scratch
-              -- buffer's text, which is text 0.
-              let freed ← eventually (return (← Ffi.Snapshot.live) == snapshots + 1)
-              let stopped ← host.stop patience
-              return opened == .settled && missed == .settled && freed && stopped &&
-                  (← stage.collaborators.held.size) == 0 &&
-                  (← stage.output.get) ==
-                    #["reload 1: installed, 1 chunks, 0 commands", "spawn open: job 1",
-                      "job 1 open: ok", "spawn missing: job 2",
-                      "job 2 missing: failed: nothing is at the path", "commands:", "text 0: \"\"",
-                      "text 1: \"héllo\\n\""]
-            catch error =>
-              discard <| host.halt patience
-              throw error }]
-
 /-- A config of one chunk with one command, `forget`, which releases the
 text of index 0: the text of the editor loop's scratch buffer, made with the
 loop's frame, before any command runs. -/
@@ -2294,6 +2224,268 @@ def hostLoopChecks (context : Context) : List Check :=
                 (← session.output.get).extract reloaded.size == #["job 1 nap: ok"] &&
                 (← session.scene) == ("".quote, #[viewLine "napped" 6]))
           nappingCompiled }]
+
+/-- A chunk whose `setup` registers two jobs that each load a file and whose
+handler makes a text of what was loaded: `open`, of `note.txt` in
+`directory`, and `missing`, of a file that is not there. A load that is
+refused is thrown, as the refusal's description. -/
+def openChunk (directory : System.FilePath) : String :=
+  "def openFile (path : String) : Unit → JobM JobSnapshotId := fun _ => do
+  match ← File.load path 1000 with
+  | .ok file => return file.snapshot
+  | .error error => throw error.describe
+
+def setup : SetupM Unit := do
+  job \"open\" (openFile " ++
+    (directory / "note.txt").toString.quote ++
+    ") fun loaded => discard loaded.toText
+  job \"missing\" (openFile " ++
+    (directory / "missing.txt").toString.quote ++
+    ") fun loaded => discard loaded.toText
+"
+
+/-- A stage for a host whose jobs reach real files: one over the real
+elaborator and `source`, with what `compiled` hands it, whose services have
+the library's file service, over the table of waits the file checks share
+(`Context.fileWaits`), which the one completion pump runs over. Its clock is
+still a fake one. -/
+def Stage.overFiles (context : Context) (source : Config.Source) (compiled : Compiled := {}) :
+    IO (Stage Config.Elaborate.State) := do
+  let completions ← context.fileWaits
+  let stage ← Stage.new context context.elaborator source compiled (some completions)
+  let collaborators := stage.collaborators
+  return { stage with
+      collaborators :=
+        { collaborators with
+          services :=
+            { collaborators.services with
+              files :=
+                Job.realFiles completions collaborators.published.reader collaborators.held } } }
+
+/-- A compiled command called `name`, written for the file checks, that runs
+the compiled open command with `path` as its argument: the driver's `run`
+hands a command no argument, so a check that opens a file hands its host a
+command of this kind for each path. It looks the open command up among the
+commands compiled code registers (`Files.commands`), so what runs is that
+registration. -/
+def opening (name : String) (path : System.FilePath) : Config.Registration :=
+  { name
+    action :=
+      .call fun call => do
+        let registered : Option Config.Action :=
+          (Files.commands.find? (·.name == Files.openName)).map (·.action)
+        match registered with
+        | some (.call run) =>
+          run { call with arguments := [.str path.toString] }
+        | _ =>
+          message "the open command is not a compiled command that is given its call" }
+
+/-- Runs `check` against a host over the library's file service
+(`Stage.overFiles`), with an empty config directory of its own, that is
+handed the file commands and their jobs as compiled code registers them
+(`Files.commands`, `Files.jobs`) and, for each name and path of `opens`, a
+command of that name that opens that path (`opening`). Stops the host:
+`false` if the check did not hold or the host did not stop. -/
+def withFileHost (context : Context) (opens : List (String × System.FilePath))
+    (check : Session → IO Bool) : IO Bool :=
+  IO.FS.withTempDir fun directory => do
+    let stage ←
+      Stage.overFiles context (Config.Directory.source directory)
+          { commands := Files.commands ++ (opens.map fun (name, path) => opening name path).toArray
+            jobs := Files.jobs }
+    onStage stage fun host stage =>
+        check
+          { host, directory, output := stage.output, threads := stage.threads, clock := stage.clock,
+            log := stage.log }
+
+/-- Runs the command called `name` through the host and waits for the jobs
+it started: whether the wait settled. -/
+def Session.ran (session : Session) (name : String) : IO Bool := do
+  session.ask [.run name]
+  return (← session.host.join patience) == .settled
+
+/-- Asks the host for the scene, and returns the echo area's text, quoted as
+the scene line has it, and every line it printed after the scene's: each
+view's line, followed by its status line. -/
+def Session.viewsAndStatus (session : Session) : IO (String × Array String) := do
+  let before := (← session.output.get).size
+  let (echo, _) ← session.scene
+  return (echo, (← session.output.get).extract (before + 1))
+
+/-- The stamp of the file at `path`, as the file system has it: when it was
+last modified, and how long it is. -/
+def stampOf (path : System.FilePath) : IO File.Stamp := do
+  let metadata ← path.metadata
+  return {
+      seconds := metadata.modified.sec, nanoseconds := metadata.modified.nsec.toNat
+      size := metadata.byteSize.toNat }
+
+/-- The text of the file `note.txt` of the file checks: two lines, with
+two-byte characters. -/
+def noteText : String :=
+  "héllo\nwörld\n"
+
+/-- The checks of files through the headless host (`Editor/Headless.lean`),
+with the real elaborator, the real queue, the real text binding and the
+library's file service: the checks of this executable whose hosts are over a
+real service. They share one table of waits and one completion pump over it
+(`Context.fileWaits`, `Stage.overFiles`), started by the first of them. No
+other check of the gated run starts a pump, so none takes these checks'
+completions.
+
+The first is a job from config. The others are the file commands and their
+jobs as compiled code registers them (`Editor/Files/Compiled.lean`), on real
+files: each check writes its files' bytes itself, in a temporary directory
+it makes, and hands its host the paths (`withFileHost`). -/
+def fileChecks (context : Context) : List Check :=
+  [{
+      name :=
+        "a job loads a file through the host and its handler makes a text of it, with its two-byte character: the job's line says ok, show prints the text, and the library then holds no snapshot more than before but the one of the loop's scene; a job whose file is not there fails with the refusal's description",
+      run :=
+        IO.FS.withTempDir fun files =>
+          IO.FS.withTempDir fun config => do
+            IO.FS.writeBinFile (files / "note.txt") "héllo\n".toUTF8
+            writeFiles config [("10-open.lean", openChunk files)]
+            let stage ← Stage.overFiles context (Config.Directory.source config)
+            let snapshots ← Ffi.Snapshot.live
+            let host ← Headless.start stage.collaborators
+            try
+              let ask (requests : List Headless.Request) : IO Unit := do
+                for request in requests do
+                  host.send request
+                unless ← host.settle patience do
+                  throw (IO.userError "the editor thread did not settle")
+              ask [.reload]
+              ask [.spawn "open"]
+              let opened ← host.join patience
+              ask [.spawn "missing"]
+              let missed ← host.join patience
+              ask [.show]
+              -- The loop delivered the job's command, so it has a frame: the
+              -- one snapshot more is the one its scene holds of the scratch
+              -- buffer's text, which is text 0.
+              let freed ← eventually (return (← Ffi.Snapshot.live) == snapshots + 1)
+              let stopped ← host.stop patience
+              return opened == .settled && missed == .settled && freed && stopped &&
+                  (← stage.collaborators.held.size) == 0 &&
+                  (← stage.output.get) ==
+                    #["reload 1: installed, 1 chunks, 0 commands", "spawn open: job 1",
+                      "job 1 open: ok", "spawn missing: job 2",
+                      "job 2 missing: failed: nothing is at the path", "commands:", "text 0: \"\"",
+                      "text 1: \"héllo\\n\""]
+            catch error =>
+              discard <| host.halt patience
+              throw error },
+    { name :=
+        "the open command on a file in a temporary directory: the host says the load job started and ended, and the focused view shows a buffer whose text is the file's, with its cursor at the start, and whose status line is the file's base name alone"
+      run :=
+        IO.FS.withTempDir fun files => do
+          let path := files / "note.txt"
+          IO.FS.writeBinFile path noteText.toUTF8
+          withFileHost context [("open-note", path)] fun session => do
+              let joined ← session.ran "open-note"
+              let (echo, lines) ← session.viewsAndStatus
+              return joined &&
+                  (← session.output.get).extract 0 3 ==
+                    #["run open-note: ok", s!"job 1 {Files.loadJob}: started",
+                      s!"job 1 {Files.loadJob}: ok"] &&
+                  echo == "".quote &&
+                  lines == #[viewLine noteText 0, statusOf (name := "note.txt")] },
+    { name :=
+        "the save command on a modified buffer: after a commit the view's status line has the modified field, and once the save job has ended the file's bytes are the buffer's text, the echo area says the file was written, and the status line has the name alone"
+      run :=
+        IO.FS.withTempDir fun files => do
+          let path := files / "note.txt"
+          IO.FS.writeBinFile path noteText.toUTF8
+          withFileHost context [("open-note", path)] fun session => do
+              unless ← session.ran "open-note" do
+                return false
+              unless ← Event.post (.commit "x") do
+                return false
+              let (_, edited) ← session.viewsAndStatus
+              let saved ← session.ran Files.saveName
+              let (echo, lines) ← session.viewsAndStatus
+              return saved &&
+                  edited ==
+                    #[viewLine ("x" ++ noteText) 1,
+                      statusOf (name := "note.txt") (modified := true)] &&
+                  (← session.output.get).contains s!"job 2 {Files.saveJob}: ok" &&
+                  (← IO.FS.readBinFile path) == ("x" ++ noteText).toUTF8 &&
+                  echo == (Files.wrote path).quote &&
+                  lines == #[viewLine ("x" ++ noteText) 1, statusOf (name := "note.txt")] },
+    { name :=
+        "opening a path that is open starts no second load and makes no second text: the open command a second time prints its own line alone, and show lists the texts it listed before"
+      run :=
+        IO.FS.withTempDir fun files => do
+          let path := files / "note.txt"
+          IO.FS.writeBinFile path noteText.toUTF8
+          withFileHost context [("open-note", path)] fun session => do
+              unless ← session.ran "open-note" do
+                return false
+              let shown ← session.shown
+              let before := (← session.output.get).size
+              let again ← session.ran "open-note"
+              let printed := (← session.output.get).extract before
+              let (_, lines) ← session.viewsAndStatus
+              return again && printed == #["run open-note: ok"] && (← session.shown) == shown &&
+                  (shown.filter (·.startsWith "text ")).size == 2 &&
+                  lines == #[viewLine noteText 0, statusOf (name := "note.txt")] },
+    { name :=
+        "open then save with no edit writes the file and leaves its bytes as they were, for a file whose lines end in line feeds and one whose lines end in CRLF: each save job ends ok, the echo area says the file was written, and the bytes read back are the bytes the check wrote"
+      run :=
+        IO.FS.withTempDir fun files => do
+          let cases : List (String × System.FilePath × ByteArray × Nat) :=
+            [("open-lf", files / "lf.txt", "one\ntwo\n".toUTF8, 2),
+              ("open-crlf", files / "crlf.txt", "one\r\ntwo\r\n".toUTF8, 4)]
+          for (_, path, bytes, _) in cases do
+            IO.FS.writeBinFile path bytes
+          withFileHost context (cases.map fun (name, path, _, _) => (name, path)) fun session => do
+              let mut held := true
+              for (name, path, bytes, job) in cases do
+                let opened ← session.ran name
+                let saved ← session.ran Files.saveName
+                let (echo, _) ← session.viewsAndStatus
+                held :=
+                  held && opened && saved && echo == (Files.wrote path).quote &&
+                    (← session.output.get).contains s!"job {job} {Files.saveJob}: ok" &&
+                    (← IO.FS.readBinFile path) == bytes
+              return held },
+    { name :=
+        "a save of a buffer whose file changed on disk after it was loaded leaves the file as it is: the file's bytes are the ones written behind the editor, the view's status line still has the modified field, and the echo area says the changed-on-disk refusal with the stamp the file now has"
+      run :=
+        IO.FS.withTempDir fun files => do
+          let path := files / "note.txt"
+          IO.FS.writeBinFile path noteText.toUTF8
+          withFileHost context [("open-note", path)] fun session => do
+              unless ← session.ran "open-note" do
+                return false
+              -- Another length, so the change is seen whatever the file
+              -- system's clock.
+              let other := "another program wrote this, at another length\n".toUTF8
+              IO.FS.writeBinFile path other
+              let found ← stampOf path
+              unless ← Event.post (.commit "x") do
+                return false
+              let saved ← session.ran Files.saveName
+              let (echo, lines) ← session.viewsAndStatus
+              return saved && (← IO.FS.readBinFile path) == other &&
+                  lines ==
+                    #[viewLine ("x" ++ noteText) 1,
+                      statusOf (name := "note.txt") (modified := true)] &&
+                  echo == (Files.notSaved path (.changed (some found))).quote },
+    { name :=
+        "the open command on a path with no file: the echo area says the refusal, and the focused view still shows the buffer it showed, with its text, its cursor and its name"
+      run :=
+        IO.FS.withTempDir fun files => do
+          let path := files / "missing.txt"
+          withFileHost context [("open-missing", path)] fun session => do
+              unless ← Event.post (.commit "kept") do
+                return false
+              let joined ← session.ran "open-missing"
+              let (echo, lines) ← session.viewsAndStatus
+              return joined && (← session.output.get).contains s!"job 1 {Files.loadJob}: ok" &&
+                  echo == (Files.notOpened path .notFound).quote &&
+                  lines == #[viewLine "kept" 4, statusOf (modified := true)] }]
 
 /-- Every check, in the order they run. -/
 def checks (context : Context) : List Check :=
