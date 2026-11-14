@@ -1288,6 +1288,13 @@ theorem runModel_byteLength (id : TextId) (model : TextModel) :
     id.byteLength.runModel model = TextModel.handle (.ask (.text id) .byteLength) model :=
   rfl
 
+/-- The revision of a text is asked like any question, and is a lemma of its
+own for the reason `runModel_byteLength` is. -/
+@[simp]
+theorem runModel_revision (id : TextId) (model : TextModel) :
+    id.revision.runModel model = TextModel.handle (.ask (.text id) .revision) model :=
+  rfl
+
 @[simp]
 theorem runModel_release (source : TextSource) (model : TextModel) :
     source.release.runModel model = TextModel.handle (.release source) model :=
@@ -1572,5 +1579,170 @@ theorem TextModel.lineStart_idempotent (content : TextContent) (offset start : N
       subst same
       have back := offsetOf_pointOf .bytes content.contents ⟨point.row, 0⟩ first column
       simp [back, column]
+
+/-! ## A text in step, and undoing an accepted edit
+
+The model computes the text an inverse leaves by reading it: `applyInverse`
+takes the text at the revision before the run from the log's `past`. An
+accepted edit pushes the text it replaced onto `past`, so the inverse of
+that one revision reads it back. That needs the log and the record of kept
+inverses to have one entry a revision, which is what `InStep` says.
+
+- `TextModel.InStep`: the log's `past` has as many entries as the text's
+  revision, and the history's `dropped` and `carried` one more. It is
+  stated so that it can be decided, and a check holds it of every live
+  text after each request of a sample sequence
+  (`ModelTest.textModelStepChecks`).
+- `TextModel.inStep_made` and `TextModel.inStep_changed`: where it comes
+  from. A text made in the empty store is in step, and an accepted edit,
+  an applied inverse among them, keeps a text in step. That every request
+  keeps it is not proved: the check holds it for the rest.
+- `TextModel.apply_accepted`: an accepted transaction leaves `changed` of
+  the model, at the next revision.
+- `TextModel.apply_applyInverse`: for a text in step, an accepted
+  transaction and then the inverse of the revision it produced leave the
+  text holding what it held, and hand back the selection the transaction
+  carried as the one before it.
+
+The undo tree's theorems are built on the last
+(`Editor/UndoTree/Theorems.lean`). -/
+
+/-- The log and the kept inverses of the text `id` of `model` are in step
+with the revision `revision`: the log holds the text at each of the
+`revision` earlier revisions, and the record of kept inverses has a slot
+for each revision from 0. -/
+def TextModel.InStep (model : TextModel) (id : TextId) (revision : Nat) : Prop :=
+  model.logs[id.index]?.map (·.past.size) = some revision ∧
+    model.histories[id.index]?.map (·.dropped.size) = some (revision + 1) ∧
+    model.histories[id.index]?.map (·.carried.size) = some (revision + 1)
+
+instance (model : TextModel) (id : TextId) (revision : Nat) :
+    Decidable (model.InStep id revision) := by
+  unfold TextModel.InStep
+  infer_instance
+
+/-- What being in step says of the text's log and of its record of kept
+inverses, each named. -/
+theorem TextModel.InStep.parts {model : TextModel} {id : TextId} {revision : Nat}
+    (inStep : model.InStep id revision) :
+    (∃ log, model.logs[id.index]? = some log ∧ log.past.size = revision) ∧
+      ∃ history,
+        model.histories[id.index]? = some history ∧
+          history.dropped.size = revision + 1 ∧ history.carried.size = revision + 1 := by
+  obtain ⟨logged, dropped, carried⟩ := inStep
+  obtain ⟨log, logAt, logSize⟩ := Option.map_eq_some_iff.mp logged
+  obtain ⟨history, historyAt, droppedSize⟩ := Option.map_eq_some_iff.mp dropped
+  refine ⟨⟨log, logAt, logSize⟩, history, historyAt, droppedSize, ?_⟩
+  simpa [historyAt] using carried
+
+/-- A text whose log and whose record of kept inverses have the sizes the
+revision asks for is in step. -/
+theorem TextModel.InStep.of {model : TextModel} {id : TextId} {revision : Nat} (log : TextLog)
+    (history : TextHistory) (logAt : model.logs[id.index]? = some log)
+    (logSize : log.past.size = revision) (historyAt : model.histories[id.index]? = some history)
+    (droppedSize : history.dropped.size = revision + 1)
+    (carriedSize : history.carried.size = revision + 1) : model.InStep id revision := by
+  simp [TextModel.InStep, logAt, historyAt, logSize, droppedSize, carriedSize]
+
+/-- A text made in the empty store is in step. -/
+theorem TextModel.inStep_made (initial : String) :
+    (({} : TextModel).made initial).2.InStep (({} : TextModel).made initial).1 0 := by
+  refine .of (TextLog.new initial) {} ?_ ?_ ?_ ?_ ?_ <;> simp [TextModel.made, TextLog.new]
+
+/-- An accepted edit keeps a text in step. -/
+theorem TextModel.inStep_changed (model : TextModel) (id : TextId) (content : TextContent)
+    (text : String) (runs : Array TextModel.Run) (origin : Origin) (state : Option Nat)
+    (carried : Option Selection × Option Selection) (inStep : model.InStep id content.revision) :
+    (model.changed id content text runs origin state carried).InStep id (content.revision + 1) := by
+  obtain ⟨⟨log, logAt, logSize⟩, ⟨history, historyAt, historySize, carriedSize⟩⟩ := inStep.parts
+  refine
+    .of (log.record content.contents (content.revision + 1) runs origin)
+      (history.record (content.revision + 1) state carried) ?_ ?_ ?_ ?_ ?_
+  · simp [TextModel.changed, Array.getElem?_modify, logAt]
+  · simp [TextLog.record, logSize]
+  · simp [TextModel.changed, Array.getElem?_modify, historyAt]
+  · simp [TextHistory.record, historySize]
+  · simp [TextHistory.record, carriedSize]
+
+/-- What an accepted transaction leaves: `changed` of the model, at the next
+revision, carrying the transaction's two selections. -/
+theorem TextModel.apply_accepted (model : TextModel) (id : TextId) (content : TextContent)
+    (transaction : Transaction) (origin : Origin) (revision : Nat)
+    (live : model.texts[id.index]? = some (some content))
+    (accepted : (model.apply id transaction origin).1 = .ok revision) :
+    ∃ text runs,
+      model.apply id transaction origin =
+        (.ok (content.revision + 1),
+          model.changed id content text runs origin none
+            (transaction.before.map normal, transaction.after.map normal)) := by
+  unfold TextModel.apply at accepted ⊢
+  simp only [TextModel.lookup, live] at accepted ⊢
+  split at accepted
+  · simp at accepted
+  · rename_i selections
+    split at accepted
+    · simp at accepted
+    · rename_i text made
+      split at accepted
+      · rename_i fits
+        simp only [selections, fits, ↓reduceIte]
+        exact ⟨text, _, rfl⟩
+      · simp at accepted
+
+/-- An accepted transaction and then the inverse of the revision it produced
+leave the text holding what it held, two revisions on, and the inverse
+hands back the selection the transaction carried as the one before it. -/
+theorem TextModel.apply_applyInverse (model : TextModel) (id : TextId) (content : TextContent)
+    (transaction : Transaction) (origin undoer : Origin) (revision : Nat)
+    (live : model.texts[id.index]? = some (some content))
+    (inStep : model.InStep id content.revision)
+    (accepted : (model.apply id transaction origin).1 = .ok revision) :
+    ∃ after,
+      (model.apply id transaction origin).2.applyInverse id (content.revision + 1)
+            (content.revision + 1) undoer =
+          (.ok ⟨content.revision + 2, transaction.before.map normal⟩, after) ∧
+        after.texts[id.index]? =
+          some (some { contents := content.contents, revision := content.revision + 2 }) := by
+  obtain ⟨text, runs, applied⟩ :=
+    TextModel.apply_accepted model id content transaction origin revision live accepted
+  obtain ⟨⟨log, logAt, logSize⟩, ⟨history, historyAt, historySize, carriedSize⟩⟩ := inStep.parts
+  have inTexts : id.index < model.texts.size := by
+    have found := live
+    simp only [Array.getElem?_eq_some_iff] at found
+    exact found.1
+  have inLogs : id.index < model.logs.size := by
+    have found := logAt
+    simp only [Array.getElem?_eq_some_iff] at found
+    exact found.1
+  have inHistories : id.index < model.histories.size := by
+    have found := historyAt
+    simp only [Array.getElem?_eq_some_iff] at found
+    exact found.1
+  have logIs : model.logs[id.index] = log := by
+    have found := logAt
+    simp only [Array.getElem?_eq_some_iff] at found
+    exact found.2
+  have historyIs : model.histories[id.index] = history := by
+    have found := historyAt
+    simp only [Array.getElem?_eq_some_iff] at found
+    exact found.2
+  have kept : (history.dropped.push false)[content.revision + 1]? = some false := by
+    rw [← historySize]
+    exact Array.getElem?_push_size
+  have carried :
+    (history.carried.push
+          (transaction.before.map normal, transaction.after.map normal))[content.revision + 1]? =
+      some (transaction.before.map normal, transaction.after.map normal) := by
+    rw [← carriedSize]
+    exact Array.getElem?_push_size
+  have past :
+    (log.past.push (content.contents, log.cells.map (·.id)))[content.revision]? =
+      some (content.contents, log.cells.map (·.id)) := by
+    rw [← logSize]
+    exact Array.getElem?_push_size
+  rw [applied]
+  simp only [TextModel.applyInverse, TextModel.changed, TextModel.lookup]
+  simp [inTexts, inLogs, inHistories, logIs, historyIs, TextHistory.record, TextLog.record,
+    TextHistory.touchesDrop, kept, carried, past, Array.getElem_modify_self]
 
 end Editor

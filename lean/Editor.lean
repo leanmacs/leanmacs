@@ -1,6 +1,7 @@
 import Editor.Api.Theorems
 import Editor.Command.Append
 import Editor.Evil.Operators
+import Editor.Evil.Theorems
 import Editor.Evil.Undo
 import Editor.Ex
 import Editor.InputScheme.Vim.Default
@@ -74,7 +75,10 @@ they set in `Editor/Evil/Registers.lean`): the operate command is a
 function of the operators and the motions it looks names up in
 (`Evil.operate Evil.operators Evil.motions`). That module brings the
 commands and the motions with it. Undo and redo, which place the cursor a
-step of the history hands back, are in `Editor/Evil/Undo.lean`.
+step of the history hands back, are in `Editor/Evil/Undo.lean`. What is
+proved of evil on the text model is in `Editor/Evil/Theorems.lean`, with
+what it needs of the undo tree in `Editor/UndoTree/Theorems.lean`; they
+are imported so that the build checks the proofs.
 The
 commands' registrations (`Editor/Evil/Compiled.lean`) name the registry
 and are not imported, as the file commands' and the minibuffer's are not.
