@@ -245,12 +245,36 @@ hand: `cargo run --locked --package editor-ffi --example window --
 |---|---|
 | `--seconds <n>` | Closes the window that many seconds after it is ready, if nobody has (20 by default). |
 | `--require-picture` | Fails the run unless every frame's picture was read back and compared: a surface that does not let its texture be copied from is then a failure too. `linux-window` gives it; this task does not, since a desktop's surface may be such a one. |
+| `--until-closed` | The window stays until a person closes it. Not understood with `--seconds`. The timeline then prints up to 5000 lines, not 300. `window-by-hand` gives it. |
+| `--no-picture` | No picture is read back and none is compared: the run prints `window: pictures were not read back (--no-picture): the picture was not checked in this run`, once, and fails for no picture. Not understood with `--require-picture`. `window-by-hand` gives it: reading a picture back and comparing it takes about half a second a draw at 1600 by 1200, which makes every step of a resize look stalled. |
+| `--family <name>` | Lays the fixture out in that family of this machine's fonts, in place of the fixture fonts, and prints `window: the fixture is laid out in <name>, of this machine's fonts` first. A family the machine has not fails the run before any window opens (`window: FAILED: this machine has no font family named <name>, of its <n> families`). No task gives it. |
+
+Two more lines are printed as the window closes, after the count of draws
+over the whole run:
+
+- `window: left alone <k> times, and each time the window showed what was
+  laid out for it`. A window is left alone when a second passes in which
+  it tells its drawer nothing, no frame is published and no draw begins
+  or ends. Each such time, if the window has not said it is hidden and a
+  frame has been presented, the draw last presented must be of a frame
+  laid out for the size and the scale the window last said, on that size
+  and scale. Otherwise the run fails: `window: FAILED: left alone from
+  <t> ms after it opened, the window showed frame <n>, laid out for <w>
+  by <h> at scale <s>, on <w> by <h> at scale <s>, when it had last said
+  it is <w> by <h> at scale <s>`. The idle second is the first such time,
+  so `<k>` is at least 1 in a run that presented a frame; a window that
+  was never left alone while it showed a frame prints `window: the window
+  was never left alone for a second while it showed a frame, so what it
+  shows when it is left alone was not judged`, which is no failure;
+- with `--no-picture`, the line of that option, in place of a line for
+  each frame's picture.
 
 What the example makes of what it saw (how these options are read, which
-findings of a picture fail which run, which sizes a frame's glyphs are
-drawn at and which of them fail, and what the timeline says of a draw's
-masks) is tested in the gate, by the example's own unit tests, which open
-no window.
+of them contradict each other, which findings of a picture fail which
+run, which sizes a frame's glyphs are drawn at and which of them fail,
+what the timeline says of a draw's masks, and which ledgers show a window
+left alone with something not laid out for it) is tested in the gate, by
+the example's own unit tests, which open no window.
 
 What to write down here when it has been run on a desktop: the machine,
 its GPU and the back end; the lines of step 6; and, on macOS, what the
@@ -345,6 +369,169 @@ front, where the first draw presents and a second answers the damage
 (the timeline should then show `draw 2 began, … for damage` before the
 idle second begins); the whole task, both programs; input checked line
 by line; a resize by hand; the window covered and uncovered.
+
+## Scale and fullscreen, by hand
+
+```sh
+mise run window-by-hand
+```
+
+**These steps have not been run by a person.** They were written for the
+owner, who is the one to run them: no program can judge an apparent size,
+press the green button, move a window between two displays or switch
+Spaces, and nothing below was done in place of a person doing so. What was
+run without a person is under "What has been run without a person", at
+the end of this section. Until the steps are run and what was seen is
+recorded, nobody has seen a window of ours enter fullscreen, move between
+displays or change Space.
+
+The task runs the window that draws (the second program of
+`window-contract`, above) with `--until-closed --no-picture`: the window
+stays until it is closed, and no picture is read back. It needs a Mac
+with a display at scale 2 and a second display at scale 1.
+
+**What the program checks for the person at the window**, each decided by
+a function that the example's own unit tests run in the gate:
+
+- For each frame it publishes, the scale it was laid out at and the size
+  its glyphs are drawn at, printed as it happens: `window: frame <n> is
+  laid out for <w> by <h> at scale <s>: 14 points are <p> pixels`. The
+  run fails if `<p>` is not 14 times `<s>` to within a 64th: that is the
+  path from the window's scale through layout to the shaper, on a real
+  window.
+- For each draw, the kind of mask the renderer drew its glyphs with, in
+  the timeline: `draw <n> ended, presented, its glyphs as plain masks`,
+  or `as subpixel masks, red first`. After a move from a display at scale
+  2 to one at scale 1 the line changes from the first to the second.
+- Left alone, the window shows what was laid out for it. Whenever a
+  second passes in which the window tells nothing, nothing is published
+  and no draw begins, and the window is not hidden, the last draw
+  presented must be of a frame laid out for the size and scale the window
+  last told, on that size and scale. It prints `window: left alone <k>
+  times, and each time the window showed what was laid out for it`, or
+  fails with which frame, laid out for what, was on what. This is "no
+  stale frame", after entering fullscreen, after leaving it, after a move
+  between displays and after coming back from another Space, for as often
+  as the person pauses a second.
+
+**What no program checks**: that 28 pixels looks like 14 points beside
+another app; that glyph edges are grey on one display and fringed with
+colour on the other; that nothing looked stretched while the system
+animated.
+
+The steps:
+
+1. With the terminal in front on the display at scale 2, run `mise run
+   window-by-hand`. To compare like with like, run it by hand in a family
+   another app has: `cargo run --locked --package editor-ffi --example
+   window -- --until-closed --no-picture --family Menlo` (it then prints
+   `window: the fixture is laid out in Menlo, of this machine's fonts`
+   first). Expected as the window opens: `input: resized <w> by <h> at
+   scale 2` and `window: frame 1 is laid out for <w> by <h> at scale 2:
+   14 points are 28 pixels`. Wait for `window: ready for input`.
+2. **Size.** Open TextEdit, type `the window draws this` in the same
+   family, regular, at 14 points, at 100%, and put it beside the window.
+   Pass: the letters are the same height and a row is as tall, by eye.
+   Before this phase's change the window's text was 16 pixels whatever
+   the display, a little over half that size at scale 2.
+3. **Two displays.** Drag the window to the display at scale 1 and let
+   go; wait a second. Expected in the terminal: `input: resized … at
+   scale 1`, once for the scale and again for the size (winit sends one
+   and then the other: read, not seen), and `window: frame <n> is laid
+   out for <w> by <h> at scale 1: 14 points are 14 pixels`. On screen:
+   the text is the size TextEdit's is when its window is dragged over
+   too. Take a picture of the window (Command-Shift-4, Space, click) and
+   enlarge it in Preview until pixels show: on the display at scale 1 the
+   edges of glyphs are fringed with colour, on the display at scale 2
+   they are grey only. Drag it back; wait a second: scale 2 and 28 pixels
+   again.
+4. **Fullscreen.** Click the green button. (The window has no menu, so a
+   keyboard shortcut for fullscreen may do nothing: use the button.)
+   Watch the animation and write down whether the text looked stretched
+   or the window showed a black band at any moment. When it has settled,
+   wait a second. Pass: the status row is at the bottom of the screen and
+   reads `window  <w> by <h>` with the screen's size in pixels; the rows
+   of text are at the top left at the size they were; nothing is blurred
+   or stretched.
+5. **Spaces.** With the window fullscreen, go to another Space
+   (Control-Left or Control-Right, or a three-finger swipe), wait two
+   seconds, and come back. Pass: the scene is there at once, as it was;
+   not blank, and not at an older size. Wait a second.
+6. **Leaving fullscreen.** Move the pointer to the top of the screen and
+   click the green button. When it has settled, wait a second. Pass: the
+   window is its old size, with the status row at its bottom reading that
+   size.
+7. Press `a` and click once in the window, then close it with the red
+   button. Expected, after the lines `window-contract` already documents:
+   in the timeline, `the window told its drawer Hidden(true)` and
+   `Hidden(false)` around step 5, with no draw between them; draws at
+   scale 2 ending `its glyphs as plain masks` and those at scale 1 `as
+   subpixel masks, red first`; no draw `for nothing that was asked`;
+   `window: pictures were not read back (--no-picture): the picture was
+   not checked in this run`; `window: left alone <k> times, and each time
+   the window showed what was laid out for it`, with `<k>` at least 5;
+   exit status 0.
+8. **What to record in the phase body**: the machine, the two displays
+   and their scales; the lines of steps 1, 3 and 7; and what was seen at
+   steps 2 to 6, the animation of step 4 among it.
+
+A step that fails is a finding to bring back, not something to adjust the
+check for.
+
+Two things the phase asks for cannot be promised by a resize alone, and
+step 4 is where they would show. Between a change of the window's size
+and the next picture presented at that size, the system stretches the
+last picture to the window's new bounds (the default of the Metal layer
+wgpu makes: read, not seen). And the render loop's first draw on a new
+size is of the frame laid out for the old one, with black where that
+frame has no view, until the frame laid out for the new size arrives.
+Each lasts until the next draw or two. If either is visible during the
+system's animation and matters, the fix is code this phase does not have:
+a call on the layer for the first, and who lays out on a resize for the
+second ([`concurrency.md`](../design/concurrency.md)).
+
+What a point is, for step 2: a logical point, one physical pixel at scale
+1. On macOS that is the same number as the typographic point another app
+states. On a Linux desktop it is not: a "14 pt" font in another app is 14
+× 96/72 pixels at scale 1, and will not match.
+
+### What has been run without a person
+
+On 2026-11-14, on macOS (aarch64, Apple M5 Max, Metal), with the
+display asleep, so that no window could be seen and no draw presented:
+
+- `cargo run --locked --package editor-ffi --example window -- --seconds 2
+  --no-picture`: `input: resized 1600 by 1200 at scale 2`, then `window:
+  frame 1 is laid out for 1600 by 1200 at scale 2: 14 points are 28
+  pixels`. The surface answered `Occluded` to two draws, the window never
+  said it was shown, and nothing was drawn in the 31 seconds that
+  followed; the run failed, as it must, for no frame presented and no
+  input. It printed `window: pictures were not read back (--no-picture):
+  the picture was not checked in this run` and `window: the window was
+  never left alone for a second while it showed a frame, so what it shows
+  when it is left alone was not judged`.
+- The same with `--until-closed --no-picture --family Menlo`, stopped by
+  a time limit after eight seconds: `window: the fixture is laid out in
+  Menlo, of this machine's fonts`, then `window: frame 1 is laid out for
+  1600 by 1200 at scale 2: 14 points are 28 pixels`; the window did not
+  close by itself.
+- In the container (`mise run linux-window`, part 4), at scale 1: `14
+  points are 14 pixels` for the frame at 800 by 600 and for the one at
+  300 by 120, each of three draws `its glyphs as subpixel masks, red
+  first`, and `window: left alone 2 times, and each time the window
+  showed what was laid out for it`: the idle second, and the seconds
+  after xdotool's resize.
+
+So the scale reaching the shaper is seen at scale 2 and at scale 1, each
+on one display. **Not seen by anyone**: a draw at scale 2 presented with
+these changes, and the masks it says; a change of scale; fullscreen;
+another Space; the size beside another app.
+
+### What the owner's run showed
+
+Not yet run. Record here, and in the phase body: the machine, the two
+displays and their scales; the lines of steps 1, 3 and 7; and what was
+seen at steps 2 to 6.
 
 ## The system's fonts, on demand
 
@@ -512,7 +699,9 @@ and each was read back and differed from the headless renderer's picture
 by 1 of 255 at the worst; each draw ended `presented, its glyphs as
 subpixel masks, red first`; and no frame was drawn in the idle second.
 The container has one display, at scale 1: no other scale and no change
-of scale is seen there.
+of scale is seen there. And once more with the fifth check: all six
+parts passed, with the same lines and `window: left alone 2 times, and
+each time the window showed what was laid out for it`.
 
 ## The clipboard, on demand
 

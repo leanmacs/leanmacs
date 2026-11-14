@@ -22,15 +22,29 @@
 //! physical pixels on a window at scale 1 and 28 on one at scale 2.
 //!
 //! ```text
-//! window [--seconds <n>] [--require-picture]
+//! window [--seconds <n> | --until-closed] [--require-picture | --no-picture]
+//!        [--family <name>]
 //!
 //! --seconds <n>        how long the window stays once it is ready, if
 //!                      nobody closes it (20 by default)
+//! --until-closed       the window stays until a person closes it
 //! --require-picture    fail unless every frame's picture was compared
+//! --no-picture         read no picture back and compare none
+//! --family <name>      lay the fixture out in that family of this
+//!                      machine's fonts, in place of the fixture fonts
 //! ```
 //!
+//! The last three are for a person at the window (`mise run
+//! window-by-hand`, which gives the first two of them): a window to drag
+//! between displays and put into fullscreen for as long as it takes; no
+//! half second of read-back and comparison in every draw, which would
+//! make each step of a resize look stalled; and text in a family another
+//! app has, to hold beside it. A family the machine has not is said
+//! before any window opens. `--until-closed` with `--seconds`, and
+//! `--no-picture` with `--require-picture`, are not understood.
+//!
 //! What it checks, and its exit status is 0 only when all of it holds.
-//! Four checks are numbered, and one more is made of every frame as it is
+//! Five checks are numbered, and one more is made of every frame as it is
 //! published:
 //!
 //! - **Each frame is laid out at the window's scale.** For each frame
@@ -54,6 +68,8 @@
 //!    desktop's surface may be such a one. The container's is not, so
 //!    `mise run linux-window` gives `--require-picture`: there, a frame
 //!    whose picture was not compared fails the run, whatever the reason.
+//!    With `--no-picture` nothing is read back, the run says so once, and
+//!    this check was not made.
 //! 3. **Nothing is drawn that nothing asked for.** Every draw of the run
 //!    is for something: a frame that is not the one shown, a size that is
 //!    not the one last drawn at, or damage the window told of since the
@@ -67,6 +83,21 @@
 //!    asks again and again in that second, more than a system uncovering
 //!    it would, fails too: that is a timer by another name.
 //! 4. **Input arrived on the queue**: at least one key or pointer event.
+//! 5. **Left alone, the window shows what was laid out for it.** Whenever
+//!    a second passes in which the window tells its drawer nothing, no
+//!    frame is published and no draw begins or ends, and the window has
+//!    not said it is hidden, the draw last presented must be of a frame
+//!    laid out for the size and the scale the window last said, on that
+//!    size and scale ([`left_alone`]). It prints `window: left alone <k>
+//!    times, and each time the window showed what was laid out for it`, or
+//!    fails with which frame, laid out for what, was on what. This is "no
+//!    stale frame", and "no frame of one scale left on a window at
+//!    another", for as often as the window is left for a second: the idle
+//!    second is the first such time, and a person makes the rest by
+//!    waiting a second after a resize, a move to another display, going
+//!    into fullscreen and out of it, and coming back from another Space.
+//!    What the window shows between two sizes, while it is not left alone,
+//!    is not judged: no program here can see it.
 //!
 //! It prints `window: ready for input` once the idle second is over: that
 //! is when to type, click, drag, scroll and resize. Each input is printed
@@ -99,7 +130,8 @@
 //! at the foot of this file, which open no window: how the command line
 //! is read, what is made of each thing found of a picture, which sizes a
 //! frame's glyphs are drawn at and which of them fail, what each draw of a
-//! ledger was for, and which ledgers fail (`cargo test` runs them: the
+//! ledger was for, which ledgers fail, and which ledgers show a window
+//! left alone with something not laid out for it (`cargo test` runs them: the
 //! manifest says `test = true` of this example). They state no size of
 //! layout's and no rule of the renderer's: the frames they read are
 //! written by hand, and a kind of mask is printed in the renderer's own
@@ -174,6 +206,16 @@ const SETTLE: Duration = Duration::from_secs(5);
 /// would fill thousands.
 const TIMELINE: usize = 300;
 
+/// How many lines of the timeline, and of the journal, are printed of a
+/// window a person kept open (`--until-closed`): a drag between two
+/// displays, an animation into fullscreen and one out of it are some
+/// hundreds of sizes each.
+const TIMELINE_BY_HAND: usize = 5000;
+
+/// How long a window must be told nothing, with nothing published and no
+/// draw begun or ended, to count as left alone.
+const ALONE: Duration = Duration::from_secs(1);
+
 /// `main` runs on the process's main thread, and the platform is run from
 /// `main`.
 fn on_main_thread() -> bool {
@@ -207,35 +249,107 @@ enum Picture {
 }
 
 /// What the command line asks for.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 struct Options {
-    /// How long the window stays once it is ready, if nobody closes it.
-    stay: Duration,
+    /// How long the window stays once it is ready, if nobody closes it;
+    /// `None` when it stays until a person closes it.
+    stay: Option<Duration>,
     /// Whether every frame's picture must be compared for the run to pass.
     require_picture: bool,
+    /// Whether each frame's picture is read back and compared at all.
+    read_picture: bool,
+    /// The family of the machine's fonts the fixture is laid out in;
+    /// `None` for the fixture fonts.
+    family: Option<String>,
 }
 
 /// The options `arguments` ask for; `None` when they are not understood.
+/// Two pairs contradict each other and are not understood together: a
+/// time to stay (`--seconds`) with staying until closed
+/// (`--until-closed`), and a picture required (`--require-picture`) with
+/// none read (`--no-picture`). A family is a name: not nothing, and not
+/// another option.
 fn options(arguments: &[&str]) -> Option<Options> {
     let mut options = Options {
-        stay: Duration::from_secs(20),
+        stay: Some(Duration::from_secs(20)),
         require_picture: false,
+        read_picture: true,
+        family: None,
     };
+    // Whether a time to stay was given, and whether staying was.
+    let (mut timed, mut until_closed) = (false, false);
     let mut rest = arguments;
     loop {
         rest = match rest {
-            [] => return Some(options),
+            [] => break,
             ["--seconds", seconds, rest @ ..] => {
-                options.stay = Duration::from_secs(seconds.parse().ok()?);
+                options.stay = Some(Duration::from_secs(seconds.parse().ok()?));
+                timed = true;
                 rest
             }
             ["--require-picture", rest @ ..] => {
                 options.require_picture = true;
                 rest
             }
+            ["--until-closed", rest @ ..] => {
+                until_closed = true;
+                rest
+            }
+            ["--no-picture", rest @ ..] => {
+                options.read_picture = false;
+                rest
+            }
+            ["--family", name, rest @ ..] if !name.is_empty() && !name.starts_with("--") => {
+                options.family = Some((*name).to_owned());
+                rest
+            }
             _ => return None,
         };
     }
+    if until_closed {
+        options.stay = None;
+    }
+    let contradicts = (timed && until_closed) || (options.require_picture && !options.read_picture);
+    (!contradicts).then_some(options)
+}
+
+/// The machine's own name for the family `name`, of `families`, the
+/// families it has: the one that is `name` whatever the case of its
+/// letters. The error is that it has none, for a person.
+fn family_of(name: &str, families: &[String]) -> Result<String, String> {
+    families
+        .iter()
+        .find(|family| family.eq_ignore_ascii_case(name))
+        .cloned()
+        .ok_or_else(|| {
+            format!(
+                "this machine has no font family named {name}, of its {} families",
+                families.len()
+            )
+        })
+}
+
+/// What is made of `pictures`, what each frame presented was found to be,
+/// in order, in a run that reads pictures back when `read` says so and
+/// requires each to be compared when `require` does. A run that reads
+/// none says so, once, and fails for none: nothing was found of any.
+fn pictured(pictures: &[Picture], read: bool, require: bool) -> Findings {
+    if !read {
+        return Findings {
+            lines: vec![
+                "pictures were not read back (--no-picture): the picture was not checked in this run"
+                    .to_owned(),
+            ],
+            failures: Vec::new(),
+        };
+    }
+    let mut found = Findings::default();
+    for (number, picture) in pictures.iter().enumerate() {
+        let verdict = judged(number + 1, picture, require);
+        found.lines.extend(verdict.line);
+        found.failures.extend(verdict.failure);
+    }
+    found
 }
 
 /// What is found of a frame's picture without comparing it, when it cannot
@@ -404,6 +518,10 @@ enum Happened {
     /// The window told its drawer that the system asks for its content to
     /// be drawn again.
     Damaged,
+    /// The window told its drawer that nobody can see it (`true`), or that
+    /// somebody can again (`false`): it is covered, off the screen, or on
+    /// another Space. It asks for no draw.
+    Hidden(bool),
     /// The window told its drawer something else, which asks for no draw:
     /// as it prints.
     Told(String),
@@ -437,11 +555,12 @@ type Record = (u64, Happened);
 /// What `canvas`, a thing the window tells its drawer, is to the ledger.
 ///
 /// Three things a window tells bear on what is drawn: the size it opened
-/// at, a new size, and damage. Whatever else it tells asks for no draw by
-/// itself (a refresh rate, hidden or shown, closing) and is kept as it
-/// prints, so the match names those three and no more. A thing a window
-/// comes to tell that does ask for a draw would show here as a draw for
-/// nothing, which fails the run: that is when to name it.
+/// at, a new size, and damage. A fourth bears on whether anybody can see
+/// what is drawn: hidden or shown. Whatever else it tells asks for no
+/// draw by itself (a refresh rate, closing) and is kept as it prints, so
+/// the match names those four and no more. A thing a window comes to tell
+/// that does ask for a draw would show here as a draw for nothing, which
+/// fails the run: that is when to name it.
 fn happened(canvas: &Canvas) -> Happened {
     match canvas {
         Canvas::Opened {
@@ -454,6 +573,7 @@ fn happened(canvas: &Canvas) -> Happened {
         },
         Canvas::Resized(size) => Happened::Resized(target(*size)),
         Canvas::Damaged => Happened::Damaged,
+        Canvas::Hidden(hidden) => Happened::Hidden(*hidden),
         other => Happened::Told(format!("{other:?}")),
     }
 }
@@ -560,7 +680,7 @@ impl Tally {
                 self.damage += 1;
                 self.ask();
             }
-            Happened::Told(_) => {}
+            Happened::Hidden(_) | Happened::Told(_) => {}
             Happened::Published(frame) => {
                 self.published = Some(*frame);
                 self.ask();
@@ -730,18 +850,96 @@ fn on_demand(tally: &Tally, opened_ns: u64, counted: u64) -> Findings {
     found
 }
 
+/// A size and a scale, for a person: `800 by 600 at scale 2`.
+fn sized(target: &Target) -> String {
+    format!(
+        "{} by {} at scale {}",
+        target.width, target.height, target.scale
+    )
+}
+
+/// What is made of the times the window of `records` was left alone, when
+/// frame `n` of them was laid out for the window `laid[n - 1]`: that each
+/// time, what it showed was laid out for it.
+///
+/// A window is left alone when [`ALONE`] passes in which it tells its
+/// drawer nothing, no frame is published and no draw begins or ends. The
+/// example's own idle second is not something that happened to the window,
+/// and breaks no such stretch. A stretch is judged when somebody can see
+/// the window (it has not said it is hidden), a frame has been presented,
+/// and no draw is in progress. Then the draw last presented must be of a
+/// frame laid out for the size and the scale the window last said, on that
+/// size and scale: anything else is a stale frame, or a frame of one scale
+/// on a window at another, left on the screen. This is what is asked of a
+/// window after it is resized, moved to a display at another scale, put
+/// into the system's fullscreen and taken out of it, and shown again after
+/// another Space, each time a person waits a second before going on.
+fn left_alone(records: &[Record], laid: &[Target]) -> Findings {
+    let opened_ns = records.first().map_or(0, |(at_ns, _)| *at_ns);
+    let mut tally = Tally::default();
+    let mut hidden = false;
+    // When the last thing happened that was not the example's own doing.
+    let mut quiet_since: Option<u64> = None;
+    let (mut times, mut stale) = (0_usize, Vec::new());
+    for (at_ns, happened) in records {
+        if !matches!(happened, Happened::Idle(_)) {
+            // Judged by what was so through the stretch that now ends:
+            // before this record is taken in.
+            let alone = quiet_since
+                .is_some_and(|since| at_ns.saturating_sub(since) >= ALONE.as_nanos() as u64);
+            let seen = !hidden && tally.drawing.is_none();
+            if let (true, true, Some((frame, on)), Some(told), Some(from_ns)) =
+                (alone, seen, tally.shown, tally.told, quiet_since)
+            {
+                times += 1;
+                let laid_for = frame.and_then(|frame| laid.get(frame.checked_sub(1)?));
+                if laid_for != Some(&told) || on != told {
+                    let showed = match (frame, laid_for) {
+                        (Some(frame), Some(laid_for)) => {
+                            format!("frame {frame}, laid out for {}", sized(laid_for))
+                        }
+                        (Some(frame), None) => {
+                            format!("frame {frame}, laid out for nothing the ledger was told")
+                        }
+                        (None, _) => "a frame nobody published".to_owned(),
+                    };
+                    stale.push(format!(
+                        "left alone from {:.1} ms after it opened, the window showed {showed}, on {}, when it had last said it is {}",
+                        since(opened_ns, from_ns),
+                        sized(&on),
+                        sized(&told)
+                    ));
+                }
+            }
+            quiet_since = Some(*at_ns);
+        }
+        if let Happened::Hidden(now) = happened {
+            hidden = *now;
+        }
+        tally.note(*at_ns, happened);
+    }
+    let line = match (times, stale.len()) {
+        (0, _) => "the window was never left alone for a second while it showed a frame, so what it shows when it is left alone was not judged".to_owned(),
+        (times, 0) => format!(
+            "left alone {times} times, and each time the window showed what was laid out for it"
+        ),
+        (times, stale) => format!(
+            "left alone {times} times, and {stale} of them the window did not show what was laid out for it"
+        ),
+    };
+    Findings {
+        lines: vec![line],
+        failures: stale,
+    }
+}
+
 /// The timeline of `records`: one line for each, its time since the first
 /// and what happened.
 fn timeline(records: &[Record]) -> Vec<String> {
     let Some((opened_ns, _)) = records.first() else {
         return Vec::new();
     };
-    let on = |target: &Target| {
-        format!(
-            "{} by {} at scale {}",
-            target.width, target.height, target.scale
-        )
-    };
+    let on = sized;
     // What each draw was for is the tally's to say, as the records go by.
     let mut tally = Tally::default();
     let mut lines = Vec::new();
@@ -762,6 +960,7 @@ fn timeline(records: &[Record]) -> Vec<String> {
             ),
             Happened::Resized(size) => format!("the window told its drawer it is {}", on(size)),
             Happened::Damaged => "the window told its drawer it is damaged".to_owned(),
+            Happened::Hidden(hidden) => format!("the window told its drawer Hidden({hidden})"),
             Happened::Told(said) => format!("the window told its drawer {said}"),
             Happened::Published(frame) => format!(
                 "frame {frame} was published{}",
@@ -843,6 +1042,9 @@ struct Kept {
     /// Each frame published that is equal to none before it: frame `n` is
     /// at `n - 1`.
     frames: Vec<Arc<Frame>>,
+    /// The window each of those frames was laid out for, as it was first
+    /// published: its size and its scale.
+    laid: Vec<Target>,
 }
 
 /// The ledger: everything that asked for a draw and every draw, in the
@@ -877,17 +1079,25 @@ impl Ledger {
         kept.records.push((at_ns, happened));
     }
 
-    /// Enters that `frame` is published, and gives its number.
-    fn published(&self, frame: &Arc<Frame>) -> usize {
+    /// Enters that `frame`, laid out for the window `window`, is
+    /// published, and gives its number.
+    fn published(&self, frame: &Arc<Frame>, window: Target) -> usize {
         let number = {
             let mut kept = locked(&self.kept);
             number_of(&kept.frames, frame).unwrap_or_else(|| {
                 kept.frames.push(Arc::clone(frame));
+                kept.laid.push(window);
                 kept.frames.len()
             })
         };
         self.note(Happened::Published(number));
         number
+    }
+
+    /// The window each frame published was laid out for: frame `n`'s is
+    /// at `n - 1`.
+    fn laid(&self) -> Vec<Target> {
+        locked(&self.kept).laid.clone()
     }
 
     /// Enters that a draw of `frame` on `target` begins.
@@ -1002,6 +1212,10 @@ fn locked<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
 struct Checked {
     /// The renderer on the window.
     gpu: WgpuRenderer,
+    /// Whether each frame presented is read back and compared: not in a
+    /// run a person watches (`--no-picture`), where the half second a
+    /// comparison takes would make every resize look stalled.
+    read: bool,
     /// Whether the window's surface lets its texture be copied from: what
     /// the renderer answered when it was asked to keep its pictures.
     copies: bool,
@@ -1025,6 +1239,9 @@ impl Renderer for Checked {
         if !drawn.presented {
             let reason = self.gpu.refused().unwrap_or("no reason given").to_owned();
             locked(&self.shared.refusals).push(reason);
+            return drawn;
+        }
+        if !self.read {
             return drawn;
         }
         let picture = self.gpu.read_back();
@@ -1069,8 +1286,13 @@ fn compare(picture: &Image, expected: &Image, target: Target) -> Picture {
     }
 }
 
-/// A renderer on `window`, checked. The error is why there is none.
-fn renderer(window: Option<&NativeWindow>, shared: &Arc<Shared>) -> Result<Checked, String> {
+/// A renderer on `window`, checked: each frame it presents is read back
+/// and compared when `read` says so. The error is why there is none.
+fn renderer(
+    window: Option<&NativeWindow>,
+    shared: &Arc<Shared>,
+    read: bool,
+) -> Result<Checked, String> {
     let window = window.ok_or("the platform named no native window to draw in")?;
     // SAFETY: the window port tells of `window` when it opens, on this
     // thread, and it stays live until the drawer returns from being told
@@ -1082,7 +1304,9 @@ fn renderer(window: Option<&NativeWindow>, shared: &Arc<Shared>) -> Result<Check
     )]
     let made = unsafe { WgpuRenderer::on_window(window, Settings::default()) };
     let mut gpu = made.map_err(|error| error.to_string())?;
-    let copies = gpu.keep_picture();
+    // A run that reads no picture asks the renderer to keep none: a draw
+    // then costs what the editor's own would, and not a read-back more.
+    let copies = read && gpu.keep_picture();
     *locked(&shared.adapter) = Some(format!(
         "{}, blending by a coverage for each channel: {}",
         gpu.adapter(),
@@ -1100,30 +1324,44 @@ fn renderer(window: Option<&NativeWindow>, shared: &Arc<Shared>) -> Result<Check
     };
     Ok(Checked {
         gpu,
+        read,
         copies,
         headless: HeadlessRenderer::new(settings),
         shared: Arc::clone(shared),
     })
 }
 
-/// A layout over the real shaper and the fixture fonts.
-fn layout() -> Result<Layout<ParleyShaper>, String> {
-    let files: Vec<Vec<u8>> = [SANS, HEBREW, JP]
-        .iter()
-        .map(|bytes| bytes.to_vec())
-        .collect();
-    let fallbacks = ["Noto Sans Hebrew", "Noto Sans JP"];
-    let fonts = FontSet::only("Noto Sans", &fallbacks, files)
-        .map_err(|error| format!("the fixture fonts: {error}"))?;
-    Ok(Layout::new(ParleyShaper::new(fonts)))
+/// The fonts the fixture is laid out in, and the family its default face
+/// names: the fixture fonts, compiled in, and no family; or, when `family`
+/// is given, the fonts of this machine and that family as the machine
+/// names it. The error is why there are none: a family the machine has
+/// not is one.
+fn fonts(family: Option<&str>) -> Result<(FontSet, Option<String>), String> {
+    let Some(name) = family else {
+        let files: Vec<Vec<u8>> = [SANS, HEBREW, JP]
+            .iter()
+            .map(|bytes| bytes.to_vec())
+            .collect();
+        let fallbacks = ["Noto Sans Hebrew", "Noto Sans JP"];
+        let fonts = FontSet::only("Noto Sans", &fallbacks, files)
+            .map_err(|error| format!("the fixture fonts: {error}"))?;
+        return Ok((fonts, None));
+    };
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "a person who asks for a family of this machine's fonts (--family) is the one caller: no test and no other run reads the machine's fonts"
+    )]
+    let fonts = FontSet::system();
+    let family = family_of(name, &fonts.families())?;
+    Ok((fonts, Some(family)))
 }
 
 /// The fixture scene in a window of `size`: [`TEXT`] in one view that
 /// fills it, a selection with its cursor, and a status row, in a default
-/// face of [`POINTS`] points. Its rectangle and the size its status row
-/// reads are physical pixels; the face's size is the one length here that
-/// is not.
-fn scene(size: Resize) -> Scene {
+/// face of [`POINTS`] points, and of the family `family` when there is
+/// one. Its rectangle and the size its status row reads are physical
+/// pixels; the face's size is the one length here that is not.
+fn scene(size: Resize, family: Option<&str>) -> Scene {
     let target = target(size);
     let rect = Rect {
         x: 0,
@@ -1141,6 +1379,7 @@ fn scene(size: Resize) -> Scene {
         named(
             "default",
             Face {
+                family: family.map(str::to_owned),
                 // In points: layout puts it at the window's scale.
                 size: Some(Length::pixels(POINTS)),
                 foreground: rgb(0x20, 0x20, 0x20),
@@ -1287,8 +1526,17 @@ fn read_back(event: &Event) -> Option<Input> {
 /// by the window, on another thread. Each frame that is not the one last
 /// published is printed with the scale it was laid out for and the size
 /// its glyphs are drawn at, and judged ([`laid_out`]).
-fn edit(queue: &Queue, session: &Session<Watched>, shared: &Shared) -> Result<(), String> {
-    let mut layout = layout()?;
+///
+/// The fixture is laid out by the real shaper over `fonts`, in the family
+/// `family` when there is one ([`fonts`]).
+fn edit(
+    queue: &Queue,
+    session: &Session<Watched>,
+    shared: &Shared,
+    fonts: FontSet,
+    family: Option<&str>,
+) -> Result<(), String> {
+    let mut layout = Layout::new(ParleyShaper::new(fonts));
     // The frame last published, by its number.
     let mut last = None;
     loop {
@@ -1313,10 +1561,10 @@ fn edit(queue: &Queue, session: &Session<Watched>, shared: &Shared) -> Result<()
                     // just said how many pixels a point is.
                     let window = target(size);
                     layout.set_scale(window.scale);
-                    let frame: Arc<Frame> = Arc::new(layout.frame(&scene(size)));
+                    let frame: Arc<Frame> = Arc::new(layout.frame(&scene(size, family)));
                     // Entered before it is handed over: no draw of it is
                     // entered first.
-                    let number = shared.ledger.published(&frame);
+                    let number = shared.ledger.published(&frame, window);
                     let sizes = drawn_at(&frame);
                     handle.submit(frame, Some(event.stamp));
                     if last != Some(number) {
@@ -1339,14 +1587,15 @@ fn edit(queue: &Queue, session: &Session<Watched>, shared: &Shared) -> Result<()
 /// and for whatever else was asked as the window opened to be drawn, then
 /// leaves the window alone for [`IDLE`] and enters in the ledger when
 /// that second began and ended, says the window is ready for input, and
-/// closes the window `stay` later if nobody has.
+/// closes the window `stay` later if nobody has; with no `stay` the window
+/// is left for a person to close.
 ///
 /// The idle second begins settled, when it can: with nothing asked for
 /// that is not yet drawn. A window is asked for more than its first frame
 /// as it opens (on macOS the system asks for its content while that frame
 /// is being drawn), and a second that began the moment the first frame
 /// was presented would see that drawn and nothing ask for it.
-fn watch(session: &Session<Watched>, shared: &Shared, stay: Duration) {
+fn watch(session: &Session<Watched>, shared: &Shared, stay: Option<Duration>) {
     let began = Instant::now();
     let presented = || session.handle().map_or(0, |handle| handle.counters().draws);
     while presented() == 0 && began.elapsed() < FIRST_FRAME {
@@ -1362,14 +1611,16 @@ fn watch(session: &Session<Watched>, shared: &Shared, stay: Duration) {
         shared.ledger.note(Happened::Idle(false));
     }
     println!("window: ready for input");
-    thread::sleep(stay);
-    PLATFORM.close();
+    if let Some(stay) = stay {
+        thread::sleep(stay);
+        PLATFORM.close();
+    }
 }
 
 /// What was found, printed; and why the check fails, when it does, in a
-/// run that requires every frame's picture to be compared when
-/// `require_picture` says so.
-fn report(session: &Session<Watched>, shared: &Shared, require_picture: bool) -> Vec<String> {
+/// run that `options` asks for: whether pictures are read back, whether
+/// each must be compared, and how much of the timeline is printed.
+fn report(session: &Session<Watched>, shared: &Shared, options: &Options) -> Vec<String> {
     let mut failures = Vec::new();
     match locked(&shared.adapter).as_deref() {
         Some(adapter) => println!("window: the renderer is on {adapter}"),
@@ -1403,15 +1654,15 @@ fn report(session: &Session<Watched>, shared: &Shared, require_picture: bool) ->
     }
 
     // 2. The picture is the frame's.
-    let pictures = locked(&shared.pictures);
-    for (number, picture) in pictures.iter().enumerate() {
-        let verdict = judged(number + 1, picture, require_picture);
-        if let Some(line) = verdict.line {
-            println!("window: {line}");
-        }
-        failures.extend(verdict.failure);
+    let found = pictured(
+        &locked(&shared.pictures),
+        options.read_picture,
+        options.require_picture,
+    );
+    for line in found.lines {
+        println!("window: {line}");
     }
-    drop(pictures);
+    failures.extend(found.failures);
 
     // Each frame was laid out at its window's scale: said as each was
     // published, and failed here.
@@ -1421,8 +1672,14 @@ fn report(session: &Session<Watched>, shared: &Shared, require_picture: bool) ->
     let (records, tally) = shared.ledger.read();
     let opened_ns = records.first().map_or(0, |(at_ns, _)| *at_ns);
     // What a line says of a draw depends only on what came before it, so
-    // the lines printed are made from the records printed and no more.
-    let printed = records.len().min(TIMELINE);
+    // the lines printed are made from the records printed and no more. A
+    // window a person kept open has more to show.
+    let most = if options.stay.is_some() {
+        TIMELINE
+    } else {
+        TIMELINE_BY_HAND
+    };
+    let printed = records.len().min(most);
     for line in timeline(&records[..printed]) {
         println!("window: at {line}");
     }
@@ -1432,10 +1689,17 @@ fn report(session: &Session<Watched>, shared: &Shared, require_picture: bool) ->
             records.len() - printed
         );
     }
-    for entry in journal.iter().take(TIMELINE) {
+    for entry in journal.iter().take(most) {
         println!("window: {}", journalled(entry, opened_ns));
     }
     let found = on_demand(&tally, opened_ns, counters.draws + counters.draws_failed);
+    for line in found.lines {
+        println!("window: {line}");
+    }
+    failures.extend(found.failures);
+
+    // 5. Left alone, the window shows what was laid out for it.
+    let found = left_alone(&records, &shared.ledger.laid());
     for line in found.lines {
         println!("window: {line}");
     }
@@ -1459,14 +1723,23 @@ fn report(session: &Session<Watched>, shared: &Shared, require_picture: bool) ->
 fn main() -> ExitCode {
     let arguments: Vec<String> = std::env::args().skip(1).collect();
     let arguments: Vec<&str> = arguments.iter().map(String::as_str).collect();
-    let Some(Options {
-        stay,
-        require_picture,
-    }) = options(&arguments)
-    else {
-        eprintln!("usage: window [--seconds <n>] [--require-picture]");
+    let Some(options) = options(&arguments) else {
+        eprintln!(
+            "usage: window [--seconds <n> | --until-closed] [--require-picture | --no-picture] [--family <name>]"
+        );
         return ExitCode::from(2);
     };
+    // Before any window opens: a family this machine has not is said now.
+    let (fonts, family) = match fonts(options.family.as_deref()) {
+        Ok(found) => found,
+        Err(reason) => {
+            println!("window: FAILED: {reason}");
+            return ExitCode::FAILURE;
+        }
+    };
+    if let Some(family) = &family {
+        println!("window: the fixture is laid out in {family}, of this machine's fonts");
+    }
     // One clock stamps the input, times the frames and stamps the ledger:
     // the journal's time from an input to its frame is a subtraction on
     // it, and so is the time from what asked for a draw to the draw.
@@ -1474,9 +1747,9 @@ fn main() -> ExitCode {
     let shared = Arc::new(Shared::new(clock.clone()));
     let queue = Arc::new(Queue::new());
     let session = {
-        let shared = Arc::clone(&shared);
+        let (shared, read) = (Arc::clone(&shared), options.read_picture);
         Session::new(clock.clone(), move |window, _| {
-            let inner = renderer(window, &shared)?;
+            let inner = renderer(window, &shared, read)?;
             let ledger = Arc::clone(&shared.ledger);
             Ok(Entered {
                 inner,
@@ -1488,10 +1761,10 @@ fn main() -> ExitCode {
 
     let editor = {
         let (queue, session, shared) = (Arc::clone(&queue), session.clone(), Arc::clone(&shared));
-        thread::spawn(move || edit(&queue, &session, &shared))
+        thread::spawn(move || edit(&queue, &session, &shared, fonts, family.as_deref()))
     };
     {
-        let (session, shared) = (session.clone(), Arc::clone(&shared));
+        let (session, shared, stay) = (session.clone(), Arc::clone(&shared), options.stay);
         // Detached: it sleeps out the window's time, and the process ends
         // without it when the window was closed sooner.
         thread::spawn(move || watch(&session, &shared, stay));
@@ -1510,7 +1783,7 @@ fn main() -> ExitCode {
         .join()
         .unwrap_or_else(|_| Err("the editor's thread panicked".to_owned()));
 
-    let mut failures = report(&session, &shared, require_picture);
+    let mut failures = report(&session, &shared, &options);
     if let Err(cannot_open) = ran {
         failures.push(format!("the window could not be opened: {cannot_open}"));
     }
@@ -1552,8 +1825,8 @@ mod tests {
 
     use super::{
         Draw, Entered, Findings, Happened, IDLE_ASKS, Idle, Ledger, Options, Picture, Served,
-        TOLERANCE, Tally, Verdict, drawn_at, entering, happened, journalled, judged, laid_out,
-        on_demand, options, timeline, uncompared,
+        TOLERANCE, Tally, Verdict, drawn_at, entering, family_of, happened, journalled, judged,
+        laid_out, left_alone, on_demand, options, pictured, timeline, uncompared,
     };
 
     /// A size a window has.
@@ -1846,7 +2119,8 @@ mod tests {
         for said in [
             Happened::Published(1),
             Happened::Resized(SMALL),
-            Happened::Told("Hidden(false)".to_owned()),
+            Happened::Hidden(false),
+            Happened::Told("Refresh(Some(60000))".to_owned()),
         ] {
             let tally = tallied(&and(showing(), std::slice::from_ref(&said)));
             assert!(tally.settled(), "{said:?}");
@@ -2084,7 +2358,7 @@ mod tests {
             Happened::Resized(LARGE),
             Happened::Published(1),
             Happened::Damaged,
-            Happened::Told("Hidden(true)".to_owned()),
+            Happened::Hidden(true),
             PRESENTED,
             began(1, LARGE),
             REFUSED,
@@ -2215,9 +2489,13 @@ mod tests {
         );
         assert_eq!(happened(&Canvas::Resized(size)), Happened::Resized(LARGE));
         assert_eq!(happened(&Canvas::Damaged), Happened::Damaged);
-        // What asks for no draw is kept as it prints.
+        // Hidden and shown ask for no draw, and say whether a window left
+        // alone is one anybody can see.
+        for hidden in [true, false] {
+            assert_eq!(happened(&Canvas::Hidden(hidden)), Happened::Hidden(hidden));
+        }
+        // What else asks for no draw is kept as it prints.
         for (canvas, said) in [
-            (Canvas::Hidden(true), "Hidden(true)"),
             (Canvas::Refresh(Some(50_000)), "Refresh(Some(50000))"),
             (Canvas::Closing, "Closing"),
         ] {
@@ -2251,14 +2529,17 @@ mod tests {
     fn frames_published_are_numbered_from_one_and_equal_frames_are_one_frame() {
         let ledger = ledger();
         let one = frame_of("one");
-        assert_eq!(ledger.published(&one), 1);
+        assert_eq!(ledger.laid(), []);
+        assert_eq!(ledger.published(&one, SMALL), 1);
         // The same value again, and another that is equal to it.
-        assert_eq!(ledger.published(&one), 1);
-        assert_eq!(ledger.published(&frame_of("one")), 1);
-        assert_eq!(ledger.published(&frame_of("two")), 2);
+        assert_eq!(ledger.published(&one, SMALL), 1);
+        assert_eq!(ledger.published(&frame_of("one"), SMALL), 1);
+        assert_eq!(ledger.published(&frame_of("two"), LARGE), 2);
         // The first again, after another: still the first.
-        assert_eq!(ledger.published(&frame_of("one")), 1);
+        assert_eq!(ledger.published(&frame_of("one"), SMALL), 1);
         assert_eq!(entered(&ledger), [1, 1, 1, 2, 1].map(Happened::Published));
+        // Each frame is kept with the window it was laid out for, once.
+        assert_eq!(ledger.laid(), [SMALL, LARGE]);
         // Each is stamped as it is entered, on the ledger's clock.
         let (records, tally) = ledger.read();
         let stamps: Vec<u64> = records.iter().map(|(at_ns, _)| *at_ns).collect();
@@ -2283,8 +2564,8 @@ mod tests {
             },
         };
         let (one, two) = (frame_of("one"), frame_of("two"));
-        ledger.published(&one);
-        ledger.published(&two);
+        ledger.published(&one, SMALL);
+        ledger.published(&two, SMALL);
 
         let drawn = renderer.draw(&DrawRequest {
             frame: &two,
@@ -2356,7 +2637,7 @@ mod tests {
         );
         assert_eq!(
             entered(&ledger),
-            [Happened::Damaged, Happened::Told("Hidden(true)".to_owned())]
+            [Happened::Damaged, Happened::Hidden(true)]
         );
     }
 
@@ -2537,12 +2818,25 @@ mod tests {
         );
     }
 
+    /// What a command line with none of the options asks for: twenty
+    /// seconds, pictures read and compared where the surface gives one, in
+    /// the fixture fonts.
+    fn as_it_comes() -> Options {
+        Options {
+            stay: Some(Duration::from_secs(20)),
+            require_picture: false,
+            read_picture: true,
+            family: None,
+        }
+    }
+
     #[test]
     fn the_command_line_says_how_long_the_window_stays_and_whether_a_picture_is_required() {
         let asked = |stay, require_picture| {
             Some(Options {
-                stay: Duration::from_secs(stay),
+                stay: Some(Duration::from_secs(stay)),
                 require_picture,
+                ..as_it_comes()
             })
         };
         assert_eq!(options(&[]), asked(20, false));
@@ -2560,6 +2854,87 @@ mod tests {
     }
 
     #[test]
+    fn the_command_line_says_whether_the_window_stays_whether_pictures_are_read_and_in_which_family()
+     {
+        // Until a person closes it.
+        assert_eq!(
+            options(&["--until-closed"]),
+            Some(Options {
+                stay: None,
+                ..as_it_comes()
+            })
+        );
+        // No picture is read back.
+        assert_eq!(
+            options(&["--no-picture"]),
+            Some(Options {
+                read_picture: false,
+                ..as_it_comes()
+            })
+        );
+        // In a family of the machine's fonts, whose name may be several
+        // words.
+        assert_eq!(
+            options(&["--family", "Menlo"]),
+            Some(Options {
+                family: Some("Menlo".to_owned()),
+                ..as_it_comes()
+            })
+        );
+        assert_eq!(
+            options(&["--family", "Helvetica Neue"]).and_then(|options| options.family),
+            Some("Helvetica Neue".to_owned())
+        );
+        // All three, as a person runs it by hand, in any order.
+        let by_hand = Some(Options {
+            stay: None,
+            require_picture: false,
+            read_picture: false,
+            family: Some("Menlo".to_owned()),
+        });
+        assert_eq!(
+            options(&["--until-closed", "--no-picture", "--family", "Menlo"]),
+            by_hand
+        );
+        assert_eq!(
+            options(&["--family", "Menlo", "--no-picture", "--until-closed"]),
+            by_hand
+        );
+        // Each with what it does not contradict.
+        assert_eq!(
+            options(&["--seconds", "2", "--no-picture"]),
+            Some(Options {
+                stay: Some(Duration::from_secs(2)),
+                read_picture: false,
+                ..as_it_comes()
+            })
+        );
+        assert_eq!(
+            options(&["--until-closed", "--require-picture"]),
+            Some(Options {
+                stay: None,
+                require_picture: true,
+                ..as_it_comes()
+            })
+        );
+    }
+
+    #[test]
+    fn options_that_contradict_each_other_are_not_understood() {
+        for arguments in [
+            // A window cannot both close after a time and stay.
+            &["--until-closed", "--seconds", "6"][..],
+            &["--seconds", "6", "--until-closed"],
+            // A picture cannot be required and not read.
+            &["--no-picture", "--require-picture"],
+            &["--require-picture", "--no-picture"],
+            &["--until-closed", "--no-picture", "--require-picture"],
+        ] {
+            assert_eq!(options(arguments), None, "{arguments:?}");
+        }
+    }
+
+    #[test]
     fn a_command_line_that_is_not_understood_gives_no_options() {
         for arguments in [
             &["--seconds"][..],
@@ -2567,9 +2942,379 @@ mod tests {
             &["--seconds", "--require-picture"],
             &["--require-pictures"],
             &["6"],
+            // A family is a name, and a name is not an option or nothing.
+            &["--family"],
+            &["--family", ""],
+            &["--family", "--no-picture"],
+            &["--no-pictures"],
+            &["--until-close"],
         ] {
             assert_eq!(options(arguments), None, "{arguments:?}");
         }
+    }
+
+    #[test]
+    fn a_family_is_one_the_machine_has_by_its_own_name_for_it_and_any_other_is_refused() {
+        let families = ["Courier", "Helvetica Neue", "Menlo"].map(str::to_owned);
+        assert_eq!(family_of("Menlo", &families), Ok("Menlo".to_owned()));
+        // Whatever the case it was asked in, it is the machine's name.
+        assert_eq!(
+            family_of("helvetica neue", &families),
+            Ok("Helvetica Neue".to_owned())
+        );
+        // One it has not is said, with how many it has.
+        assert_eq!(
+            family_of("Noto Sans", &families),
+            Err("this machine has no font family named Noto Sans, of its 3 families".to_owned())
+        );
+        // A part of a name is not the name.
+        assert!(family_of("Helvetica", &families).is_err());
+        assert!(family_of("Menlo", &[]).is_err());
+    }
+
+    #[test]
+    fn a_run_that_reads_no_picture_says_so_and_fails_for_none() {
+        // Nothing was read, so nothing was found of any picture.
+        assert_eq!(
+            pictured(&[], false, false),
+            Findings {
+                lines: vec![
+                    "pictures were not read back (--no-picture): the picture was not checked in this run"
+                        .to_owned()
+                ],
+                failures: Vec::new(),
+            }
+        );
+        // A run that reads them says what each was found to be, as before,
+        // and nothing of this.
+        let compared = Picture::Compared {
+            pixels: 100,
+            differing: 7,
+            worst: TOLERANCE + 1,
+        };
+        let pictures = [compared.clone(), Picture::NotCopied];
+        for require in [false, true] {
+            let found = pictured(&pictures, true, require);
+            let each = [
+                judged(1, &compared, require),
+                judged(2, &Picture::NotCopied, require),
+            ];
+            assert_eq!(
+                found.lines,
+                each.iter()
+                    .filter_map(|verdict| verdict.line.clone())
+                    .collect::<Vec<_>>()
+            );
+            assert_eq!(
+                found.failures,
+                each.iter()
+                    .filter_map(|verdict| verdict.failure.clone())
+                    .collect::<Vec<_>>()
+            );
+            assert_eq!(found.lines.len(), 2);
+            assert_eq!(found.failures.len(), if require { 2 } else { 1 });
+        }
+        assert_eq!(pictured(&[], true, true), Findings::default());
+    }
+
+    /// `happened`, each at its time since the first in milliseconds.
+    fn timed(happened: &[(u64, Happened)]) -> Vec<(u64, Happened)> {
+        happened
+            .iter()
+            .map(|(at_ms, happened)| (MS + at_ms * MS, happened.clone()))
+            .collect()
+    }
+
+    /// The size of `LARGE` at the scale of `SMALL`: a window dragged to a
+    /// display at another scale keeps its size in pixels for a moment.
+    const WIDE: Target = Target {
+        width: 800,
+        height: 600,
+        scale: 1.0,
+    };
+
+    /// The line of a window that was left alone `times` times and showed
+    /// what was laid out for it each time.
+    fn alone(times: usize) -> String {
+        format!(
+            "left alone {times} times, and each time the window showed what was laid out for it"
+        )
+    }
+
+    #[test]
+    fn left_alone_a_window_that_shows_what_was_laid_out_for_it_passes() {
+        let records = timed(&[
+            (
+                0,
+                Happened::Opened {
+                    size: SMALL,
+                    refresh: None,
+                },
+            ),
+            (10, Happened::Published(1)),
+            (11, began(1, SMALL)),
+            (20, PRESENTED),
+            // The example's own second is nothing the window did: with it
+            // or without, this is one stretch of a second and more.
+            (30, Happened::Idle(true)),
+            (1030, Happened::Idle(false)),
+            // A resize: the frame shown is drawn on the new size, and then
+            // the frame laid out for it.
+            (1500, Happened::Resized(WIDE)),
+            (1501, began(1, WIDE)),
+            (1510, PRESENTED),
+            (1511, Happened::Published(2)),
+            (1512, began(2, WIDE)),
+            (1520, PRESENTED),
+            // A change of scale alone, a second to the millisecond later.
+            (2520, Happened::Resized(LARGE)),
+            (2521, Happened::Published(3)),
+            (2522, began(3, LARGE)),
+            (2530, PRESENTED),
+            // The window says the same again, and the same frame is
+            // published again: nothing is drawn, and nothing is stale.
+            (4000, Happened::Resized(LARGE)),
+            (4001, Happened::Published(3)),
+            // Damage, a millisecond short of a second later: not alone.
+            (5000, Happened::Damaged),
+            (5001, began(3, LARGE)),
+            (5010, PRESENTED),
+            (7000, Happened::Told("Closing".to_owned())),
+        ]);
+        // Frame 1 was laid out for SMALL, 2 for WIDE and 3 for LARGE.
+        let laid = [SMALL, WIDE, LARGE];
+        assert_eq!(
+            left_alone(&records, &laid),
+            Findings {
+                lines: vec![alone(4)],
+                failures: Vec::new(),
+            }
+        );
+        // Back at a size it had: the frame laid out for it then is the
+        // frame laid out for it now.
+        let back = timed(&[
+            (
+                0,
+                Happened::Opened {
+                    size: SMALL,
+                    refresh: None,
+                },
+            ),
+            (10, Happened::Published(1)),
+            (11, began(1, SMALL)),
+            (20, PRESENTED),
+            (30, Happened::Resized(WIDE)),
+            (31, Happened::Published(2)),
+            (32, began(2, WIDE)),
+            (40, PRESENTED),
+            (50, Happened::Resized(SMALL)),
+            (51, Happened::Published(1)),
+            (52, began(1, SMALL)),
+            (60, PRESENTED),
+            (3000, Happened::Told("Closing".to_owned())),
+        ]);
+        assert_eq!(left_alone(&back, &laid).lines, [alone(1)]);
+        assert_eq!(left_alone(&back, &laid).failures, [] as [String; 0]);
+    }
+
+    #[test]
+    fn left_alone_a_window_that_shows_a_frame_laid_out_for_another_size_or_scale_fails_and_says_which()
+     {
+        let opened = [
+            (
+                0,
+                Happened::Opened {
+                    size: SMALL,
+                    refresh: None,
+                },
+            ),
+            (10, Happened::Published(1)),
+            (11, began(1, SMALL)),
+            (20, PRESENTED),
+        ];
+        let closing = (9000, Happened::Told("Closing".to_owned()));
+        let laid = [SMALL, WIDE, LARGE];
+        let found = |then: &[(u64, Happened)]| {
+            let all: Vec<_> = opened
+                .iter()
+                .chain(then)
+                .chain([&closing])
+                .cloned()
+                .collect();
+            left_alone(&timed(&all), &laid)
+        };
+
+        // Another size: the frame shown is drawn on the new size, and the
+        // frame laid out for it never comes.
+        let stale = found(&[
+            (1500, Happened::Resized(WIDE)),
+            (1501, began(1, WIDE)),
+            (1510, PRESENTED),
+        ]);
+        assert_eq!(
+            stale,
+            Findings {
+                lines: vec![
+                    "left alone 2 times, and 1 of them the window did not show what was laid out for it"
+                        .to_owned()
+                ],
+                failures: vec![
+                    "left alone from 1510.0 ms after it opened, the window showed frame 1, laid out for 400 by 300 at scale 1, on 800 by 600 at scale 1, when it had last said it is 800 by 600 at scale 1"
+                        .to_owned()
+                ],
+            }
+        );
+
+        // Another scale: the frame laid out for the size at the old scale
+        // is shown on the window at the new one.
+        let unscaled = found(&[
+            (1500, Happened::Resized(WIDE)),
+            (1501, Happened::Published(2)),
+            (1502, began(2, WIDE)),
+            (1510, PRESENTED),
+            (3000, Happened::Resized(LARGE)),
+            (3001, began(2, LARGE)),
+            (3010, PRESENTED),
+        ]);
+        assert_eq!(
+            unscaled.failures,
+            [
+                "left alone from 3010.0 ms after it opened, the window showed frame 2, laid out for 800 by 600 at scale 1, on 800 by 600 at scale 2, when it had last said it is 800 by 600 at scale 2"
+            ]
+        );
+        assert_eq!(
+            unscaled.lines,
+            ["left alone 3 times, and 1 of them the window did not show what was laid out for it"]
+        );
+
+        // The right frame, published, and never drawn where the window
+        // now is: what is shown is the old frame on the old size.
+        let undrawn = found(&[
+            (1500, Happened::Resized(WIDE)),
+            (1501, Happened::Published(2)),
+        ]);
+        assert_eq!(
+            undrawn.failures,
+            [
+                "left alone from 1501.0 ms after it opened, the window showed frame 1, laid out for 400 by 300 at scale 1, on 400 by 300 at scale 1, when it had last said it is 800 by 600 at scale 1"
+            ]
+        );
+
+        // A frame nobody published, and one the ledger was never told the
+        // window of.
+        let unknown = found(&[
+            (
+                1500,
+                Happened::Began {
+                    frame: None,
+                    target: SMALL,
+                },
+            ),
+            (1510, PRESENTED),
+        ]);
+        assert_eq!(
+            unknown.failures,
+            [
+                "left alone from 1510.0 ms after it opened, the window showed a frame nobody published, on 400 by 300 at scale 1, when it had last said it is 400 by 300 at scale 1"
+            ]
+        );
+        let untold = left_alone(
+            &timed(&opened.iter().chain([&closing]).cloned().collect::<Vec<_>>()),
+            &[],
+        );
+        assert_eq!(
+            untold.failures,
+            [
+                "left alone from 20.0 ms after it opened, the window showed frame 1, laid out for nothing the ledger was told, on 400 by 300 at scale 1, when it had last said it is 400 by 300 at scale 1"
+            ]
+        );
+    }
+
+    #[test]
+    fn a_window_that_is_hidden_or_never_left_alone_is_not_judged() {
+        let never = "the window was never left alone for a second while it showed a frame, so what it shows when it is left alone was not judged";
+        let unjudged = |happened: &[(u64, Happened)]| {
+            assert_eq!(
+                left_alone(&timed(happened), &[SMALL, WIDE]),
+                Findings {
+                    lines: vec![never.to_owned()],
+                    failures: Vec::new(),
+                }
+            );
+        };
+        let opened = Happened::Opened {
+            size: SMALL,
+            refresh: None,
+        };
+        let closing = Happened::Told("Closing".to_owned());
+        // Nothing happened, and a window that closed within the second.
+        unjudged(&[]);
+        unjudged(&[
+            (0, opened.clone()),
+            (10, Happened::Published(1)),
+            (11, began(1, SMALL)),
+            (20, PRESENTED),
+            (1019, closing.clone()),
+        ]);
+        // Hidden: on another Space, a stale frame is nobody's to see. What
+        // is stale here is put right as the window is shown again.
+        unjudged(&[
+            (0, opened.clone()),
+            (10, Happened::Published(1)),
+            (11, began(1, SMALL)),
+            (20, PRESENTED),
+            (30, Happened::Hidden(true)),
+            (40, Happened::Resized(WIDE)),
+            (3000, Happened::Hidden(false)),
+            (3001, began(1, WIDE)),
+            (3010, PRESENTED),
+            (3011, Happened::Published(2)),
+            (3012, began(2, WIDE)),
+            (3020, PRESENTED),
+            (3500, closing.clone()),
+        ]);
+        // Nothing was ever presented: a window that opened where nobody
+        // can see it, and is not told so. That no frame was presented
+        // fails the run by another check.
+        unjudged(&[
+            (0, opened.clone()),
+            (10, Happened::Published(1)),
+            (11, began(1, SMALL)),
+            (
+                20,
+                Happened::Ended {
+                    presented: false,
+                    masks: None,
+                },
+            ),
+            (5000, closing.clone()),
+        ]);
+        // A draw in progress for the whole of the stretch: the window is
+        // not left alone while it is drawn on.
+        unjudged(&[
+            (0, opened.clone()),
+            (10, Happened::Published(1)),
+            (11, began(1, SMALL)),
+            (20, PRESENTED),
+            (30, Happened::Resized(WIDE)),
+            (31, began(1, WIDE)),
+            (2000, PRESENTED),
+            (2001, Happened::Published(2)),
+            (2002, began(2, WIDE)),
+            (2010, PRESENTED),
+            (2500, closing.clone()),
+        ]);
+        // Shown again and then left alone, it is judged.
+        let shown = timed(&[
+            (0, opened),
+            (10, Happened::Published(1)),
+            (11, began(1, SMALL)),
+            (20, PRESENTED),
+            (30, Happened::Hidden(true)),
+            (3000, Happened::Hidden(false)),
+            (4500, closing),
+        ]);
+        assert_eq!(left_alone(&shown, &[SMALL]).lines, [alone(1)]);
     }
 
     #[test]
