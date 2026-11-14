@@ -225,7 +225,10 @@ names a scheme's key:
   keymaps, on the editor's models: a role's key runs the major mode's
   command in a view of its buffer and the global binding elsewhere, a minor
   mode's wins over the major mode's, a derived mode falls to its parent,
-  and the leader then a suffix runs the mode's local command.
+  and the leader then a suffix runs the mode's local command;
+- `modeEnterChecks`: a mode's on-enter action, on the editor's models: it
+  runs once, with the view, when the mode becomes a buffer's major mode, a
+  derived mode's lineage root first, and a refusal runs nothing.
 -/
 
 namespace ModelTest
@@ -6888,6 +6891,77 @@ def modeDispatchChecks : List Check :=
               some #[some "major-local", some "other"] &&
             roleTyped registry (withModes "major" []) typed ⟨1⟩ == some #[some "", some "other"]) }]
 
+/-- A mode called `name` whose on-enter action makes a text naming the mode
+and the view it was given, and which derives from `parent`, if given. -/
+def entering (name : String) (parent : Option String := none) : Mode :=
+  { name, parent, onEnter := fun view => makes s!"{name} in {view.index}" }
+
+/-- The registry of the on-enter checks: `listing` and `other`, and `child`,
+which derives from `base`, which derives from `root`. -/
+def enterRegistry : Config.Registry :=
+  ({} : Config.Registry).replaceModes .compiled
+    #[entering "listing", entering "other", entering "root", entering "base" (some "root"),
+      entering "child" (some "base")]
+
+/-- Sets the major mode of the buffer of each view in `steps` in turn,
+through `enterRegistry`, from `twoBuffers`, on the editor's models: the
+texts the on-enter actions made, in order, how each step was refused, if it
+was, and each buffer's major mode at the end. `none` when the run was
+refused. -/
+def entered (steps : List (ViewId × String)) :
+    Option (Array String × List (Option ModeRefusal) × Array (Option String)) :=
+  let program : EditorM (List (Option ModeRefusal) × EditorState) := do
+    let mut state ← twoBuffers
+    let mut refusals := []
+    for (view, name) in steps do
+      let (result, next) ← enterRegistry.setMajorMode view name state
+      state := next
+      refusals :=
+        refusals ++
+          [match result with
+            | .ok () => none
+            | .error refusal => some refusal]
+    return (refusals, state)
+  match program.runModel editorModel with
+  | (.ok (refusals, state), model) =>
+    let texts := model.texts.contents
+    some (texts.extract 2 texts.size, refusals, state.buffers.map (·.major))
+  | (.error _, _) => none
+
+/-- The checks of a mode's on-enter action (`Config.Registry.setMajorMode`),
+on the editor's models: it runs once, with the view, when the mode becomes
+a buffer's major mode. -/
+def modeEnterChecks : List Check :=
+  [{  name :=
+        "the on-enter action runs once, with the view, when the mode becomes a buffer's major mode"
+      run :=
+        pure
+          (entered [(⟨0⟩, "listing")] ==
+              some (#["listing in 0"], [none], #[some "listing", none]) &&
+            entered [(⟨1⟩, "listing")] ==
+              some (#["listing in 1"], [none], #[none, some "listing"])) },
+    { name :=
+        "setting the major mode a buffer already has runs nothing; setting another and then it again runs each"
+      run :=
+        pure
+          (entered [(⟨0⟩, "listing"), (⟨0⟩, "listing")] ==
+              some (#["listing in 0"], [none, none], #[some "listing", none]) &&
+            entered [(⟨0⟩, "listing"), (⟨0⟩, "other"), (⟨0⟩, "listing")] ==
+              some
+                (#["listing in 0", "other in 0", "listing in 0"], [none, none, none],
+                  #[some "listing", none])) },
+    { name := "a derived mode's lineage runs its on-enter actions root first, each once"
+      run :=
+        pure
+          (entered [(⟨1⟩, "child")] ==
+            some (#["root in 1", "base in 1", "child in 1"], [none], #[none, some "child"])) },
+    { name :=
+        "setting a mode no mode is registered under is refused with noSuchMode, and one for a view with no window with noSuchWindow; each changes nothing and runs nothing"
+      run :=
+        pure
+          (entered [(⟨0⟩, "ghost")] == some (#[], [some (.noSuchMode "ghost")], #[none, none]) &&
+            entered [(⟨9⟩, "listing")] == some (#[], [some (.noSuchWindow ⟨9⟩)], #[none, none])) }]
+
 /-- Every check, in the order they run.
 
 The order matters where the process's one pool is measured. `poolChecks` run
@@ -6932,7 +7006,8 @@ def checks : List Check :=
     vimContractChecks ++
     modeRecordChecks ++
     modeRegistryChecks ++
-    modeDispatchChecks
+    modeDispatchChecks ++
+    modeEnterChecks
 
 /-- Runs `checks` and returns the names of those that failed. A check that
 throws has failed, and its error is reported with its name. -/

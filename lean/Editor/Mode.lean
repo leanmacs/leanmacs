@@ -27,6 +27,10 @@ scheme are made from that (`Mode.keymaps`).
 - **No owner.** The owner is on the registry's entry
   (`Config.ModeEntry`), as for commands and key bindings, so `setup`
   cannot choose it.
+- **`onEnter` runs when the mode becomes a buffer's major mode**, with the
+  view it was set through, once (`Config.Registry.setMajorMode`, which
+  refuses with a `ModeRefusal`). It is a plain `EditorM` program, and
+  cannot write a store.
 
 ## A mode's keymaps for a scheme
 
@@ -161,5 +165,13 @@ def check (mode : Mode) (scheme : InputScheme) : List Problem :=
       | _ => none
 
 end Mode
+
+/-- Why setting a mode was refused. -/
+inductive ModeRefusal where
+  /-- The state has no window of this view. -/
+  | noSuchWindow (id : ViewId)
+  /-- No mode is registered under this name. -/
+  | noSuchMode (name : String)
+  deriving DecidableEq, Repr
 
 end Editor
