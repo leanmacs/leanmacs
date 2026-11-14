@@ -12,12 +12,16 @@
 #
 # It builds the image from the Dockerfile beside it and copies the checkout
 # into a work directory. `ci` runs `mise run ci` there, and its exit status is
-# the gate's. `window` builds the editor there and runs three things under
+# the gate's. `window` builds the editor there and runs five things under
 # Xvfb, a display that needs no screen and no person, failing if any fails:
 # the winit adapter's example, which holds the real window to the window
 # port's contract; `editor window-check`, with xdotool giving the window the
-# focus and typing into it; and the same with composition not allowed. Its
-# keys are synthetic, and its output says so. `render` runs the renderer's
+# focus and typing into it; the same with composition not allowed; the
+# arboard adapter's example, which holds that display's clipboard to the
+# clipboard port's contract; and text written to it by one process, read by
+# another. Its keys are synthetic, and its output says so. The clipboard is
+# the container's own: nothing of the host's is read or written. `render`
+# runs the renderer's
 # example there (`crates/editor-render-wgpu/examples/gpu.rs`): the wgpu
 # adapter on Mesa's software Vulkan driver, llvmpipe, held to the renderer
 # port's contract and compared with the reference image; its exit status is
@@ -145,18 +149,43 @@ inside_typed_check() {
   fi
 }
 
+# Text written to the clipboard by one process and read by another, which
+# one process cannot show: on X11 the text is served by the process that
+# wrote it, so the writer stays alive while the reader reads. Fails if the
+# text read is not the text written.
+inside_clipboard_across() {
+  local text='held by another process: é, 日本' held=/tmp/clipboard-hold.log
+  local holder got waited=0
+  /work/target/debug/examples/clipboard hold "$text" 10 >"$held" 2>&1 &
+  holder=$!
+  until grep -q '^clipboard: holding' "$held"; do
+    waited=$((waited + 1))
+    [ "$waited" -lt 50 ] || die "the clipboard was not written: $(cat "$held")"
+    sleep 0.1
+  done
+  got=$(/work/target/debug/examples/clipboard read) ||
+    die "another process could not read the clipboard"
+  kill "$holder" 2>/dev/null || true
+  wait "$holder" 2>/dev/null || true
+  printf 'clipboard: one process wrote "%s"; another read "%s"\n' "$text" "$got"
+  [ "$got" = "$text" ] || die "the text read is not the text written"
+}
+
 # The real window on a display that needs no screen and no person (Xvfb):
 # the winit adapter held to the window port's contract, then the keyboard
-# check with composition allowed and with it not.
+# check with composition allowed and with it not; and the clipboard of that
+# display, which is the container's own: the arboard adapter held to the
+# clipboard port's contract, then a round trip across two processes.
 inside_window() {
   [ $# -eq 0 ] || usage
   inside_prepare
   inside_versions
 
-  # What it runs: the editor, built as the gate builds it, and the adapter's
-  # example.
+  # What it runs: the editor, built as the gate builds it, and the adapters'
+  # examples.
   mise run lean
   mise exec -- cargo build --locked --package editor-platform-winit --example contract
+  mise exec -- cargo build --locked --package editor-platform-arboard --example clipboard
 
   Xvfb :99 -screen 0 1024x768x24 >/tmp/xvfb.log 2>&1 &
   local display=$!
@@ -168,14 +197,20 @@ inside_window() {
     sleep 0.1
   done
 
-  echo "linux-window: 1 of 3: the winit platform against the window port's contract, under Xvfb"
+  echo "linux-window: 1 of 5: the winit platform against the window port's contract, under Xvfb"
   /work/target/debug/examples/contract
 
-  inside_typed_check "2 of 3: the keyboard check"
-  inside_typed_check "3 of 3: the keyboard check with composition not allowed" --no-ime
+  inside_typed_check "2 of 5: the keyboard check"
+  inside_typed_check "3 of 5: the keyboard check with composition not allowed" --no-ime
+
+  echo "linux-window: 4 of 5: the system clipboard against the clipboard port's contract, in one process, under Xvfb"
+  /work/target/debug/examples/clipboard contract
+
+  echo "linux-window: 5 of 5: text written to the clipboard by one process, read by another"
+  inside_clipboard_across
 
   kill "$display"
-  echo "linux-window: all three passed"
+  echo "linux-window: all five passed"
 }
 
 # The wgpu renderer on a real adapter with no GPU: Mesa's software Vulkan

@@ -372,15 +372,36 @@ run = "tools/linux/run.sh ci"
 # Docker, like `linux-ci`, whose image, cache and volume it shares.
 #
 # This is where the winit adapter is held to the window port's contract
-# without a desktop: run it after a change to `crates/editor-platform-winit`
-# or to the contract in `crates/editor-platform`. In the container, under
-# Xvfb, it runs the adapter's example, then `editor window-check` with
-# xdotool giving the window the focus and typing into it, then the same with
-# `--no-ime`. It fails if any of the three fails. The keys are synthetic:
-# this is not the check a person makes at the keyboard (`window-check`).
+# without a desktop, and the arboard adapter to the clipboard port's: run it
+# after a change to `crates/editor-platform-winit`, to
+# `crates/editor-platform-arboard`, or to a contract in
+# `crates/editor-platform`. In the container, under Xvfb, it runs the window
+# adapter's example, then `editor window-check` with xdotool giving the
+# window the focus and typing into it, then the same with `--no-ime`; then
+# the clipboard adapter's example on that display's clipboard, and a text
+# written to it by one process and read by another. It fails if any of the
+# five fails. The keys are synthetic: this is not the check a person makes
+# at the keyboard (`window-check`). The clipboard is the container's own.
 [tasks.linux-window]
-description = "Opt-in, never part of ci: in the Linux container, under Xvfb, hold the winit window to the window port's contract and run the keyboard check on keys typed by xdotool (tools/linux/run.sh). Needs Docker"
+description = "Opt-in, never part of ci: in the Linux container, under Xvfb, hold the winit window to the window port's contract, run the keyboard check on keys typed by xdotool, and hold that display's clipboard to the clipboard port's contract (tools/linux/run.sh). Needs Docker"
 run = "tools/linux/run.sh window"
+
+# Opt-in: run it by hand, and do not add it to `ci` or to hk.pkl. It reads
+# and WRITES THE CLIPBOARD OF THIS DESKTOP.
+#
+# It runs the arboard adapter's example (`crates/editor-platform-arboard/
+# examples/clipboard.rs`) with `contract`: the system clipboard held to the
+# clipboard port's contract (`editor_platform::clipboard::contract`). It
+# keeps the text it finds on the clipboard, writes texts of its own, and
+# puts the text it found back. Only text is put back: an image or a file
+# that was on the clipboard is lost, and a clipboard that held no text is
+# left holding the contract's last text. Copy something disposable first.
+# It prints each property with whether it holds; its exit status is the
+# result. The gate builds the example and never runs it; `linux-window`
+# runs the same in the container, on a clipboard that is nobody's.
+[tasks.clipboard-contract]
+description = "Opt-in, never part of ci: hold the system clipboard to the clipboard port's contract. WRITES THIS DESKTOP'S CLIPBOARD, and puts back only the text it found there"
+run = "cargo run --locked --package editor-platform-arboard --example clipboard -- contract"
 
 # Opt-in: run it by hand, and do not add it to `ci` or to hk.pkl. It needs
 # Docker, like `linux-ci`, whose image, cache and volume it shares.

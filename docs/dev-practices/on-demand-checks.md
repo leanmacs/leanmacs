@@ -197,19 +197,83 @@ mise run linux-window
 ```
 
 This is where the winit adapter is held to the window port's contract
-without a desktop. Run it after a change to `crates/editor-platform-winit`
-or to the contract in `crates/editor-platform`. It uses the image, the cache
-and the volume of `linux-ci`, and runs three things under Xvfb, a display
-that needs no screen and no person, failing if any fails:
+without a desktop, and the arboard adapter to the clipboard port's. Run it
+after a change to `crates/editor-platform-winit`, to
+`crates/editor-platform-arboard`, or to a contract in
+`crates/editor-platform`. It uses the image, the cache and the volume of
+`linux-ci`, and runs five things under Xvfb, a display that needs no screen
+and no person, failing if any fails:
 
-1. the adapter's example, as `window-contract` runs it;
+1. the window adapter's example, as `window-contract` runs it;
 2. `editor window-check --seconds 5`, with xdotool giving the window the
    focus and typing a sentence and a dead key into it;
-3. the same with `--no-ime`.
+3. the same with `--no-ime`;
+4. the clipboard adapter's example, as `clipboard-contract` runs it: that
+   display's clipboard held to the clipboard port's contract, in one
+   process;
+5. a text written to the clipboard by one process and read by another,
+   while the first is still alive. One process cannot show this: on X11
+   the text is served by the process that wrote it.
 
 Its keys are synthetic. They go through the X server and the real window
 library, so they show the path a key takes on Linux, but nobody typed them:
-it is not the keyboard check above, and its output says so.
+it is not the keyboard check above, and its output says so. Its clipboard
+is the container's own: nothing of this machine's is read or written.
+
+**It is the required confirmation of what the gate cannot hold.** The gate
+has no clipboard, so the gate being green says nothing of a real one: that
+text written through the clipboard adapter is the text read back through it
+is confirmed by parts 4 and 5 here, and a change to the adapter is not done
+until this task exits 0, every part, on the tree that is to land.
+
+Under Xvfb there is no clipboard manager, so a text is gone from the
+clipboard when the process that wrote it ends. That is X11's rule and not
+the adapter's, and part 5 keeps the writer alive for it.
+
+It was run on 2026-11-14 (aarch64, Debian 13): all five parts passed. It
+has not been run on x86_64, and nothing here runs a Wayland compositor.
+
+## The clipboard, on demand
+
+**This has not been run on any desktop.** It was written for the owner to
+run; on Linux its two halves are parts 4 and 5 of `linux-window`, above,
+which ran in the container.
+
+```sh
+mise run clipboard-contract
+```
+
+**It writes the clipboard of the desktop it is started from.** It holds the
+system clipboard (`SystemClipboard` in `crates/editor-platform-arboard`) to
+the clipboard port's contract (`crates/editor-platform`,
+`clipboard::contract`), so it is not part of the gate, which only builds it:
+a real clipboard is the desktop's, and the gate leaves the machine as it
+found it. It is the example of `crates/editor-platform-arboard`
+(`examples/clipboard.rs`), run with `contract`.
+
+What it does to the clipboard: it keeps the text it finds there, writes
+four texts of its own, and puts the text it found back. **Only text is put
+back.** An image, a file or anything else that was on the clipboard is
+lost, and a clipboard that held no text is left holding the contract's
+last text, `a later text`.
+
+The steps:
+
+1. Copy something disposable, as text, so that nothing of value is on the
+   clipboard.
+2. Run `mise run clipboard-contract`.
+3. Expected: one line for each of the contract's four properties, each
+   beginning `clipboard-contract: holds:`; then `the text found on the
+   clipboard was put back`; then `the system clipboard keeps the clipboard
+   port's contract`; exit status 0.
+4. Paste somewhere: it is the text copied in step 1.
+
+A property that fails is printed with `FAILS` and the exit status is 1; so
+is a clipboard that could not be opened, with the reason.
+
+Not known, and for whoever runs it on macOS to write down here: whether the
+empty text written to the clipboard reads back as the empty text or as no
+text. The contract does not ask.
 
 ## The renderer on a real GPU, on demand
 
