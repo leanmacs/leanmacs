@@ -473,6 +473,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "editor-fuzzy"
+version = "0.1.0"
+
+[[package]]
 name = "editor-layout"
 version = "0.1.0"
 dependencies = [

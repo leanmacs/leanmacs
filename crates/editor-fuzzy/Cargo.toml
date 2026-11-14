@@ -1,0 +1,12 @@
+[package]
+name = "editor-fuzzy"
+version = "0.1.0"
+description = "Fuzzy matching: the Scorer port, with its fake and its contract, and the rule that orders the candidates a pattern matches"
+edition.workspace = true
+license.workspace = true
+publish = false
+
+# No dependency and no dev-dependency: the port names no matching library,
+# and the ranking rule is tested on a scorer written in its tests. The
+# library that scores is behind the port, in `editor-fuzzy-nucleo`.
+[dependencies]
