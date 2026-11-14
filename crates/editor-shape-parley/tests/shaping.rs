@@ -194,6 +194,46 @@ fn a_resolved_font_says_what_a_rasteriser_needs() {
 }
 
 #[test]
+fn a_weight_on_a_fonts_weight_axis_is_an_instance_of_the_face_and_no_synthesis() {
+    let shaper = shaper();
+    // The emoji fixture is the one that varies: it has a weight axis. So
+    // a bold emoji is the same face of the same file at another place on
+    // the axis, which its variation coordinates say, and nothing is made
+    // bolder after.
+    let bold_spec = FontSpec {
+        weight: Weight::BOLD,
+        ..FontSpec::default()
+    };
+    let emoji_in = |spec: &FontSpec| {
+        let font = shaper.font(spec);
+        let line = one_line(&shaper, &in_font("😀", font));
+        assert_eq!(line.glyphs.len(), 1);
+        (line.glyphs[0].font, font_of(&shaper, &line.glyphs[0]))
+    };
+    let (regular_id, regular) = emoji_in(&FontSpec::default());
+    let (bold_id, bold) = emoji_in(&bold_spec);
+    for font in [&regular, &bold] {
+        assert!(drawn_from(font, EMOJI));
+        assert_eq!((font.embolden, font.skew), (false, None), "{font:?}");
+    }
+    assert_eq!(
+        (bold.file, bold.index, bold.size),
+        (regular.file, regular.index, regular.size)
+    );
+    // The coordinates are what tells the two apart: the bold one has
+    // some, and they are not the regular one's.
+    assert!(!bold.coords.is_empty(), "{bold:?}");
+    assert_ne!(bold.coords, regular.coords);
+    // So they are two entries of the table, and each is found again by
+    // its coordinates: shaping either again adds none.
+    assert_ne!(bold_id, regular_id);
+    let described = shaper.resolved().len();
+    assert_eq!(emoji_in(&bold_spec).0, bold_id);
+    assert_eq!(emoji_in(&FontSpec::default()).0, regular_id);
+    assert_eq!(shaper.resolved().len(), described);
+}
+
+#[test]
 fn a_character_the_primary_lacks_is_drawn_in_the_fallback_that_covers_it() {
     let shaper = shaper();
     // Every byte is in the default font, whose family is the primary: it

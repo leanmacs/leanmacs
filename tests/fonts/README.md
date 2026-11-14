@@ -17,8 +17,8 @@ whole upstream files are 7.7 MB; these are 119 KB.
 
 ## What the tests rest on
 
-Four facts of these files, and no other: no test states a glyph id, an
-advance, an offset or a height of a font.
+Five facts of these files, and no other: no test states a glyph id, an
+advance, an offset, a variation coordinate or a height of a font.
 
 - Noto Sans has a ligature for `fi`: the two characters are one glyph.
 - Noto Sans has no glyph for U+65E5 (日), U+1F600 (😀) or U+0E01 (ก). Noto
@@ -28,6 +28,8 @@ advance, an offset or a height of a font.
   position: to the left of it, and no higher or lower.
 - Noto Sans draws the combining acute accent, U+0301, at its own height
   over `x`, and raises it over `X`.
+- Noto Emoji has a weight axis, and no other fixture varies: its bold is
+  a place on the axis, not the regular outlines made bolder.
 
 ## Where they come from
 

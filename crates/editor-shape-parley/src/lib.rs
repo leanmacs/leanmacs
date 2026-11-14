@@ -120,7 +120,10 @@
 //! - what shaping whole runs gives on real fonts: the `fi` ligature as one
 //!   glyph, a combining mark, two families on one line, and a spec's size,
 //!   weight, slant and line height reaching the font a glyph is drawn in
-//!   and the line's height (`tests/shaping.rs`).
+//!   and the line's height: a weight as a synthesis where the family has
+//!   no face of it, and as variation coordinates, which tell two entries
+//!   of the table apart, where the font has a weight axis
+//!   (`tests/shaping.rs`).
 //!
 //! - visual order: Latin then Hebrew in the order of the bidirectional
 //!   algorithm, written out by hand, the base direction, cluster order on
