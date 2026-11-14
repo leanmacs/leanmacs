@@ -234,7 +234,8 @@ need no model and no fake of a collaborator:
 - `invocationChecks`: an invocation (`Editor/Invocation.lean`): two are
   compared by their command names and their arguments;
 - `exLineChecks`: an ex line (`Editor/Ex/Line.lean`): the name and the
-  argument a typed line parses to;
+  argument a typed line parses to, and the invocation an ex binding makes
+  of an argument, by what the binding takes;
 - `schemeChecks`: the scheme interface (`Editor/InputScheme.lean`) on the
   test scheme (`Editor/InputScheme/Test.lean`), with keymaps written as key
   strings: what the keys of a bound sequence yield, that an unbound key
@@ -6017,7 +6018,8 @@ def invocationChecks : List Check :=
                 { command := "move", arguments := [.nat 2, .nat 1] })) }]
 
 /-- The checks of an ex line (`Editor/Ex/Line.lean`): what a line typed on
-the ex command line parses to. -/
+the ex command line parses to, and the invocation an ex binding makes of a
+line's argument. -/
 def exLineChecks : List Check :=
   let parsed (line : String) : Option (String × Option String) :=
     (Ex.parse line).map fun parsed => (parsed.name, parsed.argument)
@@ -6036,7 +6038,22 @@ def exLineChecks : List Check :=
         "an ex name is everything up to the first white space: a mark after letters is part of the name, and so is a leading colon"
       run := pure (parsed "w!" == some ("w!", none) && parsed ":w" == some (":w", none)) },
     { name := "the empty line and a line of white space are no ex line"
-      run := pure (parsed "" == none && parsed "  \t " == none) }]
+      run := pure (parsed "" == none && parsed "  \t " == none) },
+    { name :=
+        "an ex binding that takes nothing gives its command with no arguments for a line with no argument, and nothing for a line with one"
+      run :=
+        let binding : Ex.Binding := { name := "w", command := "write" }
+        pure
+          (binding.invocation? none == some { command := "write" } &&
+            binding.invocation? (some "notes.txt") == none) },
+    { name :=
+        "an ex binding that takes text gives its command with the line's argument as its first argument, a string, and its command with no arguments for a line with none"
+      run :=
+        let binding : Ex.Binding := { name := "e", command := "edit", takes := .text }
+        pure
+          (binding.invocation? (some "my notes.txt") ==
+              some { command := "edit", arguments := [.str "my notes.txt"] } &&
+            binding.invocation? none == some { command := "edit" }) }]
 
 /-- The key strings the scheme fixtures are written with. -/
 def schemeKeyStrings : List String :=

@@ -1,3 +1,5 @@
+import Editor.Invocation
+
 /-!
 # An ex line
 
@@ -28,11 +30,34 @@ Vim's rule, a run of letters and then the rest (`w!`, `e#`, `w>>file`),
 is not built: `!`, ranges and `#` are not, and a name config registers may
 hold what is no letter. The phase that builds `!` replaces the rule here.
 
+## The binding
+
+An ex name is bound to a command's name (`Ex.Binding`), as a key sequence
+is: it is no second kind of program. The binding says what the name takes
+after it (`Ex.Takes`): nothing, or text.
+
+`Binding.invocation?` is the invocation a line of the binding's name runs:
+
+- with no argument, the command with no arguments, whatever the binding
+  takes;
+- with an argument and a binding that takes text, the command with the
+  argument as its first argument, a string. That is where a prompt's
+  answer goes (`prompt`, `Editor/Api.lean`), so a command that asks for a
+  string when it is given none is an ex command as it stands;
+- with an argument and a binding that takes nothing, `none`: the line is
+  refused before anything runs, and the command is never handed a string
+  it would ignore.
+
+This module imports `Editor/Invocation.lean` alone, which is plain data, so
+the registry and the state requests import it without anything of the loop
+or the state.
+
 ## Where an addition goes
 
 | Addition | Where |
 |---|---|
 | A part of a line beside its name and argument (a range, `!`) | A field of `Ex.Line`, read by `Ex.parse` |
+| A kind of argument an ex name takes (a file) | A variant of `Ex.Takes`, with its case in `Binding.invocation?` |
 
 Pinned by `ModelTest.exLineChecks`.
 -/
@@ -61,5 +86,34 @@ def parse (line : String) : Option Line :=
     some
       { name := String.ofList name
         argument := if rest.isEmpty then none else some (String.ofList rest) }
+
+/-- What an ex name takes after it on the line. -/
+inductive Takes where
+  /-- Nothing: a line with an argument is refused. -/
+  | nothing
+  /-- Text: the line's argument, whole, or none. -/
+  | text
+  deriving DecidableEq, Repr
+
+/-- An ex binding: an ex name bound to a command's name, with what the name
+takes. -/
+structure Binding where
+  /-- The ex name. -/
+  name : String
+  /-- The name of the command the ex name runs, looked up when the line is
+  run. -/
+  command : String
+  /-- What the ex name takes after it. -/
+  takes : Takes := .nothing
+  deriving DecidableEq, Repr
+
+/-- The invocation a line of this binding's name with `argument` runs; `none`
+for an argument the binding does not take. -/
+def Binding.invocation? (binding : Binding) : Option String → Option Invocation
+  | none => some { command := binding.command }
+  | some argument =>
+    match binding.takes with
+    | .nothing => none
+    | .text => some { command := binding.command, arguments := [.str argument] }
 
 end Editor.Ex
