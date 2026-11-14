@@ -53,7 +53,7 @@ file says how.
 | Licence | GPL-3.0-or-later | 2026-11-09 |
 | Version control | In Lean, over subprocesses; the Rust library supplies text diff only | 2026-11-09 |
 | Concurrency | Serialized foreground commands plus background jobs on Lean's task system; cancellation and process ownership built by us | 2026-11-09, revised 2026-11-10 |
-| Rendering stack | wgpu on every platform, behind the `Renderer` port. Existing libraries are preferred even when immature (Parley, Vello), each behind a port; we write our own only where none fits | 2026-11-10 |
+| Rendering stack | wgpu on every platform, behind the `Renderer` port. Existing libraries are preferred even when immature (Parley), each behind a port; we write our own only where none fits. For drawing none fits: neither Vello nor glyphon draws subpixel text at its current version, so the glyph atlas and the quads are ours, on wgpu, with `swash` rasterising and `etagere` packing ([rendering-prior-art.md](rendering-prior-art.md), "The drawing library, as chosen"); the choice awaits the owner | 2026-11-10, revised 2026-11-13 |
 | How much we write | No library supplies the editor whole. Libraries cover the rope, shaping, drawing, the window, the terminal and parsing; the edit model, display layers, layout cache and frame building are ours | 2026-11-11 |
 | Interface model | Text is the only layout engine: blocks, tables, lists and popups are text; anything else (images, SVG, embedded terminals, nested text views) is a box that text layout places. No widget toolkit | 2026-11-11 |
 | Accessibility | Required. The tree is derived from the scene and layout as plain data, behind a port, with AccessKit as the planned adapter | 2026-11-11 |
