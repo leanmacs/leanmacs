@@ -77,6 +77,23 @@ are in `Editor/Files/Compiled.lean`.
   path, and what the save expects to find there, the stamp the buffer
   holds; and records the save as in flight (`BufferId.beginSave`), with
   the snapshot and the kept state.
+- **What it refuses, it says, and starts nothing**: a buffer there is none
+  of (`noBuffer`), a buffer that shows no file (`noFile`, with the
+  buffer's name), and a buffer whose save is in flight (`beingSaved`).
+  Two saves of one buffer in flight would both expect the stamp from
+  before the first, and the second would be refused as changed on disk
+  though nothing but the editor wrote the file; so the second is refused
+  when it is asked, with a message that says why. Queueing it to run
+  after the first is the alternative, and is more to build.
+- **A start that is refused is said, and records no save.** The job is
+  asked for before the save is recorded, and the save is recorded only
+  when the job will be started. Where no job is registered under the save
+  job's name, the command releases the snapshot it took and says so in
+  the echo area (`notSaving`): the buffer is never left "being saved" with
+  no job to end the save, and a later save is not refused for it.
+- **A forced save** (`Files.save id true`) expects whatever is there
+  (`File.Expect.whatever`), the port's override. Without it a buffer whose
+  file changed on disk could never be saved, since nothing reloads one.
 - **The job** (`saveWork`) saves the snapshot as the file (`File.save`)
   and finishes with the order and the reply. A refusal is a value in the
   reply: the job throws only for arguments that are not an order.
@@ -86,7 +103,9 @@ are in `Editor/Files/Compiled.lean`.
   save wrote and marks the kept state as saved; on a refusal it changes
   neither. The echo area then reads `wrote <path>` (`wrote`), or the
   refusal (`notSaved`): a file that changed on disk since it was loaded is
-  left as it is, and the buffer stays modified, with the stamp it had.
+  left as it is, and the buffer stays modified, with the stamp it had. A
+  buffer removed while its save ran has no save to end: what became of
+  the file is said all the same.
 - **Why the editor state keeps the save in flight**
   (`Editor/State.lean`, "A buffer's file").
   - The job's command then asks the text store nothing. A command that
@@ -294,6 +313,26 @@ def notSaved (path : System.FilePath) (error : FileError) : String :=
 def wrote (path : System.FilePath) : String :=
   s!"wrote {path}"
 
+/-- What the echo area says when the buffer called `name`, which shows no
+file, was to be saved. -/
+def noFile (name : String) : String :=
+  s!"{name} has no file to save to"
+
+/-- What the echo area says when a buffer there is none of was to be
+saved. -/
+def noBuffer : String :=
+  "no such buffer to save"
+
+/-- What the echo area says when the buffer whose file is at `path` was to
+be saved while a save of it is in flight. -/
+def beingSaved (path : System.FilePath) : String :=
+  s!"{path} is being saved"
+
+/-- What the echo area says when the job that saves `path` was not
+started. -/
+def notSaving (path : System.FilePath) (refusal : JobRefusal) : String :=
+  s!"cannot save {path}: {refusal.describe}"
+
 /-- The command a finished save job hands the loop: what the reply to the
 save of `order.buffer` becomes ("Save", in the module docs). It ends the
 save in flight with one state request (`BufferId.endSave`), which records
@@ -320,23 +359,42 @@ def saveWork (arguments : List Argument) : Work := fun _ => do
   return saved order (← File.save (.snapshot order.snapshot) order.path order.expect)
 
 /-- Saves the buffer `id` to its file: takes a snapshot of its text, starts
-the job that writes it, expecting the stamp the buffer holds, and records
-the save as in flight ("Save", in the module docs). -/
-def save (id : BufferId) : EditorM Unit := do
-  let some buffer := (← editorState).buffer? id | return
-  let some file := buffer.file | return
+the job that writes it, and records the save as in flight ("Save", in the
+module docs). The save expects the stamp the buffer holds, or, with
+`force`, whatever is there. It starts nothing, and says why in the echo
+area, for a buffer there is none of, for one with no file and while a save
+of the buffer is in flight. Where no save job is registered it says so,
+releases the snapshot it took, and records no save. -/
+def save (id : BufferId) (force : Bool := false) : EditorM Unit := do
+  let some buffer := (← editorState).buffer? id | message noBuffer
+  let some file := buffer.file | message (noFile buffer.name)
+  if file.saving.isSome then
+    message (beingSaved file.path)
+    return
   -- The state the snapshot is of: the tree told the text's revision, which
   -- is not recorded here.
   let state := (← buffer.history.sync).state
   let snapshot ← buffer.text.snapshot
   let order : SaveOrder :=
-    { buffer := id, snapshot, path := file.path, expect := .unchanged file.stamp }
-  let .ok () ← startJob saveJob order.arguments | return
-  discard <| id.beginSave snapshot state
+    { buffer := id, snapshot, path := file.path
+      expect := if force then .whatever else .unchanged file.stamp }
+  -- The job is asked for before the save is recorded, and the save is
+  -- recorded only when the job will be started: a buffer is never left
+  -- "being saved" with no job to end the save.
+  match ← startJob saveJob order.arguments with
+  | .error refusal =>
+    snapshot.release
+    message (notSaving file.path refusal)
+  | .ok () =>
+    -- Not refused: this command read the buffer, with a file and no save
+    -- in flight, and no other command runs between its requests.
+    discard <| id.beginSave snapshot state
 
 /-- The save command as it is called: saves the buffer of the window it was
-called with. -/
+called with, forced when its first argument is `true`. Its other arguments
+are ignored: an input scheme hands a command a key is bound to arguments of
+its own, a count and a register. -/
 def saveCommand (call : Call) : EditorM Unit :=
-  save call.target.window.buffer
+  save call.target.window.buffer (call.arguments.head? == some (.bool true))
 
 end Editor.Files

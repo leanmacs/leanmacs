@@ -481,6 +481,36 @@ transaction through. Where those come from is open.
   the load's result, by the queue's order. Every refusal of the file port
   takes that one route to the echo area. A start that is refused, where no
   job is registered under the name, is said there too.
+- **Saving a buffer takes the same route** (`Files.save`), with one thing
+  more, a record in the editor state:
+  - the command takes a snapshot of the buffer's text, keeps the state its
+    undo tree is in, starts the job `save-file` with an order (the buffer,
+    the snapshot, the path, and the stamp the buffer holds as what the
+    save expects), and records the save as in flight on the buffer;
+  - the job saves the snapshot and finishes with the order and the reply;
+  - the job's command makes one state request, which ends the save in
+    flight: given the stamp the save answered, it records the stamp and
+    marks the kept state as saved; given a refusal, neither. It then says
+    `wrote <path>`, or `cannot save <path>: ` and the refusal's sentence.
+
+  **A save's result cannot be interrupted.** The job's command makes state
+  requests alone, which are answered without asking the flag ("A state
+  request is answered without asking"), so the interrupt key arriving as
+  the result is delivered cannot leave a file written and a buffer that
+  does not know it. That is why the snapshot is released by the loop,
+  after the command, and not by the command: a release is a request of
+  the text store, where a command can be stopped. The record also refuses
+  a second save of the buffer while one is in flight, when it is asked: it
+  would expect the stamp from before the first and be refused as changed
+  on disk though nothing but the editor wrote the file.
+
+  **A save that is not started records nothing.** The command asks for the
+  job before it records the save, and records it only when the job will be
+  started; where no job is registered under the name it releases its
+  snapshot and says so. A buffer is never left "being saved" with no job
+  to end the save. A compiled job is not cancelled by a reload and returns
+  every refusal as a value, so a save that was started is ended unless the
+  loop itself ends first.
 
 ### Structured lifetimes
 

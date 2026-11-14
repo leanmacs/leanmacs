@@ -692,10 +692,28 @@ the text port: the undo tree (`lean/Editor/UndoTree.lean`, decided
   refusal; and the job's command marks that kept state saved on a stamp,
   and keeps the stamp for the next save to expect, or reports the refusal
   and marks nothing. It is built and played by hand as cases on the models
-  and on the library (`lean/Editor/File/Cases.lean`). A command that starts
-  a job with arguments is built (`startJob`, `lean/Editor/Api.lean`);
-  where a buffer keeps its path, stamp and line ending, and the save
-  command, are the command loop's phase 9.
+  and on the library (`lean/Editor/File/Cases.lean`), and built as the
+  save command (`Files.save`, `lean/Editor/Files.lean`; the command loop's
+  phase 9), as follows.
+  - *The command* takes the snapshot and keeps the tree's state, starts
+    the job `save-file` with them as plain arguments, expecting the stamp
+    the buffer holds, and records the save as in flight in the editor
+    state: the snapshot and the kept state, on the buffer's file.
+  - *The job's command* makes one state request, which ends the save in
+    flight: with the stamp the save answered it records the stamp and
+    marks the kept state saved, and for a refusal it changes neither. It
+    then says `wrote <path>` or the refusal in the echo area.
+  - *Why the state keeps the save in flight.* The job's command then asks
+    the text store nothing, and a command of state requests alone cannot
+    be interrupted or refused: the interrupt key arriving as a save's
+    result is delivered cannot leave a file written and a buffer that
+    does not know it. And a second save while one is in flight, which
+    would expect the stamp from before the first and be refused as changed
+    on disk, is refused when it is asked, with a message that says why.
+  - *The snapshot is the loop's to release*, once the job's command has
+    run to its end, with whatever else a finished command gave up.
+  - *A forced save* expects whatever is there. Without it a buffer whose
+    file changed on disk could never be saved, since nothing reloads one.
 - *Other styles* are written over the same two requests: a linear history
   is two lists of runs; Vim's is this tree with moves by the order nodes
   were made and a time on each; Emacs's records the revision an inverse

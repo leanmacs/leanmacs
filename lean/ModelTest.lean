@@ -8887,22 +8887,39 @@ def opens (path : System.FilePath) : Invocation :=
 `openKeys`, each bound to the open command with its path, `C-o o` bound to
 the open command with no argument, and the open command under its name.
 
-`C-o w` is bound to the save command, under its name.
+`C-o w` is bound to the save command, under its name, `C-o f` to the save
+command with `true` as its argument, and `C-o v` to the save command with
+the arguments the Vim scheme gives a command a key is bound to, a count
+and a register.
 
-Three more commands, written here, move the windows about: `scratch`
-(`C-o 0`) shows the scratch buffer in the window it is called with, `split`
-(`C-o s`) splits that window and focuses the new one, and `close` (`C-o k`)
-closes it. -/
+Five more commands, written here: `scratch` (`C-o 0`) shows the scratch
+buffer in the window it is called with, `split` (`C-o s`) splits that
+window and focuses the new one, `close` (`C-o k`) closes it, `undo`
+(`C-o u`) undoes one step of its buffer's history, `drop` (`C-o d`) removes
+the buffer 1, the first a file is opened into, and `save-absent` (`C-o x`)
+saves a buffer there is none of. -/
 def fileKeys : Loop.Keys TestScheme.scheme :=
   dispatchKeys
     (openKeys.map (fun (text, path) => (text, opens path)) ++
       [("C-o o", invoke Files.openName), ("C-o 0", invoke "scratch"), ("C-o s", invoke "split"),
-        ("C-o k", invoke "close"), ("C-o w", invoke Files.saveName)])
+        ("C-o k", invoke "close"), ("C-o w", invoke Files.saveName),
+        ("C-o f", { command := Files.saveName, arguments := [.bool true] }),
+        ("C-o v", { command := Files.saveName, arguments := [.nat 0, .str ""] }),
+        ("C-o u", invoke "undo"), ("C-o d", invoke "drop"), ("C-o x", invoke "save-absent")])
     [(Files.openName, fun call => do
         Files.openCommand call
         return none),
       (Files.saveName, fun call => do
         Files.saveCommand call
+        return none),
+      ("undo", fun call => do
+        discard <| call.target.window.buffer.undo
+        return none),
+      ("drop", fun _ => do
+        discard <| (⟨1⟩ : BufferId).remove
+        return none),
+      ("save-absent", fun _ => do
+        Files.save ⟨9⟩
         return none),
       ("scratch", fun call => do
         discard <| call.target.window.id.show ⟨0⟩
@@ -9365,7 +9382,138 @@ def fileCommandChecks : List Check :=
                     [.nat 1, .nat 2, .str "/a", .str "absent", .nat 1],
                     [.str "/a", .nat 1, .nat 2, .str "absent"]].all
                 (fun arguments => Files.SaveOrder.ofArguments? arguments == none) &&
-            ((Files.saveWork [.nat 1] ()).runModel { files := commandFiles }).1 matches .failed _ }]
+            ((Files.saveWork [.nat 1] ()).runModel { files := commandFiles }).1 matches .failed _ },
+    { name :=
+        "the save command on a buffer with no file says so in the echo area, by the buffer's name, starts no job and takes no snapshot; saving a buffer there is none of says so too"
+      run :=
+        pure <|
+          match filesDriver with
+          | none => false
+          | some driver =>
+            let (shown, _) := fedTo driver [pressF5]
+            let (asked, steps) := fedTo shown (presses "C-o w")
+            let (absent, absentSteps) := fedTo shown (presses "C-o x")
+            match (showing driver).map (·.buffer.name) with
+            | none => false
+            | some name =>
+              started steps == #[] && asked.pending.isEmpty &&
+                echoOf asked == some (Files.noFile name) &&
+                asked.model.texts.snapshots.size == shown.model.texts.snapshots.size &&
+                started absentSteps == #[] &&
+                echoOf absent == some Files.noBuffer &&
+                absent.model.texts.snapshots.size == shown.model.texts.snapshots.size &&
+                Files.noBuffer != Files.noFile name },
+    { name :=
+        "a second save while one is in flight is refused when it is asked: the echo area says the file is being saved, no second job is started and no snapshot is taken, and once the first is finished the buffer is saved once, not modified, with the stamp the files have"
+      run :=
+        pure <|
+          match noteOpen with
+          | none => false
+          | some opened =>
+            let path := inFiles "note.txt"
+            let (saving, _) := fedTo opened ([.commit "x"] ++ presses "C-o w")
+            let (again, steps) := fedTo saving (presses "C-o w")
+            let (saved, _) := again.finish 2
+            started steps == #[] && again.pending.size == 1 &&
+              echoOf again == some (Files.beingSaved path) &&
+              again.model.texts.snapshots.size == saving.model.texts.snapshots.size &&
+              heldFile again == heldFile saving &&
+              (showing saved).map (·.buffer.isModified) == some false &&
+              (heldFile saved).map (fun file => (some file.stamp, file.saving)) ==
+                some (stampOf saved path, none) &&
+              saved.jobs.files.writes == opened.jobs.files.writes + 1 &&
+              echoOf saved == some (Files.wrote path) },
+    { name :=
+        "a save that reports late marks the state it wrote: a commit fed between the save command and its job's end leaves the buffer modified once the job is finished, with the new stamp, and one undo, back to the state that was written, leaves it not modified"
+      run :=
+        pure <|
+          match noteOpen with
+          | none => false
+          | some opened =>
+            let path := inFiles "note.txt"
+            let (saving, _) := fedTo opened ([.commit "x"] ++ presses "C-o w")
+            let (typed, _) := fedTo saving [.commit "y"]
+            let (saved, _) := typed.finish 2
+            let (undone, _) := fedTo saved (presses "C-o u")
+            bytesOf saved path == some (FileModel.encode ("x" ++ FileCases.noteText)) &&
+              (showing saved).bind (·.text) == some ("xy" ++ FileCases.noteText) &&
+              (showing saved).map (·.buffer.isModified) == some true &&
+              (heldFile saved).map (fun file => (some file.stamp, file.saving)) ==
+                some (stampOf saved path, none) &&
+              statusOf saved == some (namedModified "note.txt") &&
+              (showing undone).bind (·.text) == some ("x" ++ FileCases.noteText) &&
+              (showing undone).map (·.buffer.isModified) == some false &&
+              statusOf undone == some (named "note.txt") },
+    { name :=
+        "a forced save writes over a file that changed on disk: with the file written by another program since it was opened, the save command with true as its argument writes the buffer's text as the file, and the buffer is not modified, with the new stamp; with the arguments the Vim scheme gives a bound command it is a plain save, and is refused as changed on disk"
+      run :=
+        pure <|
+          match noteOpen with
+          | none => false
+          | some opened =>
+            let path := inFiles "note.txt"
+            let text := "x" ++ FileCases.noteText
+            let (edited, _) := fedTo (rewritten opened path JobContract.otherFile) [.commit "x"]
+            let (forcing, steps) := fedTo edited (presses "C-o f")
+            let (forced, _) := forcing.finish 2
+            let (plain, _) := fedTo edited (presses "C-o v")
+            let (refused, _) := plain.finish 2
+            (started steps).map
+                  (fun start => (Files.SaveOrder.ofArguments? start.arguments).map (·.expect)) ==
+                #[some .whatever] &&
+              bytesOf forced path == some (FileModel.encode text) &&
+              (showing forced).map (·.buffer.isModified) == some false &&
+              (heldFile forced).map (fun file => (some file.stamp, file.saving)) ==
+                some (stampOf forced path, none) &&
+              echoOf forced == some (Files.wrote path) &&
+              bytesOf refused path == some JobContract.otherFile &&
+              echoOf refused == some (Files.notSaved path (.changed (stampOf edited path))) &&
+              (showing refused).map (·.buffer.isModified) == some true },
+    { name :=
+        "the save command where no save job is registered says so in the echo area, by the job's name, and leaves no save in flight: nothing is started, the snapshot it took is released, the buffer is as it was, and once the job is registered the buffer is saved"
+      run :=
+        pure <|
+          match
+            (filesDriver fun name =>
+                  if name == Files.loadJob then fileJobs Files.limit name else none).map
+              fun driver => ((fedTo driver (presses "C-o n")).1.finish 1).1 with
+          | none => false
+          | some opened =>
+            let path := inFiles "note.txt"
+            let (edited, _) := fedTo opened [.commit "x"]
+            let (asked, steps) := fedTo edited (presses "C-o w")
+            let registered : TestDriver := { asked with registered := fileJobs }
+            let (saving, _) := fedTo registered (presses "C-o w")
+            let (saved, _) := saving.finish 2
+            let live (driver : TestDriver) := (driver.model.texts.snapshots.filterMap id).size
+            started steps == #[] && asked.pending.isEmpty &&
+              echoOf asked == some (Files.notSaving path (.noSuchJob Files.saveJob)) &&
+              Files.notSaving path (.noSuchJob Files.saveJob) != Files.notSaved path .notFound &&
+              heldFile asked == heldFile edited &&
+              (heldFile asked).map (·.saving) == some none &&
+              asked.model.texts.snapshots.size == edited.model.texts.snapshots.size + 1 &&
+              live asked == live edited &&
+              bytesOf asked path == some FileCases.noteBytes &&
+              echoOf saved == some (Files.wrote path) &&
+              (showing saved).map (·.buffer.isModified) == some false &&
+              bytesOf saved path == some (FileModel.encode ("x" ++ FileCases.noteText)) },
+    { name :=
+        "a buffer removed while its save runs: the file is written, the delivery says so in the echo area and is not refused, and the buffer stays removed"
+      run :=
+        pure <|
+          match noteOpen with
+          | none => false
+          | some opened =>
+            let path := inFiles "note.txt"
+            let (saving, _) := fedTo opened ([.commit "x"] ++ presses "C-o w")
+            let (removed, _) := fedTo saving (presses "C-o 0 C-o d")
+            let (saved, delivered) := removed.finish 2
+            removed.loop.state.buffer? ⟨1⟩ == none &&
+              (delivered.map (·.ended)) == some (some .finished) &&
+              echoOf saved == some (Files.wrote path) &&
+              bytesOf saved path == some (FileModel.encode ("x" ++ FileCases.noteText)) &&
+              saved.loop.state.buffers == removed.loop.state.buffers &&
+              saved.loop.state.wellFormed }]
 
 /-- Every check, in the order they run.
 
