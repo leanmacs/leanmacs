@@ -91,14 +91,18 @@ pub struct HeadlessRenderer {
     painter: Painter<SwashRasterizer>,
     /// The picture of the frame last drawn.
     image: Image,
+    /// How much the coverage of dark text is raised ([`Weight::contrast`]).
+    contrast: f32,
 }
 
 impl HeadlessRenderer {
     /// A renderer that has drawn nothing: its picture is of no size.
     pub fn new(settings: Settings) -> Self {
+        let rasterizer = SwashRasterizer::dilated(settings.weight.dilation);
         Self {
-            painter: Painter::new(SwashRasterizer::new(), &settings, true, PAGE_SIZE),
+            painter: Painter::new(rasterizer, &settings, true, PAGE_SIZE),
             image: cpu::cleared(0, 0),
+            contrast: settings.weight.contrast,
         }
     }
 
@@ -261,9 +265,10 @@ impl WgpuRenderer {
         device: Result<gpu::Device, gpu::Unavailable>,
         settings: Settings,
     ) -> Result<Self, NoAdapter> {
-        let device = device.map_err(|gpu::Unavailable(reason)| NoAdapter { reason })?;
+        let mut device = device.map_err(|gpu::Unavailable(reason)| NoAdapter { reason })?;
+        device.contrast = settings.weight.contrast;
         let painter = Painter::new(
-            SwashRasterizer::new(),
+            SwashRasterizer::dilated(settings.weight.dilation),
             &settings,
             device.per_channel(),
             PAGE_SIZE,
@@ -348,7 +353,12 @@ impl Renderer for HeadlessRenderer {
         let target = request.target;
         let drawn = self.painter.paint(request.frame, target);
         self.image = cpu::cleared(target.width, target.height);
-        cpu::composite(&mut self.image, self.painter.quads(), self.painter.atlas());
+        cpu::composite(
+            &mut self.image,
+            self.painter.quads(),
+            self.painter.atlas(),
+            self.contrast,
+        );
         Drawn {
             presented: true,
             ..drawn
@@ -379,7 +389,12 @@ pub enum Antialiasing {
 }
 
 /// What a renderer of this crate is told once, when it is made.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+///
+/// The default draws text in linear light, its outlines as they are
+/// ([`Weight::LINEAR`]). Which weight a program draws with is the
+/// program's choice, made where it wires the renderer: nothing in this
+/// crate asks which system it runs on.
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Settings {
     /// How glyphs are antialiased.
     pub antialiasing: Antialiasing,
@@ -388,6 +403,8 @@ pub struct Settings {
     /// How many bytes the pages of the glyph atlas may come to. Glyphs in
     /// use are kept past it (the module `glyphs`, "The bound").
     pub atlas_budget: u64,
+    /// How heavy text is drawn.
+    pub weight: Weight,
 }
 
 impl Default for Settings {
@@ -396,7 +413,36 @@ impl Default for Settings {
             antialiasing: Antialiasing::Auto,
             hinting: true,
             atlas_budget: DEFAULT_ATLAS_BUDGET,
+            weight: Weight::LINEAR,
         }
+    }
+}
+
+/// How heavy text is drawn: what is added to a glyph's coverage beyond
+/// its outline, on the CPU and the GPU alike.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Weight {
+    /// How much the coverage of dark text on a light ground is raised,
+    /// from 0 (none) to 1; past 1 the adjustment is no longer a coverage
+    /// (the module `blend`).
+    pub contrast: f32,
+    /// How many pixels thicker each stem is drawn than its outline, as a
+    /// stroke laid around it; 0 dilates nothing.
+    pub dilation: f32,
+}
+
+impl Weight {
+    /// Linear light, the outline as it is: what every platform gets unless
+    /// its program says otherwise.
+    pub const LINEAR: Weight = Weight {
+        contrast: blend::CONTRAST,
+        dilation: 0.0,
+    };
+}
+
+impl Default for Weight {
+    fn default() -> Self {
+        Self::LINEAR
     }
 }
 

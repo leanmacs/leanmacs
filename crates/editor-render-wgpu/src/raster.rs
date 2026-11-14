@@ -40,16 +40,34 @@ use crate::glyphs::{GlyphImage, GlyphRequest, Kind, Rasterize, SUBPIXEL_BINS};
 pub const EMBOLDEN: f32 = 1.0 / 32.0;
 
 /// The rasteriser over swash.
-#[derive(Default)]
 pub struct SwashRasterizer {
     /// What swash keeps between glyphs.
     context: ScaleContext,
+    /// How many pixels thicker each stem is drawn than its outline
+    /// (`Weight::dilation`).
+    dilation: f32,
 }
 
 impl SwashRasterizer {
-    /// A rasteriser that has made nothing.
+    /// A rasteriser that has made nothing, and draws each outline as it
+    /// is: [`SwashRasterizer::dilated`] at 0. The renderers make theirs
+    /// from their settings, so only the tests ask for this one.
+    #[cfg(test)]
     pub fn new() -> Self {
-        Self::default()
+        Self::dilated(0.0)
+    }
+
+    /// A rasteriser that has made nothing, and draws each stem
+    /// `dilation` pixels thicker than its outline: the outline is
+    /// stroked as swash's `embolden` does it, FreeType's
+    /// `FT_Outline_EmboldenXY` without that function's halving of the
+    /// strength, so each edge moves out by the whole strength, and a
+    /// stem `dilation` thicker is a strength of half of it.
+    pub fn dilated(dilation: f32) -> Self {
+        Self {
+            context: ScaleContext::new(),
+            dilation,
+        }
     }
 }
 
@@ -84,8 +102,21 @@ impl Rasterize for SwashRasterizer {
         // the glyph is drawn.
         let across = f32::from(key.bin) / f32::from(SUBPIXEL_BINS);
         render.format(format).offset(Vector::new(across, 0.0));
-        if font.embolden {
-            render.embolden(font.size * EMBOLDEN);
+        // A synthetic bold and the dilation add. At none, swash is not
+        // asked to embolden, so an outline is drawn as it was before
+        // there was a dilation.
+        let bold = if font.embolden {
+            font.size * EMBOLDEN
+        } else {
+            0.0
+        };
+        let strength = if self.dilation > 0.0 {
+            bold + self.dilation / 2.0
+        } else {
+            bold
+        };
+        if strength > 0.0 {
+            render.embolden(strength);
         }
         render.transform(
             font.skew
@@ -110,27 +141,10 @@ impl Rasterize for SwashRasterizer {
 #[cfg(test)]
 pub(crate) mod measure {
     //! What the measurement of a run's weight (`crate::weight_tests`)
-    //! asks of swash, kept here so that swash is named by this module
-    //! alone: a glyph's id, and a glyph's plain mask with its outline
-    //! made thicker by an amount the measurement sweeps.
+    //! asks of a font, kept here so that swash is named by this module
+    //! alone: a glyph's id and its advance.
 
-    //!
-    //! The mask is made as [`SwashRasterizer`](super::SwashRasterizer)
-    //! makes a plain one at bin 0, which the measurement's first test
-    //! holds it to, and the outline made thicker as swash's `embolden`
-    //! does it: FreeType's `FT_Outline_EmboldenXY`, ported without that
-    //! function's halving of the strength, so that each edge of a stem
-    //! moves out by the whole strength. A stem `growth` pixels thicker is
-    //! a strength of half of `growth`.
-
-    use editor_layout::shaper::ResolvedFont;
     use swash::FontRef;
-    use swash::scale::image::Content;
-    use swash::scale::{Render, ScaleContext, Source};
-    use swash::zeno::{Format, Vector};
-
-    use super::bytes;
-    use crate::glyphs::{GlyphImage, Kind};
 
     /// The id of the glyph the font `bytes` draws `character` with, read
     /// from the font's own character map.
@@ -141,29 +155,12 @@ pub(crate) mod measure {
         u32::from(glyph)
     }
 
-    /// The plain mask, at bin 0, of `glyph` in face 0 of `font`, fitted
-    /// to the pixel grid or not as `hint` says, with each stem `growth`
-    /// pixels thicker than the font draws it.
-    pub fn mask(font: &ResolvedFont, glyph: u32, hint: bool, growth: f32) -> GlyphImage {
-        let face = FontRef::from_index(bytes(font), 0).expect("a fixture font");
-        let mut context = ScaleContext::new();
-        let mut scaler = context.builder(face).size(font.size).hint(hint).build();
-        let mut render = Render::new(&[Source::Outline]);
-        render.format(Format::Alpha).offset(Vector::new(0.0, 0.0));
-        if growth > 0.0 {
-            render.embolden(growth / 2.0);
-        }
+    /// How far `glyph` of the font `bytes` moves the pen at `size`
+    /// pixels to the em, read from the font's own metrics.
+    pub fn advance_of(bytes: &[u8], glyph: u32, size: f32) -> f32 {
+        let face = FontRef::from_index(bytes, 0).expect("a fixture font");
         let glyph = u16::try_from(glyph).expect("a glyph of 16 bits");
-        let image = render.render(&mut scaler, glyph).expect("an image");
-        assert_eq!(image.content, Content::Mask);
-        GlyphImage {
-            kind: Kind::Mask,
-            width: image.placement.width,
-            height: image.placement.height,
-            left: image.placement.left,
-            top: image.placement.top,
-            data: image.data,
-        }
+        face.glyph_metrics(&[]).scale(size).advance_width(glyph)
     }
 }
 
@@ -409,5 +406,112 @@ mod tests {
         // glyph and draws nothing for it.
         let last = image(&resolved(SANS), key(u32::from(u16::MAX)));
         assert!(last.is_none_or(|made| made.width * made.height == 0));
+    }
+
+    /// Noto Sans Mono, the stand-in for Menlo.
+    const MONO: &[u8] = include_bytes!("../../../tests/fonts/NotoSansMono-Regular.subset.ttf");
+
+    /// Noto Sans Mono at 28 pixels, Menlo 14 pt at scale 2.
+    fn mono() -> ResolvedFont {
+        ResolvedFont {
+            size: 28.0,
+            ..resolved(MONO)
+        }
+    }
+
+    /// The plain mask at bin 0 of the glyph `font` draws `character`
+    /// with, made by `rasterizer`, hinted as `hint` says.
+    fn made_by(
+        rasterizer: &mut SwashRasterizer,
+        font: &ResolvedFont,
+        bytes: &[u8],
+        character: char,
+        hint: bool,
+    ) -> GlyphImage {
+        rasterizer
+            .rasterize(&GlyphRequest {
+                font,
+                key: key(glyph_of(bytes, character)),
+                hint,
+            })
+            .expect("an image")
+    }
+
+    /// How wide the stem of `|` is, in pixels, at the middle row of
+    /// `image`: its coverage summed across that row.
+    fn stem(image: &GlyphImage) -> f32 {
+        let width = image.width as usize;
+        let middle = image.height as usize / 2;
+        let row = &image.data[middle * width..(middle + 1) * width];
+        row.iter().map(|byte| f32::from(*byte)).sum::<f32>() / 255.0
+    }
+
+    #[test]
+    fn a_rasteriser_that_dilates_nothing_is_the_plain_one() {
+        let font = mono();
+        for character in "the window draws this".chars() {
+            for hint in [true, false] {
+                assert_eq!(
+                    made_by(
+                        &mut SwashRasterizer::dilated(0.0),
+                        &font,
+                        MONO,
+                        character,
+                        hint
+                    ),
+                    made_by(&mut SwashRasterizer::new(), &font, MONO, character, hint),
+                    "{character:?} {hint}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn a_growth_makes_a_stem_that_many_pixels_thicker() {
+        let font = mono();
+        let plain = stem(&made_by(
+            &mut SwashRasterizer::new(),
+            &font,
+            MONO,
+            '|',
+            false,
+        ));
+        for growth in [0.3, 0.6, 1.0] {
+            let grown = stem(&made_by(
+                &mut SwashRasterizer::dilated(growth),
+                &font,
+                MONO,
+                '|',
+                false,
+            ));
+            assert!(
+                (grown - plain - growth).abs() < 0.02,
+                "{growth}: {plain} to {grown}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_dilated_synthetic_bold_is_thicker_than_either_alone() {
+        let font = mono();
+        let bold = ResolvedFont {
+            embolden: true,
+            ..mono()
+        };
+        let width = |rasterizer: &mut SwashRasterizer, font: &ResolvedFont| {
+            stem(&made_by(rasterizer, font, MONO, '|', false))
+        };
+        let plain = width(&mut SwashRasterizer::new(), &font);
+        let dilated = width(&mut SwashRasterizer::dilated(0.6), &font);
+        let emboldened = width(&mut SwashRasterizer::new(), &bold);
+        let both = width(&mut SwashRasterizer::dilated(0.6), &bold);
+        assert!(
+            dilated > plain && emboldened > plain,
+            "{plain} {dilated} {emboldened}"
+        );
+        assert!(
+            both > dilated && both > emboldened,
+            "{dilated} {emboldened} {both}"
+        );
     }
 }

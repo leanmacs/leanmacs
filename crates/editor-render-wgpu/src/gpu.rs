@@ -81,13 +81,12 @@
 use std::collections::HashMap;
 use std::fmt;
 
-use crate::Image;
 use crate::atlas::{Atlas, PageView};
-use crate::blend::CONTRAST;
 use crate::cpu::CLEAR;
 use crate::glyphs::Kind;
 use crate::quads::{Quad, QuadKind};
 use crate::surface::{Answer, Calls, State};
+use crate::{Image, Weight};
 
 /// The body of the shader, shared by both blends.
 const SHADER: &str = include_str!("shader.wgsl");
@@ -261,6 +260,24 @@ pub struct Device {
     target: Option<TargetTexture>,
     /// The window's surface, when it draws on one.
     window: Option<Window>,
+    /// How much the coverage of dark text is raised, for the shader: the
+    /// renderer's `Weight::contrast`, which it sets once it has the
+    /// device, and the default weight's until it does.
+    pub contrast: f32,
+}
+
+/// The bytes of the shader's globals: the target's size, `width` by
+/// `height`, then `contrast`, then a float unused, each in the machine's
+/// byte order.
+fn globals(width: u32, height: u32, contrast: f32) -> [u8; 16] {
+    let mut bytes = [0; 16];
+    for (at, value) in [width as f32, height as f32, contrast, 0.0]
+        .into_iter()
+        .enumerate()
+    {
+        bytes[at * 4..at * 4 + 4].copy_from_slice(&value.to_ne_bytes());
+    }
+    bytes
 }
 
 /// Waits for `future`, which wgpu resolves without an executor.
@@ -453,6 +470,7 @@ impl Device {
             instances: None,
             target: None,
             window,
+            contrast: Weight::LINEAR.contrast,
         })
     }
 
@@ -562,11 +580,8 @@ impl Device {
     /// them 0. The error says why the window's surface gave no texture.
     fn draw_on(&mut self, quads: &[Quad], width: u32, height: u32) -> Result<(), String> {
         let (view, presented) = self.canvas(width, height)?;
-        let mut globals = Vec::with_capacity(16);
-        for value in [width as f32, height as f32, CONTRAST, 0.0] {
-            globals.extend_from_slice(&value.to_ne_bytes());
-        }
-        self.queue.write_buffer(&self.globals, 0, &globals);
+        let written = globals(width, height, self.contrast);
+        self.queue.write_buffer(&self.globals, 0, &written);
 
         let (bytes, runs) = instances(quads, |page| self.pages.contains_key(&page));
         let needed = bytes.len() as u64;

@@ -15,10 +15,10 @@
 //! channels; a subpixel mask has one for each, which is what makes text
 //! sharper on a display whose pixels are stripes of red, green and blue.
 //!
-//! [`blend`] and [`source`] are that arithmetic, stated once. The CPU
-//! compositor calls them for every pixel, and the GPU's shader states the
-//! same expressions: on a GPU, blending a colour by a coverage for each
-//! channel is dual-source blending, the colour as one output and the
+//! [`blend`] and [`source_with`] are that arithmetic, stated once. The
+//! CPU compositor calls them for every pixel, and the GPU's shader states
+//! the same expressions: on a GPU, blending a colour by a coverage for
+//! each channel is dual-source blending, the colour as one output and the
 //! coverages as the other.
 //!
 //! # Which antialiasing
@@ -29,12 +29,13 @@
 //! A device that cannot blend by a coverage for each channel gets plain
 //! masks whatever the setting.
 //!
-//! # What is not tuned
+//! # The contrast
 //!
 //! [`adjusted`] raises the coverage of dark text on a light ground, which
-//! otherwise looks thin once blending is in linear light. Its amount,
-//! [`CONTRAST`], is a placeholder of 0, which leaves every coverage as it
-//! is: the right amount can only be judged by a person at a display.
+//! otherwise looks thin once blending is in linear light. Its amount is a
+//! renderer's setting (`Weight::contrast`), passed to [`source_with`] and
+//! to the shader alike. The default weight's, [`CONTRAST`], is 0, which
+//! leaves every coverage as it is.
 
 use std::sync::LazyLock;
 
@@ -43,8 +44,8 @@ use editor_layout::face::Color;
 use crate::quads::QuadKind;
 use crate::{Antialiasing, SubpixelOrder};
 
-/// How much the coverage of dark text is raised ([`adjusted`]). A
-/// placeholder: 0 raises nothing.
+/// How much the coverage of dark text is raised ([`adjusted`]) by the
+/// default weight (`Weight::LINEAR`): 0, which raises nothing.
 pub const CONTRAST: f32 = 0.0;
 
 /// The scale from which `Antialiasing::Auto` gives plain masks.
@@ -124,13 +125,26 @@ pub struct Source {
 /// What a quad of `kind` and `color` lays over a pixel at which its
 /// atlas page reads `texel`: for a fill, which reads no page, `texel` is
 /// not looked at; for a mask only its first byte is.
+///
+/// It is [`source_with`] at the default weight's [`CONTRAST`], and only
+/// the tests ask for it.
+#[cfg(test)]
 pub fn source(kind: QuadKind, color: Color, texel: [u8; 4]) -> Source {
+    source_with(kind, color, texel, CONTRAST)
+}
+
+/// What a quad of `kind` and `color` lays over a pixel at which its
+/// atlas page reads `texel`, with the coverage of text raised by
+/// `contrast` ([`adjusted`]): a renderer's setting (`Weight::contrast`).
+/// For a fill, which reads no page, `texel` is not looked at; for a mask
+/// only its first byte is.
+pub fn source_with(kind: QuadKind, color: Color, texel: [u8; 4], contrast: f32) -> Source {
     let [red, green, blue, alpha] = color.0.to_be_bytes();
     let rgb = [to_linear(red), to_linear(green), to_linear(blue)];
     let alpha = unit(alpha);
     // The coverage of text, adjusted for its colour and held back by the
     // colour's alpha.
-    let text = |mask: u8| adjusted(unit(mask), luminance(rgb), CONTRAST) * alpha;
+    let text = |mask: u8| adjusted(unit(mask), luminance(rgb), contrast) * alpha;
     match kind {
         QuadKind::Fill => Source {
             rgb,
@@ -189,6 +203,7 @@ mod tests {
     use editor_layout::face::Color;
 
     use super::{CONTRAST, adjusted, blend, source, stripes, to_linear, to_srgb};
+    use super::{Source, source_with};
     use crate::quads::QuadKind;
     use crate::{Antialiasing, SubpixelOrder};
 
@@ -377,6 +392,70 @@ mod tests {
         assert_eq!(adjusted(1.0, 0.0, 1.0), 1.0);
         // The amount in use is the placeholder.
         assert_eq!(CONTRAST, 0.0);
+    }
+
+    /// A sample of texels: none, some and all of a pixel covered, and
+    /// stripes covered unequally.
+    const TEXELS: [[u8; 4]; 5] = [
+        [0, 0, 0, 0],
+        [64, 64, 64, 64],
+        [128, 0, 0, 0],
+        [255, 128, 0, 128],
+        [255, 255, 255, 255],
+    ];
+
+    #[test]
+    fn a_source_at_the_default_contrast_is_the_source() {
+        let colours = [WHITE, BLACK, Color::rgba(0x20, 0x40, 0x80, 0xc0)];
+        for kind in [
+            QuadKind::Fill,
+            QuadKind::Mask,
+            QuadKind::Subpixel,
+            QuadKind::Color,
+        ] {
+            for color in colours {
+                for texel in TEXELS {
+                    assert_eq!(
+                        source_with(kind, color, texel, CONTRAST),
+                        source(kind, color, texel),
+                        "{kind:?} {color:?} {texel:?}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn a_contrast_raises_the_coverage_of_black_text_by_the_adjustment() {
+        let half = [128, 0, 0, 0];
+        let raised = adjusted(128.0 / 255.0, 0.0, 1.0);
+        assert!(raised > 128.0 / 255.0);
+        assert_eq!(
+            source_with(QuadKind::Mask, BLACK, half, 1.0),
+            Source {
+                rgb: [0.0; 3],
+                coverage: [raised; 4],
+            }
+        );
+        // So the pixel it lays over white is darker than at none.
+        let white = opaque(255, 255, 255);
+        let darker = blend(white, &source_with(QuadKind::Mask, BLACK, half, 1.0));
+        assert!(darker[0] < over(white, QuadKind::Mask, BLACK, half)[0]);
+    }
+
+    #[test]
+    fn a_contrast_leaves_white_text_as_it_is() {
+        for contrast in [0.0, 0.25, 0.5, 1.0] {
+            for texel in TEXELS {
+                for kind in [QuadKind::Mask, QuadKind::Subpixel] {
+                    assert_eq!(
+                        source_with(kind, WHITE, texel, contrast),
+                        source(kind, WHITE, texel),
+                        "{contrast} {kind:?} {texel:?}"
+                    );
+                }
+            }
+        }
     }
 
     #[test]

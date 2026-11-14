@@ -45,6 +45,7 @@ fn settings(antialiasing: Antialiasing, budget: u64) -> Settings {
         antialiasing,
         hinting: true,
         atlas_budget: budget,
+        ..Settings::default()
     }
 }
 

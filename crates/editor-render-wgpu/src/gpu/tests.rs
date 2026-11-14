@@ -9,7 +9,10 @@
 //! example `gpu`'s, on demand, on a real adapter.
 //!
 //! No test here runs a shaper or reads a font: the frames are of layout's
-//! fake shaper, and the glyph images the fake rasteriser's.
+//! fake shaper, and the glyph images the fake rasteriser's. One test
+//! draws real glyphs, with a weight other than the default: the weight
+//! sentence of `crate::weight_tests`, built by hand with its font
+//! compiled in.
 
 use std::ptr::NonNull;
 
@@ -22,14 +25,14 @@ use editor_platform::NativeWindow;
 use editor_render::contract;
 use editor_render::port::{DrawRequest, Renderer, Target};
 
-use super::{Device, INSTANCE_BYTES, Run, Window, instances};
+use super::{Device, INSTANCE_BYTES, Run, Window, globals, instances};
 use crate::atlas::Atlas;
 use crate::glyphs::Kind;
 use crate::glyphs::fake::FakeRasterizer;
 use crate::painter::Painter;
 use crate::quads::{Quad, QuadKind};
 use crate::surface::handles;
-use crate::{Antialiasing, Settings, SubpixelOrder, WgpuRenderer};
+use crate::{Antialiasing, Settings, SubpixelOrder, Weight, WgpuRenderer};
 
 /// An instance whose one adapter is wgpu's no-op back end.
 fn noop() -> wgpu::Instance {
@@ -637,4 +640,49 @@ fn an_instance_is_a_quads_box_its_source_and_its_colour() {
         ],
         [0, 1, 2, 3]
     );
+}
+
+#[test]
+fn the_globals_are_the_targets_size_and_the_contrast() {
+    let mut expected = Vec::new();
+    for value in [200.0_f32, 64.0, 0.5, 0.0] {
+        expected.extend_from_slice(&value.to_ne_bytes());
+    }
+    assert_eq!(globals(200, 64, 0.5).to_vec(), expected);
+}
+
+#[test]
+fn a_renderer_draws_with_its_settings_contrast() {
+    let weight = Weight {
+        contrast: 0.5,
+        dilation: 0.3,
+    };
+    let settings = Settings {
+        weight,
+        ..Settings::default()
+    };
+    let renderer = WgpuRenderer::over(&noop(), settings, true).expect("the no-op adapter");
+    assert_eq!(renderer.device.contrast, 0.5);
+    let renderer =
+        WgpuRenderer::over(&noop(), Settings::default(), true).expect("the no-op adapter");
+    assert_eq!(renderer.device.contrast, Weight::LINEAR.contrast);
+}
+
+#[test]
+fn a_renderer_with_another_weight_draws_real_glyphs_with_no_validation_error() {
+    let settings = Settings {
+        weight: Weight {
+            contrast: 0.5,
+            dilation: 0.3,
+        },
+        ..Settings::default()
+    };
+    let mut renderer = WgpuRenderer::over(&noop(), settings, true).expect("the no-op adapter");
+    let (frame, target) = crate::weight_tests::sentence();
+    let drawn = renderer.draw(&DrawRequest {
+        frame: &std::sync::Arc::new(frame),
+        target,
+    });
+    assert!(drawn.presented, "{:?}", renderer.refused());
+    assert!(drawn.glyphs_rasterised > 0);
 }

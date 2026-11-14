@@ -15,7 +15,7 @@
 
 use crate::Image;
 use crate::atlas::Atlas;
-use crate::blend::{blend, source};
+use crate::blend::{blend, source_with};
 use crate::glyphs::Kind;
 use crate::quads::{Clip, Quad, QuadKind};
 
@@ -32,8 +32,9 @@ pub fn cleared(width: u32, height: u32) -> Image {
     }
 }
 
-/// Lays `quads` over `image`, in order, reading glyph quads from `atlas`.
-pub fn composite(image: &mut Image, quads: &[Quad], atlas: &Atlas) {
+/// Lays `quads` over `image`, in order, reading glyph quads from `atlas`,
+/// with the coverage of dark text raised by `contrast` (`Weight::contrast`).
+pub fn composite(image: &mut Image, quads: &[Quad], atlas: &Atlas, contrast: f32) {
     let whole = Clip::of(0, 0, image.width, image.height);
     for quad in quads {
         let Some(shown) = quad.clipped(whole) else {
@@ -82,7 +83,7 @@ pub fn composite(image: &mut Image, quads: &[Quad], atlas: &Atlas) {
                 };
                 let over = blend(
                     [under[0], under[1], under[2], under[3]],
-                    &source(shown.kind, shown.color, texel),
+                    &source_with(shown.kind, shown.color, texel, contrast),
                 );
                 under.copy_from_slice(&over);
             }
@@ -97,6 +98,7 @@ mod tests {
     use super::{CLEAR, cleared, composite};
     use crate::Image;
     use crate::atlas::{Atlas, Slot};
+    use crate::blend::CONTRAST;
     use crate::glyphs::Kind;
     use crate::quads::{Quad, QuadKind};
 
@@ -153,7 +155,12 @@ mod tests {
     #[test]
     fn a_rectangle_fills_its_pixels_and_no_other() {
         let mut image = cleared(8, 6);
-        composite(&mut image, &[Quad::fill(2, 1, 3, 2, RED)], &no_pages());
+        composite(
+            &mut image,
+            &[Quad::fill(2, 1, 3, 2, RED)],
+            &no_pages(),
+            CONTRAST,
+        );
         for y in 0..6 {
             for x in 0..8 {
                 let inside = (2..5).contains(&x) && (1..3).contains(&y);
@@ -179,7 +186,7 @@ mod tests {
             glyph(subpixel, QuadKind::Subpixel, 1, 1, WHITE),
             glyph(colour, QuadKind::Color, 1, 2, WHITE),
         ];
-        composite(&mut image, &quads, &atlas);
+        composite(&mut image, &quads, &atlas, CONTRAST);
         assert_eq!(at(&image, 1, 0), [255, 255, 255, 255]);
         assert_eq!(at(&image, 2, 0), [188, 188, 188, 255]);
         assert_eq!(at(&image, 1, 1), [255, 188, 0, 255]);
@@ -207,7 +214,7 @@ mod tests {
             Quad::fill(2, 0, 2, 1, RED),
             glyph(mask, QuadKind::Mask, 1, 0, BLACK),
         ];
-        composite(&mut image, &quads, &atlas);
+        composite(&mut image, &quads, &atlas, CONTRAST);
         // Each pixel of the glyph is the blend with its own background.
         assert_eq!(at(&image, 1, 0), [187, 187, 187, 255]);
         assert_eq!(at(&image, 2, 0), [187, 0, 0, 255]);
@@ -219,7 +226,7 @@ mod tests {
     fn quads_are_laid_over_each_other_in_order() {
         let mut image = cleared(3, 1);
         let quads = [Quad::fill(0, 0, 2, 1, RED), Quad::fill(1, 0, 2, 1, WHITE)];
-        composite(&mut image, &quads, &no_pages());
+        composite(&mut image, &quads, &no_pages(), CONTRAST);
         assert_eq!(at(&image, 0, 0), [255, 0, 0, 255]);
         assert_eq!(at(&image, 1, 0), [255, 255, 255, 255]);
         assert_eq!(at(&image, 2, 0), [255, 255, 255, 255]);
@@ -234,6 +241,7 @@ mod tests {
             &mut image,
             &[Quad::fill(-5, -5, 100, 100, RED)],
             &no_pages(),
+            CONTRAST,
         );
         assert_eq!(image.rgba, [255, 0, 0, 255].repeat(12));
         // A glyph two pixels left of the target shows its right part: the
@@ -245,6 +253,7 @@ mod tests {
             &mut image,
             &[glyph(mask, QuadKind::Mask, -2, 0, WHITE)],
             &atlas,
+            CONTRAST,
         );
         assert_eq!(at(&image, 0, 0), [255, 255, 255, 255]);
         assert_eq!(at(&image, 1, 0), [188, 188, 188, 255]);
@@ -255,6 +264,7 @@ mod tests {
             &mut image,
             &[glyph(mask, QuadKind::Mask, 4, 0, WHITE)],
             &atlas,
+            CONTRAST,
         );
         assert_eq!(image.rgba, CLEAR.repeat(4));
     }
@@ -276,7 +286,24 @@ mod tests {
             u: 15,
             ..glyph(mask, QuadKind::Mask, 0, 0, WHITE)
         };
-        composite(&mut image, &[stray, wrong, past], &atlas);
+        composite(&mut image, &[stray, wrong, past], &atlas, CONTRAST);
         assert_eq!(image.rgba, CLEAR.repeat(4));
+    }
+
+    #[test]
+    fn a_contrast_darkens_black_text_on_white() {
+        let mut atlas = no_pages();
+        let mask = put(&mut atlas, Kind::Mask, 1, 1, &[128]);
+        let at_contrast = |contrast: f32| {
+            let mut image = cleared(1, 1);
+            let quads = [
+                Quad::fill(0, 0, 1, 1, WHITE),
+                glyph(mask, QuadKind::Mask, 0, 0, BLACK),
+            ];
+            composite(&mut image, &quads, &atlas, contrast);
+            at(&image, 0, 0)
+        };
+        assert_eq!(at_contrast(0.0), [187, 187, 187, 255]);
+        assert!(at_contrast(1.0)[0] < at_contrast(0.0)[0]);
     }
 }

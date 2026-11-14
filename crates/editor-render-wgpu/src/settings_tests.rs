@@ -1,7 +1,10 @@
 //! The settings a renderer is made with, and how it says what it made of
 //! them.
 
-use crate::{Antialiasing, DEFAULT_ATLAS_BUDGET, Masks, PAGE_SIZE, Settings, SubpixelOrder};
+use crate::blend;
+use crate::{
+    Antialiasing, DEFAULT_ATLAS_BUDGET, Masks, PAGE_SIZE, Settings, SubpixelOrder, Weight,
+};
 
 #[test]
 fn a_kind_of_mask_says_itself_for_a_person() {
@@ -24,10 +27,23 @@ fn the_default_settings_leave_antialiasing_to_the_display_and_hint() {
             antialiasing: Antialiasing::Auto,
             hinting: true,
             atlas_budget: DEFAULT_ATLAS_BUDGET,
+            weight: Weight::LINEAR,
         }
     );
     assert_eq!(Antialiasing::default(), Antialiasing::Auto);
     assert_eq!(SubpixelOrder::default(), SubpixelOrder::Rgb);
+}
+
+#[test]
+fn the_default_weight_is_linear_light_and_the_outline_as_it_is() {
+    assert_eq!(Weight::default(), Weight::LINEAR);
+    assert_eq!(
+        Weight::LINEAR,
+        Weight {
+            contrast: blend::CONTRAST,
+            dilation: 0.0,
+        }
+    );
 }
 
 #[test]

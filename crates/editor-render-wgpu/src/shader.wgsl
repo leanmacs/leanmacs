@@ -19,7 +19,8 @@
 struct Globals {
     // The target's size in pixels.
     size: vec2<f32>,
-    // How much the coverage of dark text is raised: `blend::CONTRAST`.
+    // How much the coverage of dark text is raised: the renderer's
+    // settings' `Weight::contrast`, as `blend::source_with` takes it.
     contrast: f32,
     unused: f32,
 }
