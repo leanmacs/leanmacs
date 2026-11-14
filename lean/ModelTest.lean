@@ -5963,6 +5963,59 @@ def dispatchGiveUpChecks : List Check :=
           (program.runModel editorModel).1.toOption ==
             some ([some .noSuchText, none, none], "", true) },
     { name :=
+        "a buffer a command removed keeps its empty slot through the loop's pass over the histories, in the step that removed it and in the next event's: the buffers after it keep their ids, the window on one still shows it, and a buffer added afterwards gets an id no buffer had"
+      run :=
+        pure <|
+          -- `hidden`, which no window shows, is in the slot before `other`,
+          -- which view 1 shows.
+          let middle : TextM EditorState := do
+            let state ← EditorState.initial ⟨640, 480⟩
+            let hidden ← createText "hidden"
+            let text ← createText "other"
+            let scroll ← text.mark (.anchor { offset := 0, bias := .before })
+            let selection ← text.mark (.selection { ranges := #[⟨0, 0⟩] })
+            return {
+                state with
+                buffers :=
+                  state.buffers ++
+                    #[some { name := "hidden", text := hidden, history := ← UndoTree.over hidden },
+                      some { name := "other", text, history := ← UndoTree.over text }]
+                windows := state.windows.push { id := ⟨1⟩, buffer := ⟨2⟩, scroll, selection }
+                frame :=
+                  { state.frame with
+                    tree :=
+                      .split .rows (.split .columns (.window ⟨0⟩) (.window ⟨1⟩)) .minibuffer } }
+          let removing : Dispatched := fun _ => do
+            asks [.removeBuffer ⟨1⟩]
+            return none
+          let adding : Dispatched := fun _ => do
+            let text ← createText "new"
+            let .ok id ←
+              EditorState.ask (.addBuffer "new" text (← UndoTree.over text)) | throw .noSuchText
+            EditorState.ask (.message s!"added {id.index}")
+            return none
+          let keys :=
+            dispatchKeys [("C-c g", invoke "go"), ("C-c a", invoke "add")]
+              [("go", removing), ("add", adding)]
+          let slots (loop : TestLoop) : Array (Option String) × Option String × Bool :=
+            (loop.state.buffers.map (·.map (·.name)), (loop.state.target? ⟨1⟩).map (·.buffer.name),
+              loop.state.wellFormed)
+          let program : EditorM (List (Array (Option String) × Option String × Bool) × String) := do
+            let (removed, _) ← stepsWith keys ({ state := ← middle } : TestLoop) (presses "C-c g")
+            let (next, _) ← stepsWith keys removed [pressF5]
+            let (added, _) ← stepsWith keys next (presses "C-c a")
+            return ([slots removed, slots next, slots added], added.state.echo)
+          match program.runModel editorModel with
+          | (.ok (seen, echo), model) =>
+            let kept := (#[some "scratch", none, some "other"], some "other", true)
+            seen ==
+                [kept, kept,
+                  (#[some "scratch", none, some "other", some "new"], some "other", true)] &&
+              echo == "added 3" &&
+              (model.display.scenes.back?.map fun scene => scene.views.map (shownText model)) ==
+                some #[some "", some "other"]
+          | (.error _, _) => false },
+    { name :=
         "a command that closes a window and removes the buffer it showed gives up both with nothing refused: the markers before the text, and the scene shows the window that is left"
       run :=
         pure <|
