@@ -44,9 +44,8 @@ impl PointUtf16 {
 
 /// A position as a row and a column counted in cells from the row's start:
 /// how many cells of the row start before the position. This is the column
-/// a block's corners are counted in, and the one a motion to another row
-/// is given ([`Motion::RowsUp`](crate::Motion::RowsUp)). It is a type of
-/// its own so that a column in one unit is never read as another.
+/// a block's corners are counted in. It is a type of its own so that a
+/// column in one unit is never read as another.
 ///
 /// A cell is one character, or a carriage return and the line feed after it
 /// together, so the column is the number of characters of the row before

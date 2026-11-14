@@ -582,7 +582,8 @@ fn cell_points_round_trip_at_every_position_and_count_the_characters_before_it_i
         for offset in 0..=string.len() + 2 {
             let expected = reference
                 .place(offset)
-                .map(|(row, _, _)| PointCells::new(row, characters[offset]));
+                .zip(characters.get(offset))
+                .map(|((row, _, _), &column)| PointCells::new(row, column));
             let point = snapshot.offset_to_point_cells(offset);
             prop_assert_eq!(point, expected, "{}", offset);
             if let Some(point) = point {
