@@ -616,6 +616,114 @@ mod tests {
         assert!(cache.atlas().pages().count() < pages);
     }
 
+    /// The bytes of one page of four bytes a pixel of that size.
+    const WIDE_PAGE: u64 = MASK_PAGE * 4;
+
+    /// The key of the glyph `glyph` of font 0 at bin 0, as a subpixel
+    /// mask.
+    fn subpixel(glyph: u32) -> GlyphKey {
+        GlyphKey {
+            subpixel: true,
+            ..key(glyph)
+        }
+    }
+
+    /// The kind of each page of `cache`, in the order they were added.
+    fn kinds(cache: &GlyphCache) -> Vec<Kind> {
+        cache.atlas().pages().map(|page| page.kind).collect()
+    }
+
+    #[test]
+    fn unpinned_images_of_another_kind_and_their_pages_make_room_at_the_budget() {
+        // A budget of one page of four bytes a pixel.
+        let mut cache = GlyphCache::new(PAGE, WIDE_PAGE);
+        let mut rasterizer = FakeRasterizer::new();
+        rasterizer.colour.insert(40);
+        let font = font(16.0);
+        // A page of masks that nothing keeps.
+        for glyph in 0..5 {
+            touch(&mut cache, &mut rasterizer, glyph);
+        }
+        assert_eq!(kinds(&cache), vec![Kind::Mask]);
+        // A subpixel mask needs a page that, with the masks', would pass
+        // the budget: the masks are let go, and their page with them.
+        let placed = cache.get(subpixel(7), &font, true, &mut rasterizer);
+        let slot = placed.and_then(|placed| placed.slot).expect("a slot");
+        for glyph in 0..5 {
+            assert!(!cache.holds(key(glyph)), "glyph {glyph}");
+        }
+        assert_eq!(cache.stats().evicted, 5);
+        assert_eq!(kinds(&cache), vec![Kind::Subpixel]);
+        assert!(cache.atlas().bytes() <= WIDE_PAGE);
+        assert_eq!(cache.stats().over_budget, 0);
+        let made = rasterizer.image(subpixel(7)).expect("an image");
+        assert_eq!(cache.atlas().read(slot), made.data);
+        // So does a subpixel mask nothing keeps for a colour glyph, and
+        // that one for a mask.
+        cache.unpin(subpixel(7));
+        touch(&mut cache, &mut rasterizer, 40);
+        assert!(!cache.holds(subpixel(7)));
+        assert_eq!(kinds(&cache), vec![Kind::Color]);
+        touch(&mut cache, &mut rasterizer, 8);
+        assert!(!cache.holds(key(40)) && cache.holds(key(8)));
+        assert_eq!(kinds(&cache), vec![Kind::Mask]);
+        assert_eq!(cache.stats().over_budget, 0);
+    }
+
+    #[test]
+    fn no_more_of_another_kind_is_let_go_than_makes_room() {
+        // Room for a page of four bytes a pixel and one of masks.
+        let mut cache = GlyphCache::new(PAGE, WIDE_PAGE + MASK_PAGE);
+        let mut rasterizer = FakeRasterizer::new();
+        // Masks that nothing keeps, until the first is on a second page.
+        let mut next = 0;
+        while cache.atlas().pages().count() < 2 {
+            touch(&mut cache, &mut rasterizer, next);
+            next += 1;
+        }
+        let newest = next - 1;
+        // The masks unused for longest go, those of the first page, until
+        // that page is empty: then there is room, and the rest stay.
+        let placed = cache.get(subpixel(7), &font(16.0), true, &mut rasterizer);
+        assert!(placed.is_some_and(|placed| placed.slot.is_some()));
+        for glyph in 0..newest {
+            assert!(!cache.holds(key(glyph)), "glyph {glyph}");
+        }
+        assert!(cache.holds(key(newest)));
+        assert_eq!(cache.stats().evicted, u64::from(newest));
+        assert_eq!(kinds(&cache), vec![Kind::Mask, Kind::Subpixel]);
+        assert!(cache.atlas().bytes() <= WIDE_PAGE + MASK_PAGE);
+        assert_eq!(cache.stats().over_budget, 0);
+    }
+
+    #[test]
+    fn an_image_in_use_keeps_its_page_when_another_kind_needs_the_room() {
+        let mut cache = GlyphCache::new(PAGE, WIDE_PAGE);
+        let mut rasterizer = FakeRasterizer::new();
+        let font = font(16.0);
+        // A page of masks, one of them in use.
+        let pinned = cache.get(key(0), &font, true, &mut rasterizer);
+        let pinned = pinned.and_then(|placed| placed.slot).expect("a slot");
+        for glyph in 1..5 {
+            touch(&mut cache, &mut rasterizer, glyph);
+        }
+        // In use wins: the subpixel mask's page is added past the budget,
+        // and counted.
+        let placed = cache.get(subpixel(7), &font, true, &mut rasterizer);
+        assert!(placed.is_some_and(|placed| placed.slot.is_some()));
+        assert!(cache.holds(key(0)));
+        let made = rasterizer.image(key(0)).expect("an image");
+        assert_eq!(cache.atlas().read(pinned), made.data);
+        assert_eq!(kinds(&cache), vec![Kind::Mask, Kind::Subpixel]);
+        assert!(cache.atlas().bytes() > WIDE_PAGE);
+        assert_eq!(cache.stats().over_budget, 1);
+        // Once nothing uses the mask, the next draw gives its page back.
+        cache.unpin(key(0));
+        cache.trim();
+        assert_eq!(kinds(&cache), vec![Kind::Subpixel]);
+        assert!(cache.holds(subpixel(7)));
+    }
+
     #[test]
     fn an_image_is_pinned_once_for_each_time_it_is_given() {
         let (mut cache, mut rasterizer) = (one_page(), FakeRasterizer::new());
