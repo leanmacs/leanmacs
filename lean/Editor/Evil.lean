@@ -91,6 +91,23 @@ scheme's state after its key (`Editor/Command/Call.lean`). The rule
   (`ViewId.setWanted`), as Vim's escape resets it; entering a state that
   keeps both ends leaves it.
 - **It ignores its count and its register.**
+- **The command enters no state: its key does.** The scheme's state is
+  changed only by the scheme, at a key: under the Vim scheme by a key
+  bound to an edit that names a state (`Edit.enters`,
+  `Editor/InputScheme/Vim.lean`). `enter` and the four commands that
+  begin an insert ("Insert state") reshape the selection for the state
+  their call's report says, and change nothing of the scheme. So each
+  enters a state only when a key that enters it runs it. Run by its name,
+  which no key ran, or by a key bound to its name alone, which enters no
+  state, it is told the report of the state the view is already in
+  (`Editor/Command/Call.lean`): the view stays in that state, the
+  selection is reshaped for it, and nothing is said in the echo area.
+- **It cannot say that it entered nothing.** It is not told the name it
+  was run under, and nothing here knows which report a name stands for:
+  that is the record of a Vim state, which the scheme alone reads, and no
+  command matches on a state's name. That no key ran it does not decide
+  it either: a command of config's run by its name may call `enter` with
+  a report of its own, and a key bound to the name alone enters nothing.
 - **No default key enters a state that keeps both ends from an insert
   session**, or with an anchor that is not on a cell, so rule 3 with both
   ends kept, and the anchor's part of rule 4, are pinned by calling
@@ -116,6 +133,11 @@ sets or clears a boundary.
   | `append` | After the cursor's cell: one cell on, and not past where the line's content ends, so on an empty line the head stays |
   | `insertLineStart` | At the line's first character that is not a blank, which on a line of blanks only is where the content ends |
   | `appendLineEnd` | Where the line's content ends, before its line break |
+- **Each begins an insert only when a key that enters insert state runs
+  it** ("Entering a state"). Run by its name it moves the head as the
+  table says and then rests it as the state the view is in lets a cursor
+  rest: in normal state `insert` leaves the cursor where it is, and no
+  insert begins.
 - **`selfInsert`** is the command typed text runs: it inserts its first
   argument, a string, at the head of each range of its target's selection
   (`Target.insertAtSelections`, `Editor/Api.lean`), one transaction that
@@ -312,7 +334,10 @@ def enterAt (place : TextId → Nat → TextM Nat) (call : Call) : EditorM Unit 
 
 /-- The command that enters a Vim state, as it is called: the state the
 call's report says is entered with the head where it is (`enterAt`). It
-ignores its count and its register. -/
+ignores its count and its register. It changes nothing of the input
+scheme: run by its name, which no key ran, it is told the report of the
+state the view is already in, and reshapes the selection for that state
+("Entering a state", in the module docs). -/
 def enter (call : Call) : EditorM Unit :=
   enterAt (fun _ head => pure head) call
 

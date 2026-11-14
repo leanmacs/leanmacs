@@ -22,6 +22,12 @@ they hold when config fails to load, and a reload does not replace them.
   | `insert`, `append`, `insert-line-start`, `append-line-end` | `Evil.insert`, `Evil.append`, `Evil.insertLineStart`, `Evil.appendLineEnd`: an insert before the cursor's cell, after it, at the line's first character that is not a blank, and at the line's end |
   | `self-insert` (`Vim.selfInsertCommand`) | `Evil.selfInsert`: typed text, in insert state and in the minibuffer |
 
+  The seven of the second and third rows enter a state only when a key
+  that enters it runs them: the scheme enters the state, at the key, and
+  the command reshapes the selection for the state it is told of. Run by
+  its name, each is told of the state the view is already in and enters
+  none (`Editor/Evil.lean`, "Entering a state").
+
 A name here and the name the Vim scheme's default tables give a key
 (`Editor/InputScheme/Vim/Default.lean`) are changed together: the scheme
 yields an invocation of a name, and this is where the name is given a

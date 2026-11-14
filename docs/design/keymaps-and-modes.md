@@ -259,6 +259,24 @@ report : State → ViewId → InputScheme.Report   -- defaults to the default re
   two cannot disagree.
 - **A command no key ran** (one run by its name, a prompt's continuation)
   is told the report in the state the scheme is in.
+- **So a command enters no state: a key does.** A scheme's state is
+  changed only by its `step`, and under the Vim scheme by a key bound to
+  an edit that names a state ("Vim states"). The commands such a key runs
+  (`normal`, `visual`, `visual-line`, and the four that begin an insert)
+  reshape the selection for the state they are told of, and change
+  nothing of the scheme. Run by name, or by a key bound to the name
+  alone, which enters no state, each is told of the state the view is
+  already in: the view stays in it, the selection is reshaped for it, and
+  nothing is said in the echo area (`docs/dev-practices/headless-mode.md`
+  has what `run insert` does).
+  - **Set aside: a message from the command.** The command is not told
+    the name it was run under, one function is registered under three
+    names, and no fact of the report says which state a name stands for.
+    A message would need evil to match on a state's name or to keep a
+    second copy of each record's facts, and "Vim states" has neither.
+    That no key ran the command does not decide it either: a key bound
+    to the name alone enters no state, and a command of config's run by
+    name may call `Evil.enter` with a report of its own.
 - **The first window's selection has the reported shape**: the loop starts
   its state with the scheme's report of the first view
   (`Loop.start`, `EditorState.initial`). A window made later takes its
@@ -2023,6 +2041,13 @@ every build); the second is a proposal.
   selection's shape.** The state's name is in the status line it prints;
   the shapes are checked on the models, where a scene is data. Adding
   them changes every scene fixture.
+- **A command run by its name enters no Vim state** ("What a scheme
+  reports of a view"): `run insert` leaves the view in the state it was
+  in and says nothing. Entering a state by a command's name would need
+  the scheme to be told of it, as it is told that a view is the
+  minibuffer's. Nothing built needs it: what runs a command by name is
+  the headless `run`, a prompt's continuation and a key that config
+  binds to a name.
 - **The vocabulary is a compiled table.** Registering a motion from
   `setup`, by owner, is not built ("Vocabulary").
 - **A motion runs in `TextM`.** A motion by display lines will need the

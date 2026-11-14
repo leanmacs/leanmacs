@@ -116,10 +116,37 @@ Vim scheme's keys run, so the editor moves and inserts with no config.
 | Command | Keys | Does |
 |---|---|---|
 | `move` | `h j k l w b e W B E 0 ^ $ g g G`, each after a count | Moves the cursor by the motion the key names, as Vim does; in a visual state it moves the selection's head. |
-| `insert`, `append`, `insert-line-start`, `append-line-end` | `i`, `a`, `I`, `A` | Begins an insert: before the cursor, after it, at the line's first character that is not a blank, at the line's end. |
+| `insert`, `append`, `insert-line-start`, `append-line-end` | `i`, `a`, `I`, `A` | Run by its key, begins an insert: before the cursor, after it, at the line's first character that is not a blank, at the line's end. Run by its name it begins none (below). |
 | `self-insert` | A key that prints, in insert state and in the minibuffer | Inserts what the key prints at the cursor. Everything typed until `<Escape>` is one step of the history. |
-| `normal` | `<Escape>` | Returns to normal state. From insert state the cursor steps back one character. |
-| `visual`, `visual-line` | `v`, `V` | Enters a visual state: a motion then extends the selection, by characters or by whole lines. |
+| `normal` | `<Escape>` | Run by its key, returns to normal state. From insert state the cursor steps back one character. Run by its name it leaves the view in the state it is in (below). |
+| `visual`, `visual-line` | `v`, `V` | Run by its key, enters a visual state: a motion then extends the selection, by characters or by whole lines. Run by its name it enters none (below). |
+
+**A Vim state is entered by a key, not by a command.** The Vim scheme
+enters the state when a key bound to it completes, and the command that
+key runs then gives the selection the shape of the state the view is now
+in. So `normal`, `visual`, `visual-line`, `insert`, `append`,
+`insert-line-start` and `append-line-end` enter a state only when a key
+that enters it runs them:
+
+- `run <name>` of one of the seven prints `run <name>: ok` and enters no
+  state: the view's status line names the state it was in, the next key
+  is looked up in that state's keymaps, and the echo area says nothing.
+  In normal state `run insert` leaves the cursor where it is, and a
+  `commit` after it is still dropped.
+- The command still reshapes the selection, for the state the view is
+  in. In normal state `run append` moves the cursor one character on,
+  `run append-line-end` to the line's last character and
+  `run insert-line-start` to its first character that is not a blank,
+  which is where each insert would begin, rested as normal state rests a
+  cursor.
+- A key that config binds to one of these names (`bindKey "C-c i"
+  "insert"`) enters no state either: a binding to a command's name runs
+  the command and leaves the scheme's state as it was.
+- A script enters a state with `key`: `key i KeyI -`, `key <Escape>
+  Escape -`, `key v KeyV -`.
+
+Why the command cannot do it, or say that it did not, is in
+`docs/design/keymaps-and-modes.md`, "What a scheme reports of a view".
 
 The other default keys of the Vim scheme (the operators `d c y`, `x p P`,
 `o O`, `u`, `C-r`, `.`, `:`) name commands that are not built: such a key
@@ -151,7 +178,7 @@ are skipped.
 |---|---|
 | `reload` | Asks for the config to be reloaded. Elaboration runs in the background, and the editor goes on answering. |
 | `settle` | Waits, for up to 30 seconds, until everything asked so far has been handled and no reload is running. |
-| `run <name>` | Runs the command registered under that name, through the editor loop, as a key would: with the focused window, guarded against the interrupt key, and rolled back if it does not run to its end. |
+| `run <name>` | Runs the command registered under that name, through the editor loop, as a key would: with the focused window, guarded against the interrupt key, and rolled back if it does not run to its end. It is no key, so the input scheme's state is as it was: a command that a key enters a Vim state with enters none (the table of evil's commands, above). |
 | `spawn <name>` | Starts the job registered under that name. It runs in the background, and the editor goes on answering. |
 | `join` | Waits, for up to 30 seconds, until everything asked so far has been handled and no job is running. |
 | `show` | Prints the commands, the texts and the stores. |
