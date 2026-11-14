@@ -1633,6 +1633,17 @@ What each motion says of itself:
   the last step goes to the next line's start, and R5 makes it that line.
 - **The doubled operator** is the lines from the head's to `count - 1`
   lines below, stopped at the last line.
+- **On the last line with a count above 1 the doubled operator gives up**
+  (`Evil.noLineBelow`), as Vim cancels it: `2dd`, `2cc`, `2yy`, `d2d` and
+  a `dd` replayed there with a count take nothing, leave the register,
+  begin no insert and are not the last change.
+  - Vim's doubled operator goes down `count - 1` lines first, and going
+    down fails on the last line. That is the rule of `j` under an operator
+    with a count one less, and `d2$` gives up there for the same reason.
+  - It holds in a text of one line and in the empty text, whose one line
+    is the last. A count of 1 never fails.
+  - Run through Vim 9.1 by hand, outside the suite, when the rule was
+    built (`evilOperatorChecks`, `evilRepeatChecks`).
 - **A selection** is what it covers: a selection of the line shape is the
   lines of its two ends; any other is what the text port says its range
   covers (`TextId.extents`), with R4 applied and R5 and R6 not, as Vim

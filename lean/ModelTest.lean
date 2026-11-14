@@ -15155,6 +15155,34 @@ def evilOperatorChecks : List Check :=
             .rests "ab\nc|d\nef" "5 y y" "ab\nc|d\nef" (linewise "cd\nef\n"),
             .rests "|a\nb\nc\nd\ne\nf" "2 d 3 d" "|" (linewise "a\nb\nc\nd\ne\nf\n")] },
     { name :=
+        "a doubled operator with a count above 1 on the last line is cancelled, as Vim cancels it, there being no line below to go to: 2 d d, 2 c c and 2 y y there, with and without a final line feed, in a text of one line and in the empty text, leave the text, the cursor and the register as they were and the view in normal state, and so do a count inside the operator, counts that multiply, a count past the text and a named register; counts of 1 do not fail, and from a line above a count past the text stops at the last line; the echo area says the sentence the function makes, and the register a cancelled operator named holds nothing"
+      run := do
+        let held ←
+          operatorRows
+              [.givesUp "ab\ncd\n|ef" "2 d d", .givesUp "ab\ncd\n|ef" "2 c c",
+                .givesUp "ab\ncd\n|ef" "2 y y", .givesUp "ab\ncd\ne|f\n" "2 d d",
+                .givesUp "ab\ncd\ne|f\n" "2 c c", .givesUp "ab\ncd\ne|f\n" "2 y y",
+                .givesUp "a|b" "2 d d", .givesUp "a|b" "2 c c", .givesUp "a|b" "2 y y",
+                .givesUp "a|b\n" "2 d d", .givesUp "a|b\n" "2 c c", .givesUp "a|b\n" "2 y y",
+                .givesUp "|" "2 d d", .givesUp "|" "2 c c", .givesUp "|" "2 y y",
+                .givesUp "ab\ncd\n  e|f" "d 2 d", .givesUp "ab\ncd\n  e|f" "c 2 c",
+                .givesUp "ab\ncd\n  e|f" "y 2 y", .givesUp "ab\ncd\n|ef" "2 d 3 d",
+                .givesUp "ab\ncd\n|ef" "2 c 3 c", .givesUp "ab\ncd\n|ef" "2 y 3 y",
+                .givesUp "ab\ncd\n|ef" "9 d d", .givesUp "ab\ncd\ne|f\n" "9 c c",
+                .givesUp "a|b" "9 y y", .givesUp "ab\ncd\n|ef" "\" a 2 d d",
+                .rests "ab\ncd\n|ef" "1 d 1 d" "ab\n|cd" (linewise "ef\n"),
+                .rests "ab\ncd\ne|f\n" "1 d 1 d" "ab\n|cd\n" (linewise "ef\n"),
+                .rests "ab\n|cd\nef\n" "9 d d" "|ab\n" (linewise "cd\nef\n"),
+                .inserts "ab\n|cd\nef" "9 c c" "ab\n|" (linewise "cd\nef\n"),
+                .rests "ab\n|cd\nef\n" "9 y y" "ab\n|cd\nef\n" (linewise "cd\nef\n")]
+        return held &&
+            evilGaveUp (evilEdited "ab\ncd\n|ef" "2 d d") "ab\ncd\n|ef" Evil.noLineBelow &&
+            (evilEdited "ab\ncd\n|ef" "2 c c").map (·.echo) ==
+              some s!"{Vim.operateCommand}: {Evil.noLineBelow}" &&
+            ((evilRegistered "ab\ncd\n|ef").map fun driver =>
+                (evilFed driver "\" a 2 d d").loop.state.register? "a") ==
+              some none },
+    { name :=
         "in the empty text d and c change neither the text nor the register, c still begins an insert, and y y yanks one line break, line-wise; and the counts before and after an operator multiply: 2 d 3 w deletes six words"
       run :=
         operatorRows
@@ -15965,6 +15993,47 @@ def evilRepeatChecks : List Check :=
           evilEdited "\nab |cd ef" "x d 3 b w ." == some ⟨"\n|b d ef", charwise "a", false, ""⟩ &&
             evilEdited "\nab |cd ef" "x c 3 B w ." == some ⟨"\n|b d ef", charwise "a", false, ""⟩ &&
             evilEdited "ab\n|cde" "x d j ." == some ⟨"ab\n|e", charwise "d", false, ""⟩ },
+    { name :=
+        "a doubled operator that its count cancelled on the last line is not the last change, as in Vim: after x and then 2 d d, 2 c c, 2 y y or d 2 d on the last line, . replays the x"
+      run :=
+        pure <|
+          evilEdited "ab\ncd\n|efg" "x 2 d d ." == some ⟨"ab\ncd\n|g", charwise "f", false, ""⟩ &&
+            evilEdited "ab\ncd\n|efg" "x 2 c c ." == some ⟨"ab\ncd\n|g", charwise "f", false, ""⟩ &&
+            evilEdited "ab\ncd\n|efg" "x 2 y y ." == some ⟨"ab\ncd\n|g", charwise "f", false, ""⟩ &&
+            evilEdited "ab\ncd\n|efg\n" "x 2 d d ." ==
+              some ⟨"ab\ncd\n|g\n", charwise "f", false, ""⟩ &&
+            evilEdited "|abc" "x d 2 d ." == some ⟨"|c", charwise "b", false, ""⟩ },
+    { name :=
+        "a replayed doubled operator that comes to the last line with a count above 1 gives the replay up, as Vim cancels it: 2 d d and . on the one line left, 2 d d . . when the second replay is on the last line, d d, G and 2 ., and 2 c c, a text, <Escape>, j and . each leave the text, the cursor, the register and the history as they were and the view in normal state, with no text inserted, and the echo area says why under the repeat command's name; and the change is still the last change, which . replays from the first line, with the count it had and not the count of the replay that gave up"
+      run :=
+        pure <|
+          let steps (fixture typed : String) : Option (Option (Nat × Bool)) :=
+            (evilDriver fixture).map fun driver => evilHistory (evilFed driver typed)
+          -- Whether the replay `replay`, typed after `typed`, gave up: what
+          -- `typed` left is `shown` and `register`, and the replay left that
+          -- and the history, and said why under the repeat command's name.
+          let gaveUp (fixture typed replay shown : String) (register : Option Register) : Bool :=
+            let after := typed ++ " " ++ replay
+            match evilEdited fixture after with
+            | some left =>
+              evilEdited fixture typed == some ⟨shown, register, false, ""⟩ &&
+                left.shown == shown &&
+                left.register == register &&
+                !left.insert &&
+                left.echo == s!"{Vim.repeatCommand}: {Evil.noLineBelow}" &&
+                steps fixture after == steps fixture typed
+            | none => false
+          gaveUp "|ab\ncd\nef" "2 d d" "." "|ef" (linewise "ab\ncd\n") &&
+            gaveUp "|ab\ncd\nef\ngh\nij" "2 d d ." "." "|ij" (linewise "ef\ngh\n") &&
+            gaveUp "ab\ncd\nef\n|gh" "d d G" "2 ." "ab\ncd\n|ef" (linewise "gh\n") &&
+            gaveUp "|ab\ncd\nef" "2 c c X <Escape> j" "." "X\n|ef" (linewise "ab\ncd\n") &&
+            evilEdited "|ab\ncd\nef\ngh\nij\nkl" "2 d d G . g g ." ==
+              some ⟨"|ij\nkl", linewise "ef\ngh\n", false, ""⟩ &&
+            evilEdited "|ab\ncd\nef\ngh" "2 c c X <Escape> G . g g ." ==
+              some ⟨"|X\ngh", linewise "X\nef\n", false, ""⟩ &&
+            -- The count of a replay that gave up is not kept.
+            evilEdited "|ab\ncd\nef\ngh\nij" "d d G 2 . g g ." ==
+              some ⟨"|ef\ngh\nij", linewise "cd\n", false, ""⟩ },
     { name :=
         "a replayed change whose motion fails after it moved breaks the replay off, as Vim does: the cursor is where the motion got to, in normal state, nothing is deleted or inserted, the register is the one the change left, the history has no step for it, and the change is still the last change"
       run :=

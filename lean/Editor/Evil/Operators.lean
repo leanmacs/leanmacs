@@ -29,9 +29,10 @@ one (`Editor/Evil.lean`), so the caller supplies the vocabulary.
 - **It works the stretch out and hands it to the operator**: for the kind
   `motion`, from where the motion leads (`stretch`); for the kind `lines`,
   which is the doubled key, the head's line and `count - 1` lines below,
-  stopped at the last line; for the kind `selection`, which an operator's
-  key in a visual state compiles to, what the selection covers. A
-  selection of the line shape is the lines of its two ends. Any other is
+  stopped at the last line ("The doubled operator on the last line"); for
+  the kind `selection`, which an operator's key in a visual state
+  compiles to, what the selection covers. A selection of the line shape
+  is the lines of its two ends. Any other is
   what the text port says its primary range covers by its shape
   (`TextId.extents`), stopped where the last line's content ends; the two
   rules below for a stretch that stops at a line's start and for a
@@ -49,6 +50,25 @@ one (`Editor/Evil.lean`), so the caller supplies the vocabulary.
   the key that ran it may have entered a state and has been made the last
   change, and a command that gives up is rolled back with the scheme put
   back at rest.
+
+## The doubled operator on the last line
+
+A doubled operator with a count above 1 on the last line (`lastLine`)
+gives up (`noLineBelow`): `2dd`, `2cc` and `2yy` there, `d2d`, and `dd`
+replayed there with a count. Nothing is taken, the register is as it was,
+a change begins no insert, and the edit is not the last change.
+
+- **It is Vim's rule.** Vim's doubled operator first goes down `count - 1`
+  lines, and going down fails on the last line, which cancels the
+  operator, where from a line above a count past the text stops at the
+  last line and does not fail. That is the rule of `down` under an
+  operator with a count one less (`Editor/Evil/Motions.lean`), and `d2$`
+  gives up there for the same reason.
+- **It holds in a text of one line and in the empty text**, whose one
+  line is the last: `2yy` in the empty text gives up, where `yy` yanks a
+  line break.
+- **A count of 1 never fails**: `dd`, `1dd` and `1d1d` take the last
+  line.
 
 ## What an operator takes
 
@@ -160,6 +180,11 @@ def noOperatorNamed : String :=
 motion called `name` could not be made. -/
 def cannotMove (name : String) : String :=
   s!"{name} cannot move"
+
+/-- What the operate command gives up with when a doubled operator with a
+count above 1 is on the last line, where no line is below to count. -/
+def noLineBelow : String :=
+  "no line below"
 
 /-- The row of `text` the position `offset` is in. Rows are asked in cells,
 so a carriage return and line feed is one line break. -/
@@ -346,7 +371,9 @@ amounts to from the head of the primary range of the target's selection,
 and the window then keeps no wanted column. A call that cannot be made
 gives up, and so does one whose motion failed where the cursor is; one
 whose motion failed after it moved leaves the cursor where the motion got
-to and breaks off ("What an operator takes", in the module docs). -/
+to and breaks off ("What an operator takes", in the module docs). A
+doubled operator with a count above 1 on the last line gives up too ("The
+doubled operator on the last line", in the module docs). -/
 def operate (operators : Array Vocabulary.Operator) (motions : Array Vocabulary.Motion)
     (call : Call) : EditorM Unit := do
   let [.str operator, .str kind, .str name, .nat count, .str register] :=
@@ -383,11 +410,15 @@ def operate (operators : Array Vocabulary.Operator) (motions : Array Vocabulary.
             register, before }
     | "lines" =>
       -- The doubled operator: the head's line and `count - 1` lines below,
-      -- stopped at the last line.
+      -- stopped at the last line. Vim goes down those lines first, which
+      -- fails on the last line and cancels the operator.
       let first ← rowOf text head
+      let last ← lastLine text
+      if count > 1 && first ≥ last then
+        giveUp noLineBelow
       pure
-          { stretch := .lines first (max first (min (first + count - 1) (← lastLine text))), head,
-            rest := head, register, before }
+          { stretch := .lines first (max first (min (first + count - 1) last)), head, rest := head,
+            register, before }
     | "selection" =>
       if before.shape == .line then
         -- The lines of the selection's two ends. A yank leaves the cursor
