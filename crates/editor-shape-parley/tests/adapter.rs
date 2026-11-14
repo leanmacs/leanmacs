@@ -10,13 +10,13 @@ mod common;
 use std::ops::Range;
 
 use editor_layout::shaper::{
-    FontId, FontSpec, Length, LineHeight, ShapedLine, Shaper, VisualLine, Weight,
+    FontId, FontSpec, Length, LineHeight, ResolvedFont, ShapedLine, Shaper, VisualLine, Weight,
 };
 use editor_shape_parley::{FontSet, ParleyLine, ParleyShaper, ShapeCounters};
 
 use common::{
-    MONO, MONO_FAMILY, SANS, clusters, family, fixture_set, in_font, in_fonts, one_line, plain,
-    shaper, sized,
+    HEBREW, HEBREW_FAMILY, JP, JP_FAMILY, MONO, MONO_FAMILY, SANS, SANS_FAMILY, clusters, family,
+    files, fixture_set, in_font, in_fonts, one_line, plain, shaper, sized,
 };
 
 /// The bytes of each of `lines`.
@@ -301,6 +301,37 @@ fn setting_the_fonts_again_moves_the_generation_and_starts_the_table_again() {
     one_line(&shaper, &plain("a"));
     assert!(all_drawn_from(&shaper, SANS));
     assert_eq!(shaper.metrics(FontId(0)), metrics);
+}
+
+#[test]
+fn setting_the_fonts_again_takes_the_new_sets_fallbacks_in_their_order() {
+    // Three sets over the same five files, each with the CJK font as its
+    // default family. That font has no space, and both the Hebrew font and
+    // the primary have one, so the space of this text is drawn in
+    // whichever of the two is the earlier fallback of the set in use.
+    let set = |fallbacks: &[&str]| {
+        FontSet::only(JP_FAMILY, fallbacks, files()).expect("the fixture fonts")
+    };
+    let space = |shaper: &ParleyShaper| {
+        let line = one_line(shaper, &plain("日 "));
+        assert_eq!(clusters(&line), vec![0, 3]);
+        let font = shaper.resolved()[line.glyphs[1].font.0 as usize].clone();
+        (line.glyphs[1].id, font)
+    };
+    let drawn_from = |(_, font): &(u32, ResolvedFont), file: &[u8]| (*font.data).as_ref() == file;
+    let shaper = ParleyShaper::new(set(&[HEBREW_FAMILY, SANS_FAMILY]));
+    assert!(drawn_from(&space(&shaper), HEBREW));
+    // The other order: the first fallback of the new set, not of the one
+    // the shaper was made with.
+    shaper.set_fonts(set(&[SANS_FAMILY, HEBREW_FAMILY]));
+    assert!(drawn_from(&space(&shaper), SANS));
+    // A set with no fallback has none, though the files that were the
+    // fallbacks are still in it: the space is the default family's
+    // missing glyph.
+    shaper.set_fonts(set(&[]));
+    let alone = space(&shaper);
+    assert!(drawn_from(&alone, JP));
+    assert_eq!(alone.0, 0);
 }
 
 #[test]
