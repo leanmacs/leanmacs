@@ -39,14 +39,12 @@ means, and what a motion does when it cannot go the whole way, is Vim's
   - It counts cells, where Vim's counts display columns: a recorded
     departure, which shows with a tab or a wide character before the
     cursor.
-
 - **What a word is is the text port's** (`Editor/Text.lean`): a run of word
   characters or of punctuation, or the line break of an empty line; a WORD
   is a run of characters that are not blank. It is Vim's on ASCII and not
   beyond it, which is recorded and pinned with the text port and not here.
 - **Where there is no word further on**, the raw target is the text's end,
   which an operator wants; the cursor then rests on the last character.
-
 - **A count is bounded by the text.** A motion that repeats stops when it
   can go no further, and each turn is a request of the text port, which
   the interrupt guards, so a count far past a large text can be stopped.
