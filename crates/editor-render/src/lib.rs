@@ -12,7 +12,15 @@
 //!   taken.
 //! - [`schedule`]: when to draw, as a pure function of what is asked for
 //!   and the time.
+//! - [`port`]: the [`Renderer`](port::Renderer) port itself.
+//! - [`rows`]: which rows of a frame a renderer builds and which it draws
+//!   from what it kept.
+//! - [`fake`]: the port's published fake, which records what it is asked
+//!   to draw.
 
 pub mod clock;
+pub mod fake;
 pub mod mailbox;
+pub mod port;
+pub mod rows;
 pub mod schedule;
