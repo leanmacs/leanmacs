@@ -29,7 +29,7 @@ scheme are made from that (`Mode.keymaps`).
   cannot choose it.
 - **`onEnter` runs when the mode becomes a buffer's major mode**, with the
   view it was set through, once (`Config.Registry.setMajorMode`, which
-  refuses with a `ModeRefusal`). It also runs, before the derived mode's,
+  refuses with a `ModeRefusal`, `Editor/State.lean`). It also runs, before the derived mode's,
   when a mode derived from this one becomes the major mode: the registry
   runs the on-enter of each mode of the new major mode's lineage, root
   first. So the buffer's major mode, as it runs, may be a mode derived from
@@ -170,13 +170,5 @@ def check (mode : Mode) (scheme : InputScheme) : List Problem :=
       | _ => none
 
 end Mode
-
-/-- Why setting a mode was refused. -/
-inductive ModeRefusal where
-  /-- The state has no window of this view. -/
-  | noSuchWindow (id : ViewId)
-  /-- No mode is registered under this name. -/
-  | noSuchMode (name : String)
-  deriving DecidableEq, Repr
 
 end Editor

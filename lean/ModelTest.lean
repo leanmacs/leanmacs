@@ -3775,7 +3775,7 @@ buffer, each with markers of its own:
 View 0 is focused. -/
 def threeWindows : TextM EditorState := do
   let state ← EditorState.initial ⟨640, 480⟩
-  let some buffer := state.buffers[0]? | throw .noSuchText
+  let some buffer := state.buffer? ⟨0⟩ | throw .noSuchText
   let more ←
     #[1, 2].mapM fun index => do
         let scroll ← buffer.text.mark (.anchor { offset := 0, bias := .before })
@@ -3799,7 +3799,7 @@ def twoBuffers : TextM EditorState := do
   let selection ← text.mark (.selection { ranges := #[⟨0, 0⟩] })
   let history ← UndoTree.over text
   return { state with
-      buffers := state.buffers.push { name := "other", text, history }
+      buffers := state.buffers.push (some { name := "other", text, history })
       windows := state.windows.push { id := ⟨1⟩, buffer := ⟨1⟩, scroll, selection }
       frame :=
         { state.frame with
@@ -3849,7 +3849,7 @@ def stateChecks : List Check :=
           match onTextModel (EditorState.initial ⟨640, 480⟩) with
           | none => false
           | some state =>
-            state.wellFormed && state.buffers.map (·.name) == #["scratch"] &&
+            state.wellFormed && state.buffers.map (·.map (·.name)) == #[some "scratch"] &&
               state.windows.map (·.id) == #[⟨0⟩] &&
               state.frame.tree == .split .rows (.window ⟨0⟩) .minibuffer &&
               state.frame.focused == ⟨0⟩ &&
@@ -3952,7 +3952,8 @@ def stateChecks : List Check :=
               major state 1 == none && major listed 1 == some "listing" && major listed 0 == none &&
                 listed ==
                   { state with
-                    buffers := state.buffers.modify 1 ({ · with major := some "listing" }) } &&
+                    buffers :=
+                      state.buffers.modify 1 (·.map ({ · with major := some "listing" })) } &&
                 (match listed.setMajorMode ⟨1⟩ "listing" with
                 | (.ok false, again) => again == listed
                 | _ => false) &&
@@ -4058,7 +4059,7 @@ def loopChecks : List Check :=
         pure <|
           let start : TextM EditorState := do
             let state ← threeWindows
-            let some buffer := state.buffers[0]? | throw .noSuchText
+            let some buffer := state.buffer? ⟨0⟩ | throw .noSuchText
             buffer.text.insert 0 "hello"
             return (state.focusWindow ⟨1⟩).2
           match looped start [.preedit "ka"] with
@@ -4069,7 +4070,7 @@ def loopChecks : List Check :=
                 scene.preedit == some "ka" && scene.focused == some ⟨1⟩ &&
                   scene.views.all fun view => shownText model view == some "hello"
               | _ => false) &&
-              match loop.state.buffers[0]? with
+              match loop.state.buffer? ⟨0⟩ with
               | some buffer =>
                 model.texts.contents == #["hello"] &&
                   (model.texts.texts[buffer.text.index]?).join.map (·.revision) == some 1
@@ -4168,14 +4169,14 @@ def loopChecks : List Check :=
         pure <|
           let program : EditorM (EditorState × TestLoop × String) := do
             let state ← twoBuffers
-            let some gone := state.buffers[0]? | throw .noSuchMarker
-            let some other := state.buffers[1]? | throw .noSuchMarker
+            let some gone := state.buffer? ⟨0⟩ | throw .noSuchMarker
+            let some other := state.buffer? ⟨1⟩ | throw .noSuchMarker
             gone.text.release
             other.text.insert 5 "!"
             let (loop, _) ← stepped { state } pressF5
             -- The loop recorded the insertion in the other buffer's history:
             -- one undo of it takes the insertion back.
-            let some kept := loop.state.buffers[1]? | throw .noSuchMarker
+            let some kept := loop.state.buffer? ⟨1⟩ | throw .noSuchMarker
             let some _ ← kept.history.undo | throw .noInverse
             return (state, loop, ← other.text.read)
           match program.runModel editorModel with
@@ -4201,16 +4202,17 @@ def loopChecks : List Check :=
             let history ← UndoTree.over text
             text.release
             let state :=
-              { state with buffers := state.buffers.push { name := "hidden", text, history } }
+              { state with
+                buffers := state.buffers.push (some { name := "hidden", text, history }) }
             return (← stepped { state } pressF5).1
           -- A buffer whose history is over another text than its own: the
           -- history is recorded, and only the view is refused.
           let astray : EditorM TestLoop := do
             let state ← EditorState.initial ⟨640, 480⟩
-            let some buffer := state.buffers[0]? | throw .noSuchMarker
+            let some buffer := state.buffer? ⟨0⟩ | throw .noSuchMarker
             let history ← UndoTree.over (← createText "elsewhere")
             buffer.text.release
-            let state := { state with buffers := #[{ buffer with history }] }
+            let state := { state with buffers := #[some { buffer with history }] }
             return (← stepped { state } pressF5).1
           (match hidden.runModel editorModel with
             | (.ok loop, model) =>
@@ -5120,10 +5122,10 @@ def dispatchRollbackChecks : List Check :=
             dispatchKeys [("C-c 2", invoke "both"), ("C-c 0", invoke "idle")]
               [("both", both), ("idle", idle)]
           let revisions (loop : TestLoop) : EditorM (Array Nat) :=
-            loop.state.buffers.mapM fun buffer => buffer.text.revision
+            loop.state.buffers.filterMap id |>.mapM fun buffer => buffer.text.revision
           let program : EditorM (Array String × Array Nat × Array Nat) := do
             let (loop, _) ← stepsWith keys { state := ← twoBuffers } (presses "C-c 2")
-            let texts ← loop.state.buffers.mapM fun buffer => buffer.text.read
+            let texts ← (loop.state.buffers.filterMap id).mapM fun buffer => buffer.text.read
             let before ← revisions loop
             let (loop, _) ← stepsWith keys loop (presses "C-c 0")
             return (texts, before, ← revisions loop)
@@ -5192,14 +5194,14 @@ def dispatchRollbackChecks : List Check :=
             let kept ← Loop.keep state
             -- What a command that moved in the history would have done: an
             -- undo, to the root, and then an edit.
-            let some buffer := state.buffers[0]? | throw .noSuchText
+            let some buffer := state.buffer? ⟨0⟩ | throw .noSuchText
             let some moved ← buffer.history.undo Origin.user | throw .noInverse
             buffer.text.insert 0 "x"
-            let during := { state with buffers := #[{ buffer with history := moved.tree }] }
+            let during := { state with buffers := #[some { buffer with history := moved.tree }] }
             let before ← buffer.text.read
             let (restored, said) ← kept.restore during
             let after ← buffer.text.read
-            let some again := restored.buffers[0]? | throw .noSuchText
+            let some again := restored.buffer? ⟨0⟩ | throw .noSuchText
             let some _ ← again.history.redo Origin.user | throw .noInverse
             return (before, after, said, ← buffer.text.read)
           (program.runModel editorModel).1.toOption ==
@@ -7010,7 +7012,7 @@ def entered (steps : List (ViewId × String)) :
   match program.runModel editorModel with
   | (.ok (refusals, state), model) =>
     let texts := model.texts.contents
-    some (texts.extract 2 texts.size, refusals, state.buffers.map (·.major))
+    some (texts.extract 2 texts.size, refusals, state.buffers.map (·.bind (·.major)))
   | (.error _, _) => none
 
 /-- The checks of a mode's on-enter action (`Config.Registry.setMajorMode`),

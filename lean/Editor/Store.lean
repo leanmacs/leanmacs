@@ -1,4 +1,5 @@
 import Editor.Command
+import Editor.Value
 
 /-!
 # Stores
@@ -6,8 +7,8 @@ import Editor.Command
 State of a type that config defines cannot simply be kept across a reload:
 the new config may have changed the type, so a value the old config built
 cannot be handed to the new one. Config keeps such state in a *store*: a
-named cell whose type has an encoding to a plain tree (`Value`) and a
-version.
+named cell whose type has an encoding to a plain tree (`Value`,
+`Editor/Value.lean`) and a version.
 
 The editor holds the cell as a tree, never as a value of config's type, so a
 reload leaves it where it is. A command over a store is a function from the
@@ -54,25 +55,6 @@ real editor both run.
 -/
 
 namespace Editor
-
-/-- A plain tree: what a store's cell holds. It names no type of config's, so
-it means the same before and after a reload. -/
-inductive Value where
-  /-- Nothing. -/
-  | null
-  /-- A boolean. -/
-  | bool (value : Bool)
-  /-- A natural number. -/
-  | nat (value : Nat)
-  /-- An integer. -/
-  | int (value : Int)
-  /-- A string. -/
-  | str (value : String)
-  /-- A list of trees. -/
-  | list (items : List Value)
-  /-- Named fields, in order. -/
-  | record (fields : List (String × Value))
-  deriving BEq, Repr, Inhabited
 
 /-- A store of values of type `α`, as config writes it: the cell's name, and
 how a value becomes a tree and comes back. -/

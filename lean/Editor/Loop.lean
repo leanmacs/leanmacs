@@ -356,12 +356,15 @@ history as it was, and the first such refusal is handed back. -/
 def recordHistories (state : EditorState) : TextM (EditorState × Option TextError) := do
   let mut buffers := #[]
   let mut refusal := none
-  for buffer in state.buffers do
+  for slot in state.buffers do
+    let some buffer := slot |
+      buffers := buffers.push none
+      continue
     match ← observing buffer.history.sync with
     | .ok history =>
-      buffers := buffers.push { buffer with history := history.close }
+      buffers := buffers.push (some { buffer with history := history.close })
     | .error error =>
-      buffers := buffers.push buffer
+      buffers := buffers.push (some buffer)
       refusal := refusal <|> some error
   return ({ state with buffers }, refusal)
 
@@ -522,7 +525,7 @@ refuses, and a marker that does, is not kept. -/
 def keep (state : EditorState) : TextM Kept := do
   let mut histories := #[]
   for index in [0:state.buffers.size] do
-    let some buffer := state.buffers[index]? | continue
+    let some buffer := state.buffer? ⟨index⟩ | continue
     if let .ok history← observing buffer.history.sync then
       histories := histories.push (index, history.state)
   let mut markers := #[]
@@ -563,10 +566,10 @@ def Kept.restore (kept : Kept) (state : EditorState) : TextM (EditorState × Str
   let mut refusal : Option TextError := none
   let mut moved : Array TextId := #[]
   for (index, was) in kept.histories do
-    let some buffer := buffers[index]? | continue
+    let some (some buffer) := buffers[index]? | continue
     match ← observing (revertBuffer buffer was) with
     | .ok (history, movedSince) =>
-      buffers := buffers.modify index ({ · with history })
+      buffers := buffers.modify index (·.map ({ · with history }))
       if movedSince then
         moved := moved.push buffer.text
     | .error error =>

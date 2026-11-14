@@ -1,6 +1,7 @@
+import Editor.Invocation
 import Editor.Scene
-import Editor.Store
 import Editor.UndoTree
+import Editor.Value
 
 /-!
 # The editor state
@@ -13,11 +14,15 @@ a scene of it after each.
 
 - **A buffer** (`Buffer`) is a text of the text store, a name, the text's
   undo tree, the buffer's local values (`Value` trees, as a store's cell
-  holds), and the names of its modes: one major mode or none, and its
-  minor modes, the one added last first. A name here is only a name: what
-  a mode is, and what its keys and its `onEnter` are, is the registry's
-  (`Editor/Mode.lean`, `Editor/Config/Registry.lean`), and a name no
-  registered mode has contributes nothing.
+  holds, `Editor/Value.lean`), and the names of its modes: one major mode
+  or none, and its minor modes, the one added last first. A name here is
+  only a name: what a mode is, and what its keys and its `onEnter` are, is
+  the registry's (`Editor/Mode.lean`, `Editor/Config/Registry.lean`), and a
+  name no registered mode has contributes nothing.
+- **Buffers are kept in slots** (`EditorState.buffers`). A `BufferId` is an
+  index there, and a buffer that is removed leaves its slot empty, as the
+  text store keeps the place of a released text. So an id is never used
+  again, and no window's `buffer` is renumbered when another buffer goes.
 - **A window** (`Window`) is a view of a buffer: its `ViewId`, which names it
   in every scene, the buffer it shows, its scroll position as an anchor
   marker of the buffer's text, and its selections as one selection marker
@@ -111,7 +116,8 @@ Each is pinned by `ModelTest.stateChecks`, and what the scene shows of it by
 
 namespace Editor
 
-/-- The name of a buffer: its index in the state's buffers. -/
+/-- The name of a buffer: the index of its slot in the state's buffers. It is
+never used again once its buffer is removed. -/
 structure BufferId where
   /-- Which buffer. -/
   index : Nat
@@ -180,8 +186,9 @@ structure Frame where
 
 /-- Everything the editor is showing and editing. -/
 structure EditorState where
-  /-- The buffers; a `BufferId` is an index here. -/
-  buffers : Array Buffer
+  /-- The buffers, one a slot; a `BufferId` is an index here, and the slot of
+  a buffer that was removed is `none`. -/
+  buffers : Array (Option Buffer)
   /-- The windows, each named by its view's id. -/
   windows : Array Window
   /-- The frame. -/
@@ -212,6 +219,14 @@ inductive LayoutRefusal where
 inductive BufferRefusal where
   /-- The state has no buffer of this name. -/
   | noSuchBuffer (id : BufferId)
+  deriving DecidableEq, Repr
+
+/-- Why setting a mode was refused. -/
+inductive ModeRefusal where
+  /-- The state has no window of this view. -/
+  | noSuchWindow (id : ViewId)
+  /-- No mode is registered under this name. -/
+  | noSuchMode (name : String)
   deriving DecidableEq, Repr
 
 namespace Split
@@ -279,9 +294,10 @@ namespace EditorState
 def window? (state : EditorState) (id : ViewId) : Option Window :=
   state.windows.find? (·.id == id)
 
-/-- The buffer `id` names, if there is one. -/
+/-- The buffer `id` names, if there is one: none for an id no buffer was
+given, and for one whose buffer was removed. -/
 def buffer? (state : EditorState) (id : BufferId) : Option Buffer :=
-  state.buffers[id.index]?
+  state.buffers[id.index]?.join
 
 /-- The window whose view is `id` and its buffer: what a handler acting on
 that view is given. -/
@@ -315,7 +331,7 @@ def initial (size : Size) : TextM EditorState := do
   let selection ← text.mark (.selection { ranges := #[⟨0, 0⟩], shape := .exclusive })
   let history ← UndoTree.over text
   return {
-      buffers := #[{ name := "scratch", text, history }]
+      buffers := #[some { name := "scratch", text, history }]
       windows := #[{ id := ⟨0⟩, buffer := ⟨0⟩, scroll, selection }]
       frame := { size, tree := .split .rows (.window ⟨0⟩) .minibuffer, focused := ⟨0⟩ } }
 
@@ -361,7 +377,7 @@ private def changeBuffer {α : Type} (id : BufferId) (change : Buffer → α × 
   match state.buffer? id with
   | some buffer =>
     let (said, changed) := change buffer
-    (.ok said, { state with buffers := state.buffers.set! id.index changed })
+    (.ok said, { state with buffers := state.buffers.set! id.index (some changed) })
   | none => (.error (.noSuchBuffer id), state)
 
 /-- Makes the mode `name` the major mode of the buffer `id`, and says
