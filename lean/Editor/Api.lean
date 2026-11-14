@@ -671,8 +671,10 @@ def split (view : ViewId) (axis : Axis) : EditorM (Except LayoutRefusal ViewId) 
     EditorState.ask (.split view axis scroll selection)
 
 /-- Closes the window of `view`: its sibling takes the place of the split
-that held both. Refused with `noSuchWindow` for a view with no window, and
-with `onlyWindow` for the last window. -/
+that held both. Refused with `noSuchWindow` for a view with no window, with
+`ofMinibuffer` for the minibuffer's view, and with `onlyWindow` for the
+last window of the tree, which the minibuffer's window does not count
+towards. -/
 def close (view : ViewId) : EditorM (Except LayoutRefusal Unit) :=
   return (← EditorState.ask (.removeWindow view)).map fun _ => ()
 
