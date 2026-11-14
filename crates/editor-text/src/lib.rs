@@ -205,12 +205,15 @@
 //!   punctuation; the private module `word` is the one place that says so.
 //!   A line break separates words as a blank does, but the line break of
 //!   an empty line, a row with no content that has a line break, is a word
-//!   alone. A word starts where its first cell starts. The next word start
-//!   is the first after a position, or the end of the text; the previous
-//!   one the last before it, or 0. A motion walks the rope
-//!   from the position and builds nothing. No answer is clamped: which
-//!   motion a key runs, counts and keeping a cursor on a line are the
-//!   editor's rules.
+//!   alone. A word starts where its first cell starts and ends where its
+//!   last cell starts, the position of a cursor on its last character. The
+//!   next start or end of a word is the first after a position, or the end
+//!   of the text; the previous one the last before it, or 0. The next end
+//!   passes over empty lines, and the other three stop on one.
+//! - **A motion walks the rope** from the position, a cell at a time, and
+//!   builds nothing: no string and no list of the text's cells or words.
+//!   No answer is clamped: which motion a key runs, a count as repetition
+//!   and keeping a cursor on a line are the editor's rules.
 //! - **An origin** ([`Origin`]) says who made an edit. It is an opaque
 //!   number given when a transaction is applied, not part of the
 //!   transaction. The crate keeps it in the transaction's log entry

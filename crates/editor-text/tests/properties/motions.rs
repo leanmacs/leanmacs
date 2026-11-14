@@ -79,6 +79,21 @@ struct Reference {
 struct Words {
     /// Where each starts: at its first cell.
     starts: Vec<usize>,
+    /// Where each ends: at its last cell.
+    ends: Vec<usize>,
+    /// Where each ends, but for the words that are the line break of an
+    /// empty line.
+    ends_with_content: Vec<usize>,
+}
+
+/// One word of a string.
+struct Word {
+    /// Where its first cell starts.
+    start: usize,
+    /// Where its last cell starts.
+    last: usize,
+    /// Whether it is the line break of an empty line.
+    empty: bool,
 }
 
 /// Whether `character`, which is no blank, is a word character; for a
@@ -163,7 +178,7 @@ impl Reference {
     /// run of cells of one class, or the line break of a row with no
     /// content, alone. A blank and any other line break are in none.
     fn list(&self, kind: WordKind) -> Words {
-        let mut words = Words::default();
+        let mut words: Vec<Word> = Vec::new();
         // The class of the word the cell before is in, when it is in a
         // run.
         let mut open = None;
@@ -171,21 +186,38 @@ impl Reference {
             match character {
                 None => {
                     if self.row_of(start).start == start {
-                        words.starts.push(start);
+                        words.push(Word {
+                            start,
+                            last: start,
+                            empty: true,
+                        });
                     }
                     open = None;
                 }
                 Some(' ' | '\t') => open = None,
                 Some(character) => {
                     let class = is_word_character(kind, character);
-                    if open != Some(class) {
-                        words.starts.push(start);
+                    match words.last_mut() {
+                        Some(word) if open == Some(class) => word.last = start,
+                        _ => words.push(Word {
+                            start,
+                            last: start,
+                            empty: false,
+                        }),
                     }
                     open = Some(class);
                 }
             }
         }
-        words
+        Words {
+            starts: words.iter().map(|word| word.start).collect(),
+            ends: words.iter().map(|word| word.last).collect(),
+            ends_with_content: words
+                .iter()
+                .filter(|word| !word.empty)
+                .map(|word| word.last)
+                .collect(),
+        }
     }
 
     /// The words of `kind`.
@@ -221,8 +253,14 @@ impl Reference {
             Motion::NextWordStart(kind) => {
                 first_after(&self.words(kind).starts, offset).unwrap_or(self.len)
             }
+            Motion::NextWordEnd(kind) => {
+                first_after(&self.words(kind).ends_with_content, offset).unwrap_or(self.len)
+            }
             Motion::PreviousWordStart(kind) => {
                 last_before(&self.words(kind).starts, offset).unwrap_or(0)
+            }
+            Motion::PreviousWordEnd(kind) => {
+                last_before(&self.words(kind).ends, offset).unwrap_or(0)
             }
             Motion::LineStart => self.row_of(offset).start,
             Motion::LineEnd => self.row_of(offset).content,
@@ -244,9 +282,13 @@ fn motions() -> Vec<Motion> {
         Motion::NextCell,
         Motion::PreviousCell,
         Motion::NextWordStart(WordKind::Word),
+        Motion::NextWordEnd(WordKind::Word),
         Motion::PreviousWordStart(WordKind::Word),
+        Motion::PreviousWordEnd(WordKind::Word),
         Motion::NextWordStart(WordKind::BigWord),
+        Motion::NextWordEnd(WordKind::BigWord),
         Motion::PreviousWordStart(WordKind::BigWord),
+        Motion::PreviousWordEnd(WordKind::BigWord),
         Motion::LineStart,
         Motion::LineEnd,
         Motion::LineFirstNonBlank,
