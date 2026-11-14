@@ -153,7 +153,32 @@ sets or clears a boundary.
   on its line.
 - **Not built: a count before a key that begins an insert.** Vim repeats
   the inserted text, which is the replay of an insert session. The
-  commands ignore their count and their register.
+  commands ignore their count and their register, and so do the two that
+  open a line.
+
+### Opening a line
+
+`openBelow` and `openAbove` are Vim's `o` and `O` (`openLine`).
+
+- **`openBelow`** inserts the buffer's line ending where the cursor's
+  line's content ends, and the new line is after it. **`openAbove`**
+  inserts it at the start of the cursor's line, and the new line is before
+  it.
+- **The line ending is read from the buffer** (`Buffer.lineEnding`), as
+  `Target.insertLineBreak` reads it (`Editor/Api.lean`). They do not call
+  that operation: their edit carries the selection from before the command
+  (`Target.replaceCarrying`), so an undo of the session hands back the
+  cursor the user saw.
+- **Each begins an insert only when a key that enters insert state runs
+  it.** It leaves one range of the shape its call's report says on the new
+  line, put where the report's state lets a cursor rest (`settle`): under
+  insert state's report a bar there, and the line and the text typed after
+  it are one insert session, one step of the history. Run by its name in
+  normal state it opens the line and the cursor rests on it.
+- **A recorded departure**: opened below a last line with no line feed and
+  then left with `<Escape>`, the new line is the empty last row, where a
+  cursor cannot rest ("Where a cursor rests"), so the cursor rests on the
+  line above, where Vim's is on the new line.
 - **Not built: any other key in insert state** than `<Escape>` and the
   keys that print. `RET`, `<Backspace>`, `<Tab>` and the arrow keys are
   named keys, which print nothing, and do nothing there.
@@ -388,6 +413,36 @@ the view's state is entered there. It ignores its count and its
 register. -/
 def appendLineEnd (call : Call) : EditorM Unit :=
   enterAt (fun text head => text.motion .lineEnd head) call
+
+/-- Opens an empty line beside the line of the head of the primary range of
+the target's selection, below it when `below` and above it otherwise, and
+leaves one range of the shape the call's report says on the new line
+("Opening a line", in the module docs): the buffer's line ending is
+inserted where the line's content ends, or at the line's start, in one edit
+that carries the selection from before the command, and the window keeps no
+wanted column. -/
+def openLine (below : Bool) (call : Call) : EditorM Unit := do
+  let text := call.target.buffer.text
+  let before ← call.target.selection
+  let some range := before.ranges[before.primary]? | throw .badSelection
+  let ending := call.target.buffer.lineEnding.text
+  let start ← text.motion (if below then .lineEnd else .lineStart) range.head
+  -- The new line is after the line break put below, and before the one put
+  -- above.
+  let bar := if below then start + ending.utf8ByteSize else start
+  discard <| call.target.window.id.setWanted none
+  call.target.replaceCarrying ⟨start, start⟩ ending before (cursorAt call bar)
+  settle call bar
+
+/-- The command that opens a line below the cursor's and begins an insert
+on it, Vim's `o`, as it is called. It ignores its count and its register. -/
+def openBelow (call : Call) : EditorM Unit :=
+  openLine true call
+
+/-- The command that opens a line above the cursor's and begins an insert
+on it, Vim's `O`, as it is called. It ignores its count and its register. -/
+def openAbove (call : Call) : EditorM Unit :=
+  openLine false call
 
 /-- The command typed text runs, as it is called ("Insert state", in the
 module docs): its first argument, a string, is inserted at the head of each

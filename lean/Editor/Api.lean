@@ -90,10 +90,14 @@ with `noSuchWindow` for a view with no window.
 - `insertLineBreak` breaks the line at the head of each range, with the
   buffer's line ending (`Buffer.lineEnding`, `File.LineEnding.text`): a
   line feed, or a carriage return and a line feed in a buffer whose file's
-  lines mostly end that way. It is the one place the line ending is read:
-  every command that breaks a line calls it, and none writes `"\n"`
-  itself. Nothing else is translated: a committed text and a pasted text
-  are inserted as they are.
+  lines mostly end that way. A command that breaks a line at the cursors
+  calls it, and none writes `"\n"` itself. A command whose edit must carry
+  the selection from before the command, and so is made with
+  `Target.replaceCarrying`, reads the buffer's line ending itself: evil's
+  commands that open a line (`Editor/Evil.lean`) and its line-wise put and
+  line-wise registers (`Editor/Evil/Registers.lean`,
+  `Editor/Evil/Operators.lean`). Nothing else is translated: a committed
+  text and a text read from the clipboard are inserted as they are.
 
 Each is one transaction made by the user that carries the selection before
 and the cursors after, so undoing it hands the selection back
@@ -802,9 +806,9 @@ def deleteSelections (target : Target) : TextM Unit :=
 
 /-- Breaks the line at the head of each range of `target`'s selection, with
 its buffer's line ending (`Buffer.lineEnding`): a line feed, or a carriage
-return and a line feed, inserted as `insertAtSelections` inserts. Every
-command that breaks a line calls this, and none writes the line feed
-itself. -/
+return and a line feed, inserted as `insertAtSelections` inserts. A command
+that breaks a line at the cursors calls this, and none writes the line
+feed itself. -/
 def insertLineBreak (target : Target) : TextM Unit :=
   target.insertAtSelections target.buffer.lineEnding.text
 

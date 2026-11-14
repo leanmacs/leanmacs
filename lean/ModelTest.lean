@@ -338,7 +338,11 @@ registers for evil (`Editor/Evil/Compiled.lean`), on the loop's driver:
   texts;
 - `evilSelectionChecks`: the operators over a `v` and a `V` selection, by
   the same rows, and that the operator's key leaves one cursor;
-- `evilRegisterChecks`: `x`, by the same rows.
+- `evilRegisterChecks`: `x`, the registers a yank and a deletion set, the
+  clipboard register on the clipboard model (`evilClipped`), and `p` and
+  `P`, by the same rows;
+- `evilOpenChecks`: `o` and `O`, by the same rows, and their insert
+  session.
 
 Each expected text of a row is written by hand from Vim's documented
 behaviour (`docs/design/keymaps-and-modes.md`, "Motions as built"). No
@@ -15055,6 +15059,75 @@ def evilRegisterChecks : List Check :=
             evilHistory put == some (2, false) && evilText put == some "aab b cd" &&
               evilText (evilUndone put) == some "ab cd" }]
 
+/-- A driver of the evil checks over a buffer holding `contents` whose lines
+end in a carriage return and line feed (`Buffer.lineEnding`), with the
+cursor at `head`. -/
+def evilCrlfDriver (contents : String) (head : Nat) : Option EvilDriver :=
+  (Loop.Driver.over evilHanded (fun _ => none)
+      (do
+        let state ← evilState contents head
+        return { state with buffers := state.buffers.map (·.map ({ · with lineEnding := .crlf })) })
+      editorModel).toOption
+
+/-- The checks of the two commands that open a line (`Evil.openBelow`,
+`Evil.openAbove`), by key, as `evilOperatorChecks` are. -/
+def evilOpenChecks : List Check :=
+  [{  name :=
+        "o opens an empty line below the cursor's line and O one above it, each with the bar on the new line in insert state and the register as it was; the text typed is on the new line, and <Escape> leaves the cursor on it"
+      run :=
+        operatorRows
+          [.inserts "ab\nc|d\nef" "o" "ab\ncd\n|\nef" asItWas,
+            .inserts "ab\nc|d\nef" "O" "ab\n|\ncd\nef" asItWas,
+            .inserts "ab\nc|d" "o" "ab\ncd\n|" asItWas, .inserts "|ab" "O" "|\nab" asItWas,
+            .rests "ab\nc|d\nef" "o X <Escape>" "ab\ncd\n|X\nef" asItWas,
+            .rests "ab\nc|d\nef" "O X <Escape>" "ab\n|X\ncd\nef" asItWas,
+            .rests "ab\nc|d\nef" "o <Escape>" "ab\ncd\n|\nef" asItWas] },
+    { name :=
+        "a departure from Vim, recorded: a cursor cannot rest in the empty last row. o and <Escape> on a last line with no line feed leaves the text Vim writes, and the cursor on the line above, where Vim's is on the new line"
+      run := operatorRows [.rests "ab\nc|d" "o <Escape>" "ab\nc|d\n" asItWas] },
+    { name :=
+        "inside the session o began, the selection is one exclusive range on the new line and the status field is insert state's; a count before o or O changes nothing"
+      run := do
+        let held ←
+          operatorRows
+              [.rests "ab\nc|d\nef" "3 o X <Escape>" "ab\ncd\n|X\nef" asItWas,
+                .rests "ab\nc|d\nef" "3 O X <Escape>" "ab\n|X\ncd\nef" asItWas]
+        return held &&
+            (evilScene "ab\nc|d\nef" "o").map (fun seen => (seen.selection, seen.status)) ==
+              some
+                ({ ranges := #[⟨6, 6⟩], shape := .exclusive },
+                  (evilLooks "i").2.push
+                    { text := Loop.modifiedMark, face := Loop.modifiedFace }) },
+    { name :=
+        "o and the text typed after it are one step of the history: o leaves its group open, <Escape> closes it as one node, and one undo request gives the text from before the o"
+      run :=
+        pure <|
+          match evilDriver "ab\nc|d\nef" with
+          | none => false
+          | some driver =>
+            let opened := evilFed driver "o"
+            let ended := evilFed opened "X Y <Escape>"
+            evilHistory opened == some (1, true) && evilHistory ended == some (2, false) &&
+              evilText ended == some "ab\ncd\nXY\nef" &&
+              evilText (evilUndone ended) == some "ab\ncd\nef" },
+    { name :=
+        "in a buffer whose lines end in a carriage return and line feed, the line break o and O insert is that"
+      run :=
+        pure <|
+          ((evilCrlfDriver "ab\r\ncd" 5).map fun driver => evilShown (evilFed driver "o")) ==
+              some "ab\r\ncd\r\n|" &&
+            ((evilCrlfDriver "ab\r\ncd" 5).map fun driver => evilShown (evilFed driver "O")) ==
+              some "ab\r\n|\r\ncd" },
+    { name :=
+        "o and O begin an insert only when a key that enters insert state runs them: open-below and open-above, run by name in normal state, open the line and leave the cursor resting on it, in normal state"
+      run :=
+        pure <|
+          let ran (name : String) : Option EvilEdited :=
+            (evilRegistered "ab\nc|d\nef").map fun driver =>
+              evilLeft (driver.stepped (driver.loop.invoke driver.handed { command := name })).1
+          ran "open-below" == some ⟨"ab\ncd\n|\nef", asItWas, false, ""⟩ &&
+            ran "open-above" == some ⟨"ab\n|\ncd\nef", asItWas, false, ""⟩ }]
+
 /-- Every check, in the order they run.
 
 The order matters where the process's one pool is measured. `poolChecks` run
@@ -15116,7 +15189,8 @@ def checks : List Check :=
     evilInsertChecks ++
     evilOperatorChecks ++
     evilSelectionChecks ++
-    evilRegisterChecks
+    evilRegisterChecks ++
+    evilOpenChecks
 
 /-- Runs `checks` and returns the names of those that failed. A check that
 throws has failed, and its error is reported with its name. -/
