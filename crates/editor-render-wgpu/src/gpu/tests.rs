@@ -190,6 +190,40 @@ fn a_device_without_dual_source_blending_draws_plain_masks_through_its_own_blend
 }
 
 #[test]
+fn a_draw_wgpu_refuses_is_not_presented_and_says_so_and_the_next_one_is() {
+    let mut renderer =
+        WgpuRenderer::over(&noop(), Settings::default(), true).expect("the no-op adapter");
+    let frame = std::sync::Arc::new(dressed());
+    // A target one pixel wider than the device says a texture may be.
+    let limit = renderer.device.device.limits().max_texture_dimension_2d;
+    let wide = Target {
+        width: limit + 1,
+        ..target(1.0)
+    };
+    let drawn = renderer.draw(&DrawRequest {
+        frame: &frame,
+        target: wide,
+    });
+    assert!(!drawn.presented);
+    assert!(renderer.refused().is_some());
+    // And there is no picture of it to read.
+    let image = renderer.read_back();
+    assert_eq!((image.width, image.height), (0, 0));
+    assert!(renderer.refused().is_some());
+    // The same frame on a target the device makes is presented, and
+    // nothing is said of it.
+    let drawn = renderer.draw(&DrawRequest {
+        frame: &frame,
+        target: target(1.0),
+    });
+    assert!(drawn.presented, "{:?}", renderer.refused());
+    assert_eq!(renderer.refused(), None);
+    let image = renderer.read_back();
+    assert_eq!((image.width, image.height), (200, 64));
+    assert_eq!(renderer.refused(), None);
+}
+
+#[test]
 fn the_target_read_back_is_the_size_last_drawn_at() {
     let mut device = device(true);
     // Before a first draw there is no picture.
