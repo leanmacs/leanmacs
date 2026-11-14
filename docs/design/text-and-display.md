@@ -970,10 +970,11 @@ fake shaper whose glyphs all have the cells' size.
 - Slow work that affects layout (wrapping a huge paste, a reparse) gets
   about a millisecond to finish within the frame; after that the frame is
   drawn from an approximation and corrected.
-- Shaping goes through a `Shaper` port (Parley and fontique as the planned
-  adapter): font fallback, ligatures, complex scripts, bidirectional text,
-  mixed proportional and monospace fonts. Layout takes every metric from
-  this port and assumes nothing about pixels.
+- Shaping goes through a `Shaper` port (Parley and fontique are its real
+  adapter, `editor-shape-parley`): font fallback, ligatures, complex
+  scripts, bidirectional text, mixed proportional and monospace fonts.
+  Layout takes every metric from this port and assumes nothing about
+  pixels.
 - Drawing goes through a `Renderer` port, which takes a device-independent
   frame (see below). The wgpu adapter rasterises glyphs once into an atlas
   and draws them as quads, plus rectangles. Rasterising and the atlas are
@@ -992,8 +993,10 @@ fake shaper whose glyphs all have the cells' size.
 ### As built
 
 The display pipeline's phase 1 built layout in `crates/editor-layout`, and
-put it behind a handle for Lean in `editor-ffi` (`src/display.rs`). The
-facts of each part are in the module docs; these are the decisions.
+put it behind a handle for Lean in `editor-ffi` (`src/display.rs`). Its
+phase 3 built the real shaper in `crates/editor-shape-parley`, and made
+the port and layout able to say what a real shaper says. The facts of each
+part are in the module docs; these are the decisions.
 
 - **The `Shaper` port** shapes one segment, with its font runs, into a kept
   value that breaks into visual lines at a width; measuring and breaking
@@ -1002,8 +1005,9 @@ facts of each part are in the module docs; these are the decisions.
   character one glyph of its font's advance and line height and breaks
   greedily at characters, the Lean display model's rule, so the real
   binding passes the display contract by construction; it is also what the
-  display handle runs on until Parley (phase 3), and it is the "cell
-  shaper" of the table below. Its published contract check
+  display handle still runs on (the real adapter is linked by nothing
+  yet, below), and it is the "cell shaper" of the table below. Its
+  published contract check
   (`shaper::contract`) holds the fake and every real adapter to nine
   properties that leave the breaking policy open. Two of them are what
   layout relies on of a line and the fake could never break: a line's
@@ -1029,6 +1033,83 @@ facts of each part are in the module docs; these are the decisions.
   only grows and an entry never changes. One id space for both was set
   aside: it gives one number two meanings. The fake draws a spec's glyphs
   in the resolved font of the spec's number, with no bytes.
+- **The real shaper is `editor-shape-parley`**, over Parley and fontique,
+  both pinned at exactly 0.13.0. No type of either is public: `deny.toml`
+  lets only the adapter depend on Parley, and only the adapter and
+  Parley's own crates on fontique. It builds one Parley layout for each
+  `shape` call, which is one segment of one row, keeps it, and breaks it
+  again at another width without shaping; it never uses `PlainEditor` or
+  a layout of a whole document, which shape everything again on each
+  edit. So a row costs a layout for each of its segments that is shaped,
+  which a wiring test counts against layout's own counters. Layouts are
+  quantised: a line's height and baseline are whole pixels, and advances
+  are the font's own. A font's metrics are those of a space shaped in it.
+  **It is linked by nothing yet.** The display handle stays on the fake:
+  Lean's display contract passes over the fake by construction and has no
+  way to name fonts, and a display over real fonts needs a constructor
+  that says which, whose first user is the renderer. Whoever first needs
+  real metrics through the handle wires it (the pipeline's last phase;
+  the renderer's headless tests can lay out over the adapter in Rust).
+- **Where fonts come from is one seam, a font set.** A set of given files
+  holds exactly the fonts handed to it as bytes, with the system's fonts
+  off, a default family and fallback families by name; every test uses
+  it, over fixture fonts checked in under `tests/fonts`, so what a test
+  sees depends on the text and those bytes alone. The system's set is
+  the fonts of the machine, with the system's monospace family as the
+  default and the system's own fallback by script and for emoji; no test
+  may call it, and its check is on demand (`mise run shaper-system`). A
+  character is looked for in the family its run's spec names, then the
+  default family, then the set's fallbacks in order, and where none has
+  it, it is the first family's missing glyph. A port for font sources was
+  set aside: it would be a port inside an adapter for one decision.
+- **A line is as tall as the fonts on it.** Parley makes every line at
+  least as tall as a layout's default style, as CSS does. Left alone,
+  that would hold a row in a small font, or in a font of size 0, to the
+  height of font 0, whichever font the theme's default face is. So a
+  text's default style has no size and no line height, and every byte
+  states its font; an empty text, which has no byte, takes its run's
+  font, so an empty row is as tall as the font it would be typed in. One
+  limit follows from Parley: a line always holds its baseline, so a line
+  height in pixels under about three quarters of the size gives a line a
+  little taller than was asked, and only a size of 0 gives a line of no
+  height.
+- **Direction.** A line's glyphs are in visual order, as the Unicode
+  bidirectional algorithm orders them, and the base direction of every
+  line is left to right: a line that starts in Hebrew still starts at the
+  left edge with its Hebrew run reordered, as a code editor shows it,
+  where taking the direction from the text would make it a right-to-left
+  paragraph. The fast path for a line with no right-to-left character is
+  Parley's own, which skips bidirectional resolution for such a text at
+  that base direction; the adapter adds none, since it reads clusters
+  back the same way either way.
+- **Breaking is the shaper's.** Parley breaks at words by the Unicode
+  rules; a word wider than the view breaks inside itself, so a line fits
+  or holds one cluster, and spaces at a wrap count toward the width and
+  wrap. A break never falls inside a ligature. So real rows differ from
+  the Lean display model's, which breaks at characters, and that model's
+  contract is run over the fake, not over this adapter.
+- **A carriage return alone, U+2028 and U+2029 break no line.** Parley
+  breaks at each even with no width, and the port says they are content.
+  The adapter hands Parley a stand-in of the same length in bytes for
+  each, a space for a return and U+FFFD for a separator, so every offset
+  stays true. The stand-ins only keep the line whole; what such a
+  character looks like is the open question of how escapes are drawn.
+- **Positions, cursors and selections are found by cells**, not by a
+  line's glyphs as they are listed. A real shaper lists a right-to-left
+  run's glyphs in the reverse of the text, draws two characters with one
+  glyph (a ligature), and makes one cluster of several glyphs and several
+  characters (a letter and its mark). For each visual line layout derives
+  its cells: the glyphs of one cluster are one box, the box holds the
+  characters from its cluster's offset to the next cluster's, and each
+  character has an even share of it, as a browser places a caret inside
+  a ligature. The x of a position, the position an x aims for, the goal x
+  of a move, a cursor's box and a selection's areas are read from them:
+  a cursor on one character of a ligature of two is half the glyph wide,
+  and a selection that crosses a change of direction is an area for each
+  stretch of the row it covers. The cell stays text storage's, a
+  character, so a cursor can still stand between a letter and its
+  combining mark, drawn at the even split. On the fake a cell is a glyph
+  and every answer is what it was.
 - **A font is named by its spec.** `FontSpec` is the port's term for a
   font: a family, a size, a weight, a slant and a line height. A shaper
   gives each spec an id (`Shaper::font`): equal specs one id, different
@@ -1084,8 +1165,10 @@ facts of each part are in the module docs; these are the decisions.
   query lays out at most a row for each pixel of its view, and never the
   text from the anchor to its end, which is what lines of no height would
   otherwise come to: they all fit. Lines have no height in a font of size
-  0 or of a line height of 0, set by `default` or by the face of a
-  decoration or of the selection, and wherever a shaper reports none; the
+  0, and on the fake in one of a line height of 0, set by `default` or by
+  the face of a decoration or of the selection, and wherever a shaper
+  reports none (the real shaper reports none for a size of 0, and a few
+  pixels for a line height of 0 at another size); the
   shaper's contract holds only the default font's lines to a height. The
   rule is layout's because the cost is: one walk
   (`crates/editor-layout/src/query.rs`, "The rows that fit") gives the
@@ -1237,7 +1320,13 @@ these hunks" is a fact the editor can state.
   needs sums over a whole text.
 - **How escape characters are displayed.** A raw byte of a file is a
   private-use character in the text. Until the display draws it as its
-  byte, it shows as whatever the font has there.
+  byte, it shows as whatever the font has there: the real shaper shapes
+  it as the character it is, which is the font's missing glyph. A
+  carriage return alone, U+2028 and U+2029 are in the same case: the
+  real shaper draws a space for the first and the replacement character
+  for the other two, which are stand-ins that keep the line whole
+  ("Layout and rendering", as built), not a decision about what they
+  look like.
 - **A second row rule.** A language server counts a carriage return alone
   as the end of a line; rows here do not. The rope library can count that
   rule beside this one without the stored text changing. The language
@@ -1304,7 +1393,9 @@ these hunks" is a fact the editor can state.
   is out of proportion to what it would buy now. The rule is in one private
   module, and the motions must use the same cell, so it is decided once,
   with the command loop's motions and the display pipeline's shaping, which
-  knows clusters, in view.
+  knows clusters, in view. The real shaper did not decide it: layout's
+  cells are characters, so a cursor can stand between a letter and its
+  combining mark, where it is drawn at an even split of the cluster's box.
 - **A block's columns by display width, and a block to every line's end.**
   A block's columns are counted in cells. Vim counts them in display
   columns, which needs tab stops (a view's setting) and character widths
@@ -1358,6 +1449,44 @@ these hunks" is a fact the editor can state.
 - **Sizes and the window's scale factor.** A theme states its sizes in
   physical pixels and nothing scales them. Whether a size is logical and
   scaled by the frame's scale factor, and where, waits for the window.
+  The real shaper takes sizes as physical pixels too, and hints nothing.
+- **Right-to-left geometry.** Layout's cells have no direction, since
+  the port's glyph carries none. So three things are not right for
+  right-to-left text: the cells of a right-to-left cluster of several
+  characters are placed left to right; a position on a right-to-left
+  cell, and a bar cursor there, is at the cell's left edge, though the
+  character starts at its right; and the position at the end of a line
+  that ends in right-to-left text is at the line's right edge. A
+  direction on the glyph, or on the cluster, would settle all three.
+- **A ligature in a right-to-left run.** Its glyph is placed at the left
+  edge of the leftmost of its clusters. No fixture font has such a
+  ligature, so this is shown on clusters written out by hand and on no
+  real font.
+- **What a segment boundary cuts.** A row longer than 4096 bytes is
+  shaped in segments, so a ligature, a cluster or a right-to-left run
+  that crosses a boundary is shaped as two.
+- **A ligature across a change of paint.** It is one glyph, and a row's
+  runs name paints by byte, so which paint it is drawn in is the
+  renderer's choice.
+- **Zero-width characters.** U+200B and U+200D ride on the line of the
+  cluster beside them in Parley. The shaper contract's texts hold none,
+  and its rule that a line fits its width says nothing of them.
+- **A line height shorter than its font.** The real shaper gives a line
+  of the height asked in pixels only when the line still holds its
+  baseline: under about three quarters of the size it is a little taller,
+  and a line height of 0 is a few pixels, not none ("Layout and
+  rendering", as built). Nothing needs such heights yet.
+- **The system's default family.** The system font set's default is the
+  first family fontique gives for the generic `monospace`, which on
+  macOS was Courier when it was checked. Which family the editor starts
+  in, and whether config names it, is not decided.
+- **The system's fonts on Linux, and when they change.** No gate runs
+  the system font path: `mise run shaper-system` is on demand, and it
+  has been run on macOS only. The Linux build of the pin is checked by
+  `mise run linux-ci`, which builds it with cargo alone and runs the
+  fixture tests. Nothing watches the system's fonts for changes: a
+  shaper can be handed other fonts, under another generation, and
+  nothing calls that.
 - **Face inheritance.** A face cannot name another as its base. A theme
   that wants `comment` to follow `default` leaves the attributes unset,
   which covers the one level the precedence gives; anything deeper is not

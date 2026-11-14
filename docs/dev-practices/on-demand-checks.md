@@ -1,8 +1,9 @@
 # Checks that are not part of the gate
 
 Each of these needs something the gate ([`the-gate.md`](the-gate.md)) must
-not need: a display, a person, a container, a quiet machine, or leave to
-write a crash report. Run them by hand, when their section says.
+not need: a display, a person, a container, a quiet machine, the fonts of
+one machine, or leave to write a crash report. Run them by hand, when
+their section says.
 
 ## The overflow check, on demand
 
@@ -136,6 +137,29 @@ window opens on this desktop for about a second, so it is not part
 of the gate, which only builds it. It is the example of
 `crates/editor-platform-winit`, and it prints one line; its exit status is
 the result.
+
+## The system's fonts, on demand
+
+```sh
+mise run shaper-system
+```
+
+This holds the real shaper over the fonts of this machine
+(`FontSet::system` in `crates/editor-shape-parley`) to the shaper port's
+contract (`crates/editor-layout`, `shaper::contract`). What it finds
+depends on the fonts installed, so it is not part of the gate, which only
+builds it: every test of the adapter runs on the fixture fonts under
+`tests/fonts`, and the crate's `clippy.toml` forbids the system's fonts to
+them. It is the example of `crates/editor-shape-parley`
+(`examples/system.rs`). It prints the family the default font is shaped in
+and how many families the machine has, then either that all the
+contract's properties hold or the name of each that fails; its exit status
+is the result.
+
+Run it when the pin of Parley or fontique moves, and when
+`FontSet::system` changes. It has been run on macOS, where the default
+family was Courier of 557 families and every property held. It has not
+been run on Linux: the container of `linux-ci` has no fonts installed.
 
 ## The gate on Linux, on demand
 

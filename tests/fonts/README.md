@@ -73,8 +73,8 @@ subset still maps `f`, `i` to one glyph.
 All five are under the SIL Open Font License 1.1, which permits
 redistributing and modifying them with the copyright notice and the
 licence kept. None declares a Reserved Font Name, so a subset keeps its
-family's name. The licence texts are beside the fonts, as their
-repositories give them:
+family's name. The licence texts are beside the fonts, each byte for
+byte its repository's file at the commit named above:
 
 | Licence file | From | Covers | Copyright, as the font's own record states it |
 |---|---|---|---|

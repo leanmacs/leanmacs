@@ -49,8 +49,10 @@
 //!   line of no height. A font of size 0 is.
 //! - **A glyph is drawn in the font Parley picked for its cluster**, which
 //!   is the first of the families above that has the cluster's
-//!   characters, and the first of them when none has: the glyph is then
-//!   that font's missing glyph, glyph 0. Each font a run is drawn in is an
+//!   characters (after them, in the system's set, the families the system
+//!   gives for the script), and the first of them when none has: the
+//!   glyph is then that font's missing glyph, glyph 0. Each font a run is
+//!   drawn in is an
 //!   entry of [`resolved`]: the file's bytes, the face, the size, the
 //!   variation coordinates and what is synthesised, with fontique's
 //!   number for the file. `shape` adds a layout's fonts to the table

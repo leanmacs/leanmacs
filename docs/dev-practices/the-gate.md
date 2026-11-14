@@ -44,6 +44,25 @@ real adapter, the file service's wiring test
 (`crates/editor-ffi/tests/files.rs`), also in a temporary directory of its
 own.
 
+Shaping with real fonts is tested there too, and uses no font of the
+machine. Layout (`crates/editor-layout`) measures text only through the
+`Shaper` port it defines, and its tests run on the port's published fake.
+The port's real adapter, over Parley (`crates/editor-shape-parley`), is
+held to the port's contract and to its own rules on five fixture fonts
+checked in under `tests/fonts`, at the root of the repository, whose
+README says where each comes from, under which licence, and what the
+tests rest on in each. They are compiled into the tests, so no test reads
+a file when it runs, and a font set made of them has the system's fonts
+off: a letter no fixture font has comes out as the primary fixture's
+missing glyph, on any machine. `mise run lint` holds the adapter's tests
+to that (`crates/editor-shape-parley/clippy.toml`: no file, no
+environment variable, and no call that asks for the system's fonts). One
+file runs layout over the real adapter, for the wiring alone
+(`crates/editor-shape-parley/tests/layout.rs`). The fixture fonts are
+made by `tools/fonts/subset.sh`, by hand and never by the gate. The
+system's fonts have a check of their own, outside the gate
+([`on-demand-checks.md`](on-demand-checks.md)).
+
 The Lean half's logic needs no Rust library. The editor reaches the library
 through interfaces it defines, each with a pure Lean model, and
 `mise run lean-test` runs `lake test`: the model tests

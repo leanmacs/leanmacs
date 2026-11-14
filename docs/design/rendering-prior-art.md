@@ -185,7 +185,27 @@ port that contains it.
 - **Parley is moving fast**: five breaking releases in six months. It has
   no tab stops, no incremental relayout, and no shipped code editor on it
   except Floem's per-line use. It stays behind the `Shaper` port, pinned,
-  used as one layout per line, and tabs are handled by us.
+  used as one layout per line, and tabs are handled by us. As built
+  (2026-11-13): pinned at exactly 0.13.0, with fontique at the same
+  version, in `editor-shape-parley`, whose crate docs say what to check
+  when the pin moves. What the adapter met at that version:
+  - Parley is now several crates (`parley` over `parley_engine`,
+    `parlance`, `parley_data` and `parley_emoji`), so a source reference
+    names the crate as well as the file.
+  - It breaks a line at a carriage return alone, at U+2028 and at U+2029,
+    even when asked for no width. An editor's rows end at line feeds
+    only, so these reach a shaper as content: the adapter hands Parley a
+    stand-in of the same length for each.
+  - It makes every line at least as tall as the layout's default style,
+    as CSS does. One layout per line with font 0 as the default style
+    would hold every row to font 0's height: the adapter's default style
+    has no height, and every byte states its font.
+  - A ligature's glyph belongs to its first character and its later
+    characters have none; in a right-to-left run those come first on the
+    line, so the adapter places the glyph at the leftmost of them.
+  - On Linux fontique links the system's fontconfig at build time unless
+    its feature `fontconfig-dlopen` is on, which the adapter turns on, so
+    the build needs cargo alone.
 - **wgpu on every platform.** Zed moved its Linux renderer to wgpu in 2026
   but kept Metal and DirectX elsewhere, citing latency and driver
   reliability, and reviewers reported higher GPU memory. Some macOS
