@@ -11856,6 +11856,51 @@ def lineRows : List (String × String × String) :=
     ("$", "a|b\r\ncd", "a|b\r\ncd"), ("2 $", "|ab\r\ncd", "ab\r\nc|d"), ("$", "|", "|"),
     ("$", "|\n", "|\n")]
 
+/-- The rows of the oracle table for `j` and `k` with one key: one line,
+a count of 1, a count inside the text, a count past the last line and the
+first, the last line and the first line, a shorter line and an empty line
+as the target, the last line of a text that ends in a line feed, and a
+carriage return and line feed as the line break. -/
+def verticalRows : List (String × String × String) :=
+  [("j", "abc|d\nx\nabcd", "abcd\n|x\nabcd"), ("k", "abcd\nx\nabc|d", "abcd\n|x\nabcd"),
+    ("1 j", "a|b\ncd\nef\ngh\nij", "ab\nc|d\nef\ngh\nij"),
+    ("2 j", "a|b\ncd\nef\ngh\nij", "ab\ncd\ne|f\ngh\nij"),
+    ("3 j", "a|b\ncd\nef\ngh\nij", "ab\ncd\nef\ng|h\nij"),
+    ("2 j", "a|b\ncd\nef\ngh\nij\n", "ab\ncd\ne|f\ngh\nij\n"),
+    ("5 j", "abc|d\nx\nabcd", "abcd\nx\nabc|d"),
+    ("1 k", "ab\ncd\nef\ng|h\nij", "ab\ncd\ne|f\ngh\nij"),
+    ("2 k", "ab\ncd\nef\ng|h\nij", "ab\nc|d\nef\ngh\nij"),
+    ("3 k", "ab\ncd\nef\ngh\ni|j", "ab\nc|d\nef\ngh\nij"),
+    ("5 k", "abcd\nx\nabc|d", "abc|d\nx\nabcd"), ("j", "abcd\nx\nab|cd", "abcd\nx\nab|cd"),
+    ("k", "ab|cd\nx", "ab|cd\nx"), ("j", "ab|cd\nxyz\n", "abcd\nxy|z\n"),
+    ("j", "abcd\nxy|z\n", "abcd\nxy|z\n"), ("j", "ab|cd\n\nabcd", "abcd\n|\nabcd"),
+    ("j", "abcd\n|\nabcd", "abcd\n\n|abcd"), ("k", "ab\r\n|cd", "|ab\r\ncd"),
+    ("j", "a|b\r\ncd", "ab\r\nc|d"), ("j", "|", "|"), ("k", "|", "|"), ("j", "|\n", "|\n"),
+    ("k", "|\n", "|\n")]
+
+/-- The rows of the oracle table for the wanted column, each a sequence of
+keys: `j` and `k` return to the column they started in across a shorter
+line and across an empty one; a count aims for the same column; an `h`, an
+`l`, a `j` or a `k` that cannot move keeps the column; a horizontal motion
+that moves, and `0`, `^`, `w` and `e` whether they move or not, keep none,
+so the next vertical motion aims for the cursor's own column; and `$`
+keeps the line's end, also when it does not move. -/
+def wantedRows : List (String × String × String) :=
+  [("j k", "abc|d\nx\nabcd", "abc|d\nx\nabcd"), ("j j", "abc|d\nx\nabcd", "abcd\nx\nabc|d"),
+    ("j j", "abc|d\n\nabcd", "abcd\n\nabc|d"), ("j j", "ab|cd\nxyz\n", "abcd\nxy|z\n"),
+    ("2 j 2 j", "ab|cd\nx\nabcd\ny\nabcd", "abcd\nx\nabcd\ny\nab|cd"),
+    ("j 2 j", "ab|cd\nx\nabcd\ny\nabcd", "abcd\nx\nabcd\n|y\nabcd"),
+    ("j 3 j", "ab|cd\nx\nabcd\ny\nabcd", "abcd\nx\nabcd\ny\nab|cd"),
+    ("k 2 k", "abcd\nx\nabcd\ny\nab|cd", "abcd\n|x\nabcd\ny\nabcd"),
+    ("k 3 k", "abcd\nx\nabcd\ny\nab|cd", "ab|cd\nx\nabcd\ny\nabcd"),
+    ("j h j", "abc|d\nx\nabcd", "abcd\nx\nabc|d"), ("j l j", "abc|d\nx\nabcd", "abcd\nx\nabc|d"),
+    ("k j", "abc|d\nx\nabcd", "abcd\n|x\nabcd"), ("j h j", "abc|d\nxy\nabcd", "abcd\nxy\n|abcd"),
+    ("j 0 j", "abc|d\n\nabcd", "abcd\n\n|abcd"), ("j ^ k", "abc|d\nx\nabcd", "|abcd\nx\nabcd"),
+    ("j w j", "abc|d\nx\nabcd\nabcd", "abcd\nx\nabcd\n|abcd"),
+    ("j e k", "abc|d\nx\nabcd", "abcd\n|x\nabcd"),
+    ("$ j j", "|abc\nde\nabcdef", "abc\nde\nabcde|f"),
+    ("$ j j k", "|abc\nde\nabcdef", "abc\nd|e\nabcdef"), ("2 $ k", "abc\n|def", "ab|c\ndef")]
+
 /-- The checks of evil's motions (`Editor/Evil.lean`, `Editor/Evil/Motions.lean`)
 on the loop's driver over the editor's models, under the Vim scheme that
 ships with the commands compiled code registers for evil: a motion's key
@@ -11874,6 +11919,50 @@ def evilMotionChecks : List Check :=
     { name :=
         "0 goes to the line's start and ^ to its first character that is not a blank, each whatever count was typed, and on a line of blanks only ^ rests on the last blank; $ goes to the last character of the line, or with a count of the line that many lines less one below, of the last line when the text has fewer, and does not move from the last line with a count above 1; none leaves an empty line"
       run := evilRows lineRows },
+    { name :=
+        "j and k go one line down and up by lines of the text, or with a count that many, and stop at the last line and at the first; on a shorter line the cursor is on its last character, and on an empty line on its line break; the last line of a text that ends in a line feed is the line before its end"
+      run := evilRows verticalRows },
+    { name :=
+        "j and k keep the column they aim for: j then k across a shorter line returns to the column it started in, and so does j twice across an empty line; an h or an l that cannot move keeps it, a motion along the line that moves keeps none, and after $ they stay at line ends"
+      run := evilRows wantedRows },
+    { name :=
+        "after j the window keeps the column the cursor started in, with the offset the cursor rests at; after $ it keeps the line's end; after w it keeps none"
+      run :=
+        pure <|
+          match evilDriver "abc|d\nx\nabcd" with
+          | none => false
+          | some driver =>
+            let wanted (driver : EvilDriver) : Option (Option Window.Wanted) :=
+              (driver.loop.state.window? ⟨0⟩).map (·.wanted)
+            let down := evilFed driver "j"
+            let ended := evilFed down "j $"
+            wanted driver == some none &&
+              wanted down == some (some { column := .cells 3, head := 5 }) &&
+              evilShown down == "abcd\n|x\nabcd" &&
+              wanted ended == some (some { column := .lineEnd, head := 10 }) &&
+              evilShown ended == "abcd\nx\nabc|d" &&
+              wanted (evilFed down "w") == some none },
+    { name :=
+        "a kept column holds only while the cursor is where it was kept: once a command written here has placed the cursor elsewhere, the next j aims for the cursor's own column"
+      run :=
+        pure <|
+          let place : Dispatched := fun call => do
+            call.target.select { ranges := #[⟨5, 5⟩], shape := .inclusive }
+            return none
+          match evilDriver "abc|d\nxyz\nabcd" (evilHanded (commands := [("place", place)])) with
+          | none => false
+          | some driver =>
+            let down := evilFed driver "j"
+            let (placed, _) := down.stepped (down.loop.runNamed down.handed "place")
+            evilShown down == "abcd\nxy|z\nabcd" &&
+              evilShown (evilFed down "j") == "abcd\nxyz\nabc|d" &&
+              evilShown placed == "abcd\n|xyz\nabcd" &&
+              (placed.loop.state.window? ⟨0⟩).map (·.wanted) ==
+                some (some { column := .cells 3, head := 7 }) &&
+              evilShown (evilFed placed "j") == "abcd\nxyz\n|abcd" },
+    { name :=
+        "a departure from Vim, recorded in keymaps-and-modes.md under The wanted column: the column j and k aim for counts cells, and Vim's counts display columns, so from the character after a tab j lands two cells in, where Vim's lands at the tab stop's column"
+      run := evilRows [("j", "a\t|b\n0123456789", "a\tb\n01|23456789")] },
     { name :=
         "a move by a name the vocabulary has no motion of says so in the echo area, the name and then no such motion, and leaves the cursor where it was"
       run :=

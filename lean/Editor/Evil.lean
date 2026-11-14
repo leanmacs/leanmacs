@@ -37,6 +37,13 @@ looks the motion's name up in, so the caller supplies the vocabulary.
   for the raw target from that range's head, rests the raw target by the
   rule of the call's report ("Where a cursor rests"), and places one range
   with the report's shape, whose two ends are the new head.
+- **It hands the motion the wanted column the window keeps, when that
+  column still holds** (`Window.wanted`, `Editor/State.lean`, "The wanted
+  column"): when the head is where the cursor was left when the column was
+  kept. It then has the window keep what the motion hands back, with the
+  new head (`ViewId.setWanted`): the motion's `wanted`, or its `unmoved`
+  when the head came to rest where it started. Only here is it known
+  whether the cursor moved, since the resting rule is applied here.
 - **Placing a marker is no edit**, so a motion is no step of the history.
 - **One cursor.** No command makes a second range; this one reads the
   primary range and places one range.
@@ -151,10 +158,15 @@ def move (motions : Array Vocabulary.Motion) (call : Call) : EditorM Unit := do
     | _ => ("", none)
   let some motion := motions.find? (·.name == name) | message (noSuchMotion name)
   let text := call.target.buffer.text
+  let window := call.target.window
   let selection ← call.target.selection
   let some range := selection.ranges[selection.primary]? | throw .badSelection
-  let raw ← motion.target text { head := range.head, count }
+  -- The kept column holds only while the cursor is where it was kept.
+  let wanted := (window.wanted.filter (·.head == range.head)).map (·.column)
+  let raw ← motion.target text { head := range.head, count, wanted }
   let head ← rested (restOf call.report) text raw.head
   call.target.select { ranges := #[⟨head, head⟩], shape := call.report.shape }
+  let keeps := if head == range.head then raw.unmoved else raw.wanted
+  discard <| window.id.setWanted (keeps.map fun column => { column, head })
 
 end Editor.Evil

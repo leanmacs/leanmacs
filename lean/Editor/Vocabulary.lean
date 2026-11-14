@@ -1,4 +1,4 @@
-import Editor.Text
+import Editor.State
 
 /-!
 # The vocabulary
@@ -30,6 +30,19 @@ A motion (`Motion`) is a name and a function from where a cursor is
   so it cannot edit the editor state or publish. A motion by display lines
   needs the display port and is not here; when one is built the type
   widens, and these entries lift unchanged.
+- **The wanted column goes in and comes out as data** (`From.wanted`,
+  `To.wanted`, a `WantedColumn` of the editor state, `Editor/State.lean`,
+  "The wanted column"). A motion cannot read the window, so its caller
+  hands it the column the view keeps, when that column still holds, and
+  keeps for the view what the motion hands back, with the position the
+  cursor comes to rest at. A vertical motion aims for the column it is
+  handed and hands it back; a motion that hands back none makes the view
+  keep none.
+- **A motion that could not move may keep what was kept** (`To.unmoved`,
+  which is `To.wanted` unless the motion says another): the column the
+  view keeps when the cursor comes to rest where it started. It is a field
+  of its own because a motion cannot tell that it did not move: its raw
+  target may be a position the caller's resting rule brings back.
 
 What is not on the record yet: a motion's type for an operator (exclusive,
 inclusive or line-wise), which only operators read.
@@ -54,6 +67,9 @@ structure From where
   head : Nat
   /-- The count typed, if one was. None is not a count of 1. -/
   count : Option Nat := none
+  /-- The wanted column the view keeps, when it still holds: when the cursor
+  is where it was left when the column was kept. -/
+  wanted : Option WantedColumn := none
   deriving DecidableEq, Repr
 
 /-- Where a motion leads. -/
@@ -61,6 +77,14 @@ structure To where
   /-- The raw target: the position the motion leads to, not clamped to where
   a cursor may rest. -/
   head : Nat
+  /-- The wanted column the view is to keep with the cursor where it comes
+  to rest; `none` to keep none. -/
+  wanted : Option WantedColumn := none
+  /-- The wanted column the view is to keep when the cursor comes to rest
+  where it started: `wanted`, unless the motion says another. A motion
+  that could not move may keep what was kept, and cannot tell by itself
+  that it could not: where a cursor rests is its caller's rule. -/
+  unmoved : Option WantedColumn := wanted
   deriving DecidableEq, Repr
 
 /-- A motion: its name, by which an input scheme's binding names it, and
