@@ -679,7 +679,18 @@ the text port: the undo tree (`lean/Editor/UndoTree.lean`, decided
   the step's first edit for an undo and from after its last for a redo,
   and do not place it: whose cursor it becomes and in what shape is the
   input scheme's to say. A selection comes back only for an edit that
-  carried one, which the API's selection edits do. The loop's boundary
+  carried one, which the API's selection edits do. **Evil places it**
+  (`lean/Editor/Evil/Undo.lean`, the command loop's phase 13;
+  [keymaps-and-modes.md](keymaps-and-modes.md), "Undo and redo"): `u`
+  puts one range of the view's state's shape on the head of what an undo
+  hands back, rested by that state's rule, and `C-r` places what a redo
+  hands back by the rule of entering a state, so a bar an insert session
+  ended with steps back one cell. For the selection an undo hands back to
+  be the cursor the user saw, every edit of evil's carries the selection
+  from before its command, which is what `Target.replaceCarrying`
+  (`lean/Editor/Api.lean`) is for: an edit that carries the two
+  selections it is handed, where the selection edits carry the window's
+  as it is when they are called. The loop's boundary
   after the event then makes no node, so a move is not itself a step. The
   rollback of a command that moved works from the tree the command
   recorded, since the tree from before does not know of the move and the

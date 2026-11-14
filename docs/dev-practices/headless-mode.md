@@ -110,8 +110,9 @@ puts the two commands on the keys the input scheme has for the roles
 `activate` and `quit`; under the Vim scheme, where typing in the minibuffer
 is text, they are on `<Enter>` and `<Escape>`.
 
-And it ships evil, compiled in (`lean/Editor/Evil.lean`): the commands the
-Vim scheme's keys run, so the editor moves and inserts with no config.
+And it ships evil, compiled in (`lean/Editor/Evil.lean` and the modules
+beside it): the commands the Vim scheme's keys run, so the editor moves,
+edits, undoes and repeats with no config.
 
 | Command | Keys | Does |
 |---|---|---|
@@ -120,6 +121,19 @@ Vim scheme's keys run, so the editor moves and inserts with no config.
 | `self-insert` | A key that prints, in insert state and in the minibuffer | Inserts what the key prints at the cursor. Everything typed until `<Escape>` is one step of the history. |
 | `normal` | `<Escape>` | Run by its key, returns to normal state. From insert state the cursor steps back one character. Run by its name it leaves the view in the state it is in (below). |
 | `visual`, `visual-line` | `v`, `V` | Run by its key, enters a visual state: a motion then extends the selection, by characters or by whole lines. Run by its name it enters none (below). |
+| `operate` | `d`, `c`, `y`, each with a motion (`d w`, `c 2 e`), typed twice (`d d`), or in a visual state | Deletes, changes or yanks what the motion, the lines or the selection covers, as Vim does, into the unnamed register. `c` then begins an insert. An operator whose motion cannot be made (`d j` on the last line) gives up: nothing changes, and the echo area says `operate: down cannot move`. |
+| `delete-char` | `x` | Deletes the character under the cursor, or a count of them, into the unnamed register. |
+| `put-after`, `put-before` | `p`, `P` | Puts the unnamed register after or before the cursor, or below or above the line when the register holds whole lines. With nothing to put it gives up. |
+| `open-below`, `open-above` | `o`, `O` | Opens an empty line below or above the cursor's line and begins an insert on it. |
+| `undo`, `redo` | `u`, `C-r` | Undoes or redoes one step of the buffer's history, or a count of them, and puts the cursor where it was before the change, or where the change left it. |
+| `repeat` | `.` | Makes the last change again at the cursor, with the text typed in it. A count before `.` replaces the change's count. Run by its name, which hands it no change, it gives up. |
+
+**Registers.** A yank and a deletion set the unnamed register. `"` and
+then `+` before an operator, `x`, `p` or `P` names the clipboard: the
+headless host has no window system, so it keeps a clipboard of its own in
+the process, which starts holding no text and which no other program
+sees. What one command writes there the next reads. Any other register
+name gives the command up.
 
 **A Vim state is entered by a key, not by a command.** The Vim scheme
 enters the state when a key bound to it completes, and the command that
@@ -195,9 +209,9 @@ until a reload drops it. A name that is empty or holds white space is
 refused, and so is a `setup` that binds one ex name twice. `show` does not
 list ex names.
 
-The other default keys of the Vim scheme (the operators `d c y`, `x p P`,
-`o O`, `u`, `C-r`, `.`) name commands that are not built: such a key
-says `<name>: no such command` in the echo area.
+Every default key of the Vim scheme names a command the editor ships. A
+key that config binds to a name nothing registers says
+`<name>: no such command` in the echo area.
 
 A `setup` registers each command name and each job name once. One that
 registers a name twice is rejected, like a chunk that does not elaborate.
@@ -254,8 +268,8 @@ text 2: "counted 42"
 
 Text 0 is the scratch buffer's: the editor loop makes its frame, and that
 buffer, for the first command it runs. `open-file`, `save-buffer`,
-`minibuffer-accept`, `minibuffer-cancel`, evil's nine, from `move` to
-`self-insert`, and the ex line's four, from `ex` to `reload-config`, are
+`minibuffer-accept`, `minibuffer-cancel`, evil's eighteen, from `move` to
+`repeat`, and the ex line's four, from `ex` to `reload-config`, are
 the commands the editor ships, compiled in: `show` lists them before
 config's.
 
@@ -505,6 +519,21 @@ print if the editor had not quit before it.
 - `tests/headless/ex/wq-script`: the same with `wq` in place of `w`, the
   `join` and `q`, and a `join` after it, and then `show`.
 
+**An evil session on a file** is a third process check of the same form
+(`tests/headless/session/`): the entry copies `verse.txt` into its
+temporary directory and writes the template `script` there. The script
+loads no config. It opens the file with the `:` key and `e`, and then
+runs, by keys, `2dw`, `.`, `u`, `j`, `cw`, the typed text `new`,
+`<Escape>`, `w`, `.`, `v`, `e`, `y`, `$`, `p`, `u`, `C-r`, and `:w`,
+with a `scene` line after each step. The run must exit with status 0. Its
+output, with the temporary directory's path written `@DIR@`, must be
+exactly `tests/headless/session/expected`: each scene's text, its
+selection (`26..32` while the visual selection is open, one offset twice
+otherwise), the state's name in the status line (`normal`, `insert`,
+`visual`), and the echo, which is empty until the save says
+`wrote @DIR@/verse.txt`. And the copy must hold the bytes of
+`tests/headless/session/verse-expected`.
+
 **A script waits where a command starts a job.** A script's lines are
 posted to the editor without waiting, and a job's result is queued when
 the job ends, so what the script has after a line that starts a job is
@@ -546,13 +575,14 @@ and is no failure.
 
 A key press is stepped through the scheme. Config's bindings are looked up
 first, then the scheme's own keymaps, which are those of the view's Vim
-state. The motions, `i a I A`, `v V`, `<Escape>`, `:`, typed text and the
-minibuffer's two keys run commands the editor ships; a default key whose
-command is not built says `<name>: no such command` in the echo area. A
+state. Every default key runs a command the editor ships: the motions,
+the operators, `x p P o O`, `u`, `C-r`, `.`, `i a I A`, `v V`,
+`<Escape>`, `:`, typed text and the minibuffer's two keys. A
 command a key runs prints nothing: what became of it is
 in the next scene's echo area, `<name>: no such command`,
-`<name>: refused: <error>` or `<name>: interrupted`, and a command that was
-refused or interrupted is rolled back: its buffer's text and selections are
+`<name>: refused: <error>`, `<name>: interrupted`, or `<name>: <reason>`
+for a command that gave up, and a command that was
+refused or interrupted, or that gave up, is rolled back: its buffer's text and selections are
 as they were before it. `C-g` is the interrupt key: it stops a command that
 is running at its next request to the editor, and is then looked up like
 any other key. A command that takes longer than 100 ms is logged on stderr,
@@ -573,6 +603,7 @@ reload <n>: installed, <c> chunks, <k> commands
 reload <n>: rejected
 diagnostic: <source>:<line>:<column>: <severity>: <first line of the message>
 run <name>: ok            (or "refused: <error>", "interrupted",
+                           "gave up: <reason>",
                            "no such command", "no window", or "no frame"
                            when the loop's frame could not be made)
 spawn <name>: job <id>    (or "no such job")

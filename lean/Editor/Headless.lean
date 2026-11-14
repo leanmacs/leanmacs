@@ -133,16 +133,17 @@ as before, so reload and job completion work as they did.
   `Editor/Evil/Compiled.lean`), which the Vim scheme's keys name: `move`,
   the three that enter normal state and the visual states, the four that
   begin an insert, and `self-insert`, which a key that prints runs in
-  insert state and in the minibuffer. So with no config the editor moves
-  and inserts. And it is handed the ex line's commands and the ex names
+  insert state and in the minibuffer; and the operate command, `x`, the
+  two puts, the two commands that open a line, undo, redo and the repeat
+  command. So with no config the editor moves, edits, undoes and repeats.
+  And it is handed the ex line's commands and the ex names
   that ship (`Ex.commands`, `Ex.bindings`, `Editor/Ex/Compiled.lean`):
   `ex`, which opens the ex line and runs its answer, `quit`,
   `save-and-quit` and `reload-config`, and the ex names `w`, `e`, `q`,
   `wq` and `reload`. The Vim scheme's default table binds `:` to the name
   `ex`, so that key opens the ex line. It is handed no key binding: the
-  Vim scheme's keys are its states' own keymaps. A default key whose
-  command is not built yet (an operator, `x`, `p`, `u`, `o`) says
-  `<name>: no such command` in the echo area.
+  Vim scheme's keys are its states' own keymaps. Every default key names
+  a command the host is handed.
 - **The interrupt key.** When the loop starts the host tells the library
   which key raises the interrupt flag (`Collaborators.interruptKey`, `C-g`),
   and leaves it with none when the loop ends. The loop's programs are run

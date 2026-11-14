@@ -601,9 +601,26 @@ editor state's buffers and windows through one port, whose shape is:
 - **Its requests are a sum of sub-ports**, one constructor a sub-port:
   `EditorRequest.text` carries a request of the text port,
   `EditorRequest.display` one of the display port, `EditorRequest.watch`
-  one of the watch port and `EditorRequest.state` a request about the
-  editor state. The reply to each is its sub-port's reply. `editorPort` is
+  one of the watch port, `EditorRequest.clipboard` one of the clipboard
+  port and `EditorRequest.state` a request about the editor state: five
+  sub-ports. The reply to each is its sub-port's reply. `editorPort` is
   an `abbrev`, as every port is.
+- **The clipboard port** (`lean/Editor/Clipboard.lean`, added by the
+  command loop's phase 13) is what a command asks of the system
+  clipboard: the text it holds, and to hold another. The clipboard is
+  outside the editor, written by other programs and not rolled back with
+  a command, so it is a port and not editor state. **Its refusals are
+  values**: a clipboard may not be there, and each request is then
+  answered `unavailable`, an `Except` in the reply, as a state request's
+  refusal is. Nothing is thrown, so a clipboard program has no error of
+  its own (`ClipboardM`) and the editor's error type is not widened. It
+  has a pure model (`ClipboardModel`, which a test can take away), a
+  contract every implementation runs, and a stand-in for a host with no
+  window, a cell of the process that answers with the model's rule
+  (`Clipboard.InProcess`), which is the display recorder's twin. The
+  adapter to a window system's clipboard is the display pipeline's, and
+  runs the same contract when it is bound. A clipboard request is guarded
+  as a text request is, and moves the watch model's clock.
 - **The watch port** (`lean/Editor/Watch.lean`, added by the command loop's
   phase 6) is what the loop watches a command with: whether the interrupt
   flag is up, lowering it once, and the job clock in milliseconds. It is a
@@ -619,8 +636,10 @@ editor state's buffers and windows through one port, whose shape is:
 - **A command is `EditorM := ExceptT TextError (Program editorPort)`.** A
   program over the text port alone is `TextM`, and every text operation and
   all logic over text alone (the undo tree, the text contract, `append`)
-  stays at it; the display's is `DisplayM` and the watch port's `WatchM`.
-  `TextM.lift`, `DisplayM.lift` and `Watch.lift` embed each in a command,
+  stays at it; the display's is `DisplayM`, the watch port's `WatchM` and
+  the clipboard's `ClipboardM`.
+  `TextM.lift`, `DisplayM.lift`, `Watch.lift` and `Clipboard.lift` embed
+  each in a command,
   and they are `MonadLift` instances, so an operation of any sub-port is
   used in a command as it is. That is why every config source and fixture written before the port
   became a composite elaborates unchanged. There is no lift from `JobM`, so
@@ -639,8 +658,8 @@ editor state's buffers and windows through one port, whose shape is:
   still a `TextError`, and a layout operation's refusal keeps its type.
 - **A runner's state is the product of its sub-ports' states**, but for
   the editor state, which is the loop's (below). On the
-  models it is the text model, the display model and the watch model side
-  by side (`EditorModel`); before each display request the display model's
+  models it is the text model, the display model, the watch model and the
+  clipboard model side by side (`EditorModel`); before each display request the display model's
   texts are filled from the text model's snapshots, so a command that takes
   a snapshot and asks the display about it is answered from that
   snapshot's text. On the models time passes only with requests: the watch
@@ -650,7 +669,9 @@ editor state's buffers and windows through one port, whose shape is:
   passed in: the recorder in a host with no window, the display pipeline's
   binding in one with a window; and a watch handler (`WatchHandler`),
   `Watch.real` over the library's flag and the job clock in a host, and
-  `Watch.idle`, never interrupted, by default.
+  `Watch.idle`, never interrupted, by default; and a clipboard handler
+  (`ClipboardHandler`), the in-process clipboard in a host with no window,
+  and `Clipboard.unavailable`, which answers every request so, by default.
 - **The state requests are the loop's to answer.** Built by the command
   loop's phase 8 (`lean/Editor/State/Request.lean`,
   `lean/Editor/Command/Dispatch.lean`). A state request's handler is one
@@ -692,11 +713,15 @@ editor state's buffers and windows through one port, whose shape is:
 
 | Piece | Where |
 |---|---|
-| The composite port, `EditorM`, the three embeddings and lifts, and the mapping of the display's refusals | `lean/Editor/Command.lean` |
+| The composite port, `EditorM`, the four embeddings and lifts, and the mapping of the display's refusals | `lean/Editor/Command.lean` |
+| The clipboard port: its two requests, each refused as a value; `ClipboardHandler`; `Clipboard.unavailable` | `lean/Editor/Clipboard.lean` |
+| Its pure model: the text held, and a clipboard a test takes away | `lean/Editor/Clipboard/Model.lean` |
+| Its contract, imported from the port alone, run against the model by `lake test` and against the in-process clipboard by `contract-test` | `lean/Editor/Clipboard/Contract.lean` |
+| The clipboard where there is no window (the headless host): a cell of the process that answers with the model's rule | `lean/Editor/Clipboard/InProcess.lean` |
 | The state requests and their pure handler: one read of the whole state, and a request a write (a buffer, its history, values and modes; a window; the echo; a job to start), each refused with a value | `lean/Editor/State/Request.lean`, over the operations of `lean/Editor/State.lean` |
 | A dispatched command: its state requests answered from the loop's state, every other request guarded, so that it stops at its next one once the flag is up, a major mode's on-enter actions run inside it; `Guarded`, how it ended; and `Loop.Registered`, what the loop is told of the registry. The guard has this one definition | `lean/Editor/Command/Dispatch.lean` |
-| The composite's model runner, over the three models side by side | `lean/Editor/Command/Model.lean` |
-| The composite's real runner, over the text binding, a display handler and a watch handler | `lean/Editor/Command/Real.lean` |
+| The composite's model runner, over the four models side by side | `lean/Editor/Command/Model.lean` |
+| The composite's real runner, over the text binding, a display handler, a watch handler and a clipboard handler | `lean/Editor/Command/Real.lean` |
 | `DisplayHandler`, and running a display program against one | `lean/Editor/Display.lean` |
 | The watch port: the interrupt flag, lowering it, and the clock; `WatchHandler`; `Watch.idle`; the interrupt key, `C-g` | `lean/Editor/Watch.lean` |
 | Its pure model: the interrupt keys that arrived, one that arrives at a command's n-th request, and a clock with a pace | `lean/Editor/Watch/Model.lean` |
@@ -730,6 +755,10 @@ made of state requests and text requests. Config sees it through
 | Ask for a string, without waiting for it, and accept or cancel the open prompt | `prompt label continuation initial`, which names the command that receives the answer as an invocation; `acceptPrompt`, `cancelPrompt` | To make the minibuffer's text and its markers, and to read the answer; a cancel reaches nothing |
 | Ask which command an ex name is bound to, and what the name takes | `exBinding name`, answered by the loop from the registry as it is at that step | No |
 | Have another command run after it, as a step of its own | `invoke invocation` | No: the host runs it once the command has ended |
+| End itself with a reason, rolled back, with the reason in the echo area | `giveUp reason` ([concurrency.md](concurrency.md), "Foreground: commands") | No |
+| Keep a register, a text and whether it is line-wise, under a name, and read one | `setRegister name register`; `EditorState.register?` on `editorState` | No |
+| Replace one extent in an edit that carries the two selections it is handed, the one from before the command and the one it leaves | `Target.replaceCarrying`, over `TextId.replaceCarrying` | Yes: `apply`, with the user's origin, and the marker |
+| Read and write the system clipboard, each refused as a value | `Clipboard.read`, `Clipboard.write`, the clipboard port's own, lifted | No: the clipboard handler the host hands in |
 | Ask the editor to quit; refused, as a value, while a buffer that holds a file has unsaved changes | `quit` | For the revision of each buffer that holds a file |
 | Ask for the config to be reloaded | `reloadConfig` | No: the host asks its config session once the command has ended |
 
@@ -797,6 +826,18 @@ made of state requests and text requests. Config sees it through
   name the registry and are the one module of evil's that is not imported.
   Pinned by `ConfigTest.evilChecks`, on a config the real elaborator
   loads.
+- **Evil's editing commands** (the command loop's phase 13): the operators
+  and the operate command, `x`, the registers and the two puts, the two
+  commands that open a line, undo and redo, and dot repeat, each in a
+  module of its own beside `lean/Editor/Evil.lean`. They needed two state
+  requests (`giveUp`, `setRegister`), one operation of the API
+  (`replaceCarrying`, with a case in `lean/Editor/Api/Cases.lean`), and
+  one new sub-port, the clipboard's, with its model and its contract
+  ("The editor's port is a composite"). An operator is a vocabulary entry
+  whose action is a command's body, so the vocabulary imports the port.
+  `Editor.lean` imports them, so config calls the operate command with
+  the tables that ship or with tables of its own, and the repeat and undo
+  commands.
 - **The ex line is commands over the API** (`lean/Editor/Ex.lean`, built
   by the command loop's phase 12;
   [keymaps-and-modes.md](keymaps-and-modes.md), "The ex command line"):
@@ -826,9 +867,14 @@ made of state requests and text requests. Config sees it through
 | The file commands and their jobs as compiled code registers them | `lean/Editor/Files/Compiled.lean` |
 | The commands that accept and cancel a prompt, and the minibuffer's mode | `lean/Editor/Minibuffer.lean` |
 | The minibuffer's commands and its mode as compiled code registers them | `lean/Editor/Minibuffer/Compiled.lean` |
-| The vocabulary: the motion record | `lean/Editor/Vocabulary.lean` |
-| Evil: where a cursor rests, and the commands the Vim scheme's invocations run | `lean/Editor/Evil.lean` |
+| The vocabulary: the motion record and the operator record | `lean/Editor/Vocabulary.lean` |
+| Evil: where a cursor rests, and the commands the Vim scheme's invocations run that are not below | `lean/Editor/Evil.lean` |
 | Evil's motions, as vocabulary entries, and their table | `lean/Editor/Evil/Motions.lean` |
+| Evil's operators, as vocabulary entries, their table, what an operator takes, the operate command and `x` | `lean/Editor/Evil/Operators.lean` |
+| Evil's registers, storing and fetching, and the two puts | `lean/Editor/Evil/Registers.lean` |
+| Evil's undo and redo, which place the selection a step hands back | `lean/Editor/Evil/Undo.lean` |
+| Evil's dot repeat: the table of changes and the repeat command | `lean/Editor/Evil/Repeat.lean` |
+| What is proved of evil on the text model, and of the undo tree | `lean/Editor/Evil/Theorems.lean`, `lean/Editor/UndoTree/Theorems.lean` |
 | Evil's commands as compiled code registers them | `lean/Editor/Evil/Compiled.lean` |
 | An ex line as data: its name and argument, and an ex binding | `lean/Editor/Ex/Line.lean` |
 | The ex command, and the commands `quit`, `save-and-quit` and `reload-config`, with what they say in the echo area | `lean/Editor/Ex.lean` |
@@ -841,8 +887,10 @@ made of state requests and text requests. Config sees it through
 |---|---|---|---|
 | Buffers, windows, keymaps, registers, the agent table | Compiled Lean, on the editor thread. Buffers, windows, the frame's split tree, the echo area and the preedit are the editor state (`lean/Editor/State.lean`), which the command loop (`lean/Editor/Loop.lean`) holds and is the one writer of: a command changes it by requests the loop answers. Buffers are kept in slots, so a buffer's id is never used again, and neither is a view's | Untouched | Lost unless its owner persists it |
 | A buffer's local values: plain trees by name (`Value`), as a store's cell holds | Compiled Lean, a field of the buffer in the editor state, set and read by a command (`BufferId.setValue`, `BufferId.value?`) | Untouched: a tree names no type of config's | Lost |
-| The input scheme's state: the pending keys and what the scheme keeps for each view (the Vim scheme's states, its last change) | Compiled Lean, in the command loop, which runs one scheme for its life | Untouched | Lost |
-| Compiled commands, jobs, key bindings, modes and ex bindings | Compiled Lean, in the registry, for the owner `compiled`. The executable ships the ex line's four commands, `ex`, `quit`, `save-and-quit` and `reload-config`, and the ex names `w`, `e`, `q`, `wq` and `reload` (`lean/Editor/Ex/Compiled.lean`), the file commands, `open-file` and `save-buffer`, and their jobs, `load-file` and `save-file` (`lean/Editor/Files/Compiled.lean`), the minibuffer's commands, `minibuffer-accept` and `minibuffer-cancel`, and its mode, `minibuffer` (`lean/Editor/Minibuffer/Compiled.lean`), and evil's nine commands, `move`, `normal`, `visual`, `visual-line`, `insert`, `append`, `insert-line-start`, `append-line-end` and `self-insert`, over its compiled table of motions (`lean/Editor/Evil/Compiled.lean`) | Untouched: a reload replaces config's, and cancels config's jobs only, so a compiled job that is running goes on | Registered again when the host starts |
+| The input scheme's state: the pending keys and what the scheme keeps for each view (the Vim scheme's states, its last change, and the text typed in the insert session that change began) | Compiled Lean, in the command loop, which runs one scheme for its life | Untouched | Lost |
+| The registers: a text and whether it is line-wise, by name. Evil keeps the unnamed one, which every yank and deletion sets | Compiled Lean, a field of the editor state (`EditorState.registers`, `lean/Editor/State.lean`), set by a command (`setRegister`), so it is rolled back with a command that does not run to its end | Untouched | Lost |
+| The system clipboard | Outside the editor: reached through the clipboard port. A host with no window keeps one of its own in the process (`lean/Editor/Clipboard/InProcess.lean`) | Untouched | The window system's is the system's; the in-process one is lost |
+| Compiled commands, jobs, key bindings, modes and ex bindings | Compiled Lean, in the registry, for the owner `compiled`. The executable ships the ex line's four commands, `ex`, `quit`, `save-and-quit` and `reload-config`, and the ex names `w`, `e`, `q`, `wq` and `reload` (`lean/Editor/Ex/Compiled.lean`), the file commands, `open-file` and `save-buffer`, and their jobs, `load-file` and `save-file` (`lean/Editor/Files/Compiled.lean`), the minibuffer's commands, `minibuffer-accept` and `minibuffer-cancel`, and its mode, `minibuffer` (`lean/Editor/Minibuffer/Compiled.lean`), and evil's eighteen commands, `move`, `normal`, `visual`, `visual-line`, `insert`, `append`, `insert-line-start`, `append-line-end`, `self-insert`, `operate`, `delete-char`, `put-after`, `put-before`, `open-below`, `open-above`, `undo`, `redo` and `repeat`, over its compiled tables of motions, operators and changes (`lean/Editor/Evil/Compiled.lean`) | Untouched: a reload replaces config's, and cancels config's jobs only, so a compiled job that is running goes on | Registered again when the host starts |
 | An open prompt: its label, the minibuffer's view, the asking view and the continuation, with the minibuffer's buffer and window | Compiled Lean, a field of the editor state (`EditorState.prompt`, `lean/Editor/State.lean`) and a buffer and a window of it, from the command that asks until the one that accepts or cancels | Untouched: the prompt stays open, and its continuation is a name, looked up in the registry as it is when the answer arrives | Lost |
 | A save in flight: the snapshot a save writes and the state its text was in | Compiled Lean, with the buffer's file in the editor state, from the save command until the save's result is delivered | Untouched | Lost with the buffer |
 | Asked to quit: whether a command asked the editor to quit | Compiled Lean, a field of the editor state (`EditorState.quitting`), from the command that asks until the step that says stop, or until the scene that withdraws it because a buffer has unsaved changes | Untouched: a quit that is waiting for a save still waits | Not kept: the process has ended |

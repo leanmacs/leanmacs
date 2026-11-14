@@ -197,13 +197,41 @@ time, in order, on the editor thread.
   pending, and it is one step with what follows (pinned by
   `ModelTest.dispatchUndoChecks`, with a scheme written in the test whose
   keys begin and end a session). A view's wanted column is editor state,
-  so it is rolled back with everything else.
+  so it is rolled back with everything else, and so are the registers.
+  - **A command gives up, with its reason** (the command loop's phase 13;
+    `giveUp reason` in `lean/Editor/Api.lean`, `StateRequest.giveUp`,
+    `Guarded.gaveUp`, `Loop.Ending.gaveUp`). It is the third way a command
+    ends without having run to its end, beside a refusal by the store and
+    an interrupt, and the one a command chooses: evil's operator whose
+    motion fails is cancelled as Vim cancels it. The dispatcher ends the
+    program at that request, with the state the command had reached, and
+    applies no continuation; nothing is thrown, so a `try` round the call
+    does not go on. The loop rolls it back by the rule below, says
+    `<name>: <reason>` in the echo area with no `refused:`, and puts the
+    scheme back in its state at rest. The headless host prints
+    `gave up: <reason>` for a command run by name. Run where no loop
+    dispatches the command, the request changes nothing and the operation
+    is refused.
+    - *Why not a refusal.* Throwing a `TextError` gives the same rollback,
+      and the echo then reads `<name>: refused: bad position`: the store's
+      words for something the store did not refuse. A message and a normal
+      return would leave the view in insert state after a failed `cj`, and
+      make the failed edit the last change.
+  - **What is outside the editor is not rolled back: the clipboard.** The
+    clipboard is a port (`lean/Editor/Clipboard.lean`), and what a command
+    writes there stays when the command is rolled back. The guard stops a
+    command before a request it makes of a port, never after its last. So
+    a command that writes the clipboard does so as its last request: one
+    that wrote it ran to its end. Evil's yank and deletion that name the
+    clipboard register edit, place the cursor, and then store, the write
+    last ([keymaps-and-modes.md](keymaps-and-modes.md), "Registers").
   What the loop does with it is built (`lean/Editor/Loop.lean`, "Rollback":
   `Loop.keep` and `Loop.Kept.restore`), as follows.
   - **Before a command** the loop keeps, for each buffer, the state of its
     undo tree once told the text's revision, and, for each window, its
     selection marker and its scroll marker as read.
-  - **After a command that was refused or interrupted** each kept buffer's
+  - **After a command that was refused or interrupted, or that gave up,**
+    each kept buffer's
     tree is told the revision and reverted to the kept state, with the
     user's origin, and each kept marker is placed back. The editor state is
     the one before the command: whatever the command's state requests

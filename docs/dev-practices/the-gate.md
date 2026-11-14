@@ -200,9 +200,35 @@ checks:
   by an undo request; `a`, `I` and `A`; and the selection the scene shows
   after `v` and `V` and a motion. **No test runs Vim**, and nothing about
   Vim is in the build or the gate: the rows were compared with a local Vim
-  by hand, outside the repository. The build checks the theorem that inserting at a
+  by hand, outside the repository.
+- **Evil's editing commands**, the same way (`evilOperatorChecks`,
+  `evilSelectionChecks`, `evilRegisterChecks`, `evilOpenChecks`,
+  `evilUndoChecks`, `evilRepeatChecks`). An operator's row also says the
+  unnamed register after and whether it is line-wise, or that it is as it
+  was, which a sentinel set before the keys shows, whether the view is
+  left in insert state, and whether the command gave up
+  (`docs/design/keymaps-and-modes.md`, "Operators as built"). The table of
+  `d c y` over each of the fifteen motions has five situations: no count,
+  a count of 2, the cursor on an empty line, and the cursor on the
+  buffer's last character with and without a final line feed. A check
+  that reads the default key tables holds it complete, so a motion or an
+  operator added with no rows fails it. A sweep presses every operator
+  key with every motion key from every resting position of the sample
+  texts. Beside them: the operators over a `v` and a `V` selection, `x`,
+  `p` and `P`, `o` and `O`, `u` and `C-r` after a change of each kind,
+  `.` after one, and the clipboard register, on the clipboard model, which
+  a check sets and takes away. The clipboard interface's contract
+  (`lean/Editor/Clipboard/Contract.lean`) runs on its model here, and
+  `contract-test` runs it on the clipboard a host with no window keeps.
+  `textModelStepChecks` hold a premise of the theorem about undo where it
+  is not proved: every live text of the model is in step after each
+  request of a sample sequence.
+
+The build checks the theorem that inserting at a
 position and deleting what was inserted leaves the text
-(`lean/Editor/Api/Theorems.lean`). The task
+(`lean/Editor/Api/Theorems.lean`), and the theorem that `x` then `u`
+restores the text, with its lemmas (`lean/Editor/Evil/Theorems.lean`,
+`lean/Editor/UndoTree/Theorems.lean`, `lean/Editor/Text/Model.lean`). The task
 shows by behaviour
 that they build without the library. It puts a `cargo` that always fails
 (`lean/no-cargo/cargo`) first on the `PATH`, and Lake runs `cargo` on every
@@ -243,7 +269,9 @@ loads no config: it sends `i`, the keys of `hello`, `<Escape>` and `0`,
 and its scenes must show the text, the cursor after each, and the state's
 name in the status line, exactly as `evil-expected` has them. That run is
 evil's wiring on the real library: every command its keys run is one the
-editor ships. The eighth is `ex/script`, which also has no `reload`: it
+editor ships. A whole evil session on a real file is a process check of
+its own, below (`session/script`). The eighth is `ex/script`, which also
+has no `reload`: it
 runs the ex line three times, with a name nobody bound, with `w` in the
 scratch buffer and with `q`, which ends the loop, so that the `scene` line
 after it prints nothing; its output must be exactly `ex/expected`.
@@ -384,7 +412,27 @@ spawns a process.
 the table of motions the editor ships, as it is and with a motion of
 config's own added, and the cursor goes where config's motion says. That
 is the check of what the root module lets config name of evil: a config
-that cannot name the table is rejected, and the check fails.
+that cannot name the table is rejected, and the check fails. A second
+config names the operators, the table of changes and evil's undo: a
+command of config's that runs the operate command with the arguments of
+`d w` deletes a word, one that hands the repeat command that change
+deletes the next, and one that runs evil's undo gives it back. Another
+check runs a command of config's that writes the clipboard and one that
+reads it through the host, which keeps a clipboard of its own, and a
+finished job's command reads it too.
+
+`ffi-test` also runs **an evil session on a real file**, as a process
+(`tests/headless/session/`). The entry is one shell: it makes a temporary
+directory with `mktemp -d` and removes it by a trap, copies `verse.txt`
+there, and writes the script there from the template `script`, with the
+copy's absolute path in place of `@FILE@`. The script has no `reload`. It
+opens the file with `:e`, and then, by keys, runs a count and an operator
+(`2dw`), a dot repeat, an undo, a change with typed text and its dot
+repeat, a visual yank, a put, an undo and a redo, and `:w`, with a `scene`
+after each step. The editor must exit with status 0; its output, with the
+temporary directory's path written `@DIR@`, must be exactly `expected`,
+which shows the text, the cursor, the selection, the state and the echo
+of every scene; and the copy must hold the bytes of `verse-expected`.
 
 `config-test` also runs jobs through the headless host, on a fake clock it
 moves: a job's handler runs on the editor thread, a reload that installs
@@ -406,7 +454,11 @@ by the interrupt key; and a compiled job a host is handed is started by a
 compiled command before any config is loaded, and is not cancelled by a
 reload. `contract-test` runs the watch port's contract against its
 real binding, over the library's interrupt flag, and has the interrupt key
-arrive at a known request of a command.
+arrive at a known request of a command. It runs the clipboard interface's
+contract against the clipboard a host with no window keeps
+(`lean/Editor/Clipboard/InProcess.lean`), and checks that a command run
+against the library with no clipboard handed in is answered
+`unavailable`, and that one handed a clipboard reaches it.
 
 `config-test` (`lean/ConfigTest.lean`) is linked like the editor, with
 Lean's elaborator, and is given the toolchain's directory and the package's
