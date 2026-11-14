@@ -72,9 +72,24 @@ are in `Editor/Files/Compiled.lean`.
   it. Its buffer and its window are rolled back, and the text it made is
   not released, as for every command (`Editor/Loop.lean`, "What is not
   undone"). The file is opened again.
+- **The command as it is called asks for its path when it is given none**
+  (`openCommand`). With a string as its first argument it opens that
+  path. With anything else first, or nothing, it asks for the path with a
+  prompt (`prompt`, `Editor/Api.lean`), labelled `openPrompt`, whose
+  continuation is the open command itself with no argument of its own:
+  when the prompt is accepted the command runs again with the answer as
+  its first argument, in the view it was asked from
+  (`docs/design/concurrency.md`, "Prompts"). A key bound to the command
+  under the Vim scheme hands it a count and a register, so its first
+  argument is no path, and it asks. Where the prompt is refused, because
+  one is open, the echo area says so (`notAsking`), with the refusal's
+  sentence.
 - **Not built**: a buffer for a file that is not there yet. Opening a path
-  with no file is an error, and saving under another name waits for a
-  prompt or a command line to name it.
+  with no file is an error. Saving under another name is not built
+  either, and the save command does not ask for one: a buffer with a file
+  needs no name, and one with no file needs a file that is not there yet,
+  an attach with nothing expected on disk and a buffer renamed, which is
+  more than a prompt.
 
 ## Save
 
@@ -210,9 +225,15 @@ editor state refused its buffer or refused to show it. -/
 def notShown (path : System.FilePath) : String :=
   s!"loaded {path}, and could not show it"
 
-/-- What the echo area says when the open command is called with no path. -/
-def noPath : String :=
-  s!"{openName}: no path to open"
+/-- The label of the prompt the open command asks for its path with. -/
+def openPrompt : String :=
+  "Open file: "
+
+/-- What the echo area says when the open command was called with no path
+and could not ask for one: the refusal's own sentence, after the command's
+name. -/
+def notAsking (refusal : PromptRefusal) : String :=
+  s!"{openName}: {refusal.describe}"
 
 /-- The command a finished load job hands the loop: what the reply to the
 load of `order.path` becomes ("Open", in the module docs). -/
@@ -260,11 +281,17 @@ def «open» (view : ViewId) (path : System.FilePath) : EditorM Unit := do
 
 /-- The open command as it is called: opens the path that is its first
 argument, a string, in the window it was called with. With anything else
-first, or nothing, it says so in the echo area. -/
-def openCommand (call : Call) : EditorM Unit :=
+first, or nothing, it asks for the path (`prompt`, labelled `openPrompt`),
+with itself as the continuation: the answer is then its first argument,
+and it runs in the view it was asked from. Where the prompt is refused,
+because one is open, it says so in the echo area (`notAsking`). -/
+def openCommand (call : Call) : EditorM Unit := do
   match call.arguments with
-  | .str path :: _ => Files.open call.target.window.id path
-  | _ => message noPath
+  | .str path :: _ =>
+    Files.open call.target.window.id path
+  | _ =>
+    if let .error refusal← prompt openPrompt { command := openName } then
+      message (notAsking refusal)
 
 /-- The name the save command is registered under. -/
 def saveName : String :=

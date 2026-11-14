@@ -10072,7 +10072,9 @@ def opens (path : System.FilePath) : Invocation :=
 
 /-- What a step of the file command checks is handed: the keys of
 `openKeys`, each bound to the open command with its path, `C-o o` bound to
-the open command with no argument, and the open command under its name.
+the open command with no argument, `C-o V` to the open command with the
+arguments the Vim scheme gives a command a key is bound to, a count and a
+register, and the open command under its name.
 
 `C-o w` is bound to the save command, under its name, `C-o f` to the save
 command with `true` as its argument, and `C-o v` to the save command with
@@ -10088,8 +10090,10 @@ saves a buffer there is none of. -/
 def fileKeys : Loop.Keys TestScheme.scheme :=
   dispatchKeys
     (openKeys.map (fun (text, path) => (text, opens path)) ++
-      [("C-o o", invoke Files.openName), ("C-o 0", invoke "scratch"), ("C-o s", invoke "split"),
-        ("C-o k", invoke "close"), ("C-o w", invoke Files.saveName),
+      [("C-o o", invoke Files.openName),
+        ("C-o V", { command := Files.openName, arguments := [.nat 0, .str ""] }),
+        ("C-o 0", invoke "scratch"), ("C-o s", invoke "split"), ("C-o k", invoke "close"),
+        ("C-o w", invoke Files.saveName),
         ("C-o f", { command := Files.saveName, arguments := [.bool true] }),
         ("C-o v", { command := Files.saveName, arguments := [.nat 0, .str ""] }),
         ("C-o u", invoke "undo"), ("C-o d", invoke "drop"), ("C-o x", invoke "save-absent")])
@@ -10134,16 +10138,17 @@ def filesDriver (registered : String → Option (List Argument → Work) := file
     fun driver => { driver with jobs := { files } }
 
 /-- A driver whose commands and jobs are the ones compiled code registers
-(`Files.commands`, `Files.jobs`), each under the name it is registered
-under, over the files of the file command checks: `C-o n` is bound to the
-open command with the path of `note.txt`, `C-o o` to the open command with
-no argument, and `C-o w` to the save command. -/
+(`Files.commands`, `Files.jobs`, and `Minibuffer.commands`), each under the
+name it is registered under, over the files of the file command checks:
+`C-o n` is bound to the open command with the path of `note.txt`, `C-o o`
+to the open command with no argument, `C-o w` to the save command, and
+`C-o y` to the minibuffer's accept command, in every view. -/
 def compiledDriver : Option TestDriver :=
   let keys : Loop.Keys TestScheme.scheme :=
     dispatchKeys
       [("C-o n", opens (inFiles "note.txt")), ("C-o o", invoke Files.openName),
-        ("C-o w", invoke Files.saveName)]
-      (Files.commands.toList.filterMap fun registration =>
+        ("C-o w", invoke Files.saveName), ("C-o y", invoke Minibuffer.acceptName)]
+      ((Files.commands ++ Minibuffer.commands).toList.filterMap fun registration =>
         match registration.action with
         | .call run =>
           some
@@ -10469,15 +10474,59 @@ def fileCommandChecks : List Check :=
               (showing asked).map (·.id) == some ⟨0⟩ &&
               asked.loop.state.buffers.size == 1 },
     { name :=
-        "the open command with no path among its arguments says so in the echo area and starts nothing"
+        "the open command with no path among its arguments, with none and with the count and the register an input scheme hands a command, starts no job and asks for the path: a prompt is open, labelled as the open command's, whose continuation is the open command with no argument of its own, asked from the view the command was called in"
       run :=
         pure <|
           match filesDriver with
           | none => false
           | some driver =>
-            let (asked, steps) := fedTo driver (presses "C-o o")
-            started steps == #[] && asked.pending.isEmpty && echoOf asked == some Files.noPath &&
-              asked.loop.state.buffers.size == 1 },
+            ["C-o o", "C-o V"].all fun typed =>
+              let (asked, steps) := fedTo driver (presses typed)
+              started steps == #[] && asked.pending.isEmpty && echoOf asked == some "" &&
+                asked.loop.state.prompt ==
+                  some
+                    { label := Files.openPrompt, view := ⟨1⟩, asker := ⟨0⟩
+                      continuation := { command := Files.openName } } &&
+                !Files.openPrompt.isEmpty &&
+                asked.loop.state.frame.focused == ⟨1⟩ &&
+                asked.loop.state.wellFormed },
+    { name :=
+        "the open command with no path while a prompt is open cannot ask: the echo area says so, with the refusal, and the one prompt is still open"
+      run :=
+        pure <|
+          match filesDriver with
+          | none => false
+          | some driver =>
+            let (asked, _) := fedTo driver (presses "C-o o")
+            let (again, steps) := fedTo asked (presses "C-o o")
+            started steps == #[] && echoOf again == some (Files.notAsking (.alreadyOpen ⟨1⟩)) &&
+              again.loop.state.prompt == asked.loop.state.prompt &&
+              again.loop.state.prompt.isSome &&
+              again.loop.state.windows.size == 2 },
+    { name :=
+        "the open command asks for its path and opens the answer: with the commands compiled code registers, the open command with no argument, the path of a file committed into the minibuffer, the accept command and the load job finished leave the view the command was called in showing the file's text, in a buffer called by the file's base name, with the prompt closed, and one job was started"
+      run :=
+        pure <|
+          match compiledDriver with
+          | none => false
+          | some driver =>
+            let path := inFiles "note.txt"
+            let (asked, _) := fedTo driver (presses "C-o o")
+            let (typed, _) := fedTo asked [.commit path.toString]
+            let (accepted, _) := fedTo typed (presses "C-o y")
+            let (opened, delivered) := accepted.finish 1
+            asked.loop.state.prompt.isSome && asked.pending.isEmpty &&
+              minibufferText typed == some path.toString &&
+              accepted.loop.state.prompt == none &&
+              accepted.loop.state.frame.focused == ⟨0⟩ &&
+              accepted.pending.map (fun job => (job.id, job.name)) == #[(1, Files.loadJob)] &&
+              (delivered.map (·.ended)) == some (some .finished) &&
+              opened.pending.isEmpty &&
+              opened.next == 2 &&
+              (showing opened).map (fun shown => (shown.buffer.name, shown.text)) ==
+                some ("note.txt", some FileCases.noteText) &&
+              statusOf opened == some (named "note.txt") &&
+              opened.loop.state.wellFormed },
     { name :=
         "the save command on a modified buffer: once its job is finished, the file's bytes are the buffer's text as a save writes it, the buffer is not modified, its stamp is the one the files now have, no save is in flight, the snapshot the command took is released, the echo area says the file was written, and the view's status line has no modified field"
       run :=
@@ -10724,7 +10773,7 @@ def fileCommandChecks : List Check :=
               saved.loop.state.buffers == removed.loop.state.buffers &&
               saved.loop.state.wellFormed },
     { name :=
-        "the file commands and their jobs as compiled code registers them: the open command and the save command are registered under their names and the load job and the save job under theirs, the open command with a path opens the file and the save command saves the buffer, and the open command with no path says so in the echo area and starts nothing"
+        "the file commands and their jobs as compiled code registers them: the open command and the save command are registered under their names and the load job and the save job under theirs, the open command with a path opens the file and the save command saves the buffer, and the open command with no path starts nothing and asks for one"
       run :=
         pure <|
           match compiledDriver with
@@ -10741,7 +10790,8 @@ def fileCommandChecks : List Check :=
               Files.jobs.map (·.name) == #[Files.loadJob, Files.saveJob] &&
               started steps == #[] &&
               bare.pending.isEmpty &&
-              echoOf bare == some Files.noPath &&
+              bare.loop.state.prompt.map (fun asking => (asking.label, asking.continuation)) ==
+                some (Files.openPrompt, { command := Files.openName }) &&
               (showing opened).bind (·.text) == some FileCases.noteText &&
               (showing saved).bind (·.text) == some text &&
               bytesOf saved path == some (FileModel.encode text) &&

@@ -13,7 +13,10 @@ for the owner `compiled` when its loop starts, before any config
   is given what it was called with (`Action.call`).
   - `open-file` opens the path that is its first argument, a string, in
     the window it was called with (`Files.openCommand`). With no path it
-    says so in the echo area.
+    asks for one with a prompt, whose answer it then opens: the prompt's
+    continuation is `open-file` itself, which receives the answer as its
+    first argument. A host must be handed the minibuffer's commands too
+    (`Editor/Minibuffer/Compiled.lean`) for that prompt to be answered.
   - `save-buffer` saves the buffer of the window it was called with
     (`Files.saveCommand`), forced when its first argument is `true`. Its
     other arguments are ignored: an input scheme hands a command a key is

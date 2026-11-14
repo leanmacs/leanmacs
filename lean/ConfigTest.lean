@@ -88,7 +88,10 @@ fakes. The checks here pin what only real collaborators can show:
     says so; and opening a path with no file says so and leaves the
     window. The driver's `run` hands a command no argument, so each host
     is handed a command, written here, that runs the compiled open command
-    with a path (`opening`).
+    with a path (`opening`). The last runs the open command by its name,
+    with no path: it asks for one, the path is committed into the
+    minibuffer, and the accept key opens it. Each host is handed the
+    minibuffer's commands and its mode for that.
 
 A check controls time through a port, never by sleeping and hoping: a
 decorator of the elaborator port (`Gate`) holds one chunk's elaboration open
@@ -2535,16 +2538,21 @@ def opening (name : String) (path : System.FilePath) : Config.Registration :=
 /-- Runs `check` against a host over the library's file service
 (`Stage.overFiles`), with an empty config directory of its own, that is
 handed the file commands and their jobs as compiled code registers them
-(`Files.commands`, `Files.jobs`) and, for each name and path of `opens`, a
-command of that name that opens that path (`opening`). Stops the host:
-`false` if the check did not hold or the host did not stop. -/
+(`Files.commands`, `Files.jobs`), the minibuffer's commands and its mode
+(`Minibuffer.commands`, `Minibuffer.modes`), as the executable is, and,
+for each name and path of `opens`, a command of that name that opens that
+path (`opening`). Stops the host: `false` if the check did not hold or the
+host did not stop. -/
 def withFileHost (context : Context) (opens : List (String × System.FilePath))
     (check : Session → IO Bool) : IO Bool :=
   IO.FS.withTempDir fun directory => do
     let stage ←
       Stage.overFiles context (Config.Directory.source directory)
-          { commands := Files.commands ++ (opens.map fun (name, path) => opening name path).toArray
-            jobs := Files.jobs }
+          { commands :=
+              Files.commands ++ Minibuffer.commands ++
+                (opens.map fun (name, path) => opening name path).toArray
+            jobs := Files.jobs
+            modes := Minibuffer.modes }
     onStage stage fun host stage =>
         check
           { host, directory, output := stage.output, threads := stage.threads, clock := stage.clock,
@@ -2737,7 +2745,32 @@ def fileChecks (context : Context) : List Check :=
               let (echo, lines) ← session.viewsAndStatus
               return joined && (← session.output.get).contains s!"job 1 {Files.loadJob}: ok" &&
                   echo == (Files.notOpened path .notFound).quote &&
-                  lines == #[viewLine "kept" 4, statusOf (modified := true)] }]
+                  lines == #[viewLine "kept" 4, statusOf (modified := true)] },
+    { name :=
+        "the open command with no path asks for one and opens the answer: run by its name, with the path of a file in a temporary directory committed into the minibuffer and the accept key pressed, the host says the load job started and ended, the prompt is closed, and the view the command was asked from shows the file's text in a buffer called by its base name"
+      run :=
+        IO.FS.withTempDir fun files => do
+          let path := files / "note.txt"
+          IO.FS.writeBinFile path noteText.toUTF8
+          withFileHost context [] fun session => do
+              session.ask [.run Files.openName]
+              unless ← Event.post (.commit path.toString) do
+                return false
+              let asking ← session.sceneLines
+              session.pressKeys acceptKeys
+              let joined := (← session.host.join patience) == .settled
+              let (echo, lines) ← session.viewsAndStatus
+              let output ← session.output.get
+              return joined && !acceptKeys.isEmpty &&
+                  asking.extract 1 ==
+                    #[viewLine "" 0, statusOf,
+                      minibufferLine path.toString path.toString.utf8ByteSize,
+                      promptStatus Files.openPrompt] &&
+                  output.contains s!"run {Files.openName}: ok" &&
+                  output.filter (·.startsWith "job ") ==
+                    #[s!"job 1 {Files.loadJob}: started", s!"job 1 {Files.loadJob}: ok"] &&
+                  echo == "".quote &&
+                  lines == #[viewLine noteText 0, statusOf (name := "note.txt")] }]
 
 /-- Every check, in the order they run. -/
 def checks (context : Context) : List Check :=

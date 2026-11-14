@@ -177,8 +177,10 @@ run = [
   # shows with the prompt text as its status line; `<Enter>` accepts with
   # the compiled command `minibuffer-accept`, and config's command that
   # receives the answer says it in the echo area; `<Escape>` cancels with
-  # `minibuffer-cancel`, and that command does not run
-  # (`prompt/expected`).
+  # `minibuffer-cancel`, and that command does not run; and the compiled
+  # `open-file`, run with no path, asks for one and opens the answer, a
+  # path that is not absolute, which the library refuses before it asks
+  # the file system, so the run touches no file (`prompt/expected`).
   "out=$(.lake/build/bin/editor headless \"$(lean --print-prefix)\" .lake/build/lib/lean ../tests/headless/prompt/config ../tests/headless/prompt/script) && printf '%s\\n' \"$out\" | diff ../tests/headless/prompt/expected -",
   # The editor's failure statuses. A command line it does not understand is
   # status 2, with the usage on stderr.

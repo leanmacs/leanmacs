@@ -28,3 +28,15 @@ scene
 run ask-name
 key <Escape> Escape -
 scene
+
+# `open-file` is a compiled command. Run with no path it asks for one, and
+# the answer is opened by `open-file` again, as the command the prompt
+# names. The path committed here is not absolute, so the compiled job
+# `load-file` is started and the library refuses the path before it asks
+# the file system: the run touches no file. `join` waits for the job, whose
+# command says the refusal in the echo area.
+run open-file
+commit notes/relative.txt
+key <Enter> Enter -
+join
+scene
