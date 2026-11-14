@@ -1,4 +1,5 @@
 import Editor.Command.Append
+import Editor.Command.Guard
 import Editor.Command.Model
 import Editor.Config.Reload
 import Editor.Display.Contract
@@ -60,7 +61,9 @@ The watch port's contract (`Editor/Watch/Contract.lean`: the interrupt flag
 and a clock) is run against its model here (`watchFailures`), and
 `contract-test` runs the same list against the real binding. `watchChecks`
 are what only the model shows: an interrupt key that arrives at a request a
-test names, and a clock that moves with a command's requests.
+test names, and a clock that moves with a command's requests. `guardChecks`
+run guarded commands (`Editor/Command/Guard.lean`) on those models: a
+command stops at its next request once the flag is up, and cannot catch it.
 
 The editor state (`Editor/State.lean`) is checked on the text model
 (`stateChecks`): the initial state, that a split tree's views tile the
@@ -3488,6 +3491,83 @@ def watchChecks : List Check :=
         let still := (command.runModel editorModel).1
         return resulted paced == .inr [100, 110, 120, 130] && resulted still == .inr [0, 0, 0, 0] }]
 
+/-- The editor's models with a watch model that counts: its clock, at 0,
+moves on by 1 at each text request and each display request, so its reading
+is how many of them a command made. -/
+def countingModel (watch : WatchModel := {}) : EditorModel :=
+  { editorModel with
+    watch :=
+      { watch with
+        clock := 0, pace := 1 } }
+
+/-- A command that makes a text of each of `labels`, in order, and returns
+how many it made. -/
+def makesEach (labels : List String) : EditorM Nat := do
+  for label in labels do
+    makes label
+  return labels.length
+
+/-- The checks of a guarded command (`Editor/Command/Guard.lean`) on the
+editor's models: it stops at its next request once the interrupt flag is
+up. -/
+def guardChecks : List Check :=
+  [{  name :=
+        "with the interrupt flag down a guarded command finishes with its value, and leaves the models as the command alone does"
+      run := do
+        let command := makesEach ["1", "2", "3"]
+        let (bare, alone) := command.runModel countingModel
+        let (guarded, model) := command.guarded.runModel countingModel
+        return resulted bare == .inr 3 && resulted guarded == .inr (.finished 3) &&
+            model.texts.contents == alone.texts.contents &&
+            model.display.scenes == alone.display.scenes &&
+            model.watch == alone.watch },
+    { name :=
+        "a guarded command that is refused is not itself refused: the refusal comes back as its outcome, with what the command did before it"
+      run := do
+        let command : EditorM Nat := do
+          makes "1"
+          (⟨7⟩ : TextId).insert 0 "x"
+          makesEach ["2"]
+        let (guarded, model) := command.guarded.runModel countingModel
+        return resulted guarded == .inr (.refused .noSuchText) && model.texts.contents == #["1"] },
+    { name :=
+        "with the interrupt flag up before it starts, a guarded command makes no request and is interrupted, and the flag stays up"
+      run := do
+        let (guarded, model) :=
+          (makesEach ["1", "2"]).guarded.runModel (countingModel { arrived := 1 })
+        return resulted guarded == .inr .interrupted && model.texts.contents == #[] &&
+            model.watch.clock == 0 &&
+            model.watch.arrived == 1 },
+    { name :=
+        "when the interrupt key arrives as a guarded command is about to make its fourth request, the command has made exactly three and makes no more"
+      run := do
+        let (guarded, model) :=
+          (makesEach ["1", "2", "3", "4", "5"]).guarded.runModel
+            (countingModel { arrivesAfter := some 3 })
+        return resulted guarded == .inr .interrupted && model.texts.contents == #["1", "2", "3"] &&
+            model.watch.clock == 3 },
+    { name :=
+        "a command that catches every refusal of every request cannot go on past an interrupt: nothing is thrown for it to catch"
+      run := do
+        let stubborn : EditorM Nat := do
+          let mut made := 0
+          for label in ["1", "2", "3", "4"] do
+            try
+              makes label
+              made := made + 1
+            catch _ =>
+              made := made + 100
+          return made
+        let (guarded, model) := stubborn.guarded.runModel (countingModel { arrivesAfter := some 2 })
+        return resulted guarded == .inr .interrupted && model.texts.contents == #["1", "2"] &&
+            model.watch.clock == 2 },
+    { name :=
+        "a guarded command that makes no request finishes with its value though the interrupt flag is up: there is no request to stop it at"
+      run := do
+        let (guarded, model) :=
+          (pure 7 : EditorM Nat).guarded.runModel (countingModel { arrived := 1 })
+        return resulted guarded == .inr (.finished 7) && model.watch.arrived == 1 }]
+
 /-- The checks of the user's origin (`Origin.user`) and of how a refusal is
 described to the user (`TextError.describe`). -/
 def originChecks : List Check :=
@@ -5705,6 +5785,7 @@ def checks : List Check :=
     displayChecks ++
     commandPortChecks ++
     watchChecks ++
+    guardChecks ++
     originChecks ++
     stateChecks ++
     loopChecks ++
