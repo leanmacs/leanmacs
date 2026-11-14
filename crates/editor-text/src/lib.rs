@@ -35,8 +35,13 @@
 //!   tree-sitter's rule. [`Snapshot::row_range`] is a row's bytes without
 //!   its line feed.
 //! - **A point** is a row and a column counted from the row's start: in
-//!   bytes ([`Point`]) or in UTF-16 code units ([`PointUtf16`]). They are
-//!   two types so the units cannot be mixed.
+//!   bytes ([`Point`]), in UTF-16 code units ([`PointUtf16`]) or in cells
+//!   ([`PointCells`]). They are three types so the units cannot be mixed.
+//!   A column in cells is how many cells of the row start before the
+//!   position, which is the column a block's corners are counted in. So in
+//!   a row that ends in a carriage return and a line feed, the column just
+//!   past the content's cells is the carriage return's position, and the
+//!   position between the two bytes is one column further, the row's last.
 //! - **A conversion answers only for a position**, and clamps nothing:
 //!   clamping is the caller's policy. An offset converts to a point only if
 //!   it is a position. A point converts to an offset only if it names one:
@@ -393,7 +398,7 @@ pub use log::{Attribution, LogEntry, LogError, Origin, Source, Subscription};
 pub use marker::{MarkError, Marker, MarkerId};
 pub use motion::Motion;
 pub use patch::{Edit, InputEdit, Patch, Span};
-pub use point::{Point, PointUtf16};
+pub use point::{Point, PointCells, PointUtf16};
 pub use selection::{Selection, SelectionRange, Shape};
 pub use snapshot::{Chunks, Revision, Snapshot};
 pub use text::{BadRange, Text};

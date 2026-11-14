@@ -42,6 +42,33 @@ impl PointUtf16 {
     }
 }
 
+/// A position as a row and a column counted in cells from the row's start:
+/// how many cells of the row start before the position. This is the column
+/// a block's corners are counted in, and the one a motion to another row
+/// is given ([`Motion::RowsUp`](crate::Motion::RowsUp)). It is a type of
+/// its own so that a column in one unit is never read as another.
+///
+/// A cell is one character, or a carriage return and the line feed after it
+/// together, so the column is the number of characters of the row before
+/// the position. In a row whose content has `k` cells and that ends in a
+/// carriage return and a line feed, column `k` is the carriage return's
+/// position, where the content ends, and column `k + 1` the position
+/// between the two bytes, which the line break's cell starts before.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct PointCells {
+    /// Which row, from 0.
+    pub row: usize,
+    /// How many cells into the row.
+    pub column: usize,
+}
+
+impl PointCells {
+    /// The point at `column` cells into the row `row`.
+    pub const fn new(row: usize, column: usize) -> Self {
+        Self { row, column }
+    }
+}
+
 impl Snapshot {
     /// How many rows the text has: one more than its line feeds. An empty
     /// text has one row, and a text that ends in a line feed has an empty
@@ -105,6 +132,51 @@ impl Snapshot {
         (self.rope.utf16_of(offset)? == units).then_some(offset)
     }
 
+    /// The point of the position `offset`, with its column in cells. `None`
+    /// when `offset` is not a position. It walks the row from its start, so
+    /// it costs the cells before the position in its row.
+    pub fn offset_to_point_cells(&self, offset: usize) -> Option<PointCells> {
+        let (row, _) = self.row_of_position(offset)?;
+        Some(PointCells::new(row, self.cell_column(row, offset)?))
+    }
+
+    /// The offset of `point`. `None` when `point` names no position: the
+    /// text has no such row, or the column is past the row's end. The
+    /// column just past a row's last character is the position before its
+    /// line feed, and the next column is refused, not carried into the next
+    /// row.
+    pub fn point_cells_to_offset(&self, point: PointCells) -> Option<usize> {
+        let row = self.row_range(point.row)?;
+        // Within a row's bytes, which stop before its line feed, every
+        // character starts a cell, so a column further on is a character
+        // further on.
+        let mut offset = row.start;
+        for _ in 0..point.column {
+            if offset >= row.end {
+                return None;
+            }
+            offset += self.char_at(offset)?.len_utf8();
+        }
+        Some(offset)
+    }
+
+    /// How many cells of the row `row` start before the position `offset`,
+    /// which is in that row. `None` when the text has no such row.
+    pub(crate) fn cell_column(&self, row: usize, offset: usize) -> Option<usize> {
+        let mut at = self.row_range(row)?.start;
+        let mut column = 0;
+        while at < offset {
+            let end = self.cell_end(at);
+            if end == at {
+                // The end of the text: no cell is left to count.
+                break;
+            }
+            at = end;
+            column += 1;
+        }
+        Some(column)
+    }
+
     /// The row that holds the position `offset`, and the offset that row
     /// starts at. `None` when `offset` is not a position.
     pub(crate) fn row_of_position(&self, offset: usize) -> Option<(usize, usize)> {
@@ -152,6 +224,11 @@ mod tests {
         (19, 2, 4, 2),
         (20, 2, 5, 3),
     ];
+
+    /// The column in cells of each position of [`POSITIONS`], in order. The
+    /// carriage return of row 0 is at column 5, where the row's content
+    /// ends, and the position between it and its line feed at column 6.
+    const CELL_COLUMNS: [usize; 16] = [0, 1, 2, 3, 4, 5, 6, 0, 1, 2, 3, 4, 5, 0, 1, 2];
 
     /// The offsets of [`TEXT`] that are inside a character, and two past
     /// its end.
@@ -227,6 +304,96 @@ mod tests {
                 "{offset}"
             );
         }
+    }
+
+    #[test]
+    fn the_cells_point_of_a_position_counts_the_cells_of_its_row_that_start_before_it() {
+        let text = snapshot(TEXT);
+
+        for (&(offset, row, _, _), column) in POSITIONS.iter().zip(CELL_COLUMNS) {
+            assert_eq!(
+                text.offset_to_point_cells(offset),
+                Some(PointCells::new(row, column)),
+                "{offset}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_cells_point_that_names_a_position_has_its_offset() {
+        let text = snapshot(TEXT);
+
+        for (&(offset, row, _, _), column) in POSITIONS.iter().zip(CELL_COLUMNS) {
+            assert_eq!(
+                text.point_cells_to_offset(PointCells::new(row, column)),
+                Some(offset),
+                "row {row}, cells column {column}"
+            );
+        }
+    }
+
+    #[test]
+    fn an_offset_that_is_not_a_position_has_no_point_in_cells() {
+        let text = snapshot(TEXT);
+
+        for &offset in NOT_POSITIONS {
+            assert_eq!(text.offset_to_point_cells(offset), None, "{offset}");
+        }
+    }
+
+    #[test]
+    fn a_cells_point_past_the_end_of_its_row_or_in_a_row_the_text_lacks_has_no_offset() {
+        let text = snapshot(TEXT);
+
+        // Row 0 has the columns 0 to 6, row 1 the columns 0 to 5 and row 2
+        // the columns 0 to 2; one more would be the start of the next row
+        // if columns ran on.
+        assert_eq!(text.point_cells_to_offset(PointCells::new(0, 7)), None);
+        assert_eq!(text.point_cells_to_offset(PointCells::new(1, 6)), None);
+        assert_eq!(text.point_cells_to_offset(PointCells::new(2, 3)), None);
+        assert_eq!(
+            text.point_cells_to_offset(PointCells::new(1, usize::MAX)),
+            None
+        );
+        assert_eq!(text.point_cells_to_offset(PointCells::new(3, 0)), None);
+        assert_eq!(
+            text.point_cells_to_offset(PointCells::new(usize::MAX, 0)),
+            None
+        );
+        assert_eq!(
+            snapshot("").point_cells_to_offset(PointCells::new(0, 0)),
+            Some(0)
+        );
+        assert_eq!(
+            snapshot("").point_cells_to_offset(PointCells::new(0, 1)),
+            None
+        );
+    }
+
+    #[test]
+    fn in_a_row_that_ends_in_a_carriage_return_and_a_line_feed_the_column_past_the_content_is_the_carriage_return()
+     {
+        // The content of row 0, `ab`, has two cells. Column 2 is where it
+        // ends, at the carriage return; column 3 is the position between
+        // the carriage return and the line feed, which the line break's
+        // cell starts before; and there is no column 4.
+        let text = snapshot("ab\r\ncd");
+
+        assert_eq!(text.point_cells_to_offset(PointCells::new(0, 2)), Some(2));
+        assert_eq!(text.point_cells_to_offset(PointCells::new(0, 3)), Some(3));
+        assert_eq!(text.point_cells_to_offset(PointCells::new(0, 4)), None);
+        assert_eq!(text.offset_to_point_cells(2), Some(PointCells::new(0, 2)));
+        assert_eq!(text.offset_to_point_cells(3), Some(PointCells::new(0, 3)));
+        assert_eq!(text.offset_to_point_cells(4), Some(PointCells::new(1, 0)));
+        // With a line feed alone, the column past the content is the last.
+        let text = snapshot("ab\ncd");
+        assert_eq!(text.point_cells_to_offset(PointCells::new(0, 2)), Some(2));
+        assert_eq!(text.point_cells_to_offset(PointCells::new(0, 3)), None);
+        // A carriage return with no line feed after it is a cell of the
+        // content.
+        let text = snapshot("a\rb");
+        assert_eq!(text.offset_to_point_cells(2), Some(PointCells::new(0, 2)));
+        assert_eq!(text.point_cells_to_offset(PointCells::new(0, 3)), Some(3));
     }
 
     #[test]
@@ -344,6 +511,14 @@ mod tests {
         assert_eq!(text.point_to_offset(Point::new(1_500, 7)), Some(offset));
         assert_eq!(
             text.point_utf16_to_offset(PointUtf16::new(1_500, 6)),
+            Some(offset)
+        );
+        assert_eq!(
+            text.offset_to_point_cells(offset),
+            Some(PointCells::new(1_500, 6))
+        );
+        assert_eq!(
+            text.point_cells_to_offset(PointCells::new(1_500, 6)),
             Some(offset)
         );
         assert_eq!(

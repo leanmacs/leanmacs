@@ -68,8 +68,8 @@ impl Snapshot {
     fn block(&self, range: &SelectionRange, extents: &mut Vec<Range<usize>>) -> Option<()> {
         let anchor = self.offset_to_point(range.anchor)?;
         let head = self.offset_to_point(range.head)?;
-        let one = self.column(anchor.row, range.anchor)?;
-        let other = self.column(head.row, range.head)?;
+        let one = self.cell_column(anchor.row, range.anchor)?;
+        let other = self.cell_column(head.row, range.head)?;
         let (lower, higher) = (one.min(other), one.max(other));
         for row in anchor.row.min(head.row)..=anchor.row.max(head.row) {
             let content = self.row_content(row)?;
@@ -89,23 +89,6 @@ impl Snapshot {
             extents.push(from..at);
         }
         Some(())
-    }
-
-    /// How many cells of the row `row` start before the position `offset`,
-    /// which is in that row. `None` when the text has no such row.
-    fn column(&self, row: usize, offset: usize) -> Option<usize> {
-        let mut at = self.row_range(row)?.start;
-        let mut column = 0;
-        while at < offset {
-            let end = self.cell_end(at);
-            if end == at {
-                // The end of the text: no cell is left to count.
-                break;
-            }
-            at = end;
-            column += 1;
-        }
-        Some(column)
     }
 }
 

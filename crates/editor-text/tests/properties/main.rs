@@ -26,7 +26,7 @@
 use std::fmt::Debug;
 use std::ops::Range;
 
-use editor_text::{Change, ChangeSet, Point, PointUtf16, Snapshot, Text};
+use editor_text::{Change, ChangeSet, Point, PointCells, PointUtf16, Snapshot, Text};
 use proptest::collection::vec;
 use proptest::prelude::*;
 use proptest::sample::select;
@@ -553,6 +553,59 @@ fn utf16_points_round_trip_at_every_position() {
                 None => prop_assert!(!string.is_char_boundary(offset), "{} has none", offset),
             }
         }
+        Ok(())
+    });
+}
+
+#[test]
+fn cell_points_round_trip_at_every_position_and_count_the_characters_before_it_in_its_row() {
+    // A column in cells is counted by walking the row, so asking every
+    // position of a row costs the square of its length, and a generated
+    // text may be one row: the long texts are kilobytes here, still in
+    // several pieces.
+    let text = (initial_text_repeated(20..100), steps(8));
+
+    check(256, text, |(initial, steps)| {
+        let (snapshot, string) = edited(initial, &steps);
+        let reference = Reference::of(&string);
+        // For each position, how many characters of its row are before it:
+        // within a row every character starts a cell.
+        let mut characters = vec![0; string.len() + 1];
+        let mut column = 0;
+        for (offset, character) in string.char_indices() {
+            characters[offset] = column;
+            column = if character == '\n' { 0 } else { column + 1 };
+        }
+        characters[string.len()] = column;
+
+        // To two past the end: those offsets are not positions either.
+        for offset in 0..=string.len() + 2 {
+            let expected = reference
+                .place(offset)
+                .map(|(row, _, _)| PointCells::new(row, characters[offset]));
+            let point = snapshot.offset_to_point_cells(offset);
+            prop_assert_eq!(point, expected, "{}", offset);
+            if let Some(point) = point {
+                prop_assert_eq!(snapshot.point_cells_to_offset(point), Some(offset));
+            }
+        }
+        // The last column of a row is the position before its line feed,
+        // or the end of the text, and the next names nothing.
+        for (row, range) in reference.rows.iter().enumerate() {
+            let last = characters[range.end];
+            prop_assert_eq!(
+                snapshot.point_cells_to_offset(PointCells::new(row, last)),
+                Some(range.end)
+            );
+            prop_assert_eq!(
+                snapshot.point_cells_to_offset(PointCells::new(row, last + 1)),
+                None
+            );
+        }
+        prop_assert_eq!(
+            snapshot.point_cells_to_offset(PointCells::new(reference.rows.len(), 0)),
+            None
+        );
         Ok(())
     });
 }
