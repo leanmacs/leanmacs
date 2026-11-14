@@ -239,11 +239,14 @@ time, in order, on the editor thread.
       what the user had undone before it. A command that does not run to
       its end leaves no step.
   - **Nothing is given up until a command has ended.** A request that
-    closes a window or removes a buffer changes the editor state alone.
-    The loop gives up the window's markers and releases the buffer's text
-    once the command has run to its end, by comparing the state before
-    with the state after. So a command that fails after closing a window
-    is rolled back to a window whose markers still answer.
+    closes a window, removes a buffer or ends a save changes the editor
+    state alone. The loop gives up the window's markers, releases the
+    buffer's text and releases the snapshot of a save that is no longer in
+    flight once the command has run to its end, by comparing the state
+    before with the state after. So a command that fails after closing a
+    window is rolled back to a window whose markers still answer, and one
+    that fails after ending a save to a save in flight whose snapshot
+    still reads.
   - **Markers are placed back, not left to the inverse.** A marker moves
     with every transaction: a deletion and its inverse do not return a
     marker inside the deleted range to where it was, and a command can

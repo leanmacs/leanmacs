@@ -6126,10 +6126,53 @@ def markerRefusals (window : Window) : TextM (List (Option TextError)) :=
   return [← refusalOf (window.scroll.text.marker window.scroll),
       ← refusalOf (window.selection.text.marker window.selection)]
 
+/-- `hiddenBuffer`'s state with the buffer `hidden`, which no window shows,
+holding a file: a buffer a save can be begun for. -/
+def savable : TextM EditorState := do
+  let (state, _) ← hiddenBuffer
+  return (state.attachFile ⟨2⟩ notePath noteStamp .lf).2
+
+/-- The save in flight of the buffer `hidden` of `savable`, in `state`. -/
+def savingOf (state : EditorState) : Option Buffer.Saving :=
+  ((state.buffer? ⟨2⟩).bind (·.file)).bind (·.saving)
+
+/-- The commands of the checks of a save in flight, on `savable`, bound
+under `C-c`. `begin` (`g`) takes a snapshot of the buffer's text and begins
+a save of it, with the state the buffer's history is in. `end` (`e`) ends
+the save in flight with a stamp, as a save that wrote the file does, and
+`unsaved` (`n`) with none, as one that was refused does. `remove` (`r`)
+removes the buffer. `fail` (`f`) ends the save with a stamp and is then
+refused. `twice` (`t`) releases the save's snapshot itself and then ends
+the save. -/
+def saveKeys : Loop.Keys TestScheme.scheme :=
+  let ends (stamp : Option File.Stamp) (first : SnapshotId → EditorM Unit := fun _ => pure ()) :
+    EditorM Unit := do
+    let some saving := savingOf (← editorState) | throw .noSuchSnapshot
+    first saving.snapshot
+    discard <| EditorState.ask (.endSave ⟨2⟩ saving.snapshot stamp)
+  let later : File.Stamp :=
+    { noteStamp with
+      seconds := 9, size := 12 }
+  let run (command : EditorM Unit) : Dispatched := fun _ => do
+    command
+    return none
+  dispatchKeys
+    [("C-c g", invoke "begin"), ("C-c e", invoke "end"), ("C-c n", invoke "unsaved"),
+      ("C-c r", invoke "remove"), ("C-c f", invoke "fail"), ("C-c t", invoke "twice")]
+    [("begin",
+        run do
+          let some buffer := (← editorState).buffer? ⟨2⟩ | throw .noSuchText
+          let taken ← buffer.text.snapshot
+          discard <| EditorState.ask (.beginSave ⟨2⟩ taken buffer.history.state)),
+      ("end", run (ends (some later))), ("unsaved", run (ends none)),
+      ("remove", run (discard <| EditorState.ask (.removeBuffer ⟨2⟩))),
+      ("fail", failingAfter fun _ => ends (some later)),
+      ("twice", run (ends (some later) fun taken => taken.release))]
+
 /-- The checks of what the loop gives up after a command (`Editor/Loop.lean`,
 "What a finished command gave up"), on the editor's models: the markers of
-a window a command closed and the text of a buffer it removed, once the
-command has run to its end and not before. -/
+a window a command closed, the text of a buffer it removed and the snapshot
+of a save it ended, once the command has run to its end and not before. -/
 def dispatchGiveUpChecks : List Check :=
   let asks (requests : List StateRequest) : EditorM Unit := do
     for request in requests do
@@ -6328,6 +6371,62 @@ def dispatchGiveUpChecks : List Check :=
                 ([some .noSuchMarker, some .noSuchMarker], "refused: no such marker", #[⟨0⟩, ⟨2⟩],
                   true) &&
               model.display.scenes.back?.map (·.echo) == some "refused: no such marker"
+          | (.error _, _) => false },
+    { name :=
+        "the snapshot of a save is released once a command that ended the save has run to its end, and not before: it still reads after the command that took it and began the save, and refuses noSuchSnapshot after the command that ended it, whether the save wrote the file or was refused, with nothing in the echo"
+      run :=
+        pure <|
+          let program (key : String) :
+            EditorM (Option TextError × Option TextError × Option Buffer.Saving × String) := do
+            let (begun, _) ←
+              stepsWith saveKeys ({ state := ← savable } : TestLoop) (presses "C-c g")
+            let some taken := (savingOf begun.state).map (·.snapshot) | throw .noSuchSnapshot
+            let held ← refusalOf taken.read
+            let (ended, _) ← stepsWith saveKeys begun (presses key)
+            return (held, ← refusalOf taken.read, savingOf ended.state, ended.state.echo)
+          ["C-c e", "C-c n"].all fun key =>
+            ((program key).runModel editorModel).1.toOption ==
+              some (none, some .noSuchSnapshot, none, "") },
+    { name :=
+        "a buffer removed while its save is in flight has the save's snapshot released with its text: each refuses, and nothing is in the echo"
+      run :=
+        pure <|
+          let program : EditorM (Option TextError × Option TextError × String) := do
+            let (begun, _) ←
+              stepsWith saveKeys ({ state := ← savable } : TestLoop) (presses "C-c g")
+            let some taken := (savingOf begun.state).map (·.snapshot) | throw .noSuchSnapshot
+            let (removed, _) ← stepsWith saveKeys begun (presses "C-c r")
+            return (← refusalOf taken.read, ← refusalOf (⟨2⟩ : TextId).read, removed.state.echo)
+          (program.runModel editorModel).1.toOption ==
+            some (some .noSuchSnapshot, some .noSuchText, "") },
+    { name :=
+        "a command that ended a save and was then refused released nothing: the snapshot still reads, and the buffer's file is as it was before the command, with the save in flight and its old stamp"
+      run :=
+        pure <|
+          let program : EditorM (Option TextError × Bool × String) := do
+            let (begun, _) ←
+              stepsWith saveKeys ({ state := ← savable } : TestLoop) (presses "C-c g")
+            let some taken := (savingOf begun.state).map (·.snapshot) | throw .noSuchSnapshot
+            let (failed, _) ← stepsWith saveKeys begun (presses "C-c f")
+            return (← refusalOf taken.read,
+                (savingOf failed.state).isSome &&
+                  (failed.state.buffer? ⟨2⟩).map (·.file) == (begun.state.buffer? ⟨2⟩).map (·.file),
+                failed.state.echo)
+          (program.runModel editorModel).1.toOption ==
+            some (none, true, "fail: refused: bad range") },
+    { name :=
+        "a release of a save's snapshot that the store refuses, because the command released the snapshot itself before it ended the save, is in the echo area of the scene, and the save is still ended"
+      run :=
+        pure <|
+          let program : EditorM (Option Buffer.Saving × String) := do
+            let (begun, _) ←
+              stepsWith saveKeys ({ state := ← savable } : TestLoop) (presses "C-c g")
+            let (ended, _) ← stepsWith saveKeys begun (presses "C-c t")
+            return (savingOf ended.state, ended.state.echo)
+          match program.runModel editorModel with
+          | (.ok result, model) =>
+            result == (none, "refused: no such snapshot") &&
+              model.display.scenes.back?.map (·.echo) == some "refused: no such snapshot"
           | (.error _, _) => false }]
 
 /-- A scheme written for the closed-view checks: the test scheme, with the

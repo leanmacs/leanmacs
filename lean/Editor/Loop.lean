@@ -224,11 +224,11 @@ routed through this.
 
 ## What a finished command gave up
 
-A state request that closes a window or removes a buffer changes the editor
-state and nothing in the text store: the window's markers and the buffer's
-text are still held. The loop gives them up, once the command has run to
-its end (`Loop.gaveUp`), by comparing the state from before the command
-with the state it left:
+A state request that closes a window, removes a buffer or ends a save
+changes the editor state and nothing in the text store: the window's
+markers, the buffer's text and the save's snapshot are still held. The loop
+gives them up, once the command has run to its end (`Loop.gaveUp`), by
+comparing the state from before the command with the state it left:
 
 - **A window's markers.** Each marker of a window of the state before that
   no window of the state after uses is given up (`TextId.unmark`): the
@@ -237,12 +237,20 @@ with the state it left:
   slot is empty in the state after is released, unless a buffer that is
   left is over the same text. The markers go first, so a window closed with
   its buffer gives up its markers on a text that is still there.
+- **A save's snapshot.** The snapshot of each save in flight in the state
+  before (`Buffer.File.saving`, `Editor/State.lean`) that is not in flight
+  in the state after is released (`Loop.savesInFlight`): the save's result
+  was delivered and its command ended the save, whether the save wrote the
+  file or was refused, or the buffer was removed while its save ran. The
+  command that takes the snapshot and begins the save releases nothing: the
+  job reads the snapshot.
 - **Not before the command has ended.** A command that is refused or
-  interrupted after it closed a window or removed a buffer is rolled back
-  whole: nothing was given up, so the window and the buffer of the state
-  from before are over markers and a text that still answer. Giving up
-  inside the request would leave a rollback with a window over markers
-  that are gone.
+  interrupted after it closed a window, removed a buffer or ended a save
+  is rolled back whole: nothing was given up, so the window and the buffer
+  of the state from before are over markers and a text that still answer,
+  and the save that is in flight again is over a snapshot that still
+  reads. Giving up inside the request would leave a rollback with a window
+  over markers that are gone.
 - **A refusal is said.** What the store refuses here, such as the release
   of a text the command had released itself, is in the echo area, as a
   refusal met while publishing is (`refused: ` and the refusal), in place
@@ -761,13 +769,19 @@ def Kept.restore (kept : Kept) (before after : EditorState) : TextM (EditorState
     | none => ""
   return ({ before with buffers }, history ++ unrestored)
 
+/-- The snapshots of the saves in flight in `state`: one for each buffer
+that has one (`Buffer.File.saving`). -/
+def savesInFlight (state : EditorState) : Array SnapshotId :=
+  state.buffers.filterMap fun slot => ((slot.bind (·.file)).bind (·.saving)).map (·.snapshot)
+
 /-- Gives up what a command that ran to its end dropped ("What a finished
 command gave up", in the module docs), `before` being the state from before
 it and `after` the state it left: each marker of a window of `before` that
-no window of `after` uses, and then the text of each buffer of `before`
-whose slot is empty in `after`, unless a buffer of `after` is over it. It
-is not refused: the first thing the store refuses is handed back, and the
-rest is still given up. -/
+no window of `after` uses, then the snapshot of each save in flight in
+`before` that is not in flight in `after`, and then the text of each buffer
+of `before` whose slot is empty in `after`, unless a buffer of `after` is
+over it. It is not refused: the first thing the store refuses is handed
+back, and the rest is still given up. -/
 def gaveUp (before after : EditorState) : TextM (Option TextError) := do
   let mut refusal := none
   let held := after.windows.flatMap fun window => #[window.selection, window.scroll]
@@ -776,6 +790,11 @@ def gaveUp (before after : EditorState) : TextM (Option TextError) := do
       unless held.contains id do
         if let .error error← observing (id.text.unmark id) then
           refusal := refusal <|> some error
+  let saving := savesInFlight after
+  for snapshot in savesInFlight before do
+    unless saving.contains snapshot do
+      if let .error error← (observing snapshot.release : TextM (Except TextError Unit)) then
+        refusal := refusal <|> some error
   for index in [0:before.buffers.size] do
     let some buffer := before.buffer? ⟨index⟩ | continue
     if (after.buffer? ⟨index⟩).isSome || after.buffers.any (·.any (·.text == buffer.text)) then
