@@ -36,6 +36,8 @@ use std::ops::Range;
 
 pub mod contract;
 pub mod fake;
+#[cfg(test)]
+pub(crate) mod scripted;
 
 /// Which font: a number the shaper's adapter gives a [`FontSpec`]
 /// ([`Shaper::font`]). Font 0 is the default font, [`FontSpec::default`].
@@ -160,9 +162,16 @@ pub struct Glyph {
     pub font: FontId,
     /// The byte offset in [`ShapeInput::text`] of the cluster it draws.
     pub cluster: usize,
-    /// Where it starts, in pixels from its visual line's left edge.
+    /// Where its pen position is, in pixels from its visual line's left
+    /// edge: where it starts for a cursor, a selection and a click.
     pub x: f32,
-    /// How far across it is.
+    /// How far right of its pen position its outline is drawn, in pixels.
+    /// Only a renderer reads it: no position is found by it.
+    pub dx: f32,
+    /// How far below the baseline its outline is drawn, in pixels. Only a
+    /// renderer reads it.
+    pub dy: f32,
+    /// How far across it is: how far it moves the pen.
     pub advance: f32,
 }
 

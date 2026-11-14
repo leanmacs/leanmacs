@@ -1,7 +1,8 @@
 //! The published fake of the [`Shaper`] port: [`CellShaper`].
 //!
-//! Every character is one glyph, and every glyph of a font has the same
-//! advance and line height. Lines break greedily at character boundaries:
+//! Every character is one glyph, drawn at its pen position (its offset is
+//! 0), and every glyph of a font has the same advance and line height.
+//! Lines break greedily at character boundaries:
 //! a visual line takes glyphs while the next one still fits the width, and
 //! always takes at least one.
 //!
@@ -176,6 +177,8 @@ impl CellLine {
                 font: cell.font,
                 cluster: cell.offset,
                 x,
+                dx: 0.0,
+                dy: 0.0,
                 advance: cell.advance,
             });
             x += cell.advance;

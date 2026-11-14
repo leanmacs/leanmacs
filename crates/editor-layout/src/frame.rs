@@ -45,9 +45,10 @@
 //! ([`line`](mod@crate::line), which also says which of a tab's spaces are
 //! no row at all in a view narrower than the tab).
 //!
-//! A row's hash covers its glyphs (each with its font's id), its runs
-//! (their bytes and their paint) and its height and baseline, all relative
-//! to the row's start: never its `y` or an absolute offset. So scrolling,
+//! A row's hash covers its glyphs (each with its font's id and the offset
+//! its outline is drawn at), its runs (their bytes and their paint) and
+//! its height and baseline, all relative to the row's start: never its `y`
+//! or an absolute offset. So scrolling,
 //! and an edit on another row, leave it as it was, and a renderer reuses
 //! what it built for a row whose hash it has seen. A change of a face's
 //! colour changes the hash of the rows drawn in it and of no other. A
@@ -196,7 +197,9 @@ impl Frame {
     /// selections. No hash.
     ///
     /// - A colour is its eight hexadecimal digits, `rrggbbaa`.
-    /// - A glyph is `id@x`, and `id@x#font` in a font other than font 0.
+    /// - A glyph is `id@x`, with `^dx,dy` after it when its outline is
+    ///   drawn off its pen position, and then `#font` in a font other than
+    ///   font 0.
     /// - A run is `start..end:paint`, and a paint is
     ///   `foreground/background`, then `+style:colour` when it has an
     ///   underline and `+strike` when it is struck through.
@@ -273,6 +276,9 @@ fn describe_line(out: &mut String, line: &VisualLine, runs: &[(Range<usize>, Pai
     out.push_str(" glyphs");
     for glyph in &line.glyphs {
         let _ = write!(out, " {}@{}", glyph.id, glyph.x);
+        if glyph.dx != 0.0 || glyph.dy != 0.0 {
+            let _ = write!(out, "^{},{}", glyph.dx, glyph.dy);
+        }
         if glyph.font != FontId::default() {
             let _ = write!(out, "#{}", glyph.font.0);
         }
@@ -664,6 +670,7 @@ fn hash(line: &VisualLine, runs: &[(Range<usize>, Paint)]) -> u64 {
     for glyph in &line.glyphs {
         (glyph.id, glyph.font, glyph.cluster - line.bytes.start).hash(&mut hasher);
         (glyph.x.to_bits(), glyph.advance.to_bits()).hash(&mut hasher);
+        (glyph.dx.to_bits(), glyph.dy.to_bits()).hash(&mut hasher);
     }
     runs.hash(&mut hasher);
     hasher.finish()
@@ -687,7 +694,8 @@ mod tests {
         Cursor, CursorShape, Decoration, Rect, Scene, StatusField, TextKey, TextRef, View, ViewId,
     };
     use crate::shaper::fake::CellShaper;
-    use crate::shaper::{FontId, FontSpec, Length, Shaper, VisualLine, Weight};
+    use crate::shaper::scripted::{ScriptedShaper, glyph, line};
+    use crate::shaper::{FontId, FontSpec, Glyph, Length, Shaper, VisualLine, Weight};
 
     const RED: Color = Color::rgb(0xcc, 0, 0);
     const GREEN: Color = Color::rgb(0, 0xcc, 0);
@@ -818,7 +826,7 @@ mod tests {
     }
 
     /// The frame of `view` alone.
-    fn frame(layout: &mut Layout<CellShaper>, view: View) -> ViewFrame {
+    fn frame<S: Shaper>(layout: &mut Layout<S>, view: View) -> ViewFrame {
         let scene = Scene {
             views: vec![view],
             ..Scene::default()
@@ -1357,6 +1365,62 @@ mod tests {
         );
         assert_eq!(normal.runs, bold.runs);
         assert_ne!(normal.hash, bold.hash);
+    }
+
+    /// A layout whose shaper shapes `ab` to one line of two glyphs 10
+    /// across, the second drawn `dx` right of its pen position and `dy`
+    /// below the baseline.
+    fn offset_layout(dx: f32, dy: f32) -> Layout<ScriptedShaper> {
+        let glyphs = vec![
+            glyph('a', 0, 0.0, 10.0),
+            Glyph {
+                dx,
+                dy,
+                ..glyph('b', 1, 10.0, 10.0)
+            },
+        ];
+        Layout::new(ScriptedShaper::new(10.0, 16.0).with("ab", vec![line(0..2, glyphs)]))
+    }
+
+    #[test]
+    fn two_rows_alike_but_for_a_glyphs_offset_have_different_hashes() {
+        let row = |dx: f32, dy: f32| {
+            frame(&mut offset_layout(dx, dy), view("ab", 4, 16, 0, &[]))
+                .rows
+                .remove(0)
+        };
+        let plain = row(0.0, 0.0);
+        assert_eq!(plain.hash, row(0.0, 0.0).hash);
+        // Each offset alone: the pen positions and the advances are the
+        // same, and the outline is drawn elsewhere.
+        for moved in [row(0.0, 3.0), row(1.5, 0.0)] {
+            assert_eq!(moved.line.width, plain.line.width);
+            assert_eq!(moved.runs, plain.runs);
+            assert_ne!(moved.hash, plain.hash);
+        }
+        assert_ne!(row(0.0, 3.0).hash, row(3.0, 0.0).hash);
+    }
+
+    #[test]
+    fn a_frame_is_described_with_the_offset_of_a_glyph_that_has_one() {
+        let described = |dx: f32, dy: f32| {
+            let scene = Scene {
+                views: vec![view("ab", 4, 16, 0, &[])],
+                ..Scene::default()
+            };
+            offset_layout(dx, dy).frame(&scene).describe()
+        };
+        let with = |glyphs: &str| {
+            format!(
+                "view 1 rect 0 0 40 16 background ffffffff selection ffffffff\n  \
+                 row y 0 height 16 baseline 12 bytes 0..2 glyphs {glyphs} \
+                 runs 0..2:000000ff/ffffffff\n"
+            )
+        };
+        // A glyph with no offset is written as the fake's are.
+        assert_eq!(described(0.0, 0.0), with("97@0 98@10"));
+        assert_eq!(described(1.5, -3.0), with("97@0 98@10^1.5,-3"));
+        assert_eq!(described(0.0, 2.0), with("97@0 98@10^0,2"));
     }
 
     #[test]
