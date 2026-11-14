@@ -13,6 +13,10 @@
 //!
 //! [`HeadlessRenderer`] lays the quads over a pixel buffer on the CPU
 //! (`cpu`): it needs no GPU, and every test of it runs in the gate.
+//! [`WgpuRenderer`] draws them with wgpu (`gpu`), to a target of its own:
+//! the gate runs it on wgpu's no-op back end, and its picture is checked
+//! on demand. [`present`] holds how a frame is to be presented to a
+//! window, as a decision and a pure function; no surface is made here.
 
 mod atlas;
 mod blend;
@@ -20,6 +24,7 @@ mod cpu;
 mod glyphs;
 mod gpu;
 mod painter;
+pub mod present;
 mod quads;
 mod raster;
 
