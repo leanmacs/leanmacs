@@ -196,14 +196,44 @@ time, in order, on the editor thread.
     the one before the command: whatever the command's state requests
     changed (a window split or closed, a buffer added or removed, a mode,
     the echo, a job asked for) is as it was.
-  - **The tree that is reverted is the one the command left.** A command
-    can move in a buffer's history and record the moved tree. The tree from
-    before the command does not know of the move, and the move dropped the
-    inverses that tree's edges cross: reverting it would be refused, or
-    would leave a tree out of step with the store. So each kept buffer is
-    reverted from the tree it has in the state the command left, when that
-    state still has the buffer over the same text, and the buffer of the
-    state the loop keeps gets the tree that comes back.
+  - **The tree that is reverted is the one the command left**, when the
+    kept state is a state of its open group. A command can move in a
+    buffer's history and record the moved tree. The tree from before the
+    command does not know of the move, and the move dropped the inverses
+    that tree's edges cross: reverting it would be refused, or would leave
+    a tree out of step with the store. So each kept buffer is reverted from
+    the tree it has in the state the command left, when that state still
+    has the buffer over the same text, and the buffer of the state the loop
+    keeps gets the tree that comes back.
+  - **A boundary the command set is taken back with its edits** (decided
+    2026-11-14). A command can close the open group
+    (`BufferId.closeGroup`); the kept state is then no state of the open
+    group of the tree it left, though nothing moved. The tree from before
+    the command knows of no boundary set since: told the text's revision,
+    its open group is everything the command did. So that tree is the one
+    reverted, by one inverse of the whole run, and it is the buffer's
+    afterwards: the steps the command closed go with the tree the command
+    left, the history has no step for the command and nothing to redo, and
+    the markers are placed back. Pinned on a command that edits, sets a
+    boundary, edits again and is then refused or interrupted
+    (`ModelTest.dispatchChecks`).
+    - *When the tree from before is good.* Only while none of its edges was
+      crossed since: a crossing drops the run the edge held. The loop asks
+      the tree the command left whether it still has each of them as the
+      tree from before has them (`UndoTree.keepsEdgesOf`), which a move
+      over one of them ends for good, there and back or not. A command
+      that moved that way is one that moved in the history (below).
+    - *A move over a step the command closed itself* leaves those edges
+      alone and drops inverses of the command's own run. The store then
+      refuses the one inverse, with nothing changed, and the command is
+      again one that moved in the history: the tree the command left is
+      the one in step with the store.
+    - *Why not undo back, step by step.* Moving up the steps the command
+      closed (`UndoTree.goTo`) would also restore the text, and would keep
+      those steps in the tree as a branch a redo goes to: a redo after a
+      failed command would then make part of it again, and in place of
+      what the user had undone before it. A command that does not run to
+      its end leaves no step.
   - **Nothing is given up until a command has ended.** A request that
     closes a window or removes a buffer changes the editor state alone.
     The loop gives up the window's markers and releases the buffer's text
@@ -224,13 +254,16 @@ time, in order, on the editor thread.
     echo area ends `; not rolled back: ` and the first refusal.
   - **A command that moved in the history** (an undo, a redo) is not taken
     back: the move stays. The move closed the group, so the kept state is
-    no longer a state of the open group. The loop then reverts the group
-    that is open when the command ends, which takes back the edits the
-    command made after its last move and leaves the text at the node that
-    move reached. The echo area ends `; the command moved in the history`,
-    and the windows' markers are left where the store moved them. Pinned on
-    a command that undoes, records the move and is then refused, and on a
-    state whose history was moved by hand (`ModelTest.dispatchChecks`).
+    no longer a state of the open group, and the tree from before the
+    command cannot be reverted to it (above). The loop then reverts the
+    group that is open when the command ends, which takes back the edits
+    the command made after its last move and leaves the text at the node
+    that move reached. The echo area ends `; the command moved in the
+    history`, and the windows' markers are left where the store moved
+    them. Pinned on a command that undoes, records the move and is then
+    refused, on one that sets a boundary and moves over the step it closed,
+    and on a state whose history was moved by hand
+    (`ModelTest.dispatchChecks`).
     - *Why not move back.* The kept state can be one no move returns to.
       With edits pending, a command that edits and then undoes closes the
       group as one node, whose state is the one after the command's edit.

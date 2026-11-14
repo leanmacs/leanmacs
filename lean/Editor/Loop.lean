@@ -164,24 +164,42 @@ they were before it (`docs/design/concurrency.md`, "Foreground: commands").
   state is the one before the command: the windows, the buffers, the echo
   and everything else a state request of the command changed are as they
   were.
-- **The tree that is reverted is the one the command left.** A command can
-  move in a buffer's history and record the moved tree
-  (`StateRequest.setHistory`). The tree from before the command does not
-  know of the move, and the move dropped the inverses that tree's edges
-  cross: reverting it would be refused, or would leave a tree out of step
-  with the store. So each kept buffer is reverted from the tree it has in
-  the state the command left, when that state still has the buffer, over
-  the same text, and from the tree it had before otherwise. The buffer of
-  the state the loop keeps gets the tree that comes back.
+- **The tree that is reverted is the one the command left**, when the kept
+  state is a state of its open group. A command can move in a buffer's
+  history and record the moved tree (`StateRequest.setHistory`). The tree
+  from before the command does not know of the move, and the move dropped
+  the inverses that tree's edges cross: reverting it would be refused, or
+  would leave a tree out of step with the store. So each kept buffer is
+  reverted from the tree it has in the state the command left, when that
+  state still has the buffer, over the same text, and from the tree it had
+  before otherwise. The buffer of the state the loop keeps gets the tree
+  that comes back.
+- **A boundary the command set is taken back with its edits.** A command
+  can close the open group (`BufferId.closeGroup`). The kept state is then
+  no state of the open group of the tree the command left, though nothing
+  moved. The tree from before the command knows of no boundary set since:
+  told the revision, its open group is everything the command did, so it
+  is the one reverted, by one inverse, and the buffer's. The steps the
+  command closed go with the tree the command left: the history has no
+  step for the command and nothing to redo, and the markers are placed
+  back. That tree is reverted only when the tree the command left still
+  has each of its edges as it has them (`UndoTree.keepsEdgesOf`): a move
+  over one of them dropped the inverse the edge held, and the tree from
+  before is then out of step with the store. When the command also moved
+  over a step it had closed itself, the store refuses the revert, with
+  nothing changed, since that move dropped inverses of the run, and the
+  command is one that moved in the history (below).
 - **Markers are placed back, and not left to the inverse.** A marker moves
   with every transaction: a deletion and its inverse do not return a marker
   inside the deleted range to where it was, and a command can place a
   marker with no edit. A revert hands back only the selection a transaction
   carried.
 - **No group of its own.** The kept state may be a point inside an open
-  group, and the revert goes back to it. The loop closes each group after
-  every event (`Loop.publish`), so today the kept state is a node's, and
-  the revert leaves nothing pending, no node and nothing to redo.
+  group, and the revert goes back to it, whether or not the command set a
+  boundary: the edits from before the command are then still pending. The
+  loop closes each group after every event (`Loop.publish`), so today the
+  kept state is a node's, and the revert leaves nothing pending, no node
+  and nothing to redo.
 - **What is not undone**: the texts, snapshots and markers the command
   made, and the scenes it published. The step publishes the true scene
   right after.
@@ -190,13 +208,15 @@ they were before it (`docs/design/concurrency.md`, "Foreground: commands").
   dropped the inverses of its own edits cannot be rolled back. The echo
   area then ends `; not rolled back: ` and the first refusal.
 - **A move in the history is not taken back.** When the kept state is no
-  longer a state of the open group, the history moved since it was kept.
-  The loop then reverts the group that is open (`UndoTree.revert`), which
-  takes back the edits made since the move and leaves the text at the node
-  the move reached. The echo area ends `; the command moved in the
-  history`, and the markers of that text are left where the store moved
-  them. It is pinned on a command that moves and records the move, and on
-  a state whose history was moved by hand.
+  longer a state of the open group, and the tree from before the command
+  cannot be reverted to it, the history moved since it was kept. The loop
+  then reverts the group that is open (`UndoTree.revert`), which takes
+  back the edits made since the move and leaves the text at the node the
+  move reached. The echo area ends `; the command moved in the history`,
+  and the markers of that text are left where the store moved them. It is
+  pinned on a command that moves and records the move, on one that sets a
+  boundary and moves over the step it closed, and on a state whose history
+  was moved by hand.
 
 An event's own handler, such as the commit's (`Loop.insert`), is one
 transaction, which the store accepts whole or refuses whole, and is not
@@ -639,16 +659,34 @@ def keep (state : EditorState) : TextM Kept := do
         markers := markers.push (id, marker)
   return { histories, markers }
 
-/-- Rolls one buffer's text back to the history state `was`: tells the
-tree the revision the text is at and reverts to `was`, with the user's
-origin. The tree after it, and whether the history moved since `was` was
-kept: `was` is then no state of the open group, the move is not taken back,
-and the group that is open is reverted instead, which takes back the edits
-made since the move. -/
-def revertBuffer (buffer : Buffer) (was : UndoTree.State) : TextM (UndoTree × Bool) := do
-  let history ← buffer.history.sync
+/-- Rolls one buffer's text back to the history state `was`, which `kept`,
+the buffer's tree from before the command, was in when it was kept. `left`
+is the tree the command left. Each tree it reverts is told the revision the
+text is at first, and each revert is made with the user's origin. The tree
+after it, and whether the history moved since `was` was kept.
+
+- `left` is reverted to `was` when `was` is a state of its open group: the
+  command set no boundary and made no move it did not make back.
+- Otherwise the command set a boundary or moved. When `left` still has
+  every edge of `kept` (`UndoTree.keepsEdgesOf`), `kept` is reverted to
+  `was`: its open group is everything since, across the steps the command
+  closed, and none of them is left. The store refuses that when the command
+  also moved over a step of its own.
+- Otherwise the history moved: the move is not taken back, and the group
+  that is open in `left` is reverted instead, which takes back the edits
+  made since the move. -/
+def revertBuffer (kept left : UndoTree) (was : UndoTree.State) : TextM (UndoTree × Bool) := do
+  let history ← left.sync
   if let some reverted← history.revertTo was Origin.user then
     return (reverted.tree, false)
+  if left.keepsEdgesOf kept then
+    -- Refused, with nothing changed, when the command moved over a step of
+    -- its own: the move dropped inverses of the run this would take back.
+    let whole ←
+      observing do
+          (← kept.sync).revertTo was Origin.user
+    if let .ok (some reverted) := whole then
+      return (reverted.tree, false)
   match ← history.revert Origin.user with
   | some reverted =>
     return (reverted.tree, true)
@@ -658,8 +696,9 @@ def revertBuffer (buffer : Buffer) (was : UndoTree.State) : TextM (UndoTree × B
 /-- Rolls back to what was kept ("Rollback", in the module docs), from
 `before`, the state from before the command, and `after`, the state the
 command left: each kept buffer's text is reverted to its kept history
-state, from the tree the buffer has in `after` when `after` still has it
-over the same text, and each kept marker is placed back. Returns `before`
+state (`revertBuffer`), from the tree the buffer has in `before` and the
+one it has in `after`, when `after` still has it over the same text, and
+each kept marker is placed back. Returns `before`
 with the buffers' histories after it, and what to say of the rollback after
 the command's error, which is nothing when all of it was done.
 
@@ -673,13 +712,13 @@ def Kept.restore (kept : Kept) (before after : EditorState) : TextM (EditorState
   let mut moved : Array TextId := #[]
   for (index, was) in kept.histories do
     let some (some buffer) := buffers[index]? | continue
-    -- The tree the command left knows of a move the command made.
-    let buffer :=
+    -- The tree the command left knows of a move the command made, and of
+    -- the boundaries it set.
+    let left :=
       match after.buffer? ⟨index⟩ with
-      | some left =>
-        if left.text == buffer.text then { buffer with history := left.history } else buffer
-      | none => buffer
-    match ← observing (revertBuffer buffer was) with
+      | some left => if left.text == buffer.text then left.history else buffer.history
+      | none => buffer.history
+    match ← observing (revertBuffer buffer.history left was) with
     | .ok (history, movedSince) =>
       buffers := buffers.modify index (·.map ({ · with history }))
       if movedSince then

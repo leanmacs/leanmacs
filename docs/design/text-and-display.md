@@ -644,8 +644,13 @@ the text port: the undo tree (`lean/Editor/UndoTree.lean`, decided
   (`lean/Editor/Loop.lean`, "Rollback"), with the user's origin, and also
   puts each window's selection and scroll markers back, since a marker
   inside a deleted range does not come back with the inverse. When the
-  command moved in the history the kept state is no longer one of the open
-  group: the loop then reverts the open group alone and leaves the move
+  command set a boundary the kept state is no longer one of the open group
+  of the tree it left: the loop then reverts the tree from before the
+  command, whose open group is everything the command did, so the steps
+  the command closed are not in the history. That tree is good while the
+  tree the command left still has each of its edges as it has them
+  (`UndoTree.keepsEdgesOf`). When the command moved in the history it is
+  not: the loop then reverts the open group alone and leaves the move
   ([concurrency.md](concurrency.md), "Foreground: commands").
 - *From commands.* Built by the command loop's phase 8
   (`lean/Editor/Api.lean`, "Undo"), over the buffer's own tree, with no
@@ -662,7 +667,9 @@ the text port: the undo tree (`lean/Editor/UndoTree.lean`, decided
   after the event then makes no node, so a move is not itself a step. The
   rollback of a command that moved works from the tree the command
   recorded, since the tree from before does not know of the move and the
-  move dropped the inverses that tree's edges cross. Its cases run on the
+  move dropped the inverses that tree's edges cross. The rollback of a
+  command that only set boundaries works from the tree from before, and
+  takes the boundaries back with the edits. Its cases run on the
   models and on the real binding (`lean/Editor/Api/Cases.lean`: two
   groups undone and redone, each text and each selection as it was).
 - *Saved.* The tree keeps the state last marked as saved and answers

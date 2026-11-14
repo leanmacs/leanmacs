@@ -100,6 +100,19 @@ text port, a value of `TextM`.
   rolled back this way: the move closed the group. The command loop does
   this (`Editor/Loop.lean`, "Rollback"), and does not take a move back: it
   reverts the group that is open after it (`revert`).
+- **A boundary a failed command set goes with it.** The tree kept from
+  before the command knows of no boundary set since: told the revision the
+  text is at, its open group is everything the command did, across the
+  nodes a later value of the tree made of it, and reverting it takes all of
+  it back as one run, with no node left. That tree is good only while no
+  edge of it was crossed since, because a crossing drops the run the edge
+  held. `keepsEdgesOf` is whether a later tree still has an earlier one's
+  edges as the earlier has them: each of its nodes, with the same parent,
+  state and run. A crossing gives the edge another run for good, so a move
+  over one of them shows, there and back or not. A move over an edge made
+  since does not show: it drops inverses of the open group the earlier
+  tree would revert, and the store then refuses that revert, with nothing
+  changed.
 - A state is one `UndoTree.state` gave. `revertTo` answers `none`, with
   nothing done, for a state of another node and for one that is not of the
   open group, and applies nothing for the state the text is in. The state
@@ -429,6 +442,21 @@ the group began. -/
 def revert (tree : UndoTree) (origin : Origin := .unattributed) : TextM (Option Moved) := do
   let some node := tree.node? tree.current | return none
   tree.revertTo node.state origin
+
+/-- Whether `tree` still has the edges of `earlier`, a value the tree had
+before, as `earlier` has them: it is over the same text and has each node of
+`earlier` with the same parent, the same state and the same run. A crossing
+gives an edge another run, so `tree` keeps them through edits, boundaries
+and moves over edges made since, and no longer once a move has crossed one
+of `earlier`'s, whether or not it crossed back. What else `tree` has is not
+looked at: the nodes made since, and the child each redo goes to. -/
+def keepsEdgesOf (tree earlier : UndoTree) : Bool :=
+  tree.text == earlier.text &&
+    (List.range earlier.nodes.size).all fun index =>
+      match earlier.nodes[index]?, tree.nodes[index]? with
+      | some was, some now =>
+        now.parent == was.parent && now.state == was.state && now.cross == was.cross
+      | _, _ => false
 
 /-- Marks `state` as the state last saved: by default the state the text is
 in. A save that takes time keeps `tree.state` with the snapshot it writes

@@ -112,6 +112,10 @@ at, does its part, and records the tree that comes back as the buffer's
   group after every event (`Editor/Loop.lean`, "After each event"). After a
   command that moved, that tells the moved tree nothing new and makes no
   node, so a move is not itself a step.
+- **A command that sets a boundary and then fails** is rolled back whole,
+  from the tree the buffer had before it: the edits before the boundary
+  and after it are taken back, and the steps the command closed are not in
+  the history (`Editor/Loop.lean`, "Rollback").
 - **A command that moves and then fails** is rolled back from the tree it
   recorded: the edits it made after the move are taken back, and the move
   is not (`Editor/Loop.lean`, "Rollback").
@@ -309,7 +313,9 @@ def synced (id : BufferId) : EditorM (Except BufferRefusal Buffer) := do
     return .error (.noSuchBuffer id)
 
 /-- Sets the boundary in the buffer `id`'s history: the edits since the last
-one become one step. With nothing pending it makes no node. Refused with
+one become one step. With nothing pending it makes no node. A boundary set
+by a command that then does not run to its end is taken back with the
+command's edits (`Editor/Loop.lean`, "Rollback"). Refused with
 `noSuchBuffer` for a buffer there is none of. -/
 def closeGroup (id : BufferId) : EditorM (Except BufferRefusal Unit) := do
   match ← id.synced with

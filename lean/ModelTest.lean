@@ -6190,7 +6190,8 @@ def dispatchCloseViewChecks : List Check :=
 
 /-- The checks of undo from a command in the loop (`Editor/Api.lean`,
 `Editor/Loop.lean`), on the editor's models: a move in the history a key's
-command made is the loop's after the step. -/
+command made is the loop's after the step, and a boundary set by a command
+that does not run to its end is rolled back with its edits. -/
 def dispatchUndoChecks : List Check :=
   let undo : Dispatched := fun call => do
     discard <| call.target.window.buffer.undo
@@ -6223,7 +6224,104 @@ def dispatchUndoChecks : List Check :=
                   undone.buffer.history.current != stamped.buffer.history.current &&
                   redone.buffer.history.current == stamped.buffer.history.current)
           (program.runModel editorModel).1.toOption ==
-            some (["abcd", "aC-c sd"], [3, 3, 3], true) }]
+            some (["abcd", "aC-c sd"], [3, 3, 3], true) },
+    { name :=
+        "a command that edits, sets a boundary in the history, edits again and then does not run to its end, refused or interrupted, is rolled back whole: the text and the window's selection are those before it, the echo area says how it ended and nothing of a move, the history has no step for it and nothing to redo, and the next key's edit is undone as one step"
+      run :=
+        pure <|
+          -- An edit that moves the selection, the boundary, and an edit in
+          -- the group the boundary opened.
+          let bounded (call : Call) : EditorM Unit := do
+            Loop.insert call.target "boom"
+            discard <| call.target.window.buffer.closeGroup
+            call.target.buffer.text.insert 0 "x"
+          let spun : Dispatched := fun call => do
+            bounded call
+            for _ in [0:1000] do
+              discard <| call.target.buffer.text.revision
+            return none
+          let keys :=
+            dispatchKeys
+              [("C-c b", invoke "bounded"), ("C-c l", invoke "spun"), ("C-c s", invoke "stamp")]
+              [("bounded", failingAfter bounded), ("spun", spun), ("stamp", stamp)]
+          -- `lowering` is what arrives after the command: the interrupt key
+          -- that stopped it, taken off the queue, which lowers the flag.
+          let program (failing : String) (lowering : List Received) :
+            EditorM ((String × Array SelectionRange × String) × Bool × Bool × String × String) := do
+            let loop : TestLoop := { state := ← holding "abcd" #[⟨1, 3⟩] }
+            -- The first step records what the buffer was made holding as a
+            -- step of the history.
+            let (loop, _) ← stepsWith keys loop [pressF5]
+            let nodes := (← focusedOf loop).buffer.history.nodes.size
+            let (loop, _) ← stepsWith keys loop (presses failing)
+            let target ← focusedOf loop
+            let failed := (← target.buffer.text.read, ← cursorsOf loop, loop.state.echo)
+            let stepless :=
+              target.buffer.history.nodes.size == nodes && !target.buffer.history.pending
+            let redone ← target.buffer.history.redo Origin.user
+            let loop ← takes keys loop lowering
+            let (loop, _) ← stepsWith keys loop (presses "C-c s")
+            let target ← focusedOf loop
+            let after ← target.buffer.text.read
+            let some _ ← target.buffer.history.undo | throw .noInverse
+            return (failed, stepless, redone.isNone, after, ← target.buffer.text.read)
+          let rolledBack (failing echo : String) (lowering : List Received) (watch : WatchModel) :
+            Bool :=
+            ((program failing lowering).runModel { editorModel with watch }).1.toOption ==
+              some (("abcd", #[⟨1, 3⟩], echo), true, true, "aC-c sd", "abcd")
+          rolledBack "C-c b" "bounded: refused: bad range" [] {} &&
+            rolledBack "C-c l" "spun: interrupted" [interruptArrives] { arrivesAfter := some 20 } },
+    { name :=
+        "a command run while an edit is pending in the open group, which sets a boundary and is then refused, is rolled back to the point of the group it began at: the text is the one before it, no node was made, the edit from before it is still pending, and it is one step at the next boundary, which an undo takes back and a redo gives again"
+      run :=
+        pure <|
+          let bounded : Dispatched :=
+            failingAfter fun call => do
+              Loop.insert call.target "boom"
+              discard <| call.target.window.buffer.closeGroup
+              call.target.buffer.text.insert 0 "x"
+          let keys := dispatchKeys [] [("bounded", bounded)]
+          let program : EditorM ((String × String × Nat × Bool) × Nat × String × String) := do
+            -- No scene was published since the buffer was made holding
+            -- `abcd`, so that edit is in the open group when the command
+            -- starts.
+            let ran ← Loop.run keys (← holding "abcd" #[⟨1, 3⟩]) (invoke "bounded") []
+            let some left := ran.state.buffer? ⟨0⟩ | throw .noSuchText
+            let failed :=
+              (← left.text.read, ran.state.echo, left.history.nodes.size, left.history.pending)
+            let (state, _) ← ran.state.recordHistories
+            let some buffer := state.buffer? ⟨0⟩ | throw .noSuchText
+            let some undone ← buffer.history.undo Origin.user | throw .noInverse
+            let before ← buffer.text.read
+            let some _ ← undone.tree.redo Origin.user | throw .noInverse
+            return (failed, buffer.history.nodes.size, before, ← buffer.text.read)
+          (program.runModel editorModel).1.toOption ==
+            some (("abcd", "bounded: refused: bad range", 1, true), 2, "", "abcd") },
+    { name :=
+        "a command that sets a boundary, moves over the step it closed, there and back, and is then refused moved in the history: the move is not taken back, the echo area says so, and the tree the loop keeps is the one the command left, so the next key's undo takes the step back"
+      run :=
+        pure <|
+          let crossing : Dispatched :=
+            failingAfter fun call => do
+              let buffer := call.target.window.buffer
+              call.target.buffer.text.insert 0 "x"
+              discard <| buffer.closeGroup
+              discard <| buffer.undo
+              discard <| buffer.redo
+          let keys :=
+            dispatchKeys [("C-c x", invoke "crossing"), ("C-c u", invoke "undo")]
+              [("crossing", crossing), ("undo", undo)]
+          let program : EditorM (String × String × String × String) := do
+            let loop : TestLoop := { state := ← holding "abcd" #[⟨1, 3⟩] }
+            let (loop, _) ← stepsWith keys loop ([pressF5] ++ presses "C-c x")
+            let failed ← (← focusedOf loop).buffer.text.read
+            let echo := loop.state.echo
+            let (loop, _) ← stepsWith keys loop (presses "C-c u")
+            return (failed, echo, ← (← focusedOf loop).buffer.text.read, loop.state.echo)
+          (program.runModel editorModel).1.toOption ==
+            some
+              ("xabcd", "crossing: refused: bad range; the command moved in the history", "abcd",
+                "") }]
 
 /-- The checks of key dispatch in the loop (`Editor/Loop.lean`), on the
 editor's models: keys through the scheme and the commands they run,

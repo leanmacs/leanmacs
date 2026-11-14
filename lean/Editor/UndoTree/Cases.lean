@@ -526,9 +526,33 @@ def originCases : List Property :=
         return byUndo && byRedo && byUp && byDown && byRevertTo && byRevert &&
             whole.tree.current == made }]
 
+/-- The case of whether a tree still has an earlier tree's edges as that
+tree has them (`UndoTree.keepsEdgesOf`). -/
+def keptCases : List Property :=
+  [{
+      name :=
+        "the undo tree: a later tree keeps an earlier tree's edges through an edit, a boundary and a move over an edge made since, and no longer once a move has crossed one of the earlier tree's edges, whether or not it crossed back; an earlier tree keeps no later one's, nor does another tree over the same text",
+      holds := do
+        let text ← createText "héllo"
+        let earlier ← group (← UndoTree.over text) " A"
+        let edited ← addAtEnd earlier "1"
+        let bounded := edited.close
+        -- Up the edge the boundary made, which the earlier tree has not.
+        let some since ← bounded.undo | return false
+        let kept :=
+          earlier.keepsEdgesOf earlier && edited.keepsEdgesOf earlier &&
+            bounded.keepsEdgesOf earlier &&
+            since.tree.keepsEdgesOf earlier
+        -- Up the edge the earlier tree has, and down it again.
+        let some crossed ← since.tree.undo | return false
+        let some back ← crossed.tree.redo | return false
+        let lost := !crossed.tree.keepsEdgesOf earlier && !back.tree.keepsEdgesOf earlier
+        let other := !earlier.keepsEdgesOf bounded && !(← UndoTree.over text).keepsEdgesOf earlier
+        return kept && lost && other && (← reads back.tree) == ("héllo A", 5) }]
+
 /-- The cases of the undo tree, which hold of it over every implementation
 of the text port. -/
 def cases : List Property :=
-  moveCases ++ stateCases ++ originCases
+  moveCases ++ stateCases ++ originCases ++ keptCases
 
 end Editor.UndoTreeCases
