@@ -85,7 +85,10 @@ as before, so reload and job completion work as they did.
   (`Running.watch`), so a command a key runs stops at its next request once
   the key has arrived, and the loop lowers the flag when it takes the key
   off the queue. Where no loop can take a marked key, with no frame made or
-  for an event that cannot be read, the host lowers the flag itself.
+  for an event that cannot be read, the host drops the event
+  (`Running.drop`), which lowers the flag by the loop's rule
+  (`Loop.lowerFor`), and the mark of an event that cannot be read is the
+  decoder's to read (`Event.interruptMarked`).
 - **A slow command is logged**, through the collaborators' `log`, and not on
   the output: the entries a step hands back (`Loop.Stepped.log`). The
   executable's log is stderr, so a fixture's output does not depend on how
@@ -548,6 +551,13 @@ clock the host's jobs wait on, so a test moves one clock for both. -/
 def watch (collaborators : Collaborators σ scheme) : WatchHandler :=
   Watch.real collaborators.services.timers
 
+/-- Drops an event of the window input that no loop takes: one that cannot
+be read, or one that arrives when no frame could be made. It has been taken
+off the queue all the same, so the flag is lowered for it if the library
+marked it (`interrupt`, `Loop.lowerFor`). -/
+def drop (collaborators : Collaborators σ scheme) (interrupt : Bool) : IO Unit :=
+  (Loop.lowerFor interrupt).runM (watch collaborators)
+
 /-- Runs `program`, a program of the editor loop, against the library, with
 the recorder as the display and the library's interrupt flag and the jobs'
 clock as what it watches, and hands back its result. The loop's own
@@ -595,8 +605,8 @@ step has to log is logged. A close request ends the loop.
 
 Making the frame and the step are each printed when refused (`attempt`):
 after a refused step the frame stays as it was. With no frame made the event
-is dropped, and the flag is lowered here for an interrupt key, since no loop
-took it off the queue. -/
+is dropped (`drop`), which lowers the flag for an interrupt key, since no
+loop took it off the queue. -/
 def input (collaborators : Collaborators σ scheme) (running : Running σ scheme)
     (received : Received) : IO (Running σ scheme) := do
   if let .key which true _ := received.event then
@@ -608,8 +618,7 @@ def input (collaborators : Collaborators σ scheme) (running : Running σ scheme
     | none =>
       running.attempt collaborators (Loop.start scheme ⟨0, 0⟩)
   let some frame := made |
-    if received.interrupt then
-      watch collaborators .lower
+    drop collaborators received.interrupt
     return running
   let (stepped, running) ←
     running.attempt collaborators (frame.take (running.keys collaborators) received)
@@ -714,8 +723,9 @@ def other (collaborators : Collaborators σ scheme) (running : Running σ scheme
 window input goes to the editor loop (`input`), which publishes a scene after
 it; after any other event, a scene is published once there is a frame,
 unless the driver has ended the loop. A window event that cannot be read is
-ignored, but for the interrupt flag: it is lowered for a key that carries
-the library's mark, since the event has been taken off the queue. -/
+dropped (`drop`), which lowers the interrupt flag for a key that carries the
+library's mark (`Event.interruptMarked`), since the event has been taken off
+the queue. -/
 def handle (collaborators : Collaborators σ scheme) (running : Running σ scheme)
     (event : Ffi.Event) : IO (Running σ scheme) := do
   if event.source.kind == .window then
@@ -723,8 +733,7 @@ def handle (collaborators : Collaborators σ scheme) (running : Running σ schem
     | .ok received =>
       running.input collaborators received
     | .error _ =>
-      if event.kind == .key && event.code &&& EventWords.interruptMark != 0 then
-        watch collaborators .lower
+      drop collaborators (Event.interruptMarked event)
       return running
   else
     let running ← running.other collaborators event

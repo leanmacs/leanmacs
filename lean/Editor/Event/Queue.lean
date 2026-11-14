@@ -28,9 +28,10 @@ interrupt flag", in `Editor/Ffi.lean`). What crosses for it is here too:
   chord's rule (`Key.chord`, `Editor/Keymap.lean`), and it crosses as data:
   the modifiers of the key's chord, and a mask of the modifiers a chord of
   that key keeps. The library compares words and knows no rule.
-- `Event.ofFfi` reads the library's mark, bit 3 of a key event's code, into
-  `Received.interrupt`. The loop lowers the flag for those events
-  (`Loop.take`, `Editor/Loop.lean`).
+- `Event.interruptMarked` reads the library's mark, bit 3 of a key event's
+  code, and is the one place that does: `Event.ofFfi` reads it into
+  `Received.interrupt`, and a host asks it of a key it cannot read. The
+  flag is lowered for those events (`Loop.lowerFor`, `Editor/Loop.lean`).
 - `Event.post` never sends the mark: the library sets it, for a press it
   counted.
 
@@ -261,19 +262,26 @@ def EventSource.ofFfi (source : Ffi.Source) : EventSource :=
       | .window => .window
     id := source.id }
 
-/-- The `Event` an event of the editor queue is, with its stamp and whether
-the library marked it as a press of the interrupt key, or why it cannot be
-read: one variant for each kind and code of the table in
-`crates/editor-ffi/src/window.rs`.
+/-- Whether the library marked an event of the editor queue as a press of
+the interrupt key: the interrupt mark is bit 3 of a key event's code, and of
+no other kind's. It is read from the kind and the code alone, so it answers
+for a key that cannot be read too, which a host still lowers the flag for
+(`Loop.lowerFor`). -/
+def Event.interruptMarked (event : Ffi.Event) : Bool :=
+  event.kind == .key && event.code &&& EventWords.interruptMark != 0
 
-The interrupt mark is bit 3 of a key event's code, and of no other kind's.
-It is taken off before the key is read, so a key's code is still refused
-for any higher bit, and a mark on a key that was not pressed is refused: the
-library marks presses only. -/
+/-- The `Event` an event of the editor queue is, with its stamp and whether
+the library marked it as a press of the interrupt key
+(`Event.interruptMarked`), or why it cannot be read: one variant for each
+kind and code of the table in `crates/editor-ffi/src/window.rs`.
+
+The mark is taken off before the key is read, so a key's code is still
+refused for any higher bit, and a mark on a key that was not pressed is
+refused: the library marks presses only. -/
 def Event.ofFfi (event : Ffi.Event) : Except String Received := do
   let none (value : Event) : Except String Event :=
     if event.words.isEmpty then .ok value else .error "the event has words its kind does not have"
-  let interrupt := event.kind == .key && event.code &&& EventWords.interruptMark != 0
+  let interrupt := Event.interruptMarked event
   if interrupt && event.code &&& 1 == 0 then
     throw "the interrupt mark is on a key that was not pressed"
   let decoded ←

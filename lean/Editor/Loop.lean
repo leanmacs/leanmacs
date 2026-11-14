@@ -689,18 +689,27 @@ def step (keys : Keys scheme) (loop : Loop scheme) (event : Event) : EditorM (St
         pure (loop.state.refused refusal)
     return { loop := ← { loop with state }.publish, next := .continue }
 
+/-- Lowers the interrupt flag for an event taken off the queue when the
+library marked it as a press of the interrupt key (`interrupt`), and for no
+other: one fewer interrupt key is on the queue. `take` makes it for each
+event it steps, and a host for a window event no loop takes, one it cannot
+read or one that arrives when it has no loop: that event has been taken off
+the queue all the same. -/
+def lowerFor (interrupt : Bool) : WatchM Unit := do
+  if interrupt then
+    Watch.lower
+
 /-- Takes what arrived off the queue: lowers the interrupt flag when the
 library marked the event as a press of the interrupt key
-(`Received.interrupt`), and then steps the event like any other (`step`),
-so a scheme can bind the interrupt key. This is what a host calls for each
-event it pulls.
+(`Received.interrupt`, `lowerFor`), and then steps the event like any other
+(`step`), so a scheme can bind the interrupt key. This is what a host calls
+for each event it pulls.
 
 The flag is lowered first: the key has been taken off the queue, so what
 its own binding runs is not interrupted by it. -/
 def take (keys : Keys scheme) (loop : Loop scheme) (received : Received) :
     EditorM (Stepped scheme) := do
-  if received.interrupt then
-    Watch.lower
+  lowerFor received.interrupt
   loop.step keys received.event
 
 end Loop

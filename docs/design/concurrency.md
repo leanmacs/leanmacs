@@ -136,7 +136,11 @@ time, in order, on the editor thread.
     event, so the two cannot disagree after the key is changed. The key is
     then stepped through the scheme like any other, so a scheme can bind
     it. The lowering is a request of the editor's port, so it is in the
-    pure loop, where the model tests see it.
+    pure loop, where the model tests see it. A marked event no loop steps,
+    one that cannot be read or one that arrives before there is a loop, has
+    been taken off the queue all the same: the host lowers for it by the
+    loop's rule, and reads the mark of an event it cannot read with the
+    decoder's, so the mark's encoding and the rule each have one home.
   - **When it is asked.** Before each request of a command the loop
     dispatched (`EditorM.guarded`, a pure transformation of the command's
     program, so it runs on the models). Once the flag is up the command's

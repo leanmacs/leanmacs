@@ -1536,6 +1536,16 @@ def eventDecodeChecks (_ : Unit) : List Check :=
               some false &&
             (decodedEvent (windowEvent .closeRequested 0)).map (·.interrupt) == some false) },
     { name :=
+        "whether an event carries the interrupt mark is read from its kind and its code alone: a key with bit 3 of its code carries it whether or not the key can be read, a key without the bit does not, and no other kind does with the bit"
+      run :=
+        pure
+          (Editor.Event.interruptMarked (windowEvent .key 9 #[1, 1, 103, 0, 0, 2]) &&
+            Editor.Event.interruptMarked (windowEvent .key 9 #[1, 1, 103, 0, 0, 2, 0]) &&
+            Editor.Event.interruptMarked (windowEvent .key 8 #[0, 0, 0, 0, 0]) &&
+            !Editor.Event.interruptMarked (windowEvent .key 1 #[1, 1, 103, 0, 0, 2]) &&
+            !Editor.Event.interruptMarked (windowEvent .composition 8) &&
+            !Editor.Event.interruptMarked (message 5 8 "")) },
+    { name :=
         "a code the table does not have is refused: a focus of 2, a composition of 4, a key with a bit past the interrupt mark, a key with the mark that was not pressed, a pointer of 4, a resize of 1"
       run :=
         pure

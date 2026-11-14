@@ -5123,7 +5123,13 @@ def dispatchInterruptChecks : List Check :=
             | none => false) &&
             match tookFrom unbound (between ++ arriving (presses "C-c s")) { arrived := 2 } with
             | some (text, _, echoes, _) => text == "aC-c sd" && echoes.back? == some ""
-            | none => false }]
+            | none => false },
+    { name :=
+        "for an event taken off the queue with no loop to step it, the flag is lowered once if the library marked the event, and not at all if it did not"
+      run :=
+        pure
+          ((watched (Loop.lowerFor true) { arrived := 2 }).2.arrived == 1 &&
+            (watched (Loop.lowerFor false) { arrived := 2 }).2.arrived == 2) }]
 
 /-- A command of the slow-command checks that makes `requests` requests of
 the text port, each a question that changes nothing, and is then refused if
