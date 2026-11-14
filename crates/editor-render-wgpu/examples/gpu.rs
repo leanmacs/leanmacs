@@ -19,8 +19,13 @@
 //!    masks, when the adapter blends by a coverage for each channel; and
 //!    in plain masks, as a display of scale 2 gets them, with the headless
 //!    adapter's picture of the same frame drawn the same way. No channel
-//!    of any pixel may differ by more than 3 of 255. The fixture has no
-//!    colour glyph, so a colour image is never drawn here;
+//!    of any pixel may differ by more than 3 of 255. Then the same again
+//!    with the macOS setting (`Settings::core_text`, Core Text's weight
+//!    of text): in plain masks, and in subpixel masks when the adapter
+//!    blends by a coverage for each channel, each against the headless
+//!    adapter's picture drawn with the same settings, since the reference
+//!    image is the default's. The fixture has no colour glyph, so a
+//!    colour image is never drawn here;
 //! 3. prints how long a first frame, a frame with a row edited and a
 //!    frame that differs only in its cursor took, with the rows each
 //!    built. The times are for a person to read: nothing is asserted of
@@ -188,6 +193,40 @@ fn main() -> ExitCode {
         // An adapter that cannot blend by a coverage for each channel
         // draws plain masks whatever it is told.
         held &= compared(&image, &on_the_cpu(&fixture, plain), masks);
+    }
+
+    // The same frame at the macOS weight: the contrast reaches the
+    // shader and the dilation the atlas, and the GPU is held to the CPU
+    // drawing it with the same settings.
+    let macos_plain = Settings {
+        antialiasing: Antialiasing::Grayscale,
+        ..Settings::core_text()
+    };
+    let macos_subpixel = Settings {
+        antialiasing: common::settings().antialiasing,
+        ..Settings::core_text()
+    };
+    let mut weighed = vec![(
+        macos_plain,
+        "the headless adapter's picture at the macOS weight in plain masks",
+    )];
+    if per_channel {
+        weighed.push((
+            macos_subpixel,
+            "the headless adapter's picture at the macOS weight in subpixel masks",
+        ));
+    }
+    for (settings, against) in weighed {
+        match on_this_machine(settings) {
+            Ok(mut other) => {
+                held &= draw(&mut other, &fixture).0.presented;
+                held &= compared(&other.read_back(), &on_the_cpu(&fixture, settings), against);
+            }
+            Err(none) => {
+                held = false;
+                println!("render-gpu: {none}");
+            }
+        }
     }
 
     // 3. The times, for a person.
