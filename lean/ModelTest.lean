@@ -5,7 +5,7 @@ import Editor.Command.Model
 import Editor.Config.Reload
 import Editor.Display.Contract
 import Editor.Display.Model
-import Editor.Evil
+import Editor.Evil.Compiled
 import Editor.File.Cases
 import Editor.File.Model
 import Editor.Files.Compiled
@@ -11599,6 +11599,239 @@ def evilRestChecks : List Check :=
             Evil.restOf { shape := .inclusive } == .offLineBreak &&
             Evil.restOf { shape := .line } == .offLineBreak) }]
 
+/-- A fixture of the evil checks, which writes the cursor into the text as
+a bar: the text without the bar, and the bar's byte offset. A fixture with
+no bar has its cursor at 0. -/
+def barred (fixture : String) : String × Nat :=
+  match fixture.splitOn "|" with
+  | [before, after] => (before ++ after, before.utf8ByteSize)
+  | _ => (fixture, 0)
+
+/-- `contents` with a bar written before the character at the byte offset
+`offset`, or at its end. An offset that is no character's start, and none
+past the end, writes no bar, so a fixture's expectation does not match. -/
+def withBar (contents : String) (offset : Nat) : String :=
+  let (shown, walked) :=
+    contents.foldl
+      (fun (shown, walked) char =>
+        ((if walked == offset then shown.push '|' else shown).push char, walked + char.utf8Size))
+      ("", 0)
+  if walked == offset then shown.push '|' else shown
+
+/-- The loop the evil checks run: one over the Vim scheme that ships. -/
+abbrev EvilLoop :=
+  Loop Vim.Default.scheme
+
+/-- The driver the evil checks run: one over the Vim scheme that ships. -/
+abbrev EvilDriver :=
+  Loop.Driver Vim.Default.scheme
+
+/-- What a step of the evil checks is handed: no active keymaps, so that a
+key is looked up in the keymaps of its view's Vim state alone, and the
+commands compiled code registers for evil (`Evil.commands`) and those of
+`more`, each under the name it is registered under, then `commands`. -/
+def evilHanded (more : Array Config.Registration := #[])
+    (commands : List (String × Dispatched) := []) : Loop.Keys Vim.Default.scheme :=
+  {
+    command? := fun name =>
+      match (Evil.commands ++ more).find? (·.name == name) with
+      | some { action := .call run, .. } =>
+        some fun call => do
+          run call
+          return none
+      | _ => (commands.find? (·.1 == name)).map (·.2) }
+
+/-- A state of the evil checks: one buffer, `scratch`, over a text made
+holding `contents`, so that nothing is pending in its history, and one
+window on it, focused, in a frame of 640 by 480, whose selection is one
+cursor at the byte offset `head`, of the shape the Vim scheme that ships
+reports of a view before any key. -/
+def evilState (contents : String) (head : Nat) : TextM EditorState := do
+  let text ← createText contents
+  let scroll ← text.mark (.anchor { offset := 0, bias := .before })
+  let shape := (Vim.Default.scheme.report Vim.Default.scheme.init ⟨0⟩).shape
+  let selection ← text.mark (.selection { ranges := #[⟨head, head⟩], shape })
+  let history ← UndoTree.over text
+  return {
+      buffers := #[some { name := "scratch", text, history }]
+      windows := #[{ id := ⟨0⟩, buffer := ⟨0⟩, scroll, selection }]
+      frame :=
+        { size := ⟨640, 480⟩, tree := .split .rows (.window ⟨0⟩) .minibuffer, focused := ⟨0⟩ } }
+
+/-- A driver of the evil checks over the state the fixture `fixture` says
+(`evilState`), each step handed `handed`, with no job registered; `none` if
+making the state was refused. -/
+def evilDriver (fixture : String) (handed : Loop.Keys Vim.Default.scheme := evilHanded) :
+    Option EvilDriver :=
+  let (contents, head) := barred fixture
+  (Loop.Driver.over handed (fun _ => none) (evilState contents head) editorModel).toOption
+
+/-- `driver` fed a press of each key the key string `text` names, in
+order. -/
+def evilFed (driver : EvilDriver) (text : String) : EvilDriver :=
+  (keys text).foldl (fun driver key => (driver.feed { event := press key, stamp := 0 }).1) driver
+
+/-- The selection of the view `view` of `driver`, as the text model has
+it. -/
+def evilSelection (driver : EvilDriver) (view : ViewId := ⟨0⟩) : Option Selection := do
+  let target ← driver.loop.state.target? view
+  (target.selection.runModel driver.model.texts).1.toOption
+
+/-- What the view `view` of `driver` shows, as a fixture writes it: its
+buffer's text with a bar at the head of its selection's primary range. -/
+def evilShown (driver : EvilDriver) (view : ViewId := ⟨0⟩) : String :=
+  match driver.loop.state.target? view, evilSelection driver view with
+  | some target, some selection =>
+    match (driver.model.texts.texts[target.buffer.text.index]?).join,
+      selection.ranges[selection.primary]? with
+    | some content, some range => withBar content.contents range.head
+    | _, _ => "no text"
+  | _, _ => "no view"
+
+/-- The keys the key string `typed` names, pressed under the Vim scheme that
+ships with evil's commands, from the text and the cursor `fixture` says:
+the text after them with a bar at the cursor, or what the echo area says
+when a command said something. -/
+def evilKeys (fixture typed : String) : String :=
+  match evilDriver fixture with
+  | none => "no driver"
+  | some driver =>
+    let driver := evilFed driver typed
+    if driver.loop.state.echo.isEmpty then evilShown driver else driver.loop.state.echo
+
+/-- Whether each row of `rows` holds: the keys of a row, pressed from its
+first fixture, leave its second (`evilKeys`). A failure names each row that
+does not hold, with what its keys left. -/
+def evilRows (rows : List (String × String × String)) : IO Bool := do
+  let wrong :=
+    rows.filterMap fun (typed, before, after) =>
+      let got := evilKeys before typed
+      if got == after then none else some s!"{typed} from {repr before} left {repr got}"
+  unless wrong.isEmpty do
+    throw (IO.userError ("; ".intercalate wrong))
+  return true
+
+/-- Whether a cursor of normal state may rest at the byte offset `head` of
+`contents`, said of the string alone: the text is empty and the offset 0;
+or a cell starts there, which is a character's start that is not the line
+feed of a carriage return and line feed, and that cell is not the line
+break of a row that has content. -/
+def restsWell (contents : String) (head : Nat) : Bool :=
+  let chars := contents.toList
+  let offsets :=
+    (chars.foldl (fun (offsets, walked) char => (offsets ++ [walked], walked + char.utf8Size))
+        ([], 0)).1
+  let before := none :: chars.map some
+  let after := (chars.drop 1).map some ++ [none]
+  contents.isEmpty && head == 0 ||
+    ((offsets.zip chars).zip (before.zip after)).any fun ((offset, char), (before, after)) =>
+      offset == head && !(char == '\n' && before == some '\r') &&
+        !((char == '\n' || char == '\r' && after == some '\n') && before.isSome &&
+            before != some '\n')
+
+/-- The texts every motion is swept over: those of the resting rule's
+checks, and one with a run of punctuation beside a word, a run of blanks,
+an empty line, a line that begins with a tab, and a last line with no line
+feed. -/
+def sweepTexts : List String :=
+  restings.map (·.1) ++ ["foo.bar  x\n\n\tab\nend"]
+
+/-- The counts every motion is swept with, as a move's invocation carries
+one: 0, which is no count, a count of 1, a count inside most of the texts,
+and one past every text. -/
+def sweepCounts : List Nat :=
+  [0, 1, 2, 99]
+
+/-- Every motion of the vocabulary run by the move command, in normal
+state, with each count of `sweepCounts`, from every position of a text
+holding `contents` where a normal-state cursor may rest: for each, the
+motion's name, the count, the position, and the selection the move left.
+`none` when a move was refused. -/
+def swept (contents : String) : Option (List (String × Nat × Nat × Selection)) :=
+  let program : EditorM (List (String × Nat × Nat × Selection)) := do
+    let mut moved := []
+    for position in (List.range (contents.utf8ByteSize + 1)).filter (restsWell contents) do
+      for motion in Evil.motions do
+        for count in sweepCounts do
+          let loop : EvilLoop := { state := ← evilState contents position }
+          let stepped ←
+            loop.invoke evilHanded
+                { command := Vim.moveCommand, arguments := [.str motion.name, .nat count] }
+          let some target := stepped.loop.state.focusedTarget? | throw .noSuchText
+          moved := (motion.name, count, position, ← target.selection) :: moved
+    return moved
+  (program.runModel editorModel).1.toOption
+
+/-- The rows of the oracle table for `h` and `l`
+(`docs/design/keymaps-and-modes.md`, "Motions as built"): the keys, the
+text before with the cursor as a bar, and the text after. -/
+def leftRightRows : List (String × String × String) :=
+  [("l", "a|bc", "ab|c"), ("l", "ab|c", "ab|c"), ("l", "ab|c\ndef", "ab|c\ndef"),
+    ("1 l", "a|bc", "ab|c"), ("2 l", "|abcd", "ab|cd"), ("3 l", "|abcd", "abc|d"),
+    ("5 l", "|abc", "ab|c"), ("l", "|\nabc", "|\nabc"), ("l", "a|b\r\ncd", "a|b\r\ncd"),
+    ("h", "ab|c", "a|bc"), ("h", "|abc", "|abc"), ("h", "abc\n|def", "abc\n|def"),
+    ("1 h", "ab|c", "a|bc"), ("2 h", "abc|d", "a|bcd"), ("2 h", "abc\nde|fg", "abc\n|defg"),
+    ("5 h", "abc\nde|f", "abc\n|def"), ("l", "|", "|"), ("h", "|", "|"), ("l", "|\n", "|\n"),
+    ("h", "|\n", "|\n")]
+
+/-- The checks of evil's motions (`Editor/Evil.lean`, `Editor/Evil/Motions.lean`)
+on the loop's driver over the editor's models, under the Vim scheme that
+ships with the commands compiled code registers for evil: a motion's key
+is pressed in a text with the cursor written into it, and each expected
+text is written by hand from Vim's documented behaviour, case by case. -/
+def evilMotionChecks : List Check :=
+  [{  name :=
+        "h and l move by cells and stay on the line: with no count one cell, with a count that many, as far as the line allows; neither leaves an empty line, the empty text or the line of a text that is one line feed, and l does not go onto the line break"
+      run := evilRows leftRightRows },
+    { name :=
+        "a move by a name the vocabulary has no motion of says so in the echo area, the name and then no such motion, and leaves the cursor where it was"
+      run :=
+        pure <|
+          match evilDriver "a|bc" with
+          | none => false
+          | some driver =>
+            let (driver, _) :=
+              driver.stepped
+                (driver.loop.invoke driver.handed
+                  { command := Vim.moveCommand, arguments := [.str "nowhere", .nat 0] })
+            driver.loop.state.echo == "nowhere: no such motion" && evilShown driver == "a|bc" },
+    { name :=
+        "a motion is no step of the history: after it the buffer's tree has no node more and nothing pending, and the buffer is not modified"
+      run :=
+        pure <|
+          match evilDriver "a|bc" with
+          | none => false
+          | some driver =>
+            let moved := evilFed driver "l"
+            let seen (driver : EvilDriver) : Option (Nat × Bool × Bool) :=
+              (driver.loop.state.buffer? ⟨0⟩).map fun buffer =>
+                (buffer.history.nodes.size, buffer.history.pending, buffer.isModified)
+            evilShown moved == "ab|c" && seen moved == some (1, false, false) &&
+              seen driver == some (1, false, false) },
+    { name :=
+        "after every motion of the vocabulary, in normal state, from every position a cursor may rest at in each sample text, with no count and with counts of 1, 2 and 99, the selection is one cursor of normal state's shape, on a cell inside the text, or at 0 in the empty text, and never on the line break of a line that has content"
+      run := do
+        let mut wrong := #[]
+        for contents in sweepTexts do
+          let some moved :=
+            swept contents | throw (IO.userError s!"a move was refused in {repr contents}")
+          if moved.isEmpty then
+            throw (IO.userError s!"nothing was swept in {repr contents}")
+          for (name, count, position, selection) in moved do
+            let rests : Bool :=
+              match selection.ranges with
+              | #[range] =>
+                range.anchor == range.head && selection.shape == .inclusive &&
+                  restsWell contents range.head
+              | _ => false
+            unless rests do
+              wrong :=
+                wrong.push
+                  s!"{name} with {count} from {position} of {repr contents}: {repr selection}"
+        unless wrong.isEmpty do
+          throw (IO.userError ("; ".intercalate wrong.toList))
+        return !Evil.motions.isEmpty }]
+
 /-- Every check, in the order they run.
 
 The order matters where the process's one pool is measured. `poolChecks` run
@@ -11650,7 +11883,8 @@ def checks : List Check :=
     driverChecks ++
     promptChecks ++
     fileCommandChecks ++
-    evilRestChecks
+    evilRestChecks ++
+    evilMotionChecks
 
 /-- Runs `checks` and returns the names of those that failed. A check that
 throws has failed, and its error is reported with its name. -/
