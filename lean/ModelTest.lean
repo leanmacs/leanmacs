@@ -11938,6 +11938,13 @@ def exLine (line : String) : List Event :=
 def echoesSince (before after : TestDriver) : Array String :=
   (after.model.display.scenes.map (·.echo)).extract before.model.display.scenes.size
 
+/-- A driver of the ex checks told of the ex names that ship
+(`Ex.bindings`), with the file `note.txt` open in view 0 by the ex line
+`e` and its path, its load finished. The load is job 1. -/
+def exNoteOpen : Option TestDriver :=
+  (exDriver Ex.bindings).map fun driver =>
+    ((fedTo driver (exLine s!"e {inFiles "note.txt"}")).1.finish 1).1
+
 /-- The checks of the ex command line (`Editor/Ex.lean`,
 `Editor/Ex/Compiled.lean`), on the loop's driver over the editor's models,
 the model of files and the test scheme: the ex command opens a prompt and
@@ -12076,7 +12083,72 @@ def exChecks : List Check :=
               fedTo driver (presses "C-e e" ++ [.commit "say hello there"] ++ presses "C-e n")
             promptEcho cancelled == "" && closed cancelled &&
               steps.all (·.all (·.answered.isEmpty)) &&
-              !(echoesSince driver cancelled).contains (greeted hello) }]
+              !(echoesSince driver cancelled).contains (greeted hello) },
+    { name :=
+        "the ex name e with a path: once the load is finished the view the line was asked from shows a buffer with the file's text, holding the file's path; before that it shows the scratch buffer"
+      run :=
+        pure <|
+          match exDriver Ex.bindings with
+          | none => false
+          | some driver =>
+            let path := inFiles "note.txt"
+            let (asked, _) := fedTo driver (exLine s!"e {path}")
+            let (opened, _) := asked.finish 1
+            (showing asked).map (·.id) == some ⟨0⟩ && asked.pending.size == 1 && closed asked &&
+              (showing opened).bind (·.text) == some FileCases.noteText &&
+              (heldFile opened).map (·.path) == some path &&
+              closed opened },
+    { name :=
+        "the ex name e with no argument asks for a path, with the open command's prompt, and starts nothing"
+      run :=
+        pure <|
+          match exDriver Ex.bindings with
+          | none => false
+          | some driver =>
+            let (asking, _) := fedTo driver (exLine "e")
+            asking.loop.state.prompt.map (fun asking => (asking.label, asking.continuation)) ==
+                some (Files.openPrompt, { command := Files.openName }) &&
+              asking.pending.isEmpty },
+    { name :=
+        "the ex name w after an edit starts a save, which is in flight until its job is finished: the file then holds the buffer's text, the buffer is not modified, and the echo area says the file was written"
+      run :=
+        pure <|
+          match exNoteOpen with
+          | none => false
+          | some opened =>
+            let path := inFiles "note.txt"
+            let text := "x" ++ FileCases.noteText
+            let (saving, _) := fedTo opened ([.commit "x"] ++ exLine "w")
+            let (saved, _) := saving.finish 2
+            (heldFile saving).bind (·.saving) != none && saving.pending.size == 1 &&
+              (showing saving).map (·.buffer.isModified) == some true &&
+              (showing saved).bind (·.text) == some text &&
+              bytesOf saved path == some (FileModel.encode text) &&
+              (showing saved).map (·.buffer.isModified) == some false &&
+              echoOf saved == some (Files.wrote path) },
+    { name :=
+        "the ex name w with an argument says it takes none, by the ex line's message, and starts no save: the file is as it was and the buffer is still modified"
+      run :=
+        pure <|
+          match exNoteOpen with
+          | none => false
+          | some opened =>
+            let path := inFiles "note.txt"
+            let (refused, _) := fedTo opened ([.commit "x"] ++ exLine "w other.txt")
+            promptEcho refused == Ex.noArgument "w" && refused.pending.isEmpty &&
+              (heldFile refused).bind (·.saving) == none &&
+              bytesOf refused path == some FileCases.noteBytes &&
+              statusOf refused == some (namedModified "note.txt") },
+    { name :=
+        "the ex name w in the scratch buffer says the buffer has no file, by the save command's message, and starts nothing"
+      run :=
+        pure <|
+          match exDriver Ex.bindings with
+          | none => false
+          | some driver =>
+            let (refused, _) := fedTo driver (exLine "w")
+            promptEcho refused == Files.noFile "scratch" && refused.pending.isEmpty &&
+              closed refused }]
 
 /-- Texts of the resting rule's checks, each with every position it has, in
 order, and where each rests under `onCell` and under `offLineBreak`,

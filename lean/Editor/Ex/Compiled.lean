@@ -1,5 +1,6 @@
 import Editor.Config.Registry
 import Editor.Ex
+import Editor.Files
 
 /-!
 # The ex line's commands and the ex names that ship, as compiled code registers them
@@ -16,7 +17,16 @@ drops it.
   (`Action.call`): it opens the ex line, and runs the line it is answered
   (`Ex.exCommand`). A host must be handed the minibuffer's commands too
   (`Editor/Minibuffer/Compiled.lean`) for that prompt to be answered.
-- **`Ex.bindings`**: the ex names that ship. None yet.
+- **`Ex.bindings`**: the ex names that ship. Each is bound to a command by
+  its name, so a host must be handed that command too.
+  - `w` runs `save-buffer` (`Editor/Files.lean`) and takes nothing: it
+    saves the buffer of the window the line was asked from. `w` with an
+    argument is refused by the ex line (`Ex.noArgument`): saving under
+    another name is not built, and the save command would ignore the name.
+  - `e` runs `open-file` and takes text: the rest of the line is the path,
+    whole, spaces included. `e` with no argument runs `open-file` with
+    none, which asks for a path, by that command's own rule. Vim's `e`
+    with no argument reads the current file again, which is not built.
 
 This module is apart from `Editor/Ex.lean` because it names the registry,
 which is the config session's: `Editor.lean` imports the commands, so that
@@ -35,6 +45,7 @@ def commands : Array Config.Registration :=
 /-- The ex names that ship, as a host registers them for the owner
 `compiled`. -/
 def bindings : Array Binding :=
-  #[]
+  #[{ name := "w", command := Files.saveName },
+    { name := "e", command := Files.openName, takes := .text }]
 
 end Editor.Ex
