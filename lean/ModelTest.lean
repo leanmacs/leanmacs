@@ -7941,6 +7941,39 @@ def modeEnterChecks : List Check :=
                 state.echo == "enter-fail: refused: bad range"
             | .error _ => false },
     { name :=
+        "an on-enter action that is refused refuses the command at the request that set the mode, and the command cannot catch it: neither its handler nor what follows the request runs, the echo area says the refusal under the command's name, and the mode and the action's edit are rolled back"
+      run :=
+        pure <|
+          let broken : Mode :=
+            { name := "broken"
+              onEnter := fun view => do
+                discard <| view.insertAtSelections "!"
+                let some target := (← editorState).target? view | throw .noSuchText
+                target.buffer.text.delete 9 99 }
+          -- What the command went on to do is seen in the texts it made,
+          -- which no rollback takes back.
+          let catching : Dispatched := fun call => do
+            let [.nat view, .str name] := call.arguments | throw .badPosition
+            try
+              discard <| (⟨view⟩ : ViewId).setMajorMode name
+            catch _ =>
+              makes "caught"
+            makes "went on"
+            return none
+          let keys : Loop.Keys TestScheme.scheme :=
+            { command? := fun _ => some catching
+              registered := (enterRegistry.replaceModes .config #[broken]).registered }
+          let program : EditorM (EditorState × String) := do
+            let ran ← Loop.run keys (← twoBuffers) (entersMode ⟨1⟩ "broken") []
+            return (ran.state, ← (⟨1⟩ : TextId).read)
+          match program.runModel editorModel with
+          | (.ok (state, text), model) =>
+            state.echo == "enter: refused: bad range" &&
+              ((state.buffer? ⟨1⟩).map (·.major)) == some none &&
+              text == "other" &&
+              model.texts.contents == #["", "other"]
+          | (.error _, _) => false },
+    { name :=
         "an on-enter action is guarded with the command that set the mode: with the interrupt flag up its request of the store is not made, and the command is rolled back, so the mode is not the buffer's"
       run :=
         pure
