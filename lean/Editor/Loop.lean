@@ -143,6 +143,35 @@ An event's own handler, such as the commit's (`Loop.insert`), is one
 transaction, which the store accepts whole or refuses whole, and is not
 routed through this.
 
+## What a finished command gave up
+
+A state request that closes a window or removes a buffer changes the editor
+state and nothing in the text store: the window's markers and the buffer's
+text are still held. The loop gives them up, once the command has run to
+its end (`Loop.gaveUp`), by comparing the state from before the command
+with the state it left:
+
+- **A window's markers.** Each marker of a window of the state before that
+  no window of the state after uses is given up (`TextId.unmark`): the
+  window was closed, or shown another buffer.
+- **A buffer's text.** The text of each buffer of the state before whose
+  slot is empty in the state after is released, unless a buffer that is
+  left is over the same text. The markers go first, so a window closed with
+  its buffer gives up its markers on a text that is still there.
+- **Not before the command has ended.** A command that is refused or
+  interrupted after it closed a window or removed a buffer is rolled back
+  whole: nothing was given up, so the window and the buffer of the state
+  from before are over markers and a text that still answer. Giving up
+  inside the request would leave a rollback with a window over markers
+  that are gone.
+- **A refusal is said.** What the store refuses here, such as the release
+  of a text the command had released itself, is in the echo area, as a
+  refusal met while publishing is (`refused: ` and the refusal), in place
+  of what the command left there. The rest is still given up.
+- **What is not given up**: the texts, snapshots and markers a command
+  made and no window or buffer of the state it left holds, whether it ran
+  to its end or not.
+
 ## The interrupt
 
 The Rust library raises a flag as the interrupt key arrives, before the key
@@ -613,6 +642,29 @@ def Kept.restore (kept : Kept) (before after : EditorState) : TextM (EditorState
     | none => ""
   return ({ before with buffers }, history ++ unrestored)
 
+/-- Gives up what a command that ran to its end dropped ("What a finished
+command gave up", in the module docs), `before` being the state from before
+it and `after` the state it left: each marker of a window of `before` that
+no window of `after` uses, and then the text of each buffer of `before`
+whose slot is empty in `after`, unless a buffer of `after` is over it. It
+is not refused: the first thing the store refuses is handed back, and the
+rest is still given up. -/
+def gaveUp (before after : EditorState) : TextM (Option TextError) := do
+  let mut refusal := none
+  let held := after.windows.flatMap fun window => #[window.selection, window.scroll]
+  for window in before.windows do
+    for id in [window.selection, window.scroll] do
+      unless held.contains id do
+        if let .error error← observing (id.text.unmark id) then
+          refusal := refusal <|> some error
+  for index in [0:before.buffers.size] do
+    let some buffer := before.buffer? ⟨index⟩ | continue
+    if (after.buffer? ⟨index⟩).isSome || after.buffers.any (·.any (·.text == buffer.text)) then
+      continue
+    if let .error error← observing buffer.text.release then
+      refusal := refusal <|> some error
+  return refusal
+
 /-- What running an invocation came to. -/
 structure Ran where
   /-- The editor state after it, with what it left in the echo area. -/
@@ -646,8 +698,9 @@ a command that was refused or interrupted is rolled back to the state from
 before it, with what could not be said after it.
 
 Only the command is guarded. What this makes of its own requests, keeping
-before it and rolling back after it, is not, so a flag that is up does not
-stop a rollback.
+before it, rolling back after it and giving up what a command that ran to
+its end dropped (`gaveUp`), is not, so a flag that is up does not stop a
+rollback.
 
 The clock is read just before the command and just after it, however it
 ended, and a command that took longer than the threshold is logged
@@ -671,7 +724,8 @@ def run (keys : Keys scheme) (state : EditorState) (invocation : Invocation) (ty
     return { state := said state name (what ++ unrestored), finished := false, log }
   match outcome with
   | .finished write =>
-    return { state := left, finished := true, write, log }
+    let ungiven ← gaveUp state left
+    return { state := left.refusedBy ungiven, finished := true, write, log }
   | .refused refusal =>
     failed s!"refused: {refusal.describe}"
   | .interrupted =>

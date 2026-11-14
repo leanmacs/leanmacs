@@ -5813,13 +5813,133 @@ def dispatchStateChecks : List Check :=
               ("", "moving: refused: bad range; the command moved in the history", #["window"],
                 "one") }]
 
+/-- The refusal `program` ends with, if it is refused. -/
+def refusalOf {α : Type} (program : TextM α) : TextM (Option TextError) := do
+  match ← observing program with
+  | .ok _ =>
+    return none
+  | .error refusal =>
+    return some refusal
+
+/-- The refusals reading each of a window's two markers ends with, the
+scroll anchor's first. -/
+def markerRefusals (window : Window) : TextM (List (Option TextError)) :=
+  return [← refusalOf (window.scroll.text.marker window.scroll),
+      ← refusalOf (window.selection.text.marker window.selection)]
+
+/-- The checks of what the loop gives up after a command (`Editor/Loop.lean`,
+"What a finished command gave up"), on the editor's models: the markers of
+a window a command closed and the text of a buffer it removed, once the
+command has run to its end and not before. -/
+def dispatchGiveUpChecks : List Check :=
+  let asks (requests : List StateRequest) : EditorM Unit := do
+    for request in requests do
+      discard <| EditorState.ask request
+  let bound (run : Dispatched) := dispatchKeys [("C-c g", invoke "go")] [("go", run)]
+  let ran (run : EditorM Unit) : Loop.Keys TestScheme.scheme :=
+    bound fun _ => do
+      run
+      return none
+  [{  name :=
+        "after a command that closed a window has run to its end, the window's two markers are given up: each refuses noSuchMarker, the other windows' markers still answer, and nothing is in the echo"
+      run :=
+        pure <|
+          let program :
+            EditorM (List (Option TextError) × List (Option TextError) × String × Bool) := do
+            let state ← threeWindows
+            let some closed := state.window? ⟨1⟩ | throw .noSuchMarker
+            let some stays := state.window? ⟨2⟩ | throw .noSuchMarker
+            let (loop, _) ←
+              stepsWith (ran (asks [.removeWindow ⟨1⟩])) ({ state } : TestLoop) (presses "C-c g")
+            return (← markerRefusals closed, ← markerRefusals stays, loop.state.echo,
+                loop.state.wellFormed && loop.state.windows.map (·.id) == #[⟨0⟩, ⟨2⟩])
+          (program.runModel editorModel).1.toOption ==
+            some ([some .noSuchMarker, some .noSuchMarker], [none, none], "", true) },
+    { name :=
+        "after a command that removed a buffer has run to its end, the buffer's text is released: it refuses noSuchText, the other buffers' texts still answer, and nothing is in the echo"
+      run :=
+        pure <|
+          let program : EditorM (List (Option TextError) × String × Bool) := do
+            let (state, text) ← hiddenBuffer
+            let (loop, _) ←
+              stepsWith (ran (asks [.removeBuffer ⟨2⟩])) ({ state } : TestLoop) (presses "C-c g")
+            return ([← refusalOf text.read, ← refusalOf (⟨0⟩ : TextId).read,
+                  ← refusalOf (⟨1⟩ : TextId).read],
+                loop.state.echo, loop.state.wellFormed && loop.state.buffer? ⟨2⟩ == none)
+          (program.runModel editorModel).1.toOption ==
+            some ([some .noSuchText, none, none], "", true) },
+    { name :=
+        "a command that closes a window and removes the buffer it showed gives up both with nothing refused: the markers before the text, and the scene shows the window that is left"
+      run :=
+        pure <|
+          match
+            dispatched (ran (asks [.removeWindow ⟨1⟩, .removeBuffer ⟨1⟩])) (presses "C-c g")
+              twoBuffers with
+          | some ((loop, _), scenes, model) =>
+            loop.state.wellFormed && loop.state.echo == "" && model.texts.contents == #[""] &&
+              (scenes.back?.map fun scene => (scene.echo, scene.views.map (·.id))) ==
+                some ("", #[⟨0⟩])
+          | none => false },
+    { name :=
+        "a window shown another buffer has the markers it had given up, and keeps the ones it was shown with"
+      run :=
+        pure <|
+          let showing : EditorM Unit := do
+            let text : TextId := ⟨1⟩
+            let scroll ← text.mark (.anchor { offset := 0, bias := .before })
+            let selection ← text.mark (.selection { ranges := #[⟨0, 0⟩] })
+            asks [.show ⟨0⟩ ⟨1⟩ scroll selection]
+          let program : EditorM (List (Option TextError) × List (Option TextError) × String) := do
+            let state ← twoBuffers
+            let some was := state.window? ⟨0⟩ | throw .noSuchMarker
+            let (loop, _) ← stepsWith (ran showing) ({ state } : TestLoop) (presses "C-c g")
+            let some now := loop.state.window? ⟨0⟩ | throw .noSuchMarker
+            return (← markerRefusals was, ← markerRefusals now, loop.state.echo)
+          (program.runModel editorModel).1.toOption ==
+            some ([some .noSuchMarker, some .noSuchMarker], [none, none], "") },
+    { name :=
+        "a command that closed a window and removed its buffer and was then refused gave up nothing: the window and the buffer are back, the window's markers and the buffer's text answer, and the scene shows both views"
+      run :=
+        pure <|
+          let failing : Dispatched :=
+            failingAfter fun _ => asks [.removeWindow ⟨1⟩, .removeBuffer ⟨1⟩]
+          let program : EditorM (List (Option TextError) × String × Bool × String) := do
+            let state ← twoBuffers
+            let some closed := state.window? ⟨1⟩ | throw .noSuchMarker
+            let (loop, _) ← stepsWith (bound failing) ({ state } : TestLoop) (presses "C-c g")
+            return (← markerRefusals closed, ← (⟨1⟩ : TextId).read,
+                loop.state.wellFormed && loop.state.windows == state.windows &&
+                  loop.state.buffer? ⟨1⟩ == state.buffer? ⟨1⟩ &&
+                  loop.state.frame == state.frame,
+                loop.state.echo)
+          match program.runModel editorModel with
+          | (.ok result, model) =>
+            result == ([none, none], "other", true, "go: refused: bad range") &&
+              (model.display.scenes.back?.map fun scene => scene.views.map (shownText model)) ==
+                some #[some "", some "other"]
+          | (.error _, _) => false },
+    { name :=
+        "a release the store refuses, of a text the command released itself before it removed the buffer, is in the echo area of the scene, and the buffer is still removed"
+      run :=
+        pure <|
+          let twice : EditorM Unit := do
+            (⟨2⟩ : TextId).release
+            asks [.removeBuffer ⟨2⟩]
+          match dispatched (ran twice) (presses "C-c g") ((·.1) <$> hiddenBuffer) with
+          | some ((loop, _), scenes, _) =>
+            loop.state.echo == "refused: no such text" && loop.state.buffer? ⟨2⟩ == none &&
+              loop.state.wellFormed &&
+              scenes.back?.map (·.echo) == some "refused: no such text"
+          | none => false }]
+
 /-- The checks of key dispatch in the loop (`Editor/Loop.lean`), on the
 editor's models: keys through the scheme and the commands they run,
-rollback, the interrupt, the slow-command log, and a command's state
-requests. -/
+rollback, the interrupt, the slow-command log, a command's state requests,
+and what the loop gives up after a command. -/
 def dispatchChecks : List Check :=
   dispatchKeyChecks ++ dispatchRollbackChecks ++ dispatchInterruptChecks ++ dispatchSlowChecks ++
-    dispatchStateChecks
+    dispatchStateChecks ++
+    dispatchGiveUpChecks
 
 /-- A scheme written for the test that breaks the contract: it yields the
 first binding that the keys so far begin, so it emits on a strict prefix. -/
