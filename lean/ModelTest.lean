@@ -4775,6 +4775,25 @@ def dispatchKeyChecks : List Check :=
               some ("nope: no such command", "C-c", #[some ""]) &&
             lastScene keys (presses "C-c n C-c s") == some ("", "", #[some "C-c s"])) },
     { name :=
+        "a key bound to a registered command, in a state whose focused window is not in the state, says in the echo area that no window is focused: the command makes no request, and nothing is left pending"
+      run :=
+        let made : Dispatched := fun _ => do
+          discard <| createText "made"
+          return none
+        let keys := dispatchKeys [("C-c m", invoke "made")] [("made", made)]
+        let unfocused : TextM EditorState := do
+          let state ← EditorState.initial ⟨640, 480⟩
+          return { state with frame := { state.frame with focused := ⟨9⟩ } }
+        pure <|
+          match dispatched keys (presses "C-c m") unfocused with
+          | some ((loop, _), scenes, model) =>
+            loop.state.echo == "made: no window is focused" &&
+              scenes.back?.map (·.echo) == some "made: no window is focused" &&
+              model.texts.contents == #[""] &&
+              loop.pending == "" &&
+              scenes.back?.map (·.pending) == some ""
+          | none => false },
+    { name :=
         "a command that is refused says so in the echo area, with its name and the refusal, and the step is not refused: the next key runs its command"
       run :=
         let gone : Dispatched := fun _ => do
