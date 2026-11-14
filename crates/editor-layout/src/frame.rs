@@ -2260,6 +2260,66 @@ mod tests {
     }
 
     #[test]
+    fn a_cursor_at_a_lines_end_is_a_base_advance_wide_whatever_the_last_glyph() {
+        // On the fake, a row whose last character is in a font whose
+        // glyphs are 20 across. The cursor on that character is as wide as
+        // it; the cursor past it is on no character, so it is one advance
+        // of the default face's font, at the line's width.
+        let mut layout = Layout::new(CellShaper::new(10.0, 16.0).with_family("wide", 20.0, 16.0));
+        layout.define(&[def("wide", family("wide"))]);
+        let mut cursor = |head: usize| {
+            let mut view = view("abc", 10, 16, 0, &[(head, head)]);
+            view.decorations = vec![Decoration {
+                start: 2,
+                stop: 3,
+                face: "wide".to_owned(),
+            }];
+            frame(&mut layout, view).cursors[0].area
+        };
+        assert_eq!(cursor(2), area(20.0, 0.0, 20.0, 16.0));
+        assert_eq!(cursor(3), area(40.0, 0.0, 10.0, 16.0));
+    }
+
+    #[test]
+    fn a_cursor_at_the_end_of_a_real_shapers_line_is_a_base_advance_wide() {
+        // Lines as a real shaper gives them. `abfi` ends in one glyph of
+        // two characters, 30 across: its last character is half of that,
+        // and the end is neither. `abi` ends in a glyph narrower than the
+        // base advance. `abc` drawn right to left ends, in the text's
+        // order, in its leftmost glyph, and its end is still at its right
+        // edge.
+        let ends_in_a_ligature = vec![
+            glyph('a', 0, 0.0, 10.0),
+            glyph('b', 1, 10.0, 10.0),
+            glyph('f', 2, 20.0, 30.0),
+        ];
+        let ends_narrow = vec![
+            glyph('a', 0, 0.0, 10.0),
+            glyph('b', 1, 10.0, 10.0),
+            glyph('i', 2, 20.0, 4.0),
+        ];
+        let right_to_left = vec![
+            glyph('c', 2, 0.0, 14.0),
+            glyph('b', 1, 14.0, 10.0),
+            glyph('a', 0, 24.0, 10.0),
+        ];
+        let shaper = ScriptedShaper::new(10.0, 16.0)
+            .with("abfi", vec![line(0..4, ends_in_a_ligature)])
+            .with("abi", vec![line(0..3, ends_narrow)])
+            .with("abc", vec![line(0..3, right_to_left)]);
+        let mut layout = Layout::new(shaper);
+        let mut cursor = |text: &str, head: usize| {
+            frame(&mut layout, view(text, 10, 16, 0, &[(head, head)])).cursors[0].area
+        };
+        assert_eq!(cursor("abfi", 3), area(35.0, 0.0, 15.0, 16.0));
+        assert_eq!(cursor("abfi", 4), area(50.0, 0.0, 10.0, 16.0));
+        assert_eq!(cursor("abi", 2), area(20.0, 0.0, 4.0, 16.0));
+        assert_eq!(cursor("abi", 3), area(24.0, 0.0, 10.0, 16.0));
+        assert_eq!(cursor("abc", 2), area(0.0, 0.0, 14.0, 16.0));
+        assert_eq!(cursor("abc", 3), area(34.0, 0.0, 10.0, 16.0));
+    }
+
+    #[test]
     fn a_selection_across_a_direction_change_is_an_area_for_each_run_of_glyphs_it_covers() {
         let mut layout = real_layout();
         let mut selected = |anchor: usize, head: usize| {
