@@ -290,6 +290,26 @@ def attachFile (id : BufferId) (path : System.FilePath) (stamp : File.Stamp)
     (ending : File.LineEnding) : EditorM (Except BufferRefusal Unit) :=
   EditorState.ask (.attachFile id path stamp ending)
 
+/-- Records a save of the buffer `id` as in flight: it writes `snapshot`,
+which the command took with the buffer's text in the state `saved`. Refused
+with `noSuchBuffer` for a buffer there is none of, with `noFile` for a
+buffer that shows no file, and with `beingSaved` while a save of it is in
+flight. -/
+def beginSave (id : BufferId) (snapshot : SnapshotId) (saved : UndoTree.State) :
+    EditorM (Except BufferRefusal Unit) :=
+  EditorState.ask (.beginSave id snapshot saved)
+
+/-- Ends the save of the buffer `id` that writes `snapshot`, with the stamp
+of the file it wrote, or with `none` for a save that was refused: the save
+is no longer in flight, and with a stamp the buffer's file has it and the
+state the save kept is the one marked as saved. The loop releases the
+snapshot once this command has run to its end. Refused with `noSuchBuffer`
+for a buffer there is none of, and with `notBeingSaved` unless a save of
+the buffer that writes `snapshot` is in flight. -/
+def endSave (id : BufferId) (snapshot : SnapshotId) (stamp : Option File.Stamp) :
+    EditorM (Except BufferRefusal Unit) :=
+  EditorState.ask (.endSave id snapshot stamp)
+
 /-- Replaces the bytes of the buffer `id`'s text from `start` up to, not
 including, `stop` with `s` (`TextId.replaceRange`). Refused with
 `noSuchBuffer` for a buffer there is none of; what the store refuses is

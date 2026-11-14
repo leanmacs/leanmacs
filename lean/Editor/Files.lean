@@ -3,19 +3,19 @@ import Editor.Command.Call
 import Editor.Job
 
 /-!
-# Files: opening a file into a buffer
+# Files: opening a file into a buffer, and saving a buffer
 
-The command that opens a file, written over the editor API
-(`Editor/Api.lean`) and the job port's file requests (`Editor/Job.lean`,
-`Editor/File.lean`). A command may not wait and a job may, so opening is
-three programs: a command that starts a job, the job, which loads the file,
-and the job's command, which the loop runs like any command once the job
-has ended (`Editor/Loop.lean`, "Jobs from commands"). The editor thread
+The commands that open a file and save a buffer, written over the editor
+API (`Editor/Api.lean`) and the job port's file requests (`Editor/Job.lean`,
+`Editor/File.lean`). A command may not wait and a job may, so each is three
+programs: a command that starts a job, the job, which loads or saves the
+file, and the job's command, which the loop runs like any command once the
+job has ended (`Editor/Loop.lean`, "Jobs from commands"). The editor thread
 never waits for a file.
 
-`Editor.lean` imports this module, so config calls `Files.open`. The
-commands and the jobs as compiled code registers them are in
-`Editor/Files/Compiled.lean`.
+`Editor.lean` imports this module, so config calls `Files.open` and
+`Files.save`. The commands and the jobs as compiled code registers them
+are in `Editor/Files/Compiled.lean`.
 
 ## Open
 
@@ -68,14 +68,55 @@ commands and the jobs as compiled code registers them are in
   not be added, or shown in the asking view. The buffer and its text, if
   they were made, stay.
 
+## Save
+
+- **The command** (`Files.save id`) reads the buffer; tells a copy of its
+  undo tree the revision its text is at and keeps that tree's state;
+  takes a snapshot of the text; starts the job `save-file` (`saveJob`)
+  with a save order (`SaveOrder`): the buffer, the snapshot, the file's
+  path, and what the save expects to find there, the stamp the buffer
+  holds; and records the save as in flight (`BufferId.beginSave`), with
+  the snapshot and the kept state.
+- **The job** (`saveWork`) saves the snapshot as the file (`File.save`)
+  and finishes with the order and the reply. A refusal is a value in the
+  reply: the job throws only for arguments that are not an order.
+- **The job's command** (`saved`) makes one state request and then says
+  what became of the file. The request ends the save in flight
+  (`BufferId.endSave`): on success it records the stamp of the file the
+  save wrote and marks the kept state as saved; on a refusal it changes
+  neither. The echo area then reads `wrote <path>` (`wrote`), or the
+  refusal (`notSaved`): a file that changed on disk since it was loaded is
+  left as it is, and the buffer stays modified, with the stamp it had.
+- **Why the editor state keeps the save in flight**
+  (`Editor/State.lean`, "A buffer's file").
+  - The job's command then asks the text store nothing. A command that
+    makes state requests alone cannot be interrupted or refused
+    (`Editor/Command/Dispatch.lean`, "A state request is not guarded"). So
+    the interrupt key arriving as a save's result is delivered cannot
+    leave a file written and a buffer that does not know it.
+  - The snapshot is released by the loop, once the job's command has run
+    to its end (`Editor/Loop.lean`, "What a finished command gave up"),
+    not by the command. A command that released it itself and then set
+    the stamp and the mark could be interrupted at the release, after the
+    file was written, and the next save would be refused as changed on
+    disk.
+- **A save that reports late marks the state it wrote.** If the user edits
+  while the save runs, the kept state is marked, the text is in a later
+  one, and the buffer stays modified.
+- **Nothing is translated.** The snapshot holds every byte of the file as
+  it was loaded, so a buffer opened and saved with no edit leaves the
+  file's bytes as they were, whatever its line endings.
+
 ## Every refusal takes one route
 
 A refusal of the file port is a value (`FileError`), and reaches the echo
 area through one function a command: `notOpened path error` is
 `cannot open <path>: ` and the refusal's own sentence
-(`FileError.describe`). What a refusal says is `Editor/File.lean`'s to
-change: a test compares the echo area with this function applied to the
-refusal it expects, never with the sentence.
+(`FileError.describe`), and `notSaved path error` is `cannot save <path>: `
+and that sentence. So "cannot read" and "cannot write", which are one
+refusal of the port (`denied`), read differently. What a refusal says is
+`Editor/File.lean`'s to change: a test compares the echo area with these
+functions applied to the refusal it expects, never with the sentence.
 
 ## An order crosses as arguments
 
@@ -191,5 +232,111 @@ def openCommand (call : Call) : EditorM Unit :=
   match call.arguments with
   | .str path :: _ => Files.open call.target.window.id path
   | _ => message noPath
+
+/-- The name the save command is registered under. -/
+def saveName : String :=
+  "save-buffer"
+
+/-- The name the job that saves a file is registered under. -/
+def saveJob : String :=
+  "save-file"
+
+/-- What the save job is started with: the buffer that is saved, the
+snapshot of its text to write, the file's path, and what the save expects
+to find there. -/
+structure SaveOrder where
+  /-- The buffer that is saved. -/
+  buffer : BufferId
+  /-- The snapshot the save command took of the buffer's text. -/
+  snapshot : SnapshotId
+  /-- The file's path. -/
+  path : System.FilePath
+  /-- What the save expects to find at the path. -/
+  expect : File.Expect
+  deriving DecidableEq, Repr
+
+/-- What a save expects, as arguments: a word, and after `unchanged` the
+stamp's seconds, nanoseconds and size. -/
+def expectArguments : File.Expect → List Argument
+  | .unchanged stamp =>
+    [.str "unchanged", .int stamp.seconds, .nat stamp.nanoseconds, .nat stamp.size]
+  | .absent => [.str "absent"]
+  | .whatever => [.str "whatever"]
+
+/-- What a save expects, read back from its arguments (`expectArguments`). -/
+def expectOfArguments? : List Argument → Option File.Expect
+  | [.str "unchanged", .int seconds, .nat nanoseconds, .nat size] =>
+    some (.unchanged { seconds, nanoseconds, size })
+  | [.str "absent"] => some .absent
+  | [.str "whatever"] => some .whatever
+  | _ => none
+
+/-- The order as the arguments a job is started with: the buffer's number,
+the snapshot's, the path, and then what the save expects
+(`expectArguments`). -/
+def SaveOrder.arguments (order : SaveOrder) : List Argument :=
+  [.nat order.buffer.index, .nat order.snapshot.index, .str order.path.toString] ++
+    expectArguments order.expect
+
+/-- The order `arguments` are, if they are one (`SaveOrder.arguments`). -/
+def SaveOrder.ofArguments? : List Argument → Option SaveOrder
+  | .nat buffer :: .nat snapshot :: .str path :: expect =>
+    (expectOfArguments? expect).map fun expect =>
+      { buffer := ⟨buffer⟩, snapshot := ⟨snapshot⟩, path, expect }
+  | _ => none
+
+/-- What the echo area says when the buffer's file at `path` could not be
+saved: the refusal's own sentence, after the path. -/
+def notSaved (path : System.FilePath) (error : FileError) : String :=
+  s!"cannot save {path}: {error.describe}"
+
+/-- What the echo area says when the file at `path` was written. -/
+def wrote (path : System.FilePath) : String :=
+  s!"wrote {path}"
+
+/-- The command a finished save job hands the loop: what the reply to the
+save of `order.buffer` becomes ("Save", in the module docs). It ends the
+save in flight with one state request (`BufferId.endSave`), which records
+the new stamp and marks the state the save wrote as saved, or neither for a
+save that was refused, and then says what became of the file. It makes no
+request of the text store, so it cannot be interrupted or refused. -/
+def saved (order : SaveOrder) (reply : Except FileError File.Stamp) : EditorM Unit := do
+  -- Refused only when the buffer was removed while its save ran: what
+  -- became of the file is said all the same.
+  discard <| order.buffer.endSave order.snapshot reply.toOption
+  match reply with
+  | .ok _ =>
+    message (wrote order.path)
+  | .error error =>
+    message (notSaved order.path error)
+
+/-- The save job: saves the snapshot its order names as the file at the
+order's path, if what is there is what the order expects, and finishes with
+what the reply becomes (`saved`). A refusal is a value in the reply; it
+fails only for arguments that are not an order. -/
+def saveWork (arguments : List Argument) : Work := fun _ => do
+  let some order :=
+    SaveOrder.ofArguments? arguments | throw s!"{saveJob}: its arguments are not a save order"
+  return saved order (← File.save (.snapshot order.snapshot) order.path order.expect)
+
+/-- Saves the buffer `id` to its file: takes a snapshot of its text, starts
+the job that writes it, expecting the stamp the buffer holds, and records
+the save as in flight ("Save", in the module docs). -/
+def save (id : BufferId) : EditorM Unit := do
+  let some buffer := (← editorState).buffer? id | return
+  let some file := buffer.file | return
+  -- The state the snapshot is of: the tree told the text's revision, which
+  -- is not recorded here.
+  let state := (← buffer.history.sync).state
+  let snapshot ← buffer.text.snapshot
+  let order : SaveOrder :=
+    { buffer := id, snapshot, path := file.path, expect := .unchanged file.stamp }
+  let .ok () ← startJob saveJob order.arguments | return
+  discard <| id.beginSave snapshot state
+
+/-- The save command as it is called: saves the buffer of the window it was
+called with. -/
+def saveCommand (call : Call) : EditorM Unit :=
+  save call.target.window.buffer
 
 end Editor.Files
