@@ -78,7 +78,7 @@ pub enum Kind {
     /// One byte: how much of the pixel the glyph covers.
     Mask,
     /// Four bytes: how much of the pixel's red, green and blue stripes
-    /// the glyph covers, and their mean.
+    /// the glyph covers, and a fourth that is not read.
     Subpixel,
     /// Four bytes: red, green, blue and alpha, the colours multiplied by
     /// the alpha.

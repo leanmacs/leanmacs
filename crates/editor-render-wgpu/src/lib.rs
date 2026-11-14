@@ -17,6 +17,7 @@ pub mod blend;
 pub mod glyphs;
 pub mod painter;
 pub mod quads;
+pub mod raster;
 
 #[cfg(test)]
 mod settings_tests;

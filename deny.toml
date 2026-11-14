@@ -68,7 +68,8 @@
 # `editor-render-wgpu` its one wrapper, each added in the commit that
 # added its edge. `etagere` (2026-11-14): with the entry's wrapper naming
 # another crate, it fails ("crate 'etagere = 0.3.0' is explicitly
-# banned").
+# banned"). `swash` (2026-11-14): the same way ("crate 'swash = 0.2.10'
+# is explicitly banned").
 #
 # One rule has no entry: "no crate depends on `editor-ffi`", the one crate
 # that knows about Lean. No entry for it passes the gate. With
@@ -92,6 +93,7 @@ deny = [
   { crate = "editor-layout", wrappers = ["editor-ffi", "editor-shape-parley", "editor-render", "editor-render-wgpu"], reason = "layout is reached by the crate that puts it behind a handle for Lean and wires it to text; the Shaper port it defines has one real adapter, which implements it; and the Renderer port's crate and the crate of its real adapters take its frames as plain data; another user is a decision, so it is made here" },
   { crate = "editor-render", wrappers = ["editor-render-wgpu"], reason = "the Renderer port has one user today, the crate of its real adapters, which implements it and runs its contract; the crate that starts the render thread is the next, and that is a decision, so it is made here" },
   { crate = "etagere", wrappers = ["editor-render-wgpu"], reason = "the atlas packer stays behind the Renderer port: only the crate of the port's real adapters may name its types" },
+  { crate = "swash", wrappers = ["editor-render-wgpu"], reason = "the glyph rasteriser stays behind the Renderer port: only the crate of the port's real adapters may name its types" },
   { crate = "parley", wrappers = ["editor-shape-parley"], reason = "Parley stays behind the Shaper port: only its adapter crate may name its types" },
   { crate = "fontique", wrappers = ["editor-shape-parley", "parley", "parley_engine"], reason = "fontique is Parley's font library and stays behind the Shaper port with it: beside Parley's own crates, only the adapter may name its types" },
   { crate = "editor-fs-std", wrappers = ["editor-ffi"], reason = "the file adapter is linked only by the crate that wires the library together; everything else reaches a file through the port, and editor-text's tests through its fake" },
