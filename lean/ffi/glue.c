@@ -640,6 +640,30 @@ lean_obj_res editor_glue_document_drop_inverses(b_lean_obj_arg document,
       lean_get_external_data(document), first, last)));
 }
 
+// ---- Fuzzy ranking ----
+//
+// The example of a list of strings crossing. The candidates go to the
+// library as words, their count and then the byte length of each, and as one
+// string of all of them end to end, both borrowed for the call; the ranking
+// comes back as words. The call keeps nothing in the library.
+
+void editor_ffi_fuzzy_rank(const uint8_t *pattern, size_t pattern_len,
+                           const uint8_t *words, size_t words_len,
+                           const uint8_t *strings, size_t strings_len,
+                           editor_ffi_raw_words *out);
+
+// `Editor.Ffi.fuzzyRankRaw : @& String → @& ByteArray → @& String →
+// IO RawWords`
+lean_obj_res editor_glue_fuzzy_rank(b_lean_obj_arg pattern,
+                                    b_lean_obj_arg words,
+                                    b_lean_obj_arg strings) {
+  editor_ffi_raw_words raw;
+  editor_ffi_fuzzy_rank(string_bytes(pattern), string_len(pattern),
+                        byte_array_bytes(words), byte_array_len(words),
+                        string_bytes(strings), string_len(strings), &raw);
+  return lean_io_result_mk_ok(raw_words_take(raw));
+}
+
 // ---- The event queues ----
 //
 // Rust threads push events and Lean pulls them: nothing here calls Lean. A

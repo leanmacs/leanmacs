@@ -57,6 +57,7 @@ answers cross (`FfiTest.displayChecks`); `tests/c_api.rs`,
 | Byte range | Two scalars | `ByteRange`: two `UInt64`, half-open, in bytes |
 | List | *Words*: a `@& ByteArray` of 64-bit numbers, eight bytes each, least significant first, written by a private encoder here; the glue passes its bytes and byte length, and Rust checks every count against the buffer | The glue copies the library's buffer of words into a `ByteArray` and hands the buffer back; a private decoder here builds the typed value, and words it cannot read are an `IO` error |
 | List of handles | `@& Array Snapshot`, an array of handles borrowed for the call, beside the words, which name a handle by its index in it; the glue passes it as a C array of the handles' pointers and its count, which it builds for the call (`Display.publish`) | None yet |
+| List of strings | Words, the count and then the byte length of each string, written by a private encoder here, and one `@& String` of all of them end to end; Rust refuses lengths that do not add up to the string or that end inside a character (`fuzzyRank`) | None yet |
 
 Prefer a few scalar arguments or one structure to many calls: one `nextEvent`
 returns one whole event. A raw structure whose shape the glue knows stays
@@ -95,20 +96,25 @@ with an option inside them: a run of revisions and an origin in, as three
 numbers, and an `Inverted` out, the revision the inverse produced with the
 selection it hands back if there is one (`Document.applyInverse`, with its
 refusals in `InverseRefusal`); and a run in and a refusal as a `Bool`
-(`Document.dropInverses`). A length or an offset in words is a `UInt64`, and the
+(`Document.dropInverses`). Fuzzy ranking is the example of a list of strings,
+and of a call that keeps nothing in the library: a pattern and candidates
+in, and the indices of the candidates the pattern matches out, best first,
+as words (`fuzzyRank`). A length or an offset in words is a `UInt64`, and the
 largest one is a number no text accepts: a caller with a number no word
 holds sends that, so the library refuses it and nothing is cut down. Tests:
 the `find` and event checks of `ffi-test` (`FfiTest.dataChecks`), its
 document checks (`FfiTest.documentChecks`), its snapshot checks
 (`FfiTest.snapshotChecks`), its transaction checks
 (`FfiTest.transactionChecks`), its marker checks
-(`FfiTest.markerChecks`), its inverse checks (`FfiTest.inverseChecks`) and,
+(`FfiTest.markerChecks`), its inverse checks (`FfiTest.inverseChecks`),
+for a list of strings its ranking checks (`FfiTest.fuzzyChecks`) and,
 for a list of handles, its scene checks (`FfiTest.sceneChecks`); the unit
 tests of `text.rs`, `document.rs`, `snapshot.rs`, `words.rs`,
-`transaction.rs`, `log.rs`, `marker.rs`, `inverse.rs` and, for a scene's
-words, `display/wire.rs`, the tag tests of `events.rs`, and `tests/log.rs`,
-`tests/markers.rs`, `tests/inverse.rs` and, for a scene published with its
-handles and written back, `tests/display.rs` in `editor-ffi`.
+`transaction.rs`, `log.rs`, `marker.rs`, `inverse.rs`, `fuzzy.rs` and, for a
+scene's words, `display/wire.rs`, the tag tests of `events.rs`, and
+`tests/log.rs`, `tests/markers.rs`, `tests/inverse.rs`, `tests/fuzzy.rs` and,
+for a scene published with its handles and written back, `tests/display.rs`
+in `editor-ffi`.
 
 The editor does not call these bindings. It reaches the library through a
 port it defines (`Editor/Text.lean`), whose real binding
@@ -1901,5 +1907,53 @@ def Display.scene (display : Display) : IO (Option (Array UInt64 × String)) := 
   let some words := wordsOf? raw.words
     | throw (IO.userError "the library's scene is not whole words")
   return some (words, raw.strings)
+
+/-- A list of strings as words: their count, then the byte length of each.
+The strings themselves cross beside the words, as one string of all of them
+end to end. -/
+private def lengthWords (strings : Array String) : ByteArray :=
+  strings.foldl (fun words string => pushWord words string.utf8ByteSize.toUInt64)
+    (pushWord ByteArray.empty strings.size.toUInt64)
+
+/-- The ranking `words` spell for `candidates` candidates: the count of
+indices, then each. `none` unless the count is the count of indices there
+and each is below `candidates`. -/
+private def rankingOf? (candidates : Nat) (words : Array UInt64) : Option (Array Nat) := do
+  let count := (← words[0]?).toNat
+  guard (words.size == 1 + count)
+  let indices := (words.extract 1 words.size).map (·.toNat)
+  guard (indices.all (· < candidates))
+  return indices
+
+/-- `fuzzyRank` as it crosses: the pattern, the candidates as words and one
+string, and the ranking as words with the status 0, or no words and the
+status 1 when the library cannot read the candidates. -/
+@[extern "editor_glue_fuzzy_rank"]
+private opaque fuzzyRankRaw (pattern : @& String) (words : @& ByteArray) (strings : @& String) :
+    IO RawWords
+
+/-- The indices of the `candidates` that `pattern` matches, best first, each
+once: the library's fuzzy matcher (`crates/editor-fuzzy`, over
+`nucleo-matcher`). A candidate matches when the pattern's Unicode scalar
+values all occur in it, in the pattern's order, adjacent or apart; a
+candidate that is the pattern comes first, and the rest are in the order of
+the matcher's scores.
+
+The call keeps nothing in the library: the candidates are borrowed for it,
+and each call copies their bytes once, into the one string that crosses.
+
+It refuses nothing. A status other than 0, and an answer that is not a count
+and that many indices of the candidates, mean the encoder here is wrong, so
+each is an `IO` error. -/
+def fuzzyRank (pattern : String) (candidates : Array String) : IO (Array Nat) := do
+  let strings := candidates.foldl (· ++ ·) ""
+  let raw ← fuzzyRankRaw pattern (lengthWords candidates) strings
+  if raw.status != 0 then
+    throw (IO.userError "the library could not read the candidates of a fuzzy ranking")
+  match (wordsOf? raw.words).bind (rankingOf? candidates.size) with
+  | some ranking =>
+    return ranking
+  | none =>
+    throw (IO.userError "the library's words do not spell a fuzzy ranking")
 
 end Editor.Ffi
