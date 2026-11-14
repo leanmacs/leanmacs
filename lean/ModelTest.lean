@@ -11688,7 +11688,27 @@ def apiStateChecks : List Check :=
           | some (.finished (.error .notOpen, before, .ok ()), state, _) =>
             before == some { all := #["x", "y"] } &&
               state.prompt.map (·.candidates) == some { all := #["a", "b"] }
-          | _ => false }]
+          | _ => false },
+    { name :=
+        "accepting a prompt answers with the chosen candidate when its listing is for the minibuffer's text; with the text when nothing is chosen, when the choice was made for another text than the minibuffer holds, and when there are no candidates; the continuation's own arguments follow the answer"
+      run :=
+        pure <|
+          let all := #["wq", "edit", "w"]
+          -- What the continuation was recorded with by accepting from `start`.
+          let answered (start : TextM EditorState) : Option (List Argument) :=
+            (dispatchedFrom acceptPrompt start).bind fun (reply, state) =>
+              if reply matches .ok () && state.prompt.isNone then
+                state.answered[0]?.map (·.arguments)
+              else none
+          answered (ApiCases.choosing "w" all "w" #[2, 0] [.next, .next]) ==
+              some [.str "wq", .nat 7] &&
+            answered (ApiCases.choosing "w" all "w" #[2, 0] [.previous, .previous]) ==
+              some [.str "w", .nat 7] &&
+            answered (ApiCases.choosing "w" all "w" #[2, 0] []) == some [.str "w", .nat 7] &&
+            answered (ApiCases.choosing "wx" all "w" #[2, 0] [.next, .next]) ==
+              some [.str "wx", .nat 7] &&
+            answered (ApiCases.choosing "typed" #[] "" #[] [.next]) ==
+              some [.str "typed", .nat 7] }]
 
 /-- The driver the job checks run: one over the test scheme. -/
 abbrev TestDriver :=

@@ -419,14 +419,24 @@ A command asks for a string without waiting for it
     is refused, as a value, with `notOpen` when no prompt is open.
   - A prompt asked with none, the default, makes the requests it made
     before there were candidates.
-- `acceptPrompt` reads the minibuffer's text, which is the answer, and
-  makes one state request that closes the prompt with it
+- `acceptPrompt` reads the minibuffer's text and makes one state request
+  that closes the prompt with the answer
   (`StateRequest.closePrompt`): the minibuffer's window is closed, the
   focus goes back to the asking view, and the continuation is recorded
   with the answer. `cancelPrompt` makes that request with no answer, and
   nothing else: no request of the library, so it cannot be interrupted or
   refused by the store. With no prompt open each is refused, as a value,
   with `notOpen`.
+- **The answer** is `Candidates.answer` of the text read
+  (`Editor/State.lean`, "Prompts"):
+  - **a candidate is chosen**, and the prompt's listing is for the text
+    read: that candidate;
+  - **nothing is chosen**, whatever is listed: the text. So a user who
+    types and accepts gets what was typed, with or without candidates;
+  - **nothing matches**: nothing can be chosen, so the text;
+  - **a choice made for another text** than the one read is not taken:
+    that can only be a command that changed the minibuffer and accepted in
+    one step, and it gets the text.
 - **The answer's command runs after the accepting command has ended**, as
   a step of its own (`Editor/Loop.lean`). The loop gives up the
   minibuffer's markers and releases its text then too, by its rule for
@@ -600,14 +610,18 @@ has listed and chosen ("Prompts", in the module docs). Refused with
 def setCandidates (all : Array String) : EditorM (Except PromptRefusal Unit) :=
   EditorState.ask (.setCandidates all)
 
-/-- Accepts the open prompt with the text of its minibuffer as the answer:
-the prompt is closed, and its continuation's command is run with the
-answer once this command has run to its end ("Prompts", in the module
-docs). Refused with `notOpen` when no prompt is open. -/
+/-- Accepts the open prompt: it is closed, and its continuation's command is
+run with the answer once this command has run to its end ("Prompts", in
+the module docs). The answer is the chosen candidate, when one is chosen
+and the prompt's listing is for the text of its minibuffer, and otherwise
+that text (`Candidates.answer`). Refused with `notOpen` when no prompt is
+open. -/
 def acceptPrompt : EditorM (Except PromptRefusal Unit) := do
   let state ← editorState
-  let some minibuffer := state.minibufferView?.bind state.target? | return .error .notOpen
-  EditorState.ask (.closePrompt (some (← minibuffer.buffer.text.read)))
+  let some asked := state.prompt | return .error .notOpen
+  let some minibuffer := state.target? asked.view | return .error .notOpen
+  let text ← minibuffer.buffer.text.read
+  EditorState.ask (.closePrompt (some (asked.candidates.answer text)))
 
 /-- Cancels the open prompt: it is closed, and its continuation does not
 run. It makes one request of the editor state and none of the library.

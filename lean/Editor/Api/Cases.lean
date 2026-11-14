@@ -537,6 +537,24 @@ name and an argument of the asker's own. -/
 def greeting : Invocation :=
   { command := "greet", arguments := [.nat 7] }
 
+/-- The initial state with a prompt open, asked with `greeting`, whose
+minibuffer holds `text`: its candidates are `all`, its listing is the one
+for `listedFor`, the candidates at `ranked`, and its choice was moved by
+`steps`. It is made with the state's own operations
+(`Editor/State.lean`, "Prompts"): no command lists candidates, the loop
+does. -/
+def choosing (text : String) (all : Array String) (listedFor : String) (ranked : Array Nat)
+    (steps : List Candidates.Step) : TextM EditorState := do
+  let state ← EditorState.initial ⟨640, 480⟩
+  let minibuffer ← createText text
+  let scroll ← minibuffer.mark (.anchor { offset := 0, bias := .before })
+  let selection ← minibuffer.mark (.selection { ranges := #[⟨0, 0⟩], shape := .exclusive })
+  let (_, state) :=
+    state.openPrompt "Pick: " greeting minibuffer (← UndoTree.over minibuffer) scroll selection
+  let (_, state) := state.setCandidates all
+  let (_, state) := state.listCandidates listedFor ranked
+  return steps.foldl (fun state step => (state.chooseCandidate step).2) state
+
 /-- The cases of prompts: asking for one, and what the layout operations do
 with the minibuffer's window while it is open. -/
 def promptCases : List Case :=
@@ -650,6 +668,15 @@ def promptCases : List Case :=
             state.frame.focused == ⟨0⟩ &&
             state.answered == #[] &&
             state.wellFormed },
+    { name :=
+        "accepting a prompt whose listing is for the minibuffer's text, with a candidate chosen, replies ok, closes it and answers with that candidate, not with the text: the continuation is recorded with the candidate as its first argument"
+      start := choosing "w" #["wq", "edit", "w"] "w" #[2, 0] [.next, .next]
+      run := do
+        let chosen := (← editorState).prompt.map (·.candidates.chosen)
+        let accepted ← acceptPrompt
+        let state ← editorState
+        return chosen == some (some 1) && accepted matches .ok () && state.prompt == none &&
+            state.answered == #[{ greeting with arguments := .str "wq" :: greeting.arguments }] },
     { name :=
         "accepting and cancelling with no prompt open are each refused with notOpen, a value, and leave the state as it was"
       run := do
