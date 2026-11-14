@@ -393,16 +393,21 @@ changed the state or not (`Loop.publish`):
    whose buffer's text is at the revision it was last shown at keeps the
    same snapshot; otherwise a new snapshot is taken, and views of one
    buffer share it. A view's scroll anchor and selection are its window's
-   markers, its cursor a bar in the face `cursor`, with no decorations:
-   later phases choose those. Its status line is two fields at most
-   (`Loop.status`): its buffer's name, in the face `Loop.nameFace`, and,
-   while the buffer is modified (`Buffer.isModified`), the text
-   `Loop.modifiedMark` in the face `Loop.modifiedFace`. "Modified" is the
-   presence of the second field: a buffer that is not has no such field.
+   markers, and it has no decorations: later phases choose those. Its
+   cursor is the one the scheme reports of the view
+   (`InputScheme.report`, in the scheme's state after the last key): a bar
+   in the face `cursor` under a scheme that says nothing. Its status line
+   (`Loop.statusOf`) is the fields the scheme reports of the view, then
+   its buffer's (`Loop.status`): the buffer's name, in the face
+   `Loop.nameFace`, and, while the buffer is modified
+   (`Buffer.isModified`), the text `Loop.modifiedMark` in the face
+   `Loop.modifiedFace`. "Modified" is the presence of the field in that
+   face: a buffer that is not has no such field.
    The answer is right because the histories were told their texts'
-   revisions in step 1. The minibuffer's view has another status line
-   (`Loop.statusOf`): one field, the prompt's label, in the face
-   `Loop.promptFace`, with no name and no modified field. That is how the
+   revisions in step 1. The minibuffer's view has another status line:
+   one field, the prompt's label, in the face
+   `Loop.promptFace`, with no name, no modified field and none of the
+   scheme's fields; its cursor is the scheme's report's. That is how the
    scene shows the prompt text: the scene's shape is the display
    contract, and it has no field for a prompt. The input is the whole text
    of the minibuffer's buffer, so the label is no part of it: the text
@@ -624,11 +629,7 @@ with nothing shown yet and no key typed. -/
 def start (scheme : InputScheme) (size : Size) : TextM (Loop scheme) :=
   return { state := ← EditorState.initial size }
 
-/-- How every view's cursors are drawn, until the phases that choose them. -/
-def cursor : Cursor :=
-  { shape := .bar, face := ⟨"cursor"⟩ }
-
-/-- The face of the status line's first field, the buffer's name. -/
+/-- The face of the buffer's name in a status line. -/
 def nameFace : FaceName :=
   ⟨"status.name"⟩
 
@@ -644,30 +645,35 @@ def modifiedMark : String :=
 def promptFace : FaceName :=
   ⟨"minibuffer.prompt"⟩
 
-/-- The status line of a view of `buffer`: the buffer's name, and, while the
-buffer is modified, the modified field after it. A buffer that is not
-modified has no such field, not an empty one. -/
+/-- A buffer's fields of the status line of a view of it: the buffer's name,
+and, while the buffer is modified, the modified field after it. A buffer
+that is not modified has no such field, not an empty one. -/
 def status (buffer : Buffer) : Array StatusField :=
   #[{ text := buffer.name, face := nameFace }] ++
     if buffer.isModified then #[{ text := modifiedMark, face := modifiedFace }] else #[]
 
-/-- The status line of the view `id` of `state`, which shows `buffer`: the
-prompt's label alone, in `promptFace`, for the minibuffer's view, and the
-buffer's (`status`) for any other. -/
-def statusOf (state : EditorState) (id : ViewId) (buffer : Buffer) : Array StatusField :=
+/-- The status line of the view `id` of `state`, which shows `buffer` and of
+which the scheme reports the fields `reported`: the prompt's label alone,
+in `promptFace`, for the minibuffer's view, and for any other the scheme's
+fields and then the buffer's (`status`). -/
+def statusOf (state : EditorState) (id : ViewId) (buffer : Buffer)
+    (reported : Array StatusField := #[]) : Array StatusField :=
   match state.prompt with
   | some asked =>
-    if asked.view == id then #[{ text := asked.label, face := promptFace }] else status buffer
-  | none => status buffer
+    if asked.view == id then #[{ text := asked.label, face := promptFace }]
+    else reported ++ status buffer
+  | none => reported ++ status buffer
 
 /-- The views of the loop's state, in drawing order, and the snapshots they
 name: its windows, and the minibuffer's view in the minibuffer's place
 while a prompt is open. A text at the revision it was last shown at keeps
-its snapshot; any other is given a new one. A view's status line is its
-buffer's, and the prompt's label for the minibuffer's view (`statusOf`). It
-is not refused: a view whose buffer's text refuses, because it was
-released, is left out, with nothing taken for it, and the first such
-refusal is handed back. -/
+its snapshot; any other is given a new one. A view's cursor is the one the
+scheme reports of it, in the scheme's state after the last key
+(`InputScheme.report`). Its status line is the fields the scheme reports
+and then its buffer's, and the prompt's label alone for the minibuffer's
+view (`statusOf`). It is not refused: a view whose buffer's text refuses,
+because it was released, is left out, with nothing taken for it, and the
+first such refusal is handed back. -/
 def views (loop : Loop scheme) : TextM (Array View × Array Shown × Option TextError) := do
   let state := loop.state
   let frame := state.frame
@@ -694,11 +700,13 @@ def views (loop : Loop scheme) : TextM (Array View × Array Shown × Option Text
     | .ok (revision, snapshot) =>
       unless shown.any (·.text == text) do
         shown := shown.push { text, revision, snapshot }
+      let report := scheme.report loop.input id
       views :=
         views.push
           { id, rect, snapshot, scroll := target.window.scroll,
             selections := #[target.window.selection]
-            cursor, decorations := #[], status := statusOf state id target.buffer }
+            cursor := report.cursor, decorations := #[]
+            status := statusOf state id target.buffer report.status }
   return (views, shown, refusal)
 
 /-- The scene of `state` over `views`: what the state says of the frame, the

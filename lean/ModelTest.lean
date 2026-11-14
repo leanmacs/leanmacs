@@ -5099,6 +5099,85 @@ def pressF5 : Event :=
 def shownText (model : EditorModel) (view : View) : Option String :=
   (model.texts.snapshots[view.snapshot.index]?).join.map (·.contents)
 
+/-- A report of the scheme `switching`, unlike the default in every field
+the scene shows: a block in a face of its own, one status field, an
+inclusive selection, and selecting. -/
+def markedReport : InputScheme.Report :=
+  { cursor := { shape := .block, face := ⟨"cursor.marked"⟩ }
+    status := #[{ text := "marked", face := ⟨"status.marked"⟩ }]
+    shape := .inclusive
+    selecting := true }
+
+/-- What the scheme `switching` reports of a view it was told is the
+minibuffer's: an underline in a face of its own, and one status field. -/
+def askedReport : InputScheme.Report :=
+  { cursor := { shape := .underline, face := ⟨"cursor.asked"⟩ }
+    status := #[{ text := "asked", face := ⟨"status.asked"⟩ }] }
+
+/-- The reports the scheme `switching` switches a view between: a command's
+name, the key string a loop over it binds to that command, and what the
+scheme reports of a view once a key for the view has yielded an invocation
+of the command. The keys print nothing. -/
+def switchingTable : List (String × String × InputScheme.Report) :=
+  [("mark", "C-m", markedReport), ("plain", "C-p", {}), ("begin", "C-b", { session := true }),
+    ("end", "C-e", {}), ("deafen", "C-d", { takesText := false })]
+
+/-- A scheme written for the loop's checks, so that none of them names a
+shipped scheme's states or keys: the test scheme, with a report of each
+view that an invocation it yields switches (`switchingTable`). A view
+starts with the default report, a view told to be the minibuffer's has
+`askedReport`, and a closed view's is forgotten. Its state is the test
+scheme's, and the report of each view that has one. -/
+def switching : InputScheme :=
+  { State := TestScheme.State × List (ViewId × InputScheme.Report)
+    Binding := Invocation
+    init := ({}, [])
+    step := fun maps view state key =>
+      let (next, yielded) := TestScheme.step maps view state.1 key
+      match yielded.bind fun invocation => switchingTable.find? (·.1 == invocation.command) with
+      | some (_, _, report) => ((next, (view, report) :: state.2.filter (·.1 != view)), yielded)
+      | none => ((next, state.2), yielded)
+    pending := (·.1.pending)
+    command := fun name => { command := name }
+    roles := TestScheme.roles
+    leader := TestScheme.leader
+    closeView := fun view state => (state.1, state.2.filter (·.1 != view))
+    openMinibuffer := fun view state => (state.1, (view, askedReport) :: state.2)
+    report := fun state view => ((state.2.find? (·.1 == view)).map (·.2)).getD {} }
+
+/-- What a step of a loop over `switching` is handed: one keymap, the same
+for every view, that binds each key of `switchingTable` to its command and
+each key string of `bindings` to the invocation beside it; and commands,
+one that does nothing under each name of `switchingTable`, and
+`commands`. -/
+def switchingKeys (bindings : List (String × Invocation) := [])
+    (commands : List (String × (Call → EditorM (Option Config.Write))) := []) :
+    Loop.Keys switching :=
+  { maps := fun _ _ =>
+      [Keymap.ofList
+          ((switchingTable.map fun (name, text, _) => (keys text, invoke name)) ++
+            bindings.map fun (text, invocation) => (keys text, invocation))]
+    command? := fun name =>
+      match commands.find? (·.1 == name) with
+      | some (_, command) => some command
+      | none => if switchingTable.any (·.1 == name) then some fun _ => pure none else none }
+
+/-- A loop over `switching` started from the state `start` makes and fed the
+presses of the keys `text` names and then `events`, each step handed
+`handed`, on the editor's models: the loop after them, the scenes the
+display recorded, and the models. `none` when it was refused. -/
+def switched (start : TextM EditorState) (text : String) (events : List Event := [])
+    (handed : Loop.Keys switching := switchingKeys) :
+    Option (Loop switching × Array Scene × EditorModel) :=
+  let program : EditorM (Loop switching) := do
+    let mut loop : Loop switching := { state := ← start }
+    for event in (keys text).map (Event.key · true "") ++ events do
+      loop := (← loop.step handed event).loop
+    return loop
+  match program.runModel editorModel with
+  | (.ok loop, model) => some (loop, model.display.scenes, model)
+  | (.error _, _) => none
+
 /-- The checks of the loop (`Editor/Loop.lean`) on the editor's models: what
 each event does to the state, and the scene it publishes. -/
 def loopChecks : List Check :=
@@ -5413,7 +5492,49 @@ def loopChecks : List Check :=
               #[(Split.split .rows (.window ⟨0⟩) .minibuffer).rects (frameRect ⟨640, 480⟩)
                   (some ⟨1⟩),
                 #[(⟨0⟩, frameRect ⟨640, 480⟩)]]
-          | (.error _, _) => false }]
+          | (.error _, _) => false },
+    { name :=
+        "each view's cursor in the scene is what the scheme reports of that view: the default before a key, and, in the scene published after the key whose invocation switches the focused view's report, the switched one for that view and the default still for the others; a key that switches it back is followed by the default again"
+      run :=
+        pure <|
+          match switched threeWindows "<F5> C-m C-p" with
+          | some (_, #[first, marked, plain], _) =>
+            let plainCursor : Cursor := ({} : InputScheme.Report).cursor
+            first.views.map (·.cursor) == #[plainCursor, plainCursor, plainCursor] &&
+              marked.views.map (·.cursor) == #[markedReport.cursor, plainCursor, plainCursor] &&
+              plain.views.map (·.cursor) == #[plainCursor, plainCursor, plainCursor] &&
+              markedReport.cursor != plainCursor
+          | _ => false },
+    { name :=
+        "a view's status line is the fields the scheme reports of it and then its buffer's: the name, and the modified field while the buffer is modified; a view the scheme reports no field of has its buffer's alone"
+      run :=
+        pure <|
+          match switched threeWindows "C-m" [.commit "x"] with
+          | some (_, #[marked, modified], _) =>
+            let name : StatusField := { text := "scratch", face := Loop.nameFace }
+            let mark : StatusField := { text := Loop.modifiedMark, face := Loop.modifiedFace }
+            marked.views.map (·.status) == #[markedReport.status ++ #[name], #[name], #[name]] &&
+              modified.views.map (·.status) ==
+                #[markedReport.status ++ #[name, mark], #[name, mark], #[name, mark]] &&
+              markedReport.status.size == 1
+          | _ => false },
+    { name :=
+        "while a prompt is open the minibuffer's view has the cursor the scheme reports of it, and its status line is the prompt's label alone, with none of the scheme's fields; the asking view keeps its own report"
+      run :=
+        pure <|
+          let ask : Call → EditorM (Option Config.Write) := fun _ => do
+            discard <| prompt "Name: " asked
+            return none
+          match
+            switched (EditorState.initial ⟨640, 480⟩) "C-m C-a" (handed :=
+              switchingKeys [("C-a", invoke "ask")] [("ask", ask)]) with
+          | some (_, #[_, scene], _) =>
+            scene.views.map (·.cursor) == #[markedReport.cursor, askedReport.cursor] &&
+              scene.views.map (·.status) ==
+                #[markedReport.status ++ #[{ text := "scratch", face := Loop.nameFace }],
+                  #[{ text := "Name: ", face := Loop.promptFace }]] &&
+              !askedReport.status.isEmpty
+          | _ => false }]
 
 /-- The focused window's buffer and window in `loop`'s state, or a refusal
 for a state with none. -/

@@ -17,13 +17,15 @@ the last scene published, on its own thread, so painting never waits on Lean
   how faces merge are the display pipeline's (its phase 2).
 - **The scene only carries choices made elsewhere.** Which fields a view's
   status line holds is the command loop's choice (`Loop.statusOf`,
-  `Editor/Loop.lean`): the buffer's name, and a modified field while the
-  buffer is modified; and, for the minibuffer's view while a prompt is
-  open, the prompt's label and nothing else. The scene has no field of its
-  own for a prompt: the minibuffer's view is a view like any other, whose
-  text is the input typed so far. Which cursor shape and face a view has is chosen by a
-  later phase of the command loop (the evil state in phase 11). The pending
-  key prefix is rendered by Lean into a string.
+  `Editor/Loop.lean`): the fields the input scheme reports of the view,
+  then the buffer's name, and a modified field while the buffer is
+  modified; and, for the minibuffer's view while a prompt is open, the
+  prompt's label and nothing else. The scene has no field of its own for a
+  prompt: the minibuffer's view is a view like any other, whose text is
+  the input typed so far. Which cursor shape and face a view has is the
+  input scheme's to say (`InputScheme.report`, `Editor/InputScheme.lean`):
+  the Vim scheme's is the cursor of the view's Vim state. The pending key
+  prefix is rendered by Lean into a string.
 - Sizes and rectangles are in the frame's physical pixels.
 
 ## Where an addition goes
