@@ -201,14 +201,20 @@ text <index>: <quoted text>
 store <name> v<version>: <value>
 scene <w>x<h>, focused <id or ->, echo <quoted>, preedit <quoted or ->, published <n>
 view <id> <x>,<y> <w>x<h>: <quoted text>, scroll <offset>, selections <anchor>..<head> …
+status <view id>: <face> <quoted text>, …   (or "-" for no field)
 scene: none               (no scene has been published)
 loop: refused: <error>    (a program of the editor loop was refused)
 ```
 
-The last two answer `scene`: the last scene published, with how many scenes
-have been, then each view in drawing order, its snapshot's text read from
-the library, and the offsets of its scroll anchor and of each range of its
-selection, as the markers are when it is asked.
+The `scene`, `view` and `status` lines answer `scene`: the last scene
+published, with how many scenes have been, then each view in drawing order,
+its snapshot's text read from the library, and the offsets of its scroll
+anchor and of each range of its selection, as the markers are when it is
+asked. After each view's line comes its status line (`statusLine`), one
+entry a field: the buffer's name, and the modified field while the buffer
+is modified (`Loop.status`). It is a line of its own, so the view's line
+keeps its form. It is how a script sees a buffer's name and whether it is
+modified.
 
 A command a key runs prints nothing: what became of it is in the echo area
 of the scene, `<name>: no such command`, `<name>: refused: <error>` or
@@ -436,6 +442,13 @@ def reportLines (report : Config.Report) : Array String :=
 /-- How a job that has ended is reported, after `job <id> <name>: `. -/
 def firstLine (message : String) : String :=
   (message.splitOn "\n").headD ""
+
+/-- The status line of the view `view` as `scene` prints it, a line of its
+own after the view's: the view's id, then each field's face and its quoted
+text, in order, or `-` for a status line with no field. -/
+def statusLine (view : ViewId) (status : Array StatusField) : String :=
+  let fields := status.map fun field => s!"{field.face.name} {field.text.quote}"
+  s!"status {view.index}: {if fields.isEmpty then "-" else ", ".intercalate fields.toList}"
 
 /-- The loop's state: everything the editor thread owns, for a host that
 runs the input scheme `scheme`. -/
@@ -723,8 +736,9 @@ def ended (collaborators : Collaborators σ scheme) (running : Running σ scheme
     return running
 
 /-- A scene as `scene` prints it, read from the text store as it is now: its
-frame, then each view, its snapshot's text and its markers' offsets.
-`published` is how many scenes have been published. -/
+frame, then each view, its snapshot's text and its markers' offsets, and
+after each view's line its status line (`statusLine`). `published` is how
+many scenes have been published. -/
 def sceneLines (scene : Scene) (published : Nat) : TextM (Array String) := do
   let focused :=
     match scene.focused with
@@ -745,8 +759,9 @@ def sceneLines (scene : Scene) (published : Nat) : TextM (Array String) := do
               (selection.ranges.map fun range => s!"{range.anchor}..{range.head}").toList
     let rect := view.rect
     lines :=
-      lines.push
-        s!"view {view.id.index} {rect.x},{rect.y} {rect.width}x{rect.height}: {(← view.snapshot.read).quote}, scroll {scroll.offset}, selections {" ".intercalate selections.toList}"
+      (lines.push
+            s!"view {view.id.index} {rect.x},{rect.y} {rect.width}x{rect.height}: {(← view.snapshot.read).quote}, scroll {scroll.offset}, selections {" ".intercalate selections.toList}").push
+        (statusLine view.id view.status)
   return lines
 
 /-- Prints the last scene published, or that there is none. -/

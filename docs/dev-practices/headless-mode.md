@@ -109,7 +109,7 @@ are skipped.
 | `show` | Prints the commands, the texts and the stores. |
 | `key <logical> <physical> <modifiers>` | Sends a press of a key, with no text, as the window would report it: through the library's window input, in order with what was asked before. `<logical>` is one character (`a`) or a named key in angle brackets (`<Escape>`, a W3C UI Events `key` name); `<physical>` is a W3C UI Events `code` (`KeyA`) or `-`; `<modifiers>` is `shift`, `control`, `alt` and `super` joined with `+`, or `-`. The editor prints `key arrived:` with the three. The editor loop steps the key through its input scheme, and runs the command a completed sequence is bound to. |
 | `commit <text>` | Sends the rest of the line, trimmed, as an input method's composition would end with it, the same way as `key`. The editor loop inserts it at the focused window's cursors. A `commit` with no text is refused. |
-| `scene` | Prints the last scene the editor loop published: the frame, then each view and the text its snapshot holds. |
+| `scene` | Prints the last scene the editor loop published: the frame, then each view and the text its snapshot holds, and after each view its status line: its buffer's name, and a modified field while the buffer is modified. |
 
 With the fixture the gate uses (`tests/headless`):
 
@@ -150,11 +150,13 @@ the scene, then reloads and runs a job; its output must be exactly
 $ .lake/build/bin/editor headless "$(lean --print-prefix)" .lake/build/lib/lean ../tests/headless/config ../tests/headless/scene-script
 scene 0x0, focused 0, echo "", preedit -, published 1
 view 0 0,0 0x0: "hello", scroll 0, selections 5..5
+status 0: status.name "scratch", status.modified "[+]"
 reload 1: installed, 2 chunks, 1 commands
 spawn count: job 1
 job 1 count: ok
 scene 0x0, focused 0, echo "", preedit -, published 8
 view 0 0,0 0x0: "hello", scroll 0, selections 5..5
+status 0: status.name "scratch", status.modified "[+]"
 ```
 
 A fourth, `tests/headless/dispatch/script`, runs on a config of its own,
@@ -177,17 +179,24 @@ key arrived: s KeyS -
 key arrived: g KeyG control
 scene 0x0, focused 0, echo "spin: interrupted", preedit -, published 3
 view 0 0,0 0x0: "", scroll 0, selections 0..0
+status 0: status.name "scratch"
 key arrived: c KeyC control
 key arrived: m KeyM -
 scene 0x0, focused 0, echo "", preedit -, published 6
 view 0 0,0 0x0: "mark", scroll 0, selections 4..4
+status 0: status.name "scratch", status.modified "[+]"
 key arrived: c KeyC control
 key arrived: d KeyD -
 job 1 double: started
 job 1 double: ok
 scene 0x0, focused 0, echo "doubled to 42", preedit -, published 11
 view 0 0,0 0x0: "mark", scroll 0, selections 4..4
+status 0: status.name "scratch", status.modified "[+]"
 ```
+
+The status line after the first scene's view has the name alone: `spin` was
+rolled back, so the buffer is not modified. After `mark` it has the
+modified field too.
 
 The editor runs its command loop, under the Vim scheme. The loop has no
 frame until it is first needed: for the first event from the window input
@@ -242,6 +251,7 @@ text <index>: <quoted text>
 store <name> v<version>: <value>
 scene <w>x<h>, focused <id or ->, echo <quoted>, preedit <quoted or ->, published <n>
 view <id> <x>,<y> <w>x<h>: <quoted text>, scroll <offset>, selections <anchor>..<head> …
+status <view id>: <face> <quoted text>, …   (or "-" for no field)
 scene: none
 loop: refused: <error>
 ```
@@ -251,8 +261,13 @@ not have the keyboard focus), the echo area, the input method's preedit
 (`-` when there is none) and how many scenes have been published; then, for
 each view in drawing order, its rectangle, the text of its snapshot, read
 from the library, and the offsets of its scroll anchor and of each range of
-its selection. `scene: none` means no scene has been published: the loop
-has not been needed yet.
+its selection. After each view's line comes its status line, one entry a
+field, each the field's face and its text: the buffer's name in the face
+`status.name`, and, while the buffer is modified, `[+]` in the face
+`status.modified`. A buffer that is not modified has no second field. This
+is how a script sees a buffer's name and whether it is modified.
+`scene: none` means no scene has been published: the loop has not been
+needed yet.
 
 What the editor loop is refused is in the scene's echo area, as
 `refused: <error>`: a commit the library refused, and a text or a snapshot

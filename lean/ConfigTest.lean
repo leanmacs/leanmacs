@@ -1310,6 +1310,17 @@ def setup : SetupM Unit := do
   command \"forget\" forget
 ")]
 
+/-- The status line the host prints for the view `view` of a buffer called
+`name`, modified or not: what the host prints (`Headless.statusLine`) of the
+fields the loop gives such a buffer's views (`Loop.status`). So a check that
+compares a host's whole output repeats neither the loop's faces and texts
+nor the host's form. The scratch buffer is the default: the loop's frame is
+made with it, and its name is the editor state's to choose. -/
+def statusOf (view : Nat := 0) (name : String := "scratch") (modified : Bool := false) : String :=
+  let saved := UndoTree.new ⟨0⟩ 0
+  Headless.statusLine ⟨view⟩
+    (Loop.status { name, text := ⟨0⟩, history := if modified then saved.record 1 else saved })
+
 /-- The checks of the headless mode's script and its driver
 (`Headless.script`, `Headless.run`). The command line itself is covered by
 one run of the real executable on the fixture under `tests/headless`, in the
@@ -1502,8 +1513,37 @@ def scriptChecks (context : Context) : List Check :=
               (← stage.output.get) ==
                 #["scene: none", "scene 0x0, focused 0, echo \"\", preedit -, published 1",
                   "view 0 0,0 0x0: \"héllo\", scroll 0, selections 6..6",
+                  statusOf (modified := true),
                   "scene 0x0, focused 0, echo \"\", preedit -, published 3",
-                  "view 0 0,0 0x0: \"héllo world\", scroll 0, selections 12..12"] },
+                  "view 0 0,0 0x0: \"héllo world\", scroll 0, selections 12..12",
+                  statusOf (modified := true)] },
+    { name :=
+        "a view's status line is printed as the view's id and each field's face and quoted text, and as - for a status line with no field"
+      run :=
+        pure
+          (Headless.statusLine ⟨3⟩
+                #[{ text := "a \"b\"", face := ⟨"one"⟩ }, { text := "é", face := ⟨"two.three"⟩ }] ==
+              "status 3: one \"a \\\"b\\\"\", two.three \"é\"" &&
+            Headless.statusLine ⟨0⟩ #[] == "status 0: -") },
+    { name :=
+        "the scene prints each view's status line after the view's line, with the fields the loop gives the view: the buffer's name alone before anything is typed, and the modified field after it once text is committed"
+      run :=
+        IO.FS.withTempDir fun directory => do
+          writeFiles directory greetConfig
+          let stage ← Stage.new context context.elaborator (Config.Directory.source directory)
+          let failure ←
+            Headless.run stage.collaborators
+                #[⟨1, .key { logical := .named ⟨"F5"⟩ }⟩, ⟨2, .request .scene⟩, ⟨3, .commit "a"⟩,
+                  ⟨4, .request .scene⟩]
+                patience
+          return failure == none && statusOf != statusOf (modified := true) &&
+              (← stage.output.get) ==
+                #["key arrived: <F5> - -",
+                  "scene 0x0, focused 0, echo \"\", preedit -, published 1",
+                  "view 0 0,0 0x0: \"\", scroll 0, selections 0..0", statusOf,
+                  "scene 0x0, focused 0, echo \"\", preedit -, published 3",
+                  "view 0 0,0 0x0: \"a\", scroll 0, selections 1..1",
+                  statusOf (modified := true)] },
     { name :=
         "the scene is published again after a reload installs and after a job's command runs, once a frame exists"
       run :=
@@ -1528,10 +1568,12 @@ def scriptChecks (context : Context) : List Check :=
           return (← session.lines) ==
               #["reload 1: installed, 2 chunks, 1 commands",
                 "scene 0x0, focused 0, echo \"\", preedit -, published 1",
-                "view 0 0,0 0x0: \"kept\", scroll 0, selections 4..4", "spawn count: job 1",
-                "job 1 count: ok", "reload 2: installed, 2 chunks, 1 commands",
+                "view 0 0,0 0x0: \"kept\", scroll 0, selections 4..4", statusOf (modified := true),
+                "spawn count: job 1", "job 1 count: ok",
+                "reload 2: installed, 2 chunks, 1 commands",
                 "scene 0x0, focused 0, echo \"\", preedit -, published 10",
-                "view 0 0,0 0x0: \"kept\", scroll 0, selections 4..4"] },
+                "view 0 0,0 0x0: \"kept\", scroll 0, selections 4..4",
+                statusOf (modified := true)] },
     { name :=
         "once a command has released the focused buffer's text, a commit is still followed by a scene: its echo is the refusal, and it has no view of that buffer"
       run :=
@@ -1550,7 +1592,8 @@ def scriptChecks (context : Context) : List Check :=
           return (← session.lines) ==
               #["reload 1: installed, 1 chunks, 1 commands",
                 "scene 0x0, focused 0, echo \"\", preedit -, published 1",
-                "view 0 0,0 0x0: \"a\", scroll 0, selections 1..1", "run forget: ok",
+                "view 0 0,0 0x0: \"a\", scroll 0, selections 1..1", statusOf (modified := true),
+                "run forget: ok",
                 "scene 0x0, focused 0, echo \"refused: no such text\", preedit -, published 5"] },
     { name :=
         "a program of the editor loop that is refused is printed as refused and hands back nothing, and what it made before the refusal is kept; one that is not refused prints nothing and hands back its result"
