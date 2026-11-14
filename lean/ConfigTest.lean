@@ -3088,6 +3088,42 @@ def exScriptChecks (context : Context) : List Check :=
           return failure == none && listed output &&
               (← IO.FS.readBinFile path) == noteText.toUTF8 },
     { name :=
+        "once a step said stop the host runs no further invocation: a command that asks for quit and then for the open command, with a path, to be run after it ends the loop at quit, and the open command never runs: the host prints the run alone and starts no job; with a command that says other in place of quit, the load job is started"
+      run :=
+        IO.FS.withTempDir fun files => do
+          let path := files / "note.txt"
+          IO.FS.writeBinFile path noteText.toUTF8
+          let handing (first : String) : Config.Registration :=
+            { name := s!"hand-{first}"
+              action :=
+                .plain do
+                  Editor.invoke { command := first }
+                  Editor.invoke { command := Files.openName, arguments := [.str path.toString] } }
+          let compiled : Compiled :=
+            { exCompiled with
+              commands := exCompiled.commands ++ #[handing Ex.quitName, handing "other"]
+              jobs := Files.jobs }
+          let started := s!"job 1 {Files.loadJob}: started"
+          let ran (name : String) : IO (Option (Headless.Wait × Array String)) := do
+            let stage ← Stage.new context context.elaborator { chunks := pure #[] } compiled
+            let host ← Headless.start stage.collaborators
+            try
+              host.send (.run name)
+              let joined ← host.join patience
+              let halted ← host.halt patience
+              let output ← stage.output.get
+              return if halted then some (joined, output) else none
+            catch error =>
+              discard <| host.halt patience
+              throw error
+          let left ← ran s!"hand-{Ex.quitName}"
+          let went ← ran "hand-other"
+          return left == some (.ended, #[s!"run hand-{Ex.quitName}: ok"]) &&
+              (went.map fun (joined, output) =>
+                  joined == .settled && output.contains "run hand-other: ok" &&
+                    output.contains started) ==
+                some true },
+    { name :=
         "a wait on a host whose loop a command ended answers that the loop has ended, a settle and a join alike, which is no failure of a script, and halting the host then answers that it stopped"
       run := do
         let stage ← Stage.new context context.elaborator { chunks := pure #[] } exCompiled

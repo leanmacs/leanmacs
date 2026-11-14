@@ -12082,17 +12082,19 @@ def notLeaving (name : String) : String :=
 
 /-- What a step of the quit checks is handed: the open command with the
 path of `note.txt` (`C-o n`) and the save command (`C-o w`), as the file
-command checks have them, and five commands written here, under `C-l`:
+command checks have them, and six commands written here, under `C-l`:
 `leave` (`l`) asks the editor to quit and says a refusal (`notLeaving`),
 `leave-then-fail` (`f`) asks and is then refused, `stamp` (`s`) edits its
-buffer, `other` (`o`) says `other`, and `hand-leave` (`h`) asks for `leave`
-to be run after it. Two more ask for the config to be reloaded: `again`
+buffer, `other` (`o`) says `other`, `hand-leave` (`h`) asks for `leave`
+to be run after it, and `hand-leave-other` (`t`) asks for `leave` and then
+`other` to be run after it. Two more ask for the config to be reloaded: `again`
 (`r`), and `again-then-fail` (`g`), which asks and is then refused. -/
 def quitKeys : Loop.Keys TestScheme.scheme :=
   dispatchKeys
     [("C-o n", opens (inFiles "note.txt")), ("C-o w", invoke Files.saveName),
       ("C-l l", invoke "leave"), ("C-l f", invoke "leave-then-fail"), ("C-l s", invoke "stamp"),
-      ("C-l o", invoke "other"), ("C-l h", invoke "hand-leave"), ("C-l r", invoke "again"),
+      ("C-l o", invoke "other"), ("C-l h", invoke "hand-leave"),
+      ("C-l t", invoke "hand-leave-other"), ("C-l r", invoke "again"),
       ("C-l g", invoke "again-then-fail")]
     [(Files.openName, fun call => do
         Files.openCommand call
@@ -12110,6 +12112,10 @@ def quitKeys : Loop.Keys TestScheme.scheme :=
         return none),
       ("hand-leave", fun _ => do
         Editor.invoke { command := "leave" }
+        return none),
+      ("hand-leave-other", fun _ => do
+        Editor.invoke { command := "leave" }
+        Editor.invoke { command := "other" }
         return none),
       ("again", fun _ => do
         reloadConfig
@@ -12256,6 +12262,23 @@ def dispatchQuitChecks : List Check :=
             let (left, steps) := fedTo driver (presses "C-l h")
             next steps == #[some .continue, some .continue] && left.stopped &&
               left.loop.state.quitting },
+    { name :=
+        "once a step said stop the driver runs no further invocation: a command that asks for a quitting command and then another to be run after it stops the driver at the first, whose scene is the last, and the second never runs: no scene says its message; where the first is refused, the second runs"
+      run :=
+        pure <|
+          match quitDriver with
+          | none => false
+          | some driver =>
+            let echoes (before after : TestDriver) : Array String :=
+              (after.model.display.scenes.map (·.echo)).extract before.model.display.scenes.size
+            let (left, steps) := fedTo driver (presses "C-l t")
+            let (went, _) := fedTo driver ([.commit "x"] ++ presses "C-l t")
+            next steps == #[some .continue, some .continue] && left.stopped &&
+              left.model.display.scenes.size == driver.model.display.scenes.size + 3 &&
+              !(echoes driver left).contains "other" &&
+              !went.stopped &&
+              promptEcho went == "other" &&
+              (echoes driver went).contains (notLeaving "note.txt") },
     { name :=
         "a step whose command asked for the config to be reloaded hands the request back, and the state after it is not asking; a step that ran another command hands back none, and so does one whose command asked and was then refused; the driver counts the reloads asked for"
       run :=
