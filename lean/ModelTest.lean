@@ -12671,10 +12671,30 @@ def chose (driver : TestDriver) (steps : List Candidates.Step) : TestDriver :=
         state :=
           steps.foldl (fun state step => (state.chooseCandidate step).2) driver.loop.state } }
 
+/-- The status line of the view `id` in the last scene `driver`'s display
+model holds. -/
+def statusIn (driver : TestDriver) (id : ViewId) : Option (Array StatusField) := do
+  ((← driver.model.display.scenes.back?).views.find? (·.id == id)).map (·.status)
+
+/-- The status line of the minibuffer's view in the last scene `driver`'s
+display model holds. -/
+def pickStatus (driver : TestDriver) : Option (Array StatusField) := do
+  statusIn driver (← driver.loop.state.minibufferView?)
+
+/-- The status line of the minibuffer's view of a prompt of the candidate
+checks whose minibuffer holds `pattern`: the label, then a field for each
+candidate the fuzzy model answers for the pattern, in its order, with the
+one at `chosen` of them, if any, in the chosen face. -/
+def pickFields (pattern : String) (chosen : Option Nat := none) : Array StatusField :=
+  #[{ text := pickLabel, face := Loop.promptFace }] ++
+    (pickListed pattern).listed.mapIdx fun index candidate =>
+      { text := candidate
+        face := if chosen == some index then Loop.chosenFace else Loop.candidateFace }
+
 /-- The checks of a prompt's candidates through the loop
 (`Editor/Loop.lean`, "Prompts"), on the loop's driver over the editor's
 models and the test scheme, with commands written here: the listing the
-loop makes before each scene. What is listed is compared with what the
+loop makes before each scene, and the scene's fields for it. What is listed is compared with what the
 fuzzy model answers for the same pattern and candidates. -/
 def candidateChecks : List Check :=
   [{  name :=
@@ -12755,7 +12775,62 @@ def candidateChecks : List Check :=
             plainAsk > 0 && plainStill > 0 && cost "C-c a" == plainAsk + 2 &&
               cost "C-c a C-c s" == plainStill + 1 &&
               cost "C-c a w" == plainTyped + 2 &&
-              cost "C-c a w C-c s" == plainStill + 1 }]
+              cost "C-c a w C-c s" == plainStill + 1 },
+    { name :=
+        "text typed into a prompt with candidates: in the scene, the minibuffer's view's status line is the label, in the prompt's face, and then one field for each candidate the fuzzy model answers for that text, in its order, each in the candidates' face; the other view's status line lists none"
+      run :=
+        pure <|
+          match candidateDriver with
+          | none => false
+          | some driver =>
+            let (asking, _) := fedTo driver (presses "C-c a")
+            let (typed, _) := fedTo asking (presses "e")
+            pickStatus asking == some (pickFields "") &&
+              (pickStatus asking).map (·.size) == some (1 + pickCandidates.size) &&
+              pickStatus typed == some (pickFields "e") &&
+              (pickStatus typed).map (·.size) == some 3 &&
+              (statusIn typed ⟨0⟩).map (·.any (·.face == Loop.candidateFace)) == some false },
+    { name :=
+        "where a candidate is the typed text and others match it too, its field is the first after the label, though it is the last of the candidates"
+      run :=
+        pure <|
+          match candidateDriver with
+          | none => false
+          | some driver =>
+            let (typed, _) := fedTo driver (presses "C-c a w")
+            pickStatus typed == some (pickFields "w") &&
+              ((pickStatus typed).map fun fields => (fields.map (·.text)).extract 0 2) ==
+                some #[pickLabel, "w"] &&
+              (pickStatus typed).map (·.size) == some 4 &&
+              pickCandidates.back? == some "w" },
+    { name :=
+        "a text no candidate matches: the scene lists none, and the minibuffer's status line is the label alone; so is that of a prompt asked with no candidates"
+      run :=
+        pure <|
+          match candidateDriver with
+          | none => false
+          | some driver =>
+            let (typed, _) := fedTo driver (presses "C-c a z")
+            let (plain, _) := fedTo driver (presses "C-c p w")
+            let label : Array StatusField := #[{ text := pickLabel, face := Loop.promptFace }]
+            pickStatus typed == some label && pickStatus plain == some label &&
+              minibufferText typed == some "z" },
+    { name :=
+        "with a candidate chosen, its field of the minibuffer's status line and no other is in the chosen face, and the fields say what they said"
+      run :=
+        pure <|
+          match candidateDriver with
+          | none => false
+          | some driver =>
+            let (typed, _) := fedTo driver (presses "C-c a w")
+            let (second, _) := fedTo (chose typed [.next, .next]) (presses "C-c s")
+            let (unchosen, _) := fedTo (chose second [.next, .next]) (presses "C-c s")
+            pickStatus second == some (pickFields "w" (some 1)) &&
+              ((pickStatus second).map fun fields => fields.map (·.face == Loop.chosenFace)) ==
+                some #[false, false, true, false] &&
+              Loop.chosenFace != Loop.candidateFace &&
+              candidatesOf unchosen == some (pickListed "w") &&
+              pickStatus unchosen == some (pickFields "w") }]
 
 /-- A file of three lines of which two end in CRLF and one in a line
 feed. -/

@@ -573,12 +573,20 @@ changed the state or not (`Loop.publish`):
    `Loop.modifiedFace`. "Modified" is the presence of the field in that
    face: a buffer that is not has no such field.
    The answer is right because the histories were told their texts'
-   revisions in step 1. The minibuffer's view has another status line:
-   one field, the prompt's label, in the face
+   revisions in step 1. The minibuffer's view has another status line
+   (`Loop.promptStatus`): the prompt's label, in the face
    `Loop.promptFace`, with no name, no modified field and none of the
    scheme's fields; its cursor is the scheme's report's. That is how the
    scene shows the prompt text: the scene's shape is the display
-   contract, and it has no field for a prompt. The input is the whole text
+   contract, and it has no field for a prompt. **After the label comes one
+   field for each candidate the prompt has listed**, every one, in the
+   listing's order, in the face `Loop.candidateFace`; the chosen one, if
+   one is chosen, is in `Loop.chosenFace` instead. So the candidates the
+   typed text matches, their order and which is chosen are in the scene as
+   data, and with nothing listed the line is the label alone, as for a
+   prompt with no candidates. A face nothing defines sets nothing
+   (`Editor/Face.lean`), so the fields draw as the rest of the line does
+   until a theme or config defines the two names. The input is the whole text
    of the minibuffer's buffer, so the label is no part of it: the text
    store has no read-only range to keep a label in. The focused view is named only while the frame has
    the keyboard focus. The pending prefix is the scheme's pending keys
@@ -869,6 +877,16 @@ def modifiedMark : String :=
 def promptFace : FaceName :=
   ⟨"minibuffer.prompt"⟩
 
+/-- The face of a listed candidate's field of the minibuffer's status line,
+unless it is the chosen one. -/
+def candidateFace : FaceName :=
+  ⟨"minibuffer.candidate"⟩
+
+/-- The face of the chosen candidate's field of the minibuffer's status
+line. -/
+def chosenFace : FaceName :=
+  ⟨"minibuffer.chosen"⟩
+
 /-- A buffer's fields of the status line of a view of it: the buffer's name,
 and, while the buffer is modified, the modified field after it. A buffer
 that is not modified has no such field, not an empty one. -/
@@ -876,16 +894,24 @@ def status (buffer : Buffer) : Array StatusField :=
   #[{ text := buffer.name, face := nameFace }] ++
     if buffer.isModified then #[{ text := modifiedMark, face := modifiedFace }] else #[]
 
+/-- The fields of the minibuffer's status line for the prompt `asked`: its
+label, in `promptFace`, then one field for each candidate it has listed, in
+the listing's order, in `candidateFace`, but for the chosen one, which is
+in `chosenFace`. With nothing listed it is the label alone. -/
+def promptStatus (asked : Prompt) : Array StatusField :=
+  #[{ text := asked.label, face := promptFace }] ++
+    asked.candidates.listed.mapIdx fun index candidate =>
+      { text := candidate
+        face := if asked.candidates.chosen == some index then chosenFace else candidateFace }
+
 /-- The status line of the view `id` of `state`, which shows `buffer` and of
-which the scheme reports the fields `reported`: the prompt's label alone,
-in `promptFace`, for the minibuffer's view, and for any other the scheme's
-fields and then the buffer's (`status`). -/
+which the scheme reports the fields `reported`: for the minibuffer's view
+the prompt's label and the candidates it has listed (`promptStatus`), and
+for any other the scheme's fields and then the buffer's (`status`). -/
 def statusOf (state : EditorState) (id : ViewId) (buffer : Buffer)
     (reported : Array StatusField := #[]) : Array StatusField :=
   match state.prompt with
-  | some asked =>
-    if asked.view == id then #[{ text := asked.label, face := promptFace }]
-    else reported ++ status buffer
+  | some asked => if asked.view == id then promptStatus asked else reported ++ status buffer
   | none => reported ++ status buffer
 
 /-- The views of the loop's state, in drawing order, and the snapshots they
