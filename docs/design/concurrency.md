@@ -143,6 +143,20 @@ or to its loop (`crates/editor-render`):
   when Lean publishes a frame for the new size. Until then the old frame
   is shown at its old layout, which is the cost named above and is not
   removed.
+- A scale goes to two threads, and neither hands it to the other. The
+  main thread leaves it with the render loop as part of the target, with
+  the size; the renderer sizes its own lines and chooses its masks by
+  it. Layout is told it (`Layout::set_scale`) by the thread that lays
+  out, which is whoever publishes frames: it reads the scale off the
+  resize it pulled from the editor queue and sets it before it lays out
+  for that resize's size, under whatever guards the layout. As built
+  only the window example's editor thread does (the display pipeline's
+  phase 5); the display handle Lean publishes to is never told a scale
+  ([text-and-display.md](text-and-display.md), open questions, "A scene
+  published from Lean at its window's scale"). The render thread still
+  never lays out: a frame laid out at the old scale is drawn once on the
+  target at the new one, and the frame laid out for it follows, as with
+  a size.
 - Under the second answer the render thread would lay out and post to
   the same mailbox itself; under the third it would break the frame's
   kept lines again before it draws. Neither changes the port, the
@@ -696,27 +710,49 @@ handler never runs.
 - Linux on x86_64, and real keys on a Linux desktop under X11 and Wayland.
   The gate passes on aarch64 in a container. Windows has not been attempted
   ([lean-runtime.md](lean-runtime.md), "Build").
-- The window that draws, anywhere but in the container. What has run
-  (2026-11-14, aarch64, under Xvfb, on Mesa's software Vulkan driver;
-  `mise run linux-window`, part 4): a surface made on the main thread from
-  the window's X11 handles, configured, drawn on and presented on the
-  render thread, and dropped before the window; a fixture frame of real
-  text, read back from the surface, within 1 of 255 of the CPU's picture;
-  no frame drawn over an idle second; and a key, a named key, a key with
-  modifiers, a press, a drag, a release, a wheel turn and a resize each
-  arriving on the queue as the port documents it. What has not:
+- The window that draws, on a desktop with a person at it. What has run
+  in the container (2026-11-14, aarch64, under Xvfb, on Mesa's software
+  Vulkan driver; `mise run linux-window`, part 4): a surface made on the
+  main thread from the window's X11 handles, configured, drawn on and
+  presented on the render thread, and dropped before the window; a
+  fixture frame of real text, read back from the surface, within 1 of
+  255 of the CPU's picture; each frame laid out at the window's scale,
+  which there is 1; no frame drawn over an idle second; and a key, a
+  named key, a key with modifiers, a press, a drag, a release, a wheel
+  turn and a resize each arriving on the queue as the port documents it.
+  What has run on macOS (2026-11-14, one desktop, aarch64, Metal, one
+  display at scale 2 that refreshes at 120 hertz;
+  [on-demand-checks.md](../dev-practices/on-demand-checks.md), "What the
+  first desktop run showed"): a surface on Metal made on the main thread
+  and drawn on from the render thread; the picture, within 1 of 255 of
+  the CPU's; the refresh rate winit reports, as the window tells it to
+  its drawer; a window that opens occluded, is refused its first draws, is told it is shown,
+  and then draws once; a window on a display that is asleep, which is
+  refused two draws, is told nothing and draws nothing for the half
+  minute it stays; and a frame laid out at scale 2, with 14 points drawn
+  at 28 pixels. What has not:
 
-  - **macOS, all of it.** A surface on Metal made on the main thread and
-    drawn on from the render thread; the picture; a live resize, where
-    the content may lag the window's edge; occlusion, and that a hidden
-    window is told so; the refresh rate winit reports; the order of a
-    modifier's own press and the change that names it; Command and
+  - **macOS, with a person at it.** A run started from a terminal in
+    front; input checked line by line; a live resize, where the content
+    may lag the window's edge; a window covered and uncovered; the order
+    of a modifier's own press and the change that names it; Command and
     Option; what text Escape, Enter and a letter under Control carry; a
-    trackpad's wheel in pixels; a change of scale between two displays.
-    All of it is read in the libraries' source or compiled, none of it
-    run. The steps are in
+    trackpad's wheel in pixels. The steps are in
     [on-demand-checks.md](../dev-practices/on-demand-checks.md), "The
     window's contract, on a desktop".
+  - **Two displays, fullscreen and Spaces, on macOS.** A change of scale
+    as a window is dragged from a display at scale 2 to one at scale 1,
+    and the antialiasing changing with it; the system's fullscreen, in
+    and out, which to the editor is a burst of sizes; another Space and
+    back, which is hidden and shown; and whether the text is the size of
+    the same 14 points in another app. All of it is read in this tree
+    and in winit's source and pinned on fakes, and none of it has been
+    seen: the steps are written for the owner and not yet run
+    ([on-demand-checks.md](../dev-practices/on-demand-checks.md), "Scale
+    and fullscreen, by hand"). Two things there may show and are not
+    ours to prevent with what is built: the system stretching the last
+    picture between two sizes, and a frame of the old size on the new
+    one for a draw.
   - **Wayland**: the window, its surface, and the clipboard, which
     without the data-control protocol goes through XWayland or not at
     all. Nothing here ran a Wayland compositor.

@@ -230,6 +230,8 @@ The steps:
      window had settled: …` is printed first;
    - `window: over the whole run, <d> draws for <a> things that asked for
      one`, with `<d>` no more than `<a>`;
+   - `window: left alone <k> times, and each time the window showed what
+     was laid out for it`, with `<k>` at least 1 ("Left alone", below);
    - `window: <n> inputs came off the queue, <k> of them keys or the
      pointer`;
    - `window: the window drew the fixture frame, drew nothing it was not
@@ -249,25 +251,20 @@ hand: `cargo run --locked --package editor-ffi --example window --
 | `--no-picture` | No picture is read back and none is compared: the run prints `window: pictures were not read back (--no-picture): the picture was not checked in this run`, once, and fails for no picture. Not understood with `--require-picture`. `window-by-hand` gives it: reading a picture back and comparing it takes about half a second a draw at 1600 by 1200, which makes every step of a resize look stalled. |
 | `--family <name>` | Lays the fixture out in that family of this machine's fonts, in place of the fixture fonts, and prints `window: the fixture is laid out in <name>, of this machine's fonts` first. A family the machine has not fails the run before any window opens (`window: FAILED: this machine has no font family named <name>, of its <n> families`). No task gives it. |
 
-Two more lines are printed as the window closes, after the count of draws
-over the whole run:
-
-- `window: left alone <k> times, and each time the window showed what was
-  laid out for it`. A window is left alone when a second passes in which
-  it tells its drawer nothing, no frame is published and no draw begins
-  or ends. Each such time, if the window has not said it is hidden and a
-  frame has been presented, the draw last presented must be of a frame
-  laid out for the size and the scale the window last said, on that size
-  and scale. Otherwise the run fails: `window: FAILED: left alone from
-  <t> ms after it opened, the window showed frame <n>, laid out for <w>
-  by <h> at scale <s>, on <w> by <h> at scale <s>, when it had last said
-  it is <w> by <h> at scale <s>`. The idle second is the first such time,
-  so `<k>` is at least 1 in a run that presented a frame; a window that
-  was never left alone while it showed a frame prints `window: the window
-  was never left alone for a second while it showed a frame, so what it
-  shows when it is left alone was not judged`, which is no failure;
-- with `--no-picture`, the line of that option, in place of a line for
-  each frame's picture.
+**Left alone.** A window is left alone when a second passes in which it
+tells its drawer nothing, no frame is published and no draw begins or
+ends; the example's own idle second is the first such time. Each such
+time, if the window has not said it is hidden, a frame has been presented
+and no draw is in progress, the draw last presented must be of a frame
+laid out for the size and the scale the window last said, on that size
+and scale. Otherwise the run fails: `window: FAILED: left alone from <t>
+ms after it opened, the window showed frame <n>, laid out for <w> by <h>
+at scale <s>, on <w> by <h> at scale <s>, when it had last said it is <w>
+by <h> at scale <s>`. A window that was never left alone while it showed
+a frame prints `window: the window was never left alone for a second
+while it showed a frame, so what it shows when it is left alone was not
+judged`, which is no failure by itself. What the window shows between two
+sizes, while it is not left alone, is not judged.
 
 What the example makes of what it saw (how these options are read, which
 of them contradict each other, which findings of a picture fail which

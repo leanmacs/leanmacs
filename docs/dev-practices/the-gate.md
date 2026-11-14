@@ -64,10 +64,28 @@ What the gate does check of the window, with none open:
 - **What the window that draws makes of what it saw**, in
   `crates/editor-ffi` (`examples/window.rs`, whose unit tests `cargo
   test` runs, and which open no window): how its command line is read,
-  and which findings of a frame's picture fail the run. A picture past
-  the tolerance, of the wrong size, or that could not be read back
-  fails; a surface that does not let its texture be copied from fails
-  only a run given `--require-picture`.
+  and which of its options contradict each other; which findings of a
+  frame's picture fail the run (a picture past the tolerance, of the
+  wrong size, or that could not be read back fails; a surface that does
+  not let its texture be copied from fails only a run given
+  `--require-picture`; a run given `--no-picture` reads none and says
+  so); which sizes a frame's glyphs are drawn at, and that any size but
+  14 points times the window's scale fails; what the timeline says of
+  the masks a draw used; and which ledgers show a window left alone for
+  a second with a frame that was not laid out for the size and scale it
+  last said.
+- **Layout at a scale**, in `crates/editor-layout`, on the fake shaper:
+  that a length a face states is a point, multiplied by the scale layout
+  was last told before the shaper is asked for the font; that the same
+  theme at scale 2 gives rows twice as tall and lines twice as wide, in
+  rectangles that are still physical pixels; that the queries answer at
+  the scale; and, by the counters, that a change of scale alone shapes
+  every row a view shows again and that the scale a layout already has
+  shapes none (`tests/scale.rs`, `tests/counters.rs`). In
+  `crates/editor-render`: that several sizes told within one refresh, as
+  a window going into fullscreen tells them, are one draw on the last.
+  In `crates/editor-render-wgpu`: that a renderer says which masks its
+  last draw used.
 - **How the clipboard library's answers become the port's**, in
   `crates/editor-platform-arboard`, on values built in the tests.
 
@@ -79,9 +97,18 @@ is closing); wgpu's own calls that configure a surface, take its texture,
 copy it out and present it, since the no-op back end hands out no surface
 texture, and the few lines that forward to them
 (`crates/editor-render-wgpu`, `gpu`, `OnSurface`); and anything a real
-clipboard does. `mise run lint` forbids to
-tests the calls that open a clipboard and that make a renderer on a
-window (`crates/editor-platform-arboard/clippy.toml`,
+clipboard does. Of the scale and of fullscreen it cannot see anything a
+window or a display does: that a window's scale reaches layout (the
+example's line `14 points are <p> pixels`, checked by `mise run
+linux-window` at scale 1 and by a person at scale 2); an apparent size
+beside another app; a second display and a window moved to it; the
+system's fullscreen; another Space; or what a window shows between two
+sizes. Those are a person's to see
+([`on-demand-checks.md`](on-demand-checks.md), "Scale and fullscreen, by
+hand"), and no person has yet. `mise run lint` forbids to
+tests the calls that open a clipboard, that make a renderer on a window
+and, in `editor-ffi` as in the shaper's adapter, that read the machine's
+fonts (`crates/editor-platform-arboard/clippy.toml`,
 `crates/editor-render-wgpu/clippy.toml`, `crates/editor-ffi/clippy.toml`).
 
 The Rust half needs no Lean toolchain: `mise run test` (`cargo test

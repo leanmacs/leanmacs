@@ -268,6 +268,19 @@ built"):
   moves right and down. A resize is the new size at the scale last known,
   a change of scale a resize at the size last known, and a window reports
   its size straight after it reports that it opened. Touch is not mapped.
+- **Fullscreen is the system's, and asks nothing of Lean.** The window
+  is made with winit's default attributes, so on macOS it has the green
+  button, which puts it into the system's fullscreen on a Space of its
+  own. Nothing was written for it: going in and coming out are a burst
+  of resizes, and another Space is the window hidden and shown, each of
+  which the window already reports and tells its drawer
+  ([text-and-display.md](text-and-display.md), "The window, as built").
+  The event loop is built without winit's default menu, so there is no
+  menu item for it and no shortcut of one. A fullscreen command, which a
+  key could be bound to, needs a request from Lean to the window; no
+  request of any kind goes that way yet (`Platform` has `run` and
+  `close`), and no phase builds one. Nobody has seen a window of ours in
+  fullscreen ([concurrency.md](concurrency.md), "Still to verify").
 - **What a window tells whatever draws in it** (`Canvas`): that it
   opened, with its native window (`NativeWindow`: an AppKit view, an Xlib
   window or a Wayland surface, as plain data that names no library), its

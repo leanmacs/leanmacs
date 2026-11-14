@@ -287,9 +287,12 @@ run = ".lake/build/bin/editor window-check"
 #
 # Then it runs `editor-ffi`'s example (`crates/editor-ffi/examples/
 # window.rs`): the window that draws. The wgpu renderer draws a fixture
-# frame in the real window, on this machine's GPU; the example checks that a
-# frame was presented, that its picture is the frame's, that nothing is
-# drawn that nothing asked for, and that input arrives on the queue. Once
+# frame in the real window, on this machine's GPU; the example checks that
+# each frame is laid out at the scale the window said, that a frame was
+# presented, that its picture is the frame's, that nothing is drawn that
+# nothing asked for, that input arrives on the queue, and that the window,
+# whenever it is left alone for a second, shows what was laid out for the
+# size and scale it last said. Once
 # it prints `window: ready for input`, type, click, drag, scroll and resize
 # in the window: each input is printed. It stays 20 seconds or until it is
 # closed (`-- --seconds <n>` does not reach it: run the example by hand for

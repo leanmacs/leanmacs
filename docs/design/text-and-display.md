@@ -1168,7 +1168,44 @@ part are in the module docs; these are the decisions.
   length, each to the nearest 64th of a pixel) as it asks the shaper for
   the font's id. The `Shaper` port, its fake, its contract and the real
   adapter are unchanged and in physical pixels. A frame and the answers
-  of the queries are in physical pixels at the scale last set.
+  of the queries are in physical pixels at the scale last set, so a
+  query after a change of scale answers at the new one with no frame
+  between.
+  - **In the cache key, as the font.** A kept row is used again only with
+    the font runs it was shaped with, and a font's id is the shaper's for
+    the physical spec. At another scale every run is in another font, so
+    each kept row is shaped again when a frame or a query next reaches
+    it, and the status row likewise. Nothing has a scale stored on it.
+    Two things are not keyed by a font and are handled by hand: the
+    styles kept by stack of faces are dropped on a change, and the base
+    font is found again. A theme of 28 points at scale 1 and one of 14 at
+    scale 2 share their rows.
+  - **What the counters show.** Over the frame after a change of scale
+    alone, `shaped` grows by the rows the view shows and `reused` by
+    none; over the same frame once more, `reused` by those rows and
+    `shaped` by none. Setting the scale a layout already has shapes
+    nothing. The status row is no segment and is not in the counters: the
+    fake's count of bytes shaped shows it shaped again
+    (`tests/counters.rs`).
+  - **Where no window exists the scale is 1**, which is the identity: the
+    spec handed to the shaper is the spec the faces resolve to. So the
+    headless display, Lean's display contract, `tests/display/
+    frame.expected` and the renderer's reference image are what they
+    were, and no fixture changed.
+  - **No rounding of layout's own.** Any positive scale is taken,
+    fractional ones among them, and a row is as tall as the shaper makes
+    a line of the font. On the fake that is exact and linear: at scale 2
+    every length is twice (`tests/scale.rs`). On the real shaper a line's
+    height and baseline are whole pixels, by Parley's own quantising at
+    the physical size, so a row at scale 2 is twice a row at scale 1 to
+    within a pixel: 14 points of the fixture's Noto Sans are rows 19, 24,
+    28 and 38 pixels tall at scales 1, 1.25, 1.5 and 2, with line widths
+    in exact proportion (seen in a spike, pinned by no test).
+  - **Who tells layout the scale** is whoever owns the layout. So far
+    that is one caller outside tests, the window example's editor thread
+    ("The window, as built"). The display handle Lean publishes to is
+    never told one and lays out at 1 (open questions, "A scene published
+    from Lean at its window's scale").
 - **Decorations.** A source gives the spans of a range of a snapshot and is
   asked only for the rows laid out. Selections and the scene's decorations
   are the first two; a range with equal ends of an exclusive, an inclusive
@@ -1389,7 +1426,14 @@ and the journal read from Lean.
   subpixel masks below 2 physical pixels to a logical one, plain masks
   from 2 up. The order of a display's colour stripes cannot be asked of
   the window system, so it is a setting too (red, green, blue unless
-  told otherwise). Hinting is on, as a setting.
+  told otherwise). Hinting is on, as a setting. A renderer says which
+  kind of mask its last draw asked its glyph images in (`masks()` on
+  both adapters: plain, or subpixel with the order of the stripes; none
+  before a first draw). It is what the draw did, kept as it did it, and
+  not the rule applied again by a caller; the kind says itself for a
+  person, so nothing downstream matches on it. The window example prints
+  it for each draw, which is how a change of antialiasing between two
+  displays is seen.
 - **The scale changes what the renderer sizes, and nothing else.** A
   frame is in physical pixels and so is a target. What the renderer
   itself sizes is `max(1, round(scale))` pixels thick: an underline, a
@@ -1488,7 +1532,47 @@ window is still run with nothing drawing in it. The threads are in
   time (seen), since winit says it at each step of building the window.
   A resize says how large the window is, not that it changed; the same
   size is no demand to the render loop, and a frame equal to the one
-  shown is none either.
+  shown is none either. The scale goes two ways from the window, and
+  they have nothing in common. The render loop is told it with the size,
+  as its target's, and the renderer uses it for the thickness of the
+  lines it sizes and for the kind of mask. Layout is told it by whoever
+  lays out for the window, with `Layout::set_scale`, before it lays out
+  for that size: in this phase that is the window example's editor
+  thread, which reads the scale off the resize it pulled from the queue,
+  and nothing else. Lean is handed the scale in the `resize` event and
+  reads it nowhere. Between the window saying a new scale and the frame
+  laid out for it arriving, a frame laid out at the old scale may be
+  drawn once on the target at the new one: the same transient as a frame
+  of the old size on a new one, and no longer.
+- **Native fullscreen and Spaces need no code of their own.** The window
+  is made with winit's default attributes, which are resizable and
+  titled, and on macOS such a window has the green button, which puts it
+  into the system's fullscreen on a Space of its own. The event loop is
+  built without winit's default menu, so a fullscreen shortcut that is a
+  menu item's is not there: the button is the way in. To the editor it
+  is a burst of sizes: winit reports each change of the content view's
+  frame as a resize, the adapter reports it and tells the drawer, the
+  render loop draws the frame shown on the newest size at most once a
+  refresh (several sizes within a refresh are one draw, on the last),
+  and the surface is configured again before a draw of another size. A
+  window on another Space is occluded: it is told as hidden, nothing is
+  drawn while it is, and it is drawn once when it is shown if anything
+  was asked meanwhile. All of that is read, in this tree and in winit,
+  and each step is pinned on fakes; **nobody has seen a window of ours
+  enter fullscreen, move between displays or change Space.** Two things
+  cannot be promised by a resize alone. Between a change of size and the
+  next picture presented at it, the system stretches the last picture to
+  the layer's new bounds (the default contents gravity of the Metal
+  layer wgpu makes: read). And the loop's first draw on a new size is of
+  the frame laid out for the old one, with the target cleared to black
+  where that frame has no view, until the frame for the new size
+  arrives. Each lasts a draw or two; whether either shows during the
+  system's animation is for a person to see
+  ([on-demand-checks.md](../dev-practices/on-demand-checks.md), "Scale
+  and fullscreen, by hand"). Changing the first is a call on the layer,
+  and the second is who lays out on a resize
+  ([concurrency.md](concurrency.md)); neither is built. A fullscreen
+  command needs a request from Lean to the window, which nothing builds.
 - **The refresh rate is read after the events that can change it.** winit
   has no event for it. A window comes to be on another display by being
   moved, resized or rescaled, so after each the translation asks the
@@ -1533,7 +1617,16 @@ window is still run with nothing drawing in it. The threads are in
   as documented, and the clipboard keeps its contract in one process and
   across two ([on-demand-checks.md](../dev-practices/on-demand-checks.md),
   "The window on Linux, on demand"). That task, and not the gate, is
-  what confirms a window draws and a clipboard round-trips.
+  what confirms a window draws and a clipboard round-trips. There the
+  example also fails unless each frame's glyphs are drawn at 14 points
+  times the scale the window said, which at Xvfb's scale of 1 is 14
+  pixels, and unless the window, each time it is left alone for a
+  second, shows a frame laid out for the size and scale it last said.
+  What the gate holds of the scale is layout's arithmetic and its cost,
+  on the fake shaper, and what the example makes of what it saw, in its
+  unit tests. What neither holds is for a person: an apparent size
+  beside another app, a second display at another scale, fullscreen and
+  Spaces. Those steps are written down and have not been run.
 
 ### The frame is device-independent
 
@@ -1784,13 +1877,56 @@ frame journal and the renderer's counters.
   the view's whole height. Nothing was added to the display contract for
   it. The command loop's view commands are the first caller that needs it;
   a query for a view's text area, or the status row's height in an
-  answer, would settle it.
+  answer, would settle it. It has to be a query's answer: since a
+  theme's lengths are points, Lean could not work the height out from
+  the theme without multiplying by the window's scale, and Lean
+  multiplies nothing and knows no scale for faces.
 - **Sizes and the window's scale factor** (answered): a theme states its
   lengths in logical points, and layout multiplies them by the scale
   factor of the target it lays out for, before shaping ("Decorations", as
   built, "A length a face states is in logical points"; "Layout and
   rendering", as built, "The scale"). The real shaper still takes sizes
   as physical pixels, and hints nothing.
+- **A scene published from Lean at its window's scale.** Layout can lay
+  out at a scale, and the display handle Lean publishes to is never told
+  one: it has no window behind it, and lays out at 1. So until a window
+  draws what Lean publishes (the display pipeline's phase 6), the
+  editor's own text is not laid out at its window's scale, and on a
+  display at scale 2 it would be half the size it should be. Two ways
+  are open, and `Layout::set_scale` serves both. Inside the library:
+  `editor-ffi` keeps the scale the window last said where the display
+  can read it, written as the resize is pushed on the queue, and the
+  display sets it under layout's lock before each publish and each
+  query. Lean's scene, the wire, the display interface and its model do
+  not change, and Lean never handles a scale; a scene whose rectangles
+  Lean computed for one size may then be laid out at the scale of a
+  later one, for the one publish before Lean reads the newer resize.
+  Through Lean: the scene gains a scale beside its size, or the display
+  interface a call, and Lean passes on the number it got with the
+  resize; the rectangles and the scale then always belong together, and
+  Lean's scene, which is the command loop's contract, and the wire
+  change. The plan of the display pipeline's phase 5 recommends the
+  first. It awaits the owner, and phase 6's description does not name
+  it yet.
+- **A kept row's height in the estimate, after a change of font or of
+  scale.** `Layout::height_estimate` counts a kept row at the height it
+  was last laid out at, without asking whether it would be laid out the
+  same now. After a change of the default face's font, and after a
+  change of scale, every kept row is such a row until a frame or a query
+  reaches it again, so the estimate is of the old heights for the rows
+  kept and of the new one for the rest (seen in a spike: 84 where 112 is
+  right). Nothing outside layout's own tests calls the estimate yet.
+  Dropping everything kept when the scale changes would also settle it
+  for a change of scale, at the cost of shaping rows a view may not show
+  again; it is the first reason to prefer that to keeping the scale in
+  the key as the font.
+- **The names of a face's lengths.** `Pixels`, `Pixels.whole` and
+  `LineHeight.pixels` in Lean, and `Length::pixels` and
+  `LineHeight::Pixels` in Rust, name a unit a face's lengths are no
+  longer in. Their documentation says so in each place; a reader of code
+  alone can be misled. Renaming them touches every theme, config's
+  faces and the wire's documentation for no change of behaviour, and
+  awaits the owner.
 - **Right-to-left geometry.** Layout's cells have no direction, since
   the port's glyph carries none. So three things are not right for
   right-to-left text: the cells of a right-to-left cluster of several
@@ -1823,9 +1959,16 @@ frame journal and the renderer's counters.
   offers is still what was read. The measurements are phase 6's
   ([rendering-prior-art.md](rendering-prior-art.md), "Present mode and
   pacing").
-- **The window draws only in the container.** The surface, the render
-  thread and the window's translation have run on Linux under Xvfb and
-  nowhere else: not on macOS, not on Wayland, not on a real display
+- **Where the window has drawn, and where it has not.** The surface, the
+  render thread and the window's translation run on Linux under Xvfb, in
+  a container, whenever `mise run linux-window` is run. On macOS the
+  window that draws has been run on one desktop, on Metal, on one
+  display at scale 2: its picture matched the headless renderer's within
+  1 of 255, and what failed there was the check's and has been changed
+  ([on-demand-checks.md](../dev-practices/on-demand-checks.md), "What
+  the first desktop run showed"). Not seen anywhere: a display at scale
+  1 beside one at scale 2 and a window moved between them, the system's
+  fullscreen, another Space, a resize by hand, Wayland, x86_64
   ([concurrency.md](concurrency.md), "Still to verify").
 - **The window's choices await the owner**: that the render thread draws
   and the main thread does not; that the window tells what draws in it
