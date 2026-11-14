@@ -1,6 +1,20 @@
-//! The settings a renderer is made with.
+//! The settings a renderer is made with, and how it says what it made of
+//! them.
 
-use crate::{Antialiasing, DEFAULT_ATLAS_BUDGET, PAGE_SIZE, Settings, SubpixelOrder};
+use crate::{Antialiasing, DEFAULT_ATLAS_BUDGET, Masks, PAGE_SIZE, Settings, SubpixelOrder};
+
+#[test]
+fn a_kind_of_mask_says_itself_for_a_person() {
+    assert_eq!(Masks::Plain.to_string(), "plain masks");
+    assert_eq!(
+        Masks::Subpixel(SubpixelOrder::Rgb).to_string(),
+        "subpixel masks, red first"
+    );
+    assert_eq!(
+        Masks::Subpixel(SubpixelOrder::Bgr).to_string(),
+        "subpixel masks, blue first"
+    );
+}
 
 #[test]
 fn the_default_settings_leave_antialiasing_to_the_display_and_hint() {

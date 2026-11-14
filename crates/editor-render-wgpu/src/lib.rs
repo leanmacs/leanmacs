@@ -416,6 +416,20 @@ pub enum Masks {
     Subpixel(SubpixelOrder),
 }
 
+/// The kind for a person, to end a sentence that says how glyphs were
+/// drawn: `plain masks`, or `subpixel masks, red first`. Whatever prints
+/// a kind prints this, so that a kind added here needs no other crate
+/// changed.
+impl fmt::Display for Masks {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(match self {
+            Self::Plain => "plain masks",
+            Self::Subpixel(SubpixelOrder::Rgb) => "subpixel masks, red first",
+            Self::Subpixel(SubpixelOrder::Bgr) => "subpixel masks, blue first",
+        })
+    }
+}
+
 /// The order of the colour stripes of a display's pixels, from left to
 /// right. No window system the editor runs on says which a display has,
 /// so it is a setting.
