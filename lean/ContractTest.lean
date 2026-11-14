@@ -1,4 +1,6 @@
 import Editor.Api.Cases
+import Editor.Clipboard.Contract
+import Editor.Clipboard.InProcess
 import Editor.Command.Model
 import Editor.Command.Real
 import Editor.Display.Contract
@@ -79,6 +81,16 @@ two cell sizes `model-test` runs it at against the model
 (`displayFailures`). `recorderChecks` pins what only the recorder shows:
 that it keeps and counts what is published, and that it reads the table of
 snapshots as it is when asked.
+
+The clipboard interface's contract (`Editor/Clipboard/Contract.lean`) is run
+against the clipboard a host with no window keeps
+(`Editor/Clipboard/InProcess.lean`), one clipboard for the whole list, so
+each property finds what the one before it left (`clipboardFailures`).
+`model-test` runs the same list against the model. `clipboardChecks` pins
+what the contract cannot: that a new one holds no text, and, with a command
+run against the library, that the command's clipboard requests go to the
+handler it was handed, and are each answered `unavailable` when it was
+handed none.
 
 The watch port's contract (`Editor/Watch/Contract.lean`) is run against its
 real binding (`Editor/Watch/Real.lean`), over the library's interrupt flag
@@ -827,6 +839,66 @@ def recorderChecks : List Check :=
             | .error .noSuchSnapshot => true
             | _ => false }]
 
+/-- The names of the clipboard interface's contract properties that do not
+hold of the clipboard a host with no window keeps: one clipboard for the
+whole list, so each property finds what the one before it left. -/
+def clipboardFailures : IO (List String) := do
+  let clipboard ← Clipboard.InProcess.new
+  let failed ←
+    ClipboardContract.failures
+        (fun property => Program.runM (port := clipboardPort) clipboard.handle property.holds)
+        ClipboardContract.properties
+  return failed.map (s!"the in-process clipboard: {·}")
+
+/-- A command that reads the clipboard, writes `text` to it and reads it
+again: the three replies. -/
+def clipboardRound (text : String) :
+    EditorM
+      (Except ClipboardError (Option String) ×
+        Except ClipboardError Unit × Except ClipboardError (Option String)) :=
+  do
+  let before ← Clipboard.read
+  let written ← Clipboard.write text
+  return (before, written, ← Clipboard.read)
+
+/-- What the contract cannot show of the clipboard a host with no window
+keeps, and where a command's clipboard requests go when it is run against
+the library. -/
+def clipboardChecks : List Check :=
+  [{  name := "a new in-process clipboard holds no text, and holds what was written to it last"
+      run := do
+        let clipboard ← Clipboard.InProcess.new
+        let before ← clipboard.held?
+        let first ← clipboard.handle (.write "first")
+        let second ← clipboard.handle (.write "second")
+        return before.isNone && first matches .ok () && second matches .ok () &&
+            (← clipboard.held?) == some "second" },
+    { name :=
+        "a command run against the library with no clipboard handed in is answered unavailable for a read and for a write"
+      run := do
+        let table ← Snapshots.new
+        let (result, _) ← (clipboardRound "x").runReal (.over table) (← recorderOf table).handle
+        return match result with
+          | .ok (.error .unavailable, .error .unavailable, .error .unavailable) => true
+          | _ => false },
+    { name :=
+        "a command run against the library with the in-process clipboard handed in reads what it wrote, and a later command reads it too"
+      run := do
+        let table ← Snapshots.new
+        let display := (← recorderOf table).handle
+        let clipboard ← Clipboard.InProcess.new
+        let (first, texts) ←
+          (clipboardRound "kept").runReal (.over table) display (clipboard := clipboard.handle)
+        let (second, _) ←
+          EditorM.runReal (Clipboard.lift Clipboard.read) texts display (clipboard :=
+              clipboard.handle)
+        return (match first with
+            | .ok (.ok none, .ok (), .ok (some "kept")) => true
+            | _ => false) &&
+            match second with
+            | .ok (.ok (some "kept")) => true
+            | _ => false }]
+
 /-- Runs a property of the watch port's contract against the real binding
 over `timers`. The library is told the interrupt key, and the property's
 interrupt keys arrive through the library's window input, as a window's
@@ -1015,6 +1087,9 @@ def main : IO UInt32 := do
   let displayFailed ← ContractTest.displayFailures
   let recorderChecks := ContractTest.recorderChecks
   let recorderFailed ← ContractTest.checkFailures recorderChecks
+  let clipboardFailed ← ContractTest.clipboardFailures
+  let clipboardChecks := ContractTest.clipboardChecks
+  let clipboardCheckFailed ← ContractTest.checkFailures clipboardChecks
   let watchFailed ← ContractTest.watchFailures services.timers
   let watchChecks := ContractTest.watchChecks services.timers
   let watchCheckFailed ← ContractTest.checkFailures watchChecks
@@ -1027,6 +1102,8 @@ def main : IO UInt32 := do
       caseFailed ++
       displayFailed ++
       recorderFailed ++
+      clipboardFailed ++
+      clipboardCheckFailed ++
       watchFailed ++
       watchCheckFailed ++
       apiFailed ++
@@ -1036,6 +1113,6 @@ def main : IO UInt32 := do
   unless failed.isEmpty do
     IO.Process.exit 1
   IO.println
-      s!"contract-test: {properties.length + adoptProperties.length} properties hold of the real text binding, {cases.length} cases of the undo tree hold over it, and its documents and snapshots are freed when released and with its table; {Editor.JobContract.properties.length} properties hold of the job runner over the timer service, and {Editor.JobContract.fileProperties.length} file properties over the file service, on real files; {checks.length} checks of the timer service passed, {fileChecks.length} of the file service, {Editor.FileCases.cases.length} cases across the text port and the job port hold of the binding and the file service; {(Editor.DisplayContract.properties { advance := 1, lineHeight := 1 }).length} properties of the display interface hold of the recorder over real snapshots in cells of {ContractTest.displayCells.length} sizes, and {recorderChecks.length} checks of the recorder passed; {Editor.WatchContract.properties.length} properties of the watch port hold of its real binding, and {watchChecks.length} checks of it passed; {Editor.ApiCases.cases.length} cases of the editor API hold of the real text binding; and quit ended the pump"
+      s!"contract-test: {properties.length + adoptProperties.length} properties hold of the real text binding, {cases.length} cases of the undo tree hold over it, and its documents and snapshots are freed when released and with its table; {Editor.JobContract.properties.length} properties hold of the job runner over the timer service, and {Editor.JobContract.fileProperties.length} file properties over the file service, on real files; {checks.length} checks of the timer service passed, {fileChecks.length} of the file service, {Editor.FileCases.cases.length} cases across the text port and the job port hold of the binding and the file service; {(Editor.DisplayContract.properties { advance := 1, lineHeight := 1 }).length} properties of the display interface hold of the recorder over real snapshots in cells of {ContractTest.displayCells.length} sizes, and {recorderChecks.length} checks of the recorder passed; {Editor.ClipboardContract.properties.length} properties of the clipboard interface hold of the in-process clipboard, and {clipboardChecks.length} checks of it passed; {Editor.WatchContract.properties.length} properties of the watch port hold of its real binding, and {watchChecks.length} checks of it passed; {Editor.ApiCases.cases.length} cases of the editor API hold of the real text binding; and quit ended the pump"
   (← IO.getStdout).flush
   IO.Process.exit 0

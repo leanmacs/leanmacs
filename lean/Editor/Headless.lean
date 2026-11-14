@@ -1,3 +1,4 @@
+import Editor.Clipboard.InProcess
 import Editor.Config.Directory
 import Editor.Config.Elaborate
 import Editor.Config.Reload
@@ -30,7 +31,8 @@ editor queue and handles one event to its end before the next. It owns the
 config half of the editor's state (`Config.State`) and the table of texts
 (`RealTexts`), feeds the reload reducer (`Config.step`) and performs its
 effects, and runs the command loop's programs with `EditorM.runReal`, with
-a display recorder (`Editor/Display/Recorder.lean`) as the display. Every
+a display recorder (`Editor/Display/Recorder.lean`) as the display and a
+clipboard of its own (`Editor/Clipboard/InProcess.lean`). Every
 command it runs, it runs through the command loop ("The editor loop").
 
 A reload does not run on the editor thread. The reducer's `start` effect
@@ -172,6 +174,12 @@ as before, so reload and job completion work as they did.
   8 pixels across and 16 down (`cells`), over the table of snapshots the
   text binding publishes: it keeps the last scene and counts them, and the
   `scene` request prints it.
+- **The clipboard is the host's own** (`Editor/Clipboard/InProcess.lean`):
+  with no window system there is no system clipboard, so the host keeps a
+  text in the process and answers every command's clipboard requests from
+  it, a key's, a command's run by name and a finished job's alike. What one
+  command writes the next reads; no other program sees it, and it starts
+  holding no text.
 
 The collaborators are handed in (`Collaborators`): the elaborator and the
 source of the config session, `emit`, the port every line of output goes
@@ -208,7 +216,7 @@ the arguments the command gave. `setup` starts none.
   (`JobSnapshotId.adopt`, `JobSnapshotId.toText`), and the job is settled
   once the delivery has run, which releases what it held. It hands
   `finishWith` what its loop watches (`Running.watch`), so the command's
-  guard asks the library's interrupt flag. A job that failed or was
+  guard asks the library's interrupt flag, and its clipboard. A job that failed or was
   cancelled settled itself.
 - **A reload that installs cancels the old config's jobs**: the reducer's
   `cancelJobs` effect, performed before the reload's report, takes the
@@ -594,6 +602,9 @@ structure Running (σ : Type) (scheme : InputScheme) where
   /-- The display: with no window, a recorder of what is published, over the
   snapshots `texts` publishes. -/
   display : DisplayRecorder
+  /-- The clipboard: with no window system, one the host keeps in the
+  process, which every command it runs reaches. -/
+  clipboard : Clipboard.InProcess
   /-- The editor loop's frame: none until the first event the loop takes or
   the first command it runs. -/
   frame : Option (Loop scheme) := none
@@ -700,8 +711,9 @@ def drop (collaborators : Collaborators σ scheme) (interrupt : Bool) : IO Unit 
   (Loop.lowerFor interrupt).runM (watch collaborators)
 
 /-- Runs `program`, a program of the editor loop, against the library, with
-the recorder as the display and the library's interrupt flag and the jobs'
-clock as what it watches, and hands back its result. The loop's own
+the recorder as the display, the library's interrupt flag and the jobs'
+clock as what it watches and the host's own clipboard, and hands back its
+result. The loop's own
 programs put a refusal in the echo area and are not refused
 (`Editor/Loop.lean`, "When publishing is refused"). One that is refused all
 the same is never dropped in silence: it is printed,
@@ -711,6 +723,7 @@ def attempt {α : Type} (collaborators : Collaborators σ scheme) (running : Run
     (program : EditorM α) : IO (Option α × Running σ scheme) := do
   let (result, texts) ←
     program.runReal running.texts running.display.handle (watch := watch collaborators)
+        (clipboard := running.clipboard.handle)
   match result with
   | .ok value =>
     return (some value, { running with texts })
@@ -865,7 +878,9 @@ not run.
 
 The delivery is run by `Job.finishWith`, which hands the run what the job
 held and settles the job once it has run, with what the loop's programs
-watch (`watch`): the command's guard asks the library's interrupt flag. -/
+watch (`watch`): the command's guard asks the library's interrupt flag. It
+is handed the host's clipboard too, so a job's command reaches the one a
+key's does. -/
 def ended (collaborators : Collaborators σ scheme) (running : Running σ scheme) (id : Nat) :
     IO (Running σ scheme) := do
   let (result, jobs) ← running.jobs.finish id
@@ -883,7 +898,7 @@ def ended (collaborators : Collaborators σ scheme) (running : Running σ scheme
     let (result, texts) ←
       Job.finishWith collaborators.held entry.handle
           (frame.deliver (running.keys collaborators) label command) running.texts
-          running.display.handle (watch collaborators)
+          running.display.handle (watch collaborators) running.clipboard.handle
     let running := { running with texts }
     match result with
     | .ok stepped =>
@@ -1044,13 +1059,15 @@ def compiled {σ : Type} {scheme : InputScheme} (collaborators : Collaborators �
 
 /-- What the editor thread holds as its loop starts: the compiled registry
 (`compiled`), no texts, a recorder in `cells` over the table of snapshots
-the text binding publishes, no jobs and no frame. -/
+the text binding publishes, a clipboard that holds no text, no jobs and no
+frame. -/
 def Running.new {σ : Type} {scheme : InputScheme} (collaborators : Collaborators σ scheme) :
     IO (Running σ scheme) :=
   return {
       config := { registry := compiled collaborators }
       texts := RealTexts.over collaborators.published
       display := ← DisplayRecorder.new cells collaborators.published.reader
+      clipboard := ← Clipboard.InProcess.new
       jobs := { services := collaborators.services } }
 
 /-- The editor thread: pulls the editor queue and handles each event to its

@@ -63,7 +63,8 @@ the job held, then settles the job. The program it is handed is the
 caller's: the headless host hands it the command loop's delivery of the
 job's command (`Loop.deliver`, `Editor/Headless.lean`), with what its loop
 watches, so the command is guarded against the library's interrupt flag as
-a key's is.
+a key's is, and with its clipboard, so the command reaches the clipboard a
+key's does.
 
 ## The pump
 
@@ -294,13 +295,18 @@ adopted outlives that: the store holds the library's object too.
 
 `watch` is what a guard in the program asks. By default nothing is watched
 (`Watch.idle`), as for any command run where no loop dispatched it; a host
-whose loop delivers the command hands in what its loop watches. -/
+whose loop delivers the command hands in what its loop watches.
+
+`clipboard` answers the program's clipboard requests. By default there is
+none (`Clipboard.unavailable`), as for any command run where no host handed
+one in; a host hands in the clipboard its loop's commands reach. -/
 def finishWith {α : Type} (held : HeldSnapshots) (handle : Handle) (command : EditorM α)
-    (texts : RealTexts) (display : DisplayHandler) (watch : WatchHandler := Watch.idle) :
-    IO (Except TextError α × RealTexts) := do
+    (texts : RealTexts) (display : DisplayHandler) (watch : WatchHandler := Watch.idle)
+    (clipboard : ClipboardHandler := Clipboard.unavailable) : IO (Except TextError α × RealTexts) :=
+  do
   let arrived ← (← handle.holding).filterMapM fun id => return (← held.find? id).map (id, ·)
   try
-    command.runReal texts display arrived watch
+    command.runReal texts display arrived watch clipboard
   finally
     handle.settle
 

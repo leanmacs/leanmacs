@@ -1617,6 +1617,7 @@ def scriptChecks (context : Context) : List Check :=
         let running : Headless.Running Config.Elaborate.State TestScheme.scheme :=
           { texts := RealTexts.over collaborators.published
             display := ← DisplayRecorder.new Headless.cells collaborators.published.reader
+            clipboard := ← Clipboard.InProcess.new
             jobs := { services := collaborators.services } }
         let (refused, running) ←
           running.attempt collaborators do
@@ -2137,6 +2138,28 @@ def givingUpChunk : String :=
     giveUp \"no can do\"
 "
 
+/-- A chunk whose `setup` registers two commands and a job. `copy` writes a
+text to the clipboard. `paste` puts the text the clipboard holds in the
+echo area, or says what it was answered instead. `courier` sleeps 10 ms, and
+its command says the text the clipboard holds after `courier read`. -/
+def clipboardChunk : String :=
+  "def held : EditorM String := do
+  match ← Clipboard.read with
+  | .ok (some text) => return text
+  | .ok none => return \"no text\"
+  | .error .unavailable => return \"no clipboard\"
+
+def setup : SetupM Unit := do
+  command \"copy\" do
+    match ← Clipboard.write \"kept by the host\" with
+    | .ok () => message \"written\"
+    | .error .unavailable => message \"no clipboard\"
+  command \"paste\" do
+    message (← held)
+  job \"courier\" (fun _ => sleep 10) fun _ => do
+    message s!\"courier read {← held}\"
+"
+
 /-- What compiled code hands the host of the compiled job check: the job
 `nap`, which sleeps 10 ms on the job clock and whose command inserts
 `napped` at the cursor of view 0, and the command `rest`, which starts
@@ -2190,6 +2213,26 @@ def hostLoopChecks (context : Context) : List Check :=
           return (← session.lines) ==
                 #["reload 1: installed, 1 chunks, 1 commands", "run quitter: gave up: no can do"] &&
               (← session.scene) == ("quitter: no can do".quote, #[viewLine "abcd" 4]) },
+    { name :=
+        "the host keeps a clipboard of its own: before a write a command of config's reads no text, after one command wrote a text the next reads it, and so does a finished job's command"
+      run :=
+        withHost context [("config.lean", clipboardChunk)] fun session => do
+          session.ask [.reload]
+          session.ask [.run "paste"]
+          let (empty, _) ← session.scene
+          session.ask [.run "copy"]
+          let (written, _) ← session.scene
+          session.ask [.run "paste"]
+          let (pasted, _) ← session.scene
+          session.ask [.spawn "courier"]
+          unless ← eventually (return (← session.clock.waiting) == 1) do
+            return false
+          session.clock.advance 10
+          let joined ← session.host.join patience
+          return empty == "no text".quote && written == "written".quote &&
+              pasted == "kept by the host".quote &&
+              joined == .settled &&
+              (← session.scene).1 == "courier read kept by the host".quote },
     { name :=
         "the driver's run of a command is guarded: with the interrupt key arrived the command that loops over requests is stopped, the output says it was interrupted, and the flag is down once the loop has taken the key"
       run :=
