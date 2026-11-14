@@ -186,10 +186,30 @@ The steps:
      picture that could not be read back for any other reason is a
      failure (`window: FAILED: frame <n>'s picture could not be read
      back: …`);
+   - the timeline, one line for each thing that asked for a draw and for
+     each draw, in the order they happened: `window: at <t> ms: <what>`,
+     with `<t>` the time since the window told its drawer it opened.
+     `<what>` is one of: `the window told its drawer it opened, <w> by
+     <h> at scale <s>, on a display that refreshes <r> thousandths of a
+     hertz`; `the window told its drawer it is <w> by <h> at scale <s>`;
+     `the window told its drawer it is damaged`; `the window told its
+     drawer <Hidden(true), Hidden(false), Refresh(..) or Closing>`;
+     `frame <n> was published`, with `again` when it is equal to the one
+     before; `draw <n> began, of frame <f> on <w> by <h> at scale <s>,
+     for <a frame not yet shown, a size not yet drawn at, damage>`;
+     `draw <n> ended, presented` or `not presented`; `the idle second
+     began` and `ended`. No draw may say `for nothing that was asked`;
+   - for each frame presented, `window: the journal's frame <n> answers
+     something asked <t> ms after the window opened: its draw began at
+     <t> ms and it was presented at <t> ms`: the render loop's own
+     account, to hold against the timeline;
    - `window: idle: over 1 s in which nothing was published, 0 frames
      were drawn and the window asked for 0` (a system that uncovers the
      window in that second may ask for a frame or two, and as many are
-     then drawn);
+     then drawn). The second begins once the window has drawn what was
+     asked of it as it opened; if five seconds pass and it has not, the
+     second begins anyway and `window: idle: the second began before the
+     window had settled: …` is printed first;
    - `window: over the whole run, <d> draws for <a> things that asked for
      one`, with `<d>` no more than `<a>`;
    - `window: <n> inputs came off the queue, <k> of them keys or the
