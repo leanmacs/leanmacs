@@ -1286,6 +1286,32 @@ fn compare(picture: &Image, expected: &Image, target: Target) -> Picture {
     }
 }
 
+/// The renderer's settings for this window: the platform's weight of
+/// text, and plain masks where the adapter cannot blend by a coverage for
+/// each channel (`per_channel`).
+///
+/// Where the platform draws with Core Text (`matches_core_text`, which
+/// the caller sets on macOS), text is drawn to Core Text's weight
+/// ([`Settings::core_text`]); everywhere else it keeps the default,
+/// linear light and the outlines as they are. This is the one place the
+/// target system is asked: whatever later makes the editor's own
+/// renderer applies the same rule.
+fn settings(per_channel: bool, matches_core_text: bool) -> Settings {
+    let platform = if matches_core_text {
+        Settings::core_text()
+    } else {
+        Settings::default()
+    };
+    if per_channel {
+        platform
+    } else {
+        Settings {
+            antialiasing: Antialiasing::Grayscale,
+            ..platform
+        }
+    }
+}
+
 /// A renderer on `window`, checked: each frame it presents is read back
 /// and compared when `read` says so. The error is why there is none.
 fn renderer(
@@ -1294,6 +1320,10 @@ fn renderer(
     read: bool,
 ) -> Result<Checked, String> {
     let window = window.ok_or("the platform named no native window to draw in")?;
+    // Its antialiasing is the device's to settle: one that cannot blend
+    // by a coverage for each channel draws plain masks whatever it is
+    // told. What it is told that matters is the weight and the hinting.
+    let macos = cfg!(target_os = "macos");
     // SAFETY: the window port tells of `window` when it opens, on this
     // thread, and it stays live until the drawer returns from being told
     // the window is closing. The session drops this renderer, on this
@@ -1302,7 +1332,7 @@ fn renderer(
         clippy::disallowed_methods,
         reason = "this example is the one place a renderer is made on a window: it is the window's check, run on demand"
     )]
-    let made = unsafe { WgpuRenderer::on_window(window, Settings::default()) };
+    let made = unsafe { WgpuRenderer::on_window(window, settings(true, macos)) };
     let mut gpu = made.map_err(|error| error.to_string())?;
     // A run that reads no picture asks the renderer to keep none: a draw
     // then costs what the editor's own would, and not a read-back more.
@@ -1313,20 +1343,14 @@ fn renderer(
         gpu.per_channel()
     ));
     // An adapter that cannot blend by a coverage for each channel draws
-    // plain masks whatever it is asked: so must what it is compared with.
-    let settings = if gpu.per_channel() {
-        Settings::default()
-    } else {
-        Settings {
-            antialiasing: Antialiasing::Grayscale,
-            ..Settings::default()
-        }
-    };
+    // plain masks whatever it is asked: so must what it is compared with,
+    // at the same weight.
+    let compared = settings(gpu.per_channel(), macos);
     Ok(Checked {
         gpu,
         read,
         copies,
-        headless: HeadlessRenderer::new(settings),
+        headless: HeadlessRenderer::new(compared),
         shared: Arc::clone(shared),
     })
 }
@@ -1821,7 +1845,21 @@ mod tests {
     use editor_render::fake::RecordingRenderer;
     use editor_render::journal::Entry;
     use editor_render::port::{DrawRequest, Renderer, Target};
-    use editor_render_wgpu::{Masks, SubpixelOrder};
+    use editor_render_wgpu::{Antialiasing, Masks, Settings, SubpixelOrder};
+
+    use super::settings;
+
+    #[test]
+    fn the_window_draws_to_core_texts_weight_where_it_matches_core_text_and_linear_elsewhere() {
+        let plain = |settings: Settings| Settings {
+            antialiasing: Antialiasing::Grayscale,
+            ..settings
+        };
+        assert_eq!(settings(true, false), Settings::default());
+        assert_eq!(settings(false, false), plain(Settings::default()));
+        assert_eq!(settings(true, true), Settings::core_text());
+        assert_eq!(settings(false, true), plain(Settings::core_text()));
+    }
 
     use super::{
         Draw, Entered, Findings, Happened, IDLE_ASKS, Idle, Ledger, Options, Picture, Served,
