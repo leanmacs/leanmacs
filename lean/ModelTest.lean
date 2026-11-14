@@ -15862,6 +15862,8 @@ def repeatRows : List (String × String × String) :=
     ("c c X <Escape> j .", "|ab\ncd\nef", "X\n|X\nef"), ("o X <Escape> .", "|ab", "ab\nX\n|X"),
     ("O X <Escape> .", "|ab", "|X\nX\nab"), ("i X <Escape> .", "a|b", "a|XXb"),
     ("a X <Escape> .", "a|b", "abX|X"), ("A X <Escape> j .", "|ab\ncd", "abX\ncd|X"),
+    ("I X <Escape> j .", "  a|b\n  cdef", "  Xab\n  |Xcdef"),
+    ("I X <Escape> j $ .", "  a|b\n  cdef", "  Xab\n  |Xcdef"),
     ("y w P .", "|ab cd", "abab|  ab cd"), ("y y p .", "|ab", "ab\nab\n|ab"),
     ("d w y w .", "|a b c d", "|c d")]
 
@@ -15870,8 +15872,32 @@ the loop's driver over the editor's models, under the Vim scheme that ships
 with evil's commands. -/
 def evilRepeatChecks : List Check :=
   [{  name :=
-        ". replays the last change: after d w it deletes the next word, and after c w, typed text and <Escape> it makes the same change with the same text at the cursor; a count before it replaces the change's and is kept; x, the doubled operator, o, O, i, a, A, p and P are replayed, and a yank is not the last change"
+        ". replays the last change: after d w it deletes the next word, and after c w, typed text and <Escape> it makes the same change with the same text at the cursor; a count before it replaces the change's and is kept; x, the doubled operator, o, O, i, a, I, A, p and P are replayed, and a yank is not the last change"
       run := evilRows repeatRows },
+    { name :=
+        "a replayed change that itself gives up gives the replay up and changes nothing: after d j, G and . on the last line, where j fails, the text, the cursor, the register and the history are as they were, the view is in normal state, and the echo area says why under the repeat command's name; after c j, a text, <Escape> and G, . likewise, with no text inserted and the view left in normal state; and the change is still the last change, which . replays from the first line"
+      run :=
+        pure <|
+          let said := s!"{Vim.repeatCommand}: {Evil.cannotMove Evil.down.name}"
+          let steps (typed : String) : Option (Option (Nat × Bool)) :=
+            (evilDriver "|ab\ncd\nef\ngh").map fun driver => evilHistory (evilFed driver typed)
+          let status (typed : String) : Option (Array StatusField) :=
+            (evilScene "|ab\ncd\nef\ngh" typed).map (·.status)
+          evilEdited "|ab\ncd\nef\ngh" "d j G" ==
+              some ⟨"ef\n|gh", linewise "ab\ncd\n", false, ""⟩ &&
+            evilEdited "|ab\ncd\nef\ngh" "d j G ." ==
+              some ⟨"ef\n|gh", linewise "ab\ncd\n", false, said⟩ &&
+            steps "d j G ." == steps "d j G" &&
+            status "d j G ." == status "d j G" &&
+            evilEdited "|ab\ncd\nef\ngh" "c j X <Escape> G" ==
+              some ⟨"X\nef\n|gh", linewise "ab\ncd\n", false, ""⟩ &&
+            evilEdited "|ab\ncd\nef\ngh" "c j X <Escape> G ." ==
+              some ⟨"X\nef\n|gh", linewise "ab\ncd\n", false, said⟩ &&
+            steps "c j X <Escape> G ." == steps "c j X <Escape> G" &&
+            steps "c j X <Escape> G" == some (some (2, false)) &&
+            status "c j X <Escape> G ." == status "c j X <Escape> G" &&
+            evilEdited "|ab\ncd\nef\ngh" "c j X <Escape> G . g g ." ==
+              some ⟨"|X\ngh", linewise "X\nef\n", false, ""⟩ },
     { name :=
         "a replayed change with an insert session is one step of the history and leaves the view in normal state: after c w X Y <Escape> w . the tree has one node more and nothing pending, and one u takes the whole replay back, with the cursor where it was"
       run :=

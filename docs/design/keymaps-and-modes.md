@@ -2612,7 +2612,12 @@ evilKeys "ab|c" "i X <Escape>" == "ab|Xc"
   `contract-test`.
 - **Dot repeat's rows** (`repeatRows`) and **undo's** (`undoRows`) are
   keys and texts too. The checks of `u` are the phase's rule and are not
-  compared with Vim.
+  compared with Vim. Beside its rows, dot repeat is checked where a
+  replay does not run to its end: a replayed change whose motion fails
+  where it is (`d j`, then `.` on the last line) gives the replay up
+  with nothing changed, one whose motion fails after moving breaks it
+  off, and one stopped by the interrupt is rolled back with the
+  clipboard as it was.
 
 This runs on the pure models with no Rust build. The text contract is
 what makes the motion primitives hold for the real binding, and the API's
