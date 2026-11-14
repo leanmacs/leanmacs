@@ -1,4 +1,5 @@
 import Editor.Display
+import Editor.Watch
 
 /-!
 # The editor's port, and the type of a command
@@ -6,33 +7,36 @@ import Editor.Display
 A command is a value of `EditorM`: a program over the editor's port that may
 be refused. The editor's port is a composite: its requests are a sum of the
 requests of its sub-ports, one constructor a sub-port (`EditorRequest`), and
-the reply to each is its sub-port's reply. Today it has two:
+the reply to each is its sub-port's reply. Today it has three:
 
 - **text** (`Editor/Text.lean`): texts, snapshots, markers, the edit log;
 - **display** (`Editor/Display.lean`): publishing a scene, and the two
-  questions of layout.
+  questions of layout;
+- **watch** (`Editor/Watch.lean`): the interrupt flag and a clock, which the
+  command loop asks round the commands it runs.
 
-Each sub-port keeps its own programs (`TextM`, `DisplayM`), operations,
-model, real binding and contract, unchanged. `TextM.lift` and
-`DisplayM.lift` embed a sub-port's programs in a command, and they are
-`MonadLift` instances, so an operation of either is used in a command as it
-is: `do let text ← createText "a"; Display.publish scene` elaborates at
-`EditorM`. Config is written at `EditorM`, and the lift is what lets every
-text operation it calls keep its own type. There is no lift from `JobM`, so
-a job is still not a command.
+Each sub-port keeps its own programs (`TextM`, `DisplayM`, `WatchM`),
+operations, model, real binding and contract, unchanged. `TextM.lift`,
+`DisplayM.lift` and `Watch.lift` embed a sub-port's programs in a command,
+and they are `MonadLift` instances, so an operation of any is used in a
+command as it is: `do let text ← createText "a"; Display.publish scene`
+elaborates at `EditorM`. Config is written at `EditorM`, and the lift is
+what lets every text operation it calls keep its own type. There is no lift
+from `JobM`, so a job is still not a command.
 
 A refusal is a `TextError`. The display's two refusals mean what the text
 port's refusals of the same names mean (a snapshot that names nothing, an
 offset that is not a position), so `DisplayM.lift` maps each to its
 namesake (`DisplayError.toTextError`). A sub-port whose refusal has no
 `TextError` counterpart widens the error to a sum, in the phase that adds
-it.
+it. The watch port refuses nothing.
 
-A command runs against both models (`EditorM.runModel`,
+A command runs against the three models (`EditorM.runModel`,
 `Editor/Command/Model.lean`), whose state is the product of theirs, and
-against the text port's real binding with a display handler
-(`EditorM.runReal`, `Editor/Command/Real.lean`). `docs/design/lean-runtime.md`
-("The editor's port is a composite") records why it has this shape.
+against the text port's real binding with a display handler and a watch
+handler (`EditorM.runReal`, `Editor/Command/Real.lean`).
+`docs/design/lean-runtime.md` ("The editor's port is a composite") records
+why it has this shape.
 
 ## Where an addition goes
 
@@ -56,11 +60,14 @@ inductive EditorRequest where
   | text (request : TextRequest)
   /-- A request of the display port. -/
   | display (request : DisplayRequest)
+  /-- A request of the watch port. -/
+  | watch (request : WatchRequest)
 
 /-- The type of the reply to each request: its sub-port's reply. -/
 def EditorRequest.Reply : EditorRequest → Type
   | .text request => request.Reply
   | .display request => request.Reply
+  | .watch request => request.Reply
 
 /-- The editor's port: `EditorRequest` and the reply to each request. -/
 abbrev editorPort : Port :=
@@ -88,6 +95,12 @@ def embedDisplay : Program displayPort α → Program editorPort α
   | .done value => .done value
   | .step request next => .step (.display request) fun reply => embedDisplay (next reply)
 
+/-- `program`, a program over the watch port, as one over the editor's port:
+each of its requests is the watch constructor's. -/
+def embedWatch : Program watchPort α → Program editorPort α
+  | .done value => .done value
+  | .step request next => .step (.watch request) fun reply => embedWatch (next reply)
+
 end Program
 
 /-- The text port's refusal of the same name as the display's: both ports
@@ -108,7 +121,14 @@ def DisplayM.lift {α : Type} (program : DisplayM α) : EditorM α :=
 instance : MonadLift TextM EditorM where
   monadLift := TextM.lift
 
+/-- A program over the watch port as a command. It is never refused. -/
+def Watch.lift {α : Type} (program : WatchM α) : EditorM α :=
+  ExceptT.lift program.embedWatch
+
 instance : MonadLift DisplayM EditorM where
   monadLift := DisplayM.lift
+
+instance : MonadLift WatchM EditorM where
+  monadLift := Watch.lift
 
 end Editor

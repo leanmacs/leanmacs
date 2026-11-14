@@ -19,6 +19,8 @@ import Editor.Scene
 import Editor.State
 import Editor.Text.Contract
 import Editor.UndoTree.Cases
+import Editor.Watch.Contract
+import Editor.Watch.Model
 import Editor.WindowCheck
 
 /-!
@@ -47,11 +49,18 @@ whether it held, run against the model (`commandProperties`). The `editor`
 executable runs the same command source against the real binding.
 
 A command is a program over the editor's composite port
-(`Editor/Command.lean`), run here against the text model and the display
-model side by side (`EditorModel`). `commandPortChecks` pin what that runner
-does with each sub-port's requests: a text program lifted into a command
-does what it does alone, the display answers from the text model's
-snapshots, and a display refusal is the text port's of the same name.
+(`Editor/Command.lean`), run here against the text model, the display model
+and the watch model side by side (`EditorModel`). `commandPortChecks` pin
+what that runner does with each sub-port's requests: a text program lifted
+into a command does what it does alone, the display answers from the text
+model's snapshots, a display refusal is the text port's of the same name,
+and a watch request goes to the watch model.
+
+The watch port's contract (`Editor/Watch/Contract.lean`: the interrupt flag
+and a clock) is run against its model here (`watchFailures`), and
+`contract-test` runs the same list against the real binding. `watchChecks`
+are what only the model shows: an interrupt key that arrives at a request a
+test names, and a clock that moves with a command's requests.
 
 The editor state (`Editor/State.lean`) is checked on the text model
 (`stateChecks`): the initial state, that a split tree's views tile the
@@ -3419,7 +3428,65 @@ def commandPortChecks : List Check :=
           Display.publish { twoViews with echo := "second" }
         let (result, model) := command.runModel editorModel
         return result matches .ok () &&
-            model.display.scenes == #[twoViews, { twoViews with echo := "second" }] }]
+            model.display.scenes == #[twoViews, { twoViews with echo := "second" }] },
+    { name :=
+        "a watch request inside a command is answered by the watch model, and leaves the text model and the display model as they were"
+      run := do
+        let command : EditorM (Bool × Bool × Nat) := do
+          let before ← Watch.interrupted
+          Watch.lower
+          return (before, ← Watch.interrupted, ← Watch.now)
+        let watch : WatchModel := { arrived := 1, clock := 7 }
+        let (result, model) := command.runModel { editorModel with watch }
+        return resulted result == .inr (true, false, 7) &&
+            model.watch == { watch with arrived := 0 } &&
+            model.texts.contents == #[] &&
+            model.display.scenes == #[] }]
+
+/-- The watch model after `program`, run from `model`, and what the program
+returned. -/
+def watched {α : Type} (program : WatchM α) (model : WatchModel := {}) : α × WatchModel :=
+  Program.run (port := watchPort) WatchModel.handle program model
+
+/-- The checks of the watch port's model (`Editor/Watch/Model.lean`): what
+only the model has, an arrival a test places and a clock a command's
+requests move. -/
+def watchChecks : List Check :=
+  [{  name :=
+        "the watch model's interrupt key arrives when the flag is asked for the time after the count it was given, and once: asked four times with a count of two, the flag is down, down, up and up, with one arrived"
+      run :=
+        let asks : WatchM (List Bool) := do
+          return [← Watch.interrupted, ← Watch.interrupted, ← Watch.interrupted,
+              ← Watch.interrupted]
+        let (answers, model) := watched asks { arrivesAfter := some 2 }
+        let (never, _) := watched asks
+        pure
+          (answers == [false, false, true, true] && model.arrived == 1 &&
+            model.arrivesAfter == none &&
+            never == [false, false, false, false]) },
+    { name := "the watch model's clock reads where it was set, and a watch request does not move it"
+      run :=
+        let reads : WatchM (List Nat) := do
+          let first ← Watch.now
+          discard Watch.interrupted
+          Watch.lower
+          return [first, ← Watch.now]
+        pure ((watched reads { clock := 5, pace := 10 }).1 == [5, 5]) },
+    { name :=
+        "on the editor's models the clock moves on by the watch model's pace at each text request and each display request of a command, and at no watch request"
+      run := do
+        let command : EditorM (List Nat) := do
+          let start ← Watch.now
+          let text ← createText "ab"
+          let afterText ← Watch.now
+          Display.publish twoViews
+          let afterDisplay ← Watch.now
+          discard Watch.interrupted
+          discard <| text.read
+          return [start, afterText, afterDisplay, ← Watch.now]
+        let paced := (command.runModel { editorModel with watch := { clock := 100, pace := 10 } }).1
+        let still := (command.runModel editorModel).1
+        return resulted paced == .inr [100, 110, 120, 130] && resulted still == .inr [0, 0, 0, 0] }]
 
 /-- The checks of the user's origin (`Origin.user`) and of how a refusal is
 described to the user (`TextError.describe`). -/
@@ -5637,6 +5704,7 @@ def checks : List Check :=
     sceneChecks ++
     displayChecks ++
     commandPortChecks ++
+    watchChecks ++
     originChecks ++
     stateChecks ++
     loopChecks ++
@@ -5725,12 +5793,23 @@ def displayFailures : IO (List String) := do
             (s!"the display model in cells of {cells.advance} by {cells.lineHeight}: {·}")
   return failed
 
+/-- The names of the watch port's contract properties that do not hold of
+the watch model, each run from a model in which the property's interrupt
+keys have arrived. -/
+def watchFailures : IO (List String) := do
+  let failed ←
+    WatchContract.failures
+        (fun property => pure (watched property.holds { arrived := property.arrived }).1)
+        WatchContract.properties
+  return failed.map (s!"the watch model: {·}")
+
 end ModelTest
 
 /-- Runs the checks, then the text port's contract against its model, the
 job port's contract against its model and against the runner over the fake
-clock, and the display interface's contract against its model: exits 0 when
-all hold, and 1 after naming on stderr the ones that do not.
+clock, the display interface's contract against its model and the watch
+port's against its model: exits 0 when all hold, and 1 after naming on
+stderr the ones that do not.
 
 It exits explicitly. A check of the job runner that failed may have left a
 task that never ends, and returning from `main` would wait for it for ever:
@@ -5743,7 +5822,8 @@ def main : IO UInt32 := do
       (← ModelTest.jobRunnerFailures) ++
       (← ModelTest.fileFailures) ++
       (← ModelTest.caseFailures) ++
-      (← ModelTest.displayFailures)
+      (← ModelTest.displayFailures) ++
+      (← ModelTest.watchFailures)
   for name in failed do
     IO.eprintln s!"FAILED: {name}"
   unless failed.isEmpty do
@@ -5751,6 +5831,6 @@ def main : IO UInt32 := do
     -- returning from `main` would wait for it for ever.
     IO.Process.exit 1
   IO.println
-      s!"model-test: {ModelTest.checks.length} checks passed, {Editor.TextContract.properties.length + Editor.TextContract.adoptProperties.length + ModelTest.commandProperties.length} properties hold of the text model, {Editor.UndoTreeCases.cases.length} cases of the undo tree hold over it, and {Editor.JobContract.properties.length} properties of the job model and of the job runner over the fake clock, and {Editor.JobContract.fileProperties.length} file properties of the job model and of the job runner over the fake file service; {Editor.FileCases.cases.length} cases across the text port and the job port hold of the two models; {(Editor.DisplayContract.properties { advance := 1, lineHeight := 1 }).length} properties of the display interface hold of its model in cells of {ModelTest.displayCells.length} sizes"
+      s!"model-test: {ModelTest.checks.length} checks passed, {Editor.TextContract.properties.length + Editor.TextContract.adoptProperties.length + ModelTest.commandProperties.length} properties hold of the text model, {Editor.UndoTreeCases.cases.length} cases of the undo tree hold over it, and {Editor.JobContract.properties.length} properties of the job model and of the job runner over the fake clock, and {Editor.JobContract.fileProperties.length} file properties of the job model and of the job runner over the fake file service; {Editor.FileCases.cases.length} cases across the text port and the job port hold of the two models; {(Editor.DisplayContract.properties { advance := 1, lineHeight := 1 }).length} properties of the display interface hold of its model in cells of {ModelTest.displayCells.length} sizes; {Editor.WatchContract.properties.length} properties of the watch port hold of its model"
   (← IO.getStdout).flush
   IO.Process.exit 0
