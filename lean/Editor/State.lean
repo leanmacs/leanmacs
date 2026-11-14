@@ -207,6 +207,34 @@ A prompt is a request for one string, with a text to show beside the input
     gives them up once the command that closed the prompt has run to its
     end, as it does for any window that is closed and any buffer that is
     removed.
+- **A prompt may have candidates** (`Prompt.candidates`, a `Candidates`):
+  strings the answer may be chosen from. They are plain data, as the rest
+  of a prompt is. With them the prompt holds what it has shown of them:
+  - **the listing**: the candidates the text typed so far matches, in the
+    matcher's order, and the text the listing was made for (`listed`,
+    `listedFor`). The state does not match: `listCandidates` is handed the
+    pattern and the indices a matcher answered for it, and keeps the
+    candidates at those indices, in that order. An index that is none of
+    the candidates' is dropped;
+  - **the choice**: an index of the listing, or none (`chosen`).
+    `chooseCandidate` moves it by one step, `next` or `previous`. From
+    nothing chosen, `next` chooses the first and `previous` the last;
+    `next` from the last and `previous` from the first choose nothing. So
+    the text as typed is one stop of the round, between the last candidate
+    and the first. With nothing listed neither changes anything.
+  - `setCandidates` replaces the candidates and forgets the listing and
+    the choice; `listCandidates` forgets the choice, which was an index of
+    the listing it replaces.
+  - **What the prompt answers with** is `Candidates.answer`, of the text in
+    the minibuffer: the chosen candidate, when one is chosen and the
+    listing is for that text; otherwise the text. So a prompt with no
+    candidates, or with nothing chosen, answers what was typed.
+  - Each of the three operations refuses `notOpen`, with the state as it
+    was, when no prompt is open. A prompt opened with none has no
+    candidates, no listing and no choice, and is in every way the prompt
+    it was before there were candidates.
+  - They are fields of the state, so a command that does not run to its
+    end leaves the listing and the choice as they were.
 
 ## Buffers
 
@@ -528,6 +556,64 @@ structure JobStart where
   arguments : List Argument := []
   deriving DecidableEq, Repr
 
+/-- The candidates of an open prompt, and what the prompt has shown of
+them ("Prompts", in the module docs). It is plain data. -/
+structure Candidates where
+  /-- The candidates the prompt was asked with, in the order they came
+  in. -/
+  all : Array String := #[]
+  /-- The text `listed` was made for; `none` when no listing has been made
+  since the candidates were set. -/
+  listedFor : Option String := none
+  /-- The listing: the candidates that text matches, best first. -/
+  listed : Array String := #[]
+  /-- The choice: an index of `listed`, or none. -/
+  chosen : Option Nat := none
+  deriving DecidableEq, Repr
+
+namespace Candidates
+
+/-- A step of the choice through the listing. -/
+inductive Step where
+  /-- To the candidate after the chosen one. -/
+  | next
+  /-- To the candidate before the chosen one. -/
+  | previous
+  deriving DecidableEq, Repr
+
+/-- `candidates` with a listing for `pattern`: the candidates at the indices
+`ranked`, in that order, with an index that is none of theirs dropped, and
+nothing chosen. -/
+def list (candidates : Candidates) (pattern : String) (ranked : Array Nat) : Candidates :=
+  { candidates with
+    listedFor := some pattern, listed := ranked.filterMap (candidates.all[·]?), chosen := none }
+
+/-- `candidates` with the choice moved by `step`: from nothing chosen to
+the first or the last of the listing, from the last onward and from the
+first backward to nothing chosen, and otherwise by one. With nothing listed
+it is as it was. -/
+def choose (candidates : Candidates) (step : Step) : Candidates :=
+  let count := candidates.listed.size
+  let chosen :=
+    match step, candidates.chosen with
+    | .next, none => if count == 0 then none else some 0
+    | .next, some index => if index + 1 < count then some (index + 1) else none
+    | .previous, none => if count == 0 then none else some (count - 1)
+    | .previous, some 0 => none
+    | .previous, some (index + 1) => some index
+  { candidates with chosen }
+
+/-- What a prompt with these candidates answers with when the minibuffer
+holds `text`: the chosen candidate, when one is chosen and the listing is
+for `text`, and otherwise `text`. -/
+def answer (candidates : Candidates) (text : String) : String :=
+  match candidates.chosen with
+  | some index =>
+    if candidates.listedFor == some text then candidates.listed[index]?.getD text else text
+  | none => text
+
+end Candidates
+
 /-- An open prompt: a request for one string ("Prompts", in the module
 docs). It is plain data: the command that receives the answer is named. -/
 structure Prompt where
@@ -542,6 +628,9 @@ structure Prompt where
   /-- The continuation: the command that receives the answer, and plain
   arguments of the asker's own, which follow the answer. -/
   continuation : Invocation
+  /-- The strings the answer may be chosen from, with their listing and the
+  choice; none of any, unless the prompt was asked with candidates. -/
+  candidates : Candidates := {}
   deriving DecidableEq, Repr
 
 /-- The name of the major mode the minibuffer's buffer is made with. A mode
@@ -834,14 +923,16 @@ def views (state : EditorState) : Array ViewId :=
 (`views`: the tree's windows, then the open prompt's view): the focused
 window is among them, the tree has one minibuffer leaf, the views' ids are
 distinct and are exactly the windows' ids, and each window's buffer
-exists. -/
+exists. And whether an open prompt's choice, if it has one, is an index of
+its listing. -/
 def wellFormed (state : EditorState) : Bool :=
   let ids := state.views
   ids.contains state.frame.focused && state.frame.tree.minibuffers == 1 &&
     ids.toList.eraseDups.length == ids.size &&
     ids.size == state.windows.size &&
     ids.all (fun id => (state.window? id).isSome) &&
-    state.windows.all fun window => (state.buffer? window.buffer).isSome
+    (state.windows.all fun window => (state.buffer? window.buffer).isSome) &&
+    state.prompt.all fun asked => asked.candidates.chosen.all (· < asked.candidates.listed.size)
 
 /-- A buffer called `scratch` over a new empty text, and one window on it,
 focused, in a frame of `size` with the minibuffer's place below it. The
@@ -1287,6 +1378,37 @@ def closePrompt (answer : Option String) (state : EditorState) :
             state.answered.push
               { asked.continuation with arguments := .str answer :: asked.continuation.arguments }
           | none => state.answered })
+
+/-- The state with the open prompt's candidates changed by `change`.
+Refused, with the state unchanged, with `notOpen` when no prompt is
+open. -/
+def changeCandidates (change : Candidates → Candidates) (state : EditorState) :
+    Except PromptRefusal Unit × EditorState :=
+  match state.prompt with
+  | none => (.error .notOpen, state)
+  | some asked =>
+    (.ok (), { state with prompt := some { asked with candidates := change asked.candidates } })
+
+/-- Replaces the open prompt's candidates with `all`, and forgets the
+listing and the choice. Refused, with the state unchanged, with `notOpen`
+when no prompt is open. -/
+def setCandidates (all : Array String) (state : EditorState) :
+    Except PromptRefusal Unit × EditorState :=
+  state.changeCandidates fun _ => { all }
+
+/-- Makes the open prompt's listing the one for `pattern`: the candidates at
+the indices `ranked`, in that order, with nothing chosen (`Candidates.list`).
+Refused, with the state unchanged, with `notOpen` when no prompt is open. -/
+def listCandidates (pattern : String) (ranked : Array Nat) (state : EditorState) :
+    Except PromptRefusal Unit × EditorState :=
+  state.changeCandidates (·.list pattern ranked)
+
+/-- Moves the open prompt's choice by `step` through its listing
+(`Candidates.choose`). Refused, with the state unchanged, with `notOpen`
+when no prompt is open. -/
+def chooseCandidate (step : Candidates.Step) (state : EditorState) :
+    Except PromptRefusal Unit × EditorState :=
+  state.changeCandidates (·.choose step)
 
 end EditorState
 

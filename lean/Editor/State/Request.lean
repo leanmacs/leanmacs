@@ -60,6 +60,13 @@ the models and against the library alike (`Editor/Command/Dispatch.lean`).
   makes it cannot be interrupted between the two. The handler releases
   nothing: the loop gives up the minibuffer's markers and text once the
   command has run to its end.
+- **An open prompt's candidates are set by one request, and its choice is
+  moved by another**: `setCandidates`, with the strings, and
+  `chooseCandidate`, with a step (`Editor/State.lean`, "Prompts"). Each is
+  refused with a `PromptRefusal`, `notOpen`, when no prompt is open. The
+  listing has no request: the loop makes it, between a command and the
+  scene, from what the matcher answers (`Editor/Loop.lean`), so no command
+  can list what the matcher did not answer.
 - **An invocation to run next is recorded by one request**, `invoke`: it
   is put after the invocations already recorded
   (`EditorState.answered`), a prompt's answer among them, and the loop
@@ -177,6 +184,10 @@ inductive StateRequest where
   /-- Close the open prompt: with `answer`, which its continuation's command
   receives, or with `none` for a prompt that is cancelled. -/
   | closePrompt (answer : Option String)
+  /-- Replace the open prompt's candidates with `all`. -/
+  | setCandidates (all : Array String)
+  /-- Move the open prompt's choice by `step` through its listing. -/
+  | chooseCandidate (step : Candidates.Step)
   /-- Have the window `view` keep `wanted` as its wanted column, or none. -/
   | setWanted (view : ViewId) (wanted : Option Window.Wanted)
   /-- Which command the ex name `name` is bound to, and what it takes. -/
@@ -220,6 +231,8 @@ abbrev StateRequest.Reply : StateRequest → Type
   | .endSave .. => Except BufferRefusal Unit
   | .openPrompt .. => Except PromptRefusal ViewId
   | .closePrompt _ => Except PromptRefusal Unit
+  | .setCandidates _ => Except PromptRefusal Unit
+  | .chooseCandidate _ => Except PromptRefusal Unit
   | .setWanted .. => Except LayoutRefusal Unit
   | .ex _ => Option Ex.Binding
   | .invoke _ => Unit
@@ -270,6 +283,8 @@ def handle : (request : StateRequest) → EditorState → request.Reply × Edito
   | .openPrompt label continuation text history scroll selection, state =>
     state.openPrompt label continuation text history scroll selection
   | .closePrompt answer, state => state.closePrompt answer
+  | .setCandidates all, state => state.setCandidates all
+  | .chooseCandidate step, state => state.chooseCandidate step
   | .setWanted view wanted, state => state.setWanted view wanted
   | .ex _, state => (none, state)
   | .invoke invocation, state => ((), { state with answered := state.answered.push invocation })

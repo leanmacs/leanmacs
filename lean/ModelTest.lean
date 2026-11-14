@@ -4643,7 +4643,15 @@ def spoilings : List (String × (EditorState → EditorState)) :=
         prompt := some { label := "", view := ⟨7⟩, asker := ⟨0⟩, continuation := asked } }),
     ("with a prompt whose view is also a window of the tree", fun state =>
       { state with
-        prompt := some { label := "", view := ⟨2⟩, asker := ⟨0⟩, continuation := asked } })]
+        prompt := some { label := "", view := ⟨2⟩, asker := ⟨0⟩, continuation := asked } }),
+    ("with a prompt whose choice is past its listing", fun state =>
+      let (_, asking) := state.openPrompt "" asked ⟨7⟩ (UndoTree.new ⟨7⟩ 0) ⟨⟨7⟩, 0⟩ ⟨⟨7⟩, 1⟩
+      { asking with
+        prompt :=
+          asking.prompt.map
+            ({ · with
+              candidates :=
+                { all := #["a"], listedFor := some "", listed := #["a"], chosen := some 1 } }) })]
 
 /-- `state` with a prompt asked for from its focused view, and the reply: the
 label `Name: `, the continuation `asked`, and a minibuffer over the text
@@ -4652,6 +4660,20 @@ selection that is its marker 1. The operation asks the text store nothing,
 so the ids are written out by hand. -/
 def prompted (state : EditorState) (text : Nat := 7) : Except PromptRefusal ViewId × EditorState :=
   state.openPrompt "Name: " asked ⟨text⟩ (UndoTree.new ⟨text⟩ 0) ⟨⟨text⟩, 0⟩ ⟨⟨text⟩, 1⟩
+
+/-- `state` with its open prompt's candidates replaced by `candidates`,
+whatever they are, by hand: for comparing two states but for their
+candidates, and for building a state no operation makes. A state with no
+prompt open is as it was. -/
+def withCandidates (state : EditorState) (candidates : Candidates) : EditorState :=
+  { state with prompt := state.prompt.map ({ · with candidates }) }
+
+/-- `state`, which has a prompt open, with the candidates `wq`, `edit` and
+`w` and a listing of all three for the empty text, in that order, made with
+the state's own operations. -/
+def picking (state : EditorState) : EditorState :=
+  let (_, set) := state.setCandidates #["wq", "edit", "w"]
+  (set.listCandidates "" #[0, 1, 2]).2
 
 /-- States of the quit checks, each `twoBuffers` with its histories set by
 hand. -/
@@ -4730,7 +4752,7 @@ def stateChecks : List Check :=
               (named ["other<2>", "other<3>"]).freeName "other" == "other<4>" &&
               (named ["other<2>"]).freeName "other<2>" == "other<2><2>" },
     { name :=
-        "a state that breaks one layout invariant is not well formed: a focus outside the tree, no minibuffer leaf or two, a window named twice, a tree window with no window, a window outside the tree, a window with no buffer, a prompt whose view has no window, a prompt whose view is a window of the tree"
+        "a state that breaks one layout invariant is not well formed: a focus outside the tree, no minibuffer leaf or two, a window named twice, a tree window with no window, a window outside the tree, a window with no buffer, a prompt whose view has no window, a prompt whose view is a window of the tree, a prompt whose choice is past its listing; and the same prompt with a choice in its listing is well formed"
       run := do
         let some state := onTextModel threeWindows | return false
         -- A failure names the spoiled states that were taken for well formed.
@@ -4739,7 +4761,9 @@ def stateChecks : List Check :=
           throw
               (IO.userError
                 s!"well formed: a state {"; a state ".intercalate (accepted.map (·.1))}")
-        return state.wellFormed },
+        let (_, chosen) := (picking (prompted state).2).chooseCandidate .previous
+        return state.wellFormed && chosen.wellFormed &&
+            chosen.prompt.map (·.candidates.chosen) == some (some 2) },
     { name :=
         "the views of a split tree tile the frame: each inside it, no two overlapping, their areas summing to its, for one to four windows, with and without the minibuffer's place, at even, odd and zero sizes"
       run :=
@@ -5253,6 +5277,108 @@ def stateChecks : List Check :=
               | (.error .notOpen, after) => after == state
               | _ => false },
     { name :=
+        "a prompt is opened with no candidates, no listing and no choice, and a prompt opened after one with candidates was closed has none either"
+      run :=
+        pure <|
+          match onTextModel (EditorState.initial ⟨640, 480⟩) with
+          | none => false
+          | some state =>
+            let (_, asking) := prompted state
+            let (_, chosen) := (picking asking).chooseCandidate .next
+            let (_, closed) := chosen.closePrompt (some "a")
+            let (_, again) := prompted closed 8
+            asking.prompt.map (·.candidates) == some {} &&
+              (chosen.prompt.map (·.candidates.chosen)) == some (some 0) &&
+              closed.prompt == none &&
+              again.prompt.map (·.candidates) == some {} },
+    { name :=
+        "setting an open prompt's candidates replaces them and forgets the listing and the choice, and changes nothing else of the state"
+      run :=
+        pure <|
+          match onTextModel (EditorState.initial ⟨640, 480⟩) with
+          | none => false
+          | some state =>
+            let (_, asking) := prompted state
+            let (_, chosen) := (picking asking).chooseCandidate .next
+            let (set, replaced) := chosen.setCandidates #["x", "y"]
+            replied set == .inr () &&
+              replaced.prompt.map (·.candidates) == some { all := #["x", "y"] } &&
+              withCandidates replaced {} == asking &&
+              replaced.wellFormed },
+    { name :=
+        "listing an open prompt's candidates keeps the candidates at the indices given, in that order, drops an index that is none of theirs, records the pattern the listing is for and forgets the choice; the candidates themselves stay"
+      run :=
+        pure <|
+          match onTextModel (EditorState.initial ⟨640, 480⟩) with
+          | none => false
+          | some state =>
+            let (_, asking) := prompted state
+            let (_, chosen) := (picking asking).chooseCandidate .next
+            let (listed, after) := chosen.listCandidates "w" #[2, 9, 0, 3]
+            let (emptied, unmatched) := after.listCandidates "z" #[]
+            replied listed == .inr () &&
+              after.prompt.map (·.candidates) ==
+                some
+                  { all := #["wq", "edit", "w"], listedFor := some "w", listed := #["w", "wq"] } &&
+              replied emptied == .inr () &&
+              unmatched.prompt.map (·.candidates) ==
+                some { all := #["wq", "edit", "w"], listedFor := some "z" } &&
+              withCandidates after {} == asking &&
+              after.wellFormed },
+    { name :=
+        "choosing among a listing: next from nothing chosen is the first and previous the last, next from the last and previous from the first are nothing chosen, and each other step moves by one; with nothing listed neither changes anything"
+      run :=
+        pure <|
+          match onTextModel (EditorState.initial ⟨640, 480⟩) with
+          | none => false
+          | some state =>
+            let (_, asking) := prompted state
+            let listed := picking asking
+            let steps (steps : List Candidates.Step) (start : EditorState) : Option (Option Nat) :=
+              (steps.foldl (fun state step => (state.chooseCandidate step).2) start).prompt.map
+                (·.candidates.chosen)
+            let (stepped, after) := listed.chooseCandidate .next
+            let (_, bare) := asking.setCandidates #["a"]
+            replied stepped == .inr () && withCandidates after {} == asking && after.wellFormed &&
+              steps [.next] listed == some (some 0) &&
+              steps [.previous] listed == some (some 2) &&
+              steps [.next, .next] listed == some (some 1) &&
+              steps [.next, .next, .next] listed == some (some 2) &&
+              steps [.next, .next, .next, .next] listed == some none &&
+              steps [.next, .previous] listed == some none &&
+              steps [.previous, .previous] listed == some (some 1) &&
+              steps [.previous, .previous, .previous, .previous] listed == some none &&
+              steps [.previous, .next] listed == some none &&
+              (bare.chooseCandidate .next).2 == bare &&
+              (bare.chooseCandidate .previous).2 == bare &&
+              (asking.chooseCandidate .next).2 == asking },
+    { name :=
+        "what a prompt answers with: the chosen candidate when the listing is for the text, and the text when nothing is chosen, when the listing is for another text and when there are no candidates"
+      run :=
+        pure <|
+          let listed : Candidates :=
+            { all := #["wq", "edit", "w"], listedFor := some "w", listed := #["w", "wq"] }
+          ({ listed with chosen := some 1 } : Candidates).answer "w" == "wq" &&
+            ({ listed with chosen := some 0 } : Candidates).answer "w" == "w" &&
+            listed.answer "w" == "w" &&
+            ({ listed with chosen := some 1 } : Candidates).answer "wx" == "wx" &&
+            ({ listed with chosen := some 1 } : Candidates).answer "" == "" &&
+            ({} : Candidates).answer "typed" == "typed" &&
+            ({ all := #["a"], listedFor := some "z" } : Candidates).answer "z" == "z" },
+    { name :=
+        "with no prompt open, setting candidates, listing them and choosing one are each refused with notOpen, and the state is as it was"
+      run :=
+        pure <|
+          match onTextModel twoBuffers with
+          | none => false
+          | some state =>
+            let refused : Except PromptRefusal Unit × EditorState → Bool
+              | (.error .notOpen, after) => after == state
+              | _ => false
+            refused (state.setCandidates #["a"]) && refused (state.listCandidates "a" #[0]) &&
+              refused (state.chooseCandidate .next) &&
+              refused (state.chooseCandidate .previous) },
+    { name :=
         "the initial state is not asked to quit, does not leave, has no buffer with unsaved changes and no save in flight"
       run :=
         pure <|
@@ -5343,7 +5469,8 @@ def stateRequests : List StateRequest :=
     .endSave ⟨0⟩ ⟨4⟩ (some noteStamp), .endSave ⟨9⟩ ⟨4⟩ none,
     .openPrompt "Name: " asked ⟨8⟩ (UndoTree.new ⟨8⟩ 0) (marker 8 0) (marker 8 1),
     .openPrompt "Name: " asked ⟨8⟩ (UndoTree.new ⟨8⟩ 0) (marker 0 0) (marker 8 1),
-    .closePrompt none, .closePrompt (some "typed"),
+    .closePrompt none, .closePrompt (some "typed"), .setCandidates #["one", "two"],
+    .chooseCandidate .next, .chooseCandidate .previous,
     .setWanted ⟨0⟩ (some { column := .cells 3, head := 7 }), .setWanted ⟨1⟩ none,
     .setWanted ⟨9⟩ (some { column := .lineEnd, head := 0 }), .ex "w", .invoke asked, .quit, .reload,
     .giveUp "no", .breakOff "far enough", .setRegister "a" { text := "a line\n", linewise := true }]
@@ -5790,6 +5917,32 @@ def stateRequestChecks : List Check :=
               answered.answered.size == 1 &&
               replied refused == .inl .notOpen &&
               same == state },
+    { name :=
+        "the requests to set an open prompt's candidates and to choose among its listing are the state's operations, and with no prompt open each is refused with notOpen, a value, with the state as it was"
+      run :=
+        pure <|
+          match onTextModel twoBuffers with
+          | none => false
+          | some state =>
+            let (_, asking) := prompted state
+            let listed := picking asking
+            let (set, replaced) := listed.handle (.setCandidates #["x"])
+            let (next, first) := listed.handle (.chooseCandidate .next)
+            let (previous, last) := listed.handle (.chooseCandidate .previous)
+            let (noSet, sameSet) := state.handle (.setCandidates #["x"])
+            let (noChoice, sameChoice) := state.handle (.chooseCandidate .next)
+            replied set == .inr () && replaced == (listed.setCandidates #["x"]).2 &&
+              replaced.prompt.map (·.candidates) == some { all := #["x"] } &&
+              replied next == .inr () &&
+              first == (listed.chooseCandidate .next).2 &&
+              first.prompt.map (·.candidates.chosen) == some (some 0) &&
+              replied previous == .inr () &&
+              last == (listed.chooseCandidate .previous).2 &&
+              last.prompt.map (·.candidates.chosen) == some (some 2) &&
+              replied noSet == .inl .notOpen &&
+              sameSet == state &&
+              replied noChoice == .inl .notOpen &&
+              sameChoice == state },
     { name :=
         "the handler knows no registry: asked which command an ex name is bound to, it answers none for any name, and leaves the state as it was"
       run :=
