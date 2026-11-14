@@ -236,7 +236,7 @@ a coverage for each channel), read back:
 
 So wgpu has no software renderer of its own: a machine with no GPU and
 no driver has no adapter. That decides how the renderer is tested
-([text-and-display.md](text-and-display.md)).
+([text-and-display.md](text-and-display.md), "The renderer, as built").
 
 **Why ours.** Subpixel text is the requirement none of the three meets.
 Two more counts against the first candidate: its glyph atlas is marked
@@ -260,6 +260,95 @@ quads as the CPU does: the spike compared one blend of one triangle.
 Anything with a window. Colour glyphs from a real font. How hinted
 glyphs look on a low-resolution display, which only a person at one can
 say. Any timing: nothing was measured for speed.
+
+As built (2026-11-14, the display pipeline's phase 4), in
+`crates/editor-render-wgpu`: `wgpu` 30.0.2, `swash` 0.2.10, `etagere`
+0.3.0 and `pollster` 1.0.1, each pinned exactly, none public
+([text-and-display.md](text-and-display.md), "The renderer, as built").
+What the spikes left unchecked and is now seen:
+
+- A whole frame's quads on a real GPU against the CPU compositor. The
+  fixture frame of real text, drawn by the wgpu adapter and read back,
+  differs from the reference image the CPU compositor drew by at most 1
+  of 255 in any channel: in 42 of its 24576 pixels on Metal (an Apple M5
+  Max) and in 247 on Mesa's llvmpipe through Vulkan, in the Linux
+  container. Run on demand, once each, on 2026-11-14
+  ([on-demand-checks.md](../dev-practices/on-demand-checks.md)).
+- The Linux build of the pins, and the tests there: the gate passes in
+  the container, aarch64, with no GPU driver installed.
+
+Still not checked: x86_64; a colour glyph from a real font; anything
+with a window; how the text looks to a person at a low-resolution
+display; any timing.
+
+## Present mode and pacing
+
+Decided on 2026-11-14 (the display pipeline's phase 4), and like the
+drawing library not yet confirmed by the owner: **`Fifo`, with a frame
+latency of 1, on every platform.**
+
+**This is a decision taken by reading. Nothing has been measured.** A
+present mode is a property of a window's surface, and a measurement of
+one needs a window on a display. The renderer so far draws to a texture
+of its own and opens no window, so no surface has been created,
+configured or presented to: what follows is what wgpu's source and
+documentation say at the pin, and each row says so. The measurements are
+the display pipeline's phase 6's, by the steps written down in
+[on-demand-checks.md](../dev-practices/on-demand-checks.md), "The present
+mode, measured on a window". They may overturn the choice.
+
+**The reasons.**
+
+- `Fifo` is the one mode every back end has: wgpu documents it as
+  supported on all platforms, and it is the only mode its OpenGL back end
+  offers off Windows.
+- It does not tear.
+- The editor draws on demand, at most one frame for each refresh of the
+  display. `Mailbox` and `Immediate` save latency by dropping or tearing
+  frames that arrive faster than the display shows them, and here those
+  frames are never drawn.
+- A frame latency of 1 is what wgpu's documentation recommends for
+  "applications like GUIs doing a small amount of GPU work each frame
+  that need low latency". It leaves one refresh for the CPU and the GPU
+  together, which is the cost; an editor's frame is small.
+
+**What wgpu 30.0.2 offers, by platform and back end.** Every row was read
+in the source at the pin (`wgpu-hal` 30.0.2, `wgpu-types` 30.0.2) on
+2026-11-14 and not run: no surface exists to ask.
+
+| Platform, back end | Present modes the back end reports | Frame latency the back end reports | Where it was read |
+|---|---|---|---|
+| macOS, Metal | `Fifo` and `Immediate` (the second by turning the layer's display sync off) | 1 to 2: the layer's `maximumDrawableCount` is the latency plus 1 | `wgpu-hal/src/metal/adapter.rs` |
+| Linux, Vulkan | Whatever the surface reports, of `Fifo`, `FifoRelaxed`, `Immediate` and `Mailbox`. `Fifo` is the mode Vulkan's specification requires of every surface, which is the specification's word and was not read in wgpu | The swapchain's least image count less 1, to its greatest less 1 | `wgpu-hal/src/vulkan/swapchain/native.rs`, `conv.rs` |
+| Linux, OpenGL | `Fifo` alone | Reported as 2, and ignored: the back end does not use it | `wgpu-hal/src/gles/adapter.rs` |
+
+Windows has no row: it has not been attempted ([README.md](README.md)).
+
+The modes wgpu names are `Fifo`, `FifoRelaxed`, `Immediate` and
+`Mailbox`, and two that pick from those by what is supported,
+`AutoVsync` and `AutoNoVsync`. Its documentation says `FifoRelaxed` is
+supported on AMD on Vulkan, `Immediate` on most platforms except older
+DX12 and Wayland, and `Mailbox` on DX12 on Windows 10, NVidia on Vulkan
+and Wayland on Vulkan. The frame latency is a hint, always clamped to
+the range the back end reports.
+
+**What a surface's configuration cannot reach**, of the two macOS
+techniques the survey found:
+
+- *Presenting with the transaction during a resize.* wgpu-hal's Metal
+  back end reads the layer's `presentsWithTransaction` when it takes a
+  drawable and presents accordingly, so it honours the property when the
+  layer already has it; nothing in a surface's configuration sets it.
+- *Keeping a variable-refresh display from clocking down.* wgpu-hal's
+  Metal back end has no display link and no frame-rate range: nothing
+  about the display's refresh is reachable through it.
+
+**The choice held to the code.** `present::choose` in
+`crates/editor-render-wgpu` is the decision as a pure function of the
+modes and the latency range a surface offers, with tests: `Fifo` from
+Metal's offer, from OpenGL's and from one of every mode, and a latency
+of 1 clamped into the range offered. Phase 6 configures its surface from
+what that function gives.
 
 ## Risks this raises for our planned stack
 
@@ -328,5 +417,11 @@ port that contains it.
 - **Height of lines not yet laid out** when wrapping or line heights vary:
   estimate and correct, or lay out ahead in the background.
 - **Damage**: redraw a retained scene in full each frame (Warp reports
-  1.9 ms), or report damaged regions to the compositor (Alacritty).
-- **Present mode and pacing** through wgpu on each platform.
+  1.9 ms), or report damaged regions to the compositor (Alacritty). As
+  built (2026-11-14) the whole frame is drawn on every draw, from quads
+  kept per row, and no damage is reported; whether that is enough is for
+  the measurements of phase 6.
+- **Present mode and pacing** through wgpu on each platform: decided
+  2026-11-14, and no longer open as a choice: `Fifo` at a frame latency
+  of 1 ("Present mode and pacing", above). It was decided by reading and
+  has not been measured; the measurements are phase 6's.

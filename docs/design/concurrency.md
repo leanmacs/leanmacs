@@ -21,7 +21,7 @@ process, its runtime is the only one that schedules editor code.
 | **Lean pool** | Lean | Background jobs that compute or await | Mutate editor state; block |
 | **Dedicated job threads** | Lean | Work that blocks in a system call: the reload job today | Mutate editor state |
 | **Completion pump** | Lean, a dedicated task | Pulling the completion queue and ending the wait each completion names | Run a job; mutate editor state |
-| **Render** | Rust | Turning the published scene into frames and drawing them. Shares the layout cache with the editor thread's layout queries (the design; what is built, and the decision it awaits, are under "Sharing state") | Run Lean code |
+| **Render** | Rust | Turning the published scene into frames and drawing them. Shares the layout cache with the editor thread's layout queries (the design; what is built, and the decision it awaits, are under "Sharing state"). As built it owns the renderer alone (the device, the glyph atlas, the quads kept per row), takes frames from a mailbox, and never lays out; nothing starts the thread yet | Run Lean code; call layout or a shaper; hold a lock while it draws |
 | **Services** | Rust | Timers, loading and saving files, child-process pipes, pseudo-terminals, file watches | Hold editor state; call Lean |
 | **Workers** | Rust | Tree-sitter parsing, diff, fuzzy matching | Hold editor state |
 
@@ -120,7 +120,37 @@ chosen between them (plan review of that phase, 2026-11-13):
   `&self` (`ShapedLine::break_lines`), so the frame would carry it as one
   more field. This is not built.
 
-Phase 4, which builds the render thread, needs the answer first.
+Phase 4, which builds the render thread, was to have the answer first.
+It did not: the owner has not chosen, and the decision above stays open.
+Phase 4 (2026-11-14) built on what phase 1 built, the first of the three,
+and built it so that the other two need no change to the renderer's port
+or to its loop (`crates/editor-render`):
+
+| Thing | Written by | Read by |
+|---|---|---|
+| The renderer: the device, the glyph atlas and cache, the quads kept per row | The render thread alone, with no lock | Nothing else |
+| The mailbox: one slot for a frame and the stamp of its input, behind a lock | Whoever publishes frames: the editor thread, as built | The render thread, which takes what is there |
+| The demands: the dirty mark, the animation deadline and the refresh interval (atomics), and the target's size and scale (a small lock) | Any thread, through the loop's handle | The render thread |
+| The frame journal and the counters | The render thread alone | Any thread, as a copy |
+
+- The render thread never calls layout, a shaper or Lean, and holds no
+  lock while it draws: the mailbox's and the target's locks are held only
+  to take a value out.
+- A frame is an `Arc` of plain data, so handing one over copies nothing
+  and the render thread reads it with no lock.
+- A resize is a demand. The frame last shown is drawn again on the new
+  target at once, so painting never waits on Lean; the new layout appears
+  when Lean publishes a frame for the new size. Until then the old frame
+  is shown at its old layout, which is the cost named above and is not
+  removed.
+- Under the second answer the render thread would lay out and post to
+  the same mailbox itself; under the third it would break the frame's
+  kept lines again before it draws. Neither changes the port, the
+  mailbox, the scheduler or the journal.
+
+Not built: starting the thread (the loop is run by whoever wires the
+program together, which is `editor-ffi` in the display pipeline's phase
+6), and the real clock the journal reads.
 
 ## Foreground: commands
 

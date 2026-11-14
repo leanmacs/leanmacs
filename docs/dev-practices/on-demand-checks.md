@@ -2,8 +2,8 @@
 
 Each of these needs something the gate ([`the-gate.md`](the-gate.md)) must
 not need: a display, a person, a container, a quiet machine, the fonts of
-one machine, or leave to write a crash report. Run them by hand, when
-their section says.
+one machine, a GPU, or leave to write a crash report or a file of the
+repository. Run them by hand, when their section says.
 
 ## The overflow check, on demand
 
@@ -210,3 +210,131 @@ that needs no screen and no person, failing if any fails:
 Its keys are synthetic. They go through the X server and the real window
 library, so they show the path a key takes on Linux, but nobody typed them:
 it is not the keyboard check above, and its output says so.
+
+## The renderer on a real GPU, on demand
+
+```sh
+mise run render-gpu
+```
+
+The gate runs the wgpu renderer on wgpu's no-op back end only, which
+checks its calls and draws nothing ([`the-gate.md`](the-gate.md)). This is
+where the picture it draws is checked. What it finds depends on this
+machine's GPU and its driver, and a machine with no GPU has nothing to run
+it on, so it is not part of the gate, which only builds it. It opens no
+window: it draws to a texture and reads it back.
+
+It is the example `gpu` of `crates/editor-render-wgpu`
+(`examples/gpu.rs`). It does three things, and its exit status is whether
+the first two held:
+
+1. holds a renderer on this machine's adapter to the renderer port's
+   contract (`crates/editor-render`, `contract`);
+2. draws the fixture frame of real text, reads it back and compares it
+   with the reference image `tests/render/frame.png`: no channel of any
+   pixel may differ by more than 3 of 255. On an adapter that cannot
+   blend by a coverage for each channel it compares with the headless
+   adapter's picture in plain masks instead, and says so;
+3. prints how long a first frame, a frame with a row edited and a frame
+   that differs only in its cursor took, with the rows each built. The
+   times are of one run of a debug build: nothing is asserted of them and
+   they are no measurement.
+
+Run it after a change to the shader, the wgpu device, the painter or the
+blend, and when the pin of wgpu moves. Do not loosen the 3 to make it
+pass: a difference past it is a finding.
+
+It was run on 2026-11-14 on macOS (aarch64): Metal on an Apple M5 Max,
+blending by a coverage for each channel; all 9 properties of the contract
+held; 42 of the frame's pixels differed from the reference image, the
+worst by 1 of 255.
+
+## The renderer on Linux, on demand
+
+```sh
+mise run linux-render
+```
+
+The same example, in the container of `linux-ci`, on Mesa's software
+Vulkan driver, llvmpipe: a real adapter that needs no GPU. It needs
+Docker. The image installs Mesa's Vulkan drivers and the Vulkan loader for
+this task alone (`tools/linux/Dockerfile`); they are in the image
+`linux-ci` uses too, and the gate there, which asks for no adapter, runs
+the same with them.
+
+It was run on 2026-11-14 (aarch64, Debian 13, Mesa 25.0.7): llvmpipe
+through Vulkan, blending by a coverage for each channel; all 9 properties
+held; 247 pixels differed from the reference image, the worst by 1 of
+255. It has not been run on x86_64.
+
+## The reference image, on demand
+
+```sh
+mise run render-reference
+```
+
+This writes `tests/render/frame.png`, the picture the gate compares the
+headless renderer's with, by running the example `reference` of
+`crates/editor-render-wgpu`. It writes a file of the repository, which no
+gate may do, so the gate only builds it. `tests/render/README.md` says
+what the image shows, when to make it again, and what to do then: look at
+it, enlarged, before committing it.
+
+## The present mode, measured on a window
+
+**Nothing in this section has been run, and no figure exists yet.** These
+are the steps by which the display pipeline's phase 6 measures the present
+mode on a window. They are written down now because the decision was
+taken first, by reading: `Fifo` at a frame latency of 1 on every platform
+([`rendering-prior-art.md`](../design/rendering-prior-art.md), "Present
+mode and pacing"). A measurement needs a window on a display, which
+nothing built so far has; these steps are how that decision is borne out
+or overturned.
+
+Who runs it, and when: whoever builds phase 6, at a real window, on a
+quiet machine, once on macOS and once on Linux on a desktop (not under
+Xvfb, which has no display to pace against).
+
+What phase 6 must have built first:
+
+- a surface on the window, configured from what `present::choose`
+  (`crates/editor-render-wgpu`) gives for the modes and the frame latency
+  the surface reports;
+- a way to ask for another present mode and another frame latency for
+  one run, which the editor does not otherwise offer: a flag of the
+  measuring command, not a setting;
+- the render loop running on its thread, on the clock that stamps window
+  input (`editor-ffi`'s), so that an entry's input time and its present
+  time are on one clock;
+- a way to read the frame journal at the end of a run.
+
+The steps, for each platform:
+
+1. Note what the surface reports: its present modes and its range of
+   frame latency. Compare them with the table in
+   `rendering-prior-art.md`, which was read from wgpu's source and not
+   seen on a surface, and correct the table where they differ.
+2. For each of these that the surface offers, one run each: `Fifo` at a
+   frame latency of 1; `Fifo` at 2; `Immediate`; `Mailbox`;
+   `FifoRelaxed`.
+3. In each run, open a fixture file checked in for the purpose, and type
+   a fixed run of keys: the same keys, at the same pace, every run (typed
+   by a script where the platform allows one, and by hand otherwise, with
+   which it was written down).
+4. Read the frame journal. Over the entries of the run, take
+   `present_ns − input_ns`, the time from a key's arrival to its frame's
+   presentation, as a median and a 99th percentile; and count the
+   entries, to see that each key drew a frame and that nothing drew while
+   idle.
+5. Look at the window while it is resized, and write down what is seen:
+   whether the content lags the window's edge. That is what presenting
+   with the transaction would change on macOS, and it cannot be asked for
+   through a surface's configuration.
+
+What to record, in phase 6's body: for each platform and each run, the
+figures of step 4; the machine, its GPU and driver, the display and its
+refresh rate, and whether the display has a variable refresh; the wgpu
+back end; the command that was run; and one sentence that says whether
+the figures bear out `Fifo` at a frame latency of 1 or what they favour
+instead. If they favour another, the decision in `rendering-prior-art.md`
+and `present::PREFERRED` change in the same commit.

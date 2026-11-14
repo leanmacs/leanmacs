@@ -63,6 +63,51 @@ made by `tools/fonts/subset.sh`, by hand and never by the gate. The
 system's fonts have a check of their own, outside the gate
 ([`on-demand-checks.md`](on-demand-checks.md)).
 
+Rendering is tested there too, on a machine with no GPU, and the gate
+needs none. What it checks:
+
+- **The render loop**, in `crates/editor-render`, on the fakes the crate
+  publishes: a recording renderer, a clock a test sets and a wait that
+  never blocks. Newest wins in the mailbox; the scheduler's decisions,
+  idle among them; what is and is not a demand, so that a frame submitted
+  again draws nothing; a journal entry for each frame presented, with its
+  three times, and none while idle; which rows are built again; and the
+  port's contract, each property seen to fail on a renderer written to
+  break it. One test runs the loop on a thread of its own, parked on a
+  real condition variable; it and the tests of that wait read channels
+  with a bound, and nothing sleeps.
+- **The painter and the glyph cache**, in `crates/editor-render-wgpu`, on
+  a hand-written rasteriser that reads no font: where each quad goes,
+  the drawing order, what is rasterised once, what is never evicted and
+  what the bound does.
+- **The rasteriser**, on the fixture fonts under `tests/fonts`, compiled
+  in, with glyph ids read from each font's own character map. Its tests
+  state relations only (more ink, wider, differs, the same twice).
+- **One picture.** The headless adapter draws one frame of real text on
+  the CPU, and no channel of any pixel may be further than 2 of 255 from
+  the reference image checked in at `tests/render/frame.png`
+  (`crates/editor-render-wgpu/tests/reference.rs`). The image is compiled
+  into the test, so nothing is read or written when it runs; its README
+  says what it shows and when to make it again. That test and one other
+  (`tests/reuse.rs`) are the only two that run the real shaper outside
+  its own crate, for the wiring alone.
+- **The wgpu adapter's calls.** It runs on wgpu's no-op back end, which
+  validates every call as a real one would and draws nothing: the shader
+  compiles in both its forms, the pipeline's vertex layout is the
+  shader's, and a frame with every kind of quad and every kind of atlas
+  page is drawn inside an error scope with no error
+  (`crates/editor-render-wgpu/src/gpu/tests.rs`).
+
+What it cannot check, and so does not claim: what a GPU draws. wgpu has
+no software renderer of its own, so a machine with no GPU and no driver
+has no adapter, and no test asks for one: `mise run lint` forbids the
+call that does (`crates/editor-render-wgpu/clippy.toml`). The validation
+is not everything either: a vertex attribute of the wrong type is
+refused, and one with too few components is not. The picture a real GPU
+draws is compared with the reference image by tasks of their own, outside
+the gate ([`on-demand-checks.md`](on-demand-checks.md)), and nothing with
+a window is drawn anywhere yet.
+
 The Lean half's logic needs no Rust library. The editor reaches the library
 through interfaces it defines, each with a pure Lean model, and
 `mise run lean-test` runs `lake test`: the model tests

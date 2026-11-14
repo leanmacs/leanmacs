@@ -1219,8 +1219,8 @@ part are in the module docs; these are the decisions.
   all when a frame of another generation arrives. Fonts are compared by
   what they name, never by their bytes. The frame still holds no atlas
   id and no rasterised glyph, and `Frame::describe` prints neither the
-  generation nor the table. No `Renderer` port was made for this: where
-  it goes is still open (task `display-pipeline-renderer-port-owner`).
+  generation nor the table. The `Renderer` port that takes these frames
+  was made later, in a crate of its own ("The renderer, as built").
 - **The mode line.** A view with at least one status field has a status
   row: its fields' texts one after another with no separator, each in its
   face over `mode-line` over `default`, shaped as one unbroken line
@@ -1246,6 +1246,117 @@ part are in the module docs; these are the decisions.
   published before stay. Who writes the cache, and when a resize is
   shown, is open: [concurrency.md](concurrency.md), "Sharing state".
 
+### The renderer, as built
+
+The display pipeline's phase 4 built the renderer in two crates: the port
+and what every back end shares in `crates/editor-render`, and the real
+adapters in `crates/editor-render-wgpu`. The facts of each part are in the
+module docs; these are the decisions. None is confirmed by the owner yet
+(tasks `display-pipeline-renderer-port-owner` and
+`display-pipeline-text-core-pitfalls`). Nothing starts the render thread
+or opens a surface yet: that, the real clock, and the journal reaching
+Lean are phase 6's.
+
+- **The `Renderer` port is `editor-render`'s.** It is a crate of its own,
+  which depends on `editor-layout` alone, for the reasons the window port
+  is: the fake and the contract belong to the port's owner, nothing may
+  depend on `editor-ffi`, and `editor-layout` reads no clock and starts no
+  thread while the render loop has both. The port is one method that
+  takes data and returns data: a frame and a target (a size in physical
+  pixels and a scale) in, and out whether it presented and what it cost
+  (rows built and reused, glyph images rasterised, reused, evicted and
+  skipped, the atlas's bytes). It grows by data: a field of the request
+  or of the answer. Reading pixels back is not on the port.
+- **What every back end shares is written once, there.** The mailbox
+  (one slot; a newer frame replaces one not yet taken, and the stamp kept
+  is the older). The scheduler, a pure function of the demands and the
+  time passed in. Which rows are built again (`RowCache`: one payload for
+  each distinct row hash of the frame last drawn, text rows and status
+  rows alike, built only for a hash not held, and begun again under
+  another generation or scale). The frame journal and the counters,
+  filled by the loop from what a draw returns. Time is a port there, in
+  nanoseconds, with a fake a test sets; the crate has no real clock.
+- **The loop draws on demand.** A demand is a frame that is not the one
+  shown, a dirty mark, a new size or scale, or an animation deadline that
+  has come. A frame equal to the one shown, the same value or an equal
+  one, is no demand: nothing is drawn. There is at most one draw for each
+  refresh interval, which is data (the window gives it in phase 6), and
+  with no demand the render thread waits on a condition variable with no
+  deadline. A resize draws the frame shown again on the new target at
+  once, without waiting for Lean. A draw that fails to present leaves
+  its demands, and is tried again a refresh later.
+- **The fake and the contract.** `RecordingRenderer` records every
+  request and draws nothing. The contract is nine properties of what a
+  renderer says it built: a first frame builds every row; the same frame
+  again, a frame that differs only in its cursor and another size at the
+  same scale build none; a frame that differs in one row, and one
+  scrolled by a row, build that row alone; another generation builds
+  every row; rows are counted once for each distinct hash; a frame of no
+  views is presented. Both real adapters run it.
+- **The drawing is ours: one painter, two devices.** No published
+  library draws subpixel text
+  ([rendering-prior-art.md](rendering-prior-art.md), "The drawing
+  library, as chosen"). The painter turns a frame into a list of quads,
+  rectangles of whole pixels that are filled with a colour or read a
+  rectangle of a glyph atlas, in drawing order: per view its background,
+  each run's background where it is not the view's, the selection areas,
+  the glyphs, underlines and strike-throughs, the status row, the
+  cursors. A row's quads are kept by its hash, relative to its own start.
+  Behind the painter is one of two devices, which only blend the quads:
+  the CPU compositor (`HeadlessRenderer`) and wgpu (`WgpuRenderer`). So
+  the two adapters are the same code down to the quads and the atlas's
+  bytes, and differ in the blend of one quad, which is one function and
+  one shader that state the same arithmetic.
+- **Where a glyph goes.** At its `x` plus its `dx` across, rounded to a
+  quarter of a pixel, and at its row's top plus the baseline plus its
+  `dy` down, each rounded to a whole pixel: a baseline is a whole pixel.
+- **The glyph cache.** A glyph image is kept by resolved font id, glyph
+  id, one of 4 horizontal bins of a quarter pixel, and the kind asked
+  for. There are three kinds, each in atlas pages of its own format:
+  masks (one coverage a pixel), subpixel masks (a coverage for each of
+  red, green and blue) and colour images. An image is pinned by every
+  kept row that draws it, and rows are kept for the frame last drawn, so
+  a glyph on screen is never evicted; only unpinned images are let go,
+  the one unused for longest first. The pages may come to a budget of
+  bytes (64 MiB unless a setting says otherwise); past it, unpinned
+  images go first, and if what is in use alone needs more, the page is
+  added, counted, and given back at a later draw. A frame of another
+  generation empties the cache. What cannot be drawn is counted: a glyph
+  of a font with no bytes (the fake shaper's), a glyph id past 16 bits,
+  an image larger than a page. Rasterising is `swash`, packing the pages
+  is `etagere`.
+- **Text is blended over what is under it, in linear light.** For each
+  of red, green and blue, `out = text × coverage + under × (1 −
+  coverage)`: nothing is composited against an assumed background. The
+  target holds sRGB values and blending is in linear light, so half
+  coverage of white on black is 188, not 128. On a GPU a coverage for
+  each channel is dual-source blending; an adapter without it is given
+  plain masks and one coverage, and says so.
+- **Antialiasing is a setting, and by default follows the scale:**
+  subpixel masks below 2 physical pixels to a logical one, plain masks
+  from 2 up. The order of a display's colour stripes cannot be asked of
+  the window system, so it is a setting too (red, green, blue unless
+  told otherwise). Hinting is on, as a setting.
+- **The scale changes what the renderer sizes, and nothing else.** A
+  frame is in physical pixels and so is a target. What the renderer
+  itself sizes is `max(1, round(scale))` pixels thick: an underline, a
+  strike-through, a bar or underline cursor, a hollow cursor's edge.
+  Rows built at one scale are built again at another. Scaling a theme's
+  font sizes by the scale is layout's open question.
+- **A ligature across a change of paint** is drawn whole in the paint of
+  its first byte: a glyph has one cluster, and the painter paints a
+  glyph by the run that holds it.
+- **How it is tested.** wgpu has no software renderer of its own: a
+  machine with no GPU and no driver has no adapter, and the gate runs on
+  such machines. So the gate draws with the CPU compositor, and compares
+  one frame of real text with one reference image, `tests/render/
+  frame.png`, within 2 of 255 a channel; and it runs the wgpu adapter on
+  wgpu's no-op back end, which validates every call (the shader, the
+  pipeline, every draw, inside an error scope) and draws nothing. What a
+  real GPU draws is compared with the same image on demand
+  ([the-gate.md](../dev-practices/the-gate.md),
+  [on-demand-checks.md](../dev-practices/on-demand-checks.md)).
+
 ### The frame is device-independent
 
 The frame carries positioned text runs with resolved faces, rectangles,
@@ -1257,7 +1368,14 @@ adapters behind the `Shaper` and `Renderer` ports:
 |---|---|---|
 | GUI | Parley, real font metrics | wgpu |
 | Cell grid | Cell shaper: advance is the Unicode width, line height is 1 | Writes the frame into a grid of styled cells |
-| Headless | Parley, real font metrics | Records the frame; draws nothing |
+| Headless | Parley, real font metrics | The GUI's painter, with its quads laid over a picture in memory on the CPU: no GPU and no window |
+
+As built, the headless renderer draws: it is `HeadlessRenderer`, the
+same painter as the wgpu adapter's with a CPU compositor behind it ("The
+renderer, as built"). The renderer that records the frame and draws
+nothing is the `Renderer` port's published fake, `RecordingRenderer`,
+which the tests of everything above the port run on. No cell grid
+renderer is built.
 
 The cell grid adapter is built early, as a test renderer: a test asserts
 on a frame as a grid of text. That keeps the ports honest from the start,
@@ -1313,6 +1431,31 @@ for every frame) and exposes input-to-frame latency, frame time, layout
 cache hit rate, counts of rows laid out again, and which ranges of a buffer have been visible in a view
 and for how long. The last one supports review: "you have not looked at
 these hunks" is a fact the editor can state.
+
+As built (the display pipeline's phase 4, `crates/editor-render`): the
+frame journal and the renderer's counters.
+
+- **The journal** has one entry for each frame presented, and none for a
+  draw that did not present or for any time in which nothing was drawn:
+  an idle editor writes nothing. An entry holds three times read from one
+  clock, in nanoseconds: of the input the frame answers, of the start of
+  its draw, and of its presentation; and the rows the draw built and
+  reused. The input's time is the oldest stamp among the demands the draw
+  served: a frame's stamp is its publisher's, a dirty mark and a resize
+  are stamped as they are made, an animation by its deadline; and when a
+  newer frame replaces one not yet drawn the older stamp is kept, so a
+  latency is never flattered. It is a ring of the last 4096 entries, and
+  counts those it let go.
+- **The counters** count work, never time: draws and failed draws,
+  frames submitted and replaced, rows built and reused, glyph images
+  rasterised, reused, evicted and skipped, and the atlas's bytes.
+- **What is not built.** The journal's clock is a port with only a fake:
+  for a latency to mean anything the journal must read the clock that
+  stamped the input, which is `editor-ffi`'s, so the real one is written
+  there in phase 6. Neither the journal nor the counters reach Lean yet.
+  Nothing has been measured with them. Layout's counters are layout's
+  ("Layout and rendering", as built); which ranges have been visible is
+  not built.
 
 ## Open questions
 
@@ -1471,7 +1614,48 @@ these hunks" is a fact the editor can state.
   that crosses a boundary is shaped as two.
 - **A ligature across a change of paint.** It is one glyph, and a row's
   runs name paints by byte, so which paint it is drawn in is the
-  renderer's choice.
+  renderer's choice. The renderer draws it whole in the paint of its
+  first byte ("The renderer, as built"); splitting the glyph's image at
+  the change is not done.
+- **The renderer's choices await the owner.** Where the `Renderer` port
+  lives, and that the drawing is ours and not Vello's
+  ([rendering-prior-art.md](rendering-prior-art.md)), are decisions the
+  plan of the display pipeline's phase 4 took and the owner has not
+  confirmed.
+- **No present mode has been measured.** `Fifo` at a frame latency of 1
+  was chosen by reading wgpu's source; no surface exists yet, so what
+  each platform offers is what was read, not what a surface reported.
+  The measurements are phase 6's
+  ([rendering-prior-art.md](rendering-prior-art.md), "Present mode and
+  pacing").
+- **The GPU's picture is checked on demand only.** The gate checks the
+  wgpu adapter's calls, on a back end that draws nothing, and the CPU
+  compositor's picture. That a real GPU draws the same is seen when
+  someone runs `mise run render-gpu` or `mise run linux-render`, and
+  after a change to the shader nothing makes them. The shader and the
+  CPU's blend state one arithmetic twice, kept alike by hand.
+- **No colour glyph from a real font.** No fixture font has one. Colour
+  is tested in the cache, the painter and the compositor on images the
+  tests make, and never through the rasteriser. COLR version 1 glyphs
+  are not drawn in colour by `swash` at the pin, and a colour bitmap's
+  alpha convention was not checked.
+- **What only a person at a display can tune.** Hinting (on), the
+  coverage adjustment for thin dark text (its amount is 0, which changes
+  nothing), the amount of synthetic bold, where an underline and a
+  strike-through sit (the frame carries no metric for either), and the
+  default atlas budget and page size. The order of a display's colour
+  stripes is a setting nobody sets yet.
+- **What the frame does not carry is not drawn.** The echo area, the
+  pending key prefix and the input method's preedit are in no frame.
+  Boxes, images and gutter marks are not in the frame either. A curly
+  underline is a stepped line.
+- **The whole frame is drawn on every draw.** Quads are kept per row,
+  but every quad of the frame is sent and blended again, and no damage
+  is reported to the compositor. An atlas page is sent to the GPU again
+  whole when a glyph is added to it.
+- **x86_64 is unverified** for the renderer throughout: the reference
+  image was made, and every check run, on aarch64. The comparison's
+  tolerance of 2 is for that.
 - **Zero-width characters.** U+200B and U+200D ride on the line of the
   cluster beside them in Parley. The shaper contract's texts hold none,
   and its rule that a line fits its width says nothing of them.
