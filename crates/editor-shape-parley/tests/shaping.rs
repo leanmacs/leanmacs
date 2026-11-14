@@ -169,11 +169,15 @@ fn a_resolved_font_says_what_a_rasteriser_needs() {
         assert_eq!(font.file, regular.file);
         assert_eq!(font.index, 0);
     }
+    // The size is the one the spec asked for: the default spec's, which
+    // layout owns, for the four that set none.
+    let base = FontSpec::default().size.as_pixels();
     assert_eq!(
         (regular.size, regular.embolden, regular.skew),
-        (16.0, false, None)
+        (base, false, None)
     );
-    assert_eq!((bold.size, bold.embolden, bold.skew), (16.0, true, None));
+    assert_eq!((bold.size, bold.embolden, bold.skew), (base, true, None));
+    assert_eq!((italic.size, oblique.size), (base, base));
     assert!(!italic.embolden && italic.skew.is_some_and(|degrees| degrees > 0.0));
     assert!(!oblique.embolden && oblique.skew.is_some_and(|degrees| degrees > 0.0));
     assert_eq!((big.size, big.embolden, big.skew), (24.0, false, None));
@@ -252,7 +256,8 @@ fn a_character_the_primary_lacks_is_drawn_in_the_fallback_that_covers_it() {
     assert!(drawn_from(&fonts[3], SANS));
     // All at the size the spec asked for, and the fallbacks' glyphs are
     // glyphs of theirs, not the missing glyph.
-    assert!(fonts.iter().all(|font| font.size == 16.0));
+    let asked = FontSpec::default().size.as_pixels();
+    assert!(fonts.iter().all(|font| font.size == asked));
     assert!(line.glyphs.iter().all(|glyph| glyph.id != 0));
     // The two letters are one resolved font, and each fallback another.
     assert_eq!(line.glyphs[0].font, line.glyphs[3].font);

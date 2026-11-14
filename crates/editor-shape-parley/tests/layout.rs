@@ -10,7 +10,6 @@
 mod common;
 
 use editor_layout::Layout;
-use editor_layout::cache::Counters;
 use editor_layout::scene::{Rect, Scene};
 use editor_layout::tabs::SEGMENT_BYTES;
 use editor_shape_parley::{ParleyShaper, ShapeCounters};
@@ -39,20 +38,18 @@ fn twenty_rows(changed: Option<usize>) -> String {
         .join("\n")
 }
 
-/// What layout and its shaper each counted while `run` ran.
+/// How many segments layout says it shaped while `run` ran, and what its
+/// shaper counted meanwhile. Of layout's counters only that one is read:
+/// the others are layout's own business, and it may add to them.
 fn counted(
     layout: &mut Layout<ParleyShaper>,
     run: impl FnOnce(&mut Layout<ParleyShaper>),
-) -> (Counters, ShapeCounters) {
-    let (laid, shaped) = (layout.counters(), layout.shaper().counters());
+) -> (u64, ShapeCounters) {
+    let (laid, shaped) = (layout.counters().shaped, layout.shaper().counters());
     run(layout);
-    let (laid_after, shaped_after) = (layout.counters(), layout.shaper().counters());
+    let (laid_after, shaped_after) = (layout.counters().shaped, layout.shaper().counters());
     (
-        Counters {
-            shaped: laid_after.shaped - laid.shaped,
-            broken: laid_after.broken - laid.broken,
-            reused: laid_after.reused - laid.reused,
-        },
+        laid_after - laid,
         ShapeCounters {
             layouts: shaped_after.layouts - shaped.layouts,
             bytes: shaped_after.bytes - shaped.bytes,
@@ -90,7 +87,7 @@ fn layout_builds_one_parley_layout_for_each_segment_it_shapes() {
         // Whatever layout says it shaped, the adapter built that many
         // Parley layouts and no more: none for a break, a reuse, a font's
         // metrics or a cursor.
-        assert_eq!(shaped.layouts, laid.shaped, "{step}: {laid:?}");
+        assert_eq!(shaped.layouts, laid, "{step}");
         any += shaped.layouts;
     }
     assert!(any > 0);
@@ -103,7 +100,7 @@ fn layout_builds_one_parley_layout_for_each_segment_it_shapes() {
             .lines_from(&shown, 300.0, 0, 3, None)
             .expect("a move");
     });
-    assert_eq!(shaped.layouts, laid.shaped, "{laid:?}");
+    assert_eq!(shaped.layouts, laid);
 }
 
 #[test]
@@ -121,12 +118,12 @@ fn no_parley_layout_holds_a_whole_long_row() {
         let frame = layout.frame(&scene);
         assert!(!frame.views[0].rows.is_empty());
     });
-    assert!(laid.shaped > 0);
-    assert_eq!(shaped.layouts, laid.shaped);
+    assert!(laid > 0);
+    assert_eq!(shaped.layouts, laid);
     // Each layout holds at most a segment, and all of them less than the
     // row.
     let segment = u64::try_from(SEGMENT_BYTES).expect("a length");
-    assert!(shaped.bytes <= segment * laid.shaped, "{shaped:?}");
+    assert!(shaped.bytes <= segment * laid, "{shaped:?}");
     assert!(shaped.bytes < u64::try_from(row.len()).expect("a length"));
 }
 
