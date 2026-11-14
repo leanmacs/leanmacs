@@ -989,14 +989,21 @@ def key (keys : Keys scheme) (loop : Loop scheme) (key : Key) : EditorM (Stepped
   else
     return ({ loop with input := loop.atRest } : Loop scheme).ranInto ran
 
-/-- Runs the command registered under `name` as an invocation with no
-arguments that no key yielded (`run`), and publishes a scene of the state
-after it: what a host's driver asks for. The scheme's states are left as
-they are, but for a view the command closed. -/
-def runNamed (keys : Keys scheme) (loop : Loop scheme) (name : String) : EditorM (Stepped scheme) :=
-  do
-  let stepped := loop.ranInto (← run keys loop.state { command := name } [])
+/-- Runs `invocation`, which no key yielded (`run`), and publishes a scene of
+the state after it: the echo area is cleared, the command is looked up, and
+it is called with the focused window, the invocation's arguments and no
+keys. The scheme's states are left as they are, but for a view the command
+closed. -/
+def invoke (keys : Keys scheme) (loop : Loop scheme) (invocation : Invocation) :
+    EditorM (Stepped scheme) := do
+  let stepped := loop.ranInto (← run keys loop.state invocation [])
   return { stepped with loop := ← stepped.loop.publish }
+
+/-- Runs the command registered under `name` as an invocation with no
+arguments that no key yielded (`invoke`), and publishes a scene of the
+state after it: what a host's driver asks for. -/
+def runNamed (keys : Keys scheme) (loop : Loop scheme) (name : String) : EditorM (Stepped scheme) :=
+  loop.invoke keys { command := name }
 
 /-- Runs `command`, which the loop is handed with `label` as its name, and
 publishes a scene of the state after it: how a finished job's command is
