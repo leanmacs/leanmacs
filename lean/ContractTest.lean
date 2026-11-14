@@ -2,15 +2,21 @@ import Editor.Command.Model
 import Editor.Command.Real
 import Editor.Display.Contract
 import Editor.Display.Recorder
+import Editor.Event.Queue
 import Editor.File.Cases
+import Editor.InputScheme.Test
 import Editor.Job.Contract
 import Editor.Job.Fake
 import Editor.Job.Pool
 import Editor.Job.Real
+import Editor.Key.Notation
+import Editor.Loop
 import Editor.Text.Contract
 import Editor.Text.Model
 import Editor.Text.Real
 import Editor.UndoTree.Cases
+import Editor.Watch.Contract
+import Editor.Watch.Real
 
 /-!
 # The contract checks against the real bindings
@@ -72,6 +78,17 @@ two cell sizes `model-test` runs it at against the model
 (`displayFailures`). `recorderChecks` pins what only the recorder shows:
 that it keeps and counts what is published, and that it reads the table of
 snapshots as it is when asked.
+
+The watch port's contract (`Editor/Watch/Contract.lean`) is run against its
+real binding (`Editor/Watch/Real.lean`), over the library's interrupt flag
+and the library's timer service (`watchFailures`): the interrupt keys a
+property needs arrive through the library's window input, as a window's
+would. `model-test` runs the same list against the watch model.
+`watchChecks` pins what only the real binding shows: that its clock is the
+job port's, read from a fake clock here, and, with the command loop over
+the real text binding, an interrupt key that arrives while a command runs.
+That check is single-threaded, so where the key arrives is exact: the
+display handler posts it during one of the command's own publishes.
 
 `main` starts the pump once, on a dedicated task. When the checks are done
 it quits the queues, requires the pump to have ended, and exits explicitly:
@@ -779,12 +796,159 @@ def recorderChecks : List Check :=
             | .error .noSuchSnapshot => true
             | _ => false }]
 
+/-- Runs a property of the watch port's contract against the real binding
+over `timers`. The library is told the interrupt key, and the property's
+interrupt keys arrive through the library's window input, as a window's
+would, before `holds` runs. Afterwards the events are taken off the editor
+queue, the flag is lowered for whatever `holds` left up, and the library is
+left with no interrupt key, so the next property starts with the flag down
+and the queue empty. `false` when a key could not be posted. -/
+def runOnWatch (timers : Job.Timers) (property : WatchContract.Property) : IO Bool := do
+  unless ← Event.setInterruptKey (some Watch.interruptKey) do
+    return false
+  try
+    let mut posted := 0
+    for _ in [0:property.arrived] do
+      if ← Event.post (.key Watch.interruptKey true "") then
+        posted := posted + 1
+    let held ← Program.runM (port := watchPort) (Watch.real timers) property.holds
+    for _ in [0:posted] do
+      discard <| Ffi.nextEvent .editor
+      Ffi.interruptLower
+    return held && posted == property.arrived && !(← Ffi.interruptRaised)
+  finally
+    discard <| Event.setInterruptKey none
+
+/-- The names of the watch port's contract properties that do not hold of
+the real binding over `timers`. -/
+def watchFailures (timers : Job.Timers) : IO (List String) := do
+  let failed ← WatchContract.failures (runOnWatch timers) WatchContract.properties
+  return failed.map (s!"the real watch binding: {·}")
+
+/-- What a command of the watch checks is: given its call, a program whose
+value is what to write back. -/
+abbrev Dispatched :=
+  Call → EditorM (Option Config.Write)
+
+/-- The keys the key string `text` names; none when it is refused. -/
+def keys (text : String) : List Key :=
+  (Key.parse text).toOption.getD []
+
+/-- A scene with no views whose echo is `echo`: what the command `spin`
+publishes, so that a display handler tells its publishes apart. -/
+def spinScene (echo : String) : Scene :=
+  { emptyScene with echo }
+
+/-- The command `spin` of the watch checks: it replaces what the selection
+covers with `spin`, and then, five times over, publishes a scene whose echo
+says which round it is and makes a text named for the round. -/
+def spin : Dispatched := fun call => do
+  Loop.insert call.target "spin"
+  for round in [1:6] do
+    Display.publish (spinScene s!"spin {round}")
+    discard <| createText s!"after {round}"
+  return none
+
+/-- The command `stamp` of the watch checks: it replaces what the selection
+covers with the keys it was called with, as a key string. -/
+def stamp : Dispatched := fun call => do
+  Loop.insert call.target (Key.notations call.keys)
+  return none
+
+/-- What a step of the watch checks is handed: one keymap for every view,
+which binds `C-c l` to `spin` and `C-c s` to `stamp`, and those two
+commands. -/
+def watchKeys : Loop.Keys TestScheme.scheme :=
+  { maps := fun _ =>
+      [Keymap.ofList
+          [(keys "C-c l", ({ command := "spin" } : Invocation)),
+            (keys "C-c s", { command := "stamp" })]]
+    command? := fun name => ([("spin", spin), ("stamp", stamp)].find? (·.1 == name)).map (·.2) }
+
+/-- What only the watch port's real binding shows. -/
+def watchChecks (timers : Job.Timers) : List Check :=
+  [{  name :=
+        "the watch binding's clock is the job port's: over a fake clock it reads that clock's reading, and each reading is a read of that clock"
+      run := do
+        let clock ← Job.FakeClock.new (← Job.Completions.new)
+        let handler := Watch.real clock.timers
+        let first ← Program.runM (port := watchPort) handler Watch.now
+        clock.advance 60
+        let second ← Program.runM (port := watchPort) handler Watch.now
+        return first == 0 && second == 60 && (← clock.reads) == 2 },
+    { name :=
+        "the interrupt key arrives during a command's third publish, on the real text binding: the command makes no request after it, the buffer's text is as before, the echo says interrupted, the event then pulled is marked, taking it lowers the flag, and the next key's command runs to its end"
+      run := do
+        unless ← Event.setInterruptKey (some Watch.interruptKey) do
+          return false
+        try
+          let published ← Snapshots.new
+          let recorder ← DisplayRecorder.new { advance := 8, lineHeight := 16 } published.reader
+          -- The key arrives while the command is inside its third publish,
+          -- on this thread: nothing else runs between.
+          let display : DisplayHandler := fun request => do
+            if let .publish scene := request then
+              if scene.echo == "spin 3" then
+                discard <| Event.post (.key Watch.interruptKey true "")
+            recorder.handle request
+          let watch := Watch.real timers
+          let run {α : Type} (texts : RealTexts) (program : EditorM α) :
+            IO (Option α × RealTexts) := do
+            let (result, texts) ← program.runReal texts display (watch := watch)
+            return (result.toOption, texts)
+          let press (text : String) : List Received :=
+            (keys text).map fun key => { event := .key key true "", stamp := 0 }
+          let takes (loop : Loop TestScheme.scheme) (received : List Received) :
+            EditorM (Loop TestScheme.scheme) := do
+            let mut loop := loop
+            for one in received do
+              loop := (← loop.take watchKeys one).loop
+            return loop
+          let read (loop : Loop TestScheme.scheme) : EditorM String := do
+            let some target := loop.state.focusedTarget? | throw .noSuchText
+            target.buffer.text.read
+          let (started, texts) ←
+            run (RealTexts.over published) (Loop.start TestScheme.scheme ⟨640, 480⟩)
+          let some loop := started | return false
+          -- The command, interrupted in its third round.
+          let (interrupted, texts) ←
+            run texts do
+                let loop ← takes loop (press "C-c l")
+                return (loop, ← read loop)
+          let some (loop, after) := interrupted | return false
+          let made ←
+            texts.documents.filterMapM fun document => do
+                let some document := document | return none
+                return some (← document.read)
+          let raised ← Ffi.interruptRaised
+          -- The interrupt key is next on the queue, marked.
+          let pulled ← Ffi.nextEvent .editor
+          let .ok received := Event.ofFfi pulled | return false
+          let (lowered, texts) ← run texts (takes loop [received])
+          let some loop := lowered | return false
+          let down ← Ffi.interruptRaised
+          let echoed := loop.state.echo
+          -- The next key's command runs to its end.
+          let (next, _) ←
+            run texts do
+                let loop ← takes loop (press "C-c s")
+                return (loop.state.echo, ← read loop)
+          return after == "" && made == #["", "after 1", "after 2"] && raised &&
+              received.interrupt &&
+              received.event == .key Watch.interruptKey true "" &&
+              !down &&
+              echoed == "spin: interrupted" &&
+              next == some ("", "C-c s")
+        finally
+          discard <| Event.setInterruptKey none }]
+
 end ContractTest
 
 /-- Runs the text port's contract against its real binding, then the job
 port's contract and the job checks against the runner over the library's
-timer service, then shuts down: exits 0 when everything holds, and 1 after
-naming on stderr what does not.
+timer service, the display interface's against the recorder and the watch
+port's against its real binding, then shuts down: exits 0 when everything
+holds, and 1 after naming on stderr what does not.
 
 The pool's threads are learnt first, by warming it, before anything else
 runs: the check that the pump is not one of the pool's tasks compares
@@ -820,6 +984,9 @@ def main : IO UInt32 := do
   let displayFailed ← ContractTest.displayFailures
   let recorderChecks := ContractTest.recorderChecks
   let recorderFailed ← ContractTest.checkFailures recorderChecks
+  let watchFailed ← ContractTest.watchFailures services.timers
+  let watchChecks := ContractTest.watchChecks services.timers
+  let watchCheckFailed ← ContractTest.checkFailures watchChecks
   Editor.Ffi.quit
   let pumpEnded ← ContractTest.eventually (IO.hasFinished pump)
   let failed :=
@@ -828,12 +995,14 @@ def main : IO UInt32 := do
       caseFailed ++
       displayFailed ++
       recorderFailed ++
+      watchFailed ++
+      watchCheckFailed ++
       if pumpEnded then [] else ["quit ends the completion pump"]
   for name in failed do
     IO.eprintln s!"FAILED: {name}"
   unless failed.isEmpty do
     IO.Process.exit 1
   IO.println
-      s!"contract-test: {properties.length + adoptProperties.length} properties hold of the real text binding, {cases.length} cases of the undo tree hold over it, and its documents and snapshots are freed when released and with its table; {Editor.JobContract.properties.length} properties hold of the job runner over the timer service, and {Editor.JobContract.fileProperties.length} file properties over the file service, on real files; {checks.length} checks of the timer service passed, {fileChecks.length} of the file service, {Editor.FileCases.cases.length} cases across the text port and the job port hold of the binding and the file service; {(Editor.DisplayContract.properties { advance := 1, lineHeight := 1 }).length} properties of the display interface hold of the recorder over real snapshots in cells of {ContractTest.displayCells.length} sizes, and {recorderChecks.length} checks of the recorder passed; and quit ended the pump"
+      s!"contract-test: {properties.length + adoptProperties.length} properties hold of the real text binding, {cases.length} cases of the undo tree hold over it, and its documents and snapshots are freed when released and with its table; {Editor.JobContract.properties.length} properties hold of the job runner over the timer service, and {Editor.JobContract.fileProperties.length} file properties over the file service, on real files; {checks.length} checks of the timer service passed, {fileChecks.length} of the file service, {Editor.FileCases.cases.length} cases across the text port and the job port hold of the binding and the file service; {(Editor.DisplayContract.properties { advance := 1, lineHeight := 1 }).length} properties of the display interface hold of the recorder over real snapshots in cells of {ContractTest.displayCells.length} sizes, and {recorderChecks.length} checks of the recorder passed; {Editor.WatchContract.properties.length} properties of the watch port hold of its real binding, and {watchChecks.length} checks of it passed; and quit ended the pump"
   (← IO.getStdout).flush
   IO.Process.exit 0
