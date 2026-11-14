@@ -5645,6 +5645,49 @@ and is then refused. -/
 def boom : Dispatched :=
   failingAfter fun call => Loop.insert call.target "boom"
 
+/-- `hiddenBuffer`'s state with the buffer `hidden`, which no window shows,
+holding a file: a buffer a save can be begun for. -/
+def savable : TextM EditorState := do
+  let (state, _) ← hiddenBuffer
+  return (state.attachFile ⟨2⟩ notePath noteStamp .lf).2
+
+/-- The save in flight of the buffer `hidden` of `savable`, in `state`. -/
+def savingOf (state : EditorState) : Option Buffer.Saving :=
+  ((state.buffer? ⟨2⟩).bind (·.file)).bind (·.saving)
+
+/-- The commands of the checks of a save in flight, on `savable`, bound
+under `C-c`. `begin` (`g`) takes a snapshot of the buffer's text and begins
+a save of it, with the state the buffer's history is in. `end` (`e`) ends
+the save in flight with a stamp, as a save that wrote the file does, and
+`unsaved` (`n`) with none, as one that was refused does. `remove` (`r`)
+removes the buffer. `fail` (`f`) ends the save with a stamp and is then
+refused. `twice` (`t`) releases the save's snapshot itself and then ends
+the save. -/
+def saveKeys : Loop.Keys TestScheme.scheme :=
+  let ends (stamp : Option File.Stamp) (first : SnapshotId → EditorM Unit := fun _ => pure ()) :
+    EditorM Unit := do
+    let some saving := savingOf (← editorState) | throw .noSuchSnapshot
+    first saving.snapshot
+    discard <| EditorState.ask (.endSave ⟨2⟩ saving.snapshot stamp)
+  let later : File.Stamp :=
+    { noteStamp with
+      seconds := 9, size := 12 }
+  let run (command : EditorM Unit) : Dispatched := fun _ => do
+    command
+    return none
+  dispatchKeys
+    [("C-c g", invoke "begin"), ("C-c e", invoke "end"), ("C-c n", invoke "unsaved"),
+      ("C-c r", invoke "remove"), ("C-c f", invoke "fail"), ("C-c t", invoke "twice")]
+    [("begin",
+        run do
+          let some buffer := (← editorState).buffer? ⟨2⟩ | throw .noSuchText
+          let taken ← buffer.text.snapshot
+          discard <| EditorState.ask (.beginSave ⟨2⟩ taken buffer.history.state)),
+      ("end", run (ends (some later))), ("unsaved", run (ends none)),
+      ("remove", run (discard <| EditorState.ask (.removeBuffer ⟨2⟩))),
+      ("fail", failingAfter fun _ => ends (some later)),
+      ("twice", run (ends (some later) fun taken => taken.release))]
+
 /-- A scheme written for the rollback checks: the test scheme, with two
 counts beside its state that no reset clears, as a scheme's state may hold
 what a reset must keep. The first counts the keys that yielded an
@@ -5828,7 +5871,45 @@ def dispatchRollbackChecks : List Check :=
             let some _ ← again.history.redo Origin.user | throw .noInverse
             return (before, after, said, ← buffer.text.read)
           (program.runModel editorModel).1.toOption ==
-            some ("x", "", "; the command moved in the history", "one") }]
+            some ("x", "", "; the command moved in the history", "one") },
+    { name :=
+        "a command that ended a save with a stamp, which marks the buffer's state as saved, and was then refused is rolled back whole: the buffer is modified as it was before the command, its stamp is the one from before, and its save is still in flight"
+      run :=
+        pure <|
+          let program : EditorM (Bool × Bool × Option Buffer × Option Buffer × String) := do
+            let state ← savable
+            (⟨2⟩ : TextId).insert 0 "x"
+            let (edited, _) ← stepsWith saveKeys ({ state } : TestLoop) [pressF5]
+            let (begun, _) ← stepsWith saveKeys edited (presses "C-c g")
+            let (failed, _) ← stepsWith saveKeys begun (presses "C-c f")
+            return (((begun.state.buffer? ⟨2⟩).map (·.isModified)) == some true,
+                (savingOf begun.state).isSome, failed.state.buffer? ⟨2⟩, begun.state.buffer? ⟨2⟩,
+                failed.state.echo)
+          match (program.runModel editorModel).1 with
+          | .ok (modified, saving, after, before, echo) =>
+            modified && saving && after == before && echo == "fail: refused: bad range"
+          | .error _ => false },
+    { name :=
+        "a command that recorded its buffer's history marked as saved and was then refused leaves the buffer modified as it was: a rollback takes back a mark of the saved state"
+      run :=
+        pure <|
+          let marking : Dispatched :=
+            failingAfter fun call => do
+              let .ok buffer ← call.target.window.buffer.synced | throw .noSuchText
+              discard <|
+                  EditorState.ask (.setHistory call.target.window.buffer buffer.history.markSaved)
+          let keys := dispatchKeys [("C-c m", invoke "mark")] [("mark", marking)]
+          let program : EditorM (Option Buffer × Option Buffer × String) := do
+            let (edited, _) ←
+              stepsWith keys ({ state := ← EditorState.initial ⟨640, 480⟩ } : TestLoop)
+                  [.commit "a"]
+            let (failed, _) ← stepsWith keys edited (presses "C-c m")
+            return (edited.state.buffer? ⟨0⟩, failed.state.buffer? ⟨0⟩, failed.state.echo)
+          match (program.runModel editorModel).1 with
+          | .ok (before, after, echo) =>
+            (before.map (·.isModified)) == some true && after == before &&
+              echo == "mark: refused: bad range"
+          | .error _ => false }]
 
 /-- The events of `events` as they arrive, none of them marked as an
 interrupt key. -/
@@ -6125,49 +6206,6 @@ scroll anchor's first. -/
 def markerRefusals (window : Window) : TextM (List (Option TextError)) :=
   return [← refusalOf (window.scroll.text.marker window.scroll),
       ← refusalOf (window.selection.text.marker window.selection)]
-
-/-- `hiddenBuffer`'s state with the buffer `hidden`, which no window shows,
-holding a file: a buffer a save can be begun for. -/
-def savable : TextM EditorState := do
-  let (state, _) ← hiddenBuffer
-  return (state.attachFile ⟨2⟩ notePath noteStamp .lf).2
-
-/-- The save in flight of the buffer `hidden` of `savable`, in `state`. -/
-def savingOf (state : EditorState) : Option Buffer.Saving :=
-  ((state.buffer? ⟨2⟩).bind (·.file)).bind (·.saving)
-
-/-- The commands of the checks of a save in flight, on `savable`, bound
-under `C-c`. `begin` (`g`) takes a snapshot of the buffer's text and begins
-a save of it, with the state the buffer's history is in. `end` (`e`) ends
-the save in flight with a stamp, as a save that wrote the file does, and
-`unsaved` (`n`) with none, as one that was refused does. `remove` (`r`)
-removes the buffer. `fail` (`f`) ends the save with a stamp and is then
-refused. `twice` (`t`) releases the save's snapshot itself and then ends
-the save. -/
-def saveKeys : Loop.Keys TestScheme.scheme :=
-  let ends (stamp : Option File.Stamp) (first : SnapshotId → EditorM Unit := fun _ => pure ()) :
-    EditorM Unit := do
-    let some saving := savingOf (← editorState) | throw .noSuchSnapshot
-    first saving.snapshot
-    discard <| EditorState.ask (.endSave ⟨2⟩ saving.snapshot stamp)
-  let later : File.Stamp :=
-    { noteStamp with
-      seconds := 9, size := 12 }
-  let run (command : EditorM Unit) : Dispatched := fun _ => do
-    command
-    return none
-  dispatchKeys
-    [("C-c g", invoke "begin"), ("C-c e", invoke "end"), ("C-c n", invoke "unsaved"),
-      ("C-c r", invoke "remove"), ("C-c f", invoke "fail"), ("C-c t", invoke "twice")]
-    [("begin",
-        run do
-          let some buffer := (← editorState).buffer? ⟨2⟩ | throw .noSuchText
-          let taken ← buffer.text.snapshot
-          discard <| EditorState.ask (.beginSave ⟨2⟩ taken buffer.history.state)),
-      ("end", run (ends (some later))), ("unsaved", run (ends none)),
-      ("remove", run (discard <| EditorState.ask (.removeBuffer ⟨2⟩))),
-      ("fail", failingAfter fun _ => ends (some later)),
-      ("twice", run (ends (some later) fun taken => taken.release))]
 
 /-- The checks of what the loop gives up after a command (`Editor/Loop.lean`,
 "What a finished command gave up"), on the editor's models: the markers of

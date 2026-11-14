@@ -247,6 +247,17 @@ time, in order, on the editor thread.
     window is rolled back to a window whose markers still answer, and one
     that fails after ending a save to a save in flight whose snapshot
     still reads.
+  - **A mark of the saved state is taken back** (decided 2026-11-14, with
+    the file commands). A command can mark a state of a buffer's history
+    as saved, by recording a tree it marked or by ending a save. The tree
+    the command left carries the mark, and it may be the one reverted, so
+    the tree that comes back is given the saved state of the tree from
+    before the command. Otherwise a command that ended a save and then
+    failed would leave a buffer that says "not modified" beside a stamp
+    from before the save. The file commands cannot reach this, since a
+    save's result is delivered by a command of state requests alone
+    ("Getting results back"); any command can make the request, and the
+    rule keeps a rollback whole.
   - **Markers are placed back, not left to the inverse.** A marker moves
     with every transaction: a deletion and its inverse do not return a
     marker inside the deleted range to where it was, and a command can

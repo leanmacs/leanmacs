@@ -189,6 +189,16 @@ they were before it (`docs/design/concurrency.md`, "Foreground: commands").
   over a step it had closed itself, the store refuses the revert, with
   nothing changed, since that move dropped inverses of the run, and the
   command is one that moved in the history (below).
+- **A mark of the saved state is taken back.** A command can mark a state
+  of a buffer's history as saved: by recording a tree it marked
+  (`StateRequest.setHistory`), or by ending a save
+  (`StateRequest.endSave`). The tree the command left carries that mark,
+  and it may be the tree that is reverted. So the tree that comes back is
+  given the saved state of the tree from before the command: a buffer that
+  was modified is modified again, beside the stamp and the save in flight
+  the state from before has. Without this a failed command that ended a
+  save would leave a buffer that says "not modified" beside a stamp from
+  before the save.
 - **Markers are placed back, and not left to the inverse.** A marker moves
   with every transaction: a deletion and its inverse do not return a marker
   inside the deleted range to where it was, and a command can place a
@@ -731,7 +741,8 @@ def revertBuffer (kept left : UndoTree) (was : UndoTree.State) : TextM (UndoTree
 command left: each kept buffer's text is reverted to its kept history
 state (`revertBuffer`), from the tree the buffer has in `before` and the
 one it has in `after`, when `after` still has it over the same text, and
-each kept marker is placed back. Returns `before`
+each kept marker is placed back. The tree that comes back is given the
+saved state the buffer's tree has in `before`. Returns `before`
 with the buffers' histories after it, and what to say of the rollback after
 the command's error, which is nothing when all of it was done.
 
@@ -752,7 +763,11 @@ def Kept.restore (kept : Kept) (before after : EditorState) : TextM (EditorState
       | some left => if left.text == buffer.text then left.history else buffer.history
       | none => buffer.history
     match ← observing (revertBuffer buffer.history left was) with
-    | .ok (history, movedSince) =>
+    | .ok (reverted, movedSince) =>
+      -- The tree that was reverted may be the one the command left, which
+      -- carries a mark of the saved state the command set: the mark from
+      -- before the command is put back.
+      let history := { reverted with saved := buffer.history.saved }
       buffers := buffers.modify index (·.map ({ · with history }))
       if movedSince then
         moved := moved.push buffer.text
