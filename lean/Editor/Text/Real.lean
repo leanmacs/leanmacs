@@ -437,6 +437,7 @@ def dropInverses (id : TextId) (first last : Nat) : StateT RealTexts IO (Except 
 def unit : ColumnUnit → Ffi.ColumnUnit
   | .bytes => .bytes
   | .utf16 => .utf16
+  | .cells => .cells
 
 /-- The library's answer to `query` about `snapshot`.
 

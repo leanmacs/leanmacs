@@ -81,13 +81,18 @@ structure Place where
   bytes : Nat
   /-- Its column in UTF-16 code units. -/
   units : Nat
+  /-- Its column in cells: how many cells of its row start before it. -/
+  cells : Nat
 
 /-- Every position of `rows`, written out by hand. The offsets from 0 to 20
-that are missing are inside a character: 2, 10, 16, 17 and 18. -/
+that are missing are inside a character: 2, 10, 16, 17 and 18. In cells, the
+carriage return of row 0, at 6, is at column 5, where the row's content ends,
+and the position between it and its line feed, 7, at column 6. -/
 def positions : List Place :=
-  [⟨0, 0, 0, 0⟩, ⟨1, 0, 1, 1⟩, ⟨3, 0, 3, 2⟩, ⟨4, 0, 4, 3⟩, ⟨5, 0, 5, 4⟩, ⟨6, 0, 6, 5⟩, ⟨7, 0, 7, 6⟩,
-    ⟨8, 1, 0, 0⟩, ⟨9, 1, 1, 1⟩, ⟨11, 1, 3, 2⟩, ⟨12, 1, 4, 3⟩, ⟨13, 1, 5, 4⟩, ⟨14, 1, 6, 5⟩,
-    ⟨15, 2, 0, 0⟩, ⟨19, 2, 4, 2⟩, ⟨20, 2, 5, 3⟩]
+  [⟨0, 0, 0, 0, 0⟩, ⟨1, 0, 1, 1, 1⟩, ⟨3, 0, 3, 2, 2⟩, ⟨4, 0, 4, 3, 3⟩, ⟨5, 0, 5, 4, 4⟩,
+    ⟨6, 0, 6, 5, 5⟩, ⟨7, 0, 7, 6, 6⟩, ⟨8, 1, 0, 0, 0⟩, ⟨9, 1, 1, 1, 1⟩, ⟨11, 1, 3, 2, 2⟩,
+    ⟨12, 1, 4, 3, 3⟩, ⟨13, 1, 5, 4, 4⟩, ⟨14, 1, 6, 5, 5⟩, ⟨15, 2, 0, 0, 0⟩, ⟨19, 2, 4, 2, 1⟩,
+    ⟨20, 2, 5, 3, 2⟩]
 
 /-- "a", the character the library keeps the raw byte `0xFF` of a file as
 (U+10DCFF), and "b". That character is four bytes of UTF-8, so "b" is at the
@@ -279,7 +284,7 @@ def positionProperties : List Property :=
             (← paired.pointOf 2) == ⟨0, 2⟩ &&
             (← paired.pointOf 3) == ⟨1, 0⟩ },
     { name :=
-        "the point of every offset of a text is the one in a table written out by hand, in bytes and in UTF-16, and an offset inside a character or past the end is refused"
+        "the point of every offset of a text is the one in a table written out by hand, in bytes, in UTF-16 and in cells, and an offset inside a character or past the end is refused"
       holds := do
         let text ← createText rows
         let mut held := (← text.byteLength) == 20 && (← text.rowCount) == 3
@@ -287,23 +292,25 @@ def positionProperties : List Property :=
         for offset in [0:22] do
           let inBytes ← pointOf? (.text text) .bytes offset
           let inUnits ← pointOf? (.text text) .utf16 offset
+          let inCells ← pointOf? (.text text) .cells offset
           match positions.find? (·.offset == offset) with
           | some place =>
             held :=
               held && inBytes == some ⟨place.row, place.bytes⟩ &&
-                inUnits == some ⟨place.row, place.units⟩
+                inUnits == some ⟨place.row, place.units⟩ &&
+                inCells == some ⟨place.row, place.cells⟩
           | none =>
-            held := held && inBytes == none && inUnits == none
+            held := held && inBytes == none && inUnits == none && inCells == none
         return held },
     { name :=
-        "every position of a text converts to a point and back, in both units, and nothing else converts"
+        "every position of a text converts to a point and back, in every unit, and nothing else converts"
       holds := do
         let mut held := true
         for contents in [rows, "", "a\n", "a\r\nb", "\n\n", "héllo wörld", escaped] do
           let text ← createText contents
           let snapshot ← text.snapshot
           for source in [TextSource.text text, TextSource.snapshot snapshot] do
-            for unit in [ColumnUnit.bytes, ColumnUnit.utf16] do
+            for unit in [ColumnUnit.bytes, ColumnUnit.utf16, ColumnUnit.cells] do
               let mut converted := 0
               for offset in [0:contents.utf8ByteSize + 2] do
                 if let some point← pointOf? source unit offset then
@@ -337,12 +344,42 @@ def positionProperties : List Property :=
         let text ← createText rows
         let huge := 2 ^ 64 + 1
         let mut held := true
-        for unit in [ColumnUnit.bytes, ColumnUnit.utf16] do
+        for unit in [ColumnUnit.bytes, ColumnUnit.utf16, ColumnUnit.cells] do
           let offset ← refusedWith .badPosition (discard <| text.pointOf huge unit)
           let row ← refusedWith .badPosition (discard <| text.offsetOf ⟨huge, 0⟩ unit)
           let column ← refusedWith .badPosition (discard <| text.offsetOf ⟨0, huge⟩ unit)
           held := held && offset && row && column
         return held && (← text.pointOf 1) == ⟨0, 1⟩ && (← text.offsetOf ⟨1, 0⟩) == 8 },
+    { name :=
+        "a column in cells counts the cells of the row that start before the position: in a row that ends in a carriage return and a line feed the column just past the content's cells is the carriage return, the next is the position between the two, and the one after is refused"
+      holds := do
+        -- The content of row 0, "ab", has two cells, at the columns 0 and
+        -- 1. The carriage return, where the content ends, is at column 2.
+        -- The line break's cell starts there, so the position between its
+        -- two bytes has three cells before it. The row has no column 4.
+        let text ← createText "ab\r\ncd"
+        let atReturn := (← text.offsetOf ⟨0, 2⟩ .cells) == 2 && (← text.pointOf 2 .cells) == ⟨0, 2⟩
+        let between := (← text.offsetOf ⟨0, 3⟩ .cells) == 3 && (← text.pointOf 3 .cells) == ⟨0, 3⟩
+        let past ← refusedWith .badPosition (discard <| text.offsetOf ⟨0, 4⟩ .cells)
+        let nextRow := (← text.pointOf 4 .cells) == ⟨1, 0⟩ && (← text.offsetOf ⟨1, 2⟩ .cells) == 6
+        -- With a line feed alone the column past the content is the row's
+        -- last, and a carriage return with no line feed is a cell of the
+        -- content.
+        let alone ← createText "ab\ncd"
+        let lineFeed := (← alone.offsetOf ⟨0, 2⟩ .cells) == 2
+        let pastLineFeed ← refusedWith .badPosition (discard <| alone.offsetOf ⟨0, 3⟩ .cells)
+        let bare ← createText "a\rb"
+        let bareReturn :=
+          (← bare.pointOf 2 .cells) == ⟨0, 2⟩ && (← bare.offsetOf ⟨0, 3⟩ .cells) == 3
+        -- A character of several bytes is one cell, and a letter and a
+        -- combining mark after it are two.
+        let wide ← createText "aé😀éb"
+        let counted :=
+          (← wide.pointOf 7 .cells) == ⟨0, 3⟩ && (← wide.pointOf 8 .cells) == ⟨0, 4⟩ &&
+            (← wide.pointOf 10 .cells) == ⟨0, 5⟩ &&
+            (← wide.offsetOf ⟨0, 2⟩ .cells) == 3
+        return atReturn && between && past && nextRow && lineFeed && pastLineFeed && bareReturn &&
+            counted },
     { name :=
         "the character a raw byte is kept as is one character: four bytes of the text and two UTF-16 units"
       holds := do

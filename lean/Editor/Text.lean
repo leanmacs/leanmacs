@@ -217,15 +217,22 @@ operations as they are: they are lifted into it.
   and a text that ends in a line feed has an empty last row. A carriage
   return is an ordinary character of its row and starts none.
 - A *point* is a row and a column. The column counts from the row's start,
-  in bytes of UTF-8 or in UTF-16 code units: the query says which
+  in bytes of UTF-8, in UTF-16 code units or in cells: the query says which
   (`ColumnUnit`). A character outside the Basic Multilingual Plane is two
-  code units.
+  code units. A column in cells is how many cells of the row start before
+  the position: the column a block's corners are counted in.
 - A conversion answers only for a position, and clamps nothing. The point of
   an offset that is not a position is refused with `badPosition`. So is the
   offset of a point that names none: in a row the text does not have, past
   the end of its row, inside a character, or between the two code units of
   one. The column just past a row's last character is the position before
   its line feed.
+- In cells, a row that ends in a carriage return and a line feed has two
+  columns past its content's cells. With `k` cells of content, column `k` is
+  the carriage return's position, where the content ends, and column `k + 1`
+  the position between the two bytes, which the line break's cell starts
+  before; column `k + 2` is refused. In `"ab\r\ncd"` the point `⟨0, 2⟩` is
+  the offset 2, `⟨0, 3⟩` is 3, and `⟨0, 4⟩` names nothing.
 - `release` gives up a text or a snapshot. Its id is refused from then on,
   for good: an id is never used again. Releasing a text leaves its snapshots
   readable.
@@ -398,6 +405,9 @@ inductive ColumnUnit where
   | bytes
   /-- UTF-16 code units. This is the unit a language server counts in. -/
   | utf16
+  /-- Cells: how many cells of the row start before the position. This is
+  the unit a block's columns and a motion to another row count in. -/
+  | cells
   deriving DecidableEq, Repr
 
 /-- A row and a column of a text. The column counts from the row's start, in

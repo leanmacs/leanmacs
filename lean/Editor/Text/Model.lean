@@ -196,13 +196,20 @@ def splice (text : String) (start stop : Nat) (s : String) : Option String :=
 def rowCount (text : String) : Nat :=
   (text.toList.filter (· == '\n')).length + 1
 
-/-- How wide `c` is in a column counted in `unit`: its bytes of UTF-8, or its
+/-- How wide `c` is in a column counted in `unit`: its bytes of UTF-8, its
 UTF-16 code units, which are two for a character outside the Basic
-Multilingual Plane. -/
+Multilingual Plane, or one cell.
+
+Within a row every character starts a cell: a row's line feed is not walked
+as a column, and the carriage return before it starts the line break's cell.
+So the position between that carriage return and its line feed is one column
+past the carriage return's, with the line break's cell before it, which is
+what counting each character as one gives. -/
 def width (unit : ColumnUnit) (c : Char) : Nat :=
   match unit with
   | .bytes => c.utf8Size
   | .utf16 => if c.val < 0x10000 then 1 else 2
+  | .cells => 1
 
 /-- The point of the byte offset `offset` in `text`, with its column in
 `unit`. `none` unless the offset is a position: a character boundary of the
