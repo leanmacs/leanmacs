@@ -7,16 +7,18 @@
 //! one test below owns both counts of this process.
 
 use std::mem::MaybeUninit;
-use std::slice;
+use std::{ptr, slice};
 
 use editor_ffi::document::{
     Document, RawText, editor_ffi_document_free, editor_ffi_document_new,
     editor_ffi_document_replace,
 };
+use editor_ffi::motion;
 use editor_ffi::snapshot::{
     ColumnUnit, RawPoint, RawSnapshotInfo, Snapshot, editor_ffi_document_snapshot,
     editor_ffi_snapshot_free, editor_ffi_snapshot_info, editor_ffi_snapshot_live,
-    editor_ffi_snapshot_offset_of, editor_ffi_snapshot_point_of, editor_ffi_snapshot_read,
+    editor_ffi_snapshot_motion, editor_ffi_snapshot_offset_of, editor_ffi_snapshot_point_of,
+    editor_ffi_snapshot_read, editor_ffi_snapshot_row, editor_ffi_snapshot_slice,
 };
 use editor_ffi::text::editor_ffi_text_free;
 
@@ -26,8 +28,14 @@ const BYTES: u8 = ColumnUnit::Bytes.tag();
 /// The tag of the unit that counts a column in UTF-16 code units.
 const UTF16: u8 = ColumnUnit::Utf16.tag();
 
+/// The tag of the unit that counts a column in cells.
+const CELLS: u8 = ColumnUnit::Cells.tag();
+
 /// A tag that names no unit.
-const NO_UNIT: u8 = 2;
+const NO_UNIT: u8 = 3;
+
+/// A tag that names no motion.
+const NO_MOTION: u8 = motion::TAGS;
 
 /// A new document holding `text`.
 fn document_new(text: &str) -> *mut Document {
@@ -125,6 +133,98 @@ unsafe fn offset_of(snapshot: *const Snapshot, unit: u8, row: u64, column: u64) 
     found.then(|| unsafe { offset.assume_init() })
 }
 
+/// What an out-value holds before a call, to see that a refusal leaves it
+/// untouched.
+const UNTOUCHED: u64 = 0xDEAD_BEEF;
+
+/// Where the motion `tag` names, with `count` and `column`, leads from the
+/// byte offset `offset` of `snapshot`; `None` when the library returns
+/// false, which must leave the out-value as it was.
+///
+/// # Safety
+///
+/// `snapshot` came from [`editor_ffi_document_snapshot`] and has not been
+/// freed.
+unsafe fn motion_from(
+    snapshot: *const Snapshot,
+    tag: u8,
+    count: u64,
+    column: u64,
+    offset: usize,
+) -> Option<u64> {
+    let mut answer = UNTOUCHED;
+    // SAFETY: the caller guarantees `snapshot`, and `answer` is writable.
+    let found =
+        unsafe { editor_ffi_snapshot_motion(snapshot, tag, count, column, offset, &mut answer) };
+    if !found {
+        assert_eq!(answer, UNTOUCHED, "a refusal wrote the out-value");
+    }
+    found.then_some(answer)
+}
+
+/// The text a read filled `raw` with, copied as the glue copies it, with
+/// the buffer handed back; `None` when the read returned false, which must
+/// leave the record as it was.
+///
+/// # Safety
+///
+/// When `found`, the library filled `raw` with a buffer that has not been
+/// handed back.
+unsafe fn text_read(found: bool, raw: RawText) -> Option<String> {
+    if !found {
+        assert!(raw.text.is_null(), "a refusal wrote the record");
+        assert_eq!(raw.text_len, UNTOUCHED as usize);
+        return None;
+    }
+    // SAFETY: the record's buffer is `text_len` bytes, owned by this caller
+    // until it is handed back.
+    let text = unsafe { slice::from_raw_parts(raw.text, raw.text_len) }.to_vec();
+    // SAFETY: the buffer came from the library in this record, and is handed
+    // back once.
+    unsafe { editor_ffi_text_free(raw.text, raw.text_len) };
+    Some(String::from_utf8(text).expect("a snapshot's text is UTF-8"))
+}
+
+/// A record no read has filled.
+fn unfilled() -> RawText {
+    RawText {
+        text: ptr::null_mut(),
+        text_len: UNTOUCHED as usize,
+    }
+}
+
+/// The content of the row `row` of `snapshot`; `None` when the library
+/// returns false.
+///
+/// # Safety
+///
+/// `snapshot` came from [`editor_ffi_document_snapshot`] and has not been
+/// freed.
+unsafe fn row_read(snapshot: *const Snapshot, row: u64) -> Option<String> {
+    let mut raw = unfilled();
+    // SAFETY: the caller guarantees `snapshot`, and `raw` is writable for
+    // one record.
+    let found = unsafe { editor_ffi_snapshot_row(snapshot, row, &mut raw) };
+    // SAFETY: the record is as the call left it.
+    unsafe { text_read(found, raw) }
+}
+
+/// The text of `snapshot` from the byte offset `start` up to `end`; `None`
+/// when the library returns false.
+///
+/// # Safety
+///
+/// `snapshot` came from [`editor_ffi_document_snapshot`] and has not been
+/// freed.
+unsafe fn slice_read(snapshot: *const Snapshot, start: usize, end: usize) -> Option<String> {
+    let mut raw = unfilled();
+    // SAFETY: the caller guarantees `snapshot`, and `raw` is writable for
+    // one record.
+    let found = unsafe { editor_ffi_snapshot_slice(snapshot, start, end, &mut raw) };
+    // SAFETY: the record is as the call left it.
+    unsafe { text_read(found, raw) }
+}
+
 #[test]
 fn a_snapshot_is_taken_and_read_through_c_and_is_live_from_the_call_that_made_it_until_its_free() {
     let before = editor_ffi_snapshot_live();
@@ -191,6 +291,81 @@ fn a_snapshot_is_taken_and_read_through_c_and_is_live_from_the_call_that_made_it
         assert_eq!(point_of(first, NO_UNIT, 0), None);
         assert_eq!(offset_of(first, NO_UNIT, 0, 0), None);
         assert_eq!(point_of(first, u8::MAX, 0), None);
+
+        // What a motion, a column in cells and a read answer are the text's
+        // rules: each answer below is compared with what the text itself
+        // answers, asked of a snapshot beside the handle.
+        let beside = editor_text::Text::from(text).snapshot();
+
+        // A point crosses in cells too, both ways: the "x" after "😀".
+        let cells = beside.offset_to_point_cells(19).expect("a position");
+        let (row, column) = (cells.row as u64, cells.column as u64);
+        assert_eq!(point_of(first, CELLS, 19), Some((row, column)));
+        assert_eq!(offset_of(first, CELLS, row, column), Some(19));
+        assert_ne!(point_of(first, BYTES, 19), Some((row, column)));
+        assert_eq!(point_of(first, CELLS, 16), None);
+        assert_eq!(offset_of(first, CELLS, 3, 0), None);
+        assert_eq!(offset_of(first, CELLS, 0, u64::MAX), None);
+
+        // Every motion crosses under its tag, from the start of the text,
+        // from inside a word and from a line break, with a count and a
+        // column for the two that take them.
+        for tag in 0..motion::TAGS {
+            let named = motion::motion_of(tag, 1, 3).expect("the tag of a motion");
+            for offset in [0, 4, 6, 12, 20] {
+                let expected = beside.motion(named, offset).expect("a position");
+                assert_eq!(
+                    motion_from(first, tag, 1, 3, offset),
+                    Some(expected as u64),
+                    "{named:?} from {offset}"
+                );
+            }
+            // An offset inside a character, one past the end and one as
+            // large as the boundary carries are refused, whichever motion
+            // it is.
+            assert_eq!(motion_from(first, tag, 1, 3, 2), None);
+            assert_eq!(motion_from(first, tag, 1, 3, 21), None);
+            assert_eq!(motion_from(first, tag, 1, 3, usize::MAX), None);
+        }
+        // A count and a column as large as the boundary carries are
+        // answered, not refused.
+        let down = motion::motion_of(16, u64::MAX, u64::MAX).expect("the tag of a motion");
+        let expected = beside.motion(down, 0).expect("a position");
+        assert_eq!(
+            motion_from(first, 16, u64::MAX, u64::MAX, 0),
+            Some(expected as u64)
+        );
+        // A tag no one defined is refused, for an offset every motion
+        // answers.
+        assert_eq!(motion_from(first, NO_MOTION, 0, 0, 0), None);
+        assert_eq!(motion_from(first, u8::MAX, 0, 0, 0), None);
+
+        // A row is read without its line break, and a range exactly, each
+        // in a buffer that is handed back.
+        for row in 0..3 {
+            let expected = beside.row_to_string(row).expect("a row of the text");
+            assert_eq!(row_read(first, row as u64), Some(expected), "row {row}");
+        }
+        assert_eq!(row_read(first, 3), None);
+        assert_eq!(row_read(first, u64::MAX), None);
+        for (start, end) in [(1, 9), (15, 20), (4, 4), (0, 20)] {
+            let expected = beside.slice_to_string(start..end).expect("two positions");
+            assert_eq!(
+                slice_read(first, start, end),
+                Some(expected),
+                "{start}..{end}"
+            );
+        }
+        // The second snapshot reads what its document held, not the first's
+        // text.
+        assert_eq!(slice_read(second, 0, 1).as_deref(), Some("J"));
+        // A range that is backwards, splits a character, runs past the end
+        // or is as large as the boundary carries is refused.
+        assert_eq!(slice_read(first, 9, 1), None);
+        assert_eq!(slice_read(first, 0, 2), None);
+        assert_eq!(slice_read(first, 16, 20), None);
+        assert_eq!(slice_read(first, 0, 21), None);
+        assert_eq!(slice_read(first, usize::MAX, usize::MAX), None);
 
         // A snapshot outlives its document.
         editor_ffi_document_free(document);

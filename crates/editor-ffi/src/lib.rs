@@ -64,7 +64,7 @@
 //! | Kind | Lean to Rust | Rust to Lean |
 //! |---|---|---|
 //! | String | A pointer and a byte length, borrowed for the call; what is kept is copied (`text::borrow`) | An owned buffer, pointer and length, in the result record; the glue copies it and hands it back with one call to [`text::editor_ffi_text_free`]. Embedded NUL bytes survive |
-//! | Enum | A `u8` tag, converted with a checked function that refuses a tag it does not know ([`events::QueueId::from_tag`], [`snapshot::ColumnUnit::from_tag`]) | A `u64` tag in the result record ([`events::EventKind::tag`]) |
+//! | Enum | A `u8` tag, converted with a checked function that refuses a tag it does not know ([`events::QueueId::from_tag`], [`snapshot::ColumnUnit::from_tag`], [`motion::motion_of`]) | A `u64` tag in the result record ([`events::EventKind::tag`]) |
 //! | Small structure | Its fields, as scalar arguments | One `#[repr(C)]` record filled through an out-pointer in a single call ([`events::RawEvent`]) |
 //! | Option | A presence flag and a value | The function returns whether there is a value and fills the record only if so |
 //! | Byte range | Two scalars | A record of two `u64`: a start and an end, half-open, in bytes ([`text::ByteRange`]) |
@@ -80,9 +80,16 @@
 //! out, in [`document::RawText`]; a refusal as a `bool`) and a snapshot (a
 //! record of three numbers out, in [`snapshot::RawSnapshotInfo`]; an enum
 //! in, as the tag of a [`snapshot::ColumnUnit`]; an option of a record out,
-//! in [`snapshot::RawPoint`], and an option of a number). Offsets into a
+//! in [`snapshot::RawPoint`], and an option of a number; an enum with
+//! values in, as the tag of a motion and the two numbers the motions by
+//! rows take ([`motion::motion_of`],
+//! [`snapshot::editor_ffi_snapshot_motion`]); and an option of a string
+//! out, from [`snapshot::editor_ffi_snapshot_row`] and
+//! [`snapshot::editor_ffi_snapshot_slice`]). Offsets into a
 //! text cross as `usize`, and rows and columns as `u64`; a row or a column
-//! no `usize` holds is refused, never cut down. A document's transactions
+//! no `usize` holds is refused, never cut down, but for the count and the
+//! column of a motion by rows, which stops where the text does and so
+//! reads one as the largest. A document's transactions
 //! and its edit log are the example of lists: a transaction in, as words
 //! and one string of everything it inserts
 //! ([`transaction::editor_ffi_document_apply`], with its result in
@@ -107,7 +114,8 @@
 //! length or an offset the other side cannot hold is sent as the largest it
 //! can, which no text accepts, so it too is refused and never cut down.
 //! Tests: the unit tests in `text.rs`, `document.rs`, `snapshot.rs`,
-//! `words.rs`, `transaction.rs`, `log.rs`, `marker.rs` and `inverse.rs`;
+//! `motion.rs`, `words.rs`, `transaction.rs`, `log.rs`, `marker.rs` and
+//! `inverse.rs`;
 //! the tag tests in `events.rs`;
 //! `find_fills_the_range_it_found_and_reports_whether_it_found_one` and the
 //! document test in `tests/c_api.rs`; the snapshot test in
@@ -324,6 +332,7 @@ pub mod inverse;
 pub mod log;
 pub mod main_thread;
 pub mod marker;
+pub mod motion;
 pub mod snapshot;
 pub mod text;
 pub mod timers;

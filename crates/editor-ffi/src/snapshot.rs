@@ -2,9 +2,10 @@
 //! example of a handle.
 //!
 //! [`editor_ffi_document_snapshot`] hands out an owned snapshot of a
-//! document, and the functions here read it: its text, its revision, length
-//! and row count in one record, and the conversions between a byte offset
-//! and a point. A snapshot never changes and is `Send + Sync`
+//! document, and the functions here read it: its text, whole, by one row or
+//! by a range; its revision, length and row count in one record; the
+//! conversions between a byte offset and a point; and where a motion leads
+//! from a position. A snapshot never changes and is `Send + Sync`
 //! ([`editor_text::Snapshot`]), so it sits behind no lock, and it outlives
 //! its document.
 //!
@@ -24,14 +25,27 @@
 //! or [`editor_ffi_files_save`](crate::files::editor_ffi_files_save),
 //! leaves it the caller's.
 //!
-//! What a row, a point and a position are is the text's rule, pinned by
-//! `editor-text`'s own tests. This module converts numbers and forwards.
+//! What a row, a point, a position, a cell and a word are is the text's
+//! rule, pinned by `editor-text`'s own tests. This module converts numbers
+//! and forwards.
 //!
-//! A column is counted in bytes or in UTF-16 code units. The unit crosses
-//! as a tag ([`ColumnUnit`]), so a third unit is a tag and not a function.
-//! Offsets cross as `usize`, as a document's do; rows and columns as `u64`,
-//! in and out. A row or a column that no `usize` holds is refused, never
-//! cut down.
+//! A column is counted in bytes, in UTF-16 code units or in cells. The
+//! unit crosses as a tag ([`ColumnUnit`]), so another unit is a tag and not
+//! a function. Offsets cross as `usize`, as a document's do; rows and
+//! columns as `u64`, in and out. A row or a column that no `usize` holds is
+//! refused, never cut down.
+//!
+//! A motion crosses as a tag too, with a count and a column for the two
+//! motions by rows ([`editor_ffi_snapshot_motion`]; the table of tags is in
+//! [`crate::motion`]), so another motion is a tag and not a function. Its
+//! count and its column are the one place a number too large for a `usize`
+//! is not refused: it is read as the largest, which means the same to a
+//! motion that stops at the last row and at the end of a row's content.
+//!
+//! One row and a range are read as the whole text is, into an owned buffer
+//! the caller hands back ([`editor_ffi_snapshot_row`],
+//! [`editor_ffi_snapshot_slice`]), but as options: a row the text lacks and
+//! a range that is not two positions in order are refused.
 //!
 //! What a selection covers in the snapshot's text
 //! ([`editor_ffi_snapshot_extents`]) is asked and answered in words; the
@@ -39,12 +53,12 @@
 
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use editor_text::{Point, PointUtf16};
+use editor_text::{Motion, Point, PointCells, PointUtf16};
 
 use crate::document::{Document, RawText};
 use crate::log::RawWords;
 use crate::marker::{self, MarkStatus};
-use crate::text;
+use crate::{motion, text};
 
 /// A document's text as it was when the snapshot was taken.
 pub struct Snapshot(editor_text::Snapshot);
@@ -56,6 +70,8 @@ pub enum ColumnUnit {
     Bytes = 0,
     /// UTF-16 code units.
     Utf16 = 1,
+    /// Cells: how many cells of the row start before the position.
+    Cells = 2,
 }
 
 impl ColumnUnit {
@@ -69,6 +85,7 @@ impl ColumnUnit {
         match tag {
             0 => Some(Self::Bytes),
             1 => Some(Self::Utf16),
+            2 => Some(Self::Cells),
             _ => None,
         }
     }
@@ -101,6 +118,10 @@ impl Snapshot {
                 let point = self.0.offset_to_point_utf16(offset)?;
                 (point.row, point.column)
             }
+            ColumnUnit::Cells => {
+                let point = self.0.offset_to_point_cells(offset)?;
+                (point.row, point.column)
+            }
         };
         Some(RawPoint {
             row: row as u64,
@@ -116,8 +137,30 @@ impl Snapshot {
         let offset = match unit {
             ColumnUnit::Bytes => self.0.point_to_offset(Point::new(row, column))?,
             ColumnUnit::Utf16 => self.0.point_utf16_to_offset(PointUtf16::new(row, column))?,
+            ColumnUnit::Cells => self.0.point_cells_to_offset(PointCells::new(row, column))?,
         };
         Some(offset as u64)
+    }
+
+    /// Where `motion` leads from the byte offset `offset`
+    /// ([`editor_text::Snapshot::motion`]). `None` when the offset is not a
+    /// position of the text.
+    pub fn motion(&self, motion: Motion, offset: usize) -> Option<u64> {
+        Some(self.0.motion(motion, offset)? as u64)
+    }
+
+    /// A copy of the content of the row `row`: the row without its line
+    /// break ([`editor_text::Snapshot::row_to_string`]). `None` when the
+    /// text has no such row, and when no `usize` holds the row.
+    pub fn row(&self, row: u64) -> Option<String> {
+        self.0.row_to_string(usize::try_from(row).ok()?)
+    }
+
+    /// A copy of the text from the byte offset `start` up to, not
+    /// including, `end` ([`editor_text::Snapshot::slice_to_string`]).
+    /// `None` unless both are positions of the text and `start <= end`.
+    pub fn slice(&self, start: usize, end: usize) -> Option<String> {
+        self.0.slice_to_string(start..end)
     }
 
     /// What the selection `words` spell
@@ -277,6 +320,92 @@ pub unsafe extern "C" fn editor_ffi_snapshot_offset_of(
     true
 }
 
+/// [`Snapshot::motion`] for C: returns whether the byte offset `offset` is
+/// a position of `snapshot`, and if so fills `out` with where the motion
+/// `motion` is the tag of leads from it ([`motion::motion_of`]). `count`
+/// and `column` are read for the two motions by rows and for no other.
+///
+/// False, with `out` untouched, also when `motion` is the tag of no
+/// motion.
+///
+/// # Safety
+///
+/// `snapshot` is a snapshot handle this library handed out and has not
+/// taken back, and `out` points to a writable `u64`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn editor_ffi_snapshot_motion(
+    snapshot: *const Snapshot,
+    motion: u8,
+    count: u64,
+    column: u64,
+    offset: usize,
+    out: *mut u64,
+) -> bool {
+    let Some(motion) = motion::motion_of(motion, count, column) else {
+        return false;
+    };
+    // SAFETY: the caller guarantees `snapshot` points to a live snapshot.
+    let Some(answer) = unsafe { &*snapshot }.motion(motion, offset) else {
+        return false;
+    };
+    // SAFETY: the caller guarantees `out` is writable.
+    unsafe { out.write(answer) };
+    true
+}
+
+/// [`Snapshot::row`] for C: returns whether `snapshot` has the row `row`,
+/// and if so fills `out` with a copy of its content, the row without its
+/// line break, in a buffer the caller hands back with
+/// [`editor_ffi_text_free`](crate::text::editor_ffi_text_free). False, with
+/// `out` untouched, otherwise.
+///
+/// # Safety
+///
+/// `snapshot` is a snapshot handle this library handed out and has not
+/// taken back, and `out` points to a writable [`RawText`].
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn editor_ffi_snapshot_row(
+    snapshot: *const Snapshot,
+    row: u64,
+    out: *mut RawText,
+) -> bool {
+    // SAFETY: the caller guarantees `snapshot` points to a live snapshot.
+    let Some(content) = unsafe { &*snapshot }.row(row) else {
+        return false;
+    };
+    let (text, text_len) = text::lend(content);
+    // SAFETY: the caller guarantees `out` is writable.
+    unsafe { out.write(RawText { text, text_len }) };
+    true
+}
+
+/// [`Snapshot::slice`] for C: returns whether `start` and `end` are
+/// positions of `snapshot` in order, and if so fills `out` with a copy of
+/// the text between them, in a buffer the caller hands back with
+/// [`editor_ffi_text_free`](crate::text::editor_ffi_text_free). False, with
+/// `out` untouched, otherwise.
+///
+/// # Safety
+///
+/// `snapshot` is a snapshot handle this library handed out and has not
+/// taken back, and `out` points to a writable [`RawText`].
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn editor_ffi_snapshot_slice(
+    snapshot: *const Snapshot,
+    start: usize,
+    end: usize,
+    out: *mut RawText,
+) -> bool {
+    // SAFETY: the caller guarantees `snapshot` points to a live snapshot.
+    let Some(slice) = unsafe { &*snapshot }.slice(start, end) else {
+        return false;
+    };
+    let (text, text_len) = text::lend(slice);
+    // SAFETY: the caller guarantees `out` is writable.
+    unsafe { out.write(RawText { text, text_len }) };
+    true
+}
+
 /// [`Snapshot::extents_words`] for C: fills `out` with what the selection
 /// the `len` bytes at `words` spell covers in `snapshot`, as words, and the
 /// status [`MarkStatus::Done`]; or with no words and the status that says
@@ -342,15 +471,124 @@ mod tests {
     fn a_column_unit_is_named_by_its_tag() {
         assert_eq!(ColumnUnit::from_tag(0), Some(ColumnUnit::Bytes));
         assert_eq!(ColumnUnit::from_tag(1), Some(ColumnUnit::Utf16));
-        for unit in [ColumnUnit::Bytes, ColumnUnit::Utf16] {
+        assert_eq!(ColumnUnit::from_tag(2), Some(ColumnUnit::Cells));
+        for unit in [ColumnUnit::Bytes, ColumnUnit::Utf16, ColumnUnit::Cells] {
             assert_eq!(ColumnUnit::from_tag(unit.tag()), Some(unit));
         }
     }
 
     #[test]
     fn a_tag_that_names_no_column_unit_is_refused() {
-        assert_eq!(ColumnUnit::from_tag(2), None);
+        assert_eq!(ColumnUnit::from_tag(3), None);
         assert_eq!(ColumnUnit::from_tag(u8::MAX), None);
+    }
+
+    #[test]
+    fn the_cells_unit_asks_the_text_for_its_point_in_cells() {
+        // "é" is two bytes and "😀" four, and each is one cell and one or
+        // two UTF-16 units, so the three columns of the "x" differ.
+        const TEXT: &str = "a\né😀x";
+        let snapshot = snapshot(TEXT);
+        let text = Document::new(TEXT).snapshot();
+        let cells = text.offset_to_point_cells(8).expect("a position");
+        let expected = RawPoint {
+            row: cells.row as u64,
+            column: cells.column as u64,
+        };
+
+        assert_eq!(snapshot.point_of(ColumnUnit::Cells, 8), Some(expected));
+        assert_eq!(
+            snapshot.offset_of(ColumnUnit::Cells, expected.row, expected.column),
+            Some(8)
+        );
+        assert_ne!(snapshot.point_of(ColumnUnit::Bytes, 8), Some(expected));
+        assert_ne!(snapshot.point_of(ColumnUnit::Utf16, 8), Some(expected));
+        // What the text refuses is refused: an offset inside "😀" and one
+        // past the end, a row the text does not have, and a column no row
+        // is as long as or no `usize` holds.
+        assert_eq!(snapshot.point_of(ColumnUnit::Cells, 5), None);
+        assert_eq!(snapshot.point_of(ColumnUnit::Cells, 10), None);
+        assert_eq!(snapshot.offset_of(ColumnUnit::Cells, 2, 0), None);
+        assert_eq!(snapshot.offset_of(ColumnUnit::Cells, 1, 4), None);
+        assert_eq!(snapshot.offset_of(ColumnUnit::Cells, 0, u64::MAX), None);
+        assert_eq!(snapshot.offset_of(ColumnUnit::Cells, u64::MAX, 0), None);
+    }
+
+    /// Characters of one, two and four bytes, a blank line, punctuation
+    /// and a line break of each kind, so that no two motions answer alike
+    /// everywhere.
+    const MOVED_IN: &str = "foo.bar  x\r\n\r\n\tsé😀! y\nend";
+
+    #[test]
+    fn a_motion_is_what_the_text_answers_for_it() {
+        let snapshot = snapshot(MOVED_IN);
+        let text = Document::new(MOVED_IN).snapshot();
+
+        // What each motion answers is the text's rule, so each answer is
+        // compared with what the text itself answers.
+        for tag in 0..motion::TAGS {
+            let motion = motion::motion_of(tag, 1, 2).expect("the tag of a motion");
+            for offset in [3, 7, 15] {
+                let expected = text.motion(motion, offset).expect("a position");
+
+                assert_eq!(
+                    snapshot.motion(motion, offset),
+                    Some(expected as u64),
+                    "{motion:?} from {offset}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn a_motion_from_an_offset_that_is_no_position_is_refused() {
+        let snapshot = snapshot(MOVED_IN);
+
+        for tag in 0..motion::TAGS {
+            let motion = motion::motion_of(tag, 1, 2).expect("the tag of a motion");
+            // Inside "é", past the end, and as far as an offset goes.
+            for offset in [17, MOVED_IN.len() + 1, usize::MAX] {
+                assert_eq!(snapshot.motion(motion, offset), None, "{motion:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn a_row_and_a_range_are_read_as_the_text_reads_them() {
+        let snapshot = snapshot(MOVED_IN);
+        let text = Document::new(MOVED_IN).snapshot();
+
+        for row in 0..4 {
+            let expected = text.row_to_string(row).expect("a row of the text");
+
+            assert_eq!(snapshot.row(row as u64), Some(expected), "row {row}");
+        }
+        // Through characters of several bytes and a line break, an empty
+        // range, and the whole text.
+        for (start, end) in [(14, 28), (5, 5), (0, MOVED_IN.len())] {
+            let expected = text.slice_to_string(start..end).expect("two positions");
+
+            assert_eq!(snapshot.slice(start, end), Some(expected), "{start}..{end}");
+        }
+    }
+
+    #[test]
+    fn a_row_the_text_lacks_and_a_range_that_is_not_two_positions_in_order_are_refused() {
+        let snapshot = snapshot(MOVED_IN);
+
+        assert_eq!(snapshot.row(4), None);
+        assert_eq!(snapshot.row(u64::MAX), None);
+        // Backwards, an end inside "é", past the end, and as far as an
+        // offset goes.
+        for (start, end) in [
+            (5, 3),
+            (0, 17),
+            (17, 20),
+            (0, MOVED_IN.len() + 1),
+            (usize::MAX, usize::MAX),
+        ] {
+            assert_eq!(snapshot.slice(start, end), None, "{start}..{end}");
+        }
     }
 
     #[test]
