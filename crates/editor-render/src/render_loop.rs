@@ -1277,6 +1277,41 @@ mod tests {
         assert!(ends(&waiting(&park, Some(clock.peek() + 2_000_000))));
     }
 
+    /// An hour of `clock` from where it is: a deadline no test waits out,
+    /// on a clock that does not move.
+    fn an_hour_on(clock: &FakeClock) -> u64 {
+        clock.peek() + 3_600_000_000_000
+    }
+
+    #[test]
+    fn a_notification_made_before_a_wait_with_a_deadline_is_not_lost() {
+        let clock = FakeClock::new();
+        let park = condvar_park(&clock);
+        let far = an_hour_on(&clock);
+        park.notify();
+        // The wait returns at once, an hour before its deadline.
+        assert!(ends(&waiting(&park, Some(far))));
+        // And it took the notification: the next wait has none to take.
+        let returned = waiting(&park, None);
+        assert!(still_waits(&returned));
+        park.notify();
+        assert!(ends(&returned));
+    }
+
+    #[test]
+    fn a_wait_with_a_deadline_ahead_waits_and_is_woken_by_a_notification() {
+        let clock = FakeClock::new();
+        let park = condvar_park(&clock);
+        let far = an_hour_on(&clock);
+        // A wait with a deadline may end for no reason, as a condition
+        // variable's may: one that does is begun again, so that a wait
+        // that never lasts fails here and one stray wake-up does not.
+        let lasting = (0..3).map(|_| waiting(&park, Some(far))).find(still_waits);
+        let returned = lasting.expect("a wait with its deadline ahead that lasts");
+        park.notify();
+        assert!(ends(&returned));
+    }
+
     /// The handle crosses to other threads; the loop moves to its own.
     #[test]
     fn a_handle_is_shared_between_threads_and_a_loop_is_sent_to_one() {
