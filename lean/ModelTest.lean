@@ -5251,6 +5251,27 @@ def stateRequestChecks : List Check :=
               replied refused == .inr () &&
               unsaved == held },
     { name :=
+        "ending a save with no stamp withdraws a quit that was asked: the state is no longer asked to quit, whether or not the buffer is modified, and is otherwise as it was before the save began; ending it with a stamp leaves the state asked"
+      run :=
+        pure <|
+          match onTextModel twoBuffers with
+          | none => false
+          | some state =>
+            let asked (state : EditorState) : EditorState := { state with quitting := true }
+            let edited := (UndoTree.new ⟨1⟩ 0).record 3
+            let (_, clean) := state.handle (.attachFile ⟨1⟩ notePath noteStamp .crlf)
+            let (_, held) := clean.handle (.setHistory ⟨1⟩ edited)
+            let ends (held : EditorState) (stamp : Option File.Stamp) : EditorState :=
+              let history := ((held.buffer? ⟨1⟩).map (·.history.state)).getD ⟨0⟩
+              let (_, saving) := held.handle (.beginSave ⟨1⟩ ⟨5⟩ history)
+              ((asked saving).handle (.endSave ⟨1⟩ ⟨5⟩ stamp)).2
+            (clean.buffer? ⟨1⟩).map (·.isModified) == some false &&
+              (held.buffer? ⟨1⟩).map (·.isModified) == some true &&
+              ends clean none == clean &&
+              ends held none == held &&
+              (ends clean (some noteStamp)).quitting &&
+              (ends held (some noteStamp)).quitting },
+    { name :=
         "ending a save is refused with notBeingSaved for a snapshot that is not the one of the save in flight, for a buffer with no save in flight and for one with no file, and with noSuchBuffer, each with the state as it was"
       run :=
         pure <|
@@ -12176,6 +12197,23 @@ def dispatchQuitChecks : List Check :=
               (showing refused).map (·.buffer.isModified) == some true &&
               bytesOf refused path == some JobContract.otherFile },
     { name :=
+        "asked to quit while a save of a buffer that is not modified is in flight, which is then refused, the file having changed behind the editor: the delivery says continue, the driver has not stopped, the state is no longer asked to quit, and the echo area has the save's refusal"
+      run :=
+        pure <|
+          match quitDriver with
+          | none => false
+          | some driver =>
+            let changed := rewritten driver path JobContract.otherFile
+            let (asked, _) := fedTo changed (presses "C-o w C-l l")
+            let (refused, delivered) := asked.finish 2
+            asked.loop.state.quitting && !asked.stopped &&
+              (showing asked).map (·.buffer.isModified) == some false &&
+              delivered.map (·.next) == some .continue &&
+              !refused.stopped &&
+              !refused.loop.state.quitting &&
+              echoOf refused == some (Files.notSaved path (.changed (stampOf changed path))) &&
+              bytesOf refused path == some JobContract.otherFile },
+    { name :=
         "an edit made while a quit waits for a save withdraws it: the state is no longer asked to quit after the edit's step, and the delivery of the save's result says continue, with the file written and the buffer still modified"
       run :=
         pure <|
@@ -12613,6 +12651,24 @@ def exChecks : List Check :=
               bytesOf refused path == some JobContract.otherFile &&
               promptEcho later == Ex.notQuitting (.unsaved "note.txt") &&
               !later.stopped },
+    { name :=
+        "the ex name wq on a buffer that is not modified, with the file changed behind the editor: the save is refused, the echo area says so by the save command's message, the quit is withdrawn and the driver has not stopped; and so with w and then q in place of wq"
+      run :=
+        pure <|
+          match exNoteOpen with
+          | none => false
+          | some opened =>
+            let path := inFiles "note.txt"
+            let changed := rewritten opened path JobContract.otherFile
+            [exLine "wq", exLine "w" ++ exLine "q"].all fun lines =>
+              let (asked, _) := fedTo changed lines
+              let (refused, _) := asked.finish 2
+              asked.loop.state.quitting && !asked.stopped &&
+                (showing asked).map (·.buffer.isModified) == some false &&
+                !refused.stopped &&
+                !refused.loop.state.quitting &&
+                echoOf refused == some (Files.notSaved path (.changed (stampOf changed path))) &&
+                bytesOf refused path == some JobContract.otherFile },
     { name :=
         "the ex name wq while another file's buffer has unsaved changes starts this buffer's save and is refused the quit, with the other buffer's name: the file is written and the driver has not stopped"
       run :=

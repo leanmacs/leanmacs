@@ -348,9 +348,15 @@ command cannot end the process.
 - **A quit that cannot go ahead is withdrawn when the scene is made.**
   After the histories were told their texts' revisions, so that "unsaved"
   is right, a state asked to quit in which a buffer has unsaved changes is
-  no longer asked. This is the one place a waiting quit ends without
-  quitting: the save it waited for was refused, or the buffer was edited
-  while it waited.
+  no longer asked. This is where a waiting quit ends without quitting
+  because the buffer was edited while it waited.
+- **A save that is refused withdraws the quit.** The state request that
+  ends a save with no stamp clears the flag, whether or not the buffer is
+  modified. A buffer that was not modified has no unsaved changes after
+  its save was refused, so the rule above alone would let the editor
+  leave, with the refusal unseen and an exit status that says the file
+  was written. The state does not keep which save a quit waits for: any
+  save that is refused withdraws it.
 - **Set aside: a one-shot output of the step**, like the jobs to start. A
   quit that waits for a save must outlive the command that asked, so it
   is state.
@@ -373,11 +379,11 @@ waits for a save in flight.**
   saved mark is set when the save's result is delivered. So a buffer whose
   text is in the state its save in flight is writing has no unsaved
   changes; the quit is asked, and the editor does not leave until that
-  result is delivered. The delivery's scene finds the buffer saved and
-  the step says stop; or finds it still modified, because the save was
-  refused, and the quit is withdrawn, with the save's refusal in the echo
-  area. So `w` then `q`, typed as fast as you like, writes the file and
-  quits.
+  result is delivered. The delivery finds the buffer saved and the step
+  says stop; or the save was refused, and the quit is withdrawn, with the
+  save's refusal in the echo area, whether or not the buffer is modified.
+  So `w` then `q`, typed as fast as you like, writes the file and quits,
+  and does not quit when the file was not written.
 - **A buffer edited after its save began has unsaved changes**, and `quit`
   refuses.
 - **A buffer with no file never blocks.** The scratch buffer cannot be
@@ -404,7 +410,8 @@ only if the save started.**
 - **When the save did not start, it does not quit.** A buffer with no file
   says so, and the editor goes on, as Vim's `wq` does with no file name.
 - **When the save is refused**, the file having changed on disk, the quit
-  is withdrawn and the refusal is in the echo area.
+  is withdrawn and the refusal is in the echo area, for a buffer that is
+  not modified too.
 - **When another buffer has unsaved changes**, the save starts and the
   quit is refused with that buffer's name: the file is written and the
   editor goes on. Vim does the same.

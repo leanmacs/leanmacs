@@ -148,8 +148,9 @@ so that a change to one breaks no other's checks:
   driver over the model of files, with commands written in the test that
   name no ex name: the step says stop once the editor can leave, after
   its scene; a quit asked while a save is in flight stops at the delivery
-  of the save's result; a quit is withdrawn when that save is refused and
-  when the buffer is edited meanwhile; and a reload a command asked for is
+  of the save's result; a quit is withdrawn when that save is refused,
+  whether or not the buffer is modified, and when the buffer is edited
+  meanwhile; and a reload a command asked for is
   handed back with its step.
 - **The ex line and the names that ship** (`exChecks`), on that driver,
   with the test scheme: the ex command and the accept and cancel commands

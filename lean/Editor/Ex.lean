@@ -70,7 +70,9 @@ names that ship, are in `Editor/Ex/Compiled.lean`.
   stop once the save's result has been delivered (`Editor/Loop.lean`,
   "Quit"): `w` then `q`, typed as fast as you like, writes the file and
   quits. If that save is refused the quit is withdrawn, and the save's
-  refusal is what the echo area says.
+  refusal is what the echo area says, whether or not the buffer was
+  modified: the editor never leaves on a save that did not write the
+  file.
 - **It quits the editor, not a window.** Vim's `q` closes the current
   window and quits when it is the last.
 
@@ -89,7 +91,8 @@ names that ship, are in `Editor/Ex/Compiled.lean`.
   does with no file name.
 - **When the save is refused**, the file having changed on disk, the quit
   is withdrawn and the echo area says the save's refusal
-  (`Files.notSaved`).
+  (`Files.notSaved`). That holds for a buffer that is not modified too:
+  its save is refused all the same, and the editor goes on.
 - **When another buffer has unsaved changes**, the save starts and the
   quit is refused with that buffer's name (`notQuitting`): the file is
   written and the editor goes on. Vim does the same.

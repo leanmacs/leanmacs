@@ -251,7 +251,8 @@ A prompt is a request for one string, with a text to show beside the input
     file has that stamp and the kept state is the one marked as saved
     (`UndoTree.markSaved`): a buffer whose text has moved on since stays
     modified, since a save that reports late marks the state it wrote.
-    Given no stamp, for a save that was refused, neither changes. It
+    Given no stamp, for a save that was refused, neither changes, and a
+    quit that was asked is withdrawn ("Quit", below). It
     refuses `noSuchBuffer`, and `notBeingSaved` unless a save of the
     buffer that writes that snapshot is in flight.
   - Ending a save is one request that asks the text store nothing, so the
@@ -278,11 +279,19 @@ A command asks the editor to quit, and the editor quits once it can
 - **The editor leaves** (`EditorState.leaves`) when it was asked to quit,
   no buffer has unsaved changes, and no save is in flight. The loop asks
   after each scene and says stop (`Editor/Loop.lean`, "Quit").
-- **A quit that cannot go ahead is withdrawn** (`settleQuit`): asked to
-  quit while a buffer has unsaved changes, the state is no longer asked.
-  The loop applies it when it makes a scene. So a quit that was waiting
-  for a save ends without quitting when the save is refused, or when the
-  buffer is edited meanwhile, and is not left to fire at some later save.
+- **A quit that cannot go ahead is withdrawn**, in two places, so that a
+  quit that was waiting for a save is not left to fire at some later
+  save:
+  - `settleQuit`: asked to quit while a buffer has unsaved changes, the
+    state is no longer asked. The loop applies it when it makes a scene.
+    So a quit that was waiting ends without quitting when the buffer is
+    edited meanwhile.
+  - `endSave` with no stamp: a save that ends without having written the
+    file withdraws the quit, whether or not the buffer is modified. A
+    buffer that was not modified has no unsaved changes after its save
+    was refused, so `settleQuit` alone would let the editor leave with
+    the save's refusal unseen. The state does not keep which save a quit
+    waits for: any save that is refused withdraws it.
 
 ## A buffer's modes
 
@@ -1003,7 +1012,8 @@ def beginSave (id : BufferId) (snapshot : SnapshotId) (saved : UndoTree.State)
 longer in flight. With the stamp of the file it wrote, the buffer's file
 has that stamp, and the state the save kept is the one marked as saved in
 the buffer's history (`UndoTree.markSaved`), wherever the text is by now.
-With `none`, for a save that was refused, neither changes. Refused, with
+With `none`, for a save that was refused, neither changes, and the state
+is no longer asked to quit ("Quit", in the module docs). Refused, with
 the state unchanged, with `noSuchBuffer` for a buffer there is none of, and
 with `notBeingSaved` unless a save of the buffer that writes `snapshot` is
 in flight. -/
@@ -1030,6 +1040,9 @@ def endSave (id : BufferId) (snapshot : SnapshotId) (stamp : Option File.Stamp)
                       stamp, saving := none }
                 history := buffer.history.markSaved saving.state }
             | none => { buffer with file := some { file with saving := none } }
+          -- A save that was refused wrote nothing: a quit that waited for
+          -- it is withdrawn ("Quit", in the module docs).
+          let state := if stamp.isNone then { state with quitting := false } else state
           changeBuffer id (fun _ => ((), ended)) state
 
 /-- The value the buffer `id` keeps under `name`, if it keeps one. -/

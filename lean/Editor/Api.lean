@@ -329,8 +329,8 @@ here:
   in flight, with the snapshot it writes and the state the text was in,
   and `BufferId.endSave id snapshot stamp` ends it with what the save
   answered: with a stamp, the buffer's file has it and that state is the
-  one marked as saved; with none, neither changes (`Editor/State.lean`, "A
-  buffer's file"). The loop releases the snapshot once the command that
+  one marked as saved; with none, neither changes, and a quit that was
+  asked is withdrawn (`Editor/State.lean`, "A buffer's file" and "Quit"). The loop releases the snapshot once the command that
   ended the save has run to its end. A command that is not a save has no
   use for either.
 - `BufferId.isModified` ("Undo", above) and `insertLineBreak`
@@ -506,7 +506,8 @@ def beginSave (id : BufferId) (snapshot : SnapshotId) (saved : UndoTree.State) :
 /-- Ends the save of the buffer `id` that writes `snapshot`, with the stamp
 of the file it wrote, or with `none` for a save that was refused: the save
 is no longer in flight, and with a stamp the buffer's file has it and the
-state the save kept is the one marked as saved. The loop releases the
+state the save kept is the one marked as saved, and with none the editor
+is no longer asked to quit. The loop releases the
 snapshot once this command has run to its end. Refused with `noSuchBuffer`
 for a buffer there is none of, and with `notBeingSaved` unless a save of
 the buffer that writes `snapshot` is in flight. -/

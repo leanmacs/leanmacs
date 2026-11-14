@@ -258,10 +258,14 @@ request sets a flag of the editor state (`EditorState.quitting`,
   told their texts' revisions, so that "unsaved" is right: asked to quit
   with a buffer that has unsaved changes, the state is no longer asked. A
   command's own `quit` is refused in that case and never asks, so this is
-  where a quit that was waiting ends without quitting: the save it waited
-  for was refused, and the delivery's scene finds the buffer still
-  modified, with the save's refusal in the echo area; or the buffer was
-  edited while the quit waited.
+  where a quit that was waiting ends without quitting because the buffer
+  was edited while it waited.
+- **A save that is refused withdraws a quit that waited for it.** The
+  request that ends a save with no stamp clears the flag
+  (`EditorState.endSave`), whether or not the buffer is modified: the
+  delivery's step says to go on, with the save's refusal in the echo
+  area. So neither `wq`, nor `w` and then `q`, leaves when the file was
+  not written.
 - **A command that asks and does not run to its end has not asked.** The
   flag is editor state, and the loop's state is then the one from before
   the command ("Rollback").
