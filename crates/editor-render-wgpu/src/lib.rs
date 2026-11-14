@@ -13,10 +13,21 @@
 //!
 //! [`HeadlessRenderer`] lays the quads over a pixel buffer on the CPU
 //! (`cpu`): it needs no GPU, and every test of it runs in the gate.
-//! [`WgpuRenderer`] draws them with wgpu (`gpu`), to a target of its own:
-//! the gate runs it on wgpu's no-op back end, and its picture is checked
-//! on demand. [`present`] holds how a frame is to be presented to a
-//! window, as a decision and a pure function; no surface is made here.
+//! [`WgpuRenderer`] draws them with wgpu (`gpu`): to a target of its own,
+//! or to a window's surface, which it presents
+//! ([`WgpuRenderer::on_window`]). The gate runs it on wgpu's no-op back
+//! end, to a target of its own, and its picture is checked on demand.
+//! [`present`] holds how a frame is presented to a window, as a decision
+//! and a pure function, and `surface` what else is decided about a
+//! window's surface: the handles wgpu is given, the format, and what is
+//! done when the surface gives no texture. The window reaches this crate
+//! as the window port's own data (`editor_platform::NativeWindow`), and
+//! that type is all of the port this crate uses.
+//!
+//! The calls that make a surface, configure it, take its texture and
+//! present it need a window, so no test in the gate reaches them: the
+//! no-op back end presents to no surface. They are run on demand, by
+//! `editor-ffi`'s example `window`, on a real window.
 
 mod atlas;
 mod blend;
@@ -27,6 +38,7 @@ mod painter;
 pub mod present;
 mod quads;
 mod raster;
+mod surface;
 
 #[cfg(test)]
 mod settings_tests;
@@ -34,6 +46,7 @@ mod settings_tests;
 use std::error::Error;
 use std::fmt;
 
+use editor_platform::NativeWindow;
 use editor_render::port::{DrawRequest, Drawn, Renderer};
 
 use crate::painter::Painter;
@@ -109,16 +122,20 @@ impl fmt::Display for NoAdapter {
 impl Error for NoAdapter {}
 
 /// The GPU adapter of the `Renderer` port: it draws a frame with wgpu, to
-/// a target of its own that can be read back.
+/// a target of its own that can be read back
+/// ([`WgpuRenderer::on_this_machine`]) or to a window, which it presents
+/// to ([`WgpuRenderer::on_window`]).
 ///
 /// It is the same painter as [`HeadlessRenderer`]'s, down to the list of
 /// quads and the bytes of the atlas; what it does of its own is send the
 /// atlas to textures and draw the quads through one pipeline (the module
-/// `gpu`). It presents to no window: the surface is the display
-/// pipeline's phase 6.
+/// `gpu`).
 ///
 /// A draw wgpu refuses answers `presented: false`, when the frame is
-/// already painted. What was painted for it is not lost from the count:
+/// already painted, and so does a draw on a window whose surface gave no
+/// texture: a window that is occluded, or a surface that stays outdated
+/// once it has been configured again. What was painted for it is not lost
+/// from the count:
 /// the next draw that presents answers for it too, as if the two were one
 /// draw (the module `painter`, "What a paint answers").
 ///
@@ -145,6 +162,71 @@ impl WgpuRenderer {
         Self::over(&instance, settings, true)
     }
 
+    /// A renderer that presents to `window`: on an adapter of this machine
+    /// that can, through a surface made on the window. Each draw is then
+    /// drawn on the window and presented, as
+    /// [`present::choose`] says: without tearing, one frame waiting at
+    /// most.
+    ///
+    /// It is refused, with the reason, when no surface can be made on the
+    /// window, when no adapter can present to it, or when the surface
+    /// offers nothing to configure it with.
+    ///
+    /// What it finds depends on the machine and needs a window, so no test
+    /// calls it: the crate's `clippy.toml` forbids it to them.
+    ///
+    /// # Safety
+    ///
+    /// `window` is a live window of the system, and stays one until the
+    /// renderer is dropped: the surface holds its handles and nothing
+    /// keeps the window alive for it. It is called on the thread that runs
+    /// the window, which is where the window port tells of the window
+    /// (`Canvas::Opened`): macOS makes a surface nowhere else. The renderer
+    /// may then be sent to another thread to draw, and is dropped before
+    /// the window is.
+    pub unsafe fn on_window(window: &NativeWindow, settings: Settings) -> Result<Self, NoAdapter> {
+        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
+        // SAFETY: the caller's.
+        unsafe { Self::over_window(&instance, window, settings, true) }
+    }
+
+    /// Keeps the picture of each draw from here on, for
+    /// [`WgpuRenderer::read_back`]: a renderer on a window copies what it
+    /// drew out of the surface before presenting it. That is for checking
+    /// a window's picture, and the editor never asks for it. A renderer
+    /// with a target of its own is always read back, and is not changed.
+    pub fn keep_picture(&mut self) {
+        self.device.keep_picture();
+    }
+
+    /// A renderer on an adapter of `instance` that presents to `window`.
+    ///
+    /// # Safety
+    ///
+    /// As [`WgpuRenderer::on_window`].
+    unsafe fn over_window(
+        instance: &wgpu::Instance,
+        window: &NativeWindow,
+        settings: Settings,
+        allow_per_channel: bool,
+    ) -> Result<Self, NoAdapter> {
+        let (raw_window_handle, raw_display_handle) = surface::handles(window);
+        let target = wgpu::SurfaceTargetUnsafe::RawHandle {
+            raw_display_handle: Some(raw_display_handle),
+            raw_window_handle,
+        };
+        // SAFETY: the caller's: the window is live, and outlives the
+        // renderer that holds the surface.
+        let surface =
+            unsafe { instance.create_surface_unsafe(target) }.map_err(|error| NoAdapter {
+                reason: format!("no surface on the window: {error}"),
+            })?;
+        Self::with(
+            gpu::Device::on_surface(instance, surface, allow_per_channel),
+            settings,
+        )
+    }
+
     /// A renderer on an adapter of `instance`, which blends by a coverage
     /// for each channel when the adapter can and `allow_per_channel` says
     /// it may.
@@ -153,8 +235,15 @@ impl WgpuRenderer {
         settings: Settings,
         allow_per_channel: bool,
     ) -> Result<Self, NoAdapter> {
-        let device = gpu::Device::new(instance, allow_per_channel)
-            .map_err(|gpu::Unavailable(reason)| NoAdapter { reason })?;
+        Self::with(gpu::Device::new(instance, allow_per_channel), settings)
+    }
+
+    /// A renderer over `device`, if there is one.
+    fn with(
+        device: Result<gpu::Device, gpu::Unavailable>,
+        settings: Settings,
+    ) -> Result<Self, NoAdapter> {
+        let device = device.map_err(|gpu::Unavailable(reason)| NoAdapter { reason })?;
         let painter = Painter::new(
             SwashRasterizer::new(),
             &settings,
@@ -180,14 +269,22 @@ impl WgpuRenderer {
         self.device.per_channel()
     }
 
-    /// What wgpu said of the last draw, when it refused it: that draw
-    /// answered `presented: false`.
+    /// Why the last draw was not presented, when it was not: what wgpu
+    /// said in refusing it, or that the window's surface gave no texture.
+    /// That draw answered `presented: false`. It is also why the last
+    /// picture could not be read back, when it could not.
     pub fn refused(&self) -> Option<&str> {
         self.refused.as_deref()
     }
 
     /// The picture of the frame last drawn, read back from the GPU; a
     /// picture of no size before a first draw, or when it cannot be read.
+    ///
+    /// A renderer on a window gives the picture it kept of its last draw
+    /// ([`WgpuRenderer::keep_picture`]), as the surface held it before it
+    /// was presented: a picture of no size when none is kept, and when the
+    /// surface's texture cannot be copied from or is of a format that is
+    /// not a picture's, which [`WgpuRenderer::refused`] then says.
     pub fn read_back(&mut self) -> Image {
         self.device.read_back().unwrap_or_else(|refused| {
             self.refused = Some(refused);

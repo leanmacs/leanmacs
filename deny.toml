@@ -104,6 +104,12 @@
 # `editor-platform-winit`'s dependencies, it fails ("crate
 # 'raw-window-handle = 0.6.2' is explicitly banned").
 #
+# For the wrapper `editor-render-wgpu` of `editor-platform`'s entry
+# (2026-11-14), added in the commit in which the renderer came to make a
+# surface on a window, which it is handed as the port's `NativeWindow`:
+# with the wrapper not yet there, it fails on that edge ("crate
+# 'editor-platform = 0.1.0' is explicitly banned").
+#
 # One rule has no entry: "no crate depends on `editor-ffi`", the one crate
 # that knows about Lean. No entry for it passes the gate. With
 # `wrappers = ["editor-ffi"]` the wrapper matches nothing and
@@ -121,7 +127,7 @@ deny = [
   { crate = "winit", wrappers = ["editor-platform-winit"], reason = "winit stays behind the window port: only its adapter crate may name its types" },
   { crate = "raw-window-handle", wrappers = ["winit", "wgpu", "wgpu-core", "wgpu-hal", "wgpu-types", "ndk"], reason = "a window's handles cross between the window adapter and the renderer as the port's own data (`editor_platform::NativeWindow`): each adapter reaches this crate through the library it wraps (`winit::raw_window_handle`, `wgpu::rwh`), and no crate of the workspace depends on it; the wrappers are the third-party crates that do" },
   { crate = "editor-platform-winit", wrappers = ["editor-ffi"], reason = "the window adapter is linked only by the crate that wires the library together; everything else reaches a window through the port" },
-  { crate = "editor-platform", wrappers = ["editor-ffi", "editor-platform-winit", "editor-platform-arboard"], reason = "the window port has two users today, its adapter and the crate that runs it onto the event queue; the clipboard port beside it has one, its adapter; another is a decision, so it is made here" },
+  { crate = "editor-platform", wrappers = ["editor-ffi", "editor-platform-winit", "editor-platform-arboard", "editor-render-wgpu"], reason = "the window port has two users, its adapter and the crate that runs it onto the event queue; the clipboard port beside it has one, its adapter; and the crate of the renderer's real adapters takes one type of it, `NativeWindow`, to make a surface on a window; another is a decision, so it is made here" },
   { crate = "arboard", wrappers = ["editor-platform-arboard"], reason = "arboard stays behind the clipboard port: only its adapter crate may name its types" },
   { crate = "ropey", wrappers = ["editor-text"], reason = "the rope stays behind editor-text's own types: only that crate may name the library's" },
   { crate = "editor-text", wrappers = ["editor-ffi", "editor-fs-std", "editor-layout"], reason = "text storage has two users, the crate that puts a text behind a handle for Lean and layout, which reads its snapshots, patches and selections as plain values; and the file port it defines has one adapter, which implements it; another is a decision, so it is made here" },

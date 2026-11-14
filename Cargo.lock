@@ -510,6 +510,7 @@ name = "editor-render-wgpu"
 version = "0.1.0"
 dependencies = [
  "editor-layout",
+ "editor-platform",
  "editor-render",
  "editor-shape-parley",
  "etagere",

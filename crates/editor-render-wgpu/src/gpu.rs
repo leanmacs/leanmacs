@@ -1,5 +1,5 @@
 //! The wgpu device: the painter's quads drawn on a GPU, to an offscreen
-//! target.
+//! target or to a window's surface.
 //!
 //! It draws what the CPU compositor draws, from the same list of quads
 //! and the same bytes of the atlas: a texture for each page, one pipeline
@@ -30,11 +30,31 @@
 //! taken as sent only by a draw wgpu accepted: what a refused draw sent,
 //! the next sends again.
 //!
-//! # What is here and what is not
+//! # What is drawn on
 //!
-//! The target is a texture this device makes, the size of the last draw's
-//! target, and [`Device::read_back`] copies it out. There is no surface:
-//! presenting to a window is the display pipeline's phase 6.
+//! A device draws on one of two things, decided when it is made.
+//!
+//! One made with [`Device::new`] draws on a texture of its own, the size
+//! of the last draw's target, and [`Device::read_back`] copies it out.
+//!
+//! One made with [`Device::on_surface`] draws on a window's surface and
+//! presents it. Its adapter is one that can present to the surface. The
+//! surface is configured at the size of a draw when it is not, or is of
+//! another size, with the format, the present mode and the frame latency
+//! chosen when the device was made (`surface`, `present`). Each draw asks
+//! the surface for its next texture, does what `surface::next` says of
+//! the answer, draws through the same pipeline, and presents. A draw the
+//! surface gave no texture for is not presented, and says why. The
+//! picture of a draw is copied out of the surface's texture, before it is
+//! presented, only when that is asked for ([`Device::keep_picture`]): it
+//! is a copy of every pixel for every frame, which a check wants and the
+//! editor does not.
+//!
+//! The no-op back end presents to no surface, so those calls run in no
+//! test of the gate: what decides them is pinned in `surface`, and the
+//! calls themselves are run on a real window, on demand.
+//!
+//! # What is not done
 //!
 //! A page's texture is sent again whole when an image has been written to
 //! the page since it was last sent. That is one copy of at most a page
@@ -57,7 +77,9 @@ use crate::atlas::{Atlas, PageView};
 use crate::blend::CONTRAST;
 use crate::cpu::CLEAR;
 use crate::glyphs::Kind;
+use crate::present::{self, Mode};
 use crate::quads::{Quad, QuadKind};
+use crate::surface::{Answer, Next, choose_format, mode_of, next, wgpu_mode};
 
 /// The body of the shader, shared by both blends.
 const SHADER: &str = include_str!("shader.wgsl");
@@ -89,9 +111,10 @@ fn fragment(in: Varying) -> @location(0) vec4<f32> {
 }
 ";
 
-/// The format of the target: sRGB values, so that blending is in linear
-/// light.
-const TARGET_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8UnormSrgb;
+/// The format of a target of the device's own: sRGB values, so that
+/// blending is in linear light. A window's surface has the format chosen
+/// from what it offers (`surface::choose_format`).
+const OWN_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8UnormSrgb;
 
 /// How many bytes one quad takes in the instance buffer: its box, its
 /// source and its colour.
@@ -128,6 +151,121 @@ struct TargetTexture {
     height: u32,
 }
 
+/// A window's surface, as the device holds it.
+struct Window {
+    /// The surface.
+    surface: wgpu::Surface<'static>,
+    /// How it is configured, or is to be: the format, the present mode and
+    /// the frame latency chosen when the device was made, and the size of
+    /// the last draw.
+    config: wgpu::SurfaceConfiguration,
+    /// Whether it is configured as `config` says. It is not before the
+    /// first draw, nor after a texture that no longer fitted it.
+    configured: bool,
+    /// Whether its texture may be copied from, so that a picture of it can
+    /// be kept.
+    copies: bool,
+    /// Whether the picture of each draw is kept.
+    keep: bool,
+    /// The picture of the last draw, or why there is none; `None` when no
+    /// picture is kept or nothing was drawn.
+    picture: Option<Result<Image, String>>,
+}
+
+impl Window {
+    /// The surface, to be configured from what it offers `adapter`: the
+    /// format and the present mode `surface` chooses. The error says why
+    /// nothing can be drawn on it.
+    fn new(surface: wgpu::Surface<'static>, adapter: &wgpu::Adapter) -> Result<Self, String> {
+        let offered = surface.get_capabilities(adapter);
+        let formats = choose_format(&offered.formats)
+            .ok_or("the window's surface offers no format on this adapter")?;
+        let modes: Vec<Mode> = offered
+            .present_modes
+            .iter()
+            .copied()
+            .filter_map(mode_of)
+            .collect();
+        // A surface does not say what frame latencies it takes: wgpu holds
+        // the one asked for to what the back end allows.
+        let presentation = present::choose(&modes, 0..=u32::MAX);
+        // The size is the first draw's: 1 by 1 stands for "not yet".
+        let mut config = surface
+            .get_default_config(adapter, 1, 1)
+            .ok_or("the window's surface cannot be configured on this adapter")?;
+        config.format = formats.surface;
+        config.view_formats = if formats.target == formats.surface {
+            Vec::new()
+        } else {
+            vec![formats.target]
+        };
+        config.present_mode = wgpu_mode(presentation.mode);
+        config.desired_maximum_frame_latency = presentation.frame_latency;
+        Ok(Self {
+            surface,
+            config,
+            configured: false,
+            copies: offered.usages.contains(wgpu::TextureUsages::COPY_SRC),
+            keep: false,
+            picture: None,
+        })
+    }
+
+    /// The format the surface's texture is drawn on through.
+    fn target_format(&self) -> wgpu::TextureFormat {
+        self.config
+            .view_formats
+            .first()
+            .copied()
+            .unwrap_or(self.config.format)
+    }
+
+    /// The surface's next texture, `width` by `height`: the surface is
+    /// configured first when it is not, or is of another size, and what it
+    /// answers is acted on as `surface::next` says. The error says why
+    /// there is no texture, and the draw is then not presented.
+    fn acquire(
+        &mut self,
+        device: &wgpu::Device,
+        width: u32,
+        height: u32,
+    ) -> Result<wgpu::SurfaceTexture, String> {
+        if !self.configured || (self.config.width, self.config.height) != (width, height) {
+            self.config.width = width;
+            self.config.height = height;
+            self.surface.configure(device, &self.config);
+            self.configured = true;
+        }
+        let mut asked_again = false;
+        loop {
+            let (answer, texture) = match self.surface.get_current_texture() {
+                wgpu::CurrentSurfaceTexture::Success(texture) => (Answer::Success, Some(texture)),
+                wgpu::CurrentSurfaceTexture::Suboptimal(texture) => {
+                    (Answer::Suboptimal, Some(texture))
+                }
+                wgpu::CurrentSurfaceTexture::Timeout => (Answer::Timeout, None),
+                wgpu::CurrentSurfaceTexture::Occluded => (Answer::Occluded, None),
+                wgpu::CurrentSurfaceTexture::Outdated => (Answer::Outdated, None),
+                wgpu::CurrentSurfaceTexture::Lost => (Answer::Lost, None),
+                wgpu::CurrentSurfaceTexture::Validation => (Answer::Validation, None),
+            };
+            match (next(answer, asked_again), texture) {
+                (Next::Draw, Some(texture)) => return Ok(texture),
+                (Next::DrawThenConfigure, Some(texture)) => {
+                    // The next draw configures the surface again.
+                    self.configured = false;
+                    return Ok(texture);
+                }
+                (Next::ConfigureAndAskAgain, _) => {
+                    self.surface.configure(device, &self.config);
+                    asked_again = true;
+                }
+                _ => return Err(format!("the window's surface gave no texture: {answer:?}")),
+            }
+        }
+    }
+}
+
 /// The device.
 pub struct Device {
     /// wgpu's device.
@@ -138,6 +276,8 @@ pub struct Device {
     adapter: String,
     /// Whether it blends by a coverage for each channel.
     per_channel: bool,
+    /// The format of what the pipeline draws on.
+    format: wgpu::TextureFormat,
     /// The one pipeline.
     pipeline: wgpu::RenderPipeline,
     /// The layout of a page's bind group.
@@ -153,8 +293,10 @@ pub struct Device {
     pages: HashMap<u32, PageTexture>,
     /// The quads of a draw, and how many bytes it holds.
     instances: Option<(wgpu::Buffer, u64)>,
-    /// The target.
+    /// The target of the device's own, when it draws on no window.
     target: Option<TargetTexture>,
+    /// The window's surface, when it draws on one.
+    window: Option<Window>,
 }
 
 /// Waits for `future`, which wgpu resolves without an executor.
@@ -163,13 +305,42 @@ fn wait<T>(future: impl Future<Output = T>) -> T {
 }
 
 impl Device {
-    /// A device on an adapter of `instance`, blending by a coverage for
-    /// each channel when the adapter can and `allow_per_channel` says it
-    /// may.
+    /// A device on an adapter of `instance` that draws on a target of its
+    /// own, blending by a coverage for each channel when the adapter can
+    /// and `allow_per_channel` says it may.
     pub fn new(instance: &wgpu::Instance, allow_per_channel: bool) -> Result<Self, Unavailable> {
-        let adapter = wait(instance.request_adapter(&wgpu::RequestAdapterOptions::default()))
-            .map_err(|error| Unavailable(format!("no adapter: {error}")))?;
+        Self::build(instance, None, allow_per_channel)
+    }
+
+    /// A device on an adapter of `instance` that can present to `surface`,
+    /// and draws on it. It is refused, with the reason, when no adapter
+    /// can, or when the surface offers nothing to configure it with.
+    pub fn on_surface(
+        instance: &wgpu::Instance,
+        surface: wgpu::Surface<'static>,
+        allow_per_channel: bool,
+    ) -> Result<Self, Unavailable> {
+        Self::build(instance, Some(surface), allow_per_channel)
+    }
+
+    /// A device on an adapter of `instance`, drawing on `surface` when
+    /// there is one and on a target of its own otherwise.
+    fn build(
+        instance: &wgpu::Instance,
+        surface: Option<wgpu::Surface<'static>>,
+        allow_per_channel: bool,
+    ) -> Result<Self, Unavailable> {
+        let adapter = wait(instance.request_adapter(&wgpu::RequestAdapterOptions {
+            compatible_surface: surface.as_ref(),
+            ..Default::default()
+        }))
+        .map_err(|error| Unavailable(format!("no adapter: {error}")))?;
         let info = adapter.get_info();
+        let window = surface
+            .map(|surface| Window::new(surface, &adapter))
+            .transpose()
+            .map_err(|reason| Unavailable(format!("{reason} ({})", info.name)))?;
+        let format = window.as_ref().map_or(OWN_FORMAT, Window::target_format);
         let dual = wgpu::Features::DUAL_SOURCE_BLENDING;
         let per_channel = allow_per_channel && adapter.features().contains(dual);
         let (device, queue) = wait(adapter.request_device(&wgpu::DeviceDescriptor {
@@ -272,7 +443,7 @@ impl Device {
                 entry_point: Some("fragment"),
                 compilation_options: Default::default(),
                 targets: &[Some(wgpu::ColorTargetState {
-                    format: TARGET_FORMAT,
+                    format,
                     blend: Some(blend),
                     write_mask: wgpu::ColorWrites::ALL,
                 })],
@@ -306,6 +477,7 @@ impl Device {
             queue,
             adapter: format!("{} ({:?})", info.name, info.backend),
             per_channel,
+            format,
             pipeline,
             page_layout,
             globals,
@@ -314,7 +486,22 @@ impl Device {
             pages: HashMap::new(),
             instances: None,
             target: None,
+            window,
         })
+    }
+
+    /// Keeps the picture of each draw on a window from here on, for
+    /// [`Device::read_back`]: the surface's texture is copied out before
+    /// it is presented. Nothing changes for a device that draws on a
+    /// target of its own, which is always read back.
+    pub fn keep_picture(&mut self) {
+        if let Some(window) = &mut self.window {
+            window.keep = true;
+            if window.copies {
+                window.config.usage |= wgpu::TextureUsages::COPY_SRC;
+                window.configured = false;
+            }
+        }
     }
 
     /// Whether the device blends by a coverage for each channel, so that
@@ -329,8 +516,10 @@ impl Device {
     }
 
     /// Draws `quads`, in order, over a target `width` by `height` cleared
-    /// first, reading glyph quads from `atlas`. The error is wgpu's, when
-    /// it refuses a call of the draw.
+    /// first, reading glyph quads from `atlas`: on the window's surface,
+    /// which is then presented, or on the device's own target. The error
+    /// is wgpu's, when it refuses a call of the draw, or says that the
+    /// window's surface gave no texture to draw on.
     pub fn draw(
         &mut self,
         quads: &[Quad],
@@ -340,27 +529,63 @@ impl Device {
     ) -> Result<(), String> {
         let scope = self.device.push_error_scope(wgpu::ErrorFilter::Validation);
         let sent = self.send_pages(atlas);
-        let (width, height) = (width.max(1), height.max(1));
-        if !self
-            .target
-            .as_ref()
-            .is_some_and(|target| (target.width, target.height) == (width, height))
-        {
-            self.target = Some(TargetTexture {
+        let drawn = self.draw_on(quads, width.max(1), height.max(1));
+        if let Some(error) = wait(scope.pop()) {
+            return Err(error.to_string());
+        }
+        drawn?;
+        // The draw was accepted: what it sent is what the textures hold.
+        for (number, written) in sent {
+            if let Some(texture) = self.pages.get_mut(&number) {
+                texture.sent = written;
+            }
+        }
+        Ok(())
+    }
+
+    /// What is drawn on, `width` by `height`: the window's next texture,
+    /// seen through the format the pipeline draws in, or the device's own
+    /// target, made anew when its size is another. The error says why the
+    /// window's surface gave no texture.
+    fn canvas(
+        &mut self,
+        width: u32,
+        height: u32,
+    ) -> Result<(wgpu::TextureView, Option<wgpu::SurfaceTexture>), String> {
+        if let Some(window) = &mut self.window {
+            let texture = window.acquire(&self.device, width, height)?;
+            let view = texture.texture.create_view(&wgpu::TextureViewDescriptor {
+                format: Some(self.format),
+                ..Default::default()
+            });
+            return Ok((view, Some(texture)));
+        }
+        let target = match self.target.take() {
+            Some(target) if (target.width, target.height) == (width, height) => target,
+            _ => TargetTexture {
                 texture: self.device.create_texture(&wgpu::TextureDescriptor {
                     label: Some("target"),
                     size: extent(width, height),
                     mip_level_count: 1,
                     sample_count: 1,
                     dimension: wgpu::TextureDimension::D2,
-                    format: TARGET_FORMAT,
+                    format: self.format,
                     usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
                     view_formats: &[],
                 }),
                 width,
                 height,
-            });
-        }
+            },
+        };
+        let view = target.texture.create_view(&Default::default());
+        self.target = Some(target);
+        Ok((view, None))
+    }
+
+    /// The calls of one draw, on a target `width` by `height`, neither of
+    /// them 0. The error says why the window's surface gave no texture.
+    fn draw_on(&mut self, quads: &[Quad], width: u32, height: u32) -> Result<(), String> {
+        let (view, presented) = self.canvas(width, height)?;
         let mut globals = Vec::with_capacity(16);
         for value in [width as f32, height as f32, CONTRAST, 0.0] {
             globals.extend_from_slice(&value.to_ne_bytes());
@@ -386,9 +611,8 @@ impl Device {
             self.instances = Some((buffer, size));
         }
         let mut encoder = self.device.create_command_encoder(&Default::default());
-        if let (Some(target), Some((buffer, _))) = (&self.target, &self.instances) {
+        if let Some((buffer, _)) = &self.instances {
             self.queue.write_buffer(buffer, 0, &bytes);
-            let view = target.texture.create_view(&Default::default());
             let clear = wgpu::Color {
                 r: f64::from(CLEAR[0]) / 255.0,
                 g: f64::from(CLEAR[1]) / 255.0,
@@ -424,16 +648,52 @@ impl Device {
             }
         }
         self.queue.submit([encoder.finish()]);
-        if let Some(error) = wait(scope.pop()) {
-            return Err(error.to_string());
-        }
-        // The draw was accepted: what it sent is what the textures hold.
-        for (number, written) in sent {
-            if let Some(texture) = self.pages.get_mut(&number) {
-                texture.sent = written;
+        if let Some(texture) = presented {
+            // The picture is taken while the texture is still this
+            // device's: presented, it is the window system's.
+            let picture = self.picture_of(&texture.texture, width, height);
+            if let Some(window) = &mut self.window {
+                window.picture = picture;
             }
+            self.queue.present(texture);
         }
         Ok(())
+    }
+
+    /// The picture of a window's `texture`, `width` by `height`, when the
+    /// window's pictures are kept: the texture copied out and its pixels
+    /// put in the order a picture has them. An error where the surface
+    /// does not let its texture be copied from, or is of a format that is
+    /// not four bytes a pixel.
+    fn picture_of(
+        &self,
+        texture: &wgpu::Texture,
+        width: u32,
+        height: u32,
+    ) -> Option<Result<Image, String>> {
+        let window = self.window.as_ref().filter(|window| window.keep)?;
+        if !window.copies {
+            return Some(Err(
+                "the window's surface does not let its texture be copied from".to_owned(),
+            ));
+        }
+        let blue_first = match window.config.format {
+            wgpu::TextureFormat::Bgra8Unorm | wgpu::TextureFormat::Bgra8UnormSrgb => true,
+            wgpu::TextureFormat::Rgba8Unorm | wgpu::TextureFormat::Rgba8UnormSrgb => false,
+            other => {
+                return Some(Err(format!(
+                    "a surface of the format {other:?} is not read back as a picture"
+                )));
+            }
+        };
+        Some(self.copy_out(texture, width, height).map(|mut image| {
+            if blue_first {
+                for pixel in image.rgba.as_chunks_mut::<4>().0 {
+                    pixel.swap(0, 2);
+                }
+            }
+            image
+        }))
     }
 
     /// Makes the textures hold what `atlas`'s pages hold: one for each
@@ -466,16 +726,27 @@ impl Device {
     }
 
     /// The target as it was last drawn, read back from the GPU; a picture
-    /// of no size before a first draw.
+    /// of no size before a first draw. For a device that draws on a
+    /// window, the picture kept of the last draw, and a picture of no size
+    /// when none is kept ([`Device::keep_picture`]).
     pub fn read_back(&mut self) -> Result<Image, String> {
-        let Some(target) = &self.target else {
-            return Ok(Image {
-                width: 0,
-                height: 0,
-                rgba: Vec::new(),
-            });
+        let nothing = Image {
+            width: 0,
+            height: 0,
+            rgba: Vec::new(),
         };
-        let (width, height) = (target.width, target.height);
+        if let Some(window) = &self.window {
+            return window.picture.clone().unwrap_or(Ok(nothing));
+        }
+        let Some(target) = &self.target else {
+            return Ok(nothing);
+        };
+        self.copy_out(&target.texture, target.width, target.height)
+    }
+
+    /// The pixels of `texture`, `width` by `height` and four bytes a
+    /// pixel, copied out of the GPU in the order the texture holds them.
+    fn copy_out(&self, texture: &wgpu::Texture, width: u32, height: u32) -> Result<Image, String> {
         let scope = self.device.push_error_scope(wgpu::ErrorFilter::Validation);
         // A row of the copy is padded to a multiple of 256 bytes.
         let row = (width * 4).next_multiple_of(wgpu::COPY_BYTES_PER_ROW_ALIGNMENT);
@@ -487,7 +758,7 @@ impl Device {
         });
         let mut encoder = self.device.create_command_encoder(&Default::default());
         encoder.copy_texture_to_buffer(
-            target.texture.as_image_copy(),
+            texture.as_image_copy(),
             wgpu::TexelCopyBufferInfo {
                 buffer: &buffer,
                 layout: wgpu::TexelCopyBufferLayout {

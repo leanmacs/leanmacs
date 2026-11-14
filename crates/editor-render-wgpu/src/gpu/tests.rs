@@ -11,11 +11,14 @@
 //! No test here runs a shaper or reads a font: the frames are of layout's
 //! fake shaper, and the glyph images the fake rasteriser's.
 
+use std::ptr::NonNull;
+
 use editor_layout::Layout;
 use editor_layout::face::{Color, Face, FaceDef, Underline, UnderlineStyle};
 use editor_layout::frame::Frame;
 use editor_layout::scene::{Decoration, Rect, Scene, StatusField};
 use editor_layout::shaper::fake::CellShaper;
+use editor_platform::NativeWindow;
 use editor_render::contract;
 use editor_render::port::{DrawRequest, Renderer, Target};
 
@@ -461,6 +464,29 @@ fn an_instance_with_no_adapter_gives_no_renderer() {
             .to_string()
             .starts_with("no GPU renderer: no adapter"),
         "{refused}"
+    );
+}
+
+#[test]
+fn a_surface_that_offers_nothing_is_refused_with_a_reason() {
+    // A window made up for the test: the no-op back end makes a surface
+    // from any handle and never touches it, so the view is never read.
+    let mut made_up = 0_u8;
+    let window = NativeWindow::AppKit {
+        view: NonNull::from(&mut made_up).cast(),
+    };
+    // SAFETY: the back end is the no-op one, which keeps the handle and
+    // does nothing with it; the renderer, were one made, is dropped here,
+    // before `made_up` is.
+    let refused = unsafe { WgpuRenderer::over_window(&noop(), &window, Settings::default(), true) }
+        .err()
+        .expect("the no-op back end presents to no surface");
+    // The no-op back end has nothing to offer a surface, and its adapter
+    // says so: no renderer is made, and the reason is wgpu's.
+    let reason = refused.to_string();
+    assert!(
+        reason.starts_with("no GPU renderer: no adapter") && reason.contains("surface"),
+        "{reason}"
     );
 }
 

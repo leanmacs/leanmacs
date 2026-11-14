@@ -9,8 +9,14 @@ publish = false
 [dependencies]
 # The port this crate implements, with its fake, its contract check and
 # the row cache every back end keeps its rows through. `deny.toml` lists
-# this crate as editor-render's one wrapper.
+# this crate among editor-render's wrappers.
 editor-render = { path = "../editor-render" }
+# The window port, for one type: `NativeWindow`, a window as the system
+# knows it, which the window adapter fills and this crate makes a surface
+# from. Nothing else of the port is used: this crate runs no window and
+# hears nothing a window says. `deny.toml` lists this crate among
+# editor-platform's wrappers.
+editor-platform = { path = "../editor-platform" }
 # The frame a renderer draws, as plain data. `deny.toml` lists this crate
 # among editor-layout's wrappers.
 editor-layout = { path = "../editor-layout" }

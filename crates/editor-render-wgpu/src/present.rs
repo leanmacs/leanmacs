@@ -12,14 +12,19 @@
 //!
 //! [`choose`] is that decision as a pure function, so the record cannot
 //! drift from the code. Nothing here makes, configures or presents to a
-//! surface: no window exists in this phase. The display pipeline's phase
-//! 6 writes those calls against a window, from what [`choose`] gives, and
-//! takes the measurements that say whether the choice bears out
+//! surface: the device does (the module `gpu`), for a renderer made on a
+//! window, and it configures the surface with what [`choose`] gives for
+//! the modes the surface offers. A surface does not say what frame
+//! latencies it takes, so the device asks for [`FRAME_LATENCY`] and wgpu
+//! holds it to what the back end allows.
+//!
+//! Nothing has been measured. The display pipeline's phase 6 takes the
+//! measurements that say whether the choice bears out
 //! (`docs/dev-practices/on-demand-checks.md`, "The present mode, measured
-//! on a window"). Nothing has been measured.
+//! on a window").
 //!
 //! The types are this crate's own: no type of wgpu is public here. The
-//! adapter that configures a surface maps them to wgpu's.
+//! module `surface` maps them to wgpu's and back.
 
 use std::ops::RangeInclusive;
 

@@ -29,6 +29,16 @@
 # `mise run lint` fails with "use of a disallowed method
 # `editor_render_wgpu::WgpuRenderer::on_this_machine`".
 #
+# A window's surface comes through one function too,
+# `WgpuRenderer::on_window`, which is on the list for the same reason and
+# one more: it needs a window, and the gate opens none. No target of this
+# crate calls it. Its one caller is `editor-ffi`'s example `window`, whose
+# own `clippy.toml` lists it. Seen to bite once by hand, on 2026-11-14:
+# with a test added to `tests/contract.rs` that calls
+# `WgpuRenderer::on_window`, `mise run lint` fails with "use of a
+# disallowed method `editor_render_wgpu::WgpuRenderer::on_window`". Clippy
+# compiles the test and does not run it.
+#
 # The exceptions. This file governs the crate's examples too, and each
 # example exists to do one thing no test may. Each call of a listed name
 # in an example is under its own `#[expect(clippy::disallowed_methods,
@@ -105,6 +115,8 @@ disallowed-methods = [
   { path = "editor_fs_std::StdFs::system", reason = "the renderer touches no file system, real or fake" },
   # This machine's GPU: what it finds depends on the machine.
   { path = "editor_render_wgpu::WgpuRenderer::on_this_machine", reason = "no test asks for this machine's adapter: the gate runs the wgpu adapter on wgpu's no-op back end, and the example `gpu` is the one place a real adapter is asked for" },
+  # A window's surface: it needs a window, and a real adapter.
+  { path = "editor_render_wgpu::WgpuRenderer::on_window", reason = "no test makes a surface on a window: the gate opens no window, and `editor-ffi`'s example `window` is the one place a renderer is made on one" },
 ]
 
 disallowed-types = [
