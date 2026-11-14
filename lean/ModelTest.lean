@@ -79,6 +79,23 @@ and the scenes the display model records. Among them is what the loop does
 when publishing is refused, with a text or a snapshot released behind it:
 the scene is published all the same, with the refusal in its echo.
 
+What a key does in the loop is checked the same way (`dispatchChecks`), on
+the editor's models and the test scheme, with keymaps and commands written
+in the test, so that none of them names a shipped scheme's keys or a
+registered command:
+
+- `dispatchKeyChecks`: which keys are stepped through the scheme, the
+  pending keys the scene shows, and the command a completed sequence runs,
+  with its arguments and its keys;
+- `dispatchRollbackChecks`: a command that fails leaves the texts, the
+  windows' markers, the history and the scheme's state as they were, what
+  cannot be rolled back is said, and a move in the history is not taken
+  back;
+- `dispatchInterruptChecks`: on the watch model, an interrupt key that
+  arrives while a command runs, before one and between two;
+- `dispatchSlowChecks`: on the watch model's clock, which a command's
+  requests move, a command slower than the threshold is logged once.
+
 The undo tree (`Editor/UndoTree.lean`) is plain Lean over the text port, so
 its cases (`Editor/UndoTree/Cases.lean`) are properties of the same kind and
 run against the model in the same list; `contract-test` runs them against
@@ -5108,11 +5125,69 @@ def dispatchInterruptChecks : List Check :=
             | some (text, _, echoes, _) => text == "aC-c sd" && echoes.back? == some ""
             | none => false }]
 
+/-- A command of the slow-command checks that makes `requests` requests of
+the text port, each a question that changes nothing, and is then refused if
+`refused`. -/
+def asking (requests : Nat) (refused : Bool := false) : Dispatched := fun call => do
+  for _ in [0:requests] do
+    discard <| call.target.buffer.text.revision
+  if refused then
+    throw .badRange
+  return none
+
+/-- What each step of a run handed back as its log, on the editor's models
+with a clock that moves on by 10 milliseconds at each text request and each
+display request; nothing when the run was refused. -/
+def logged (keys : Loop.Keys TestScheme.scheme) (events : List Event) : Array (Array String) :=
+  match
+    dispatched keys events (model :=
+      { editorModel with watch := { clock := 1000, pace := 10 } }) with
+  | some ((_, steps), _, _) => steps.map (·.log)
+  | none => #[]
+
+/-- The checks of the slow-command log in the loop (`Editor/Loop.lean`), on
+the model's clock: a command that took longer than the threshold is logged
+once, with its name and how long it took. -/
+def dispatchSlowChecks : List Check :=
+  let keys : Loop.Keys TestScheme.scheme :=
+    {
+      dispatchKeys
+        [("C-c 6", invoke "stamp"), ("C-c 5", invoke "five"), ("C-c 2", invoke "two"),
+          ("C-c r", invoke "refused"), ("C-c n", invoke "nope")]
+        [("stamp", asking 6), ("five", asking 5), ("two", asking 2),
+          ("refused", asking 7 true)] with
+      slowAfter := 50 }
+  [{  name :=
+        "a command that takes longer than the threshold produces one log entry with its name and how long it took, in the step that ran it and in no other"
+      run :=
+        pure
+          (logged keys (presses "C-c 6" ++ [pressF5]) ==
+            #[#[], #["slow command: stamp took 60 ms"], #[]]) },
+    { name :=
+        "a command that takes less than the threshold, or exactly as long, produces no log entry"
+      run := pure (logged keys (presses "C-c 2 C-c 5") == #[#[], #[], #[], #[]]) },
+    { name :=
+        "a slow command that was refused is logged like one that finished, with the time the command took and not the time its rollback took"
+      run :=
+        pure (logged keys (presses "C-c r") == #[#[], #["slow command: refused took 70 ms"]]) },
+    { name := "an invocation of a name no command is registered under produces no log entry"
+      run := pure (logged keys (presses "C-c n") == #[#[], #[]]) },
+    { name :=
+        "the threshold a step is handed by default is the loop's, 100 milliseconds: a command of ten requests is not logged and one of eleven is"
+      run :=
+        let keys :=
+          dispatchKeys [("C-c a", invoke "ten"), ("C-c b", invoke "eleven")]
+            [("ten", asking 10), ("eleven", asking 11)]
+        pure
+          (keys.slowAfter == Loop.slowAfter && Loop.slowAfter == 100 &&
+            logged keys (presses "C-c a C-c b") ==
+              #[#[], #[], #[], #["slow command: eleven took 110 ms"]]) }]
+
 /-- The checks of key dispatch in the loop (`Editor/Loop.lean`), on the
 editor's models: keys through the scheme and the commands they run,
-rollback, and the interrupt. -/
+rollback, the interrupt, and the slow-command log. -/
 def dispatchChecks : List Check :=
-  dispatchKeyChecks ++ dispatchRollbackChecks ++ dispatchInterruptChecks
+  dispatchKeyChecks ++ dispatchRollbackChecks ++ dispatchInterruptChecks ++ dispatchSlowChecks
 
 /-- A scheme written for the test that breaks the contract: it yields the
 first binding that the keys so far begin, so it emits on a strict prefix. -/

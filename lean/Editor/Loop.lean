@@ -60,6 +60,12 @@ command's name and plain arguments, and the loop runs it (`Loop.run`):
 5. **What the command asked to be written** (a command over a store) is
    handed back with the step (`Loop.Stepped.write`), for whoever holds the
    cells.
+6. **A slow command is logged.** The loop reads the watch port's clock just
+   before the command and just after it, however it ended. When it took
+   longer than the threshold the step was handed (`Loop.Keys.slowAfter`,
+   `Loop.slowAfter` by default), the step hands back one entry
+   (`Loop.Stepped.log`): `slow command: <name> took <n> ms`. The loop
+   writes no log itself: the host does, with what the step hands back.
 
 A call into a config command is not guarded against the interpreter: an
 exception thrown by interpreted code ends the process
@@ -291,6 +297,11 @@ inductive Loop.Next where
   | stop
   deriving DecidableEq, Repr
 
+/-- How long a command may take before it is logged as slow, in
+milliseconds, unless a step is handed another threshold. -/
+def Loop.slowAfter : Nat :=
+  100
+
 /-- What a step is handed beside the loop and the event: what the keys are
 looked up in, and what an invocation runs. It is rebuilt by the caller for
 each step, from the registry as it then is, so a reload changes it between
@@ -302,6 +313,9 @@ structure Loop.Keys (scheme : InputScheme) where
   called with, the program, whose value is what the command asks to be
   written; `none` for a name no command is registered under. -/
   command? : String → Option (Call → EditorM (Option Config.Write)) := fun _ => none
+  /-- How long a command may take before it is logged as slow, in
+  milliseconds: one that takes longer is logged. -/
+  slowAfter : Nat := Loop.slowAfter
 
 /-- What a step hands back: the loop after it, and what to do next. A
 one-shot output of a step is a field here. -/
@@ -315,6 +329,10 @@ structure Loop.Stepped (scheme : InputScheme) where
   step that ran no command, and for one whose command did not run to its
   end. -/
   write : Option Config.Write := none
+  /-- What the step has to say to whoever keeps a log, one entry a line: a
+  command it ran that took longer than the threshold. The loop writes
+  nothing itself. -/
+  log : Array String := #[]
 
 namespace EditorState
 
@@ -568,11 +586,19 @@ structure Ran where
   finished : Bool
   /-- What the command asked to be written, when it ran to its end. -/
   write : Option Config.Write := none
+  /-- The log entry of a command that took longer than the threshold. -/
+  log : Array String := #[]
 
 /-- `state` with what became of the command called `name` in the echo
 area: its name, then `what`. -/
 def said (state : EditorState) (name what : String) : EditorState :=
   { state with echo := s!"{name}: {what}" }
+
+/-- The log entries of the command called `name`, which took `took`
+milliseconds: one, with its name and how long it took, when that is more
+than `threshold`, and none otherwise. -/
+def slow (name : String) (took threshold : Nat) : Array String :=
+  if took > threshold then #[s!"slow command: {name} took {took} ms"] else #[]
 
 /-- Runs `invocation`, which the keys `typed` yielded, from `state` ("Running
 an invocation", in the module docs): clears the echo area, looks the
@@ -584,7 +610,11 @@ with what could not be said after it.
 
 Only the command is guarded. What this makes of its own requests, keeping
 before it and rolling back after it, is not, so a flag that is up does not
-stop a rollback. -/
+stop a rollback.
+
+The clock is read just before the command and just after it, however it
+ended, and a command that took longer than the threshold is logged
+(`slow`). Keeping and rolling back are not timed. -/
 def run (keys : Keys scheme) (state : EditorState) (invocation : Invocation) (typed : List Key) :
     EditorM Ran := do
   let state := { state with echo := "" }
@@ -594,21 +624,25 @@ def run (keys : Keys scheme) (state : EditorState) (invocation : Invocation) (ty
   let some target :=
     state.focusedTarget? | return { state := said state name "no window is focused", finished := false }
   let kept ← keep state
+  let started ← Watch.now
+  let outcome ← (command { target, arguments := invocation.arguments, keys := typed }).guarded
+  let log := slow name ((← Watch.now) - started) keys.slowAfter
   let failed (what : String) : EditorM Ran := do
     let (state, unrestored) ← kept.restore state
-    return { state := said state name (what ++ unrestored), finished := false }
-  match ← (command { target, arguments := invocation.arguments, keys := typed }).guarded with
+    return { state := said state name (what ++ unrestored), finished := false, log }
+  match outcome with
   | .finished write =>
-    return { state, finished := true, write }
+    return { state, finished := true, write, log }
   | .refused refusal =>
     failed s!"refused: {refusal.describe}"
   | .interrupted =>
     failed "interrupted"
 
 /-- One key through the scheme, for the focused view, and the invocation it
-yields, if it yields one, run (`run`): the loop after them, and what the
-command asked to be written. The keys the command is told of are what the
-scheme reported as pending before the key, then the key's chord.
+yields, if it yields one, run (`run`): the loop after them, what the
+command asked to be written, and what there is to log. The keys the command
+is told of are what the scheme reported as pending before the key, then the
+key's chord.
 
 The scheme's state after the key is kept, and it is the state at rest from
 then on, when the invocation ran to its end, or when the key yielded
@@ -616,22 +650,22 @@ nothing and left nothing pending. When the invocation did not run to its
 end the scheme goes back to its state at rest: it is as it was before the
 first key of the sequence. -/
 def key (keys : Keys scheme) (loop : Loop scheme) (key : Key) :
-    EditorM (Loop scheme × Option Config.Write) := do
+    EditorM (Loop scheme × Option Config.Write × Array String) := do
   let before := scheme.pending loop.input
   let (input, yielded) := scheme.step keys.maps loop.state.frame.focused loop.input key
   let some invocation := yielded |
     return ({ loop with
           input, atRest := if (scheme.pending input).isEmpty then input else loop.atRest },
-        none)
+        none, #[])
   let ran ← run keys loop.state invocation (before ++ [key.chord])
   if ran.finished then
     return ({ loop with
           state := ran.state, input, atRest := input },
-        ran.write)
+        ran.write, ran.log)
   else
     return ({ loop with
           state := ran.state, input := loop.atRest },
-        none)
+        none, ran.log)
 
 /-- Handles `event` and publishes a scene of the state after it, and says
 whether to go on. A close request and a quit stop the loop and publish
@@ -642,8 +676,8 @@ refused: the publish puts a refusal of its own in the echo area too ("When
 publishing is refused", in the module docs). -/
 def step (keys : Keys scheme) (loop : Loop scheme) (event : Event) : EditorM (Stepped scheme) := do
   if let some pressed := stepped? event then
-    let (loop, write) ← loop.key keys pressed
-    return { loop := ← loop.publish, next := .continue, write }
+    let (loop, write, log) ← loop.key keys pressed
+    return { loop := ← loop.publish, next := .continue, write, log }
   match event with
   | .closeRequested | .quit =>
     return { loop, next := .stop }
