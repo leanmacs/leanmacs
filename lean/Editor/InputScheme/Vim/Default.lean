@@ -160,15 +160,26 @@ def roles : List (Role × String) :=
 def leader : String :=
   "\\"
 
-/-- The role table and the leader as the scheme takes them, as chords. A
-string `Key.parse` refuses puts its role on no key. -/
+/-- The hand-tuned keys: a mode's name, a key string and what it is bound
+to. None: no mode ships. -/
+def tuned : List (String × String × Bound) :=
+  []
+
+/-- The role table, the leader and the hand-tuned keys as the scheme takes
+them, as chords. A string `Key.parse` refuses puts its role on no key, and
+binds no tuned key. -/
 def modeKeys : ModeKeys :=
   { roles :=
       roles.filterMap fun (role, text) =>
         match Key.parse text with
         | .ok keys => some (role, keys)
         | .error _ => none
-    leader := (Key.parse leader).toOption.getD [] }
+    leader := (Key.parse leader).toOption.getD []
+    tuned :=
+      tuned.filterMap fun (mode, text, bound) =>
+        match Key.parse text with
+        | .ok keys => some (mode, keys, bound)
+        | .error _ => none }
 
 /-- The Vim scheme that ships: the grammar over the default states, with the
 default role table and leader. -/

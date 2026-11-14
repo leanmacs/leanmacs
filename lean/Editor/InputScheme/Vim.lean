@@ -165,9 +165,11 @@ the text store, and the scheme holds only which Vim state the view is in.
 
 ## Mode keys
 
-The scheme is given a role table and a leader beside its states
-(`ModeKeys`), and reports them to the core (`InputScheme.roles`,
-`InputScheme.leader`). The grammar reads neither: a mode's keys reach it as
+The scheme is given a role table, a leader and hand-tuned keys beside its
+states (`ModeKeys`), and reports them to the core (`InputScheme.roles`,
+`InputScheme.leader`, `InputScheme.tuned`, each tuned binding wrapped in
+`Bound.mode`), with every state's keymaps as its own
+(`InputScheme.defaults`). The grammar reads neither: a mode's keys reach it as
 active keymaps. The tables that ship are data in
 `Editor/InputScheme/Vim/Default.lean`.
 
@@ -565,18 +567,24 @@ structure ModeKeys where
   roles : List (Role × List Key) := []
   /-- The prefix a mode's suffixes are bound under. -/
   leader : List Key := []
+  /-- The hand-tuned keys: a mode's name, a key sequence and what it is
+  bound to. -/
+  tuned : List (String × List Key × Bound) := []
 
-/-- The Vim scheme over the registry `states`, with the role table and
-leader `modes`. Its bindings are parts of speech, and it reports every key
-of the edit begun as pending. A key bound to a command name is bound to the
-command of that name, which changes no text and enters no state: the
-grammar cannot look either up. A key a mode binds is bound to the same
-command, marked as a mode's (`Bound.mode`). -/
+/-- The Vim scheme over the registry `states`, with the role table, leader
+and hand-tuned keys `modes`. Its bindings are parts of speech, and it
+reports every key of the edit begun as pending. A key bound to a command
+name is bound to the command of that name, which changes no text and enters
+no state: the grammar cannot look either up. A key a mode binds, and a
+hand-tuned key, is marked as a mode's (`Bound.mode`). Its own keymaps are
+every state's. -/
 def scheme (states : States) (modes : ModeKeys := {}) : InputScheme :=
   { State, Binding := Bound, init := {}, step := step states, pending := (·.typed)
     command := fun name => .command { name }
     roles := modes.roles
     leader := modes.leader
-    modeCommand := fun name => .mode (.command { name }) }
+    modeCommand := fun name => .mode (.command { name })
+    defaults := states.initial.keymaps ++ states.others.flatMap (·.keymaps)
+    tuned := modes.tuned.map fun (name, keys, bound) => (name, keys, .mode bound) }
 
 end Editor.Vim

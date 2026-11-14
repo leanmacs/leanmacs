@@ -16,6 +16,7 @@ import Editor.Job.Model
 import Editor.Job.Pool
 import Editor.Key.Notation
 import Editor.Loop
+import Editor.Mode
 import Editor.Role
 import Editor.Scene
 import Editor.State
@@ -213,7 +214,10 @@ Modes are checked on the test scheme, by the roles and the leader it reports
 (`InputScheme.roleKey`, `InputScheme.leader`), so that no check of a mode
 names a scheme's key:
 
-- `modeRecordChecks`: the registered roles (`Editor/Role.lean`).
+- `modeRecordChecks`: the registered roles (`Editor/Role.lean`), and the
+  keymaps a mode makes for a scheme (`Editor/Mode.lean`): its roles at the
+  scheme's keys for them, its suffixes under the leader, and the scheme's
+  hand-tuned keys for it ahead of both.
 -/
 
 namespace ModelTest
@@ -6525,10 +6529,63 @@ def vimContractChecks : List Check :=
         pure
           (failsOnly { vimSubject with unbound := charKey "z" } [SchemeContract.unboundResets]) }]
 
+/-- A mode the mode checks run on: `listing`, which fills two roles and has
+one suffix, each with a command of its own. -/
+def listing : Mode :=
+  { name := "listing"
+    roles := [(Role.nextItem, "listing-next"), (Role.previousItem, "listing-previous")]
+    locals := [("x", "listing-execute")] }
+
+/-- The keys `role` is on under the test scheme; none when it has no row. -/
+def roleKeys (role : Role) : List Key :=
+  (TestScheme.scheme.roleKey role).getD []
+
+/-- What the keymaps `mode` makes for the test scheme `scheme` make of
+`keys`. -/
+def modeLookup (mode : Mode) (keys : List Key) (scheme : InputScheme := TestScheme.scheme)
+    (same : scheme.Binding = Invocation := by rfl) : Lookup Invocation :=
+  Keymap.resolve (same ▸ mode.keymaps scheme) keys
+
 /-- The checks of roles and of the mode record (`Editor/Role.lean`,
-`Editor/Mode.lean`): the roles the core registers. -/
+`Editor/Mode.lean`): the roles the core registers, and the keymaps a mode
+makes for a scheme, read through the test scheme's role table and leader. -/
 def modeRecordChecks : List Check :=
-  [{  name :=
+  [{  name := "a mode's role is bound at the scheme's key for the role to the mode's command"
+      run :=
+        pure
+          (modeLookup listing (roleKeys Role.nextItem) == .bound (invoke "listing-next") &&
+            modeLookup listing (roleKeys Role.previousItem) == .bound (invoke "listing-previous") &&
+            modeLookup listing (roleKeys Role.quit) == .unbound) },
+    { name := "a mode's suffix is bound under the scheme's leader to the mode's command"
+      run :=
+        pure
+          (modeLookup listing (TestScheme.scheme.leader ++ keys "x") ==
+              .bound (invoke "listing-execute") &&
+            modeLookup listing TestScheme.scheme.leader == .pending &&
+            modeLookup listing (keys "x") == .unbound) },
+    { name := "a role the scheme has no key for binds nothing"
+      run :=
+        let marking : Mode := { name := "marking", roles := [(Role.mark, "marking-mark")] }
+        pure
+          ((marking.keymaps roleless).all (·.bindings.isEmpty) &&
+            modeLookup marking (roleKeys Role.mark) == .bound (invoke "marking-mark")) },
+    { name :=
+        "a scheme's hand-tuned key for the mode is in the keymap ahead of the roles and suffixes, and wins over a role on the same key; another mode's is not"
+      run :=
+        let tuned : InputScheme :=
+          { TestScheme.scheme with
+            tuned :=
+              [("listing", roleKeys Role.nextItem, invoke "tuned-next"),
+                ("listing", keys "C-t", invoke "tuned-t"),
+                ("other", keys "C-o", invoke "other-o")] }
+        pure
+          (modeLookup listing (roleKeys Role.nextItem) tuned == .bound (invoke "tuned-next") &&
+            modeLookup listing (keys "C-t") tuned == .bound (invoke "tuned-t") &&
+            modeLookup listing (roleKeys Role.previousItem) tuned ==
+              .bound (invoke "listing-previous") &&
+            modeLookup listing (keys "C-o") tuned == .unbound &&
+            ((listing.keymaps tuned).head?.map (·.bindings.length)) == some 2) },
+    { name :=
         "the registered roles are next-item, previous-item, activate, quit, refresh, toggle and mark, each a name of its own"
       run :=
         pure

@@ -55,6 +55,12 @@ A scheme also says what a key a mode binds is bound to (`modeCommand`),
 which is `command` unless the scheme treats a mode's keys apart: the Vim
 scheme marks them, so that they do not hold where typing is text.
 
+A scheme may tune keys for a mode by hand (`tuned`: a mode's name, a key
+sequence and a binding of its own type), which the mode's keymaps consult
+ahead of its roles and suffixes (`Editor/Mode.lean`), and reports its own
+keymaps (`defaults`), against which `Mode.check` finds a tuned key that
+shadows one of the scheme's. Both default to empty.
+
 ## What every scheme must do
 
 `Editor/InputScheme/Contract.lean` is the contract check every scheme runs:
@@ -115,6 +121,14 @@ structure InputScheme where
   keys apart. Completing a sequence bound to it yields an invocation of
   that command. -/
   modeCommand : String → Binding := command
+  /-- The scheme's own keymaps, in precedence order (the Vim scheme's are
+  every state's): what a mode's hand-tuned key is checked against for
+  shadowing. -/
+  defaults : List (Keymap Binding) := []
+  /-- The scheme's hand-tuned keys: each a mode's name, a key sequence as
+  chords, and its binding, consulted with that mode ahead of its roles and
+  suffixes. -/
+  tuned : List (String × List Key × Binding) := []
 
 /-- The keys `role` is on in `scheme`'s role table, if it has a row. -/
 def InputScheme.roleKey (scheme : InputScheme) (role : Role) : Option (List Key) :=
