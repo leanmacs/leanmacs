@@ -6,6 +6,7 @@ import Editor.Config.Reload
 import Editor.Display.Contract
 import Editor.Display.Model
 import Editor.Evil.Compiled
+import Editor.Ex.Compiled
 import Editor.Ex.Line
 import Editor.File.Cases
 import Editor.File.Model
@@ -151,7 +152,16 @@ editor's models and the job model (`Editor/Loop/Driver.lean`):
   changed on disk, a save that reports late, a forced save, and what each
   command says when it starts nothing; and the commands and jobs as
   compiled code registers them (`Editor/Files/Compiled.lean`). They touch
-  no file.
+  no file;
+- `exChecks`: the ex command line (`Editor/Ex.lean`) on that driver, with
+  the commands compiled code registers for it, for the minibuffer and for
+  files, keys of the test scheme bound to the ex command and to the accept
+  and cancel commands, and ex bindings written here: the ex command opens
+  a prompt, and the accepted line runs the command its name is bound to,
+  as a step of its own, with the rest of the line as its argument; a name
+  nobody bound, an argument a name does not take, an empty line, a bound
+  command that is not registered or is refused, and a cancelled line.
+  Each message is read from the function that makes it.
 
 The undo tree (`Editor/UndoTree.lean`) is plain Lean over the text port, so
 its cases (`Editor/UndoTree/Cases.lean`) are properties of the same kind and
@@ -11871,6 +11881,203 @@ def fileCommandChecks : List Check :=
               bytesOf saved path == some (FileModel.encode text) &&
               echoOf saved == some (Files.wrote path) }]
 
+/-- The ex bindings of the ex line's own checks, written here: `say` runs
+the command `greet` of the prompt checks with the rest of the line, and
+`plain` runs it and takes nothing; `ghost` is bound to a command nobody
+registered, and `burst` to `boom`, which inserts and is then refused. -/
+def exTestBindings : Array Ex.Binding :=
+  #[{ name := "say", command := "greet", takes := .text }, { name := "plain", command := "greet" },
+    { name := "ghost", command := "nobody" }, { name := "burst", command := "boom" }]
+
+/-- What a step of the ex checks is handed. The commands are the ones
+compiled code registers for the ex line, the minibuffer and files
+(`Ex.commands`, `Minibuffer.commands`, `Files.commands`), each under the
+name it is registered under, and then the commands of the prompt checks:
+`greet`, which says what it was called with, `boom`, `other` and the test
+scheme's self-insert. The ex bindings a command is told of are `bindings`,
+the latest of a name.
+
+One keymap, the same for every view: `C-e e` runs the ex command, `C-e V`
+runs it with the arguments the Vim scheme gives a command a key is bound
+to, a count and a register, `C-e l` runs it with the line `say hello there`
+as its first argument, `C-e y` and `C-e n` run the minibuffer's accept and
+cancel commands, and `C-e o` runs `other`. -/
+def exKeys (bindings : Array Ex.Binding := exTestBindings) : Loop.Keys TestScheme.scheme :=
+  let compiled : List (String × Dispatched) :=
+    (Ex.commands ++ Minibuffer.commands ++ Files.commands).toList.filterMap fun registration =>
+      match registration.action with
+      | .call run =>
+        some
+          (registration.name, fun call => do
+            run call
+            return none)
+      | _ => none
+  {
+    dispatchKeys
+      [("C-e e", invoke Ex.name), ("C-e V", { command := Ex.name, arguments := [.nat 0, .str ""] }),
+        ("C-e l", { command := Ex.name, arguments := [.str "say hello there"] }),
+        ("C-e y", invoke Minibuffer.acceptName), ("C-e n", invoke Minibuffer.cancelName),
+        ("C-e o", invoke "other")]
+      (compiled ++ promptCommands) with
+    registered := { ex := fun name => bindings.findRev? (·.name == name) } }
+
+/-- A driver of the ex checks over the initial state, told of the ex
+bindings `bindings`, with the file commands' jobs and the files of the file
+command checks; `none` if making the state was refused. -/
+def exDriver (bindings : Array Ex.Binding := exTestBindings) : Option TestDriver :=
+  (Loop.Driver.over (exKeys bindings) fileJobs (EditorState.initial ⟨640, 480⟩)
+        editorModel).toOption.map
+    fun driver => { driver with jobs := { files := commandFiles } }
+
+/-- The events of one ex line: the key that opens the ex line, `line`
+committed into the minibuffer, and the accept key. -/
+def exLine (line : String) : List Event :=
+  presses "C-e e" ++ [.commit line] ++ presses "C-e y"
+
+/-- The echo area of each scene `after` recorded that `before` had not. -/
+def echoesSince (before after : TestDriver) : Array String :=
+  (after.model.display.scenes.map (·.echo)).extract before.model.display.scenes.size
+
+/-- The checks of the ex command line (`Editor/Ex.lean`,
+`Editor/Ex/Compiled.lean`), on the loop's driver over the editor's models,
+the model of files and the test scheme: the ex command opens a prompt and
+runs its answer as the command the line's name is bound to. Each message is
+read from the function that makes it. -/
+def exChecks : List Check :=
+  let closed (driver : TestDriver) : Bool :=
+    let state := driver.loop.state
+    state.prompt == none && state.frame.focused == ⟨0⟩ && state.answered.isEmpty && state.wellFormed
+  let hello : List Argument := [.str "hello there"]
+  [{  name :=
+        "the ex command opens a prompt labelled with the ex line's label, whose continuation is the ex command itself, with the focus in the minibuffer's view; called with a count and a register first, as a key under the Vim scheme calls it, it asks the same"
+      run :=
+        pure <|
+          match exDriver with
+          | none => false
+          | some driver =>
+            let asked (keys : String) :=
+              let (asking, _) := fedTo driver (presses keys)
+              asking.loop.state.prompt.map (fun asking => (asking.label, asking.continuation)) ==
+                  some (Ex.label, { command := Ex.name }) &&
+                asking.loop.state.minibufferView? == some asking.loop.state.frame.focused &&
+                asking.loop.state.frame.focused != ⟨0⟩ &&
+                asking.loop.state.wellFormed
+            asked "C-e e" && asked "C-e V" },
+    { name :=
+        "a line typed on the ex line and accepted runs the command its name is bound to, with the rest of the line as its first argument, a string, in the view the line was asked from and with no keys; the accept key is three steps, the accept command, the ex command and the bound command, each with a scene"
+      run :=
+        pure <|
+          match exDriver with
+          | none => false
+          | some driver =>
+            let (typed, _) := fedTo driver (presses "C-e e" ++ [.commit "say hello there"])
+            let (accepted, _) := fedTo typed (presses "C-e y")
+            minibufferText typed == some "say hello there" &&
+              promptEcho accepted == greeted hello &&
+              closed accepted &&
+              echoesSince typed accepted == #["", "", "", greeted hello] },
+    { name :=
+        "criterion 5: a name nobody bound leaves the ex line's message for it in the echo area, with the prompt closed, and the editor goes on: the next key's command runs"
+      run :=
+        pure <|
+          match exDriver with
+          | none => false
+          | some driver =>
+            let (unknown, _) := fedTo driver (exLine "nope 1 2")
+            let (after, _) := fedTo unknown (presses "C-e o")
+            promptEcho unknown == Ex.unknown "nope" && closed unknown &&
+              echoOf unknown == some (Ex.unknown "nope") &&
+              promptEcho after == "other" },
+    { name :=
+        "an argument for an ex name that takes nothing leaves the ex line's message for it in the echo area and runs nothing; the name alone runs its command with no arguments"
+      run :=
+        pure <|
+          match exDriver with
+          | none => false
+          | some driver =>
+            let (refused, _) := fedTo driver (exLine "plain hello")
+            let (ran, _) := fedTo driver (exLine "plain")
+            promptEcho refused == Ex.noArgument "plain" && closed refused &&
+              !(echoesSince driver refused).contains (greeted hello) &&
+              promptEcho ran == greeted [] },
+    { name :=
+        "an empty line and a line of white space run nothing and leave the echo area empty, with the prompt closed"
+      run :=
+        pure <|
+          match exDriver with
+          | none => false
+          | some driver =>
+            let (empty, _) := fedTo driver (presses "C-e e C-e y")
+            let (blank, _) := fedTo driver (exLine "   ")
+            promptEcho empty == "" && closed empty && promptEcho blank == "" && closed blank },
+    { name :=
+        "an ex name bound to a command nobody registered says there is no such command, by the command's name"
+      run :=
+        pure <|
+          match exDriver with
+          | none => false
+          | some driver =>
+            let (ran, _) := fedTo driver (exLine "ghost")
+            promptEcho ran == "nobody: no such command" && closed ran },
+    { name :=
+        "a command an ex line runs that is refused is rolled back, and the echo area says the refusal under the command's own name, not the ex command's"
+      run :=
+        pure <|
+          match exDriver with
+          | none => false
+          | some driver =>
+            let (ran, _) := fedTo driver (exLine "burst")
+            promptEcho ran == "boom: refused: bad range" && driverText ran == some "" &&
+              closed ran },
+    { name :=
+        "a key fed after the accept key is handled after the command the line runs: the scenes show the bound command's message before the other command's"
+      run :=
+        pure <|
+          match exDriver with
+          | none => false
+          | some driver =>
+            let (typed, _) := fedTo driver (presses "C-e e" ++ [.commit "say hello there"])
+            let (after, _) := fedTo typed (presses "C-e y C-e o")
+            echoesSince typed after == #["", "", "", greeted hello, greeted hello, "other"] },
+    { name :=
+        "the ex command called with a string as its first argument runs that line and opens no prompt"
+      run :=
+        pure <|
+          match exDriver with
+          | none => false
+          | some driver =>
+            let (ran, steps) := fedTo driver (presses "C-e l")
+            promptEcho ran == greeted hello && closed ran &&
+              steps.map (·.map (·.answered)) ==
+                #[some #[], some #[{ command := "greet", arguments := hello }]] &&
+              ran.model.display.scenes.all (·.views.size == 1) },
+    { name :=
+        "the ex command while a prompt is open says the refusal after its own name and leaves that prompt open, with what was typed"
+      run :=
+        pure <|
+          match exDriver with
+          | none => false
+          | some driver =>
+            let (typed, _) := fedTo driver (presses "C-e e" ++ [.commit "say"])
+            let (again, _) := fedTo typed (presses "C-e e")
+            (typed.loop.state.minibufferView?).map
+                  (fun view => promptEcho again == Ex.notAsking (.alreadyOpen view)) ==
+                some true &&
+              again.loop.state.prompt == typed.loop.state.prompt &&
+              again.loop.state.prompt.isSome &&
+              minibufferText again == some "say" },
+    { name := "cancelling the ex line runs nothing: the prompt is closed and no command is run"
+      run :=
+        pure <|
+          match exDriver with
+          | none => false
+          | some driver =>
+            let (cancelled, steps) :=
+              fedTo driver (presses "C-e e" ++ [.commit "say hello there"] ++ presses "C-e n")
+            promptEcho cancelled == "" && closed cancelled &&
+              steps.all (·.all (·.answered.isEmpty)) &&
+              !(echoesSince driver cancelled).contains (greeted hello) }]
+
 /-- Texts of the resting rule's checks, each with every position it has, in
 order, and where each rests under `onCell` and under `offLineBreak`,
 written out by hand: the empty text; one line feed; a line with no line
@@ -12904,6 +13111,7 @@ def checks : List Check :=
     driverChecks ++
     promptChecks ++
     fileCommandChecks ++
+    exChecks ++
     evilRestChecks ++
     evilMotionChecks ++
     evilStateChecks ++

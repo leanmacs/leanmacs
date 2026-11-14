@@ -2,6 +2,7 @@ import Editor.Api.Theorems
 import Editor.Command.Append
 import Editor.Evil
 import Editor.Evil.Motions
+import Editor.Ex
 import Editor.Files
 import Editor.InputScheme.Vim.Default
 import Editor.Minibuffer
@@ -38,7 +39,12 @@ session's, and are not imported. A command of config's asks for a string
 with `prompt` (`Editor/Api.lean`), and the commands that accept and cancel
 a prompt and the minibuffer's mode are here as well
 (`Editor/Minibuffer.lean`); their registrations
-(`Editor/Minibuffer/Compiled.lean`) are not, for the same reason.
+(`Editor/Minibuffer/Compiled.lean`) are not, for the same reason. The ex
+command line is here too (`Editor/Ex.lean`, with an ex line as data in
+`Editor/Ex/Line.lean`): a command of config's runs a line with `Ex.run`,
+and `setup` binds an ex name to a command with `exCommand`
+(`Editor/Setup.lean`). The registrations of the ex line's commands and the
+ex names that ship (`Editor/Ex/Compiled.lean`) are not imported.
 
 How a key becomes an invocation is here too, so config can come to write
 bindings: input schemes (`Editor/InputScheme.lean`), with the keymaps they
