@@ -162,12 +162,17 @@ a value, with their `LayoutRefusal`.
 
 A view's id is never used again (`Editor/State.lean`).
 
-## Buffer-local values and modes
+## Buffer-local values, modes and the wanted column
 
 These are Lean state alone: none makes a request of the library, so none
 has a case on the real binding. They are pinned once, on the models
 (`ModelTest.apiStateChecks`, `ModelTest.modeEnterChecks`).
 
+- `ViewId.setWanted view wanted` has the view's window keep a wanted
+  column, the column its vertical motions aim for, with the offset the
+  cursor was left at, or none (`Editor/State.lean`, "The wanted column").
+  A command reads it from its target's window (`Target.window.wanted`), or
+  from the state.
 - `BufferId.setValue id name value` has a buffer keep a plain tree
   (`Value`, `Editor/Value.lean`) under a name, in place of the one the name
   had, and `BufferId.value?` reads it.
@@ -703,6 +708,15 @@ def «show» (view : ViewId) (buffer : BufferId) : EditorM (Except LayoutRefusal
   let scroll ← shown.text.mark (.anchor { offset := 0, bias := .before })
   let selection ← shown.text.mark (.selection { ranges := #[⟨0, 0⟩], shape })
   EditorState.ask (.show view buffer scroll selection)
+
+/-- Has the window of `view` keep `wanted` as its wanted column, the column
+its vertical motions aim for with the offset the cursor was left at, or
+none (`Editor/State.lean`, "The wanted column"). It makes one request of
+the editor state and none of the library. Refused with `noSuchWindow` for a
+view with no window. -/
+def setWanted (view : ViewId) (wanted : Option Window.Wanted) :
+    EditorM (Except LayoutRefusal Unit) :=
+  EditorState.ask (.setWanted view wanted)
 
 /-- Makes the mode called `name` the major mode of the buffer the window of
 `view` shows, and says whether it became the major mode: `false`, with

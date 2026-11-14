@@ -99,6 +99,8 @@ handler is these operations:
   caller made on that buffer's text. It refuses `noSuchWindow`,
   `noSuchBuffer` for a buffer there is none of (a window over no buffer
   would break the last invariant), and `markersOfAnotherText`.
+- `setWanted` has a window keep a wanted column, or none ("The wanted
+  column", below). It refuses `noSuchWindow` for a view with no window.
 
 **A view's id is never used again.** A new window's id is the state's
 `nextView`, or one more than the greatest id a window has when that is
@@ -112,6 +114,27 @@ and `showBuffer` refuse it with `ofMinibuffer` and its view, and
 `showBuffer` refuses the same way to show the minibuffer's buffer in
 another window. `removeWindow` counts the tree's windows alone, so the last
 ordinary window cannot be removed while a prompt is open.
+
+## The wanted column
+
+A window keeps the column its vertical motions aim for, which survives
+crossing a shorter line (`Window.wanted`, a `Window.Wanted`;
+`docs/design/keymaps-and-modes.md`, "The wanted column").
+
+- **The column** (`WantedColumn`) is a number of cells from the row's
+  start, counted as the text port counts a column in cells, or `lineEnd`,
+  the end of the row's content whatever its length.
+- **It is kept with the offset the cursor was left at** (`Wanted.head`),
+  and holds only while the cursor is still there. So nothing has to clear
+  it: whatever else moves the cursor makes it stale. Whether it holds is
+  the reader's to ask, since the state does not know where a cursor is:
+  that is a marker of the text store.
+- `setWanted` sets it, or none, for any window, the minibuffer's among
+  them.
+- **A window shown another buffer keeps none** (`showBuffer`): an offset
+  of one text means nothing in another. A window a split makes has none.
+- It is a field of the state, so a command that does not run to its end
+  leaves it as it was.
 
 ## Prompts
 
@@ -345,6 +368,26 @@ told the revision the text is at, which the loop does before each scene. -/
 def Buffer.isModified (buffer : Buffer) : Bool :=
   buffer.history.isModified
 
+/-- The column a view's vertical motions aim for. -/
+inductive WantedColumn where
+  /-- This many cells from the row's start, counted as the text port counts
+  a column in cells (`ColumnUnit.cells`). -/
+  | cells (count : Nat)
+  /-- Where the row's content ends, whatever its length: what a motion to
+  the line's end leaves, so that the vertical motions after it stay at line
+  ends. -/
+  | lineEnd
+  deriving DecidableEq, Repr
+
+/-- The wanted column a window keeps, with the position it was kept at. -/
+structure Window.Wanted where
+  /-- The column. -/
+  column : WantedColumn
+  /-- The offset the cursor was left at when the column was kept. The column
+  holds only while the cursor is still there. -/
+  head : Nat
+  deriving DecidableEq, Repr
+
 /-- A window: a view of a buffer. -/
 structure Window where
   /-- The view's name in every scene. -/
@@ -356,6 +399,10 @@ structure Window where
   /-- Its selections: one selection marker of the buffer's text, whose
   ranges are its cursors. -/
   selection : MarkerId
+  /-- The column its vertical motions aim for, with the offset the cursor
+  was left at when it was kept; `none` when it keeps none ("The wanted
+  column", in the module docs). -/
+  wanted : Option Window.Wanted := none
   deriving DecidableEq, Repr
 
 /-- The axis a split divides its rectangle along. -/
@@ -746,6 +793,19 @@ def focusWindow (id : ViewId) (state : EditorState) : Except LayoutRefusal Unit 
     (.ok (), { state with frame := { state.frame with focused := id } })
   else (.error (.noSuchWindow id), state)
 
+/-- Has the window `id` keep `wanted` as its wanted column, or none. Any
+window is taken, the minibuffer's among them. Refused, with the state
+unchanged, with `noSuchWindow` for a view with no window. -/
+def setWanted (id : ViewId) (wanted : Option Window.Wanted) (state : EditorState) :
+    Except LayoutRefusal Unit × EditorState :=
+  if (state.window? id).isNone then (.error (.noSuchWindow id), state)
+  else
+    (.ok (),
+      { state with
+        windows :=
+          state.windows.map fun window =>
+            if window.id == id then { window with wanted } else window })
+
 /-- `state` with the buffer `id` changed by `change`, and what `change`
 said. Refused, with the state unchanged, with `noSuchBuffer` for a buffer
 there is none of. -/
@@ -978,7 +1038,8 @@ def splitWindow (id : ViewId) (axis : Axis) (scroll selection : MarkerId) (state
   | false, _, _ => (.error (.noSuchWindow id), state)
 
 /-- Has the window `id` show the buffer `buffer`, with `scroll` and
-`selection` as its markers. Refused, with the state unchanged, with
+`selection` as its markers, and no wanted column: an offset of one text
+means nothing in another. Refused, with the state unchanged, with
 `ofMinibuffer`, and the minibuffer's view, for the minibuffer's window and
 for the minibuffer's buffer in another window, with `noSuchWindow` for a
 window not in the tree, with `noSuchBuffer` for a buffer there is none of,
@@ -1011,7 +1072,7 @@ where
                 state.windows.map fun window =>
                   if window.id == id then
                     { window with
-                      buffer, scroll, selection }
+                      buffer, scroll, selection, wanted := none }
                   else window })
 
 /-- Opens a prompt, asked from the focused view: a buffer in the next slot

@@ -4216,6 +4216,69 @@ def stateChecks : List Check :=
               after.frame.focused == ⟨1⟩ &&
                 after == { state with frame := { state.frame with focused := ⟨1⟩ } }
             | _ => false },
+    { name := "the initial state's window keeps no wanted column"
+      run :=
+        pure <|
+          match onTextModel (EditorState.initial ⟨640, 480⟩) with
+          | none => false
+          | some state => (state.window? ⟨0⟩).map (·.wanted) == some none },
+    { name :=
+        "setting a window's wanted column keeps the column with the head it was kept at, and leaves the other windows and the rest of the state; setting none keeps none again"
+      run :=
+        pure <|
+          match onTextModel threeWindows with
+          | none => false
+          | some state =>
+            let kept : Window.Wanted := { column := .cells 3, head := 7 }
+            let wanted (state : EditorState) (index : Nat) : Option (Option Window.Wanted) :=
+              (state.window? ⟨index⟩).map (·.wanted)
+            match state.setWanted ⟨1⟩ (some kept) with
+            | (.ok (), after) =>
+              wanted after 1 == some (some kept) && wanted after 0 == some none &&
+                wanted after 2 == some none &&
+                after ==
+                  { state with
+                    windows :=
+                      state.windows.map fun window =>
+                        if window.id == ⟨1⟩ then { window with wanted := some kept }
+                        else window } &&
+                (match after.setWanted ⟨1⟩ (some { column := .lineEnd, head := 2 }) with
+                | (.ok (), ends) => wanted ends 1 == some (some { column := .lineEnd, head := 2 })
+                | _ => false) &&
+                match after.setWanted ⟨1⟩ none with
+                | (.ok (), cleared) => cleared == state
+                | _ => false
+            | _ => false },
+    { name :=
+        "setting the wanted column of a view with no window is refused with noSuchWindow, and the state is as it was"
+      run :=
+        pure <|
+          match onTextModel threeWindows with
+          | none => false
+          | some state =>
+            match state.setWanted ⟨7⟩ (some { column := .cells 3, head := 7 }) with
+            | (.error (.noSuchWindow id), after) => id == ⟨7⟩ && after == state
+            | _ => false },
+    { name :=
+        "a window shown another buffer keeps no wanted column, and a window a split makes has none while its source keeps its own"
+      run :=
+        pure <|
+          match onTextModel twoBuffers with
+          | none => false
+          | some state =>
+            let kept : Window.Wanted := { column := .cells 3, head := 4 }
+            let marker (text index : Nat) : MarkerId := ⟨⟨text⟩, index⟩
+            let (_, keeping) := state.setWanted ⟨0⟩ (some kept)
+            let wanted (state : EditorState) (index : Nat) : Option (Option Window.Wanted) :=
+              (state.window? ⟨index⟩).map (·.wanted)
+            (match keeping.showBuffer ⟨0⟩ ⟨1⟩ (marker 1 8) (marker 1 9) with
+              | (.ok (), shown) =>
+                wanted keeping 0 == some (some kept) && wanted shown 0 == some none
+              | _ => false) &&
+              match keeping.splitWindow ⟨0⟩ .rows (marker 0 8) (marker 0 9) with
+              | (.ok made, split) =>
+                wanted split made.index == some none && wanted split 0 == some (some kept)
+              | _ => false },
     { name :=
         "setting a buffer's major mode names it and says it became the major mode, leaving the other buffers; setting it again changes nothing and says not; another mode replaces it"
       run :=
@@ -4539,7 +4602,9 @@ def stateRequests : List StateRequest :=
     .endSave ⟨0⟩ ⟨4⟩ (some noteStamp), .endSave ⟨9⟩ ⟨4⟩ none,
     .openPrompt "Name: " asked ⟨8⟩ (UndoTree.new ⟨8⟩ 0) (marker 8 0) (marker 8 1),
     .openPrompt "Name: " asked ⟨8⟩ (UndoTree.new ⟨8⟩ 0) (marker 0 0) (marker 8 1),
-    .closePrompt none, .closePrompt (some "typed")]
+    .closePrompt none, .closePrompt (some "typed"),
+    .setWanted ⟨0⟩ (some { column := .cells 3, head := 7 }), .setWanted ⟨1⟩ none,
+    .setWanted ⟨9⟩ (some { column := .lineEnd, head := 0 })]
 
 /-- The checks of the state requests' pure handler (`EditorState.handle`,
 `Editor/State/Request.lean`), on states made on the text model. The handler
@@ -4769,6 +4834,24 @@ def stateRequestChecks : List Check :=
               still == state &&
               replied astray == .inl .markersOfAnotherText &&
               yet == state },
+    { name :=
+        "the wanted-column request is the state's operation: the window keeps the column and the head, none clears it, and a view with no window is refused with noSuchWindow, with the state as it was"
+      run :=
+        pure <|
+          match onTextModel twoBuffers with
+          | none => false
+          | some state =>
+            let kept : Window.Wanted := { column := .cells 3, head := 7 }
+            let (set, after) := state.handle (.setWanted ⟨1⟩ (some kept))
+            let (cleared, bare) := after.handle (.setWanted ⟨1⟩ none)
+            let (absent, same) := state.handle (.setWanted ⟨9⟩ (some kept))
+            replied set == .inr () && after == (state.setWanted ⟨1⟩ (some kept)).2 &&
+              (after.window? ⟨1⟩).map (·.wanted) == some (some kept) &&
+              after.window? ⟨0⟩ == state.window? ⟨0⟩ &&
+              replied cleared == .inr () &&
+              bare == state &&
+              replied absent == .inl (.noSuchWindow ⟨9⟩) &&
+              same == state },
     { name := "a message sets the echo area's text, and the last of two is the one kept"
       run :=
         pure <|
@@ -9248,7 +9331,33 @@ def apiStateChecks : List Check :=
             replied unknown == .inl (.noSuchMode "listing") &&
               replied unseen == .inl (.noSuchWindow ⟨9⟩) &&
               some state == onTextModel twoBuffers
-          | none => false }]
+          | none => false },
+    { name :=
+        "a wanted column set from a command is the window's, with its head, and setting none clears it; a view with no window is refused with noSuchWindow; none of it makes a request of the library"
+      run :=
+        pure <|
+          let kept : Window.Wanted := { column := .cells 3, head := 7 }
+          let view : ViewId := ⟨1⟩
+          let program : EditorM _ := do
+            let start ← twoBuffers
+            let before ← Watch.now
+            let ran ←
+              EditorM.dispatched
+                  (do
+                    let set ← view.setWanted (some kept)
+                    let held := ((← editorState).window? view).map (·.wanted)
+                    let cleared ← (⟨0⟩ : ViewId).setWanted none
+                    return (set, held, cleared, ← (⟨9⟩ : ViewId).setWanted (some kept)))
+                  {} start
+            return (ran, start, before, ← Watch.now)
+          match (program.runModel countingModel).1 with
+          | .ok ((.finished (set, held, cleared, refused), state), start, before, after) =>
+            replied set == .inr () && held == some (some kept) && replied cleared == .inr () &&
+              replied refused == .inl (.noSuchWindow ⟨9⟩) &&
+              state == (start.setWanted view (some kept)).2 &&
+              before > 0 &&
+              after == before
+          | _ => false }]
 
 /-- The driver the job checks run: one over the test scheme. -/
 abbrev TestDriver :=

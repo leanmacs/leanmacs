@@ -48,6 +48,10 @@ the models and against the library alike (`Editor/Command/Dispatch.lean`).
   makes it cannot be interrupted between the two. The handler releases
   nothing: the loop gives up the minibuffer's markers and text once the
   command has run to its end.
+- **A window's wanted column is set by one request**, `setWanted`, with
+  the column and the offset it is kept at, or with none
+  (`Editor/State.lean`, "The wanted column"). It is refused with a
+  `LayoutRefusal`, `noSuchWindow`, for a view with no window.
 - **A file is attached by one request, and a save is two.** `attachFile`
   has a buffer hold a file a load answered. `beginSave` records a save in
   flight, with the snapshot it writes, which the command took first, and
@@ -123,6 +127,8 @@ inductive StateRequest where
   /-- Close the open prompt: with `answer`, which its continuation's command
   receives, or with `none` for a prompt that is cancelled. -/
   | closePrompt (answer : Option String)
+  /-- Have the window `view` keep `wanted` as its wanted column, or none. -/
+  | setWanted (view : ViewId) (wanted : Option Window.Wanted)
 
 /-- The type of the reply to each request. -/
 abbrev StateRequest.Reply : StateRequest → Type
@@ -145,6 +151,7 @@ abbrev StateRequest.Reply : StateRequest → Type
   | .endSave .. => Except BufferRefusal Unit
   | .openPrompt .. => Except PromptRefusal ViewId
   | .closePrompt _ => Except PromptRefusal Unit
+  | .setWanted .. => Except LayoutRefusal Unit
 
 namespace EditorState
 
@@ -186,6 +193,7 @@ def handle : (request : StateRequest) → EditorState → request.Reply × Edito
   | .openPrompt label continuation text history scroll selection, state =>
     state.openPrompt label continuation text history scroll selection
   | .closePrompt answer, state => state.closePrompt answer
+  | .setWanted view wanted, state => state.setWanted view wanted
 
 end EditorState
 
