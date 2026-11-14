@@ -17,7 +17,6 @@ use parley::fontique::{Blob, Collection, CollectionOptions};
 /// fallback families in the order given.
 pub struct FontSet {
     /// The fonts.
-    #[expect(dead_code, reason = "read by the shaper, which the next commit adds")]
     pub(crate) collection: Collection,
     /// The default family: what a spec with no family is shaped in.
     pub(crate) default: String,
