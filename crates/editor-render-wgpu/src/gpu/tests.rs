@@ -408,6 +408,30 @@ fn quad(kind: QuadKind, page: u32) -> Quad {
 }
 
 #[test]
+fn a_list_of_more_quads_than_the_buffer_holds_is_given_a_larger_one() {
+    let mut device = device(true);
+    let atlas = Atlas::new(64);
+    let fill = quad(QuadKind::Fill, 0);
+    // How many quads the buffer the device has made holds.
+    let room = |device: &Device| {
+        let held = device.instances.as_ref().map_or(0, |(_, held)| *held);
+        (held / INSTANCE_BYTES) as usize
+    };
+    // A few quads first: a buffer is made for them.
+    assert_eq!(device.draw(&[fill; 3], &atlas, 200, 64), Ok(()));
+    let first = room(&device);
+    assert!(first >= 3);
+    // Then one more than it holds, and then many times more: wgpu
+    // refuses the quads written past the end of a buffer.
+    for count in [first + 1, first * 8] {
+        assert_eq!(device.draw(&vec![fill; count], &atlas, 200, 64), Ok(()));
+        assert!(room(&device) >= count, "{count} quads");
+    }
+    // A shorter list after a longer one is drawn as well.
+    assert_eq!(device.draw(&[fill; 3], &atlas, 200, 64), Ok(()));
+}
+
+#[test]
 fn quads_are_drawn_in_runs_that_read_one_page_each() {
     let fill = quad(QuadKind::Fill, 0);
     let quads = [
