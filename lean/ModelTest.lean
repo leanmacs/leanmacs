@@ -217,7 +217,7 @@ names a scheme's key:
 - `modeRecordChecks`: the registered roles (`Editor/Role.lean`), and the
   keymaps a mode makes for a scheme (`Editor/Mode.lean`): its roles at the
   scheme's keys for them, its suffixes under the leader, and the scheme's
-  hand-tuned keys for it ahead of both.
+  hand-tuned keys for it ahead of both; and what `Mode.check` reports.
 -/
 
 namespace ModelTest
@@ -6536,6 +6536,16 @@ def listing : Mode :=
     roles := [(Role.nextItem, "listing-next"), (Role.previousItem, "listing-previous")]
     locals := [("x", "listing-execute")] }
 
+/-- The test scheme with keymaps of its own, which bind `C-x C-s` and
+`C-x C-f`, and a hand-tuned key for `listing` that they do not bind: what
+`Mode.check` is run against. -/
+def checkedScheme : InputScheme :=
+  { TestScheme.scheme with
+    defaults :=
+      [Keymap.ofList [(keys "C-x C-s", invoke "save")],
+        Keymap.ofList [(keys "C-x C-f", invoke "find")]]
+    tuned := [("listing", keys "C-t", invoke "tuned-t")] }
+
 /-- The keys `role` is on under the test scheme; none when it has no row. -/
 def roleKeys (role : Role) : List Key :=
   (TestScheme.scheme.roleKey role).getD []
@@ -6585,6 +6595,48 @@ def modeRecordChecks : List Check :=
               .bound (invoke "listing-previous") &&
             modeLookup listing (keys "C-o") tuned == .unbound &&
             ((listing.keymaps tuned).head?.map (·.bindings.length)) == some 2) },
+    { name := "Mode.check reports nothing for a mode with no problem, under a scheme that tunes it"
+      run := pure (listing.check TestScheme.scheme == [] && listing.check checkedScheme == []) },
+    { name := "Mode.check reports a role that is not registered, by its name"
+      run :=
+        let mode := { listing with roles := listing.roles ++ [(Role.mk "frobnicate", "f")] }
+        pure
+          (mode.check checkedScheme == [.unregisteredRole { name := "frobnicate" }] &&
+            mode.problems == [.unregisteredRole { name := "frobnicate" }]) },
+    { name :=
+        "Mode.check reports a suffix used twice once, comparing suffixes as keys, so that two spellings of one key are one suffix"
+      run :=
+        let twice := { listing with locals := [("x", "a"), ("x", "b"), ("x", "c"), ("y", "d")] }
+        let spelled := { listing with locals := [("TAB", "a"), ("<Tab>", "b")] }
+        pure
+          (twice.check checkedScheme == [.duplicateSuffix (keys "x")] &&
+            spelled.check checkedScheme == [.duplicateSuffix (keys "TAB")]) },
+    { name := "Mode.check reports a suffix that is not keys, and one that names no keys"
+      run :=
+        let mode := { listing with locals := listing.locals ++ [("S-a", "a"), ("", "b")] }
+        pure (mode.check checkedScheme == [.unreadableSuffix "S-a", .unreadableSuffix ""]) },
+    { name :=
+        "Mode.check reports a hand-tuned key of the mode that the scheme's own keymaps bind exactly, and not one they bind longer, nor another mode's"
+      run :=
+        let shadowing : InputScheme :=
+          { checkedScheme with
+            tuned :=
+              [("listing", keys "C-t", invoke "tuned-t"),
+                ("listing", keys "C-x C-s", invoke "tuned-save"),
+                ("listing", keys "C-x", invoke "tuned-prefix"),
+                ("other", keys "C-x C-f", invoke "other-find")] }
+        pure
+          (listing.check shadowing == [.shadowsScheme (keys "C-x C-s")] &&
+            listing.problems == []) },
+    { name := "each problem Mode.check reports is described by a sentence naming it"
+      run :=
+        let described :=
+          [Mode.Problem.unregisteredRole { name := "frobnicate" }, .duplicateSuffix (keys "C-x"),
+                .unreadableSuffix "S-a", .shadowsScheme (keys "C-x C-s")].map
+            Mode.Problem.describe
+        pure
+          ([("frobnicate", 0), ("C-x", 1), ("S-a", 2), ("C-x C-s", 3)].all fun (name, index) =>
+            ((described[index]?).getD "").contains name) },
     { name :=
         "the registered roles are next-item, previous-item, activate, quit, refresh, toggle and mark, each a name of its own"
       run :=

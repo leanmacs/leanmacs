@@ -39,12 +39,23 @@ leader, bound to what the scheme says a mode's key is bound to
 unreadable suffix, bind nothing. So a tuned key wins over a role on the
 same keys.
 
+## What a mode cannot mean
+
+`Mode.problems` is what is wrong with a mode under any scheme: a role that
+is not registered, a suffix used twice (reported once), and a suffix that is
+not keys or names none. `Mode.check mode scheme` adds what needs a scheme: a
+hand-tuned key the scheme has for the mode that the scheme's own keymaps
+(`InputScheme.defaults`) bind exactly, which it shadows. A tuned key that is
+a strict prefix of one of theirs is not reported (the open question
+"Unreachable bindings"). `Mode.Problem.describe` says each as a sentence.
+
 ## Where an addition goes
 
 | Addition | Where |
 |---|---|
 | A new kind of key a mode declares | A field of `Mode`, and its keymap in `Mode.keymaps` |
 | A new role | `Editor/Role.lean`; nothing here |
+| A new mistake a mode can make | A variant of `Mode.Problem`, its sentence in `describe`, and its case in `problems` (or in `check`, when it needs a scheme) |
 
 Pinned by `ModelTest.modeRecordChecks`, on the test scheme.
 -/
@@ -98,6 +109,56 @@ def keymaps (scheme : InputScheme) (mode : Mode) : List (Keymap scheme.Binding) 
   let suffixes :=
     mode.suffixes.map fun (keys, command) => (scheme.leader ++ keys, scheme.modeCommand command)
   [Keymap.ofList (tunedFor scheme mode.name), Keymap.ofList (roles ++ suffixes)]
+
+/-- What a mode cannot mean. -/
+inductive Problem where
+  /-- It fills a role the core does not register. -/
+  | unregisteredRole (role : Role)
+  /-- It uses this suffix, as chords, more than once. -/
+  | duplicateSuffix (keys : List Key)
+  /-- This suffix is not keys: `Key.parse` refuses it, or it names none. -/
+  | unreadableSuffix (text : String)
+  /-- The scheme tunes this key sequence for the mode by hand, and its own
+  keymaps bind exactly that sequence. -/
+  | shadowsScheme (keys : List Key)
+  deriving DecidableEq, Repr
+
+/-- The problem, as a sentence that names what is wrong. -/
+def Problem.describe : Problem → String
+  | .unregisteredRole role => s!"the role `{role.name}` is not registered"
+  | .duplicateSuffix keys => s!"the suffix `{Key.notations keys}` is used twice"
+  | .unreadableSuffix text => s!"the suffix `{text}` is not keys"
+  | .shadowsScheme keys =>
+    s!"the hand-tuned key `{Key.notations keys}` shadows a binding of the scheme"
+
+/-- What `mode` cannot mean under any scheme: the roles it fills that are not
+registered, then the suffixes it uses more than once, each once, compared
+as chords, then the suffixes that are not keys, each in order. -/
+def problems (mode : Mode) : List Problem :=
+  let unregistered :=
+    (mode.roles.filter fun (role, _) => !Role.registered.contains role).map fun (role, _) =>
+      Problem.unregisteredRole role
+  let suffixes := mode.suffixes.map (·.1)
+  let duplicates :=
+    (suffixes.eraseDups.filter fun keys => suffixes.count keys > 1).map Problem.duplicateSuffix
+  let unreadable :=
+    (mode.locals.filter fun (text, _) =>
+          match Key.parse text with
+          | .ok [] | .error _ => true
+          | .ok _ => false).map
+      fun (text, _) => Problem.unreadableSuffix text
+  unregistered ++ duplicates ++ unreadable
+
+/-- What `mode` cannot mean under `scheme`: its `problems`, then each
+hand-tuned key the scheme has for it that the scheme's own keymaps
+(`InputScheme.defaults`) bind exactly. A tuned key that is a strict prefix
+of one of theirs is not reported. -/
+def check (mode : Mode) (scheme : InputScheme) : List Problem :=
+  mode.problems ++
+    (tunedFor scheme mode.name).filterMap fun (keys, _) =>
+      match Keymap.resolve scheme.defaults keys with
+      | .bound _ => some (.shadowsScheme keys)
+      | _ => none
 
 end Mode
 
