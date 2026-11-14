@@ -358,7 +358,42 @@ def undoCases : List Case :=
         let undone ← buffer.isModified
         let absent : BufferId := ⟨9⟩
         return made matches .ok false && edited matches .ok true && undone matches .ok false &&
-            refusedAs (← absent.isModified) (.noSuchBuffer absent) }]
+            refusedAs (← absent.isModified) (.noSuchBuffer absent) },
+    { name :=
+        "an edit that carries the selections it is handed: replaceCarrying replaces an extent of the text in one revision and leaves the window's selection at the one after; an undo hands back the one before, which was not the window's, and a redo the one after; an extent that stops inside a character is refused with badChange, with the text, its revision and the window's selection as they were"
+      start := holding "héllo wörld" (selection #[(0, 0)])
+      run := do
+        let view : ViewId := ⟨0⟩
+        let buffer : BufferId := ⟨0⟩
+        let .ok () ← buffer.closeGroup | return false
+        let revision ← scratch.revision
+        let before := selection #[(7, 10)]
+        let after := selection #[(3, 1)] .inclusive
+        let .ok () ← view.onTarget (·.replaceCarrying ⟨1, 6⟩ "ey" before after) | return false
+        let replaced ← scratch.read
+        let .ok placed ← view.selection | return false
+        let made ← scratch.revision
+        let .ok (some undone) ← buffer.undo | return false
+        let restored ← scratch.read
+        let .ok (some redone) ← buffer.redo | return false
+        let again ← scratch.read
+        let moved ← scratch.revision
+        -- An undo and a redo place no selection: the marker is where the
+        -- two edits left it.
+        let .ok held ← view.selection | return false
+        -- In "hey wörld" the "ö" is bytes 5 and 6.
+        let refused ←
+          refusedWith .badChange (view.onTarget (·.replaceCarrying ⟨2, 6⟩ "x" before after))
+        let .ok kept ← view.selection | return false
+        return replaced == "hey wörld" && placed == after && made == revision + 1 &&
+            undone == ⟨some before⟩ &&
+            restored == "héllo wörld" &&
+            redone == ⟨some after⟩ &&
+            again == "hey wörld" &&
+            refused &&
+            (← scratch.read) == "hey wörld" &&
+            (← scratch.revision) == moved &&
+            kept == held }]
 
 /-- A cursor marker at the start of `text`, made and given up at once: its
 number says how many markers the text had given out before it. -/

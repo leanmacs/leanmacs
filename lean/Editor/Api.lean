@@ -101,6 +101,17 @@ and the cursors after, so undoing it hands the selection back
 cursors. The heads of a kept selection are in order, since its ranges are
 sorted and apart, so they are the extents an insertion replaces.
 
+- `Target.replaceCarrying extent s before after` is the edit of a command
+  that says both selections itself: one transaction that replaces one
+  extent and carries `before` and `after` as they are handed in
+  (`TextId.replaceCarrying`), and then places `after`. The operations above
+  carry the window's selection as it is when they are called. A command
+  that has moved the selection since it was called, or that leaves the
+  cursor somewhere other than after what it inserted, hands in the
+  selection from before the command and the one it leaves, so an undo of
+  its step hands back the cursor the user saw and a redo the one the
+  command left.
+
 ## Undo
 
 The undo operations work over the buffer's own undo tree
@@ -510,6 +521,23 @@ def TextId.replaceRange (text : TextId) (start stop : Nat) (s : String) : TextM 
   let _ ← text.apply (Transaction.replacing length start stop s) Origin.user
   return ()
 
+/-- Replaces `extent` of `text` with `s`, as one transaction made by the
+user that carries `before`, a selection of the text as it is, and `after`,
+one of the text the edit leaves. An undo of the edit hands `before` back,
+and a redo `after`. Refused, changing nothing, as the store refuses the
+transaction: with `badChange` unless the extent's ends are character
+boundaries within the text, in order, and with `badSelection` for a
+selection that is none of its text. -/
+def TextId.replaceCarrying (text : TextId) (extent : Extent) (s : String)
+    (before after : Selection) : TextM Unit := do
+  let length ← text.byteLength
+  let _ ←
+    text.apply
+        { Transaction.replacing length extent.start extent.stop s with
+          before := some before, after := some after }
+        Origin.user
+  return ()
+
 /-- The buffer called `name`, if there is one. -/
 def findBuffer (name : String) : EditorM (Option BufferId) :=
   return (← editorState).findBuffer name
@@ -742,6 +770,16 @@ def replaceExtents (target : Target) (before : Selection) (extents : Array Exten
   let after : Selection :=
     { ranges := cursors, primary := min before.primary (cursors.size - 1), shape := before.shape }
   let _ ← text.apply { changes, before := some before, after := some after } Origin.user
+  target.select after
+
+/-- Replaces `extent` of `target`'s text with `s`, as one transaction made
+by the user that carries `before` and `after` (`TextId.replaceCarrying`),
+and places `after` as the window's selection. `before` is the caller's to
+say: the selection from before its command, whatever the window's is by
+now. -/
+def replaceCarrying (target : Target) (extent : Extent) (s : String) (before after : Selection) :
+    TextM Unit := do
+  target.buffer.text.replaceCarrying extent s before after
   target.select after
 
 /-- Replaces what each range of `target`'s selection covers with `s`, as one
