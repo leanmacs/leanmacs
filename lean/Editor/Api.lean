@@ -62,6 +62,33 @@ edit log, and one step for the buffer's history to be told of.
   and deleting the range it occupies leaves the text's contents as they
   were.
 
+## Selections
+
+A window's selection is a selection marker of its buffer's text
+(`Window.selection`), whose ranges are the view's cursors. A command that
+was handed its `Target` uses the operations on it, which are programs over
+the text port; one that has a view's id uses the operations on `ViewId`,
+which read the window from the state first and are refused, as a value,
+with `noSuchWindow` for a view with no window.
+
+- `selection` reads the selection, in the form the store keeps one in, and
+  `select` places it. A selection the store refuses is thrown
+  (`badSelection`).
+- `insertAtSelections s` inserts `s` at the head of each range. Each range
+  becomes a cursor just after its insertion; the primary and the shape
+  are kept.
+- `deleteSelections` deletes what each range covers, by the selection's
+  shape (`TextId.extents`), and leaves a cursor where each started.
+- `Target.replaceSelections s` replaces what each range covers with `s`
+  and leaves a cursor after each: what a committed text does
+  (`Editor/Loop.lean`).
+
+Each is one transaction made by the user that carries the selection before
+and the cursors after, so undoing it hands the selection back
+(`replaceExtents`), and the selection marker is then placed at the
+cursors. The heads of a kept selection are in order, since its ranges are
+sorted and apart, so they are the extents an insertion replaces.
+
 Each operation that makes a text request has a case in
 `Editor/Api/Cases.lean`, played on the editor's models and on the real
 binding.
@@ -150,5 +177,115 @@ def deleteRange (id : BufferId) (start stop : Nat) : EditorM (Except BufferRefus
   id.replaceRange start stop ""
 
 end BufferId
+
+/-- The changes that replace each of `extents`, sorted and apart, of a text
+of `length` bytes, with `text`, and the cursor after each insertion. -/
+def replacingEach (length : Nat) (extents : Array Extent) (text : String) :
+    Array Change × Array SelectionRange :=
+  Id.run do
+    let mut changes := #[]
+    let mut cursors := #[]
+    let mut walked := 0
+    let mut shift : Int := 0
+    for extent in extents do
+      changes :=
+        changes ++
+          #[.retain (extent.start - walked), .delete (extent.stop - extent.start), .insert text]
+      let after := (extent.start + shift + text.utf8ByteSize).toNat
+      cursors := cursors.push ⟨after, after⟩
+      shift := shift + text.utf8ByteSize - (extent.stop - extent.start)
+      walked := extent.stop
+    return (changes.push (.retain (length - walked)), cursors)
+
+namespace Target
+
+/-- The selection of `target`'s window, in the form the store keeps one in.
+Refused with `noSuchMarker` when the window's selection marker was given
+up. -/
+def selection (target : Target) : TextM Selection := do
+  let .selection selection ← target.buffer.text.marker target.window.selection | throw .noSuchMarker
+  return selection
+
+/-- Places `selection` as the selection of `target`'s window. Refused as the
+store refuses a selection: with `badSelection` for one that is none or has
+an end that is not a position of the text. -/
+def select (target : Target) (selection : Selection) : TextM Unit :=
+  target.buffer.text.place target.window.selection (.selection selection)
+
+/-- Replaces each of `extents`, sorted and apart, of `target`'s text with
+`s`, as one transaction made by the user, which carries `before` and the
+cursors after, one after each insertion, with `before`'s shape, and places
+the window's selection at those cursors. -/
+def replaceExtents (target : Target) (before : Selection) (extents : Array Extent) (s : String) :
+    TextM Unit := do
+  let text := target.buffer.text
+  let (changes, cursors) := replacingEach (← text.byteLength) extents s
+  let after : Selection :=
+    { ranges := cursors, primary := min before.primary (cursors.size - 1), shape := before.shape }
+  let _ ← text.apply { changes, before := some before, after := some after } Origin.user
+  target.select after
+
+/-- Replaces what each range of `target`'s selection covers with `s`, as one
+transaction made by the user, and leaves a cursor after each insertion. -/
+def replaceSelections (target : Target) (s : String) : TextM Unit := do
+  let selection ← target.selection
+  target.replaceExtents selection (← target.buffer.text.extents selection) s
+
+/-- Inserts `s` at the head of each range of `target`'s selection, as one
+transaction made by the user, and leaves a cursor just after each
+insertion. -/
+def insertAtSelections (target : Target) (s : String) : TextM Unit := do
+  let selection ← target.selection
+  target.replaceExtents selection (selection.ranges.map fun range => ⟨range.head, range.head⟩) s
+
+/-- Deletes what each range of `target`'s selection covers, as one
+transaction made by the user, and leaves a cursor where each started. -/
+def deleteSelections (target : Target) : TextM Unit :=
+  target.replaceSelections ""
+
+end Target
+
+namespace ViewId
+
+/-- The window of `view` and its buffer. Refused with `noSuchWindow` for a
+view with no window. -/
+def target (view : ViewId) : EditorM (Except LayoutRefusal Target) := do
+  match (← editorState).target? view with
+  | some target =>
+    return .ok target
+  | none =>
+    return .error (.noSuchWindow view)
+
+/-- Runs `run` on the window of `view` and its buffer. Refused with
+`noSuchWindow` for a view with no window; what the store refuses is
+thrown. -/
+def onTarget {α : Type} (view : ViewId) (run : Target → TextM α) :
+    EditorM (Except LayoutRefusal α) := do
+  match ← view.target with
+  | .ok target =>
+    return .ok (← run target)
+  | .error refusal =>
+    return .error refusal
+
+/-- The selection of the window of `view` (`Target.selection`). -/
+def selection (view : ViewId) : EditorM (Except LayoutRefusal Selection) :=
+  view.onTarget (·.selection)
+
+/-- Places `selection` as the selection of the window of `view`
+(`Target.select`). -/
+def select (view : ViewId) (selection : Selection) : EditorM (Except LayoutRefusal Unit) :=
+  view.onTarget (·.select selection)
+
+/-- Inserts `s` at the head of each range of the selection of the window of
+`view` (`Target.insertAtSelections`). -/
+def insertAtSelections (view : ViewId) (s : String) : EditorM (Except LayoutRefusal Unit) :=
+  view.onTarget (·.insertAtSelections s)
+
+/-- Deletes what each range of the selection of the window of `view` covers
+(`Target.deleteSelections`). -/
+def deleteSelections (view : ViewId) : EditorM (Except LayoutRefusal Unit) :=
+  view.onTarget (·.deleteSelections)
+
+end ViewId
 
 end Editor

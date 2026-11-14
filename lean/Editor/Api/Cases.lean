@@ -75,6 +75,27 @@ def refusedWith {α : Type} (error : TextError) (command : EditorM α) : EditorM
   catch refusal =>
     return refusal == error
 
+/-- The selection of shape `shape` with `ranges`, each an anchor and a head,
+whose primary is the one at `primary`. -/
+def selection (ranges : Array (Nat × Nat)) (shape : Shape := .exclusive) (primary : Nat := 0) :
+    Selection :=
+  { ranges := ranges.map fun (anchor, head) => ⟨anchor, head⟩, primary, shape }
+
+/-- The initial state with its buffer holding `text` and its window's
+selection placed at `selected`: view 0 on buffer 0, over the store's first
+text. -/
+def holding (text : String) (selected : Selection) : TextM EditorState := do
+  let state ← EditorState.initial ⟨640, 480⟩
+  let some target := state.focusedTarget? | throw .noSuchText
+  target.buffer.text.insert 0 text
+  target.buffer.text.place target.window.selection (.selection selected)
+  return state
+
+/-- The text of the buffer `scratch` of the initial state: the store's
+first. -/
+def scratch : TextId :=
+  ⟨0⟩
+
 /-- The cases of buffers: creating, finding and removing one, and editing
 and reading one at positions. -/
 def bufferCases : List Case :=
@@ -180,9 +201,82 @@ def bufferCases : List Case :=
             (← text.byteLength) == 9 &&
             (← text.rowCount) == 3 }]
 
+/-- The cases of a view's selections: inserting at them, deleting what they
+cover, and reading and placing them. -/
+def selectionCases : List Case :=
+  [{  name :=
+        "inserting at a view's selections, two cursors, puts the insertion at each and leaves each cursor just after its insertion, as one revision made by the user that carries the selection before and the cursors after"
+      start := holding "abcd" (selection #[(1, 1), (3, 3)])
+      run := do
+        let .ok before ← (⟨0⟩ : ViewId).selection | return false
+        let .ok () ← (⟨0⟩ : ViewId).insertAtSelections "X" | return false
+        let text := (← scratch.read, ← scratch.revision)
+        let .ok after ← (⟨0⟩ : ViewId).selection | return false
+        let traced ← scratch.trace 0 6
+        -- The insertion was the text's second revision: its inverse hands
+        -- back the selection the transaction carried before it.
+        let undone ← scratch.applyInverse 2 2
+        return before == selection #[(1, 1), (3, 3)] && text == ("aXbcXd", 2) &&
+            after == selection #[(2, 2), (5, 5)] &&
+            traced.map (·.author) ==
+              #[.entry 1 Origin.unattributed, .entry 2 Origin.user, .entry 1 Origin.unattributed,
+                .entry 2 Origin.user, .entry 1 Origin.unattributed] &&
+            undone.selection == some (selection #[(1, 1), (3, 3)]) &&
+            (← scratch.read) == "abcd" },
+    { name :=
+        "inserting at selections that are ranges inserts at the head of each, forward or backward, and leaves a cursor after each insertion, with the primary and the shape kept; a string of two-byte characters moves the later cursors by its bytes"
+      start := holding "abcdef" (selection #[(0, 2), (5, 3)] (primary := 1))
+      run := do
+        let .ok () ← (⟨0⟩ : ViewId).insertAtSelections "é" | return false
+        let .ok after ← (⟨0⟩ : ViewId).selection | return false
+        return (← scratch.read) == "abécédef" &&
+            after == selection #[(4, 4), (7, 7)] (primary := 1) },
+    { name :=
+        "deleting a view's selections deletes what each range covers, by the selection's shape, as one revision made by the user, and leaves a cursor where each range started"
+      start := holding "abcdef" (selection #[(1, 3), (5, 4)])
+      run := do
+        let .ok () ← (⟨0⟩ : ViewId).deleteSelections | return false
+        let .ok exclusive ← (⟨0⟩ : ViewId).selection | return false
+        let deleted := (← scratch.read, ← scratch.revision)
+        -- An inclusive cursor covers the character it is on.
+        let .ok () ← (⟨0⟩ : ViewId).select (selection #[(1, 1)] .inclusive) | return false
+        let .ok () ← (⟨0⟩ : ViewId).deleteSelections | return false
+        let .ok inclusive ← (⟨0⟩ : ViewId).selection | return false
+        return deleted == ("adf", 2) && exclusive == selection #[(1, 1), (2, 2)] &&
+            (← scratch.read) == "af" &&
+            inclusive == selection #[(1, 1)] .inclusive &&
+            (← scratch.revision) == 3 },
+    { name :=
+        "a view's selection is read as the store keeps it and placed as it is given: ranges that overlap are read back as one, and a selection the store refuses, with an end inside a character or with no range, is refused with badSelection and leaves the selection as it was"
+      start := holding "héllo" (selection #[(0, 0)])
+      run := do
+        let view : ViewId := ⟨0⟩
+        let .ok () ← view.select (selection #[(4, 6), (0, 3), (1, 3)] (primary := 1)) | return false
+        let .ok merged ← view.selection | return false
+        let inside ← refusedWith .badSelection (view.select (selection #[(0, 2)]))
+        let empty ← refusedWith .badSelection (view.select (selection #[]))
+        let .ok kept ← view.selection | return false
+        return merged.ranges.size == 2 && inside && empty && kept == merged &&
+            (← scratch.revision) == 1 },
+    { name :=
+        "reading, placing, inserting at and deleting the selections of a view with no window are each refused with noSuchWindow, a value, and make no request of the store"
+      run := do
+        let view : ViewId := ⟨9⟩
+        let before ← createText ""
+        let read ← view.selection
+        let placed ← view.select (selection #[(0, 0)])
+        let inserted ← view.insertAtSelections "x"
+        let deleted ← view.deleteSelections
+        let after ← createText ""
+        return refusedAs read (.noSuchWindow view) && refusedAs placed (.noSuchWindow view) &&
+            refusedAs inserted (.noSuchWindow view) &&
+            refusedAs deleted (.noSuchWindow view) &&
+            after.index == before.index + 1 &&
+            (← scratch.revision) == 0 }]
+
 /-- Every case of the editor API, in the order they run. -/
 def cases : List Case :=
-  bufferCases
+  bufferCases ++ selectionCases
 
 /-- Plays `cases` with `run`, each from a store with no text, and returns
 the names of those that did not hold: one that returned `false`, and one
