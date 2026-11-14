@@ -971,6 +971,26 @@ gate may do, so the gate only builds it. `tests/render/README.md` says
 what the image shows, when to make it again, and what to do then: look at
 it, enlarged, before committing it.
 
+## The Core Text reference, on demand
+
+```sh
+mise run coretext-reference
+```
+
+This writes `tests/coretext/sentence.png`: the sentence `the window draws
+this` drawn by Core Text from the fixture font Noto Sans Mono at 14 pt on
+a bitmap of scale 2, black on white, with font smoothing on. It is the
+macOS target the renderer's weight is fitted to and held to
+(`crates/editor-render-wgpu/src/weight_tests.rs`). It runs
+`tools/coretext/capture.swift` with the system's `swift`, so it needs
+macOS. It writes a file of the repository, which no gate may do, so it is
+not in the gate, and nothing in the gate runs Swift.
+
+Run it on a new major version of macOS, or when the fixture font changes.
+`tests/coretext/README.md` records how the file was last captured and
+what to do with a new one: look at it, enlarged, before committing it, and
+fit the weight again if it no longer matches.
+
 ## The present mode, measured on a window
 
 **Nothing in this section has been run, and no figure exists yet.** These
