@@ -14,6 +14,8 @@ import Editor.Face
 import Editor.File.Cases
 import Editor.File.Model
 import Editor.Files.Compiled
+import Editor.Fuzzy.Contract
+import Editor.Fuzzy.Model
 import Editor.InputScheme.Contract
 import Editor.InputScheme.Test
 import Editor.InputScheme.Vim.Default
@@ -85,6 +87,14 @@ what only the model shows: a clipboard that is not available refuses and
 keeps what it held, and one that holds nothing answers no text. They also
 show the contract biting: a clipboard written here that drops every write
 is reported.
+
+The fuzzy matching interface's contract (`Editor/Fuzzy/Contract.lean`) is
+run against its model here (`fuzzyFailures`), and `contract-test` runs the
+same list against the real binding. `fuzzyChecks` are what only the model
+shows: its rule of what matches, and that after the candidates that are
+the pattern its order is the candidates'. They also show the contract
+biting on each of the two things it asks: a matcher written here that
+ignores case, and one that does not put an exact match first.
 
 The editor state (`Editor/State.lean`) is checked on the text model
 (`stateChecks`): the initial state, that a split tree's views tile the
@@ -4278,6 +4288,83 @@ def clipboardChecks : List Check :=
         return (ClipboardContract.properties.head?.map (·.name)).any dropped.contains &&
             held.isEmpty &&
             !ClipboardContract.properties.isEmpty }]
+
+/-- Runs a program over the fuzzy port against the fuzzy model: its
+value. The model has no state. -/
+def ranked {α : Type} (program : FuzzyM α) : α :=
+  (Program.run (port := fuzzyPort) FuzzyModel.handle program ()).1
+
+/-- A matcher written for the tests that break the contract: a candidate
+matches when `matched` says so of the pattern and the candidate, and the
+candidates that are the pattern come first only with `exactFirst`; the rest
+are in the candidates' order. -/
+def matcherBy (matched : String → String → Bool) (exactFirst : Bool) :
+    (request : FuzzyRequest) → Unit → request.Reply × Unit
+  | .rank pattern candidates, state =>
+    let indices :=
+      (Array.range candidates.size).filter fun index => (candidates[index]?).any (matched pattern)
+    if exactFirst then
+      (indices.filter (candidates[·]? == some pattern) ++
+          indices.filter (candidates[·]? != some pattern),
+        state)
+    else (indices, state)
+
+/-- The names of the fuzzy contract's properties that do not hold of the
+matcher `handle`. -/
+def fuzzyBroken (handle : (request : FuzzyRequest) → Unit → request.Reply × Unit) :
+    IO (List String) :=
+  FuzzyContract.failures
+    (fun property => pure (Program.run (port := fuzzyPort) handle property.holds ()).1)
+    FuzzyContract.properties
+
+/-- The checks of the fuzzy matching interface's model
+(`Editor/Fuzzy/Model.lean`): what only the model shows, its rule of what
+matches and its order after the candidates that are the pattern, and the
+contract (`Editor/Fuzzy/Contract.lean`) seen to report a matcher that
+breaks each of the two things it asks. -/
+def fuzzyChecks : List Check :=
+  [{  name :=
+        "the fuzzy model matches a pattern whose characters are in a candidate in order, together or apart, and not one with a character the candidate lacks or with its characters in another order; the empty pattern matches everything and nothing else matches the empty candidate"
+      run :=
+        pure <|
+          FuzzyModel.matches "ace" "ace" && FuzzyModel.matches "ace" "abcde" &&
+            !FuzzyModel.matches "axe" "abcde" &&
+            !FuzzyModel.matches "eca" "abcde" &&
+            !FuzzyModel.matches "aa" "a" &&
+            FuzzyModel.matches "aa" "aba" &&
+            FuzzyModel.matches "" "" &&
+            FuzzyModel.matches "" "a" &&
+            !FuzzyModel.matches "a" "" &&
+            !FuzzyModel.matches "a" "A" },
+    { name :=
+        "the fuzzy model ranks the candidates that are the pattern first and the other matches after them, each group in the order the candidates came in, and a request through the port is answered so"
+      run :=
+        pure <|
+          let candidates := #["wq", "edit", "rewrite", "w", "w", "xw"]
+          FuzzyModel.rank "w" candidates == #[3, 4, 0, 2, 5] &&
+            ranked (Fuzzy.rank "w" candidates) == #[3, 4, 0, 2, 5] &&
+            FuzzyModel.rank "z" candidates == #[] &&
+            FuzzyModel.rank "w" #[] == #[] },
+    { name :=
+        "the fuzzy contract reports a matcher that ignores case, by its properties of which candidates match and by none of an exact match"
+      run := do
+        let folded (pattern candidate : String) : Bool :=
+          FuzzyModel.matches pattern.toLower candidate.toLower
+        let broken ← fuzzyBroken (matcherBy folded true)
+        return !broken.isEmpty && broken.all (·.startsWith FuzzyContract.whichMatch) },
+    { name :=
+        "the fuzzy contract reports a matcher that answers the matches in the candidates' order, by its properties of an exact match and by none of which candidates match"
+      run := do
+        let broken ← fuzzyBroken (matcherBy FuzzyModel.matches false)
+        return !broken.isEmpty && broken.all (·.startsWith FuzzyContract.exactFirst) },
+    { name :=
+        "every property of the fuzzy contract holds of the model and of a matcher written to its rule, and the contract has properties of which candidates match and of an exact match"
+      run := do
+        let names := FuzzyContract.properties.map (·.name)
+        return (← fuzzyBroken FuzzyModel.handle).isEmpty &&
+            (← fuzzyBroken (matcherBy FuzzyModel.matches true)).isEmpty &&
+            names.any (·.startsWith FuzzyContract.whichMatch) &&
+            names.any (·.startsWith FuzzyContract.exactFirst) }]
 
 /-- The editor's models with a watch model that counts: its clock, at 0,
 moves on by 1 at each text request and each display request, so its reading
@@ -16326,6 +16413,7 @@ def checks : List Check :=
     commandPortChecks ++
     watchChecks ++
     clipboardChecks ++
+    fuzzyChecks ++
     guardChecks ++
     originChecks ++
     stateChecks ++
@@ -16457,6 +16545,12 @@ def clipboardFailures : IO (List String) := do
         ClipboardContract.properties
   return failed.map (s!"the clipboard model: {·}")
 
+/-- The names of the fuzzy matching interface's contract properties that do
+not hold of the fuzzy model. -/
+def fuzzyFailures : IO (List String) := do
+  let failed ← fuzzyBroken FuzzyModel.handle
+  return failed.map (s!"the fuzzy model: {·}")
+
 /-- The names of the cases of the editor API (`Editor/Api/Cases.lean`) that
 do not hold of the editor's models, each played from models with no
 text. -/
@@ -16469,7 +16563,8 @@ end ModelTest
 /-- Runs the checks, then the text port's contract against its model, the
 job port's contract against its model and against the runner over the fake
 clock, the display interface's contract against its model, the watch
-port's against its model, the clipboard interface's against its model and
+port's against its model, the clipboard interface's against its model, the
+fuzzy matching interface's against its model and
 the cases of the editor API on the editor's models: exits 0 when all hold,
 and 1 after naming on stderr the ones that do not.
 
@@ -16487,6 +16582,7 @@ def main : IO UInt32 := do
       (← ModelTest.displayFailures) ++
       (← ModelTest.watchFailures) ++
       (← ModelTest.clipboardFailures) ++
+      (← ModelTest.fuzzyFailures) ++
       (← ModelTest.apiCaseFailures)
   for name in failed do
     IO.eprintln s!"FAILED: {name}"
@@ -16495,6 +16591,6 @@ def main : IO UInt32 := do
     -- returning from `main` would wait for it for ever.
     IO.Process.exit 1
   IO.println
-      s!"model-test: {ModelTest.checks.length} checks passed, {Editor.TextContract.properties.length + Editor.TextContract.adoptProperties.length + ModelTest.commandProperties.length} properties hold of the text model, {Editor.UndoTreeCases.cases.length} cases of the undo tree hold over it, and {Editor.JobContract.properties.length} properties of the job model and of the job runner over the fake clock, and {Editor.JobContract.fileProperties.length} file properties of the job model and of the job runner over the fake file service; {Editor.FileCases.cases.length} cases across the text port and the job port hold of the two models; {(Editor.DisplayContract.properties { advance := 1, lineHeight := 1 }).length} properties of the display interface hold of its model in cells of {ModelTest.displayCells.length} sizes; {Editor.WatchContract.properties.length} properties of the watch port hold of its model; {Editor.ClipboardContract.properties.length} properties of the clipboard interface hold of its model; {Editor.ApiCases.cases.length} cases of the editor API hold of the editor's models"
+      s!"model-test: {ModelTest.checks.length} checks passed, {Editor.TextContract.properties.length + Editor.TextContract.adoptProperties.length + ModelTest.commandProperties.length} properties hold of the text model, {Editor.UndoTreeCases.cases.length} cases of the undo tree hold over it, and {Editor.JobContract.properties.length} properties of the job model and of the job runner over the fake clock, and {Editor.JobContract.fileProperties.length} file properties of the job model and of the job runner over the fake file service; {Editor.FileCases.cases.length} cases across the text port and the job port hold of the two models; {(Editor.DisplayContract.properties { advance := 1, lineHeight := 1 }).length} properties of the display interface hold of its model in cells of {ModelTest.displayCells.length} sizes; {Editor.WatchContract.properties.length} properties of the watch port hold of its model; {Editor.ClipboardContract.properties.length} properties of the clipboard interface hold of its model; {Editor.FuzzyContract.properties.length} properties of the fuzzy matching interface hold of its model; {Editor.ApiCases.cases.length} cases of the editor API hold of the editor's models"
   (← IO.getStdout).flush
   IO.Process.exit 0
