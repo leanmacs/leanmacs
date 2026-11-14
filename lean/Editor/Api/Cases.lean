@@ -569,7 +569,34 @@ def promptCases : List Case :=
         return away matches .ok () && onWindow == ⟨0⟩ && back matches .ok () &&
             state.frame.focused == view &&
             state.prompt.isSome &&
-            state.wellFormed }]
+            state.wellFormed },
+    { name :=
+        "accepting a prompt replies ok and closes it: the answer is the minibuffer's text as it is, the initial value and what was inserted at its cursor, recorded with the continuation as its first argument, before the continuation's own; the minibuffer's window is gone, the focus is on the view the prompt was asked from, and the state is well formed"
+      run := do
+        let .ok view ← prompt "Name: " greeting "hé" | return false
+        let .ok () ← view.insertAtSelections "llo" | return false
+        let accepted ← acceptPrompt
+        let state ← editorState
+        return accepted matches .ok () && state.prompt == none && state.window? view == none &&
+            state.frame.focused == ⟨0⟩ &&
+            state.answered == #[{ command := "greet", arguments := [.str "héllo", .nat 7] }] &&
+            state.wellFormed },
+    { name :=
+        "cancelling a prompt replies ok, closes it and answers nothing: the minibuffer's window is gone and the focus is on the view the prompt was asked from"
+      run := do
+        let .ok view ← prompt "Name: " greeting "hé" | return false
+        let cancelled ← cancelPrompt
+        let state ← editorState
+        return cancelled matches .ok () && state.prompt == none && state.window? view == none &&
+            state.frame.focused == ⟨0⟩ &&
+            state.answered == #[] &&
+            state.wellFormed },
+    { name :=
+        "accepting and cancelling with no prompt open are each refused with notOpen, a value, and leave the state as it was"
+      run := do
+        let state ← editorState
+        return refusedAs (← acceptPrompt) .notOpen && refusedAs (← cancelPrompt) .notOpen &&
+            (← editorState) == state }]
 
 /-- Every case of the editor API, in the order they run. -/
 def cases : List Case :=

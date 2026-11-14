@@ -6878,7 +6878,51 @@ def dispatchGiveUpChecks : List Check :=
           | (.ok result, model) =>
             result == (none, "refused: no such snapshot") &&
               model.display.scenes.back?.map (·.echo) == some "refused: no such snapshot"
-          | (.error _, _) => false }]
+          | (.error _, _) => false },
+    { name :=
+        "after a command that cancelled a prompt has run to its end the minibuffer is given up, though the last scene named a snapshot of its text: its text refuses noSuchText and each of its window's markers refuses, the window's text and markers still answer, and nothing is in the echo; the same after a command that accepted it"
+      run :=
+        pure <|
+          [cancelPrompt, acceptPrompt].all fun close =>
+            let keys := ran (discard close)
+            let program :
+              EditorM
+                (Option TextError ×
+                  Bool × Option TextError × List (Option TextError) × String × Bool) :=
+              do
+              let state ← promptedOver "ab"
+              let some minibuffer := state.window? ⟨1⟩ | throw .noSuchMarker
+              let some window := state.window? ⟨0⟩ | throw .noSuchMarker
+              -- A scene of the open prompt first, so that the loop holds a
+              -- snapshot of the minibuffer's text when the text is released.
+              let (shown, _) ← stepsWith keys ({ state } : TestLoop) [pressF5]
+              let (loop, _) ← stepsWith keys shown (presses "C-c g")
+              return (← refusalOf minibuffer.scroll.text.read,
+                  (← markerRefusals minibuffer).all (·.isSome), ← refusalOf window.scroll.text.read,
+                  ← markerRefusals window, loop.state.echo,
+                  loop.state.wellFormed && loop.state.prompt == none &&
+                    loop.state.windows.map (·.id) == #[⟨0⟩])
+            (program.runModel editorModel).1.toOption ==
+              some (some .noSuchText, true, none, [none, none], "", true) },
+    { name :=
+        "a command that accepts a prompt and is then refused gives nothing up: the prompt is open again, its text reads what was typed, its window's markers answer, and nothing is answered"
+      run :=
+        pure <|
+          let keys := bound (failingAfter fun _ => discard acceptPrompt)
+          let program : EditorM (Option String × List (Option TextError) × String × Bool × Bool) :=
+            do
+            let state ← promptedOver "ab"
+            let some minibuffer := state.window? ⟨1⟩ | throw .noSuchMarker
+            let (loop, steps) ←
+              stepsWith keys ({ state } : TestLoop) (.commit "c" :: presses "C-c g")
+            return ((← observing minibuffer.scroll.text.read).toOption, ← markerRefusals minibuffer,
+                loop.state.echo,
+                loop.state.prompt == state.prompt && loop.state.frame.focused == ⟨1⟩ &&
+                  loop.state.wellFormed,
+                loop.state.answered.isEmpty &&
+                  steps.back?.map (·.ended) == some (some (.refused .badRange)))
+          (program.runModel editorModel).1.toOption ==
+            some (some "abc", [none, none], "go: refused: bad range", true, true) }]
 
 /-- A scheme written for the closed-view checks: the test scheme, with the
 views it was stepped for kept beside its state, in the order they first

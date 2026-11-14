@@ -230,6 +230,20 @@ A command asks for a string without waiting for it
   value, with `alreadyOpen` and the open prompt's view. The state is read
   first, so the refusal makes no text. A command run where no window is
   focused is refused with `noWindow`.
+- `acceptPrompt` reads the minibuffer's text, which is the answer, and
+  makes one state request that closes the prompt with it
+  (`StateRequest.closePrompt`): the minibuffer's window is closed, the
+  focus goes back to the asking view, and the continuation is recorded
+  with the answer. `cancelPrompt` makes that request with no answer, and
+  nothing else: no request of the library, so it cannot be interrupted or
+  refused by the store. With no prompt open each is refused, as a value,
+  with `notOpen`.
+- **The answer's command runs after the accepting command has ended**, as
+  a step of its own (`Editor/Loop.lean`). The loop gives up the
+  minibuffer's markers and releases its text then too, by its rule for
+  any window that was closed and any buffer that was removed; a command
+  that accepts and then fails is rolled back with the prompt open and its
+  text as typed.
 - **The minibuffer's window is not a window command's.** `ViewId.split`,
   `ViewId.close` and `ViewId.show` on it, and `ViewId.show` of the
   minibuffer's buffer in another view, are refused with `ofMinibuffer` and
@@ -306,6 +320,21 @@ def prompt (label : String) (continuation : Invocation) (initial : String := "")
   let cursor := initial.utf8ByteSize
   let selection ← text.mark (.selection { ranges := #[⟨cursor, cursor⟩], shape := .exclusive })
   EditorState.ask (.openPrompt label continuation text (← UndoTree.over text) scroll selection)
+
+/-- Accepts the open prompt with the text of its minibuffer as the answer:
+the prompt is closed, and its continuation's command is run with the
+answer once this command has run to its end ("Prompts", in the module
+docs). Refused with `notOpen` when no prompt is open. -/
+def acceptPrompt : EditorM (Except PromptRefusal Unit) := do
+  let state ← editorState
+  let some minibuffer := state.minibufferView?.bind state.target? | return .error .notOpen
+  EditorState.ask (.closePrompt (some (← minibuffer.buffer.text.read)))
+
+/-- Cancels the open prompt: it is closed, and its continuation does not
+run. It makes one request of the editor state and none of the library.
+Refused with `notOpen` when no prompt is open. -/
+def cancelPrompt : EditorM (Except PromptRefusal Unit) :=
+  EditorState.ask (.closePrompt none)
 
 /-- Replaces the bytes of `text` from `start` up to, not including, `stop`
 with `s`, as one transaction made by the user. Refused, changing nothing,
