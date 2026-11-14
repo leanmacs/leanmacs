@@ -14,17 +14,25 @@ the watch handler the caller hands in: the real binding
 the one that watches nothing (`Watch.idle`), so a command run where no loop
 dispatched it is never interrupted. This module adds no decision: each
 request is passed to its sub-port's handler as it is.
+
+A state request is the loop's to answer (`Editor/Command.lean`, "The state
+requests are the loop's to answer"), and a command the loop runs has none
+left when it reaches this runner. One that does reach it is answered as the
+models answer it: as an editor with no buffer and no window would
+(`EditorState.none`), with nothing kept and no call into the library.
 -/
 
 namespace Editor
 
 /-- Answers `request` with its sub-port's handler: the text binding over the
-table of texts, `display`, or `watch`. -/
+table of texts, `display`, or `watch`. A state request is answered from an
+editor with nothing in it, and changes nothing. -/
 def EditorRequest.handleReal (display : DisplayHandler) (watch : WatchHandler := Watch.idle) :
     (request : EditorRequest) → StateT RealTexts IO request.Reply
   | .text request => RealTexts.handle request
   | .display request => StateT.lift (display request)
   | .watch request => StateT.lift (watch request)
+  | .state request => pure (EditorState.none.handle request).1
 
 /-- Runs a command against the Rust library, with `texts` as the texts made
 so far, `display` answering its display requests and `watch` its watch

@@ -1,3 +1,4 @@
+import Editor.Api
 import Editor.Command.Append
 import Editor.Command.Guard
 import Editor.Command.Model
@@ -3505,6 +3506,12 @@ def resulted {α : Type} : Except TextError α → TextError ⊕ α
   | .ok value => .inr value
   | .error refusal => .inl refusal
 
+/-- A reply that may be refused, as a sum, which has an equality: the
+refusal on the left. -/
+def replied {ε α : Type} : Except ε α → ε ⊕ α
+  | .ok value => .inr value
+  | .error refusal => .inl refusal
+
 /-- The checks of the editor's composite port (`Editor/Command.lean`): what
 its model runner does with each sub-port's requests. -/
 def commandPortChecks : List Check :=
@@ -3566,7 +3573,32 @@ def commandPortChecks : List Check :=
         return resulted result == .inr (true, false, 7) &&
             model.watch == { watch with arrived := 0 } &&
             model.texts.contents == #[] &&
-            model.display.scenes == #[] }]
+            model.display.scenes == #[] },
+    { name :=
+        "a state request of a command no loop runs is answered as an editor with no buffer and no window answers it, and nothing is kept: a read sees none, a buffer added is not there at the next read, and neither the watch model's clock nor the other models move"
+      run := do
+        let command :
+          EditorM
+            (EditorState ×
+              Except BufferRefusal BufferId × EditorState × Except LayoutRefusal Unit) :=
+          do
+          let before ← editorState
+          let added ← EditorState.ask (.addBuffer "new" ⟨0⟩ (UndoTree.new ⟨0⟩ 0))
+          let after ← editorState
+          return (before, added, after, ← EditorState.ask (.focus ⟨0⟩))
+        let watch : WatchModel := { clock := 7, pace := 3 }
+        let (result, model) := command.runModel { editorModel with watch }
+        match result with
+        | .ok (before, added, after, focused) =>
+          return before == EditorState.none && before.buffers.isEmpty && before.windows.isEmpty &&
+              replied added == .inr ⟨0⟩ &&
+              after == EditorState.none &&
+              replied focused == .inl (.noSuchWindow ⟨0⟩) &&
+              model.watch == watch &&
+              model.texts.contents == #[] &&
+              model.display.scenes == #[]
+        | .error _ =>
+          return false }]
 
 /-- The watch model after `program`, run from `model`, and what the program
 returned. -/
@@ -3996,12 +4028,6 @@ def stateChecks : List Check :=
               | _ => false
             refused (state.setMajorMode ⟨5⟩ "listing") && refused (state.addMinorMode ⟨5⟩ "one") &&
               refused (state.removeMinorMode ⟨5⟩ "one") }]
-
-/-- A reply that may be refused, as a sum, which has an equality: the
-refusal on the left. -/
-def replied {ε α : Type} : Except ε α → ε ⊕ α
-  | .ok value => .inr value
-  | .error refusal => .inl refusal
 
 /-- `twoBuffers` with a third buffer, `hidden`, over a text of its own that
 no window shows, and that text. -/

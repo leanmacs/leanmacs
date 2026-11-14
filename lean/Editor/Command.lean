@@ -1,4 +1,5 @@
 import Editor.Display
+import Editor.State.Request
 import Editor.Watch
 
 /-!
@@ -7,15 +8,17 @@ import Editor.Watch
 A command is a value of `EditorM`: a program over the editor's port that may
 be refused. The editor's port is a composite: its requests are a sum of the
 requests of its sub-ports, one constructor a sub-port (`EditorRequest`), and
-the reply to each is its sub-port's reply. Today it has three:
+the reply to each is its sub-port's reply. Today it has four:
 
 - **text** (`Editor/Text.lean`): texts, snapshots, markers, the edit log;
 - **display** (`Editor/Display.lean`): publishing a scene, and the two
   questions of layout;
 - **watch** (`Editor/Watch.lean`): the interrupt flag and a clock, which the
-  command loop asks round the commands it runs.
+  command loop asks round the commands it runs;
+- **state** (`Editor/State/Request.lean`): the editor state's buffers and
+  windows, the echo area and the jobs to start.
 
-Each sub-port keeps its own programs (`TextM`, `DisplayM`, `WatchM`),
+The first three keep their own programs (`TextM`, `DisplayM`, `WatchM`),
 operations, model, real binding and contract, unchanged. `TextM.lift`,
 `DisplayM.lift` and `Watch.lift` embed a sub-port's programs in a command,
 and they are `MonadLift` instances, so an operation of any is used in a
@@ -23,6 +26,26 @@ command as it is: `do let text ← createText "a"; Display.publish scene`
 elaborates at `EditorM`. Config is written at `EditorM`, and the lift is
 what lets every text operation it calls keep its own type. There is no lift
 from `JobM`, so a job is still not a command.
+
+## The state requests are the loop's to answer
+
+A state request reaches nothing outside the editor state, so it has no
+model and no binding: its handler is one pure function over `EditorState`
+(`EditorState.handle`). The command loop holds the editor state, and it
+answers the state requests of each command it runs, in place, before the
+command's program reaches a runner (`EditorM.dispatched`,
+`Editor/Command/Dispatch.lean`). So the handler is the same function on the
+models and against the library by construction, the loop stays the one
+writer of the editor state, and neither runner holds a state of its own.
+
+A runner still has to answer every request of the port. Both answer a state
+request as an editor with no buffer and no window would
+(`EditorState.none`), and keep nothing of it: a command run where no loop
+dispatched it finds no buffer and no window, and what it adds is gone at
+its next request. Every command a host runs goes through the loop; only a
+test runs one bare. A state request does not reach the library, and on the
+models it does not move the clock. `docs/design/lean-runtime.md` ("The
+editor's port is a composite") says why the state is not the runners'.
 
 A refusal is a `TextError`. The display's two refusals mean what the text
 port's refusals of the same names mean (a snapshot that names nothing, an
@@ -44,7 +67,7 @@ why it has this shape.
 |---|---|
 | A new question about a text, or a new text request | Inside the text port (`Editor/Text.lean`, "Adding to the port"): nothing here changes |
 | A new question of layout | Inside the display port (`Editor/Display.lean`): nothing here changes |
-| Requests about buffers and windows (command loop, phase 8) | A third constructor, `EditorRequest.state`, whose handler is one pure function over `EditorState`, the same in the model and in the real runner; both runners' state gains an `EditorState` |
+| A request about buffers, windows or the rest of the editor state | Inside the state requests (`Editor/State/Request.lean`, "Where an addition goes"): nothing here changes |
 | A new sub-port | A constructor of `EditorRequest`, its case in `EditorRequest.Reply`, a `Program.embed…`, a lift and its `MonadLift` instance here, and its case in both runners |
 
 What the composite runners do with each sub-port is pinned by
@@ -62,12 +85,16 @@ inductive EditorRequest where
   | display (request : DisplayRequest)
   /-- A request of the watch port. -/
   | watch (request : WatchRequest)
+  /-- A request about the editor state, which the loop that runs the
+  command answers. -/
+  | state (request : StateRequest)
 
 /-- The type of the reply to each request: its sub-port's reply. -/
 def EditorRequest.Reply : EditorRequest → Type
   | .text request => request.Reply
   | .display request => request.Reply
   | .watch request => request.Reply
+  | .state request => request.Reply
 
 /-- The editor's port: `EditorRequest` and the reply to each request. -/
 abbrev editorPort : Port :=

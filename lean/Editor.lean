@@ -1,7 +1,7 @@
+import Editor.Api
 import Editor.Command.Append
 import Editor.InputScheme.Vim.Default
 import Editor.Setup
-import Editor.UndoTree
 
 /-!
 # The editor
@@ -10,8 +10,12 @@ The root module user config imports: the editor's ports, the commands written
 over them, the pure models that tests and theorems run them against, the
 editor's composite port, of which a command is a program and whose
 sub-ports' operations are lifted into it (`Editor/Command.lean`, which
-comes with `Editor/Setup.lean` through the stores), the undo
-tree over the text port (`Editor/UndoTree.lean`), the events the editor queue
+comes with `Editor/Setup.lean` through the stores), the editor API a
+command is written with (`Editor/Api.lean`: the editor state's buffers and
+windows, undo, modes, messages and jobs, over the state requests of
+`Editor/State/Request.lean`), the undo
+tree over the text port (`Editor/UndoTree.lean`, which comes with the
+editor state a buffer's history is part of), the events the editor queue
 delivers, as plain data (`Editor/Event.lean`), the scene Lean publishes to
 the display (`Editor/Scene.lean`) and the display interface it is published
 through (`Editor/Display.lean`), and what config registers

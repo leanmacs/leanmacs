@@ -23,6 +23,13 @@ do: each text request and each display request moves the watch model's
 clock on by its pace (`WatchModel.paced`), and a watch request moves
 nothing. So a command of six requests takes six paces, and a test of the
 loop says how long a command took by how much it asked.
+
+There is no model of the editor state here. A state request is the loop's
+to answer, from the state the loop holds (`Editor/Command.lean`, "The state
+requests are the loop's to answer"), and a command the loop runs has none
+left when it reaches these models. One that does reach them, from a command
+run bare, is answered as an editor with no buffer and no window would
+(`EditorState.none`), with nothing kept and the clock where it was.
 -/
 
 namespace Editor
@@ -52,8 +59,11 @@ def snapshotTexts (texts : TextModel) : Array (SnapshotId × String) :=
     id
 
 /-- Answers `request` with its sub-port's model. A text request and a
-display request each move the watch model's clock on by its pace. -/
+display request each move the watch model's clock on by its pace. A state
+request is answered from an editor with nothing in it, and changes
+nothing. -/
 def handle : (request : EditorRequest) → EditorModel → request.Reply × EditorModel
+  | .state request, model => ((EditorState.none.handle request).1, model)
   | .text request, model =>
     let (reply, texts) := TextModel.handle request model.texts
     (reply,
