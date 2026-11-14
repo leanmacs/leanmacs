@@ -10,7 +10,8 @@
 mod common;
 
 use editor_layout::shaper::{
-    FontId, FontSpec, Glyph, Length, LineHeight, ResolvedFont, Shaper, Slant, VisualLine, Weight,
+    FontId, FontSpec, Glyph, Length, LineHeight, ResolvedFont, ShapedLine, Shaper, Slant,
+    VisualLine, Weight,
 };
 use editor_shape_parley::{FontSet, ParleyShaper};
 
@@ -403,6 +404,92 @@ fn a_line_that_starts_in_hebrew_still_starts_at_the_left() {
     assert_eq!(clusters(&line), vec![6, 4, 2, 0, 8, 9, 10, 11]);
     assert!(end_to_end(&line));
     assert_eq!(line.glyphs[0].x, 0.0);
+}
+
+#[test]
+fn latin_and_hebrew_broken_at_a_width_are_whole_lines_each_in_visual_order() {
+    let shaper = shaper();
+    let hebrew_letter = |character: char| ('\u{5d0}'..='\u{5ea}').contains(&character);
+    // Words of the two scripts in turn, Hebrew alone, and a line that
+    // starts and ends in Hebrew. None has a ligature or a mark: every
+    // character is one glyph.
+    for text in [
+        "abc שלום def שלום שלום ghi",
+        "שלום שלום שלום",
+        "שלום abc שלום",
+    ] {
+        let character = |glyph: &Glyph| text[glyph.cluster..].chars().next().expect("a cluster");
+        let offsets: Vec<usize> = text.char_indices().map(|(at, _)| at).collect();
+        let unbroken = one_line(&shaper, &plain(text));
+        let shaped = |cluster: usize| {
+            let glyph = unbroken
+                .glyphs
+                .iter()
+                .find(|glyph| glyph.cluster == cluster);
+            glyph.map(|glyph| (glyph.id, glyph.font, glyph.advance, glyph.dx, glyph.dy))
+        };
+        let kept = shaper.shape(&plain(text));
+        // Half the unbroken line, a quarter of it, and too narrow for any
+        // two characters.
+        let mut counts = Vec::new();
+        for share in [2.0, 4.0, 1000.0] {
+            let width = unbroken.width / share;
+            let lines = kept.break_lines(Some(width));
+            let mut at = 0;
+            let mut reordered_past_the_first = false;
+            for (index, line) in lines.iter().enumerate() {
+                let said = format!("{text:?} at {width}, line {index}: {line:?}");
+                // The lines hold the text in order, each character on one
+                // line, as one glyph of it.
+                assert_eq!(line.bytes.start, at, "{said}");
+                at = line.bytes.end;
+                let mut drawn = clusters(line);
+                drawn.sort_unstable();
+                let held = offsets.iter().filter(|at| line.bytes.contains(at));
+                assert_eq!(drawn, held.copied().collect::<Vec<_>>(), "{said}");
+                // A line fits the width or holds one cluster, starts at
+                // its own left edge, and is as wide as its glyphs laid end
+                // to end.
+                assert!(line.width <= width || line.glyphs.len() == 1, "{said}");
+                assert_eq!(line.glyphs[0].x, 0.0, "{said}");
+                assert!(end_to_end(line), "{said}");
+                // Breaking moves glyphs and shapes none again: each is the
+                // glyph the unbroken line has for its character, in the
+                // same font, as wide and with the same offset.
+                for (place, glyph) in line.glyphs.iter().enumerate() {
+                    let here = (glyph.id, glyph.font, glyph.advance, glyph.dx, glyph.dy);
+                    assert_eq!(Some(here), shaped(glyph.cluster), "{said}");
+                    let in_hebrew = hebrew(&shaper, line, place);
+                    assert!(in_hebrew || !hebrew_letter(character(glyph)), "{said}");
+                }
+                // Each line is in visual order on its own: of two letters
+                // next to each other, two Hebrew ones are in the reverse
+                // of the text's order and two Latin ones in it.
+                for pair in line.glyphs.windows(2) {
+                    let (left, right) = (character(&pair[0]), character(&pair[1]));
+                    if hebrew_letter(left) && hebrew_letter(right) {
+                        assert!(pair[0].cluster > pair[1].cluster, "{said}");
+                        reordered_past_the_first |= index > 0;
+                    }
+                    if left.is_ascii_alphabetic() && right.is_ascii_alphabetic() {
+                        assert!(pair[0].cluster < pair[1].cluster, "{said}");
+                    }
+                }
+            }
+            assert_eq!(at, text.len(), "{text:?} at {width}");
+            // Reordered text is on lines past the first, but where every
+            // line is one character.
+            assert_eq!(
+                reordered_past_the_first,
+                lines.len() < offsets.len(),
+                "{text:?} at {width}"
+            );
+            counts.push(lines.len());
+        }
+        // The narrower, the more lines, down to a line for each character.
+        assert!(1 < counts[0] && counts[0] < counts[1] && counts[1] < counts[2]);
+        assert_eq!(counts[2], offsets.len(), "{text:?}");
+    }
 }
 
 #[test]

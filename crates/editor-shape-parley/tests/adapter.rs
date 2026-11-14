@@ -210,6 +210,34 @@ fn an_object_replacement_character_is_a_character_like_another() {
 }
 
 #[test]
+fn a_font_run_that_reaches_past_the_text_is_held_to_it() {
+    let shaper = shaper();
+    let big = shaper.font(&sized(32));
+    // The second letter in a bigger font: the line is taller for it, and
+    // the two letters are in two fonts.
+    let within = one_line(&shaper, &in_fonts("ab", &[(1..2, big)]));
+    assert_ne!(within.glyphs[0].font, within.glyphs[1].font);
+    assert!(within.height > one_line(&shaper, &plain("ab")).height);
+    // A run from that letter to past the text's end is the same run.
+    for end in [3, 10, usize::MAX] {
+        let past = one_line(&shaper, &in_fonts("ab", &[(1..end, big)]));
+        assert_eq!(past, within, "1..{end}");
+    }
+    // A run that starts at or past the text's end is over none of it.
+    let plain_line = one_line(&shaper, &plain("ab"));
+    for run in [2..2, 2..10, 5..10] {
+        let none = one_line(&shaper, &in_fonts("ab", &[(run.clone(), big)]));
+        assert_eq!(none, plain_line, "{run:?}");
+    }
+    // The same of a text with characters of several bytes, whose end is
+    // no number of characters.
+    let within = one_line(&shaper, &in_fonts("aé", &[(1..3, big)]));
+    let past = one_line(&shaper, &in_fonts("aé", &[(1..7, big)]));
+    assert_ne!(within.glyphs[0].font, within.glyphs[1].font);
+    assert_eq!(past, within);
+}
+
+#[test]
 fn spaces_wider_than_the_view_wrap() {
     let shaper = shaper();
     let text = "a          b";
@@ -227,11 +255,19 @@ fn spaces_wider_than_the_view_wrap() {
 fn breaking_a_kept_line_adds_no_resolved_font() {
     let shaper = shaper();
     // Shaping describes every font the line is drawn in, fallbacks among
-    // them, before it returns.
-    let before = shaper.resolved().len();
+    // them, before it returns, and each of them once: the primary, which
+    // three runs of this line are drawn in, the CJK font and the emoji
+    // font.
+    assert_eq!(shaper.resolved().len(), 0);
     let kept = shaper.shape(&plain("ab 日 😀 cd"));
     let described = shaper.resolved();
-    assert!(described.len() >= before + 3);
+    assert_eq!(described.len(), 3);
+    for (index, font) in described.iter().enumerate() {
+        assert_eq!(
+            described.iter().position(|other| other == font),
+            Some(index)
+        );
+    }
     // Broken at any width, every glyph names a font described then, and
     // the table is as it was.
     for width in [None, Some(1.0), Some(30.0), Some(1000.0)] {

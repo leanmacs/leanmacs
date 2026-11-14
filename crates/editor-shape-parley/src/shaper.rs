@@ -112,6 +112,10 @@ impl State {
         };
         let stated = runs.iter().filter(|run| run.font != FontId::default());
         for run in std::iter::once(&whole).chain(stated) {
+            // A run is held to the text. Parley's builder holds a range
+            // to the text's length too at 0.13.0 (`parley/src/util.rs`),
+            // so no test can tell this line from its absence; it is here
+            // so that the rule does not rest on that.
             let bytes = run.bytes.start.min(text.len())..run.bytes.end.min(text.len());
             if bytes.is_empty() {
                 continue;

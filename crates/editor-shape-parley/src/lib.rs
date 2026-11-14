@@ -36,7 +36,8 @@
 //!   default family, then the set's fallback families as the families a
 //!   character is looked for in, in that order; its size in pixels; its
 //!   weight; its slant; its line height. A spec with no family starts at
-//!   the default family.
+//!   the default family. A font run that reaches past the text is held to
+//!   it, and one that starts at or past its end is over none of it.
 //! - **A line is as tall as the fonts on it.** Parley makes a line at
 //!   least as tall as a layout's default style; a text's default style
 //!   here has no height, and every byte states its font, so a line in a
@@ -113,7 +114,8 @@
 //!   the spec's family, then the default, then the fallbacks in the set's
 //!   order (`tests/shaping.rs`);
 //! - that shaping describes every font a line is drawn in before it
-//!   returns, so a break adds none, and what setting the fonts again does
+//!   returns, each once, so a break adds none, and what setting the fonts
+//!   again does, the new set's fallbacks in their order among it
 //!   (`tests/adapter.rs`);
 //! - the rules above (`tests/adapter.rs`, and the stand-ins in
 //!   `src/shaper.rs`);
@@ -128,7 +130,10 @@
 //! - visual order: Latin then Hebrew in the order of the bidirectional
 //!   algorithm, written out by hand, the base direction, cluster order on
 //!   a left-to-right line, and a glyph's offset carried, each of `dx` and
-//!   `dy` on its own axis and with its sign
+//!   `dy` on its own axis and with its sign; Latin and Hebrew broken at a
+//!   width, where every line holds its characters, starts at its left
+//!   edge, is as wide as its glyphs and is in visual order on its own,
+//!   and every glyph is the one the unbroken line has
 //!   (`tests/shaping.rs`); where a ligature's glyph starts in each
 //!   direction, on clusters written out by hand (`src/shaper.rs`), since
 //!   no fixture font has a ligature in a right-to-left script.
