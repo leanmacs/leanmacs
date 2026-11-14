@@ -12015,6 +12015,16 @@ def lastCharacterRows (ending : String) : List (String × String × String) :=
     ("0", here, lineStart), ("^", here, lineStart), ("$", here, here), ("3 $", here, here),
     ("g g", here, "|ab\ncd" ++ ending), ("G", here, lineStart)]
 
+/-- The move command called with `arguments`, as an invocation no key
+yielded, under the Vim scheme that ships with evil's commands, from the
+text and the cursor `fixture` says: the text after it with a bar at the
+cursor, and what the echo area says. `none` if there is no driver. -/
+def evilMoved (fixture : String) (arguments : List Argument) : Option (String × String) :=
+  (evilDriver fixture).map fun driver =>
+    let (moved, _) :=
+      driver.stepped (driver.loop.invoke driver.handed { command := Vim.moveCommand, arguments })
+    (evilShown moved, moved.loop.state.echo)
+
 /-- The checks of evil's motions (`Editor/Evil.lean`, `Editor/Evil/Motions.lean`)
 on the loop's driver over the editor's models, under the Vim scheme that
 ships with the commands compiled code registers for evil: a motion's key
@@ -12120,6 +12130,29 @@ def evilMotionChecks : List Check :=
         unless echo == "move: no motion named (expects a motion's name, then an optional count)" do
           throw (IO.userError s!"the echo area says {repr echo}")
         return echo != Evil.noSuchMotion "" && evilShown ran == "a|bc" },
+    { name :=
+        "the move command called with a motion's name and no count after it moves with no count: every motion of the vocabulary, from the middle of a text of three lines, leaves the cursor where it leaves it when the count is 0, which is how a key with no count calls it, and says nothing; by the name of the motion one cell on it goes where l does"
+      run := do
+        let here := "ab cd\ne|f gh\nij kl"
+        let wrong :=
+          Evil.motions.toList.filterMap fun motion =>
+            let alone := evilMoved here [.str motion.name]
+            let counted := evilMoved here [.str motion.name, .nat 0]
+            if alone.isSome && alone == counted && alone.map (·.2) == some "" then none
+            else some s!"{motion.name} alone left {repr alone}, and with the count 0 {repr counted}"
+        unless wrong.isEmpty do
+          throw (IO.userError ("; ".intercalate wrong))
+        return !Evil.motions.isEmpty &&
+            evilMoved "a|bc" [.str Evil.right.name] == some ("ab|c", "") &&
+            evilKeys "a|bc" "l" == "ab|c" },
+    { name :=
+        "the move command called with a first argument that is not a string says that no motion was named, as it does handed no argument, and leaves the cursor where it was: a number alone, and a number before a motion's name, which is not read as the name"
+      run :=
+        pure <|
+          !Evil.noMotionNamed.isEmpty &&
+            evilMoved "a|bc" [.nat 1] == some ("a|bc", Evil.noMotionNamed) &&
+            evilMoved "a|bc" [.nat 1, .str Evil.right.name] == some ("a|bc", Evil.noMotionNamed) &&
+            evilMoved "a|bc" [] == some ("a|bc", Evil.noMotionNamed) },
     { name :=
         "a motion is no step of the history: after it the buffer's tree has no node more and nothing pending, and the buffer is not modified"
       run :=

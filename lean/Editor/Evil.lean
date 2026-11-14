@@ -32,8 +32,10 @@ looks the motion's name up in, so the caller supplies the vocabulary.
 
 - **Its arguments are the name of the motion, a string, and the count**, a
   number, with 0 for none, as the Vim scheme lays a move out
-  (`Editor/InputScheme/Vim.lean`, "Edits"). A name with no entry says
-  `<name>: no such motion` in the echo area and moves nothing.
+  (`Editor/InputScheme/Vim.lean`, "Edits"). The count may be left out,
+  which is no count, so a command of config's calls it with a name alone.
+  A name with no entry says `<name>: no such motion` in the echo area and
+  moves nothing.
 - **A call that names no motion says so, apart from a name with no
   entry.** Run by its name, which hands a command no argument, or called
   with a first argument that is not a string, it says
@@ -232,13 +234,13 @@ def noText : String :=
 
 /-- The move command over the vocabulary `motions`, as it is called ("The
 move command", in the module docs): its first argument names the motion and
-its second is the count, 0 for none. The head of the primary range of the
-target's selection goes where the motion leads, rested by the rule of the
-call's report, and the selection is one range of the report's shape, from
-the anchor it had where the report says a motion extends the selection,
-and with both ends on the new head otherwise. A call that names no motion
-(`noMotionNamed`) and a name with no motion (`noSuchMotion`) are each said
-in the echo area, and nothing moves. -/
+its second is the count, 0 or left out for none. The head of the primary
+range of the target's selection goes where the motion leads, rested by the
+rule of the call's report, and the selection is one range of the report's
+shape, from the anchor it had where the report says a motion extends the
+selection, and with both ends on the new head otherwise. A call that names
+no motion (`noMotionNamed`) and a name with no motion (`noSuchMotion`) are
+each said in the echo area, and nothing moves. -/
 def move (motions : Array Vocabulary.Motion) (call : Call) : EditorM Unit := do
   let named : Option (String × Option Nat) :=
     match call.arguments with
