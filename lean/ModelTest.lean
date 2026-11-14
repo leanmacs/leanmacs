@@ -6,6 +6,7 @@ import Editor.Config.Reload
 import Editor.Display.Contract
 import Editor.Display.Model
 import Editor.Evil.Compiled
+import Editor.Ex.Line
 import Editor.File.Cases
 import Editor.File.Model
 import Editor.Files.Compiled
@@ -232,6 +233,8 @@ need no model and no fake of a collaborator:
   chord names it back;
 - `invocationChecks`: an invocation (`Editor/Invocation.lean`): two are
   compared by their command names and their arguments;
+- `exLineChecks`: an ex line (`Editor/Ex/Line.lean`): the name and the
+  argument a typed line parses to;
 - `schemeChecks`: the scheme interface (`Editor/InputScheme.lean`) on the
   test scheme (`Editor/InputScheme/Test.lean`), with keymaps written as key
   strings: what the keys of a bound sequence yield, that an unbound key
@@ -6012,6 +6015,28 @@ def invocationChecks : List Check :=
             decide
               (({ command := "move", arguments := [.nat 1, .nat 2] } : Invocation) ≠
                 { command := "move", arguments := [.nat 2, .nat 1] })) }]
+
+/-- The checks of an ex line (`Editor/Ex/Line.lean`): what a line typed on
+the ex command line parses to. -/
+def exLineChecks : List Check :=
+  let parsed (line : String) : Option (String × Option String) :=
+    (Ex.parse line).map fun parsed => (parsed.name, parsed.argument)
+  [{  name := "an ex line of one word is that name, with no argument"
+      run := pure (parsed "w" == some ("w", none)) },
+    { name := "an ex line of a word and more is the word as its name and the rest as its argument"
+      run := pure (parsed "e notes.txt" == some ("e", some "notes.txt")) },
+    { name :=
+        "white space round an ex line and after its name is dropped, and the argument is kept whole, the spaces inside it included"
+      run := pure (parsed "  e   /tmp/my notes.txt  " == some ("e", some "/tmp/my notes.txt")) },
+    { name := "a tab separates an ex name from its argument as a space does"
+      run := pure (parsed "e\tnotes.txt" == some ("e", some "notes.txt")) },
+    { name := "an ex name may hold a hyphen, and its argument a digit"
+      run := pure (parsed "greet-all 2" == some ("greet-all", some "2")) },
+    { name :=
+        "an ex name is everything up to the first white space: a mark after letters is part of the name, and so is a leading colon"
+      run := pure (parsed "w!" == some ("w!", none) && parsed ":w" == some (":w", none)) },
+    { name := "the empty line and a line of white space are no ex line"
+      run := pure (parsed "" == none && parsed "  \t " == none) }]
 
 /-- The key strings the scheme fixtures are written with. -/
 def schemeKeyStrings : List String :=
@@ -12619,6 +12644,7 @@ def checks : List Check :=
     keymapChecks ++
     keyNotationChecks ++
     invocationChecks ++
+    exLineChecks ++
     schemeChecks ++
     schemeContractChecks ++
     dispatchChecks ++
