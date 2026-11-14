@@ -121,7 +121,7 @@ edits, undoes and repeats with no config.
 | `self-insert` | A key that prints, in insert state and in the minibuffer | Inserts what the key prints at the cursor. Everything typed until `<Escape>` is one step of the history. |
 | `normal` | `<Escape>` | Run by its key, returns to normal state. From insert state the cursor steps back one character. Run by its name it leaves the view in the state it is in (below). |
 | `visual`, `visual-line` | `v`, `V` | Run by its key, enters a visual state: a motion then extends the selection, by characters or by whole lines. Run by its name it enters none (below). |
-| `operate` | `d`, `c`, `y`, each with a motion (`d w`, `c 2 e`), typed twice (`d d`), or in a visual state | Deletes, changes or yanks what the motion, the lines or the selection covers, as Vim does, into the unnamed register. `c` then begins an insert. An operator whose motion cannot be made (`d j` on the last line) gives up: nothing changes, and the echo area says `operate: down cannot move`. |
+| `operate` | `d`, `c`, `y`, each with a motion (`d w`, `c 2 e`), typed twice (`d d`), or in a visual state | Deletes, changes or yanks what the motion, the lines or the selection covers, as Vim does, into the unnamed register. `c` then begins an insert. An operator whose motion cannot be made (`d j` on the last line) gives up: nothing changes, and the echo area says `operate: down cannot move`. Where the motion moved before it failed (`d 3 b` that reaches an empty first line with a step left over) the cursor is left where the motion got to, nothing else changes, and the command is printed as having broken off. |
 | `delete-char` | `x` | Deletes the character under the cursor, or a count of them, into the unnamed register. |
 | `put-after`, `put-before` | `p`, `P` | Puts the unnamed register after or before the cursor, or below or above the line when the register holds whole lines. With nothing to put it gives up. |
 | `open-below`, `open-above` | `o`, `O` | Opens an empty line below or above the cursor's line and begins an insert on it. |
@@ -581,9 +581,12 @@ the operators, `x p P o O`, `u`, `C-r`, `.`, `i a I A`, `v V`,
 command a key runs prints nothing: what became of it is
 in the next scene's echo area, `<name>: no such command`,
 `<name>: refused: <error>`, `<name>: interrupted`, or `<name>: <reason>`
-for a command that gave up, and a command that was
+for a command that gave up or broke off, and a command that was
 refused or interrupted, or that gave up, is rolled back: its buffer's text and selections are
-as they were before it. `C-g` is the interrupt key: it stops a command that
+as they were before it. A command that broke off is not rolled back: what
+it did stays, and the key that ran it has entered no state (an operator
+whose motion failed after it moved leaves the cursor where the motion got
+to). `C-g` is the interrupt key: it stops a command that
 is running at its next request to the editor, and is then looked up like
 any other key. A command that takes longer than 100 ms is logged on stderr,
 `slow command: <name> took <n> ms`, and not on the output.
@@ -603,7 +606,7 @@ reload <n>: installed, <c> chunks, <k> commands
 reload <n>: rejected
 diagnostic: <source>:<line>:<column>: <severity>: <first line of the message>
 run <name>: ok            (or "refused: <error>", "interrupted",
-                           "gave up: <reason>",
+                           "gave up: <reason>", "broke off: <reason>",
                            "no such command", "no window", or "no frame"
                            when the loop's frame could not be made)
 spawn <name>: job <id>    (or "no such job")

@@ -206,7 +206,7 @@ checks:
   `evilUndoChecks`, `evilRepeatChecks`). An operator's row also says the
   unnamed register after and whether it is line-wise, or that it is as it
   was, which a sentinel set before the keys shows, whether the view is
-  left in insert state, and whether the command gave up
+  left in insert state, and whether the command gave up or broke off
   (`docs/design/keymaps-and-modes.md`, "Operators as built"). The table of
   `d c y` over each of the fifteen motions has five situations: no count,
   a count of 2, the cursor on an empty line, and the cursor on the

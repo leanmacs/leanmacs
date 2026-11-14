@@ -391,7 +391,7 @@ scheme.
   two states of the scheme: the one after the last key, and the last one in
   which nothing was pending. When the invocation a key yields does not run
   to its end (no such command, a refusal, an interrupt, a command that
-  gives up), the scheme goes
+  gives up or breaks off), the scheme goes
   back to the second: it is as it was before the first key of the
   sequence. When the invocation runs to its end, or a key yields nothing
   and leaves nothing pending, the second becomes the first.
@@ -405,8 +405,9 @@ scheme.
   - Consequence: a key whose command is not registered echoes
     `<name>: no such command` and the view stays in the state it was in;
     and an operator whose motion fails (`cj` on the last line) gives up,
-    so the view is not left in insert state and the cancelled edit is not
-    the last change ("Operators as built").
+    or breaks off where the motion moved first (`c3b` that reaches an
+    empty first line), so the view is not left in insert state and the
+    cancelled edit is not the last change ("Operators as built").
 - **What a command is run with** (`Call`): the focused window and its
   buffer, the invocation's arguments unchanged, the keys that yielded
   it, which are what the scheme reported as pending before the last key,
@@ -425,8 +426,9 @@ scheme.
 - **A failure is said in the echo area** and the editor keeps running:
   `<name>: no such command`, `<name>: refused: <error>`,
   `<name>: interrupted`, or `<name>: <reason>` for a command that gave up
-  with a reason. The echo is cleared when an invocation runs, and
-  not by a key that yields nothing. What the command did is rolled back
+  or broke off with a reason. The echo is cleared when an invocation runs,
+  and not by a key that yields nothing. What the command did is rolled
+  back, but for a command that broke off, whose doings stay
   ([concurrency.md](concurrency.md), "Foreground: commands").
 
 ### Vocabulary
@@ -1070,6 +1072,10 @@ four that begin an insert).
   back as `<Escape>` does.
 - **It is one command in normal state**, so it is one step of the history
   and is rolled back whole.
+- **A change that breaks off breaks the replay off.** A replayed operator
+  whose motion fails after it moved leaves the cursor where the motion got
+  to and ends the command there, with no typed text inserted, as Vim's `.`
+  does ("Operators as built").
 - **What is not repeated gives the command up**, with nothing changed: no
   change, which is the command run by its name; a command the table does
   not have, which is a command of config's bound as changing text; and a
@@ -1558,7 +1564,7 @@ documentation:
 
 | # | Rule | Source |
 |---|---|---|
-| R1 | A motion that failed gives the operator up | Vim cancels the operator; its documents do not say it in one place |
+| R1 | A motion that failed cancels the operator, and the cursor is left where the motion got to | Vim cancels the operator; its documents do not say it in one place |
 | R2 | Reach `lines`: the stretch is the lines of `p` and `t`, and those between | `motion.txt`, `linewise` |
 | R3 | Otherwise it is cells from the lower of `p` and `t` to the higher. Reach `inclusive` takes the cell at the higher end too, unless that end is where its line's content ends | `motion.txt`, `inclusive`, `exclusive` |
 | R4 | The stretch stops no later than where the last line's content ends | The empty last row is no line here; Vim cannot address the last line's line feed |
@@ -1573,7 +1579,7 @@ What each motion says of itself:
 | `left`, `right` | exclusive | | Never. `right`'s raw target is the line break at a line's last cell, so `dl` there takes that cell |
 | `down`, `up` | lines | | On the last line, and on the first. A count past the text stops at the last line and does not fail |
 | `word-forward`, `bigword-forward` | exclusive | The last step stops where its line's content ends, and from an empty line it goes to the next line's start. For an operator that replaces, on a cell that is neither a blank (a space or a tab) nor a line break: the end of the word under the cursor, counted as the first, then `count - 1` word ends on, with reach `inclusive` | Never |
-| `word-backward`, `bigword-backward` | exclusive | | When a step is asked of it at offset 0: when it starts there, and when it has come to rest on an empty first line with steps left over |
+| `word-backward`, `bigword-backward` | exclusive | | When a step is asked of it at offset 0: when it starts there, and when it has come to rest on an empty first line with steps left over, which is a failure after the motion moved |
 | `word-end`, `bigword-end` | inclusive | | Never |
 | `line-start` | exclusive | | Never |
 | `line-first-non-blank` | exclusive | On a line of blanks only, the line's last blank | Never |
@@ -1643,15 +1649,39 @@ each with one rule:
   buffer's line ending and then the register's lines without their last
   line break, so `yyp` on `ab` leaves `ab⏎ab`.
 
-**A motion that fails gives the operator up** (`Evil.cannotMove`). Vim
+**A motion that fails cancels the operator** (`Evil.cannotMove`). Vim
 cancels the operator: nothing is deleted or yanked, the register is as it
-was, `c` begins no insert, and the edit is not what `.` repeats. Here the
-command gives up ([concurrency.md](concurrency.md), "Foreground:
-commands"): the loop rolls it back, and the scheme goes back to its state
-at rest, so the view is not in insert state and the last change is what
-it was. What does not fail, as in Vim: `dh` at a line's start, `dl` on an
-empty line, `d0` and `d^` where the cursor is, and `dw` and `de` at the
-text's end take no cell or the last cell.
+was, `c` begins no insert, the edit is not what `.` repeats, and the
+cursor is where the motion got to. Here, either way, the scheme goes back
+to its state at rest, so the view is not in insert state and the last
+change is what it was ([concurrency.md](concurrency.md), "Foreground:
+commands"):
+
+- **Where the motion did not move, the command gives up** and the loop
+  rolls it back: `dj` on the last line, `dk` on the first, `d2$` on the
+  last line, `db` at the text's start.
+- **Where the motion moved before it failed, the command places the
+  cursor and breaks off**, which rolls nothing back. A counted `b` or `B`
+  that comes to rest on an empty first line with steps left over fails
+  there, and Vim leaves the cursor on that line: `d3b` on the `c` of
+  `⏎ab cd` leaves the cursor on the empty first line and the text and the
+  register as they were. The cursor is one range of the shape the
+  selection had before the command, rested as normal state rests one, and
+  the window keeps no wanted column. They are the only motions that ship
+  that fail after moving. A replayed change breaks its replay off the
+  same way ("The last change").
+- **What does not fail**, as in Vim: `dh` at a line's start, `dl` on an
+  empty line, `d0` and `d^` where the cursor is, and `dw` and `de` at the
+  text's end take no cell or the last cell. With a count they cannot go
+  the whole way of, `w W e E` take what there is, `h` and `l` the cells
+  the line has, `j` and `k` stop at the last line and at the first, and
+  `$` at the last line's end.
+- **How it was verified.** The rows of `b B` that fail after moving, of
+  each other motion with a count past what the text has, and of `.` after
+  a cancelled operator were run through Vim 9.1 by hand, outside the
+  suite, when the review of the phase was answered; the editor's results
+  for the same rows are pinned by `evilOperatorChecks` and
+  `evilRepeatChecks`.
 
 **`x`, `p`, `P`.**
 
@@ -1676,11 +1706,6 @@ built":
 - **A cursor cannot rest in the empty last row** ("Where a cursor rests"):
   after cells of a last line with no final line feed are emptied, and
   after `o` and escape there.
-- **A motion that fails after it moved.** When `b` or `B` with a count
-  comes to rest on an empty first line with steps left over, Vim cancels
-  the operator and leaves the cursor on that line. Here the command is
-  rolled back, so the cursor stays where it was. The text, the register
-  and the state agree.
 - **A count before `o` and `O` is ignored**, as one before `i a I A` is.
 - **What `u` does to the cursor** ("Undo and redo").
 - **A change over a visual selection is not repeated** ("The last
@@ -2537,7 +2562,7 @@ evilKeys "ab|c" "i X <Escape>" == "ab|Xc"
   unnamed register after and whether it is line-wise, or that it is as it
   was, which a sentinel set before the keys shows; whether the view is
   left in insert state, read from the scene's status field; and whether
-  the command gave up. The operator × motion table, its completeness
+  the command gave up or broke off. The operator × motion table, its completeness
   check and the sweep are in "Operators as built".
 - **The clipboard register is checked on the clipboard model**
   (`evilClipped`), which a check sets and takes away; the clipboard port's
@@ -2673,10 +2698,6 @@ every build). The second is proved on the text model
   and escape emptied, when the text has no final line feed. Letting a
   normal-state cursor rest in the empty last row of such a text would
   remove the departure, and is phase 11's rule to change.
-- **A motion that fails after it moved** ("Operators as built"): `b` with
-  a count that comes to rest on an empty first line. Vim leaves the cursor
-  there; here the command is rolled back. Moving the cursor and then
-  giving up would need a give-up that keeps part of what the command did.
 - **What `u` does to the cursor** ("Undo and redo"). The phase asks for
   the cursor from before the change; Vim leaves it at the start of the
   changed text. A step whose first edit was typed text hands back the bar

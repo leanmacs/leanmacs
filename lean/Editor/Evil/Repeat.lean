@@ -29,6 +29,10 @@ insert).
   `<Escape>` does.
 - **It is one command in normal state**, so it is one step of the history
   and is rolled back whole when any part of it gives up or is refused.
+- **A change that breaks off breaks the replay off**: an operator whose
+  motion failed after it moved leaves the cursor where the motion got to
+  (`Editor/Evil/Operators.lean`, "What an operator takes") and ends the
+  command there, so no typed text is inserted, as Vim's `.` does.
 - **A count typed before `.`** has already replaced the change's count in
   the arguments (the scheme's rule). For a change that begins an insert
   with a key (`i a I A o O`) it replaces a count those commands ignore.

@@ -756,6 +756,7 @@ made of state requests and text requests. Config sees it through
 | Ask which command an ex name is bound to, and what the name takes | `exBinding name`, answered by the loop from the registry as it is at that step | No |
 | Have another command run after it, as a step of its own | `invoke invocation` | No: the host runs it once the command has ended |
 | End itself with a reason, rolled back, with the reason in the echo area | `giveUp reason` ([concurrency.md](concurrency.md), "Foreground: commands") | No |
+| End itself with a reason and keep what it did, with the reason in the echo area and the input scheme back at rest | `breakOff reason` ([concurrency.md](concurrency.md), "Foreground: commands") | No |
 | Keep a register, a text and whether it is line-wise, under a name, and read one | `setRegister name register`; `EditorState.register?` on `editorState` | No |
 | Replace one extent in an edit that carries the two selections it is handed, the one from before the command and the one it leaves | `Target.replaceCarrying`, over `TextId.replaceCarrying` | Yes: `apply`, with the user's origin, and the marker |
 | Read and write the system clipboard, each refused as a value | `Clipboard.read`, `Clipboard.write`, the clipboard port's own, lifted | No: the clipboard handler the host hands in |
@@ -829,8 +830,8 @@ made of state requests and text requests. Config sees it through
 - **Evil's editing commands** (the command loop's phase 13): the operators
   and the operate command, `x`, the registers and the two puts, the two
   commands that open a line, undo and redo, and dot repeat, each in a
-  module of its own beside `lean/Editor/Evil.lean`. They needed two state
-  requests (`giveUp`, `setRegister`), one operation of the API
+  module of its own beside `lean/Editor/Evil.lean`. They needed three state
+  requests (`giveUp`, `breakOff`, `setRegister`), one operation of the API
   (`replaceCarrying`, with a case in `lean/Editor/Api/Cases.lean`), and
   one new sub-port, the clipboard's, with its model and its contract
   ("The editor's port is a composite"). An operator is a vocabulary entry

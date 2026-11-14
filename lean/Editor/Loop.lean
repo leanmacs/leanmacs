@@ -91,6 +91,15 @@ command's name and plain arguments, and the loop runs it (`Loop.run`):
    (`giveUp`, `Editor/Api.lean`) is rolled back the same way, and what is
    said is `<name>: ` and its reason, with no `refused:`: the store refused
    nothing (`Editor/Command/Dispatch.lean`, "A command that gives up").
+   **A command that breaks off** (`breakOff`, `Editor/Api.lean`) is said
+   the same way and is not rolled back: the state it reached is the
+   loop's (`Editor/Command/Dispatch.lean`, "A command that breaks off").
+   What this module says of a command that ran to its end holds for it
+   too (the jobs, the invocations and the reload it asked for are handed
+   back, what it dropped is given up, and the scheme is told of the views
+   it closed), with two differences: it has no value, so it asks for
+   nothing to be written, and the scheme goes back to its state at rest
+   ("The scheme after a command that failed", below).
 6. **What the command asked to be written** (a command over a store) is
    handed back with the step (`Loop.Stepped.write`), for whoever holds the
    cells.
@@ -284,7 +293,10 @@ not run to its end, the scheme goes back to its state at rest: it is as it
 was before the first key of the sequence, so a key that entered a state of
 the scheme's has not entered it, and no prefix is left pending. When the
 invocation runs to its end, or a key yields nothing and leaves nothing
-pending, the state at rest becomes the state after the key.
+pending, the state at rest becomes the state after the key. A command that
+breaks off (`breakOff`, `Editor/Api.lean`) has not run to its end for
+this: the scheme goes back to its state at rest, though what the command
+did stays.
 
 ## Rollback
 
@@ -694,6 +706,9 @@ inductive Loop.Ending where
   | interrupted
   /-- It gave up, with `reason`, and was rolled back. -/
   | gaveUp (reason : String)
+  /-- It broke off, with `reason`: what it did was kept, and the scheme is
+  back in its state at rest. -/
+  | brokeOff (reason : String)
   /-- No command is registered under the name. -/
   | noSuchCommand
   /-- No window is focused for the command to act on. -/
@@ -1150,7 +1165,8 @@ structure Ran where
   to its end. -/
   reload : Bool := false
 
-/-- Whether the command ran to its end. -/
+/-- Whether the command ran to its end: one that broke off did not, though
+what it did was kept. -/
 def Ran.finished (ran : Ran) : Bool :=
   ran.ending == .finished
 
@@ -1174,7 +1190,9 @@ it asked for taken out and handed back. It is not
 refused: a refusal of the command, an interrupt and the reason of a command
 that gave up are each said in the echo area, after `name`, and a command
 that was refused or interrupted, or that gave up, is rolled back to the
-state from before it, with what could not be said after it.
+state from before it, with what could not be said after it. The reason of
+a command that broke off is said the same way, and the state it reached is
+kept as that of a command that ran to its end is.
 
 Only the command is guarded. What this makes of its own requests, keeping
 before it, rolling back after it and giving up what a command that ran to
@@ -1193,14 +1211,14 @@ def dispatch (keys : Keys scheme) (state : EditorState) (name : String)
   let failed (what : String) (ending : Ending) : EditorM Ran := do
     let (state, unrestored) ← kept.restore state left
     return { state := said state name (what ++ unrestored), ending, log }
-  match outcome with
-  | .finished write =>
+  -- What the command did stays: `left`, the state it reached, is the loop's.
+  let stays (left : EditorState) (ending : Ending) (write : Option Config.Write) : EditorM Ran := do
     let ungiven ← gaveUp state left
     return {
         state :=
           { left.refusedBy ungiven with
             starts := #[], answered := #[], reload := false }
-        ending := .finished
+        ending
         closed := closedViews state left
         opened := openedMinibuffer state left
         write
@@ -1208,12 +1226,17 @@ def dispatch (keys : Keys scheme) (state : EditorState) (name : String)
         starts := left.starts
         answered := left.answered
         reload := left.reload }
+  match outcome with
+  | .finished write =>
+    stays left .finished write
   | .refused refusal =>
     failed s!"refused: {refusal.describe}" (.refused refusal)
   | .interrupted =>
     failed "interrupted" .interrupted
   | .gaveUp reason =>
     failed reason (.gaveUp reason)
+  | .brokeOff reason =>
+    stays (said left name reason) (.brokeOff reason) none
 
 /-- Runs `invocation`, which the keys `typed` yielded, from `state` ("Running
 an invocation", in the module docs): clears the echo area, looks the

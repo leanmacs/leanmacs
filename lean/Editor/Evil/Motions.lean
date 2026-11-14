@@ -38,7 +38,7 @@ What each says of itself for an operator (`Editor/Vocabulary.lean`,
 | `left`, `right` | exclusive | | Never |
 | `down`, `up` | lines | | On the last line, and on the first. A count past the text stops there and does not fail |
 | `word-forward`, `bigword-forward` | exclusive | The last step stops where its line's content ends, and from an empty line goes to the next line's start. For an operator that replaces, on a cell that is neither a blank nor a line break: the end of the word, inclusive | Never |
-| `word-backward`, `bigword-backward` | exclusive | | When a step is asked of it at the text's start |
+| `word-backward`, `bigword-backward` | exclusive | | When a step is asked of it at the text's start: where it starts, and where it has come to rest on an empty first line with steps left over, which is the one failure here that comes after the motion moved |
 | `word-end`, `bigword-end` | inclusive | | Never |
 | `line-start` | exclusive | | Never |
 | `line-first-non-blank` | exclusive | On a line of blanks only, the line's last blank | Never |

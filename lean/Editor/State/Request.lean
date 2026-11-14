@@ -83,6 +83,11 @@ the models and against the library alike (`Editor/Command/Dispatch.lean`).
   request, with the reason (`Editor/Command/Dispatch.lean`, "A command
   that gives up"). This handler knows no command to end, so here the
   request changes nothing and is answered like a write that has no reply.
+- **A command breaks off by one request**, `breakOff`, with its reason
+  (`breakOff`, `Editor/Api.lean`). It is the loop's to act on as `giveUp`
+  is, and differs in what the loop then does: what the command did stays
+  (`Editor/Command/Dispatch.lean`, "A command that breaks off"). Here it
+  changes nothing either.
 - **A register is set by one request**, `setRegister`, with its name
   (`Editor/State.lean`, "Registers"). It is never refused: a name is any
   string, and which names mean something is the asking command's rule. A
@@ -168,6 +173,9 @@ inductive StateRequest where
   | reload
   /-- End this command here, with `reason`: it gives up. -/
   | giveUp (reason : String)
+  /-- End this command here, with `reason`, and keep what it did: it breaks
+  off. -/
+  | breakOff (reason : String)
   /-- Keep `register` under `name`, in place of the register the name
   had. -/
   | setRegister (name : String) (register : Register)
@@ -199,6 +207,7 @@ abbrev StateRequest.Reply : StateRequest → Type
   | .quit => Unit
   | .reload => Unit
   | .giveUp _ => Unit
+  | .breakOff _ => Unit
   | .setRegister .. => Unit
 
 namespace EditorState
@@ -247,6 +256,7 @@ def handle : (request : StateRequest) → EditorState → request.Reply × Edito
   | .quit, state => ((), { state with quitting := true })
   | .reload, state => ((), { state with reload := true })
   | .giveUp _, state => ((), state)
+  | .breakOff _, state => ((), state)
   | .setRegister name register, state => ((), state.setRegister name register)
 
 end EditorState

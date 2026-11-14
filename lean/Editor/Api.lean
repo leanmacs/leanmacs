@@ -244,6 +244,29 @@ cannot be done (`docs/design/concurrency.md`, "Foreground: commands").
   returns ran to its end: what it did so far stays, and a key that entered
   a state has entered it. Give up when the call must leave no trace.
 
+## Breaking off
+
+`breakOff reason` ends the command there too, and keeps what it did: it
+found that what its key stands for cannot be done, after doing something
+that is to stay. It is how evil's operate command leaves the cursor where a
+motion got to before it failed, with the operator cancelled
+(`Editor/Evil/Operators.lean`).
+
+- **Its type is `EditorM α` for any `α`**, and it cannot be caught, as
+  `giveUp` cannot: it makes one state request (`StateRequest.breakOff`),
+  at which the loop ends the command's program
+  (`Editor/Command/Dispatch.lean`, "A command that breaks off").
+- **The loop rolls nothing back.** The texts, the markers and the editor
+  state the command reached are kept, as a finished command's are, and
+  what it asked to be started or run after it is handed back. The echo
+  area reads `<name>: <reason>`, in place of what the command said.
+- **The input scheme goes back to its state at rest**, as after a command
+  that gave up: a key that entered a state of the scheme's has not entered
+  it, and its edit is not the last change. So the command leaves the
+  selection as the state the view was in before the key has it.
+- **Run where no loop dispatches the command** it is refused, with
+  `badSelection`, as `giveUp` is.
+
 It makes no request of the library. Pinned by
 `ModelTest.dispatchStateChecks` and `ModelTest.dispatchCommandGivesUpChecks`.
 
@@ -427,6 +450,16 @@ Run where no loop dispatches the command it is refused with
 `badSelection`. -/
 def giveUp {α : Type} (reason : String) : EditorM α := do
   EditorState.ask (.giveUp reason)
+  throw .badSelection
+
+/-- Ends the command here, with `reason`, and keeps what it did ("Breaking
+off", in the module docs): the loop that runs the command rolls nothing
+back, says `<name>: <reason>` in the echo area and puts the input scheme
+back in its state at rest, and nothing after this runs, a `catch` round it
+included. Run where no loop dispatches the command it is refused with
+`badSelection`. -/
+def breakOff {α : Type} (reason : String) : EditorM α := do
+  EditorState.ask (.breakOff reason)
   throw .badSelection
 
 /-- Keeps `register` under `name`, in place of the register the name had

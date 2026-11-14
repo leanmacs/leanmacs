@@ -2138,6 +2138,15 @@ def givingUpChunk : String :=
     giveUp \"no can do\"
 "
 
+/-- A chunk whose `setup` registers a command `stopper`: it inserts `typed`
+at the cursor of view 0, and then breaks off, with a reason. -/
+def breakingOffChunk : String :=
+  "def setup : SetupM Unit := do
+  command \"stopper\" do
+    discard <| (⟨0⟩ : ViewId).insertAtSelections \"typed\"
+    breakOff \"far enough\"
+"
+
 /-- A chunk whose `setup` registers two commands and a job. `copy` writes a
 text to the clipboard. `paste` puts the text the clipboard holds in the
 echo area, or says what it was answered instead. `courier` sleeps 10 ms, and
@@ -2213,6 +2222,18 @@ def hostLoopChecks (context : Context) : List Check :=
           return (← session.lines) ==
                 #["reload 1: installed, 1 chunks, 1 commands", "run quitter: gave up: no can do"] &&
               (← session.scene) == ("quitter: no can do".quote, #[viewLine "abcd" 4]) },
+    { name :=
+        "the driver's run of a command of config's that breaks off keeps what the command did and is printed so: the output says it broke off, with its reason, the scene's echo is its name and the reason with no refused, and the view's text holds what the command inserted"
+      run :=
+        withHost context [("config.lean", breakingOffChunk)] fun session => do
+          session.ask [.reload]
+          unless ← Event.post (.commit "abcd") do
+            return false
+          session.ask [.run "stopper"]
+          return (← session.lines) ==
+                #["reload 1: installed, 1 chunks, 1 commands",
+                  "run stopper: broke off: far enough"] &&
+              (← session.scene) == ("stopper: far enough".quote, #[viewLine "abcdtyped" 9]) },
     { name :=
         "the host keeps a clipboard of its own: before a write a command of config's reads no text, after one command wrote a text the next reads it, and so does a finished job's command"
       run :=

@@ -29,9 +29,10 @@ else guards a program, and every command a host runs goes through it.
   request does not go on. What a command made before it stopped is the
   loop's to roll back.
 - **A dispatched command is not refused.** How it ended is its value
-  (`Guarded`): it finished, it was refused, it was interrupted, or it gave
-  up ("A command that gives up"). So the loop that runs it goes on to roll
-  back and to publish whichever it was.
+  (`Guarded`): it finished, it was refused, it was interrupted, it gave up
+  ("A command that gives up"), or it broke off ("A command that breaks
+  off"). So the loop that runs it goes on to roll back, where it does, and
+  to publish whichever it was.
 - **A state request is not guarded.** It is pure Lean, not a call into the
   library, and what the guard bounds is the requests that reach the library
   (`docs/design/concurrency.md`, "When it is asked"). It also keeps a move
@@ -59,7 +60,7 @@ else guards a program, and every command a host runs goes through it.
   reaches a runner, and the handler is the same function on the models and
   against the library by construction.
 - **The state comes back however the command ended**: finished, refused,
-  interrupted or having given up. A rollback needs the undo trees the
+  interrupted, having given up or having broken off. A rollback needs the undo trees the
   command left (`Editor/Loop.lean`, "Rollback"), so the state a command
   that did not run to its end had reached is handed back with how it
   ended, and the loop decides what to keep of it.
@@ -86,6 +87,25 @@ back (`docs/design/concurrency.md`, "Foreground: commands").
   reason would have run to its end: the scheme would keep the state its
   key entered, and what the command did so far would stay.
 - **The case recurses nowhere**: it ends the program.
+
+## A command that breaks off
+
+A command also ends itself, with a reason, by a second state request
+(`StateRequest.breakOff`, made by `breakOff`, `Editor/Api.lean`): it found
+that what its key stands for cannot be done, and what it did so far is to
+stay. Evil's operate command breaks off when its motion failed after it
+moved the cursor, as Vim cancels the operator and leaves the cursor where
+the motion got to (`Editor/Evil/Operators.lean`).
+
+- **The program is finished at that request**, with `Guarded.brokeOff` of
+  the reason and the state the command had reached, as one that gives up
+  is: the continuation is not applied, and nothing is thrown.
+- **It is not a give-up.** The loop rolls nothing back: the state the
+  command reached is the loop's, as a finished command's is. It is not a
+  command that ran to its end either: the loop says the reason, and puts
+  the input scheme back in its state at rest, so the key that ran the
+  command has entered no state and is no last change
+  (`Editor/Loop.lean`, "Running an invocation").
 
 ## Requests that name something registered
 
@@ -150,6 +170,9 @@ inductive Guarded (α : Type) where
   | interrupted
   /-- It gave up, with `reason`, and made no request after that one. -/
   | gaveUp (reason : String)
+  /-- It broke off, with `reason`, and made no request after that one: what
+  it did so far is to stay. -/
+  | brokeOff (reason : String)
   deriving BEq, Repr
 
 /-- What the loop is told of the registry for the state requests that name
@@ -178,7 +201,8 @@ before each of its other requests: how the command ended, and the state it
 left, or had reached when it was refused or when the flag was found up,
 with that request and everything after it not made. A request to give up
 ends the program there, with its reason and the state it had reached ("A
-command that gives up", in the module docs).
+command that gives up", in the module docs), and so does a request to
+break off ("A command that breaks off").
 
 A request to set a major mode is answered with what `registered` says of
 the mode ("Requests that name something registered", in the module docs):
@@ -212,6 +236,7 @@ partial def Program.dispatched {α : Type} (registered : Loop.Registered) :
     else dispatched registered state (next (.error (.noSuchJob name)))
   | state, .step (.state (.ex name)) next => dispatched registered state (next (registered.ex name))
   | state, .step (.state (.giveUp reason)) _ => .done (.gaveUp reason, state)
+  | state, .step (.state (.breakOff reason)) _ => .done (.brokeOff reason, state)
   | state, .step (.state request) next =>
     let (reply, state) := state.handle request
     dispatched registered state (next reply)
@@ -224,7 +249,7 @@ partial def Program.dispatched {α : Type} (registered : Loop.Registered) :
 requests answered in place, and stopped at its next other request once the
 interrupt flag is up. It is not itself refused: how the command ended is
 its value, with the editor state it left, or had reached when it was
-refused or interrupted, or gave up. -/
+refused or interrupted, gave up or broke off. -/
 def EditorM.dispatched {α : Type} (command : EditorM α) (registered : Loop.Registered)
     (state : EditorState) : EditorM (Guarded α × EditorState) :=
   ExceptT.lift (command.run.dispatched registered state)

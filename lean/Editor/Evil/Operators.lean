@@ -56,10 +56,25 @@ one (`Editor/Evil.lean`), so the caller supplies the vocabulary.
 the motion leads under an operator (`Motion.taken`), by Vim's rules, in
 order:
 
-- **A motion that failed gives the operator up** (`cannotMove`), as Vim
-  cancels it: nothing is taken, the register is as it was, and a change
-  begins no insert. The operate command sees to it before it asks for a
-  stretch.
+- **A motion that failed cancels the operator** (`cannotMove`), as Vim
+  cancels it: nothing is taken, the register is as it was, a change begins
+  no insert, and the edit is not the last change. The operate command sees
+  to it before it asks for a stretch.
+  - **Where the motion did not move**, the command gives up (`giveUp`):
+    `dj` on the last line, `d2$` there, `db` at the text's start.
+  - **Where the motion moved before it failed**, the cursor goes where it
+    got to and the command breaks off (`breakOff`, `Editor/Api.lean`),
+    which keeps the cursor and puts the scheme back at rest as a give-up
+    does: `d3b` that comes to rest on an empty first line with a step left
+    over leaves the cursor on that line, as Vim does. The cursor is one
+    range of the shape the selection had before the command, rested as a
+    view that extends no selection rests one, since that is the state the
+    scheme goes back to; the window then keeps no wanted column. Whether
+    the motion moved is asked of the rested position, so a raw target
+    that rests where the cursor was has not moved it.
+  - Of the motions that ship only `word-backward` and `bigword-backward`
+    fail after moving. A replayed change breaks its replay off the same
+    way (`Editor/Evil/Repeat.lean`).
 - **A motion whose reach is `lines`** takes the lines of the head and of
   its target, and those between.
 - **Otherwise cells from the lower of the two to the higher.** A motion
@@ -141,8 +156,8 @@ the command expects. -/
 def noOperatorNamed : String :=
   "no operator named (expects an operator's name, the kind of what it acts on, that thing's name, a count and a register's name)"
 
-/-- What the operate command gives up with when the motion called `name`
-could not be made. -/
+/-- What the operate command gives up with, or breaks off with, when the
+motion called `name` could not be made. -/
 def cannotMove (name : String) : String :=
   s!"{name} cannot move"
 
@@ -329,7 +344,9 @@ the operator, the kind of what it acts on, that thing, the count, 0 for
 none, and the register. The operator is handed the stretch its target
 amounts to from the head of the primary range of the target's selection,
 and the window then keeps no wanted column. A call that cannot be made
-gives up. -/
+gives up, and so does one whose motion failed where the cursor is; one
+whose motion failed after it moved leaves the cursor where the motion got
+to and breaks off ("What an operator takes", in the module docs). -/
 def operate (operators : Array Vocabulary.Operator) (motions : Array Vocabulary.Motion)
     (call : Call) : EditorM Unit := do
   let [.str operator, .str kind, .str name, .nat count, .str register] :=
@@ -349,7 +366,18 @@ def operate (operators : Array Vocabulary.Operator) (motions : Array Vocabulary.
         motion.taken operator.replaces text
             { head, count := if count == 0 then none else some count }
       if taken.failed then
-        giveUp (cannotMove name)
+        -- Vim cancels the operator and leaves the cursor where the motion
+        -- got to, as the state the view was in before the key has it: the
+        -- scheme goes back to that state.
+        let cursor :=
+          { call.report with
+            shape := before.shape, selecting := false }
+        let reached ← rested (restOf cursor) text taken.head
+        if reached == head then
+          giveUp (cannotMove name)
+        call.target.select { ranges := #[⟨reached, reached⟩], shape := before.shape }
+        discard <| call.target.window.id.setWanted none
+        breakOff (cannotMove name)
       pure
           { stretch := ← stretch operator text head taken, head, rest := min head taken.head,
             register, before }

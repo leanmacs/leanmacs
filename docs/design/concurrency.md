@@ -217,6 +217,31 @@ time, in order, on the editor thread.
       words for something the store did not refuse. A message and a normal
       return would leave the view in insert state after a failed `cj`, and
       make the failed edit the last change.
+  - **A command breaks off, with its reason** (`breakOff reason`,
+    `StateRequest.breakOff`, `Guarded.brokeOff`, `Loop.Ending.brokeOff`).
+    It ends itself as one that gives up does, at one state request the
+    dispatcher finishes the program at, and differs in what the loop then
+    keeps: nothing is rolled back. The texts, the markers and the editor
+    state the command reached are the loop's, as a finished command's
+    are, and the jobs and invocations it asked for are handed to the
+    host. The echo area reads `<name>: <reason>`, and the scheme goes back
+    to its state at rest, as after a give-up. The headless host prints
+    `broke off: <reason>` for a command run by name.
+    - *What it is for.* Vim cancels an operator whose motion fails and
+      leaves the cursor where the motion got to. Where the motion moved
+      before it failed (a counted `b` that reaches an empty first line
+      with steps left over), a give-up would put the cursor back, and a
+      normal return would leave the view in insert state after `c3b` and
+      make the cancelled edit the last change. Evil's operate command
+      places the cursor and breaks off
+      ([keymaps-and-modes.md](keymaps-and-modes.md), "Operators as
+      built").
+    - *The command leaves a state that fits the scheme at rest.* The
+      scheme forgets the key, so a command that breaks off leaves the
+      selection in the shape it found it, and not in the shape of a state
+      its key entered.
+    - Pinned by `ModelTest.dispatchCommandBreaksOffChecks`, and through
+      the headless host by `ConfigTest.hostLoopChecks`.
   - **What is outside the editor is not rolled back: the clipboard.** The
     clipboard is a port (`lean/Editor/Clipboard.lean`), and what a command
     writes there stays when the command is rolled back. The guard stops a

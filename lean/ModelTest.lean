@@ -130,7 +130,10 @@ registered command:
 - `dispatchCommandGivesUpChecks`: a command that gives up (`giveUp`,
   `Editor/Api.lean`) is rolled back, its reason is in the echo area with
   no `refused:`, and the scheme is back at rest. It is another thing than
-  `dispatchGiveUpChecks`, which is what the loop gives up after a command.
+  `dispatchGiveUpChecks`, which is what the loop gives up after a command;
+- `dispatchCommandBreaksOffChecks`: a command that breaks off (`breakOff`,
+  `Editor/Api.lean`) keeps what it did, its reason is in the echo area with
+  no `refused:`, and the scheme is back at rest.
 
 What the loop does with a scheme's report of a view is checked with a
 scheme written here, `switching`: the test scheme, with a report of each
@@ -5094,7 +5097,7 @@ def stateRequests : List StateRequest :=
     .closePrompt none, .closePrompt (some "typed"),
     .setWanted ⟨0⟩ (some { column := .cells 3, head := 7 }), .setWanted ⟨1⟩ none,
     .setWanted ⟨9⟩ (some { column := .lineEnd, head := 0 }), .ex "w", .invoke asked, .quit, .reload,
-    .giveUp "no", .setRegister "a" { text := "a line\n", linewise := true }]
+    .giveUp "no", .breakOff "far enough", .setRegister "a" { text := "a line\n", linewise := true }]
 
 /-- The checks of the state requests' pure handler (`EditorState.handle`,
 `Editor/State/Request.lean`), on states made on the text model. The handler
@@ -5594,6 +5597,15 @@ def stateRequestChecks : List Check :=
           | none => false
           | some state =>
             let (_, after) := state.handle (.giveUp "no such thing")
+            after == state },
+    { name :=
+        "the request by which a command breaks off changes nothing of the state either: the handler knows no command to end"
+      run :=
+        pure <|
+          match onTextModel twoBuffers with
+          | none => false
+          | some state =>
+            let (_, after) := state.handle (.breakOff "far enough")
             after == state },
     { name :=
         "the request to set a register sets the register of that name, in place of the one the name had, and changes nothing else of the state"
@@ -7617,6 +7629,36 @@ def dispatchStateChecks : List Check :=
           | (.error refusal, model) => refusal == .badSelection && model.texts.contents == #["one"]
           | (.ok _, _) => false },
     { name :=
+        "a command that edits, says something, breaks off and would edit again ends as having broken off, with its reason and the state it had reached: the first edit was made, the second was not, and a try round the call does not go on"
+      run :=
+        pure <|
+          let command : EditorM Unit := do
+            discard <| createText "one"
+            EditorState.ask (.message "said")
+            try
+              breakOff "far enough"
+            catch _ =>
+              pure ()
+            discard <| createText "two"
+            EditorState.ask (.message "late")
+          let program : EditorM (Guarded Unit × EditorState) := do
+            command.dispatched {} (← EditorState.initial ⟨640, 480⟩)
+          match program.runModel editorModel with
+          | (.ok (outcome, state), model) =>
+            outcome == .brokeOff "far enough" && state.echo == "said" &&
+              model.texts.contents == #["", "one"]
+          | (.error _, _) => false },
+    { name :=
+        "a command that breaks off where no loop dispatches it is refused with badSelection, and nothing of its reason is kept: the handler of the runners changes nothing"
+      run :=
+        pure <|
+          let command : EditorM Unit := do
+            discard <| createText "one"
+            breakOff "far enough"
+          match command.runModel editorModel with
+          | (.error refusal, model) => refusal == .badSelection && model.texts.contents == #["one"]
+          | (.ok _, _) => false },
+    { name :=
         "a command that edits, moves in the history and records the move, edits again and is then refused: the rollback reverts the edit made since the move from the tree the command left, leaves the text at the node the move reached, says the command moved in the history, and what was undone can be redone"
       run :=
         pure <|
@@ -8569,12 +8611,107 @@ def dispatchCommandGivesUpChecks : List Check :=
           (program.runModel editorModel).1.toOption ==
             some ("abcd", s!"quitter: {reason}", some (Loop.Ending.gaveUp reason)) }]
 
+/-- The checks of a command that breaks off (`breakOff`, `Editor/Api.lean`;
+`Editor/Loop.lean`, "Running an invocation"), on the editor's models, with
+the scheme `switching`, whose report a key's invocation switches, and
+commands written here: the loop keeps what the command did, says its reason
+in the echo area with no `refused:`, and puts the scheme back in its state
+at rest. -/
+def dispatchCommandBreaksOffChecks : List Check :=
+  let reason := "far enough"
+  -- Edits the text, which moves the selection, and then breaks off or, with
+  -- no reason, runs to its end.
+  let editing (reason : Option String) : Dispatched := fun call => do
+    Loop.insert call.target "typed"
+    match reason with
+    | some reason =>
+      breakOff reason
+    | none =>
+      return none
+  let handed (commands : List (String × Dispatched) := []) : Loop.Keys switching :=
+    switchingKeys [("C-s", invoke "say"), ("C-g", invoke "stopper"), ("C-f", invoke "finisher")]
+      ([("say", say), ("stopper", editing (some reason)), ("finisher", editing none)] ++ commands)
+  -- What the key `key` leaves from a text with a selection: the text, the
+  -- selection, the echo area, the history's nodes and whether an edit is
+  -- pending in it, and how the step says the command ended.
+  let left (key : String) :
+    Option (String × Array SelectionRange × String × Nat × Bool × Option Loop.Ending) :=
+    let program :
+      EditorM (String × Array SelectionRange × String × Nat × Bool × Option Loop.Ending) := do
+      let loop : Loop switching := { state := ← holding "abcd" #[⟨1, 3⟩] }
+      let (loop, steps) ← stepsWith (handed []) loop (presses key)
+      let some target := loop.state.focusedTarget? | throw .noSuchText
+      return (← target.buffer.text.read, (← target.selection).ranges, loop.state.echo,
+          target.buffer.history.nodes.size, target.buffer.history.pending,
+          (steps.back?).bind (·.ended))
+    (program.runModel editorModel).1.toOption
+  [{  name :=
+        "a key whose command edits and then breaks off: the text, the selection and the history are those the same command leaves when it runs to its end, which are not those from before it; the echo area reads the command's name and its reason with no refused, and the step says the command broke off"
+      run :=
+        pure <|
+          match left "C-g", left "C-f" with
+          | some (text, ranges, echo, nodes, pending, ended),
+            some (finished, placed, said, steps, unclosed, how) =>
+            text == finished && text != "abcd" && ranges == placed && ranges != #[⟨1, 3⟩] &&
+              nodes == steps &&
+              pending == unclosed &&
+              echo == s!"stopper: {reason}" &&
+              said.isEmpty &&
+              ended == some (Loop.Ending.brokeOff reason) &&
+              how == some .finished
+          | _, _ => false },
+    { name :=
+        "a command that breaks off leaves the scheme at rest: the next key's command is told the report from before the key that broke off, and not the one that key would have switched to; the same key with a command that runs to its end switches it"
+      run :=
+        pure <|
+          let breaking : Dispatched := fun _ => breakOff reason
+          let echoes (commands : List (String × Dispatched)) : Option (Array String) :=
+            (switched (EditorState.initial ⟨640, 480⟩) "C-m C-b C-s" (handed :=
+                  handed commands)).map
+              (·.2.1.map (·.echo))
+          match echoes [("begin", breaking)], echoes [] with
+          | some #[_, broke, after], some #[_, _, begun] =>
+            broke == s!"begin: {reason}" && after == reportText markedReport &&
+              begun == reportText { session := true }
+          | _, _ => false },
+    { name :=
+        "a command that has its buffer keep a value, asks for an invocation to be run after it and then breaks off leaves the editor state it reached: the buffer keeps the value, and the step hands the invocation back"
+      run :=
+        pure <|
+          let keeping : Dispatched := fun call => do
+            discard <| call.target.window.buffer.setValue "count" (.nat 7)
+            Editor.invoke { command := "say" }
+            breakOff reason
+          let bound : Loop.Keys switching :=
+            switchingKeys [("C-k", invoke "keeping")] [("keeping", keeping)]
+          let program : EditorM (Option Value × String × Array (Array String)) := do
+            let loop : Loop switching := { state := ← EditorState.initial ⟨640, 480⟩ }
+            let (loop, steps) ← stepsWith bound loop (presses "C-k")
+            return (loop.state.value? ⟨0⟩ "count", loop.state.echo,
+                steps.map fun step => step.answered.map (·.command))
+          (program.runModel editorModel).1.toOption ==
+            some (some (.nat 7), s!"keeping: {reason}", #[#["say"]]) },
+    { name :=
+        "a command that breaks off, run by its name, ends the same way: what it did stays, its name and its reason are in the echo area, and the step says it broke off"
+      run :=
+        pure <|
+          let program : EditorM (String × String × Option Loop.Ending) := do
+            let loop : Loop switching := { state := ← holding "abcd" #[⟨1, 3⟩] }
+            let stepped ← loop.runNamed (handed []) "stopper"
+            let some target := stepped.loop.state.focusedTarget? | throw .noSuchText
+            return (← target.buffer.text.read, stepped.loop.state.echo, stepped.ended)
+          match (program.runModel editorModel).1.toOption, left "C-f" with
+          | some (text, echo, ended), some (finished, _) =>
+            text == finished && echo == s!"stopper: {reason}" &&
+              ended == some (Loop.Ending.brokeOff reason)
+          | _, _ => false }]
+
 /-- The checks of key dispatch in the loop (`Editor/Loop.lean`), on the
 editor's models: keys through the scheme and the commands they run,
 rollback, the interrupt, the slow-command log, a command's state requests,
-what the loop gives up after a command, a command that gives up, the
-scheme's notice of a closed view, undo from a command, and what a command
-is told of its view. -/
+what the loop gives up after a command, a command that gives up, a command
+that breaks off, the scheme's notice of a closed view, undo from a command,
+and what a command is told of its view. -/
 def dispatchChecks : List Check :=
   dispatchKeyChecks ++ dispatchRollbackChecks ++ dispatchInterruptChecks ++ dispatchSlowChecks ++
     dispatchStateChecks ++
@@ -8583,7 +8720,8 @@ def dispatchChecks : List Check :=
     dispatchMinibufferNoticeChecks ++
     dispatchUndoChecks ++
     dispatchReportChecks ++
-    dispatchCommandGivesUpChecks
+    dispatchCommandGivesUpChecks ++
+    dispatchCommandBreaksOffChecks
 
 /-- A scheme written for the test that breaks the contract: it yields the
 first binding that the keys so far begin, so it emits on a strict prefix. -/
@@ -14409,8 +14547,8 @@ structure OperatorRow where
   register : Option Register
   /-- Whether the view is left in insert state. -/
   insert : Bool := false
-  /-- Whether the command gave up: something is said in the echo area, which
-  is no refusal, and nothing changed. -/
+  /-- Whether the command gave up or broke off: something is said in the
+  echo area, which is no refusal. -/
   gaveUp : Bool := false
 
 namespace OperatorRow
@@ -14427,6 +14565,12 @@ def inserts (before keys after : String) (register : Option Register) : Operator
 register are as they were, and the view is in normal state. -/
 def givesUp (before keys : String) : OperatorRow :=
   { before, keys, after := before, register := none, gaveUp := true }
+
+/-- A row whose keys' command breaks off: the cursor is at `after`'s bar,
+the text and the register are as they were, the view is in normal state,
+and the echo area says something that is no refusal. -/
+def breaksOff (before keys after : String) : OperatorRow :=
+  { before, keys, after, register := none, gaveUp := true }
 
 /-- What is wrong with the row, if anything: what its keys left when that
 is not what the row says, and a key string that names no keys. -/
@@ -15013,8 +15157,72 @@ def evilOperatorChecks : List Check :=
         "a departure from Vim, recorded: a cursor cannot rest in the empty last row. d $ on the only word of the last line of a text with no final line feed leaves the text Vim writes, and the cursor on the line above, where Vim's is on the emptied line"
       run := operatorRows [.rests "ab\n|cd" "d $" "a|b\n" (charwise "cd")] },
     { name :=
-        "a departure from Vim, recorded: when b with a count comes to rest on an empty first line with steps left over, the motion fails and the operator gives up, and the cursor stays where it was, where Vim leaves it on the empty line; the text, the register and the state are Vim's"
-      run := operatorRows [.givesUp "\nab |cd" "d 3 b", .givesUp "\nab |cd" "c 3 B"] },
+        "a motion that fails after it moved cancels the operator and leaves the cursor where it got to, as Vim does: when b or B with a count comes to rest on an empty first line with steps left over, the cursor is on that line, nothing is deleted, changed or yanked, the register is as it was, and the view is in normal state; the echo area says the sentence the function makes of the motion's name"
+      run := do
+        let held ←
+          operatorRows
+              [.breaksOff "\nab |cd" "d 3 b" "|\nab cd", .breaksOff "\nab |cd" "c 3 B" "|\nab cd",
+                .breaksOff "\nab |cd" "y 3 b" "|\nab cd", .breaksOff "\nab |cd" "d 3 B" "|\nab cd",
+                .breaksOff "\nab |cd" "c 3 b" "|\nab cd", .breaksOff "\nab |cd" "y 3 B" "|\nab cd",
+                .breaksOff "\n|ab" "d 2 b" "|\nab", .breaksOff "\n\nab |cd" "d 9 b" "|\n\nab cd",
+                .breaksOff "\nab |cd\n" "d 3 b" "|\nab cd\n",
+                -- With no step left over the motion has not failed.
+                .rests "\nab |cd" "d 2 b" "|cd" (charwise "\nab "),
+                .rests " a|b" "d 2 b" "|b" (charwise " a"), .givesUp "|\nab" "d b"]
+        return held &&
+            (evilEdited "\nab |cd" "d 3 b").map (·.echo) ==
+              some s!"{Vim.operateCommand}: {Evil.cannotMove Evil.wordBackward.name}" &&
+            (evilEdited "\nab |cd" "c 3 B").map (·.echo) ==
+              some s!"{Vim.operateCommand}: {Evil.cannotMove Evil.bigwordBackward.name}" &&
+            -- The cursor a cancelled c leaves is one range of normal state's
+            -- shape, and the window keeps no wanted column: k kept one.
+            ((evilDriver "\nab cd\ne|f").map fun driver =>
+                let moved := evilFed driver "k"
+                let broke := evilFed moved "c 3 b"
+                (((moved.loop.state.window? ⟨0⟩).bind (·.wanted)).isSome,
+                  (broke.loop.state.window? ⟨0⟩).bind (·.wanted), evilSelection broke)) ==
+              some
+                (true, none, some { ranges := #[⟨0, 0⟩], shape := (vimDefaultReport "").shape }) },
+    { name :=
+        "the other motions under an operator with a count they cannot go the whole way of, as Vim has them: w, W, e and E at the text's end take what there is and do not fail, with and without a final line feed; h and l take the cells there are on the line, and none at a line's start or on an empty line; j and k with a count past the text stop at the last line and at the first, and $ at the last line's end; on the last line j and a counted $ fail, and on the first k does, each where it is, so the operator gives up with nothing moved"
+      run :=
+        operatorRows
+          [.rests "ab |cd" "d 3 w" "ab| " (charwise "cd"),
+            .rests "ab c|d" "d 3 w" "ab |c" (charwise "d"),
+            .rests "ab |cd\n" "d 3 w" "ab| \n" (charwise "cd"),
+            .inserts "ab |cd" "c 3 w" "ab |" (charwise "cd"),
+            .rests "ab |cd" "y 3 w" "ab |cd" (charwise "cd"),
+            .rests "ab |cd" "d 3 W" "ab| " (charwise "cd"),
+            .inserts "ab c|d" "c 3 W" "ab c|" (charwise "d"),
+            .rests "ab |cd\n" "y 3 W" "ab |cd\n" (charwise "cd"),
+            .rests "ab |cd" "d 3 e" "ab| " (charwise "cd"),
+            .rests "ab c|d" "d 3 e" "ab |c" (charwise "d"),
+            .rests "ab |cd\n" "d 3 e" "ab| \n" (charwise "cd"),
+            .inserts "ab |cd" "c 3 e" "ab |" (charwise "cd"),
+            .rests "ab c|d" "y 3 e" "ab c|d" (charwise "d"),
+            .rests "ab |cd" "d 3 E" "ab| " (charwise "cd"),
+            .inserts "ab c|d" "c 3 E" "ab c|" (charwise "d"),
+            .rests "ab |cd\n" "y 3 E" "ab |cd\n" (charwise "cd"),
+            .rests "ab c|d\n" "d 2 w" "ab |c\n" (charwise "d"),
+            .rests "ab c|d\n" "d 2 e" "ab |c\n" (charwise "d"),
+            .rests "a|bcd" "d 3 h" "|bcd" (charwise "a"),
+            .rests "ab\n|cd" "d 3 h" "ab\n|cd" asItWas,
+            .inserts "ab\n|cd" "c 3 h" "ab\n|cd" asItWas,
+            .rests "ab\nc|d" "y 3 h" "ab\n|cd" (charwise "c"),
+            .rests "ab|cd\nef" "d 5 l" "a|b\nef" (charwise "cd"),
+            .rests "abc|d\nef" "d 3 l" "ab|c\nef" (charwise "d"),
+            .inserts "ab|cd\nef" "c 5 l" "ab|\nef" (charwise "cd"),
+            .rests "ab|cd\nef" "y 5 l" "ab|cd\nef" (charwise "cd"),
+            .rests "ab\n|\ncd" "d 3 l" "ab\n|\ncd" asItWas,
+            .rests "ab\n|cd\nef" "d 3 j" "|ab" (linewise "cd\nef\n"),
+            .givesUp "ab\ncd\n|ef" "d 3 j", .givesUp "ab\ncd\n|ef" "c 3 j",
+            .givesUp "ab\ncd\ne|f" "y 3 j",
+            .rests "ab\n|cd\nef" "d 3 k" "|ef" (linewise "ab\ncd\n"),
+            .givesUp "|ab\ncd\nef" "d 3 k", .givesUp "a|b\ncd" "c 3 k",
+            .rests "ab\nc|d" "y 3 k" "a|b\ncd" (linewise "ab\ncd\n"),
+            .rests "a|b\ncd\nef" "d 3 $" "|a" (charwise "b\ncd\nef"),
+            .rests "ab\nc|d\nef" "d 3 $" "ab\n|c" (charwise "d\nef"),
+            .givesUp "ab\ncd\ne|f" "d 3 $", .givesUp "ab\ncd\n|ef" "c 3 $"] },
     { name :=
         "a change and the text typed after it are one step of the history: c l deletes the cell and leaves its group open, the typed text joins it, <Escape> closes it as one node, and one undo request gives the text from before the change"
       run :=
@@ -15539,6 +15747,31 @@ def evilRepeatChecks : List Check :=
             let changing := evilFed driver "c w"
             let committed := (changing.feed { event := .commit "かな", stamp := 0 }).1
             evilShown (evilFed committed "X <Escape> w .") == "かなX かな|X baz" },
+    { name :=
+        "an operator that a motion's failure cancelled is not the last change, whether or not the motion moved first, as in Vim: after x, a d 3 b that leaves the cursor on the empty first line, and w, . replays the x; and after x and a d j that fails on the last line, . replays the x"
+      run :=
+        pure <|
+          evilEdited "\nab |cd ef" "x d 3 b w ." == some ⟨"\n|b d ef", charwise "a", false, ""⟩ &&
+            evilEdited "\nab |cd ef" "x c 3 B w ." == some ⟨"\n|b d ef", charwise "a", false, ""⟩ &&
+            evilEdited "ab\n|cde" "x d j ." == some ⟨"ab\n|e", charwise "d", false, ""⟩ },
+    { name :=
+        "a replayed change whose motion fails after it moved breaks the replay off, as Vim does: the cursor is where the motion got to, in normal state, nothing is deleted or inserted, the register is the one the change left, the history has no step for it, and the change is still the last change"
+      run :=
+        pure <|
+          let said := s!"{Vim.repeatCommand}: {Evil.cannotMove Evil.wordBackward.name}"
+          let steps (fixture typed : String) : Option (Option (Nat × Bool)) :=
+            (evilDriver fixture).map fun driver => evilHistory (evilFed driver typed)
+          evilEdited "\nab cd |ef gh" "d 2 b ." ==
+              some ⟨"|\nef gh", charwise "ab cd ", false, said⟩ &&
+            evilEdited "\nab cd |ef gh" "c 2 b X <Escape> ." ==
+              some ⟨"|\nXef gh", charwise "ab cd ", false, said⟩ &&
+            steps "\nab cd |ef gh" "d 2 b ." == steps "\nab cd |ef gh" "d 2 b" &&
+            steps "\nab cd |ef gh" "c 2 b X <Escape> ." ==
+              steps "\nab cd |ef gh" "c 2 b X <Escape>" &&
+            evilEdited "\nab cd ef |gh" "d 2 b $ . ." ==
+              some ⟨"|\nh", charwise "ab g", false, said⟩ &&
+            evilEdited "\nab cd |ef gh ij" "d 2 b . G $ ." ==
+              some ⟨"\nef |j", charwise "gh i", false, ""⟩ },
     { name := "every command of the table of changes is one evil registers, under the same name"
       run :=
         pure <|

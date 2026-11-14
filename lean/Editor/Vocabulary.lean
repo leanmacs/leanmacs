@@ -56,9 +56,11 @@ A motion (`Motion`) is a name and a function from where a cursor is
   motion's `reach`, so a motion that leads an operator where it leads a
   cursor says nothing more.
 - **A motion says when it could not be made** (`To.failed`, `Taken.failed`),
-  as Vim fails a motion that has nowhere to go. An operator that waits for
-  it is given up by its caller. The move command does not read it: the
-  cursor goes to the target the motion answers, which is where it was.
+  as Vim fails a motion that has nowhere to go, or that has gone as far as
+  it can with steps left over. An operator that waits for it is cancelled
+  by its caller, which leaves the cursor at the position the motion
+  answers (`Editor/Evil/Operators.lean`). The move command does not read
+  it: the cursor goes to the target the motion answers.
 
 ## Operators
 
@@ -129,7 +131,7 @@ structure To where
   that it could not: where a cursor rests is its caller's rule. -/
   unmoved : Option WantedColumn := wanted
   /-- Whether the motion could not be made, as Vim fails a motion: an
-  operator that waits for it is given up. A cursor is moved to `head` all
+  operator that waits for it is cancelled. A cursor is moved to `head` all
   the same. -/
   failed : Bool := false
   deriving DecidableEq, Repr
@@ -151,7 +153,8 @@ structure Taken where
   head : Nat
   /-- How the operator takes what lies between. -/
   reach : Reach
-  /-- Whether the motion could not be made: the operator is given up. -/
+  /-- Whether the motion could not be made: the operator is cancelled, and
+  the cursor is left at `head`. -/
   failed : Bool := false
   deriving DecidableEq, Repr
 

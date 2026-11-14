@@ -243,15 +243,15 @@ reload <n>: installed, <c> chunks, <k> commands
 reload <n>: rejected
 diagnostic: <source>:<line>:<column>: <severity>: <first line of the message>
 run <name>: ok            (or "refused: <error>", "interrupted",
-                           "gave up: <reason>", "no such command",
-                           "no window", or "no frame" for a host whose
-                           frame could not be made)
+                           "gave up: <reason>", "broke off: <reason>",
+                           "no such command", "no window", or "no frame"
+                           for a host whose frame could not be made)
 spawn <name>: job <id>    (or "no such job")
 job <id> <name>: started  (a command asked for the job)
 job <id> <name>: ok       (the handler's command ran; or "refused: <error>",
-                           "interrupted", "gave up: <reason>", "failed:
-                           <first line of the message>", "cancelled",
-                           "no frame")
+                           "interrupted", "gave up: <reason>", "broke off:
+                           <reason>", "failed: <first line of the
+                           message>", "cancelled", "no frame")
 event <source id> <code>  (an event from the library's scripted source)
 key arrived: <logical> <physical> <modifiers>
                           (a key press from the window, `Key.describe`)
@@ -279,8 +279,8 @@ buffer's name and whether the buffer is modified.
 
 A command a key runs prints nothing: what became of it is in the echo area
 of the scene, `<name>: no such command`, `<name>: refused: <error>`,
-`<name>: interrupted` or, for one that gave up, `<name>: <reason>`, and a
-slow one is on the log. A command run by name
+`<name>: interrupted` or, for one that gave up or broke off,
+`<name>: <reason>`, and a slow one is on the log. A command run by name
 and a job's command are printed and are in the echo area too, a job's under
 its label, `job <id> <name>`. The command that receives a prompt's answer
 prints nothing either, whatever accepted the prompt: what became of it is
@@ -773,6 +773,7 @@ def describeEnding : Loop.Ending → String
   | .refused refusal => s!"refused: {refusal.describe}"
   | .interrupted => "interrupted"
   | .gaveUp reason => s!"gave up: {reason}"
+  | .brokeOff reason => s!"broke off: {reason}"
   | .noSuchCommand => "no such command"
   | .noWindow => "no window"
 
