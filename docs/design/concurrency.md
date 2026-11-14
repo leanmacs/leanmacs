@@ -441,17 +441,24 @@ transaction through. Where those come from is open.
 - **Opening a file is a command, a job and the job's command**
   (`lean/Editor/Files.lean`, built by the command loop's phase 9), the
   first use of this route by compiled code:
-  - the command (`Files.open`) starts the job `load-file` with an order,
-    plain arguments: the path and the view it was called in. It makes
-    nothing and judges nothing;
+  - the command (`Files.open`) shows the buffer that holds the path, if
+    one does, and starts nothing. Otherwise it starts the job `load-file`
+    with an order, plain arguments: the path and the view it was called
+    in. It makes nothing and judges nothing;
   - the job loads the file, under the editor's limit of 1 GiB, and
     finishes with the order and the reply. A refusal is a value in the
     reply;
   - the job's command makes the buffer when the result is delivered: a
     text of the snapshot the job loaded, a buffer over it called by the
-    path's base name, the file attached, and the buffer shown. On a
-    refusal it says `cannot open <path>: ` and the refusal's sentence in
-    the echo area, and the window still shows what it showed.
+    path's base name (or that name and `<2>`, `<3>`, when a buffer has
+    it), the file attached, and the buffer shown. On a refusal it says
+    `cannot open <path>: ` and the refusal's sentence in the echo area,
+    and the window still shows what it showed;
+  - the path is matched to an open buffer twice, when the command runs and
+    again when the result is delivered, so two opens of one path in flight
+    make one buffer: the second delivery shows it and takes nothing in;
+  - the buffer is shown in the view the command was called in, or in the
+    focused view if that view was closed while the file loaded.
 
   An empty buffer made when the command runs and filled later was set
   aside: the window would change before the file is known to exist, and a

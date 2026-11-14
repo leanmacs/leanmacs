@@ -8641,12 +8641,16 @@ def unbroken : ByteArray :=
 
 /-- The files of the file command checks, in `fileRoot`: `note.txt`, with a
 two-byte character, a four-byte one and a byte that is not UTF-8
-(`FileCases.noteBytes`), and three files that differ in their line
-endings. -/
+(`FileCases.noteBytes`), three files that differ in their line endings,
+and two files called `x.txt`, in the directories `a` and `b`. -/
 def commandFiles : FileModel :=
-  fileModelOf
-    #[("note.txt", FileCases.noteBytes), ("crlf.txt", mostlyCrlf), ("lf.txt", mostlyLf),
-      ("plain.txt", unbroken)]
+  [("a", "first x\n"), ("b", "second x\n")].foldl
+    (fun (model : FileModel) (directory, text) =>
+      (model.withDirectory (fileRoot / directory)).withFile (fileRoot / directory / "x.txt")
+        text.toUTF8)
+    (fileModelOf
+      #[("note.txt", FileCases.noteBytes), ("crlf.txt", mostlyCrlf), ("lf.txt", mostlyLf),
+        ("plain.txt", unbroken)])
 
 /-- The path of a file of the file command checks, by its name. -/
 def inFiles (name : String) : System.FilePath :=
@@ -8657,7 +8661,8 @@ opens: `missing.txt` is not there, and `relative.txt` is not an absolute
 path. -/
 def openKeys : List (String × System.FilePath) :=
   [("C-o n", inFiles "note.txt"), ("C-o c", inFiles "crlf.txt"), ("C-o l", inFiles "lf.txt"),
-    ("C-o p", inFiles "plain.txt"), ("C-o m", inFiles "missing.txt"), ("C-o r", "relative.txt")]
+    ("C-o p", inFiles "plain.txt"), ("C-o m", inFiles "missing.txt"), ("C-o r", "relative.txt"),
+    ("C-o a", fileRoot / "a" / "x.txt"), ("C-o b", fileRoot / "b" / "x.txt")]
 
 /-- The invocation that opens `path`: the open command, with the path as
 its argument. -/
@@ -8666,12 +8671,29 @@ def opens (path : System.FilePath) : Invocation :=
 
 /-- What a step of the file command checks is handed: the keys of
 `openKeys`, each bound to the open command with its path, `C-o o` bound to
-the open command with no argument, and the open command under its name. -/
+the open command with no argument, and the open command under its name.
+
+Three more commands, written here, move the windows about: `scratch`
+(`C-o 0`) shows the scratch buffer in the window it is called with, `split`
+(`C-o s`) splits that window and focuses the new one, and `close` (`C-o k`)
+closes it. -/
 def fileKeys : Loop.Keys TestScheme.scheme :=
   dispatchKeys
-    (openKeys.map (fun (text, path) => (text, opens path)) ++ [("C-o o", invoke Files.openName)])
+    (openKeys.map (fun (text, path) => (text, opens path)) ++
+      [("C-o o", invoke Files.openName), ("C-o 0", invoke "scratch"), ("C-o s", invoke "split"),
+        ("C-o k", invoke "close")])
     [(Files.openName, fun call => do
         Files.openCommand call
+        return none),
+      ("scratch", fun call => do
+        discard <| call.target.window.id.show ⟨0⟩
+        return none),
+      ("split", fun call => do
+        if let .ok made← call.target.window.id.split .rows then
+          discard <| made.focus
+        return none),
+      ("close", fun call => do
+        discard <| call.target.window.id.close
         return none)]
 
 /-- The jobs of the file command checks, by name: the load job, whose loads
@@ -8853,15 +8875,42 @@ def fileCommandChecks : List Check :=
                 ((markerRefusals old).runModel opened.model.texts).1.toOption ==
                   some [some .noSuchMarker, some .noSuchMarker] },
     { name :=
-        "a file loaded for a view that has no window is said in the echo area as loaded and not shown: its buffer is there and holds the file, and the windows show what they showed"
+        "a file whose asking view was closed while it loaded is shown in the focused view: the command is called in a second view, that view is closed before the job is finished, and the file's buffer is then shown in the view that has the focus"
       run :=
         pure <|
           match filesDriver with
           | none => false
           | some driver =>
             let path := inFiles "note.txt"
+            let (asked, steps) := fedTo driver (presses "C-o s C-o n")
+            let (closed, _) := fedTo asked (presses "C-o k")
+            let (opened, _) := closed.finish 1
+            started steps ==
+                #[{ name := Files.loadJob
+                    arguments := Files.LoadOrder.arguments { path, view := ⟨1⟩ } }] &&
+              asked.loop.state.frame.focused == ⟨1⟩ &&
+              closed.loop.state.frame.focused == ⟨0⟩ &&
+              (showing closed ⟨1⟩).isNone &&
+              opened.loop.state.findFile path == some ⟨1⟩ &&
+              (showing opened).map (·.id) == some ⟨1⟩ &&
+              (showing opened).bind (·.text) == some FileCases.noteText &&
+              opened.loop.state.wellFormed },
+    { name :=
+        "a file loaded where no window can show it is said in the echo area as loaded and not shown: in a state whose focused view has no window, for an order whose view has none either, the buffer is there and holds the file, and the windows show what they showed"
+      run :=
+        pure <|
+          match filesDriver with
+          | none => false
+          | some driver =>
+            let path := inFiles "note.txt"
+            let state := driver.loop.state
+            let astray : TestDriver :=
+              { driver with
+                loop :=
+                  { driver.loop with
+                    state := { state with frame := { state.frame with focused := ⟨7⟩ } } } }
             let asked :=
-              driver.started
+              astray.started
                 #[{ name := Files.loadJob
                     arguments := Files.LoadOrder.arguments { path, view := ⟨9⟩ } }]
             let (opened, _) := asked.finish 1
@@ -8869,6 +8918,63 @@ def fileCommandChecks : List Check :=
               Files.notShown path != Files.notOpened path .notFound &&
               (showing opened).map (·.id) == some ⟨0⟩ &&
               opened.loop.state.findFile path == some ⟨1⟩ },
+    { name :=
+        "opening a path that is open shows its buffer and makes no second one: with the file open and another buffer shown in the view since, the open command shows the file's buffer again, with one cursor at its start, the step hands back no job to start, and there are as many buffers and texts as before"
+      run :=
+        pure <|
+          match filesDriver with
+          | none => false
+          | some driver =>
+            let (asked, _) := fedTo driver (presses "C-o n")
+            let (opened, _) := asked.finish 1
+            let (back, _) := fedTo opened (presses "C-o 0")
+            let (again, steps) := fedTo back (presses "C-o n")
+            (showing back).map (·.id) == some ⟨0⟩ && started steps == #[] &&
+              again.pending.isEmpty &&
+              (showing again).map (fun shown => (shown.id, shown.text, shown.cursors)) ==
+                some (⟨1⟩, some FileCases.noteText, some #[⟨0, 0⟩]) &&
+              again.loop.state.buffers.size == opened.loop.state.buffers.size &&
+              again.model.texts.texts.size == opened.model.texts.texts.size &&
+              echoOf again == some "" },
+    { name :=
+        "two opens of one path in flight make one buffer: the command is run twice before either job is finished, and once both are, one buffer holds the path, the view shows it, and the second delivery made no text and left no snapshot"
+      run :=
+        pure <|
+          match filesDriver with
+          | none => false
+          | some driver =>
+            let path := inFiles "note.txt"
+            let (asked, _) := fedTo driver (presses "C-o n C-o n")
+            let (first, _) := asked.finish 1
+            let (second, delivered) := first.finish 2
+            asked.pending.size == 2 && (delivered.map (·.ended)) == some (some .finished) &&
+              second.loop.state.findFile path == some ⟨1⟩ &&
+              second.loop.state.buffers.size == 2 &&
+              (showing second).map (·.id) == some ⟨1⟩ &&
+              second.model.texts.texts.size == first.model.texts.texts.size &&
+              second.model.texts.snapshots.filterMap id ==
+                first.model.texts.snapshots.filterMap id &&
+              second.jobs.files.held.all (·.isNone) &&
+              echoOf second == echoOf first },
+    { name :=
+        "a second file with the base name a buffer has gets a name of its own: two files called x.txt in two directories open as x.txt and x.txt<2>, each buffer holding its own path and its own text"
+      run :=
+        pure <|
+          match filesDriver with
+          | none => false
+          | some driver =>
+            let (asked, _) := fedTo driver (presses "C-o a")
+            let (first, _) := asked.finish 1
+            let (asked, _) := fedTo first (presses "C-o b")
+            let (second, _) := asked.finish 2
+            let seen (driver : TestDriver) :=
+              (showing driver).map fun shown =>
+                (shown.buffer.name, shown.buffer.file.map (·.path), shown.text)
+            seen first == some ("x.txt", some (fileRoot / "a" / "x.txt"), some "first x\n") &&
+              seen second ==
+                some ("x.txt<2>", some (fileRoot / "b" / "x.txt"), some "second x\n") &&
+              statusOf second == some (named "x.txt<2>") &&
+              second.loop.state.buffers.size == 3 },
     { name :=
         "the open command where no load job is registered says so in the echo area, by the job's name, starts nothing and leaves the view as it was"
       run :=

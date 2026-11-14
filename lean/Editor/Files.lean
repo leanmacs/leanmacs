@@ -19,11 +19,13 @@ commands and the jobs as compiled code registers them are in
 
 ## Open
 
-- **The command** (`Files.open view path`) starts the job `load-file`
-  (`loadJob`) with a load order (`LoadOrder`): the path, and the view the
-  command was called in, the asking view. It does not judge the path: the
-  file port refuses one that is not absolute, and that refusal takes the
-  route every refusal takes.
+- **The command** (`Files.open view path`). When a buffer holds the path
+  (`EditorState.findFile`: equality of the path string), it shows that
+  buffer in the view and starts no job. Otherwise it starts the job
+  `load-file` (`loadJob`) with a load order (`LoadOrder`): the path, and
+  the view the command was called in, the asking view. It does not judge
+  the path: the file port refuses one that is not absolute, and that
+  refusal takes the route every refusal takes.
 - **The job** (`loadWork`) loads the file (`File.load`), unless it is
   longer than a limit, and finishes with the order and the reply. A
   refusal is a value in the reply: the job throws only for arguments that
@@ -32,13 +34,23 @@ commands and the jobs as compiled code registers them are in
   delivered. On a refusal it says so in the echo area (`notOpened`) and
   changes nothing else, so the window still shows what it showed. On
   success it makes a text of the snapshot the job loaded
-  (`JobSnapshotId.toText`), adds a buffer over it, called by the path's
-  base name, has the buffer hold the file (`BufferId.attachFile`: the
-  path, the stamp the load answered, and the file's dominant line ending,
-  or a line feed for a file with no line break), and shows the buffer in
-  the asking view (`ViewId.show`), with one cursor at its start. The
-  buffer's history is a new tree, saved at its root, so the buffer is not
-  modified.
+  (`JobSnapshotId.toText`), adds a buffer over it, has the buffer hold the
+  file (`BufferId.attachFile`: the path, the stamp the load answered, and
+  the file's dominant line ending, or a line feed for a file with no line
+  break), and shows the buffer (`ViewId.show`), with one cursor at its
+  start. The buffer's history is a new tree, saved at its root, so the
+  buffer is not modified.
+- **The path is matched twice**: when the command runs, and again when the
+  result is delivered. Two opens of one path can be in flight, and the
+  first delivery makes the buffer: the second then shows that buffer and
+  takes nothing in, so there is one buffer for the path.
+- **The name** is the path's base name. When a buffer already has that
+  name it is the base name followed by `<2>`, `<3>` and so on, the first
+  that is free (`EditorState.freeName`), so a second file of one base name
+  can be opened.
+- **The window** is the asking view while it still has a window, and the
+  focused view otherwise. When the command runs they are the same view;
+  they differ only if the asking view was closed while the file loaded.
 - **Nothing is made before the result.** An empty buffer made when the
   command runs and filled later would change the window before the file is
   known to exist, and a refusal would have to undo it. So events that
@@ -136,12 +148,20 @@ def opened (order : LoadOrder) (reply : Except FileError File.Loaded) : EditorM 
     message (notOpened order.path error)
   | .ok loaded =>
     let path := order.path
+    let state ← editorState
+    let view := if (state.window? order.view).isSome then order.view else state.frame.focused
+    -- Another open of the path may have been delivered while this one's
+    -- file loaded: the path is matched again, and nothing is taken in.
+    if let some buffer := state.findFile path then
+      let .ok () ← view.show buffer | message (notShown path)
+      return
     let text ← loaded.snapshot.toText
-    let .ok buffer ← addBuffer (path.fileName.getD path.toString) text | message (notShown path)
+    let name := state.freeName (path.fileName.getD path.toString)
+    let .ok buffer ← addBuffer name text | message (notShown path)
     let .ok () ←
       buffer.attachFile path loaded.stamp
           (loaded.endings.dominant.getD .lf) | message (notShown path)
-    let .ok () ← order.view.show buffer | message (notShown path)
+    let .ok () ← view.show buffer | message (notShown path)
 
 /-- The load job: loads the file its order names, unless it is longer than
 `limit` bytes, and finishes with what the reply becomes (`opened`). A
@@ -152,10 +172,15 @@ def loadWork (limit : Nat := Files.limit) (arguments : List Argument) : Work := 
     LoadOrder.ofArguments? arguments | throw s!"{loadJob}: its arguments are not a load order"
   return opened order (← File.load order.path limit)
 
-/-- Opens the file at `path` in `view`: starts the job that loads it, whose
-result makes the buffer and shows it ("Open", in the module docs). Where no
-load job is registered it says so in the echo area. -/
+/-- Opens the file at `path` in `view`. When a buffer holds the path
+(`EditorState.findFile`), it shows that buffer and starts nothing.
+Otherwise it starts the job that loads the file, whose result makes the
+buffer and shows it ("Open", in the module docs). Where no load job is
+registered it says so in the echo area. -/
 def «open» (view : ViewId) (path : System.FilePath) : EditorM Unit := do
+  if let some buffer := (← editorState).findFile path then
+    let .ok () ← view.show buffer | message (notShown path)
+    return
   if let .error refusal← startJob loadJob (LoadOrder.arguments { path, view }) then
     message (notOpening path refusal)
 
