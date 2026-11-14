@@ -19,6 +19,8 @@
 //!   to draw.
 //! - [`contract`]: the rules the fake and every real adapter are held to.
 //! - [`journal`]: the frame journal and the counters.
+//! - [`render_loop`]: the loop that takes frames from the mailbox and
+//!   draws them on demand, and the handle other threads reach it through.
 
 pub mod clock;
 pub mod contract;
@@ -26,5 +28,6 @@ pub mod fake;
 pub mod journal;
 pub mod mailbox;
 pub mod port;
+pub mod render_loop;
 pub mod rows;
 pub mod schedule;
