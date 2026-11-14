@@ -32,11 +32,18 @@ Which keys print text is the same for every scheme (`Key.printed?`): a
 scheme that yields a self-insert for an unbound key asks it what the key
 prints.
 
+A scheme also says what a key bound to a command name is (`command`): the
+binding, of its own type, that runs the command of that name. So whoever
+holds key sequences bound to command names, as the registry does for config
+(`Editor/Config/Registry.lean`), makes a keymap for any scheme without
+naming its binding type.
+
 ## What every scheme must do
 
 `Editor/InputScheme/Contract.lean` is the contract check every scheme runs:
 a strict prefix of a complete input yields nothing and is reported as
-pending, and a key that continues nothing resets the pending keys. The
+pending, a key that continues nothing resets the pending keys, and a key
+bound to `command` of a name yields an invocation of that command. The
 record carries no equality on `State`: a scheme's state may hold what a
 reset must keep, so the contract speaks of `pending` and of what the scheme
 then yields.
@@ -76,6 +83,10 @@ structure InputScheme where
   /-- The keys of the sequence begun and not yet completed, in order; none
   when no sequence is begun. -/
   pending : State → List Key
+  /-- The binding that runs the command of this name: what a key sequence
+  bound to a command name is bound to under this scheme. Completing a
+  sequence bound to it yields an invocation of that command. -/
+  command : String → Binding
 
 /-- The text `key` prints, if it is printable: its logical key is a
 character, and none of control, alt and super is held. It is the key's own,

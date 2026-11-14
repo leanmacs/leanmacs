@@ -43,7 +43,10 @@ is `parse` with the edit compiled, and `scheme` packages it as an
   every Vim state. It is one walk, so prefixes merge across the two lists,
   and a part of speech bound in an active keymap is the same to the grammar
   as one bound in a state's keymap.
-- **A motion alone is a move**, and **a command is run**.
+- **A motion alone is a move**, and **a command is run**. A key bound to a
+  command name alone (`scheme.command`, as a binding from config is) is
+  bound to `Bound.command` of that name, which changes no text and enters
+  no state.
 - **An operator waits for its target** (`State.operator`). There is no
   keymap for the wait: the motion that moves when typed alone is the
   operator's target when typed after it, so a motion bound once, in any
@@ -525,8 +528,11 @@ def step (states : States) (maps : ViewId → List (Keymap Bound)) (view : ViewI
   | (next, .text text) => (next, some (selfInsert text))
 
 /-- The Vim scheme over the registry `states`. Its bindings are parts of
-speech, and it reports every key of the edit begun as pending. -/
+speech, and it reports every key of the edit begun as pending. A key bound
+to a command name is bound to the command of that name, which changes no
+text and enters no state: the grammar cannot look either up. -/
 def scheme (states : States) : InputScheme :=
-  { State, Binding := Bound, init := {}, step := step states, pending := (·.typed) }
+  { State, Binding := Bound, init := {}, step := step states, pending := (·.typed)
+    command := fun name => .command { name } }
 
 end Editor.Vim

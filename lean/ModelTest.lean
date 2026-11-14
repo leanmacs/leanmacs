@@ -4219,7 +4219,8 @@ def eager : InputScheme :=
           keymap.bindings.find? fun binding => typed.isPrefixOf binding.1 with
       | some binding => ([], some binding.2)
       | none => ([], none)
-    pending := id }
+    pending := id
+    command := fun name => { command := name } }
 
 /-- A scheme written for the test that breaks the contract: the test scheme,
 except that an unbound key leaves the pending keys as they were. -/
@@ -4231,7 +4232,8 @@ def sticky : InputScheme :=
       match TestScheme.step maps view state key with
       | (next, some invocation) => (next, some invocation)
       | (next, none) => (if next.pending.isEmpty then state else next, none)
-    pending := (·.pending) }
+    pending := (·.pending)
+    command := fun name => { command := name } }
 
 /-- A scheme written for the test that breaks the contract: the test scheme,
 except that it reports no pending keys. -/
@@ -4240,7 +4242,8 @@ def silent : InputScheme :=
     Binding := Invocation
     init := {}
     step := TestScheme.step
-    pending := fun _ => [] }
+    pending := fun _ => []
+    command := fun name => { command := name } }
 
 /-- A scheme written for the test that breaks the contract: the test scheme,
 except that an unbound key after a prefix hides the prefix and does not drop
@@ -4258,7 +4261,8 @@ def masking : InputScheme :=
       | (next, none) =>
         if !state.1.pending.isEmpty && next.pending.isEmpty && !state.2 then ((state.1, true), none)
         else ((next, false), none)
-    pending := fun state => if state.2 then [] else state.1.pending }
+    pending := fun state => if state.2 then [] else state.1.pending
+    command := fun name => { command := name } }
 
 /-- A scheme written for the test that breaks the contract: the test scheme,
 except that an unbound key after a prefix yields an invocation. -/
@@ -4272,7 +4276,8 @@ def noisy : InputScheme :=
       | (next, none) =>
         if !state.pending.isEmpty && next.pending.isEmpty then (next, some (invoke "noise"))
         else (next, none)
-    pending := (·.pending) }
+    pending := (·.pending)
+    command := fun name => { command := name } }
 
 /-- A scheme written for the test that breaks the contract: the test scheme,
 except that after a key that yields an invocation it reports the keys of the
@@ -4286,7 +4291,14 @@ def lingering : InputScheme :=
       match TestScheme.step maps view state.1 key with
       | (next, some invocation) => ((next, state.1.pending ++ [key.chord]), some invocation)
       | (next, none) => ((next, next.pending), none)
-    pending := (·.2) }
+    pending := (·.2)
+    command := fun name => { command := name } }
+
+/-- A scheme written for the test that breaks the contract: the test scheme,
+except that what it says runs a named command runs a command of another
+name. -/
+def misnaming : InputScheme :=
+  { TestScheme.scheme with command := fun name => { command := name ++ "-not" } }
 
 /-- The subject the scheme contract is run on: `scheme` over the scheme
 checks' keymaps for view 0, the sequences those bind, and a key none of
@@ -4360,12 +4372,15 @@ def schemeContractChecks : List Check :=
             (subject.scheme.pending state).isEmpty &&
             (subject.feedFrom state (keys "C-x C-s")).2 == (subject.feed (keys "C-x C-s")).2) },
     { name :=
-        "the scheme contract reports a scheme that still reports pending keys after the key that completes an input"
+        "the scheme contract reports a scheme that still reports pending keys after the key that completes an input, for a bound sequence and for a key bound to a named command"
       run :=
         let subject := subjectOf lingering schemeMaps
         pure
-          (failsOnly subject [SchemeContract.completeEmits] &&
-            (subject.feed (keys "C-x C-s")).2.getLast? == some (some (invoke "save"))) }]
+          (failsOnly subject [SchemeContract.completeEmits, SchemeContract.namedCommandRuns] &&
+            (subject.feed (keys "C-x C-s")).2.getLast? == some (some (invoke "save"))) },
+    { name :=
+        "the scheme contract reports a scheme whose binding for a command name runs a command of another name, for that property alone"
+      run := pure (failsOnly (subjectOf misnaming schemeMaps) [SchemeContract.namedCommandRuns]) }]
 
 /-- The delete operator of the Vim checks: it changes text and names no
 state. -/

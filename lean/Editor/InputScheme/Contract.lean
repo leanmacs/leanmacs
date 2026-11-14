@@ -33,6 +33,11 @@ the pending keys the scheme reports. Nothing here knows what a binding is.
 - `unboundResets`: after a strict prefix, the unbound key yields nothing
   and leaves nothing pending, and the sequence typed next yields what it
   yields from the initial state.
+- `namedCommandRuns`: the unbound key, bound to `scheme.command` of a name
+  in a keymap put before the subject's, yields an invocation of the command
+  of that name when typed from the initial state, and leaves nothing
+  pending. It is what lets a registry bind a key sequence to a command name
+  under a scheme whose binding type it does not know.
 
 The contract compares no states: a scheme's state may hold what a reset
 must keep, such as its last edit, and the record carries no equality on it.
@@ -131,9 +136,29 @@ def unboundResets : Property :=
         yields.getLast? == some none && (subject.scheme.pending state).isEmpty &&
           (subject.feedFrom state sequence).2 == (subject.feed sequence).2 }
 
+/-- The command name `namedCommandRuns` binds a key to. No scheme knows
+it. -/
+def namedCommand : String :=
+  "contract-named-command"
+
+/-- With the unbound key bound to `scheme.command` of a name in a keymap put
+before the subject's, that key, typed from the initial state, yields an
+invocation of the command of that name and leaves nothing pending. -/
+def namedCommandRuns : Property :=
+  { name :=
+      "a key bound to what the scheme says runs a named command yields an invocation of the command of that name, and the scheme then reports no pending keys"
+    holds := fun subject =>
+      let bound : Keymap subject.scheme.Binding :=
+        Keymap.ofList [([subject.unbound], subject.scheme.command namedCommand)]
+      let (state, yielded) :=
+        subject.scheme.step (fun view => bound :: subject.maps view) subject.view
+          subject.scheme.init subject.unbound
+      yielded.map (·.command) == some namedCommand && (subject.scheme.pending state).isEmpty }
+
 /-- Every property of the contract. -/
 def properties : List Property :=
-  [hasPrefixes, strictPrefixEmitsNothing, strictPrefixIsPending, completeEmits, unboundResets]
+  [hasPrefixes, strictPrefixEmitsNothing, strictPrefixIsPending, completeEmits, unboundResets,
+    namedCommandRuns]
 
 /-- The names of the properties that do not hold of `subject`; none when the
 scheme keeps the contract. -/

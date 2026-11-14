@@ -24,6 +24,8 @@ Its rules:
   (`selfInsert`), an invocation whose argument is the key's character.
   Which keys are printable is the scheme interface's (`Key.printed?`): the
   logical key is a character and none of control, alt and super is held.
+- **A key bound to a command name is bound to its invocation with no
+  arguments** (`scheme.command`).
 
 ## Where an addition goes
 
@@ -68,6 +70,7 @@ def step (maps : ViewId → List (Keymap Binding)) (view : ViewId) (state : Stat
 
 /-- The test scheme. -/
 def scheme : InputScheme :=
-  { State, Binding, init := {}, step, pending := (·.pending) }
+  { State, Binding, init := {}, step, pending := (·.pending)
+    command := fun name => { command := name } }
 
 end Editor.TestScheme
