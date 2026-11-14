@@ -2,6 +2,7 @@ import Editor.Command.Append
 import Editor.Config.Reload
 import Editor.Display.Contract
 import Editor.Display.Model
+import Editor.Face
 import Editor.File.Cases
 import Editor.File.Model
 import Editor.Job.Contract
@@ -33,7 +34,8 @@ The display interface's contract (`Editor/Display/Contract.lean`) is run
 against its model here, in cells of two sizes (`displayFailures`). The real
 binding's run of it is the display pipeline's. `sceneChecks` and
 `displayChecks` are what only the model shows: the scenes published to it,
-and its exact layout rule.
+and its exact layout rule. `faceChecks` are the checks of faces as data and
+of the built-in theme (`Editor/Face.lean`).
 
 A command is tested the same way: as a property, a command that returns
 whether it held, run against the model (`commandProperties`). The `editor`
@@ -2684,6 +2686,53 @@ def sceneChecks : List Check :=
           (twoViews == twoViews && twoViews != { twoViews with pending := "" } &&
             twoViews != { twoViews with views := twoViews.views.pop }) }]
 
+/-- The checks of faces and of the built-in theme, which are plain data
+(`Editor/Face.lean`). What a face looks like in a frame is layout's rule,
+pinned in `crates/editor-layout`; these pin what Lean itself defines. -/
+def faceChecks : List Check :=
+  [{
+      name :=
+        "the built-in theme defines default, cursor, selection, echo-area, minibuffer-prompt and mode-line, each once",
+      run :=
+        pure
+          (Theme.builtin.map (·.name.name) ==
+            #["default", "cursor", "selection", "echo-area", "minibuffer-prompt", "mode-line"]) },
+    { name := "the built-in default face sets every attribute, and no other built-in face does"
+      run :=
+        let complete (face : Face) : Bool :=
+          face.family.isSome && face.size.isSome && face.weight.isSome && face.slant.isSome &&
+            face.foreground.isSome &&
+            face.background.isSome &&
+            face.underline.isSome &&
+            face.strikeThrough.isSome &&
+            face.lineHeight.isSome
+        pure ((Theme.builtin.filter (complete ·.face)).map (·.name.name) == #["default"]) },
+    { name := "a colour is its four bytes, red first, and one made of three is opaque"
+      run :=
+        pure
+          (Color.rgba 0x12 0x34 0x56 0x78 == { word := 0x12345678 } &&
+            Color.rgb 0x12 0x34 0x56 == { word := 0x123456ff }) },
+    { name :=
+        "a length's literal is whole pixels, in 64ths, and one longer than a length holds is the longest"
+      run :=
+        pure
+          ((14 : Pixels) == { sixtyFourths := 896 } && (0 : Pixels) == { sixtyFourths := 0 } &&
+            Pixels.whole (2 ^ 40) == { sixtyFourths := 0xffffffff }) },
+    { name :=
+        "a face sets nothing it was not told to, and two faces are equal exactly when their attributes are"
+      run :=
+        let plain : Face := {}
+        let red : Face := { foreground := some (Color.rgb 200 0 0) }
+        pure
+          (plain.family.isNone && plain.size.isNone && plain.weight.isNone && plain.slant.isNone &&
+            plain.foreground.isNone &&
+            plain.background.isNone &&
+            plain.underline.isNone &&
+            plain.strikeThrough.isNone &&
+            plain.lineHeight.isNone &&
+            red != plain &&
+            red == { foreground := some (Color.rgb 200 0 0) }) }]
+
 /-- A display model whose cells are one pixel each way, holding `texts` as
 the snapshots 0, 1, 2 and so on, with nothing published. -/
 def displayOver (texts : List String) (cells : Display.Cells := { advance := 1, lineHeight := 1 }) :
@@ -3081,6 +3130,7 @@ def checks : List Check :=
     undoTreeChecks ++
     fileModelChecks ++
     sceneChecks ++
+    faceChecks ++
     displayChecks
 
 /-- Runs `checks` and returns the names of those that failed. A check that

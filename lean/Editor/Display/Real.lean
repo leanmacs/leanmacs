@@ -1,4 +1,5 @@
 import Editor.Display
+import Editor.Face
 import Editor.Ffi
 import Editor.Text.Real
 
@@ -33,6 +34,19 @@ scroll marker and no selection, and is shown from its start. A document
 gone by then (released) resolves nothing either; the text binding keeps
 every document a command can name alive.
 
+**The theme travels with the scene, in the binding.** The scene names faces
+and the display interface publishes a scene (`Editor/Scene.lean`,
+`Editor/Display.lean`); neither says what a face looks like. This binding
+holds the theme (`Editor/Face.lean`) and writes its definitions into the
+same words and the same string as the scene, so a scene and its faces reach
+layout in one call. They are written only on the first publish after the
+theme was set (`over`, `setTheme`): the words carry a presence, and absent
+is "as last published", so a publish costs the faces only when they
+changed. A theme stays to be sent until the library has taken it. Lean
+merges nothing: a theme is a list of definitions, sent in order, and where
+it defines a name twice the later definition is over the earlier by layout's
+rule.
+
 It is never imported by `Editor` or by anything `model-test` reaches: it
 links the Rust library. `contract-test` holds it to the display contract
 (`Editor/Display/Contract.lean`), and `ffi-test display` to the fixture
@@ -42,20 +56,37 @@ the words of one scene with the library's layout written out
 (`FfiTest.sceneChecks`): a scene with what the fixture has none of, a
 pending prefix, a preedit, a view whose snapshot the table does not hold
 and a view whose markers are of two texts, and it checks what the library
-shows of each of those views.
+shows of each of those views; and the words of a theme whose definitions
+use every constructor of a face's attributes, when a theme is sent and when
+it is not, and which names layout reads by itself.
 -/
 
 namespace Editor
 
-/-- The real binding: the library's display, and the read half of the text
-binding's table of snapshots it finds a query's snapshot in. -/
+/-- The real binding: the library's display, the read half of the text
+binding's table of snapshots it finds a query's snapshot in, and the theme
+it has yet to send. -/
 structure RealDisplay where
   /-- The library's display. -/
   display : Ffi.Display
   /-- The snapshots a query may name. -/
   snapshots : SnapshotReader
+  /-- The theme not yet sent: set by `over` and by `setTheme`, and none
+  once a publish has sent it. -/
+  theme : IO.Ref (Option Theme)
 
 namespace RealDisplay
+
+/-- The binding over `display` and `snapshots`, with `theme` to send with
+the first scene published. -/
+def over (display : Ffi.Display) (snapshots : SnapshotReader) (theme : Theme) :
+    BaseIO RealDisplay := do
+  return { display, snapshots, theme := ← IO.mkRef (some theme) }
+
+/-- Makes `theme` what the faces look like from the next publish on: it is
+sent with the next scene published, in place of the theme sent before. -/
+def setTheme (real : RealDisplay) (theme : Theme) : BaseIO Unit :=
+  real.theme.set (some theme)
 
 /-- The library's machine word for an offset of the port: one no word
 holds is the largest, past the end of every text. -/
@@ -170,11 +201,56 @@ def encodeView (real : RealDisplay) (encoded : Encoded) (view : View) : IO Encod
         strings := encoded.strings ++ field.text ++ field.face.name }
   return encoded
 
-/-- `scene` as it crosses to the library. A view whose snapshot the table
-does not hold is sent with none, and shows nothing. After the views comes
-the presence of the faces' definitions: 0, "as last published", since this
-binding sends none yet. -/
-def encode (real : RealDisplay) (scene : Scene) : IO Encoded := do
+/-- The library's tag of a slant. -/
+def slantTag : Slant → UInt64
+  | .upright => 0
+  | .italic => 1
+  | .oblique => 2
+
+/-- The library's tag of an underline style. -/
+def underlineTag : UnderlineStyle → UInt64
+  | .none => 0
+  | .single => 1
+  | .double => 2
+  | .curly => 3
+  | .dotted => 4
+  | .dashed => 5
+
+/-- The word of a weight: 1 to 1000, a weight outside that range sent as
+the nearest end of it, which is what the library would refuse otherwise. -/
+def weightWord (weight : Nat) : UInt64 :=
+  (min 1000 (max 1 weight)).toUInt64
+
+/-- One definition of a face added to `encoded`: its 22 words, an absent
+attribute written as 0, and its name and then its family, when it has one,
+added to the string. -/
+def encodeFace (encoded : Encoded) (definition : FaceDefinition) : Encoded :=
+  let face := definition.face
+  let color (color : Color) : UInt64 := color.word.toUInt64
+  let underline := face.underline.getD { style := .none }
+  let (kind, height) : UInt64 × UInt64 :=
+    match face.lineHeight with
+    | some (.multiple sixtyFourths) => (0, sixtyFourths.toUInt64)
+    | some (.pixels height) => (1, height.sixtyFourths.toUInt64)
+    | none => (0, 0)
+  let named := pushText encoded definition.name.name
+  let words := named.words.push face.family.isSome.toUInt64
+  let familied := pushText { named with words } (face.family.getD "")
+  let words := pushOptional familied.words (face.size.map (·.sixtyFourths.toUInt64))
+  let words := pushOptional words (face.weight.map weightWord)
+  let words := pushOptional words (face.slant.map slantTag)
+  let words := pushOptional words (face.foreground.map color)
+  let words := pushOptional words (face.background.map color)
+  let words := words.push face.underline.isSome.toUInt64 |>.push (underlineTag underline.style)
+  let words := pushOptional words (underline.color.map color)
+  let words := pushOptional words (face.strikeThrough.map (·.toUInt64))
+  { familied with words := words.push face.lineHeight.isSome.toUInt64 |>.push kind |>.push height }
+
+/-- `scene` as it crosses to the library, with the definitions `faces`
+after its views when there are any to send: none is sent as their absence,
+which is "as last published". A view whose snapshot the table does not
+hold is sent with none, and shows nothing. -/
+def encode (real : RealDisplay) (scene : Scene) (faces : Option Theme) : IO Encoded := do
   let words :=
     pushOptional #[RealTexts.word scene.size.width, RealTexts.word scene.size.height]
       (scene.focused.map (RealTexts.word ·.index))
@@ -184,14 +260,24 @@ def encode (real : RealDisplay) (scene : Scene) : IO Encoded := do
   let encoded := pushText encoded (scene.preedit.getD "")
   let encoded := { encoded with words := encoded.words.push scene.views.size.toUInt64 }
   let encoded ← scene.views.foldlM real.encodeView encoded
-  return { encoded with words := encoded.words.push 0 }
+  match faces with
+  | none =>
+    return { encoded with words := encoded.words.push 0 }
+  | some theme =>
+    let counted := { encoded with words := encoded.words.push 1 |>.push theme.size.toUInt64 }
+    return theme.foldl encodeFace counted
 
-/-- Publishes `scene` to the library. Words this binding wrote that the
-library cannot read are an error: they are this binding's mistake. -/
+/-- Publishes `scene` to the library, with the theme if it has not been
+sent yet. The theme counts as sent once the library has taken the scene.
+Words this binding wrote that the library cannot read are an error: they
+are this binding's mistake. -/
 def publish (real : RealDisplay) (scene : Scene) : IO Unit := do
-  let encoded ← real.encode scene
+  let unsent ← real.theme.get
+  let encoded ← real.encode scene unsent
   unless ← real.display.publish encoded.words encoded.strings encoded.snapshots do
     throw (IO.userError "the library could not read a scene's words")
+  if unsent.isSome then
+    real.theme.set none
 
 /-- Answers `request` from the library. -/
 def handle (real : RealDisplay) : (request : DisplayRequest) → IO request.Reply
