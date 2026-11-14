@@ -122,6 +122,16 @@
 # with the wrapper not yet there, it fails on that edge ("crate
 # 'editor-platform = 0.1.0' is explicitly banned").
 #
+# For fuzzy matching (2026-11-14, the command loop's phase 14), whose
+# entries came in the commit that added the Scorer port's adapter,
+# `editor-fuzzy-nucleo`. `nucleo-matcher`: with it added to
+# `editor-fuzzy`'s dependencies, it fails ("crate 'nucleo-matcher = 0.3.1'
+# is explicitly banned"). `editor-fuzzy`, the port's crate, which had no
+# entry while nothing depended on it: with the entry's wrapper naming
+# another crate, it fails on the adapter's edge ("crate 'editor-fuzzy =
+# 0.1.0' is explicitly banned"). `editor-fuzzy-nucleo` itself has no entry
+# yet: nothing depends on it.
+#
 # One rule has no entry: "no crate depends on `editor-ffi`", the one crate
 # that knows about Lean. No entry for it passes the gate. With
 # `wrappers = ["editor-ffi"]` the wrapper matches nothing and
@@ -156,4 +166,6 @@ deny = [
   { crate = "fontique", wrappers = ["editor-shape-parley", "parley", "parley_engine"], reason = "fontique is Parley's font library and stays behind the Shaper port with it: beside Parley's own crates, only the adapter may name its types" },
   { crate = "editor-fs-std", wrappers = ["editor-ffi"], reason = "the file adapter is linked only by the crate that wires the library together; everything else reaches a file through the port, and editor-text's tests through its fake" },
   { crate = "tempfile", wrappers = ["editor-fs-std", "editor-ffi"], reason = "a temporary directory is for a test that touches real files: the file adapter's contract test and editor-ffi's wiring test; editor-text's tests run on the fake and make no file" },
+  { crate = "nucleo-matcher", wrappers = ["editor-fuzzy-nucleo"], reason = "the matching library stays behind the Scorer port: only its adapter crate may name its types" },
+  { crate = "editor-fuzzy", wrappers = ["editor-fuzzy-nucleo"], reason = "the Scorer port and the ranking rule have one user, the port's adapter, which implements it and runs its contract; another is a decision, so it is made here" },
 ]

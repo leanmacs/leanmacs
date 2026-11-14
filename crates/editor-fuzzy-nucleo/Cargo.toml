@@ -1,0 +1,42 @@
+[package]
+name = "editor-fuzzy-nucleo"
+version = "0.1.0"
+description = "The scorer port's real adapter, over nucleo-matcher"
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+# The scorer port, its fake and its contract. This crate implements the
+# port, and its test `tests/contract.rs` runs the contract on the adapter.
+editor-fuzzy = { path = "../editor-fuzzy" }
+# The matcher: which candidates a pattern matches, and how well. Kept
+# behind the port: no nucleo type is public here, and `deny.toml` lets no
+# other crate depend on it. Pinned exactly; 0.3.1 was the newest release on
+# 2026-11-14. Its licence is MPL-2.0, and it is used unmodified.
+#
+# Its features. The crate has three, all on by default. Two are on here,
+# `unicode-casefold` and `unicode-normalization`, and for one reason: with
+# `default-features = false` and nothing else the crate does not compile
+# (0.3.1: its two option enums lose the variant marked `#[default]`). The
+# adapter asks for neither: it matches with case kept and nothing
+# normalised, so the tables the two features bring are not consulted.
+# `unicode-segmentation` is off: with it a text is cut into grapheme
+# clusters and only the first scalar value of each is looked at, so a
+# combining mark could never be matched; without it a text is its scalar
+# values, which is the port's contract.
+#
+# Looked at on 2026-11-14 and set aside:
+#
+# - `nucleo` 0.5.0, the same matcher behind an injector and a pool of
+#   worker threads (with `rayon` and `parking_lot`). It answers later,
+#   through a snapshot that is polled; the port asks a question and is
+#   answered in the call.
+# - `frizbee` 0.13.0, by its description: it forgives typing errors, so a
+#   pattern with a character the candidate lacks can match, which the
+#   port's contract refuses.
+# - `fuzzy-matcher` 0.3.7 and `sublime_fuzzy` 0.7.0: not looked into beyond
+#   their versions.
+# - Our own: the rule of what matches is ten lines (the port's fake), but
+#   the scores are what the library is for.
+nucleo-matcher = { version = "=0.3.1", default-features = false, features = ["unicode-casefold", "unicode-normalization"] }
