@@ -23,6 +23,7 @@ means, and what a motion does when it cannot go the whole way, is Vim's
 | `line-start` | `lineStart` | None is ever given: a `0` after a digit is part of the count. A count is ignored |
 | `line-first-non-blank` | `lineFirstNonBlank` | Ignored, as Vim documents |
 | `line-end` | `rowsDown (count - 1)`, then `lineEnd` | The end of the line `count - 1` lines below. With fewer lines below it goes to the last line's end. On the last line with a count above 1 it does not move, which is Vim's failed motion |
+| `first-line`, `last-line` | `offsetOf` of the row's start, then `lineFirstNonBlank` | The line number, from 1, stopped at the last line. With none: the first line, and the last |
 
 - **The last line** (`lastLine`) is the last row a cursor may rest in
   outside insert state: the row before the empty last row of a text that
@@ -198,9 +199,32 @@ def down : Vocabulary.Motion :=
 def up : Vocabulary.Motion :=
   vertical "up" false
 
-/-- The table the move command looks a motion's name up in. -/
+/-- The motion called `name` to a line: with a count, the line of that
+number, from 1, or the last line (`lastLine`) when the text has fewer; with
+none, the last line when `last` and the first otherwise. It goes to the
+line's first character that is not a blank, which is Vim's default. -/
+def toLine (name : String) (last : Bool) : Vocabulary.Motion :=
+  { name
+    target := fun text origin => do
+      let final ← lastLine text
+      let row :=
+        match origin.count with
+        | some line => min (line - 1) final
+        | none => if last then final else 0
+      return { head := ← text.motion .lineFirstNonBlank (← text.offsetOf ⟨row, 0⟩) } }
+
+/-- To the first line, or to the line a count numbers. -/
+def firstLine : Vocabulary.Motion :=
+  toLine "first-line" false
+
+/-- To the last line, or to the line a count numbers. -/
+def lastLineMotion : Vocabulary.Motion :=
+  toLine "last-line" true
+
+/-- The table the move command looks a motion's name up in: one entry for
+each name the Vim scheme's default tables bind a key to. -/
 def motions : Array Vocabulary.Motion :=
-  #[left, right, wordForward, wordBackward, wordEnd, bigwordForward, bigwordBackward, bigwordEnd,
-    lineStart, lineFirstNonBlank, lineEnd, down, up]
+  #[left, down, up, right, wordForward, wordBackward, wordEnd, bigwordForward, bigwordBackward,
+    bigwordEnd, lineStart, lineFirstNonBlank, lineEnd, firstLine, lastLineMotion]
 
 end Editor.Evil

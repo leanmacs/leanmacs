@@ -11701,12 +11701,16 @@ def evilKeys (fixture typed : String) : String :=
 
 /-- Whether each row of `rows` holds: the keys of a row, pressed from its
 first fixture, leave its second (`evilKeys`). A failure names each row that
-does not hold, with what its keys left. -/
+does not hold, with what its keys left, and each row whose key string
+names no keys. -/
 def evilRows (rows : List (String × String × String)) : IO Bool := do
   let wrong :=
     rows.filterMap fun (typed, before, after) =>
       let got := evilKeys before typed
-      if got == after then none else some s!"{typed} from {repr before} left {repr got}"
+      -- A key string that is refused presses nothing, which a row that
+      -- expects the text unchanged would not show.
+      if (keys typed).isEmpty then some s!"{repr typed} names no keys"
+      else if got == after then none else some s!"{typed} from {repr before} left {repr got}"
   unless wrong.isEmpty do
     throw (IO.userError ("; ".intercalate wrong))
   return true
@@ -11901,6 +11905,23 @@ def wantedRows : List (String × String × String) :=
     ("$ j j", "|abc\nde\nabcdef", "abc\nde\nabcde|f"),
     ("$ j j k", "|abc\nde\nabcdef", "abc\nd|e\nabcdef"), ("2 $ k", "abc\n|def", "ab|c\ndef")]
 
+/-- The rows of the oracle table for `g g` and `G`: no count, a count as
+the line's number, from 1, a number past the last line, a text that ends
+in a line feed, whose last line is the line before its end, leading
+blanks, an empty line and a line of blanks only as the target, a text of
+one line, and that neither keeps a wanted column. -/
+def toLineRows : List (String × String × String) :=
+  [("G", "a|bcd\n  xyz\n", "abcd\n  |xyz\n"), ("G", "a\nb\n  c|c\nd\n", "a\nb\n  cc\n|d\n"),
+    ("G", "ab|c", "|abc"), ("1 G", "a\nb\n  c|c\nd", "|a\nb\n  cc\nd"),
+    ("2 G", "a\nb\n  c|c\nd", "a\n|b\n  cc\nd"), ("9 9 G", "a\nb\n  c|c\nd", "a\nb\n  cc\n|d"),
+    ("4 G", "a|b\ncd", "ab\n|cd"), ("2 G", "ab\n\n|cd", "ab\n|\ncd"),
+    ("2 G", "ab\n   \n|cd", "ab\n  | \ncd"), ("G", "a|b\r\n  cd", "ab\r\n  |cd"), ("G", "|", "|"),
+    ("G", "|\n", "|\n"), ("g g", "abcd\n  x|yz", "|abcd\n  xyz"), ("g g", "  a|b\ncd", "  |ab\ncd"),
+    ("g g", "ab|c", "|abc"), ("1 g g", "a\nb\n  c|c\nd", "|a\nb\n  cc\nd"),
+    ("3 g g", "a\nb\n  c|c\nd", "a\nb\n  |cc\nd"), ("9 9 g g", "a\nb\n  c|c\nd", "a\nb\n  cc\n|d"),
+    ("9 9 g g", "a\nb\n  c|c\nd\n", "a\nb\n  cc\n|d\n"), ("g g", "|", "|"), ("g g", "|\n", "|\n"),
+    ("j G k k", "abc|d\nx\nabcd", "|abcd\nx\nabcd")]
+
 /-- The checks of evil's motions (`Editor/Evil.lean`, `Editor/Evil/Motions.lean`)
 on the loop's driver over the editor's models, under the Vim scheme that
 ships with the commands compiled code registers for evil: a motion's key
@@ -11925,6 +11946,22 @@ def evilMotionChecks : List Check :=
     { name :=
         "j and k keep the column they aim for: j then k across a shorter line returns to the column it started in, and so does j twice across an empty line; an h or an l that cannot move keeps it, a motion along the line that moves keeps none, and after $ they stay at line ends"
       run := evilRows wantedRows },
+    { name :=
+        "gg goes to the first line and G to the last, or with a count each to the line of that number, the last line when the text has fewer, and to that line's first character that is not a blank; the last line of a text that ends in a line feed is the line before its end; neither keeps a wanted column"
+      run := evilRows toLineRows },
+    { name :=
+        "every key the default tables bind to a motion has a motion of its name in the vocabulary: pressed in a text of three lines, none says anything in the echo area"
+      run := do
+        let said :=
+          Vim.Default.motions.filterMap fun (typed, _) =>
+            match evilDriver "ab cd\ne|f gh\nij kl" with
+            | none => some s!"{typed}: no driver"
+            | some driver =>
+              let echo := (evilFed driver typed).loop.state.echo
+              if echo.isEmpty then none else some s!"{typed} said {repr echo}"
+        unless said.isEmpty do
+          throw (IO.userError ("; ".intercalate said))
+        return !Vim.Default.motions.isEmpty },
     { name :=
         "after j the window keeps the column the cursor started in, with the offset the cursor rests at; after $ it keeps the line's end; after w it keeps none"
       run :=
