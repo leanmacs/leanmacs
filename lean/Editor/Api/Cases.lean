@@ -1,5 +1,5 @@
-import Editor.Api
-import Editor.Command.Dispatch
+import Editor.InputScheme.Test
+import Editor.Loop
 
 /-!
 # The cases of the editor API
@@ -21,8 +21,10 @@ reach the library. What an operation does to Lean state alone has one
 implementation, the state requests' handler, and is pinned once, on the
 models (`ModelTest.stateRequestChecks`, `ModelTest.apiStateChecks`).
 
-This module imports the API and the dispatch, and nothing else: no model
-and no real binding. The list is plain data, programs that have not run.
+This module imports the loop, which brings the API and the dispatch, and
+the test scheme, for the one case that asks the loop what the next scene's
+views are (`Loop.views`). It imports no model and no real binding. The list
+is plain data, programs that have not run.
 
 Offsets are byte offsets. "é" and "ö" are two bytes each: `"héllo"` is 6
 bytes and `"héllo wörld"` is 13.
@@ -346,9 +348,106 @@ def undoCases : List Case :=
             refusedAs (← absent.redo) (.noSuchBuffer absent) &&
             refusedAs (← absent.closeGroup) (.noSuchBuffer absent) }]
 
+/-- A cursor marker at the start of `text`, made and given up at once: its
+number says how many markers the text had given out before it. -/
+def nextMarker (text : TextId) : TextM Nat := do
+  let marker ← text.mark (.selection (selection #[(0, 0)]))
+  text.unmark marker
+  return marker.index
+
+/-- The cases of windows: splitting one, closing one, focusing one and
+showing another buffer in one. -/
+def windowCases : List Case :=
+  [{  name :=
+        "split then close: a split puts a new view, with an id no view had, below the view it was made from, on the same buffer, with markers of its own that read as the source's, and leaves the focus; closing the new view gives back the tree, the windows and the focus from before the split, and the source window's markers are the ones it had, where they were"
+      start := holding "héllo" (selection #[(1, 3)])
+      run := do
+        let view : ViewId := ⟨0⟩
+        let before ← editorState
+        let some source := before.window? view | return false
+        let markers := (← scratch.marker source.selection, ← scratch.marker source.scroll)
+        let .ok made ← view.split .rows | return false
+        let split ← editorState
+        let some new := split.window? made | return false
+        let copies := (← scratch.marker new.selection, ← scratch.marker new.scroll)
+        let .ok () ← made.close | return false
+        let after ← editorState
+        return made == ⟨1⟩ && split.wellFormed &&
+            split.frame.tree ==
+              .split .rows (.split .rows (.window ⟨0⟩) (.window ⟨1⟩)) .minibuffer &&
+            split.frame.focused == view &&
+            new.buffer == source.buffer &&
+            new.selection != source.selection &&
+            new.scroll != source.scroll &&
+            copies == markers &&
+            after.frame == before.frame &&
+            after.windows == before.windows &&
+            after.buffers == before.buffers &&
+            (← scratch.marker source.selection) == markers.1 &&
+            (← scratch.marker source.scroll) == markers.2 },
+    { name :=
+        "a second split, along columns, puts its view to the right, with the next id and not the closed view's; focusing a view in the tree focuses it; and splitting, closing and focusing a view with no window are each refused with noSuchWindow, with no marker made"
+      run := do
+        let view : ViewId := ⟨0⟩
+        let .ok first ← view.split .rows | return false
+        let .ok () ← first.close | return false
+        let .ok second ← view.split .columns | return false
+        let .ok () ← second.focus | return false
+        let state ← editorState
+        let absent : ViewId := ⟨9⟩
+        let marked ← nextMarker scratch
+        let split ← absent.split .rows
+        return first == ⟨1⟩ && second == ⟨2⟩ &&
+            state.frame.tree ==
+              .split .rows (.split .columns (.window ⟨0⟩) (.window ⟨2⟩)) .minibuffer &&
+            state.frame.focused == second &&
+            state.wellFormed &&
+            refusedAs split (.noSuchWindow absent) &&
+            refusedAs (← absent.close) (.noSuchWindow absent) &&
+            refusedAs (← absent.focus) (.noSuchWindow absent) &&
+            (← nextMarker scratch) == marked + 1 &&
+            (← editorState) == state },
+    { name :=
+        "close the only window: it is refused with onlyWindow, and the tree and the rest of the state are as they were"
+      run := do
+        let before ← editorState
+        let closed ← (⟨0⟩ : ViewId).close
+        let after ← editorState
+        return refusedAs closed .onlyWindow && after.frame.tree == before.frame.tree &&
+            after == before },
+    { name :=
+        "showing another buffer in a view puts the view's window on it, with a scroll anchor at its start and one cursor at its start of the shape the view's selection had, and the view of the next scene reads that buffer's text; showing the buffer the view shows changes nothing and marks nothing; a buffer there is none of is refused with noSuchBuffer, and a view with no window with noSuchWindow"
+      start := holding "first" (selection #[(2, 4)] .inclusive)
+      run := do
+        let view : ViewId := ⟨0⟩
+        let .ok other ← createBuffer "other" "sécond" | return false
+        let before ← editorState
+        let marked ← nextMarker scratch
+        let same ← view.show ⟨0⟩
+        let unmarked := (← nextMarker scratch) == marked + 1 && (← editorState) == before
+        let .ok () ← view.show other | return false
+        let state ← editorState
+        let some target := state.target? view | return false
+        let .ok selected ← view.selection | return false
+        let scroll ← target.buffer.text.marker target.window.scroll
+        -- The views of the next scene, as the loop makes them of the state.
+        let (views, _, unshown) ← ({ state } : Loop TestScheme.scheme).views
+        let some shown := views.find? (·.id == view) | return false
+        let absent : BufferId := ⟨9⟩
+        return same matches .ok () && unmarked && target.window.buffer == other &&
+            target.buffer.name == "other" &&
+            selected == selection #[(0, 0)] .inclusive &&
+            scroll == .anchor { offset := 0, bias := .before } &&
+            (← shown.snapshot.read) == "sécond" &&
+            unshown.isNone &&
+            state.wellFormed &&
+            refusedAs (← view.show absent) (.noSuchBuffer absent) &&
+            refusedAs (← (⟨9⟩ : ViewId).show other) (.noSuchWindow ⟨9⟩) &&
+            (← editorState) == state }]
+
 /-- Every case of the editor API, in the order they run. -/
 def cases : List Case :=
-  bufferCases ++ selectionCases ++ undoCases
+  bufferCases ++ selectionCases ++ undoCases ++ windowCases
 
 /-- Plays `cases` with `run`, each from a store with no text, and returns
 the names of those that did not hold: one that returned `false`, and one

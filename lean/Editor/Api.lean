@@ -116,6 +116,30 @@ at, does its part, and records the tree that comes back as the buffer's
   recorded: the edits it made after the move are taken back, and the move
   is not (`Editor/Loop.lean`, "Rollback").
 
+## Windows
+
+Each operation is a request over the layout operations of
+`Editor/State.lean`, which keep the layout invariants, and is refused, as
+a value, with their `LayoutRefusal`.
+
+- `ViewId.split view axis` makes a new window on the same buffer, below
+  the view for `Axis.rows` and to its right for `Axis.columns`, and returns
+  its view. The new window has markers of its own: copies, marked on the
+  buffer's text, of the source window's scroll anchor and selection as
+  they are. The focus stays.
+- `ViewId.close` removes a window. The last one is refused (`onlyWindow`).
+  Closing the view a split made gives back the tree from before the split.
+  The window's markers are given up by the loop once the command has run
+  to its end (`Editor/Loop.lean`, "What a finished command gave up").
+- `ViewId.focus` focuses a window.
+- `ViewId.show view buffer` has the window show another buffer, with a
+  scroll anchor at that buffer's start and one cursor at its start, of the
+  shape the window's selection had. Showing the buffer the window already
+  shows changes nothing and marks nothing. The markers the window had are
+  given up by the loop, as a closed window's are.
+
+A view's id is never used again (`Editor/State.lean`).
+
 Each operation that makes a text request has a case in
 `Editor/Api/Cases.lean`, played on the editor's models and on the real
 binding.
@@ -375,6 +399,48 @@ def insertAtSelections (view : ViewId) (s : String) : EditorM (Except LayoutRefu
 (`Target.deleteSelections`). -/
 def deleteSelections (view : ViewId) : EditorM (Except LayoutRefusal Unit) :=
   view.onTarget (·.deleteSelections)
+
+/-- Splits the window of `view` along `axis`: a new window on the same
+buffer, below it for rows and to its right for columns, whose markers are
+copies of the window's scroll anchor and selection as they are, and returns
+the new view. The focus stays. Refused with `noSuchWindow` for a view with
+no window. -/
+def split (view : ViewId) (axis : Axis) : EditorM (Except LayoutRefusal ViewId) := do
+  match ← view.target with
+  | .error refusal =>
+    return .error refusal
+  | .ok target =>
+    let text := target.buffer.text
+    let scroll ← text.mark (← text.marker target.window.scroll)
+    let selection ← text.mark (← text.marker target.window.selection)
+    EditorState.ask (.split view axis scroll selection)
+
+/-- Closes the window of `view`: its sibling takes the place of the split
+that held both. Refused with `noSuchWindow` for a view with no window, and
+with `onlyWindow` for the last window. -/
+def close (view : ViewId) : EditorM (Except LayoutRefusal Unit) :=
+  return (← EditorState.ask (.removeWindow view)).map fun _ => ()
+
+/-- Focuses the window of `view`. Refused with `noSuchWindow` for a view
+with no window. -/
+def focus (view : ViewId) : EditorM (Except LayoutRefusal Unit) :=
+  EditorState.ask (.focus view)
+
+/-- Has the window of `view` show the buffer `buffer`, with a scroll anchor
+at its start and one cursor at its start, of the shape the window's
+selection had. Showing the buffer the window shows already changes nothing
+and marks nothing. Refused with `noSuchWindow` for a view with no window,
+and with `noSuchBuffer` for a buffer there is none of. -/
+def «show» (view : ViewId) (buffer : BufferId) : EditorM (Except LayoutRefusal Unit) := do
+  let state ← editorState
+  let some target := state.target? view | return .error (.noSuchWindow view)
+  if target.window.buffer == buffer then
+    return .ok ()
+  let some shown := state.buffer? buffer | return .error (.noSuchBuffer buffer)
+  let shape := (← target.selection).shape
+  let scroll ← shown.text.mark (.anchor { offset := 0, bias := .before })
+  let selection ← shown.text.mark (.selection { ranges := #[⟨0, 0⟩], shape })
+  EditorState.ask (.show view buffer scroll selection)
 
 end ViewId
 
