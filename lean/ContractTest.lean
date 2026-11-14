@@ -1,3 +1,4 @@
+import Editor.Api.Cases
 import Editor.Command.Model
 import Editor.Command.Real
 import Editor.Display.Contract
@@ -89,6 +90,12 @@ job port's, read from a fake clock here, and, with the command loop over
 the real text binding, an interrupt key that arrives while a command runs.
 That check is single-threaded, so where the key arrives is exact: the
 display handler posts it during one of the command's own publishes.
+
+The cases of the editor API (`Editor/Api/Cases.lean`) are played on the
+real text binding, with a recorder as the display and nothing watched
+(`apiFailures`): each from a table of its own, dropped with the case.
+`model-test` plays the same list on the editor's models, so every request
+an operation of the API makes of the library is answered the same by both.
 
 `main` starts the pump once, on a dedicated task. When the checks are done
 it quits the queues, requires the pump to have ended, and exits explicitly:
@@ -198,6 +205,30 @@ def runHanded (arrived : Array (JobSnapshotId × String)) (command : TextM Bool)
 that table is handed, as the headless host hands its loop one. -/
 def recorderOf (table : Snapshots) : BaseIO DisplayRecorder :=
   DisplayRecorder.new { advance := 1, lineHeight := 1 } table.reader
+
+/-- What must hold of the library's objects once the cases of the editor API
+have run. -/
+def apiLeakName : String :=
+  "the cases of the editor API leave nothing behind: each table is dropped with its case, and the library holds the documents and the snapshots it held before"
+
+/-- The names of the cases of the editor API (`Editor/Api/Cases.lean`) that
+do not hold of the real text binding, each played from a table with no
+texts, with a recorder over that table as the display and nothing watched.
+`apiLeakName` is among them if the library's counts are not then what they
+were. -/
+def apiFailures : IO (List String) := do
+  let before := (← Ffi.Document.live, ← Ffi.Snapshot.live)
+  let failed ←
+    ApiCases.failures
+        (fun play => do
+          let table ← Snapshots.new
+          return (← play.runReal (.over table) (← recorderOf table).handle).1)
+        ApiCases.cases
+  let after := (← Ffi.Document.live, ← Ffi.Snapshot.live)
+  return failed.map (s!"the real text binding: {·}") ++
+      if after == before then []
+      else
+        [s!"{apiLeakName} ({before.1} documents and {before.2} snapshots before, {after.1} and {after.2} after)"]
 
 /-- Runs `properties` against the real binding, each from a table with no
 texts, and then `adoptProperties`, each in a run handed its snapshots
@@ -987,6 +1018,7 @@ def main : IO UInt32 := do
   let watchFailed ← ContractTest.watchFailures services.timers
   let watchChecks := ContractTest.watchChecks services.timers
   let watchCheckFailed ← ContractTest.checkFailures watchChecks
+  let apiFailed ← ContractTest.apiFailures
   Editor.Ffi.quit
   let pumpEnded ← ContractTest.eventually (IO.hasFinished pump)
   let failed :=
@@ -997,12 +1029,13 @@ def main : IO UInt32 := do
       recorderFailed ++
       watchFailed ++
       watchCheckFailed ++
+      apiFailed ++
       if pumpEnded then [] else ["quit ends the completion pump"]
   for name in failed do
     IO.eprintln s!"FAILED: {name}"
   unless failed.isEmpty do
     IO.Process.exit 1
   IO.println
-      s!"contract-test: {properties.length + adoptProperties.length} properties hold of the real text binding, {cases.length} cases of the undo tree hold over it, and its documents and snapshots are freed when released and with its table; {Editor.JobContract.properties.length} properties hold of the job runner over the timer service, and {Editor.JobContract.fileProperties.length} file properties over the file service, on real files; {checks.length} checks of the timer service passed, {fileChecks.length} of the file service, {Editor.FileCases.cases.length} cases across the text port and the job port hold of the binding and the file service; {(Editor.DisplayContract.properties { advance := 1, lineHeight := 1 }).length} properties of the display interface hold of the recorder over real snapshots in cells of {ContractTest.displayCells.length} sizes, and {recorderChecks.length} checks of the recorder passed; {Editor.WatchContract.properties.length} properties of the watch port hold of its real binding, and {watchChecks.length} checks of it passed; and quit ended the pump"
+      s!"contract-test: {properties.length + adoptProperties.length} properties hold of the real text binding, {cases.length} cases of the undo tree hold over it, and its documents and snapshots are freed when released and with its table; {Editor.JobContract.properties.length} properties hold of the job runner over the timer service, and {Editor.JobContract.fileProperties.length} file properties over the file service, on real files; {checks.length} checks of the timer service passed, {fileChecks.length} of the file service, {Editor.FileCases.cases.length} cases across the text port and the job port hold of the binding and the file service; {(Editor.DisplayContract.properties { advance := 1, lineHeight := 1 }).length} properties of the display interface hold of the recorder over real snapshots in cells of {ContractTest.displayCells.length} sizes, and {recorderChecks.length} checks of the recorder passed; {Editor.WatchContract.properties.length} properties of the watch port hold of its real binding, and {watchChecks.length} checks of it passed; {Editor.ApiCases.cases.length} cases of the editor API hold of the real text binding; and quit ended the pump"
   (← IO.getStdout).flush
   IO.Process.exit 0

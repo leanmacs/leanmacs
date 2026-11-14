@@ -1,4 +1,4 @@
-import Editor.Api
+import Editor.Api.Cases
 import Editor.Command.Append
 import Editor.Command.Guard
 import Editor.Command.Model
@@ -7815,13 +7815,21 @@ def watchFailures : IO (List String) := do
         WatchContract.properties
   return failed.map (s!"the watch model: {·}")
 
+/-- The names of the cases of the editor API (`Editor/Api/Cases.lean`) that
+do not hold of the editor's models, each played from models with no
+text. -/
+def apiCaseFailures : IO (List String) := do
+  let failed ← ApiCases.failures (fun play => pure (play.runModel editorModel).1) ApiCases.cases
+  return failed.map (s!"the editor's models: {·}")
+
 end ModelTest
 
 /-- Runs the checks, then the text port's contract against its model, the
 job port's contract against its model and against the runner over the fake
-clock, the display interface's contract against its model and the watch
-port's against its model: exits 0 when all hold, and 1 after naming on
-stderr the ones that do not.
+clock, the display interface's contract against its model, the watch
+port's against its model and the cases of the editor API on the editor's
+models: exits 0 when all hold, and 1 after naming on stderr the ones that
+do not.
 
 It exits explicitly. A check of the job runner that failed may have left a
 task that never ends, and returning from `main` would wait for it for ever:
@@ -7835,7 +7843,8 @@ def main : IO UInt32 := do
       (← ModelTest.fileFailures) ++
       (← ModelTest.caseFailures) ++
       (← ModelTest.displayFailures) ++
-      (← ModelTest.watchFailures)
+      (← ModelTest.watchFailures) ++
+      (← ModelTest.apiCaseFailures)
   for name in failed do
     IO.eprintln s!"FAILED: {name}"
   unless failed.isEmpty do
@@ -7843,6 +7852,6 @@ def main : IO UInt32 := do
     -- returning from `main` would wait for it for ever.
     IO.Process.exit 1
   IO.println
-      s!"model-test: {ModelTest.checks.length} checks passed, {Editor.TextContract.properties.length + Editor.TextContract.adoptProperties.length + ModelTest.commandProperties.length} properties hold of the text model, {Editor.UndoTreeCases.cases.length} cases of the undo tree hold over it, and {Editor.JobContract.properties.length} properties of the job model and of the job runner over the fake clock, and {Editor.JobContract.fileProperties.length} file properties of the job model and of the job runner over the fake file service; {Editor.FileCases.cases.length} cases across the text port and the job port hold of the two models; {(Editor.DisplayContract.properties { advance := 1, lineHeight := 1 }).length} properties of the display interface hold of its model in cells of {ModelTest.displayCells.length} sizes; {Editor.WatchContract.properties.length} properties of the watch port hold of its model"
+      s!"model-test: {ModelTest.checks.length} checks passed, {Editor.TextContract.properties.length + Editor.TextContract.adoptProperties.length + ModelTest.commandProperties.length} properties hold of the text model, {Editor.UndoTreeCases.cases.length} cases of the undo tree hold over it, and {Editor.JobContract.properties.length} properties of the job model and of the job runner over the fake clock, and {Editor.JobContract.fileProperties.length} file properties of the job model and of the job runner over the fake file service; {Editor.FileCases.cases.length} cases across the text port and the job port hold of the two models; {(Editor.DisplayContract.properties { advance := 1, lineHeight := 1 }).length} properties of the display interface hold of its model in cells of {ModelTest.displayCells.length} sizes; {Editor.WatchContract.properties.length} properties of the watch port hold of its model; {Editor.ApiCases.cases.length} cases of the editor API hold of the editor's models"
   (← IO.getStdout).flush
   IO.Process.exit 0
