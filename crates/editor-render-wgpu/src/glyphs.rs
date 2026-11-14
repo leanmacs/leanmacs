@@ -389,17 +389,20 @@ impl GlyphCache {
         }
     }
 
-    /// Whether an image is held for `key`.
+    /// Whether an image is held for `key`: for tests.
+    #[cfg(test)]
     pub fn holds(&self, key: GlyphKey) -> bool {
         self.entries.contains_key(&key)
     }
 
-    /// How many images are held.
+    /// How many images are held: for tests.
+    #[cfg(test)]
     pub fn len(&self) -> usize {
         self.entries.len()
     }
 
-    /// Whether no image is held.
+    /// Whether no image is held: for tests.
+    #[cfg(test)]
     pub fn is_empty(&self) -> bool {
         self.entries.is_empty()
     }

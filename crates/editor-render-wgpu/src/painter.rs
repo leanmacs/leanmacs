@@ -72,9 +72,7 @@ use editor_render::rows::{RowCache, RowRef};
 
 use crate::atlas::Atlas;
 use crate::blend::stripes;
-use crate::glyphs::{
-    GlyphCache, GlyphImage, GlyphKey, GlyphRequest, Kind, Rasterize, Stats, bin_of,
-};
+use crate::glyphs::{GlyphCache, GlyphImage, GlyphKey, GlyphRequest, Kind, Rasterize, bin_of};
 use crate::quads::{Clip, Quad, QuadKind, pixel};
 use crate::{Antialiasing, Settings, SubpixelOrder};
 
@@ -253,12 +251,15 @@ impl<Z: Rasterize> Painter<Z> {
         self.glyphs.atlas()
     }
 
-    /// What the glyph cache has done since the painter was made.
-    pub fn glyph_stats(&self) -> Stats {
+    /// What the glyph cache has done since the painter was made: for
+    /// tests.
+    #[cfg(test)]
+    pub fn glyph_stats(&self) -> crate::glyphs::Stats {
         self.glyphs.stats()
     }
 
-    /// The rasteriser.
+    /// The rasteriser: for tests, which look at what a fake was asked.
+    #[cfg(test)]
     pub fn rasterizer(&self) -> &Z {
         &self.rasterizer
     }

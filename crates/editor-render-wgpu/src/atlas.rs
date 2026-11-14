@@ -190,14 +190,16 @@ impl Atlas {
     }
 
     /// The bytes of the image at `slot`, row by row; none when its page
-    /// is gone.
+    /// is gone. For tests.
+    #[cfg(test)]
     pub fn read(&self, slot: Slot) -> Vec<u8> {
         self.region(slot.page, (slot.x, slot.y), (slot.width, slot.height))
     }
 
     /// The bytes of the rectangle of the page numbered `page` whose top
     /// left is `corner` and whose width and height are `size`, row by
-    /// row; none when there is no such page.
+    /// row; none when there is no such page. For tests.
+    #[cfg(test)]
     pub fn region(&self, page: u32, corner: (u32, u32), size: (u32, u32)) -> Vec<u8> {
         let Some(page) = self.page(page) else {
             return Vec::new();
