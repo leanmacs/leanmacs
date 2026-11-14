@@ -1454,7 +1454,8 @@ window is still run with nothing drawing in it. The threads are in
   choice already on record, `Fifo` at 1, and never wgpu's default, which
   on llvmpipe's surface was a mode that tears. An outdated or lost
   surface is configured again and tried once; an occluded one is not
-  presented to. The picture is copied out of the surface only when a
+  presented to, and the draw says its target is hidden, so that the loop
+  waits to be told more and not for a refresh. The picture is copied out of the surface only when a
   check asks for it. All of this is decided in one place that makes no
   call of wgpu's (`surface::State`), which reaches the surface through a
   port of two calls, configure and ask for the next texture: the device

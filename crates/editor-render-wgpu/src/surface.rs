@@ -68,7 +68,12 @@
 //!
 //! A draw that is not presented is the render loop's to try again, and a
 //! window the loop has been told is hidden is not drawn on at all
-//! (`editor-render`'s `render_loop`).
+//! (`editor-render`'s `render_loop`). A window is not always said to be
+//! hidden: one that opens on macOS is occluded until it is on the screen,
+//! and says only that it is shown. So a surface whose last answer was
+//! that its window is occluded is hidden ([`State::hidden`]), the draw
+//! says so in what it answers, and the loop tries it again when it is
+//! told more, not a refresh later.
 //!
 //! # The picture
 //!
@@ -259,6 +264,9 @@ pub(crate) struct State {
     copies: bool,
     /// Whether the picture of each draw is kept.
     keep: bool,
+    /// Whether the surface, when it was last asked for a texture, gave
+    /// none because its window is occluded.
+    hidden: bool,
 }
 
 /// The order a surface's texture holds the bytes of a pixel in.
@@ -331,7 +339,15 @@ impl State {
             configured: false,
             copies: offered.usages.contains(wgpu::TextureUsages::COPY_SRC),
             keep: false,
+            hidden: false,
         })
+    }
+
+    /// Whether the surface, when it was last asked for a texture, gave
+    /// none because its window is occluded: nobody can see it, and a draw
+    /// on it is not to be tried again until the window says more.
+    pub(crate) fn hidden(&self) -> bool {
+        self.hidden
     }
 
     /// Keeps the picture of each draw from here on: the surface is
@@ -391,6 +407,7 @@ impl State {
         let mut asked_again = false;
         loop {
             let (answer, texture) = calls.next_texture();
+            self.hidden = answer == Answer::Occluded;
             match (next(answer, asked_again), texture) {
                 (Next::Draw, Some(texture)) => return Ok(texture),
                 (Next::DrawThenConfigure, Some(texture)) => {
@@ -734,6 +751,44 @@ mod tests {
             assert_eq!(state.acquire(&mut surface, 800, 600), Ok(1), "{name}");
             assert_eq!(surface.calls[2..], [Call::Asked]);
         }
+    }
+
+    #[test]
+    fn a_surface_whose_last_answer_was_that_its_window_is_occluded_is_hidden() {
+        let mut state = state_of(&[Bgra8UnormSrgb]);
+        // Nothing is known of a surface nobody has asked.
+        assert!(!state.hidden());
+        let mut surface = Scripted::answering(&[
+            Answer::Occluded,
+            Answer::Occluded,
+            Answer::Success,
+            Answer::Occluded,
+            Answer::Timeout,
+            Answer::Occluded,
+            Answer::Validation,
+            // Outdated, and occluded once it is configured again.
+            Answer::Outdated,
+            Answer::Occluded,
+            // Outdated, and still outdated.
+            Answer::Outdated,
+            Answer::Outdated,
+        ]);
+        let mut hidden_after = |surface: &mut Scripted| {
+            let _ = state.acquire(surface, 800, 600);
+            state.hidden()
+        };
+        // Occluded, and still occluded when it is asked again.
+        assert!(hidden_after(&mut surface));
+        assert!(hidden_after(&mut surface));
+        // It gives a texture: it is seen.
+        assert!(!hidden_after(&mut surface));
+        // No other reason for no texture says the window is hidden.
+        assert!(hidden_after(&mut surface));
+        assert!(!hidden_after(&mut surface), "Timeout");
+        assert!(hidden_after(&mut surface));
+        assert!(!hidden_after(&mut surface), "Validation");
+        assert!(hidden_after(&mut surface), "Outdated, then Occluded");
+        assert!(!hidden_after(&mut surface), "Outdated twice");
     }
 
     #[test]

@@ -135,8 +135,10 @@ impl Error for NoAdapter {}
 /// A draw wgpu refuses answers `presented: false`, when the frame is
 /// already painted, and so does a draw on a window whose surface gave no
 /// texture: a window that is occluded, or a surface that stays outdated
-/// once it has been configured again. What was painted for it is not lost
-/// from the count:
+/// once it has been configured again. Of the first it also answers
+/// `hidden: true`, so that the render loop does not try again every
+/// refresh while nobody can see the window. What was painted for it is
+/// not lost from the count:
 /// the next draw that presents answers for it too, as if the two were one
 /// draw (the module `painter`, "What a paint answers").
 ///
@@ -319,6 +321,9 @@ impl Renderer for WgpuRenderer {
         }
         Drawn {
             presented: self.refused.is_none(),
+            // A window that is occluded gave no texture: the loop is not
+            // to try again until the window says more.
+            hidden: self.refused.is_some() && self.device.hidden(),
             ..drawn
         }
     }

@@ -470,6 +470,16 @@ impl Device {
             .is_none_or(|window| window.state.keep_picture())
     }
 
+    /// Whether the window's surface, when it was last asked for a texture,
+    /// gave none because the window is occluded
+    /// (`surface::State::hidden`). A device that draws on a target of its
+    /// own is never hidden.
+    pub fn hidden(&self) -> bool {
+        self.window
+            .as_ref()
+            .is_some_and(|window| window.state.hidden())
+    }
+
     /// Whether the device blends by a coverage for each channel, so that
     /// subpixel masks may be drawn on it.
     pub fn per_channel(&self) -> bool {
