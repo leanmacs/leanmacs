@@ -619,10 +619,14 @@ def parse (states : States) (maps : ViewId → List (Keymap Bound)) (view : View
             (state, (key.printed?.map Parsed.text).getD .nothing)
           else (state.reset, .nothing)
 
-/-- The invocation typed text yields: the command `self-insert`, with the
-text a key printed as its argument. -/
+/-- The name of the command typed text runs. -/
+def selfInsertCommand : String :=
+  "self-insert"
+
+/-- The invocation typed text yields: the command `selfInsertCommand`, with
+the text a key printed as its argument. -/
 def selfInsert (text : String) : Invocation :=
-  { command := "self-insert", arguments := [.str text] }
+  { command := selfInsertCommand, arguments := [.str text] }
 
 /-- One key of the Vim scheme: `parse`, with the edit it completed compiled
 to its invocation. -/

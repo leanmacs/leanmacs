@@ -19,6 +19,8 @@ they hold when config fails to load, and a reload does not replace them.
   |---|---|
   | `move` (`Vim.moveCommand`) | `Evil.move` over the compiled vocabulary, `Evil.motions` |
   | `normal`, `visual`, `visual-line` | `Evil.enter`, one function for the three: it reads the state it enters from its call's report |
+  | `insert` | `Evil.insert`: an insert before the cursor's cell |
+  | `self-insert` (`Vim.selfInsertCommand`) | `Evil.selfInsert`: typed text, in insert state and in the minibuffer |
 
 A name here and the name the Vim scheme's default tables give a key
 (`Editor/InputScheme/Vim/Default.lean`) are changed together: the scheme
@@ -39,6 +41,7 @@ namespace Editor.Evil
 def commands : Array Config.Registration :=
   #[{ name := Vim.moveCommand, action := .call (move motions) },
     { name := "normal", action := .call enter }, { name := "visual", action := .call enter },
-    { name := "visual-line", action := .call enter }]
+    { name := "visual-line", action := .call enter }, { name := "insert", action := .call insert },
+    { name := Vim.selfInsertCommand, action := .call selfInsert }]
 
 end Editor.Evil

@@ -12173,6 +12173,142 @@ def evilStateChecks : List Check :=
           [("j v j", "abc|d\nx\nabcd", "abcd\nx\nabc|d"),
             ("j v <Escape> j", "abc|d\nx\nabcd", "abcd\nx\n|abcd")] }]
 
+/-- The history of the buffer 0 of `driver`, as the checks read it: how many
+nodes its tree has, and whether an edit is pending in its open group. -/
+def evilHistory (driver : EvilDriver) : Option (Nat × Bool) :=
+  (driver.loop.state.buffer? ⟨0⟩).map fun buffer =>
+    (buffer.history.nodes.size, buffer.history.pending)
+
+/-- `driver` after one undo request of the buffer 0 (`BufferId.undo`), made
+by a command the loop is handed, which says in the echo area whether there
+was a step to undo: `undone` or `nothing to undo`. -/
+def evilUndone (driver : EvilDriver) : EvilDriver :=
+  let undo : EditorM Unit := do
+    match ← (⟨0⟩ : BufferId).undo with
+    | .ok (some _) =>
+      message "undone"
+    | _ =>
+      message "nothing to undo"
+  (driver.stepped (driver.loop.deliver driver.handed "undo" undo)).1
+
+/-- What the buffer 0 of `driver` holds in the text model. -/
+def evilText (driver : EvilDriver) : Option String := do
+  let buffer ← driver.loop.state.buffer? ⟨0⟩
+  (driver.model.texts.texts[buffer.text.index]?).join.map (·.contents)
+
+/-- The rows of the oracle table for `i`, typed text and `<Escape>`: the
+text is inserted before the cursor's cell, and `<Escape>` leaves the cursor
+on the last character typed, one cell back from the bar, and where it is at
+a line's start. A digit, a key a motion is bound to, a shifted letter and a
+space are text in the session. -/
+def insertRows : List (String × String × String) :=
+  [("i X <Escape>", "ab|c", "ab|Xc"), ("i <Escape>", "a|bc", "|abc"),
+    ("i <Escape>", "|abc", "|abc"), ("i <Escape>", "ab\n|cd", "ab\n|cd"),
+    ("i h e l l o <Escape>", "foo |bar", "foo hell|obar"), ("i h i <Escape>", "|", "h|i"),
+    ("i X <Escape>", "ab\n|\ncd", "ab\n|X\ncd"), ("i 2 w <Escape>", "a|b", "a2|wb"),
+    ("i x SPC A <Escape>", "a|b", "ax |Ab"), ("i é <Escape>", "a|b", "a|éb"),
+    ("i X <Escape> l l", "|abc", "Xa|bc"), ("j i <Escape> j", "abc|d\nx\nabcd", "abcd\nx\n|abcd")]
+
+/-- The checks of evil's insert state (`Editor/Evil.lean`) on the loop's
+driver over the editor's models, under the Vim scheme that ships with
+evil's commands: the keys that begin an insert, typed text, and `<Escape>`,
+and that one insert session is one step of the history. -/
+def evilInsertChecks : List Check :=
+  [{  name :=
+        "i begins an insert before the cursor's cell, a key that prints is inserted at the bar, and <Escape> leaves the cursor one cell back from the bar, or where it is at a line's start; a digit and a key a motion is bound to are text in the session"
+      run := evilRows insertRows },
+    { name :=
+        "i, typed text and <Escape>: the text is inserted at the cursor, the history has gained one node for the whole session and none inside it, one undo request gives the text from before the session, and a second finds nothing to undo"
+      run :=
+        pure <|
+          match evilDriver "foo |bar" with
+          | none => false
+          | some driver =>
+            let typing := evilFed driver "i h e l l o"
+            let typed := evilFed typing "<Escape>"
+            let undone := evilUndone typed
+            let again := evilUndone undone
+            evilHistory driver == some (1, false) && evilHistory typing == some (1, true) &&
+              evilText typing == some "foo hellobar" &&
+              evilHistory typed == some (2, false) &&
+              evilText typed == some "foo hellobar" &&
+              undone.loop.state.echo == "undone" &&
+              evilText undone == some "foo bar" &&
+              again.loop.state.echo == "nothing to undo" &&
+              evilText again == some "foo bar" },
+    { name :=
+        "two insert sessions are two steps of the history: an undo request after the second gives the text from after the first"
+      run :=
+        pure <|
+          match evilDriver "a|b" with
+          | none => false
+          | some driver =>
+            let typed := evilFed driver "i x y <Escape> i z <Escape>"
+            evilText typed == some "axzyb" && evilHistory typed == some (3, false) &&
+              evilText (evilUndone typed) == some "axyb" &&
+              evilText (evilUndone (evilUndone typed)) == some "ab" },
+    { name :=
+        "the scene shows the state: before i and after <Escape> a block, normal state's status field and one inclusive selection; inside the session a bar, insert state's status field and one exclusive selection at the bar, with the modified field once something is typed"
+      run :=
+        pure <|
+          let seen (typed : String) : Option EvilSeen := evilScene "foo |bar" typed
+          let modified : StatusField := { text := Loop.modifiedMark, face := Loop.modifiedFace }
+          let insert := vimDefaultReport "i"
+          let normal := vimDefaultReport ""
+          seen "<F5>" ==
+              some
+                { selection := { ranges := #[⟨4, 4⟩], shape := .inclusive }, covered := #["b"]
+                  cursor := (evilLooks "").1, status := (evilLooks "").2 } &&
+            seen "i" ==
+              some
+                { selection := { ranges := #[⟨4, 4⟩], shape := .exclusive }, covered := #[""]
+                  cursor := (evilLooks "i").1, status := (evilLooks "i").2 } &&
+            seen "i h" ==
+              some
+                { selection := { ranges := #[⟨5, 5⟩], shape := .exclusive }, covered := #[""]
+                  cursor := (evilLooks "i").1, status := (evilLooks "i").2.push modified } &&
+            seen "i h <Escape>" ==
+              some
+                { selection := { ranges := #[⟨4, 4⟩], shape := .inclusive }, covered := #["h"]
+                  cursor := (evilLooks "").1, status := (evilLooks "").2.push modified } &&
+            insert.cursor.shape == .bar &&
+            normal.cursor.shape == .block &&
+            insert.cursor != normal.cursor &&
+            insert.status != normal.status },
+    { name :=
+        "a key that prints, typed while a prompt is open, is inserted in the minibuffer and not in the asking view; RET then accepts, and the command the prompt named is run with what was typed"
+      run :=
+        pure <|
+          let ask : Dispatched := fun _ => do
+            discard <| prompt "Name: " { command := "greet" }
+            return none
+          let greet : Dispatched := fun call => do
+            message s!"hello {" ".intercalate (call.arguments.map argumentText)}"
+            return none
+          let handed := evilHanded Minibuffer.commands [("ask", ask), ("greet", greet)]
+          match evilDriver "a|bc" handed with
+          | none => false
+          | some driver =>
+            let (asking, _) := driver.stepped (driver.loop.runNamed driver.handed "ask")
+            let typing := evilFed asking "A d a 7"
+            let answered := evilFed typing "RET"
+            asking.loop.state.frame.focused == ⟨1⟩ && evilShown typing ⟨1⟩ == "Ada7|" &&
+              evilShown typing == "a|bc" &&
+              answered.loop.state.prompt.isNone &&
+              answered.loop.state.echo == "hello Ada7" &&
+              evilShown answered == "a|bc" },
+    { name :=
+        "the command typed text runs, called with no string as its first argument, inserts nothing and says so in the echo area"
+      run :=
+        pure <|
+          match evilDriver "a|bc" with
+          | none => false
+          | some driver =>
+            let (ran, _) :=
+              driver.stepped (driver.loop.runNamed driver.handed Vim.selfInsertCommand)
+            ran.loop.state.echo == Evil.noText && !Evil.noText.isEmpty && evilShown ran == "a|bc" &&
+              evilHistory ran == some (1, false) }]
+
 /-- Every check, in the order they run.
 
 The order matters where the process's one pool is measured. `poolChecks` run
@@ -12226,7 +12362,8 @@ def checks : List Check :=
     fileCommandChecks ++
     evilRestChecks ++
     evilMotionChecks ++
-    evilStateChecks
+    evilStateChecks ++
+    evilInsertChecks
 
 /-- Runs `checks` and returns the names of those that failed. A check that
 throws has failed, and its error is reported with its name. -/

@@ -77,6 +77,36 @@ scheme's state after its key (`Editor/Command/Call.lean`). The rule
   keeps both ends leaves it.
 - **It ignores its count and its register.**
 
+## Insert state
+
+Insert state is a state whose selection is exclusive: a bar between
+characters. The commands here place the bar and insert at it; that what is
+typed in one session is one step of the history is the loop's
+(`Editor/Loop.lean`, "Insert sessions"), which leaves the buffer's undo
+group open while the scheme reports the view as in a session. Nothing here
+sets or clears a boundary.
+
+- **`insert`** begins an insert before the cursor's cell: the head stays,
+  and entering the state ("Entering a state") makes the selection one bar
+  there.
+- **`selfInsert`** is the command typed text runs: it inserts its first
+  argument, a string, at the head of each range of its target's selection
+  (`Target.insertAtSelections`, `Editor/Api.lean`), one transaction that
+  carries the selection before and after. With no string it inserts
+  nothing and says so.
+- **The minibuffer's typing is the same command.** While a prompt is open
+  the focused window is the minibuffer's, whose view the scheme reports as
+  taking text, so a key that prints there yields the same invocation and
+  the loop runs it with the minibuffer's window as its target.
+- **Leaving insert state is `enter`**: rule 3 steps the head back one cell
+  on its line.
+- **Not built: a count before a key that begins an insert.** Vim repeats
+  the inserted text, which is the replay of an insert session. The
+  commands ignore their count and their register.
+- **Not built: any other key in insert state** than `<Escape>` and the
+  keys that print. `RET`, `<Backspace>`, `<Tab>` and the arrow keys are
+  named keys, which print nothing, and do nothing there.
+
 ## Where a cursor rests
 
 A motion answers a position, its raw target, which the text port never
@@ -174,6 +204,11 @@ has no motion of. -/
 def noSuchMotion (name : String) : String :=
   s!"{name}: no such motion"
 
+/-- What the command typed text runs says in the echo area when it is called
+with no string to insert. -/
+def noText : String :=
+  "self-insert: no text to insert"
+
 /-- The move command over the vocabulary `motions`, as it is called ("The
 move command", in the module docs): its first argument names the motion and
 its second is the count, 0 for none. The head of the primary range of the
@@ -230,5 +265,24 @@ def enter (call : Call) : EditorM Unit := do
   call.target.select { ranges := #[⟨anchor, head⟩], shape := report.shape }
   unless report.selecting do
     discard <| call.target.window.id.setWanted none
+
+/-- The command that begins an insert before the cursor's cell, as it is
+called ("Insert state", in the module docs): the head stays where it is,
+and the view's state is entered (`enter`), which makes the selection one
+bar there. It ignores its count and its register. -/
+def insert (call : Call) : EditorM Unit :=
+  enter call
+
+/-- The command typed text runs, as it is called ("Insert state", in the
+module docs): its first argument, a string, is inserted at the head of each
+range of the target's selection, as one transaction that carries the
+selection before and the cursors after. Called with no string it inserts
+nothing and says so in the echo area (`noText`). -/
+def selfInsert (call : Call) : EditorM Unit := do
+  match call.arguments with
+  | .str text :: _ =>
+    call.target.insertAtSelections text
+  | _ =>
+    message noText
 
 end Editor.Evil
