@@ -136,6 +136,28 @@ crossing a shorter line (`Window.wanted`, a `Window.Wanted`;
 - It is a field of the state, so a command that does not run to its end
   leaves it as it was.
 
+## Registers
+
+A register is a text a command set aside, to put back later
+(`Register`; `docs/design/keymaps-and-modes.md`, "Registers").
+
+- **It is a text and whether that text is whole lines** (`linewise`):
+  what puts it back reads the flag to choose between the cursor and the
+  line. The state does not check that a line-wise text ends in a line
+  break: that is the rule of whoever sets it.
+- **Registers are kept by name** (`EditorState.registers`), for the whole
+  editor and not for a buffer or a view. `register?` reads one, and
+  `setRegister` sets one in place of the register the name had. A name is
+  any string: which names mean something, the unnamed register among
+  them, is the rule of the commands that set and read them, so one more
+  register is one more name and nothing here changes.
+- **The state starts with none.** A name nothing was set under reads as
+  no register, which is another thing than a register whose text is
+  empty.
+- **They are fields of the state, so a command that does not run to its
+  end leaves them as they were.** The clipboard is not here: it is
+  outside the editor, behind a port of its own.
+
 ## Prompts
 
 A prompt is a request for one string, with a text to show beside the input
@@ -533,6 +555,15 @@ name (`EditorState.freeName`). -/
 def Prompt.bufferName : String :=
   "minibuffer"
 
+/-- A register: a text a command set aside ("Registers", in the module
+docs). -/
+structure Register where
+  /-- The text. -/
+  text : String
+  /-- Whether the text is whole lines, to be put back as lines. -/
+  linewise : Bool := false
+  deriving DecidableEq, Repr
+
 /-- Everything the editor is showing and editing. -/
 structure EditorState where
   /-- The buffers, one a slot; a `BufferId` is an index here, and the slot of
@@ -567,6 +598,9 @@ structure EditorState where
   /-- Whether a command asked for the config to be reloaded, which the loop
   has not yet handed to its host. -/
   reload : Bool := false
+  /-- The registers, each under its name, in the order each name was first
+  set ("Registers", in the module docs). No name is here twice. -/
+  registers : Array (String × Register) := #[]
   deriving BEq, Repr
 
 /-- What a handler acts on: a window and the buffer it shows. -/
@@ -1044,6 +1078,21 @@ def endSave (id : BufferId) (snapshot : SnapshotId) (stamp : Option File.Stamp)
           -- it is withdrawn ("Quit", in the module docs).
           let state := if stamp.isNone then { state with quitting := false } else state
           changeBuffer id (fun _ => ((), ended)) state
+
+/-- The register kept under `name`, if one was set under it. -/
+def register? (state : EditorState) (name : String) : Option Register :=
+  (state.registers.find? (·.1 == name)).map (·.2)
+
+/-- `state` with `register` kept under `name`, in place of the register the
+name had, where that one was; a name nothing was set under is added
+last. Nothing else changes, and it is never refused: a name is any
+string. -/
+def setRegister (name : String) (register : Register) (state : EditorState) : EditorState :=
+  { state with
+    registers :=
+      if state.registers.any (·.1 == name) then
+        state.registers.map fun entry => if entry.1 == name then (name, register) else entry
+      else state.registers.push (name, register) }
 
 /-- The value the buffer `id` keeps under `name`, if it keeps one. -/
 def value? (state : EditorState) (id : BufferId) (name : String) : Option Value := do

@@ -232,6 +232,23 @@ cannot be done (`docs/design/concurrency.md`, "Foreground: commands").
 It makes no request of the library. Pinned by
 `ModelTest.dispatchStateChecks` and `ModelTest.dispatchCommandGivesUpChecks`.
 
+## Registers
+
+`setRegister name register` keeps a register, a text and whether it is
+whole lines, under a name, in place of the register the name had
+(`Editor/State.lean`, "Registers"). A command reads one from the state
+(`EditorState.register?` on `editorState`), which has what the command's
+own requests have left.
+
+- **It is never refused**: a name is any string. Which names mean
+  something is the rule of the commands that set and read them.
+- **A register is editor state**, so a command that sets one and then
+  does not run to its end leaves the register the name had
+  (`Editor/Loop.lean`, "Rollback").
+- It makes no request of the library. Pinned by
+  `ModelTest.apiStateChecks`, and the rollback by
+  `ModelTest.dispatchRollbackChecks`.
+
 ## Ex bindings
 
 `exBinding name` asks which command the ex name `name` is bound to, and
@@ -396,6 +413,12 @@ Run where no loop dispatches the command it is refused with
 def giveUp {α : Type} (reason : String) : EditorM α := do
   EditorState.ask (.giveUp reason)
   throw .badSelection
+
+/-- Keeps `register` under `name`, in place of the register the name had
+("Registers", in the module docs). It is never refused, and makes no
+request of the library. -/
+def setRegister (name : String) (register : Register) : EditorM Unit :=
+  EditorState.ask (.setRegister name register)
 
 /-- Asks for the job registered under `name` to be started with
 `arguments`, once this command has run to its end. Its result comes back

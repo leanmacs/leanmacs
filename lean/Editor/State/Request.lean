@@ -83,6 +83,11 @@ the models and against the library alike (`Editor/Command/Dispatch.lean`).
   request, with the reason (`Editor/Command/Dispatch.lean`, "A command
   that gives up"). This handler knows no command to end, so here the
   request changes nothing and is answered like a write that has no reply.
+- **A register is set by one request**, `setRegister`, with its name
+  (`Editor/State.lean`, "Registers"). It is never refused: a name is any
+  string, and which names mean something is the asking command's rule. A
+  command reads a register with a read of the state
+  (`EditorState.register?`).
 
 ## Where an addition goes
 
@@ -163,6 +168,9 @@ inductive StateRequest where
   | reload
   /-- End this command here, with `reason`: it gives up. -/
   | giveUp (reason : String)
+  /-- Keep `register` under `name`, in place of the register the name
+  had. -/
+  | setRegister (name : String) (register : Register)
 
 /-- The type of the reply to each request. -/
 abbrev StateRequest.Reply : StateRequest → Type
@@ -191,6 +199,7 @@ abbrev StateRequest.Reply : StateRequest → Type
   | .quit => Unit
   | .reload => Unit
   | .giveUp _ => Unit
+  | .setRegister .. => Unit
 
 namespace EditorState
 
@@ -238,6 +247,7 @@ def handle : (request : StateRequest) → EditorState → request.Reply × Edito
   | .quit, state => ((), { state with quitting := true })
   | .reload, state => ((), { state with reload := true })
   | .giveUp _, state => ((), state)
+  | .setRegister name register, state => ((), state.setRegister name register)
 
 end EditorState
 

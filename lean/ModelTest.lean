@@ -4432,6 +4432,36 @@ def stateChecks : List Check :=
           | none => false
           | some state => (state.window? ⟨0⟩).map (·.wanted) == some none },
     { name :=
+        "the initial state has no register: none is read under the empty name, under a letter or under the clipboard's name"
+      run :=
+        pure <|
+          match onTextModel (EditorState.initial ⟨640, 480⟩) with
+          | none => false
+          | some state =>
+            state.registers.isEmpty && ["", "\"", "a", "+"].all (state.register? · == none) },
+    { name :=
+        "a register set under a name is read back under that name with its text and whether it is line-wise, and under no other; a second one set under the name replaces it, and a register under another name stays; nothing else of the state changes"
+      run :=
+        pure <|
+          match onTextModel threeWindows with
+          | none => false
+          | some state =>
+            let word : Register := { text := "word" }
+            let line : Register := { text := "a line\n", linewise := true }
+            let once := state.setRegister "a" word
+            let both := once.setRegister "b" line
+            let again := both.setRegister "a" line
+            once.register? "a" == some word && once.register? "b" == none &&
+              once.register? "" == none &&
+              !word.linewise &&
+              both.register? "a" == some word &&
+              both.register? "b" == some line &&
+              again.register? "a" == some line &&
+              again.register? "b" == some line &&
+              again.registers.size == 2 &&
+              { again with registers := #[] } == state &&
+              (state.setRegister "" word).register? "" == some word },
+    { name :=
         "the initial state's selection is one cursor at 0, of the shape the state is made with, and exclusive when it is made with none"
       run :=
         pure <|
@@ -4880,7 +4910,7 @@ def stateRequests : List StateRequest :=
     .closePrompt none, .closePrompt (some "typed"),
     .setWanted ⟨0⟩ (some { column := .cells 3, head := 7 }), .setWanted ⟨1⟩ none,
     .setWanted ⟨9⟩ (some { column := .lineEnd, head := 0 }), .ex "w", .invoke asked, .quit, .reload,
-    .giveUp "no"]
+    .giveUp "no", .setRegister "a" { text := "a line\n", linewise := true }]
 
 /-- The checks of the state requests' pure handler (`EditorState.handle`,
 `Editor/State/Request.lean`), on states made on the text model. The handler
@@ -5381,6 +5411,21 @@ def stateRequestChecks : List Check :=
           | some state =>
             let (_, after) := state.handle (.giveUp "no such thing")
             after == state },
+    { name :=
+        "the request to set a register sets the register of that name, in place of the one the name had, and changes nothing else of the state"
+      run :=
+        pure <|
+          match onTextModel twoBuffers with
+          | none => false
+          | some state =>
+            let word : Register := { text := "word" }
+            let line : Register := { text := "a line\n", linewise := true }
+            let (_, set) := state.handle (.setRegister "a" word)
+            let (_, replaced) := set.handle (.setRegister "a" line)
+            state.register? "a" == none && set.register? "a" == some word &&
+              set == state.setRegister "a" word &&
+              replaced.register? "a" == some line &&
+              { replaced with registers := #[] } == state },
     { name :=
         "every kind of request, accepted and refused, leaves a well-formed state well formed, with no prompt open and with one open, and the state with nothing in it answers each without a buffer or a window"
       run := do
@@ -6917,6 +6962,33 @@ def dispatchRollbackChecks : List Check :=
           match (program.runModel editorModel).1 with
           | .ok (texts, before, after) => texts == #["", "other"] && before == after
           | .error _ => false },
+    { name :=
+        "a key's command that sets a register and is then refused leaves the register the name had: a register is editor state, and the state is the one from before the command; a command that sets one and runs to its end leaves it set"
+      run :=
+        pure <|
+          let kept : Register := { text := "kept" }
+          let lost : Register := { text := "lost\n", linewise := true }
+          let keeps : Dispatched := fun _ => do
+            setRegister "a" kept
+            return none
+          let loses : Dispatched :=
+            failingAfter fun _ => do
+              setRegister "a" lost
+              setRegister "b" lost
+          let keys :=
+            dispatchKeys [("C-c k", invoke "keeps"), ("C-c l", invoke "loses")]
+              [("keeps", keeps), ("loses", loses)]
+          let program :
+            EditorM
+              (Option Register × Option Register × Option Register × Option Register × String) :=
+            do
+            let loop : TestLoop := { state := ← EditorState.initial ⟨640, 480⟩ }
+            let (set, _) ← stepsWith keys loop (presses "C-c k")
+            let (failed, _) ← stepsWith keys set (presses "C-c l")
+            return (loop.state.register? "a", set.state.register? "a", failed.state.register? "a",
+                failed.state.register? "b", failed.state.echo)
+          (program.runModel editorModel).1.toOption ==
+            some (none, some kept, some kept, none, "loses: refused: bad range") },
     { name :=
         "after a command that failed the scheme is as it was before the first key of the sequence, with what it keeps across a reset: the key that yielded the failed invocation is not counted, a key that yielded nothing before it still is, and nothing is pending"
       run :=
@@ -10436,6 +10508,31 @@ def apiStateChecks : List Check :=
             replied set == .inr () && held == some (some kept) && replied cleared == .inr () &&
               replied refused == .inl (.noSuchWindow ⟨9⟩) &&
               state == (start.setWanted view (some kept)).2 &&
+              before > 0 &&
+              after == before
+          | _ => false },
+    { name :=
+        "a register set from a command is the editor state's, which the command then reads it from, and a second set under the name replaces it; none of it makes a request of the library"
+      run :=
+        pure <|
+          let word : Register := { text := "word" }
+          let line : Register := { text := "a line\n", linewise := true }
+          let program : EditorM _ := do
+            let start ← twoBuffers
+            let before ← Watch.now
+            let ran ←
+              EditorM.dispatched
+                  (do
+                    setRegister "a" word
+                    let first := (← editorState).register? "a"
+                    setRegister "a" line
+                    return (first, (← editorState).register? "a", (← editorState).register? "b"))
+                  {} start
+            return (ran, start, before, ← Watch.now)
+          match (program.runModel countingModel).1 with
+          | .ok ((.finished (first, second, other), state), start, before, after) =>
+            first == some word && second == some line && other == none &&
+              state == start.setRegister "a" line &&
               before > 0 &&
               after == before
           | _ => false },
