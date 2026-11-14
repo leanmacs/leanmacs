@@ -418,6 +418,20 @@ impl Default for Settings {
     }
 }
 
+impl Settings {
+    /// The default settings, with text drawn as Core Text draws it: its
+    /// weight ([`Weight::CORE_TEXT`]) and the hinting fitted with it,
+    /// which is off: the fit came nearest Core Text's drawing with
+    /// outlines not fitted to the pixel grid.
+    pub fn core_text() -> Self {
+        Self {
+            hinting: false,
+            weight: Weight::CORE_TEXT,
+            ..Self::default()
+        }
+    }
+}
+
 /// How heavy text is drawn: what is added to a glyph's coverage beyond
 /// its outline, on the CPU and the GPU alike.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -437,6 +451,26 @@ impl Weight {
     pub const LINEAR: Weight = Weight {
         contrast: blend::CONTRAST,
         dilation: 0.0,
+    };
+
+    /// Core Text's weight, with hinting off ([`Settings::core_text`]):
+    /// fitted to Core Text's drawing of a sentence of the fixture font
+    /// Noto Sans Mono at 28 pixels, black on white
+    /// (`tests/coretext/sentence.png`).
+    ///
+    /// Drawn with it, the sentence has 1910 pixels darker than mid-grey
+    /// against Core Text's 1891 (1.010 of them) and ink of 499078
+    /// against 503470 (0.991); the default draws 0.699 and 0.721 of
+    /// them. Of the amounts the fit swept, contrast and dilation each in
+    /// steps of 0.1 and hinting on and off, it is the nearest, and the
+    /// tests in `weight_tests` hold it to that and to within a tenth of
+    /// each count.
+    ///
+    /// The dilation is a number of pixels whatever the size, fitted at
+    /// one size: what it comes to at other sizes is not measured.
+    pub const CORE_TEXT: Weight = Weight {
+        contrast: 0.1,
+        dilation: 0.8,
     };
 }
 

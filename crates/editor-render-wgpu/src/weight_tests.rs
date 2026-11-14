@@ -17,6 +17,20 @@
 //! The font is a stand-in for Menlo, whose licence keeps it out of the
 //! repository: the numbers are of the stand-in, at one size, 28 pixels.
 //!
+//! # The fit
+//!
+//! `Weight::CORE_TEXT`, with the hinting `Settings::core_text` gives it,
+//! was chosen by sweeping a grid ([`grid`]): the contrast from 0 to 1
+//! and the dilation from 0 to 0.8 pixels, each in steps of 0.1, with
+//! hinting on and off. Each point's error is the larger of the parts by
+//! which its dark pixels and its ink miss the reference's; the point of
+//! least error was taken, its error being under the tolerance of a tenth.
+//! A finer step of 0.05 around it was not tried: its error, 0.010,
+//! leaves no more than 0.01 to gain, which would fit the constant to one
+//! sentence. The macOS setting is held to the tolerance, and to being
+//! no worse than its neighbours on the grid and the default; the whole
+//! grid is swept again by setting [`FULL_SWEEP`].
+//!
 //! The direction tests below draw each glyph over its own image, as if
 //! no two touched, and state relations only: dilating the outline,
 //! raising the coverage, blending on sRGB values and drawing black on
@@ -443,12 +457,17 @@ fn error(counts: Counts, target: Counts) -> f64 {
 fn the_default_weight_is_lighter_than_core_texts() {
     let target = weigh(reference(), 0xff);
     let default = weighed(Weight::LINEAR, true);
+    let macos = weigh(drawn(Settings::core_text()), 0xff);
     println!("{SENTENCE:?}, Noto Sans Mono at {SIZE} px, black on white");
     println!(
         "{:<28} {:>6} {:>8} {:>7} {:>7}",
         "drawing", "dark", "ink", "dark/CT", "ink/CT"
     );
-    for (name, counts) in [("Core Text", target), ("default (linear)", default)] {
+    for (name, counts) in [
+        ("Core Text", target),
+        ("default (linear)", default),
+        ("macOS (Settings::core_text)", macos),
+    ] {
         println!(
             "{:<28} {:>6} {:>8} {:>7.3} {:>7.3}",
             name,
@@ -461,4 +480,110 @@ fn the_default_weight_is_lighter_than_core_texts() {
     assert!(default.dark < target.dark, "{default:?} {target:?}");
     assert!(default.ink < target.ink, "{default:?} {target:?}");
     assert!(error(default, target) > 0.10);
+}
+
+/// How far the macOS setting's counts may be from the reference's, as a
+/// part of the reference's, in dark pixels and in ink alike.
+const TOLERANCE: f64 = 0.10;
+
+/// The counts of the sentence drawn with `settings`.
+fn weighed_with(settings: Settings) -> Counts {
+    weigh(drawn(settings), 0xff)
+}
+
+#[test]
+fn the_macos_weight_matches_core_texts_reference() {
+    let target = weigh(reference(), 0xff);
+    let macos = weighed_with(Settings::core_text());
+    assert!(
+        error(macos, target) <= TOLERANCE,
+        "{macos:?} against {target:?}: dark x{:.3}, ink x{:.3}",
+        macos.dark as f64 / target.dark as f64,
+        macos.ink as f64 / target.ink as f64,
+    );
+}
+
+/// The amounts the fit sweeps: each from 0 by 0.1, the contrast to 1,
+/// past which the adjustment is no longer a coverage, and the dilation
+/// to 0.8 pixels; and hinting on and off.
+fn grid() -> Vec<(Weight, bool)> {
+    let mut points = Vec::new();
+    for hinting in [true, false] {
+        for dilation in 0..=8 {
+            for contrast in 0..=10 {
+                let weight = Weight {
+                    contrast: contrast as f32 / 10.0,
+                    dilation: dilation as f32 / 10.0,
+                };
+                points.push((weight, hinting));
+            }
+        }
+    }
+    points
+}
+
+/// Whether [`the_core_text_weight_is_the_best_on_the_grid`] sweeps the
+/// whole grid, as the fit did, and prints its nearest points. The sweep
+/// draws the sentence 198 times, over 2 seconds in the debug profile, so
+/// the gate holds the macOS setting to its neighbours on the grid and to
+/// the default instead. Set it to `true` to fit again, and run
+/// `cargo test --locked -p editor-render-wgpu --lib weight_tests -- --nocapture`.
+const FULL_SWEEP: bool = false;
+
+/// The points of the grid next to the macOS setting: a step of 0.1 up or
+/// down in the contrast, in the dilation or in both, and the same with
+/// hinting the other way; and the default.
+fn neighbours() -> Vec<(Weight, bool)> {
+    let chosen = Settings::core_text();
+    let (weight, hinting) = (chosen.weight, chosen.hinting);
+    let mut points = vec![(Weight::LINEAR, true), (weight, !hinting)];
+    for contrast in [-0.1_f32, 0.0, 0.1] {
+        for dilation in [-0.1_f32, 0.0, 0.1] {
+            let next = Weight {
+                contrast: weight.contrast + contrast,
+                dilation: weight.dilation + dilation,
+            };
+            let on_grid = (0.0..=1.0).contains(&next.contrast)
+                && (0.0..=0.8 + f32::EPSILON).contains(&next.dilation);
+            if on_grid && next != weight {
+                points.push((next, hinting));
+                points.push((next, !hinting));
+            }
+        }
+    }
+    points
+}
+
+#[test]
+fn the_core_text_weight_is_the_best_on_the_grid() {
+    let target = weigh(reference(), 0xff);
+    let chosen = Settings::core_text();
+    let best = error(weighed_with(chosen), target);
+    let points = if FULL_SWEEP { grid() } else { neighbours() };
+    let mut table: Vec<(Weight, bool, Counts, f64)> = points
+        .into_iter()
+        .map(|(weight, hinting)| {
+            let counts = weighed(weight, hinting);
+            (weight, hinting, counts, error(counts, target))
+        })
+        .collect();
+    table.sort_by(|one, other| one.3.total_cmp(&other.3));
+    println!("the nearest points of the grid to Core Text's {target:?}:");
+    for (weight, hinting, counts, miss) in table.iter().take(12) {
+        println!(
+            "contrast {:.2} dilation {:.2} hinting {hinting:<5} dark {:>5} ink {:>7} dark/CT {:.3} ink/CT {:.3} error {miss:.3}",
+            weight.contrast,
+            weight.dilation,
+            counts.dark,
+            counts.ink,
+            counts.dark as f64 / target.dark as f64,
+            counts.ink as f64 / target.ink as f64,
+        );
+    }
+    for (weight, hinting, _, miss) in &table {
+        assert!(
+            *miss >= best,
+            "{weight:?} hinting {hinting} misses by {miss:.4}, the macOS setting by {best:.4}"
+        );
+    }
 }
