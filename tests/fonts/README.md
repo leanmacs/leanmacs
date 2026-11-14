@@ -17,7 +17,7 @@ whole upstream files are 7.7 MB; these are 119 KB.
 
 ## What the tests rest on
 
-Five facts of these files, and no other: no test states a glyph id, an
+Six facts of these files, and no other: no test states a glyph id, an
 advance, an offset, a variation coordinate or a height of a font.
 
 - Noto Sans has a ligature for `fi`: the two characters are one glyph.
@@ -30,6 +30,10 @@ advance, an offset, a variation coordinate or a height of a font.
   over `x`, and raises it over `X`.
 - Noto Emoji has a weight axis, and no other fixture varies: its bold is
   a place on the axis, not the regular outlines made bolder.
+- Noto Sans is its upstream's hinted build, and the subset keeps the
+  hints: at 16 pixels the `a` fitted to the pixel grid is another image
+  than the `a` left as its outline is (the rasteriser's tests,
+  `crates/editor-render-wgpu/src/raster.rs`).
 
 ## Where they come from
 

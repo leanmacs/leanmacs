@@ -299,6 +299,32 @@ mod tests {
     }
 
     #[test]
+    fn an_outline_not_fitted_to_the_pixel_grid_gives_another_image() {
+        // Noto Sans is its upstream's hinted build: at 16 pixels its hints
+        // move the edges of the `a`.
+        let font = resolved(SANS);
+        let request = |hint: bool| GlyphRequest {
+            font: &font,
+            key: key(glyph_of(SANS, 'a')),
+            hint,
+        };
+        // From one rasteriser, which keeps state between glyphs.
+        let mut rasterizer = SwashRasterizer::new();
+        let fitted = rasterizer.rasterize(&request(true)).expect("an image");
+        let plain = rasterizer.rasterize(&request(false)).expect("an image");
+        assert_ne!(plain, fitted);
+        assert_eq!(plain.kind, Kind::Mask);
+        assert!(ink(&plain) > 0);
+        // Each is the image a rasteriser that has made nothing gives:
+        // what is kept of one does not reach the other.
+        assert_eq!(rasterizer.rasterize(&request(true)), Some(fitted));
+        assert_eq!(
+            SwashRasterizer::new().rasterize(&request(false)),
+            Some(plain)
+        );
+    }
+
+    #[test]
     fn a_space_is_an_image_of_no_size() {
         let made = mask(&resolved(SANS), SANS, ' ');
         assert_eq!(made.width * made.height, 0);

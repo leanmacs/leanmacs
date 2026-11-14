@@ -1067,6 +1067,25 @@ fn each_kind_of_image_is_drawn_as_its_kind_of_quad() {
 }
 
 #[test]
+fn glyphs_are_asked_for_fitted_to_the_pixel_grid_or_not_as_the_settings_say() {
+    let shown = frame_of(vec![plain_row(0.0, &[1, 2], 1)]);
+    // Whether each glyph was asked for hinted, by a painter told
+    // `hinting`.
+    let asked = |hinting: bool| -> Vec<bool> {
+        let settings = Settings {
+            hinting,
+            ..settings(Antialiasing::Grayscale, u64::MAX)
+        };
+        let mut painter = Painter::new(FakeRasterizer::new(), &settings, true, PAGE);
+        painter.paint(&shown, target(1.0));
+        let asked = &painter.rasterizer().asked;
+        asked.iter().map(|(_, _, hint)| *hint).collect()
+    };
+    assert_eq!(asked(false), vec![false, false]);
+    assert_eq!(asked(true), vec![true, true]);
+}
+
+#[test]
 fn a_subpixel_mask_is_kept_in_the_order_of_the_displays_stripes() {
     let shown = frame_of(vec![plain_row(0.0, &[1], 1)]);
     let key = GlyphKey {
