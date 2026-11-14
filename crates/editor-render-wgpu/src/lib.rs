@@ -12,4 +12,17 @@
 
 pub mod atlas;
 pub mod glyphs;
+pub mod painter;
 pub mod quads;
+
+/// The order of the colour stripes of a display's pixels, from left to
+/// right. No window system the editor runs on says which a display has,
+/// so it is a setting.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub enum SubpixelOrder {
+    /// Red, green, blue: nearly every display.
+    #[default]
+    Rgb,
+    /// Blue, green, red.
+    Bgr,
+}

@@ -1,0 +1,904 @@
+//! The painter's tests: on the fake rasteriser, with no font and no GPU.
+//!
+//! The frames are of two sorts. Where a test is about a number of the
+//! frame (a glyph's offset, a row's height, a cursor's area), the frame is
+//! built by hand from the frame's public data, so the number is the one
+//! the test states. Where it is about what a whole view comes to, the
+//! frame is laid out on layout's fake shaper, and what is expected is
+//! read from that frame's own numbers.
+
+use std::ops::Range;
+use std::sync::Arc;
+
+use editor_layout::Layout;
+use editor_layout::face::{Color, Face, FaceDef, Paint, Underline, UnderlineStyle};
+use editor_layout::frame::{Area, CursorBox, Frame, FrameRow, ViewFrame};
+use editor_layout::scene::{Cursor, CursorShape, Decoration, Rect, Scene, StatusField, ViewId};
+use editor_layout::shaper::fake::CellShaper;
+use editor_layout::shaper::{Glyph, ResolvedFontId, VisualLine};
+use editor_render::port::Target;
+
+use super::{Painter, thickness};
+use crate::SubpixelOrder;
+use crate::glyphs::fake::{FakeRasterizer, font};
+use crate::glyphs::{GlyphKey, bin_of};
+use crate::quads::{Quad, QuadKind};
+
+/// The page size of the painters here.
+const PAGE: u32 = 64;
+
+const WHITE: Color = Color::rgb(0xff, 0xff, 0xff);
+const BLACK: Color = Color::rgb(0, 0, 0);
+const RED: Color = Color::rgb(0xff, 0, 0);
+const GREEN: Color = Color::rgb(0, 0xff, 0);
+const BLUE: Color = Color::rgb(0, 0, 0xff);
+const YELLOW: Color = Color::rgb(0xff, 0xff, 0);
+const GREY: Color = Color::rgb(0x80, 0x80, 0x80);
+
+/// The width and the height of every image of the fake rasteriser.
+const GLYPH: (u32, u32) = (FakeRasterizer::WIDTH, FakeRasterizer::HEIGHT);
+
+/// A painter over `rasterizer` that asks for plain masks, with an atlas
+/// that never fills.
+fn painter_over(rasterizer: FakeRasterizer) -> Painter<FakeRasterizer> {
+    Painter::new(rasterizer, true, None, PAGE, u64::MAX)
+}
+
+/// A painter over the fake rasteriser as it comes.
+fn painter() -> Painter<FakeRasterizer> {
+    painter_over(FakeRasterizer::new())
+}
+
+/// A target of 400 by 300 pixels at `scale`.
+fn target(scale: f32) -> Target {
+    Target {
+        width: 400,
+        height: 300,
+        scale,
+    }
+}
+
+/// The glyph `id` of font 0 at `x`, ten pixels across, drawn at its pen
+/// position; its cluster is `cluster`.
+fn glyph(id: u32, cluster: usize, x: f32) -> Glyph {
+    Glyph {
+        id,
+        font: ResolvedFontId(0),
+        cluster,
+        x,
+        dx: 0.0,
+        dy: 0.0,
+        advance: 10.0,
+    }
+}
+
+/// A row at `y`, 16 pixels down with its baseline at 12, of `glyphs`
+/// painted by `runs`, with the content hash `hash`.
+fn row(y: f32, glyphs: Vec<Glyph>, runs: Vec<(Range<usize>, Paint)>, hash: u64) -> FrameRow {
+    let bytes = 0..glyphs.len();
+    let width = glyphs.last().map_or(0.0, |last| last.x + last.advance);
+    FrameRow {
+        y,
+        height: 16.0,
+        baseline: 12.0,
+        bytes: bytes.clone(),
+        line: Arc::new(VisualLine {
+            bytes,
+            glyphs,
+            width,
+            height: 16.0,
+            baseline: 12.0,
+        }),
+        runs,
+        hash,
+    }
+}
+
+/// A row at `y` of the glyphs `ids`, ten pixels apart, in the base paint.
+fn plain_row(y: f32, ids: &[u32], hash: u64) -> FrameRow {
+    let glyphs = ids
+        .iter()
+        .enumerate()
+        .map(|(index, id)| glyph(*id, index, index as f32 * 10.0))
+        .collect();
+    row(y, glyphs, vec![(0..ids.len(), Paint::default())], hash)
+}
+
+/// A view at the target's top left, 200 by 100, of `rows`: white behind,
+/// blue selections, no status row and no cursor.
+fn view(rows: Vec<FrameRow>) -> ViewFrame {
+    ViewFrame {
+        id: ViewId(1),
+        rect: Rect {
+            x: 0,
+            y: 0,
+            width: 200,
+            height: 100,
+        },
+        background: WHITE,
+        rows,
+        status: None,
+        cursors: Vec::new(),
+        selections: Vec::new(),
+        selection: BLUE,
+    }
+}
+
+/// The frame of `views`, of generation 0, whose font 0 is 16 pixels.
+fn frame(views: Vec<ViewFrame>) -> Frame {
+    Frame {
+        views,
+        generation: 0,
+        fonts: Arc::from(vec![font(16.0)]),
+    }
+}
+
+/// The frame of one view of `rows`.
+fn frame_of(rows: Vec<FrameRow>) -> Frame {
+    frame(vec![view(rows)])
+}
+
+/// The quads of `painter` of `kind` and `color`.
+fn quads_of(painter: &Painter<FakeRasterizer>, kind: QuadKind, color: Color) -> Vec<Quad> {
+    painter
+        .quads()
+        .iter()
+        .filter(|quad| quad.kind == kind && quad.color == color)
+        .copied()
+        .collect()
+}
+
+/// Where each of `quads` is and how large: left, top, width, height.
+fn boxes(quads: &[Quad]) -> Vec<(i32, i32, u32, u32)> {
+    quads
+        .iter()
+        .map(|quad| (quad.x, quad.y, quad.width, quad.height))
+        .collect()
+}
+
+/// The fills of `color` among the quads of `painter`, as boxes.
+fn fills(painter: &Painter<FakeRasterizer>, color: Color) -> Vec<(i32, i32, u32, u32)> {
+    boxes(&quads_of(painter, QuadKind::Fill, color))
+}
+
+/// The base paint with `foreground`.
+fn ink(foreground: Color) -> Paint {
+    Paint {
+        foreground,
+        ..Paint::default()
+    }
+}
+
+#[test]
+fn a_glyphs_quad_is_at_the_frames_own_x_plus_dx_and_baseline_plus_dy() {
+    // Three glyphs of a row 16 pixels down a view at 20, 30. The first is
+    // drawn 3 pixels right of its pen position and 2 above the baseline,
+    // the second at its pen position, the third 4.5 pixels left of it and
+    // 5 below.
+    let glyphs = vec![
+        Glyph {
+            dx: 3.0,
+            dy: -2.0,
+            ..glyph(7, 0, 10.0)
+        },
+        glyph(8, 1, 20.0),
+        Glyph {
+            dx: -4.5,
+            dy: 5.0,
+            ..glyph(9, 2, 30.0)
+        },
+    ];
+    let mut shown = view(vec![row(16.0, glyphs, vec![(0..3, ink(RED))], 1)]);
+    shown.rect = Rect {
+        x: 20,
+        y: 30,
+        width: 200,
+        height: 100,
+    };
+    let mut painter = painter();
+    painter.paint(&frame(vec![shown]), target(1.0));
+    // An image's left edge is at the glyph's place and its top its own
+    // height above the baseline (the fake rasteriser's placement). The
+    // row's top is at 30 + 16 and its baseline 12 below that.
+    let top = |baseline: i32| 30 + 16 + baseline - GLYPH.1 as i32;
+    assert_eq!(
+        boxes(&quads_of(&painter, QuadKind::Mask, RED)),
+        vec![
+            (20 + 13, top(10), GLYPH.0, GLYPH.1),
+            (20 + 20, top(12), GLYPH.0, GLYPH.1),
+            // 25.5 across: the pixel 25, and the image of its second
+            // quarter.
+            (20 + 25, top(17), GLYPH.0, GLYPH.1),
+        ]
+    );
+    let bins: Vec<u8> = painter
+        .rasterizer()
+        .asked
+        .iter()
+        .map(|(key, _, _)| key.bin)
+        .collect();
+    assert_eq!(bins, vec![0, 0, 2]);
+}
+
+#[test]
+fn a_glyph_is_drawn_from_the_image_of_its_fractions_bin() {
+    // Cells 10.25 pixels across: each glyph is a quarter of a pixel
+    // further into its pixel than the one before.
+    let rect = Rect {
+        x: 0,
+        y: 0,
+        width: 200,
+        height: 100,
+    };
+    let laid = Layout::new(CellShaper::new(10.25, 16.0)).frame(&Scene::of_text("abcde", rect));
+    let glyphs = &laid.views[0].rows[0].line.glyphs;
+    let places: Vec<(i32, u8)> = glyphs
+        .iter()
+        .map(|glyph| bin_of(glyph.x + glyph.dx))
+        .collect();
+    assert!(places.iter().any(|(_, bin)| *bin != 0), "{places:?}");
+    let mut painter = painter();
+    painter.paint(&laid, target(1.0));
+    let asked: Vec<(u32, u8)> = painter
+        .rasterizer()
+        .asked
+        .iter()
+        .map(|(key, _, _)| (key.glyph, key.bin))
+        .collect();
+    let expected: Vec<(u32, u8)> = glyphs
+        .iter()
+        .zip(&places)
+        .map(|(glyph, (_, bin))| (glyph.id, *bin))
+        .collect();
+    assert_eq!(asked, expected);
+    let lefts: Vec<i32> = quads_of(&painter, QuadKind::Mask, BLACK)
+        .iter()
+        .map(|quad| quad.x)
+        .collect();
+    let wholes: Vec<i32> = places.iter().map(|(whole, _)| *whole).collect();
+    assert_eq!(lefts, wholes);
+}
+
+/// The faces of the view the order test lays out.
+fn theme() -> Vec<FaceDef> {
+    let named = |name: &str, face: Face| FaceDef {
+        name: name.to_owned(),
+        face,
+    };
+    vec![
+        named(
+            "mark",
+            Face {
+                background: Some(YELLOW),
+                underline: Some(Underline {
+                    style: UnderlineStyle::Single,
+                    color: Some(RED),
+                }),
+                strike_through: Some(true),
+                ..Face::default()
+            },
+        ),
+        named(
+            "selection",
+            Face {
+                background: Some(BLUE),
+                ..Face::default()
+            },
+        ),
+        named(
+            "mode-line",
+            Face {
+                background: Some(GREY),
+                ..Face::default()
+            },
+        ),
+        named(
+            "cursor",
+            Face {
+                foreground: Some(WHITE),
+                background: Some(GREEN),
+                ..Face::default()
+            },
+        ),
+    ]
+}
+
+/// One view of `ab cd` and `ef`: `ab` marked, `cd` selected with a block
+/// cursor on the `c`, and a status row.
+fn dressed() -> Frame {
+    let rect = Rect {
+        x: 0,
+        y: 0,
+        width: 200,
+        height: 64,
+    };
+    // The selection is from its anchor after the `d` back to its head on
+    // the `c`, where the cursor is.
+    let (anchor, head) = (5, 3);
+    let mut scene = Scene::of_text("ab cd\nef", rect).selecting(anchor..head);
+    scene.faces = Some(theme());
+    let shown = &mut scene.views[0];
+    shown.decorations = vec![Decoration {
+        start: 0,
+        stop: 2,
+        face: "mark".to_owned(),
+    }];
+    shown.cursor = Cursor {
+        shape: CursorShape::Block,
+        face: "cursor".to_owned(),
+    };
+    shown.status = vec![StatusField {
+        text: "st".to_owned(),
+        face: "mode-line".to_owned(),
+    }];
+    Layout::new(CellShaper::new(10.0, 16.0)).frame(&scene)
+}
+
+#[test]
+fn a_view_is_drawn_back_to_front() {
+    let laid = dressed();
+    let mut painter = painter();
+    painter.paint(&laid, target(1.0));
+    // What each quad is and its colour, with a run of the same counted
+    // once.
+    let mut order: Vec<(QuadKind, Color)> = painter
+        .quads()
+        .iter()
+        .map(|quad| (quad.kind, quad.color))
+        .collect();
+    order.dedup();
+    assert_eq!(
+        order,
+        vec![
+            // The view's background.
+            (QuadKind::Fill, WHITE),
+            // The backgrounds of the runs that are not white: the marked
+            // one, then the selected one; and the selection's area.
+            (QuadKind::Fill, YELLOW),
+            (QuadKind::Fill, BLUE),
+            // The glyphs of the text rows.
+            (QuadKind::Mask, BLACK),
+            // The marked run's underline and its strike-through.
+            (QuadKind::Fill, RED),
+            (QuadKind::Fill, BLACK),
+            // The status row: its background, then its glyphs.
+            (QuadKind::Fill, GREY),
+            (QuadKind::Mask, BLACK),
+            // The cursor, and the glyph under it again in its foreground.
+            (QuadKind::Fill, GREEN),
+            (QuadKind::Mask, WHITE),
+        ]
+    );
+    // The blue is drawn twice over the selected glyphs: the run's
+    // background, and the selection's area as the frame gives it.
+    let shown = &laid.views[0];
+    let blues = fills(&painter, BLUE);
+    assert_eq!(blues.len(), 1 + shown.selections.len());
+    let area = shown.selections[0];
+    let expected = Quad::over(area.x, area.y, area.width, area.height, BLUE);
+    assert_eq!(blues.last(), boxes(&[expected]).last());
+    // The status row's background is the view's width, where the frame
+    // puts the row.
+    let status = shown.status.as_ref().expect("a status row");
+    let behind = Quad::over(0.0, status.y, 200.0, status.height, GREY);
+    assert_eq!(fills(&painter, GREY), boxes(&[behind]));
+    // And every glyph of the frame has its quad, once: those of the text
+    // rows and of the status row in black.
+    let glyphs: usize = shown.rows.iter().map(|row| row.line.glyphs.len()).sum();
+    let drawn = quads_of(&painter, QuadKind::Mask, BLACK).len();
+    assert_eq!(drawn, glyphs + status.line.glyphs.len());
+}
+
+#[test]
+fn text_in_the_views_own_background_draws_no_background_of_its_own() {
+    let mut painter = painter();
+    painter.paint(&frame_of(vec![plain_row(0.0, &[1, 2, 3], 1)]), target(1.0));
+    let kinds: Vec<QuadKind> = painter.quads().iter().map(|quad| quad.kind).collect();
+    assert_eq!(
+        kinds,
+        vec![
+            QuadKind::Fill,
+            QuadKind::Mask,
+            QuadKind::Mask,
+            QuadKind::Mask
+        ]
+    );
+    assert_eq!(fills(&painter, WHITE), vec![(0, 0, 200, 100)]);
+}
+
+#[test]
+fn the_backgrounds_of_rows_of_broken_heights_meet_with_no_gap() {
+    // Two rows 16.5 pixels down each, on yellow.
+    let on_yellow = Paint {
+        background: YELLOW,
+        ..Paint::default()
+    };
+    let tall = |y: f32, hash: u64| FrameRow {
+        height: 16.5,
+        ..row(y, vec![glyph(1, 0, 0.0)], vec![(0..1, on_yellow)], hash)
+    };
+    let mut painter = painter();
+    painter.paint(&frame_of(vec![tall(0.0, 1), tall(16.5, 2)]), target(1.0));
+    // The first is from 0 to 17 (16.5 rounded) and the second from there
+    // to 33.
+    assert_eq!(
+        fills(&painter, YELLOW),
+        vec![(0, 0, 10, 17), (0, 17, 10, 16)]
+    );
+}
+
+/// The underline quads of a row of two glyphs, from 0 to 20 across with
+/// its baseline at 12, underlined in `style`, at `scale`.
+fn underlined(style: UnderlineStyle, scale: f32) -> Vec<(i32, i32, u32, u32)> {
+    let paint = Paint {
+        underline: Some((style, RED)),
+        ..Paint::default()
+    };
+    let glyphs = vec![glyph(1, 0, 0.0), glyph(2, 1, 10.0)];
+    let mut painter = painter();
+    painter.paint(
+        &frame_of(vec![row(0.0, glyphs, vec![(0..2, paint)], 1)]),
+        target(scale),
+    );
+    fills(&painter, RED)
+}
+
+#[test]
+fn an_underline_is_drawn_in_its_style_below_the_baseline() {
+    assert_eq!(
+        underlined(UnderlineStyle::Single, 1.0),
+        vec![(0, 13, 20, 1)]
+    );
+    assert_eq!(
+        underlined(UnderlineStyle::Double, 1.0),
+        vec![(0, 13, 20, 1), (0, 15, 20, 1)]
+    );
+    // Dots: every other pixel.
+    let dots: Vec<(i32, i32, u32, u32)> = (0..10).map(|dot| (dot * 2, 13, 1, 1)).collect();
+    assert_eq!(underlined(UnderlineStyle::Dotted, 1.0), dots);
+    // Dashes: three pixels on and three off, the last cut at the run's
+    // end.
+    assert_eq!(
+        underlined(UnderlineStyle::Dashed, 1.0),
+        vec![(0, 13, 3, 1), (6, 13, 3, 1), (12, 13, 3, 1), (18, 13, 2, 1)]
+    );
+    // Curly: steps two pixels across, one up and one down.
+    let steps: Vec<(i32, i32, u32, u32)> = (0..10)
+        .map(|step| (step * 2, 13 + step % 2, 2, 1))
+        .collect();
+    assert_eq!(underlined(UnderlineStyle::Curly, 1.0), steps);
+}
+
+#[test]
+fn a_line_the_painter_sizes_is_as_thick_as_the_scale() {
+    assert_eq!(
+        [
+            thickness(1.0),
+            thickness(1.25),
+            thickness(1.5),
+            thickness(2.0),
+            thickness(3.0),
+            thickness(0.5)
+        ],
+        [1, 1, 2, 2, 3, 1]
+    );
+    // At scale 2 an underline is two pixels thick, two below the
+    // baseline, and its pattern twice as long.
+    assert_eq!(
+        underlined(UnderlineStyle::Single, 2.0),
+        vec![(0, 14, 20, 2)]
+    );
+    assert_eq!(
+        underlined(UnderlineStyle::Double, 2.0),
+        vec![(0, 14, 20, 2), (0, 18, 20, 2)]
+    );
+    let dots: Vec<(i32, i32, u32, u32)> = (0..5).map(|dot| (dot * 4, 14, 2, 2)).collect();
+    assert_eq!(underlined(UnderlineStyle::Dotted, 2.0), dots);
+}
+
+#[test]
+fn a_strike_through_is_drawn_through_the_glyphs_in_their_colour() {
+    let paint = Paint {
+        strike_through: true,
+        ..ink(RED)
+    };
+    let glyphs = vec![glyph(1, 0, 0.0), glyph(2, 1, 10.0)];
+    let struck = frame_of(vec![row(0.0, glyphs, vec![(0..2, paint)], 1)]);
+    let mut painter = painter();
+    painter.paint(&struck, target(1.0));
+    // Three tenths of the font's 16 pixels above the baseline at 12:
+    // 7.2, so 7.
+    assert_eq!(fills(&painter, RED), vec![(0, 7, 20, 1)]);
+    painter.paint(&struck, target(2.0));
+    assert_eq!(fills(&painter, RED), vec![(0, 7, 20, 2)]);
+}
+
+/// The quads a cursor of `shape` comes to: in the cursor's green, and in
+/// its white. The cursor is on the second row of a view, over the area
+/// `area`; the row has one glyph, at 10 across.
+fn cursor_quads(shape: CursorShape, area: Area, scale: f32) -> (Vec<Quad>, Vec<Quad>) {
+    let mut shown = view(vec![
+        plain_row(0.0, &[1], 1),
+        row(
+            16.0,
+            vec![glyph(2, 0, 10.0)],
+            vec![(0..1, Paint::default())],
+            2,
+        ),
+    ]);
+    shown.cursors = vec![CursorBox {
+        area,
+        shape,
+        paint: Paint {
+            foreground: WHITE,
+            background: GREEN,
+            ..Paint::default()
+        },
+    }];
+    let mut painter = painter();
+    painter.paint(&frame(vec![shown]), target(scale));
+    let green = quads_of(&painter, QuadKind::Fill, GREEN);
+    let white = quads_of(&painter, QuadKind::Mask, WHITE);
+    // A cursor is the last thing drawn.
+    let last = green.len() + white.len();
+    let tail = &painter.quads()[painter.quads().len() - last..];
+    assert!(tail.iter().all(|quad| quad.color != BLACK), "{tail:?}");
+    (green, white)
+}
+
+/// The cell of the second row's glyph: ten across from 10, the row's 16
+/// down from 16.
+const CELL: Area = Area {
+    x: 10.0,
+    y: 16.0,
+    width: 10.0,
+    height: 16.0,
+};
+
+#[test]
+fn a_block_cursor_fills_its_cell_and_draws_the_glyph_under_it_again() {
+    let (green, white) = cursor_quads(CursorShape::Block, CELL, 1.0);
+    assert_eq!(boxes(&green), vec![(10, 16, 10, 16)]);
+    // The glyph's own quad, in the cursor's foreground: its image begins
+    // at the cell's left and stands on the baseline, 12 below the row's
+    // top.
+    let top = 16 + 12 - GLYPH.1 as i32;
+    assert_eq!(boxes(&white), vec![(10, top, GLYPH.0, GLYPH.1)]);
+    assert_eq!(white[0].page, 1);
+}
+
+#[test]
+fn the_glyph_under_a_block_cursor_is_cut_to_the_cursors_area() {
+    // A cursor four pixels across and eight down, from the row's top:
+    // the glyph's image is six across and reaches from 2 below the row's
+    // top to 12 below.
+    let narrow = Area {
+        width: 4.0,
+        height: 8.0,
+        ..CELL
+    };
+    let (green, white) = cursor_quads(CursorShape::Block, narrow, 1.0);
+    assert_eq!(boxes(&green), vec![(10, 16, 4, 8)]);
+    assert_eq!(boxes(&white), vec![(10, 18, 4, 6)]);
+    // A cursor that is on no glyph draws none.
+    let aside = Area { x: 100.0, ..CELL };
+    let (_, white) = cursor_quads(CursorShape::Block, aside, 1.0);
+    assert!(white.is_empty());
+}
+
+#[test]
+fn a_bar_an_underline_and_a_hollow_cursor_are_lines_as_thick_as_the_scale() {
+    let green = |shape, scale| boxes(&cursor_quads(shape, CELL, scale).0);
+    assert_eq!(green(CursorShape::Bar, 1.0), vec![(10, 16, 1, 16)]);
+    assert_eq!(green(CursorShape::Bar, 2.0), vec![(10, 16, 2, 16)]);
+    assert_eq!(green(CursorShape::Underline, 1.0), vec![(10, 31, 10, 1)]);
+    assert_eq!(green(CursorShape::Underline, 2.0), vec![(10, 30, 10, 2)]);
+    // The top, the bottom, the left and the right edge.
+    assert_eq!(
+        green(CursorShape::Hollow, 1.0),
+        vec![
+            (10, 16, 10, 1),
+            (10, 31, 10, 1),
+            (10, 16, 1, 16),
+            (19, 16, 1, 16)
+        ]
+    );
+    assert_eq!(
+        green(CursorShape::Hollow, 2.0),
+        vec![
+            (10, 16, 10, 2),
+            (10, 30, 10, 2),
+            (10, 16, 2, 16),
+            (18, 16, 2, 16)
+        ]
+    );
+    // None of them draws the glyph again.
+    for shape in [
+        CursorShape::Bar,
+        CursorShape::Underline,
+        CursorShape::Hollow,
+    ] {
+        assert!(cursor_quads(shape, CELL, 1.0).1.is_empty(), "{shape:?}");
+    }
+}
+
+#[test]
+fn a_row_seen_again_takes_its_quads_from_the_row_cache_and_asks_the_rasteriser_nothing() {
+    let rect = Rect {
+        x: 0,
+        y: 0,
+        width: 200,
+        height: 100,
+    };
+    let mut layout = Layout::new(CellShaper::new(10.0, 16.0));
+    let first = layout.frame(&Scene::of_text("one\ntwo", rect).selecting(0..0));
+    let moved = layout.frame(&Scene::of_text("one\ntwo", rect).selecting(5..5));
+    assert_ne!(first.views[0].cursors, moved.views[0].cursors);
+    let mut painter = painter();
+    let drawn = painter.paint(&first, target(1.0));
+    let asked = painter.rasterizer().asked.len();
+    let glyphs = quads_of(&painter, QuadKind::Mask, BLACK);
+    assert_eq!(drawn.rows_rebuilt, 2);
+    // "one" and "two" share an `o`: five images for six glyphs.
+    assert_eq!((drawn.glyphs_rasterised, drawn.glyphs_reused), (5, 1));
+
+    let again = painter.paint(&moved, target(1.0));
+    assert_eq!((again.rows_rebuilt, again.rows_reused), (0, 2));
+    assert_eq!((again.glyphs_rasterised, again.glyphs_reused), (0, 0));
+    assert_eq!(painter.rasterizer().asked.len(), asked);
+    // The rows' glyphs are drawn as they were; only the cursor moved, to
+    // where the second frame puts it.
+    assert_eq!(quads_of(&painter, QuadKind::Mask, BLACK)[..6], glyphs[..6]);
+    let cursor = moved.views[0].cursors[0];
+    let area = cursor.area;
+    let cell = Quad::over(
+        area.x,
+        area.y,
+        area.width,
+        area.height,
+        cursor.paint.background,
+    );
+    assert!(painter.quads()[1..].contains(&cell), "{cell:?}");
+}
+
+#[test]
+fn a_row_moved_is_drawn_from_what_was_kept_where_it_now_is() {
+    let mut painter = painter();
+    painter.paint(&frame_of(vec![plain_row(0.0, &[1, 2], 1)]), target(1.0));
+    let before = quads_of(&painter, QuadKind::Mask, BLACK);
+    let asked = painter.rasterizer().asked.len();
+    // The same row, 48 pixels lower, in a view 20 further right.
+    let mut shown = view(vec![plain_row(48.0, &[1, 2], 1)]);
+    shown.rect.x = 20;
+    let drawn = painter.paint(&frame(vec![shown]), target(1.0));
+    assert_eq!((drawn.rows_rebuilt, drawn.rows_reused), (0, 1));
+    assert_eq!(painter.rasterizer().asked.len(), asked);
+    let moved: Vec<Quad> = before.iter().map(|quad| quad.moved(20, 48)).collect();
+    assert_eq!(quads_of(&painter, QuadKind::Mask, BLACK), moved);
+}
+
+#[test]
+fn a_dropped_row_lets_its_glyphs_go_so_the_atlas_stays_within_its_budget() {
+    // A budget of one page of masks, and forty frames of one row each,
+    // every row of three glyphs no other has.
+    let page = 32;
+    let budget = u64::from(page * page);
+    let mut painter = Painter::new(FakeRasterizer::new(), true, None, page, budget);
+    let mut evicted = 0;
+    for step in 0..40_u32 {
+        let ids = [step * 3, step * 3 + 1, step * 3 + 2];
+        let drawn = painter.paint(
+            &frame_of(vec![plain_row(0.0, &ids, u64::from(step) + 1)]),
+            target(1.0),
+        );
+        assert_eq!(drawn.glyphs_rasterised, 3);
+        assert!(drawn.atlas_bytes <= budget, "at frame {step}");
+        evicted += drawn.glyphs_evicted;
+    }
+    assert!(evicted > 0);
+    assert_eq!(painter.glyph_stats().over_budget, 0);
+    assert_eq!(painter.glyph_stats().evicted, evicted);
+}
+
+/// The bytes the atlas of `painter` holds where `quad` reads.
+fn read(painter: &Painter<FakeRasterizer>, quad: &Quad) -> Vec<u8> {
+    painter
+        .atlas()
+        .region(quad.page, (quad.u, quad.v), (quad.width, quad.height))
+}
+
+/// The key of the plain mask of the glyph `glyph` of font 0 at bin 0.
+fn mask_key(glyph: u32) -> GlyphKey {
+    GlyphKey {
+        font: ResolvedFontId(0),
+        glyph,
+        bin: 0,
+        subpixel: false,
+    }
+}
+
+#[test]
+fn a_frame_of_another_generation_is_rasterised_afresh_and_keeps_its_glyphs_in_use() {
+    let page = 32;
+    let budget = u64::from(page * page);
+    let mut painter = Painter::new(FakeRasterizer::new(), true, None, page, budget);
+    let kept = plain_row(0.0, &[1, 2, 3], 1);
+    let first = painter.paint(&frame_of(vec![kept.clone()]), target(1.0));
+    assert_eq!(first.glyphs_rasterised, 3);
+    // The same row under another generation: its font ids may mean other
+    // fonts, so nothing kept is used.
+    let later = |rows: Vec<FrameRow>| Frame {
+        generation: 1,
+        ..frame_of(rows)
+    };
+    let second = painter.paint(&later(vec![kept.clone()]), target(1.0));
+    assert_eq!((second.rows_rebuilt, second.rows_reused), (1, 0));
+    assert_eq!((second.glyphs_rasterised, second.glyphs_reused), (3, 0));
+    // The row stays on screen while forty other rows come and go, in an
+    // atlas of one page: its images are still its own.
+    for step in 0..40_u32 {
+        let ids = [100 + step * 3, 101 + step * 3, 102 + step * 3];
+        let churn = plain_row(16.0, &ids, 100 + u64::from(step));
+        painter.paint(&later(vec![kept.clone(), churn]), target(1.0));
+    }
+    assert!(painter.glyph_stats().evicted > 0);
+    let glyphs = quads_of(&painter, QuadKind::Mask, BLACK);
+    for (quad, id) in glyphs.iter().zip([1, 2, 3]) {
+        let made = painter.rasterizer().image(mask_key(id)).expect("an image");
+        assert_eq!(read(&painter, quad), made.data, "glyph {id}");
+    }
+}
+
+#[test]
+fn another_scale_builds_the_rows_again_and_keeps_the_glyph_images() {
+    let mut painter = painter();
+    let shown = frame_of(vec![plain_row(0.0, &[1, 2, 3], 1)]);
+    painter.paint(&shown, target(1.0));
+    let drawn = painter.paint(&shown, target(2.0));
+    assert_eq!((drawn.rows_rebuilt, drawn.rows_reused), (1, 0));
+    // A frame is in physical pixels: the images are the same ones, and
+    // the rasteriser is asked for none.
+    assert_eq!((drawn.glyphs_rasterised, drawn.glyphs_reused), (0, 3));
+    assert_eq!(painter.rasterizer().asked.len(), 3);
+}
+
+#[test]
+fn a_glyph_with_no_image_is_counted_and_draws_nothing() {
+    let mut rasterizer = FakeRasterizer::new();
+    rasterizer.missing.insert(2);
+    let mut painter = painter_over(rasterizer);
+    // The second glyph has no image, and the fourth names a font the
+    // frame does not have.
+    let stray = Glyph {
+        font: ResolvedFontId(9),
+        ..glyph(4, 3, 30.0)
+    };
+    let glyphs = vec![
+        glyph(1, 0, 0.0),
+        glyph(2, 1, 10.0),
+        glyph(3, 2, 20.0),
+        stray,
+    ];
+    let shown = frame_of(vec![row(0.0, glyphs, vec![(0..4, Paint::default())], 1)]);
+    let drawn = painter.paint(&shown, target(1.0));
+    assert_eq!((drawn.glyphs_rasterised, drawn.glyphs_skipped), (2, 2));
+    let lefts: Vec<i32> = quads_of(&painter, QuadKind::Mask, BLACK)
+        .iter()
+        .map(|quad| quad.x)
+        .collect();
+    assert_eq!(lefts, vec![0, 20]);
+    // Drawn again from the kept row, nothing is skipped: nothing is
+    // asked.
+    assert_eq!(painter.paint(&shown, target(1.0)).glyphs_skipped, 0);
+}
+
+#[test]
+fn nothing_is_drawn_outside_a_view_or_outside_the_target() {
+    // A view 25 pixels across of a row of three glyphs: the third's image
+    // is from 20 to 26.
+    let mut shown = view(vec![plain_row(0.0, &[1, 2, 3], 1)]);
+    shown.rect.width = 25;
+    let mut painter = painter();
+    painter.paint(&frame(vec![shown.clone()]), target(1.0));
+    let widths: Vec<u32> = quads_of(&painter, QuadKind::Mask, BLACK)
+        .iter()
+        .map(|quad| quad.width)
+        .collect();
+    assert_eq!(widths, vec![GLYPH.0, GLYPH.0, 5]);
+    // On a target 12 pixels across and 8 down, the view itself is cut:
+    // the first glyph's image, from 2 to 12 down, is cut at 8, and the
+    // second's, from 10 across, at 12.
+    let small = Target {
+        width: 12,
+        height: 8,
+        scale: 1.0,
+    };
+    painter.paint(&frame(vec![shown]), small);
+    assert_eq!(fills(&painter, WHITE), vec![(0, 0, 12, 8)]);
+    assert_eq!(
+        boxes(&quads_of(&painter, QuadKind::Mask, BLACK)),
+        vec![(0, 2, GLYPH.0, 6), (10, 2, 2, 6)]
+    );
+}
+
+#[test]
+fn a_glyph_across_a_change_of_paint_is_drawn_in_the_paint_of_its_first_byte() {
+    // One glyph for two bytes, a ligature, the first byte red and the
+    // second blue.
+    let ligature = Glyph {
+        advance: 20.0,
+        ..glyph(5, 0, 0.0)
+    };
+    let mut both = row(
+        0.0,
+        vec![ligature],
+        vec![(0..1, ink(RED)), (1..2, ink(BLUE))],
+        1,
+    );
+    both.bytes = 0..2;
+    let mut painter = painter();
+    painter.paint(&frame_of(vec![both]), target(1.0));
+    assert_eq!(quads_of(&painter, QuadKind::Mask, RED).len(), 1);
+    assert!(quads_of(&painter, QuadKind::Mask, BLUE).is_empty());
+}
+
+#[test]
+fn each_kind_of_image_is_drawn_as_its_kind_of_quad() {
+    let mut rasterizer = FakeRasterizer::new();
+    rasterizer.colour.insert(2);
+    let shown = frame_of(vec![plain_row(0.0, &[1, 2], 1)]);
+    let kinds = |painter: &Painter<FakeRasterizer>| -> Vec<QuadKind> {
+        painter.quads()[1..].iter().map(|quad| quad.kind).collect()
+    };
+    let mut plain = painter_over(rasterizer);
+    plain.paint(&shown, target(1.0));
+    assert_eq!(kinds(&plain), vec![QuadKind::Mask, QuadKind::Color]);
+
+    let mut rasterizer = FakeRasterizer::new();
+    rasterizer.colour.insert(2);
+    let order = Some(SubpixelOrder::Rgb);
+    let mut subpixel = Painter::new(rasterizer, true, order, PAGE, u64::MAX);
+    subpixel.paint(&shown, target(1.0));
+    assert_eq!(kinds(&subpixel), vec![QuadKind::Subpixel, QuadKind::Color]);
+    // Each reads a page of its own.
+    let pages: Vec<u32> = subpixel.quads()[1..].iter().map(|quad| quad.page).collect();
+    assert_ne!(pages[0], pages[1]);
+    // And the rasteriser was asked for subpixel masks, hinted as the
+    // painter was told.
+    assert!(
+        subpixel
+            .rasterizer()
+            .asked
+            .iter()
+            .all(|(key, _, hint)| key.subpixel && *hint)
+    );
+}
+
+#[test]
+fn a_subpixel_mask_is_kept_in_the_order_of_the_displays_stripes() {
+    let shown = frame_of(vec![plain_row(0.0, &[1], 1)]);
+    let key = GlyphKey {
+        subpixel: true,
+        ..mask_key(1)
+    };
+    let kept = |order: SubpixelOrder| {
+        let mut painter = Painter::new(FakeRasterizer::new(), true, Some(order), PAGE, u64::MAX);
+        painter.paint(&shown, target(1.0));
+        let made = painter.rasterizer().image(key).expect("an image").data;
+        (read(&painter, &painter.quads()[1]), made)
+    };
+    // Red, green, blue: as the rasteriser gives it.
+    let (held, made) = kept(SubpixelOrder::Rgb);
+    assert_eq!(held, made);
+    // Blue, green, red: the first and the third coverage of each pixel
+    // change places.
+    let (held, made) = kept(SubpixelOrder::Bgr);
+    let swapped: Vec<u8> = made
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .flat_map(|pixel| [pixel[2], pixel[1], pixel[0], pixel[3]])
+        .collect();
+    assert_eq!(held, swapped);
+    assert_ne!(held, made);
+}

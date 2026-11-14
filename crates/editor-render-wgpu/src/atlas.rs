@@ -192,15 +192,22 @@ impl Atlas {
     /// The bytes of the image at `slot`, row by row; none when its page
     /// is gone.
     pub fn read(&self, slot: Slot) -> Vec<u8> {
-        let Some(page) = self.page(slot.page) else {
+        self.region(slot.page, (slot.x, slot.y), (slot.width, slot.height))
+    }
+
+    /// The bytes of the rectangle of the page numbered `page` whose top
+    /// left is `corner` and whose width and height are `size`, row by
+    /// row; none when there is no such page.
+    pub fn region(&self, page: u32, corner: (u32, u32), size: (u32, u32)) -> Vec<u8> {
+        let Some(page) = self.page(page) else {
             return Vec::new();
         };
         let bytes = page.kind.bytes() as usize;
         let stride = page.size as usize * bytes;
-        (slot.y..slot.y + slot.height)
+        (corner.1..corner.1 + size.1)
             .flat_map(|row| {
-                let start = row as usize * stride + slot.x as usize * bytes;
-                page.pixels[start..start + slot.width as usize * bytes]
+                let start = row as usize * stride + corner.0 as usize * bytes;
+                page.pixels[start..start + size.0 as usize * bytes]
                     .iter()
                     .copied()
             })
