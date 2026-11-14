@@ -1,0 +1,30 @@
+# The script `mise run ffi-test` has the editor's headless mode run against
+# the config in `config/`, under the editor's input scheme, to ask for a
+# prompt and to answer it with the keys the editor ships. What it prints
+# must be exactly `expected`.
+
+reload
+settle
+
+# `ask-name` is config's: it asks `Name: ` with `Ada` in the minibuffer and
+# returns at once. The minibuffer is a view of its own, view 1, which has
+# the focus, so the text an input method commits is inserted there. The
+# scene shows the input typed so far as that view's text and the prompt
+# text as its status line.
+run ask-name
+commit !
+scene
+
+# `<Enter>` accepts: under the Vim scheme the minibuffer's view is in a Vim
+# state of its own, which binds the key to the compiled command
+# `minibuffer-accept`. The prompt is closed, the focus is back on view 0,
+# and config's `greet-named` has run with the answer, which it says in the
+# echo area.
+key <Enter> Enter -
+scene
+
+# `<Escape>` cancels, with `minibuffer-cancel`: the prompt is closed, and
+# the command that would have received the answer does not run.
+run ask-name
+key <Escape> Escape -
+scene

@@ -171,6 +171,15 @@ run = [
   # refused by the library before it asks the file system, so the run
   # touches no file (`files/expected`).
   "out=$(.lake/build/bin/editor headless \"$(lean --print-prefix)\" .lake/build/lib/lean ../tests/headless/files/config ../tests/headless/files/script) && printf '%s\\n' \"$out\" | diff ../tests/headless/files/expected -",
+  # A prompt, on a config of its own (tests/headless/prompt), under the
+  # editor's input scheme: a command of config's asks for a prompt, a
+  # committed text is inserted in the minibuffer, whose view the scene
+  # shows with the prompt text as its status line; `<Enter>` accepts with
+  # the compiled command `minibuffer-accept`, and config's command that
+  # receives the answer says it in the echo area; `<Escape>` cancels with
+  # `minibuffer-cancel`, and that command does not run
+  # (`prompt/expected`).
+  "out=$(.lake/build/bin/editor headless \"$(lean --print-prefix)\" .lake/build/lib/lean ../tests/headless/prompt/config ../tests/headless/prompt/script) && printf '%s\\n' \"$out\" | diff ../tests/headless/prompt/expected -",
   # The editor's failure statuses. A command line it does not understand is
   # status 2, with the usage on stderr.
   "status=0; .lake/build/bin/editor bogus || status=$?; test \"$status\" -eq 2",

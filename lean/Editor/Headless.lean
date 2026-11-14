@@ -9,6 +9,7 @@ import Editor.Job.Jobs
 import Editor.Job.Pool
 import Editor.Job.Real
 import Editor.Loop
+import Editor.Minibuffer.Compiled
 import Editor.Text.Real
 import Editor.Watch.Real
 
@@ -109,10 +110,14 @@ as before, so reload and job completion work as they did.
   commands and their jobs (`Files.commands`, `Files.jobs`,
   `Editor/Files/Compiled.lean`): `open-file` and `save-buffer`, the first
   commands it ships, which `show` lists before config's, and the jobs
-  `load-file` and `save-file`. It is handed no binding and no mode: the
-  commands its scheme's keys name are not built yet, so a key of the Vim
-  scheme says `<name>: no such command` in the echo area, and no mode
-  ships.
+  `load-file` and `save-file`. It is handed the minibuffer's commands and
+  its mode too (`Minibuffer.commands`, `Minibuffer.modes`,
+  `Editor/Minibuffer/Compiled.lean`): `minibuffer-accept` and
+  `minibuffer-cancel`, which the Vim scheme's minibuffer state binds to
+  `<Enter>` and `<Escape>`, and the mode `minibuffer`, the first mode it
+  ships. It is handed no binding: the other commands its scheme's keys name
+  are not built yet, so such a key says `<name>: no such command` in the
+  echo area, a key that prints in the minibuffer among them.
 - **The interrupt key.** When the loop starts the host tells the library
   which key raises the interrupt flag (`Collaborators.interruptKey`, `C-g`),
   and leaves it with none when the loop ends. The loop's programs are run
@@ -286,8 +291,8 @@ end of the script and for a loop that did not stop.
 `editor headless <sysroot> <olean dir> <config dir> <script file>`: `run`
 with the real elaborator, a directory as the source, stdout as the output,
 the library's timer service and file service for the jobs, and the file
-commands and their jobs as its compiled ones, then the quit and the
-explicit exit. Before the loop starts it warms the pool (`Editor/Job/Pool.lean`) and
+commands with their jobs and the minibuffer's commands with its mode as
+its compiled ones, then the quit and the explicit exit. Before the loop starts it warms the pool (`Editor/Job/Pool.lean`) and
 starts the completion pump on a dedicated task (`Editor/Job/Real.lean`),
 which the quit ends. Its exit status is 0 when the script ran to its end and
 1 when it could not, and then it says why on stderr: the script cannot be
@@ -337,7 +342,10 @@ config binds, one of which starts a job with an argument, and a fifth on
 `tests/headless/files`, which runs the file commands the executable ships
 and touches no file: `save-buffer` on the scratch buffer, and a command of
 config's that opens a path the library refuses before it asks the file
-system.
+system, and a sixth on `tests/headless/prompt`, under the Vim scheme the
+executable runs: a command of config's asks for a prompt, a committed text
+goes into the minibuffer, `<Enter>` accepts and config's command receives
+the answer, and `<Escape>` cancels.
 -/
 
 namespace Editor.Headless
@@ -1359,8 +1367,9 @@ def main (sysroot oleanDir configDir scriptPath : String) : IO UInt32 := do
           services :=
             { completions, timers := Job.realTimers completions,
               files := Job.realFiles completions published.reader held },
-          published, held, requests := 1, wakeups := 2, jobs := 3, commands := Files.commands
-          compiledJobs := Files.jobs, log := IO.eprintln } directives settlePatience
+          published, held, requests := 1, wakeups := 2, jobs := 3
+          commands := Files.commands ++ Minibuffer.commands, compiledJobs := Files.jobs
+          modes := Minibuffer.modes, log := IO.eprintln } directives settlePatience
   (← IO.getStdout).flush
   if let some failure := failure then
     IO.eprintln s!"editor: {failure.describe settlePatience}"
