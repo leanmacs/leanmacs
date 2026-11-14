@@ -3541,6 +3541,9 @@ def fileModelChecks : List Check :=
             (File.LineEndings.mk 2 2).dominant == some .lf &&
             (File.LineEndings.mk 0 0).dominant == none) },
     { name :=
+        "the text of a line ending is a line feed for LF, and a carriage return and a line feed for CRLF"
+      run := pure (File.LineEnding.lf.text == "\n" && File.LineEnding.crlf.text == "\r\n") },
+    { name :=
         "each file error describes its own thing: no two say the same, a binary file's says its offset, a file too large its size and its limit, a changed file whether one is there, and a failure its detail"
       run := do
         let errors : List FileError :=

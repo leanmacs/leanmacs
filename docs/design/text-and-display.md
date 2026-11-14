@@ -94,7 +94,15 @@ the text port: the undo tree (`lean/Editor/UndoTree.lean`, decided
 - Line endings are kept as they are. Nothing is normalised on the way in or
   out, so LF, CRLF and mixed files come back byte for byte. Which ending a
   new line gets is Lean's policy, and detecting a file's dominant ending
-  belongs with loading it.
+  belongs with loading it. As built (the command loop's phase 9): a buffer
+  keeps one line ending, chosen when its file is opened, the file's
+  dominant one, or a line feed for a file with no line break and for a
+  buffer with no file. It decides one thing: the text a command inserts to
+  break a line. One API operation reads it (`Target.insertLineBreak`,
+  `lean/Editor/Api.lean`), every command that breaks a line calls that
+  operation, and none writes a line feed itself. Nothing else is
+  translated: a committed text and a pasted text are inserted as they
+  are.
 - The crate takes bytes and gives bytes. Reading and writing a file is the
   file port's: `editor_text::fs::Fs`, which the crate defines, with loading
   and saving over it in `editor_text::file`. A load counts the file's line

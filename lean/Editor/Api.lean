@@ -87,6 +87,13 @@ with `noSuchWindow` for a view with no window.
 - `Target.replaceSelections s` replaces what each range covers with `s`
   and leaves a cursor after each: what a committed text does
   (`Editor/Loop.lean`).
+- `insertLineBreak` breaks the line at the head of each range, with the
+  buffer's line ending (`Buffer.lineEnding`, `File.LineEnding.text`): a
+  line feed, or a carriage return and a line feed in a buffer whose file's
+  lines mostly end that way. It is the one place the line ending is read:
+  every command that breaks a line calls it, and none writes `"\n"`
+  itself. Nothing else is translated: a committed text and a pasted text
+  are inserted as they are.
 
 Each is one transaction made by the user that carries the selection before
 and the cursors after, so undoing it hands the selection back
@@ -471,6 +478,14 @@ transaction made by the user, and leaves a cursor where each started. -/
 def deleteSelections (target : Target) : TextM Unit :=
   target.replaceSelections ""
 
+/-- Breaks the line at the head of each range of `target`'s selection, with
+its buffer's line ending (`Buffer.lineEnding`): a line feed, or a carriage
+return and a line feed, inserted as `insertAtSelections` inserts. Every
+command that breaks a line calls this, and none writes the line feed
+itself. -/
+def insertLineBreak (target : Target) : TextM Unit :=
+  target.insertAtSelections target.buffer.lineEnding.text
+
 end Target
 
 namespace ViewId
@@ -513,6 +528,11 @@ def insertAtSelections (view : ViewId) (s : String) : EditorM (Except LayoutRefu
 (`Target.deleteSelections`). -/
 def deleteSelections (view : ViewId) : EditorM (Except LayoutRefusal Unit) :=
   view.onTarget (·.deleteSelections)
+
+/-- Breaks the line at the head of each range of the selection of the window
+of `view`, with its buffer's line ending (`Target.insertLineBreak`). -/
+def insertLineBreak (view : ViewId) : EditorM (Except LayoutRefusal Unit) :=
+  view.onTarget (·.insertLineBreak)
 
 /-- Splits the window of `view` along `axis`: a new window on the same
 buffer, below it for rows and to its right for columns, whose markers are

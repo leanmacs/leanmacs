@@ -63,7 +63,10 @@ names a snapshot.
   Nothing about a file cancels a job or ends it.
 
 Which line ending a new line gets is the editor's policy, so the library
-sends the counts and `File.LineEndings.dominant` decides.
+sends the counts and `File.LineEndings.dominant` decides. The buffer keeps
+the answer (`Buffer.lineEnding`, `Editor/State.lean`), and the one
+operation that breaks a line inserts its text (`File.LineEnding.text`,
+`Target.insertLineBreak` in `Editor/Api.lean`).
 
 ## Adding to this
 
@@ -101,6 +104,12 @@ inductive LineEnding where
   /-- A carriage return and a line feed. -/
   | crlf
   deriving DecidableEq, Repr
+
+/-- What a line ending is, as text: a line feed, or a carriage return and a
+line feed. It is what a command inserts to break a line. -/
+def LineEnding.text : LineEnding → String
+  | .lf => "\n"
+  | .crlf => "\r\n"
 
 /-- The line endings of a file, counted on its bytes. A carriage return
 alone is neither. -/

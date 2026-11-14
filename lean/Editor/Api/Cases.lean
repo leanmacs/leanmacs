@@ -457,9 +457,48 @@ def windowCases : List Case :=
             refusedAs (← (⟨9⟩ : ViewId).show other) (.noSuchWindow ⟨9⟩) &&
             (← editorState) == state }]
 
+/-- The cases of breaking a line: the break a command inserts is its
+buffer's line ending. -/
+def lineBreakCases : List Case :=
+  [{  name :=
+        "a line break in a buffer whose line ending is CRLF is a carriage return and a line feed, inserted at the cursor as one revision made by the user, with the cursor after both"
+      start := holding "ab" (selection #[(1, 1)])
+      run := do
+        let view : ViewId := ⟨0⟩
+        let stamp : File.Stamp := { seconds := 1, nanoseconds := 0, size := 2 }
+        let .ok () ← (⟨0⟩ : BufferId).attachFile "/files/note.txt" stamp .crlf | return false
+        let .ok () ← view.insertLineBreak | return false
+        let .ok after ← view.selection | return false
+        return (← scratch.read) == "a\r\nb" && after == selection #[(3, 3)] &&
+            (← scratch.revision) == 2 &&
+            (← scratch.trace 1 3) == #[⟨1, 3, .entry 2 Origin.user⟩] },
+    { name :=
+        "a line break in a buffer with no file is a line feed alone, and with two cursors each gets one, with a cursor after each; on the window and its buffer a command was handed it is the same"
+      start := holding "abc" (selection #[(1, 1), (2, 2)])
+      run := do
+        let view : ViewId := ⟨0⟩
+        let .ok () ← view.insertLineBreak | return false
+        let .ok after ← view.selection | return false
+        let broken ← scratch.read
+        let .ok target ← view.target | return false
+        target.insertLineBreak
+        let .ok again ← view.selection | return false
+        return broken == "a\nb\nc" && after == selection #[(2, 2), (4, 4)] &&
+            (← scratch.read) == "a\n\nb\n\nc" &&
+            again == selection #[(3, 3), (6, 6)] },
+    { name :=
+        "breaking a line in a view with no window is refused with noSuchWindow, a value, and makes no request of the store"
+      run := do
+        let view : ViewId := ⟨9⟩
+        let before ← createText ""
+        let broken ← view.insertLineBreak
+        let after ← createText ""
+        return refusedAs broken (.noSuchWindow view) && after.index == before.index + 1 &&
+            (← scratch.revision) == 0 }]
+
 /-- Every case of the editor API, in the order they run. -/
 def cases : List Case :=
-  bufferCases ++ selectionCases ++ undoCases ++ windowCases
+  bufferCases ++ selectionCases ++ undoCases ++ windowCases ++ lineBreakCases
 
 /-- Plays `cases` with `run`, each from a store with no text, and returns
 the names of those that did not hold: one that returned `false`, and one
