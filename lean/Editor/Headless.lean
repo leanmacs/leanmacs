@@ -115,8 +115,8 @@ through, the services the loop's jobs wait on, which a test makes of a fake
 clock, and the two tables the host makes before those services: the table of
 snapshots the loop's text binding publishes, of which the loop is the one
 writer, and what the jobs hold. Beside them, each with a default: the
-compiled commands and bindings, the log, the threshold for a slow command
-and the interrupt key.
+compiled commands and bindings, the log, the threshold for a slow command,
+the interrupt key and how the frame is made (`Collaborators.start`).
 
 The driver's `run <name>` and a finished job's command are not dispatched by
 a key, and are run as before: neither is guarded against the interrupt flag
@@ -328,6 +328,10 @@ structure Collaborators (σ : Type) (scheme : InputScheme) where
   /-- The interrupt key, which the host tells the library when its loop
   starts. -/
   interruptKey : Key := Watch.interruptKey
+  /-- How the host makes the editor loop's frame at the first window event:
+  `Loop.start` in a frame of 0 by 0, which a resize changes. A test hands
+  one that is refused, to see what the host does with no frame. -/
+  start : TextM (Loop scheme) := Loop.start scheme ⟨0, 0⟩
 
 /-- What the driver posts to the editor queue: a request, a marker to wait
 for, or the end of the loop. -/
@@ -616,7 +620,7 @@ def input (collaborators : Collaborators σ scheme) (running : Running σ scheme
     | some frame =>
       pure (some frame, running)
     | none =>
-      running.attempt collaborators (Loop.start scheme ⟨0, 0⟩)
+      running.attempt collaborators collaborators.start
   let some frame := made |
     drop collaborators received.interrupt
     return running
@@ -767,6 +771,17 @@ def compiled {σ : Type} {scheme : InputScheme} (collaborators : Collaborators �
   (({} : Config.Registry).replace .compiled collaborators.commands).replaceBindings .compiled
     collaborators.bindings
 
+/-- What the editor thread holds as its loop starts: the compiled registry
+(`compiled`), no texts, a recorder in `cells` over the table of snapshots
+the text binding publishes, no jobs and no frame. -/
+def Running.new {σ : Type} {scheme : InputScheme} (collaborators : Collaborators σ scheme) :
+    IO (Running σ scheme) :=
+  return {
+      config := { registry := compiled collaborators }
+      texts := RealTexts.over collaborators.published
+      display := ← DisplayRecorder.new cells collaborators.published.reader
+      jobs := { services := collaborators.services } }
+
 /-- The editor thread: pulls the editor queue and handles each event to its
 end, until the driver ends the loop or the queues are quit. After each event
 it publishes in `progress` how many markers it has reached, whether a reload
@@ -779,11 +794,7 @@ queue. -/
 def loop {σ : Type} {scheme : InputScheme} (collaborators : Collaborators σ scheme)
     (progress : IO.Ref Progress) : IO Unit := do
   discard <| Event.setInterruptKey (some collaborators.interruptKey)
-  let mut running : Running σ scheme :=
-    { config := { registry := compiled collaborators }
-      texts := RealTexts.over collaborators.published
-      display := ← DisplayRecorder.new cells collaborators.published.reader
-      jobs := { services := collaborators.services } }
+  let mut running ← Running.new collaborators
   repeat
     let event ← Ffi.nextEvent .editor
     if event.kind == .quit then

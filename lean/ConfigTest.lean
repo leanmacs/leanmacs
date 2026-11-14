@@ -44,7 +44,11 @@ fakes. The checks here pin what only real collaborators can show:
   key stops a command that loops and stops nothing when none runs, config's
   command of a compiled command's name runs until a reload drops it, a
   reload rebinds a key, compiled bindings run when config fails to load,
-  and a command slower than the threshold is logged, on the fake clock;
+  a command slower than the threshold is logged, on the fake clock, and a
+  marked interrupt key no loop takes, one that cannot be read or one that
+  arrives when the frame cannot be made, still has the flag lowered for it.
+  Those last two run no loop: each pulls the key off the queue and hands it
+  to the host's handler on its own thread (`withRunning`);
 - `fileChecks`: a job from config that loads a file through the host, over
   the library's file service, and whose handler makes a text of it. It is
   the one check whose host is over a real service, so it is the one that
@@ -1692,6 +1696,52 @@ its one cursor at `cursor`. -/
 def viewLine (text : String) (cursor : Nat) : String :=
   s!"view 0 0,0 0x0: {text.quote}, scroll 0, selections {cursor}..{cursor}"
 
+/-- The collaborators of a host of the test scheme over the real elaborator. -/
+abbrev TestCollaborators :=
+  Headless.Collaborators Config.Elaborate.State TestScheme.scheme
+
+/-- Hands `check` a host's state as its loop starts (`Headless.Running.new`),
+with the collaborators `adjust` makes of those of a stage of its own over an
+empty config directory, and the stage. The library is told the interrupt
+key, as the host's loop tells it, but no loop runs: the check calls the
+host's handlers itself, on its own thread. Afterwards the library has no
+interrupt key and the flag is down, whatever the check did. The directory
+is removed. -/
+def withRunning (context : Context) (adjust : TestCollaborators → TestCollaborators)
+    (check :
+      TestCollaborators →
+        Headless.Running Config.Elaborate.State TestScheme.scheme →
+        Stage Config.Elaborate.State → IO Bool) :
+    IO Bool :=
+  IO.FS.withTempDir fun directory => do
+    let stage ← Stage.new context context.elaborator (Config.Directory.source directory)
+    let collaborators := adjust stage.collaborators
+    unless ← Event.setInterruptKey (some collaborators.interruptKey) do
+      return false
+    try
+      check collaborators (← Headless.Running.new collaborators) stage
+    finally
+      discard <| Event.setInterruptKey none
+      -- A check whose host did not lower the flag leaves it down for the
+      -- next: one key was posted, and a lower with none counted is nothing.
+      Ffi.interruptLower
+
+/-- A press of the interrupt key as the library hands it to a host: posted as
+the window would report it, which raises the flag when the library has been
+told the key, and pulled back off the editor queue, marked. What an earlier
+host left on the queue is pulled past: the press is behind it, so no pull
+waits. `none` when the press was not queued, or the queues were quit. -/
+def interruptPulled : IO (Option Ffi.Event) := do
+  unless ← Event.post (.key Watch.interruptKey true "") do
+    return none
+  repeat
+    let event ← Ffi.nextEvent .editor
+    if event.kind == .quit then
+      return none
+    if event.source.kind == .window && event.kind == .key then
+      return some event
+  return none
+
 /-- The checks of key dispatch through the headless host, on the real queue,
 the real text binding, the library's interrupt flag and the real elaborator,
 with the test scheme and compiled commands and bindings written here. -/
@@ -1846,7 +1896,31 @@ def dispatchChecks (context : Context) : List Check :=
             return (← session.output.get) ==
                   #["run stamp: no frame", "run missing: no such command", "run stamp: ok"] &&
                 (← session.scene) == ("".quote, #[viewLine "a!" 2]))
-          dispatchCompiled }]
+          dispatchCompiled },
+    { name :=
+        "a window key the library marked as the interrupt key that cannot be read is dropped, and the flag is lowered for it, since it has been taken off the queue"
+      run :=
+        withRunning context id fun collaborators running stage => do
+          let some pulled ← interruptPulled | return false
+          let raised ← Ffi.interruptRaised
+          -- A word past the key's: the mark is still on it, and it no longer
+          -- reads as a key.
+          let unreadable := { pulled with words := pulled.words.push 0 }
+          let running ← running.handle collaborators unreadable
+          return raised && (Event.ofFfi unreadable).toOption.isNone && running.frame.isNone &&
+              (← stage.output.get).isEmpty &&
+              !(← Ffi.interruptRaised) },
+    { name :=
+        "a key the library marked as the interrupt key that arrives when the host cannot make its frame is dropped, the refusal is printed, and the flag is lowered for it, since it has been taken off the queue"
+      run :=
+        withRunning context (fun collaborators => { collaborators with start := throw .noSuchText })
+          fun collaborators running stage => do
+          let some pulled ← interruptPulled | return false
+          let raised ← Ffi.interruptRaised
+          let running ← running.handle collaborators pulled
+          return raised && running.frame.isNone &&
+              (← stage.output.get).back? == some "loop: refused: no such text" &&
+              !(← Ffi.interruptRaised) }]
 
 /-- Every check, in the order they run. -/
 def checks (context : Context) : List Check :=
