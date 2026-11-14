@@ -24,6 +24,12 @@
 //! most one draw for each refresh interval, and with no demand a wait with
 //! no deadline. Nothing is drawn before a first frame arrives.
 //!
+//! A mark, a new size and a deadline each ask for the frame shown to be
+//! drawn again. Made before a first frame is shown they ask for nothing:
+//! the first draw is on the size last asked for, and it takes the mark and
+//! a deadline that has come without answering them. A deadline still
+//! ahead is kept for the frame that draw shows.
+//!
 //! # What a draw leaves behind
 //!
 //! One journal [`Entry`] for each draw that presented, and none otherwise.
@@ -31,8 +37,10 @@
 //! frame's stamp is its publisher's, or the time it was submitted when the
 //! publisher gave none, and where a newer frame replaced one not yet drawn
 //! the older stamp is kept; a dirty mark and a resize are stamped as they
-//! are made; an animation by its deadline. Its `draw_ns` is read as the
-//! draw begins and its `present_ns` when the renderer returns.
+//! are made; an animation by its deadline. A draw with no frame shown
+//! before it served its frame alone, so its `input_ns` is that frame's
+//! stamp whatever else was asked. Its `draw_ns` is read as the draw begins
+//! and its `present_ns` when the renderer returns.
 //!
 //! A draw that does not present leaves its demands as they were, adds no
 //! entry, counts as failed, and is tried again a refresh later.
@@ -507,14 +515,15 @@ impl<R: Renderer> RenderLoop<R> {
             let mut asked = locked(&shared.asked);
             (asked.target, asked.since.take())
         };
-        let stamps = [
-            pending.as_ref().map(|(_, stamp)| *stamp),
-            dirty,
-            due,
-            resized,
-        ];
+        // A mark, a deadline and a new size ask for the frame shown to be
+        // drawn again. With none shown they asked for nothing: the draw
+        // takes them, and answers its frame alone.
+        let again = [dirty, due, resized].into_iter().flatten();
+        let again = again.filter(|_| self.shown.is_some());
+        let submitted = pending.as_ref().map(|(_, stamp)| *stamp);
         let draw_ns = shared.clock.now_ns();
-        let input_ns = stamps.into_iter().flatten().min().unwrap_or(draw_ns);
+        let input_ns = submitted.into_iter().chain(again).min();
+        let input_ns = input_ns.unwrap_or(draw_ns);
         self.last_draw = Some(draw_ns);
         let drawn = self.renderer.draw(&DrawRequest {
             frame: &frame,
@@ -669,6 +678,73 @@ mod tests {
         assert_eq!(rig.requests(), 0);
         assert!(rig.handle.journal().is_empty());
         assert_eq!(rig.handle.counters(), Counters::default());
+    }
+
+    #[test]
+    fn what_was_asked_before_a_first_frame_is_shown_is_no_part_of_its_latency() {
+        let wider = Target {
+            width: 800,
+            ..TARGET
+        };
+        // Whether or not the loop steps between what is asked and the
+        // frame.
+        for stepped in [true, false] {
+            let mut rig = rig();
+            rig.clock.set(10);
+            rig.handle.mark_dirty();
+            rig.handle.animate_at(20);
+            rig.handle.resize(wider);
+            if stepped {
+                assert_eq!(rig.render.step(), Step::Wait(None));
+            }
+            // Five seconds on, the first frame, drawn at once.
+            let arrived = 5_000_000_000;
+            rig.clock.set(arrived);
+            rig.handle.submit(frame_of("one"), None);
+            let entry = rig.drew();
+            // It answers its own frame alone: the mark, the deadline and
+            // the size were of no frame shown.
+            assert_eq!(
+                (entry.input_ns, entry.draw_ns),
+                (arrived, arrived),
+                "stepped: {stepped}"
+            );
+            // It is drawn on the size asked for, and all three are served.
+            assert_eq!(rig.render.renderer().requests()[0].target, wider);
+            rig.clock.advance(REFRESH);
+            assert_eq!(rig.render.step(), Step::Wait(None));
+            assert_eq!(rig.requests(), 1);
+        }
+    }
+
+    #[test]
+    fn a_first_present_that_fails_keeps_what_was_asked_before_it_out_of_the_latency() {
+        let mut rig = rig();
+        rig.clock.set(10);
+        rig.handle.mark_dirty();
+        rig.handle.animate_at(20);
+        rig.clock.set(7000);
+        rig.handle.submit(frame_of("one"), None);
+        rig.render.renderer_mut().fail_next_present();
+        assert_eq!(rig.render.step(), Step::Wait(Some(7000 + REFRESH)));
+        // Nothing is shown yet: a mark made now is of no frame either.
+        rig.handle.mark_dirty();
+        rig.clock.set(7000 + REFRESH);
+        assert_eq!(rig.drew().input_ns, 7000);
+        rig.clock.advance(REFRESH);
+        assert_eq!(rig.render.step(), Step::Wait(None));
+    }
+
+    #[test]
+    fn a_deadline_ahead_of_the_first_draw_is_kept_for_the_frame_it_shows() {
+        let mut rig = rig();
+        rig.clock.set(100);
+        rig.handle.animate_at(9000);
+        rig.handle.submit(frame_of("one"), None);
+        assert_eq!(rig.drew().input_ns, 100);
+        assert_eq!(rig.render.step(), Step::Wait(Some(9000)));
+        rig.clock.set(9000);
+        assert_eq!(rig.drew().input_ns, 9000);
     }
 
     #[test]

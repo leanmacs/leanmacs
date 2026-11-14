@@ -1444,8 +1444,11 @@ frame journal and the renderer's counters.
   served: a frame's stamp is its publisher's, a dirty mark and a resize
   are stamped as they are made, an animation by its deadline; and when a
   newer frame replaces one not yet drawn the older stamp is kept, so a
-  latency is never flattered. It is a ring of the last 4096 entries, and
-  counts those it let go.
+  latency is never flattered. A mark, a size and a deadline ask for the
+  frame shown to be drawn again, so what was asked before a first frame
+  is shown is no demand of the first draw: its input's time is its
+  frame's stamp alone, and a latency is not inflated either. It is a ring
+  of the last 4096 entries, and counts those it let go.
 - **The counters** count work, never time: draws and failed draws,
   frames submitted and replaced, rows built and reused, glyph images
   rasterised, reused, evicted and skipped, and the atlas's bytes.
