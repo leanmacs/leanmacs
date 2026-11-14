@@ -7346,16 +7346,33 @@ def crowded : InputScheme :=
         if role == Role.previousItem then (role, (TestScheme.scheme.roleKey Role.nextItem).getD [])
         else (role, keys) }
 
+/-- A scheme written for the test that breaks the contract: the test scheme,
+except that a key that prints and that nothing binds yields nothing, so no
+view of it takes typed text, the minibuffer's included. -/
+def mute : InputScheme :=
+  { State := TestScheme.State
+    Binding := Invocation
+    init := {}
+    step := fun maps view state key =>
+      let (pending, yielded) := Keymap.walk (maps view) state.pending key
+      ({ pending }, yielded)
+    pending := (·.pending)
+    command := fun name => { command := name }
+    roles := TestScheme.roles
+    leader := TestScheme.leader }
+
 /-- The subject the scheme contract is run on: `scheme` over the scheme
-checks' keymaps for view 0, the sequences those bind, and a key none of
-them goes on with. -/
+checks' keymaps for view 0, the sequences those bind, a key none of them
+goes on with, and that same key as the one that prints and that nothing
+binds. -/
 def subjectOf (scheme : InputScheme) (maps : ViewId → List (Keymap scheme.Binding)) :
     SchemeContract.Subject :=
   { scheme
     maps
     view := ⟨0⟩
     sequences := [keys "C-x C-s", keys "C-x C-f", keys "C-x r t", keys "C-q"]
-    unbound := charKey "z" }
+    unbound := charKey "z"
+    printable := charKey "z" }
 
 /-- Whether exactly the properties `expected` of the scheme contract do not
 hold of `subject`. -/
@@ -7418,13 +7435,13 @@ def schemeContractChecks : List Check :=
             (subject.scheme.pending state).isEmpty &&
             (subject.feedFrom state (keys "C-x C-s")).2 == (subject.feed (keys "C-x C-s")).2) },
     { name :=
-        "the scheme contract reports a scheme that still reports pending keys after the key that completes an input, for a bound sequence, for a key bound to a named command and for a mode's key"
+        "the scheme contract reports a scheme that still reports pending keys after the key that completes an input, for a bound sequence, for a key bound to a named command, for a mode's key and for a key typed in the minibuffer's view"
       run :=
         let subject := subjectOf lingering schemeMaps
         pure
           (failsOnly subject
               [SchemeContract.completeEmits, SchemeContract.namedCommandRuns,
-                SchemeContract.modeCommandRuns] &&
+                SchemeContract.modeCommandRuns, SchemeContract.minibufferTakesText] &&
             (subject.feed (keys "C-x C-s")).2.getLast? == some (some (invoke "save"))) },
     { name :=
         "the scheme contract reports a scheme whose binding for a command name runs a command of another name, for that property alone"
@@ -7433,6 +7450,14 @@ def schemeContractChecks : List Check :=
         "the scheme contract reports a scheme whose binding for a mode's key runs a command of another name, for that property alone"
       run :=
         pure (failsOnly (subjectOf modeMisnaming schemeMaps) [SchemeContract.modeCommandRuns]) },
+    { name :=
+        "the scheme contract reports a scheme that yields nothing for a key that prints in the minibuffer's view, for that property alone"
+      run :=
+        let subject := subjectOf mute schemeMaps
+        pure
+          (failsOnly subject [SchemeContract.minibufferTakesText] &&
+            (subject.feed [charKey "z"]).2 == [none] &&
+            ((subjectOf TestScheme.scheme schemeMaps).feed [charKey "z"]).2.all (·.isSome)) },
     { name :=
         "the scheme contract reports a scheme whose role table lacks a registered role, for that property alone"
       run := pure (failsOnly (subjectOf roleless schemeMaps) [SchemeContract.everyRoleHasKey]) },
@@ -7579,8 +7604,9 @@ def vimEscapeTable : List (String × Vim.Bound) :=
 
 /-- The registry of Vim states the grammar's checks run on, written here so
 that no check of the grammar names a default binding: `normal`, the initial
-state; `insert`, where typing is text; and `visual`, where an operator acts
-on the selection and normal's keys are bound too. -/
+state; `insert`, where typing is text, which is also the state the
+registry names for the minibuffer's view; and `visual`, where an operator
+acts on the selection and normal's keys are bound too. -/
 def vimStates : Vim.States :=
   { initial := { name := "normal", keymaps := [vimKeymap vimNormalTable] }
     others :=
@@ -7590,7 +7616,8 @@ def vimStates : Vim.States :=
           insertsText := true },
         { name := "visual"
           keymaps := [vimKeymap vimEscapeTable, vimKeymap vimNormalTable]
-          operatesOnSelection := true }] }
+          operatesOnSelection := true }]
+    minibuffer := some "insert" }
 
 /-- A state record as the checks compare it: its name, its cursor, its two
 flags and how many keymaps it has. A record has no equality of its own,
@@ -7726,15 +7753,22 @@ def vimModeKeys : Vim.ModeKeys :=
           keys (" ".intercalate strokes))
     leader := keys "SPC" }
 
-/-- The subject the scheme contract is run on for the Vim scheme: the
-scheme over `vimStates`, with the checks' role table and leader and no
-active keymaps, for view 0. -/
-def vimSubject : SchemeContract.Subject :=
-  { scheme := Vim.scheme vimStates vimModeKeys
+/-- The subject the scheme contract is run on for the Vim scheme over
+`states`: the scheme with the checks' role table and leader and no active
+keymaps, for view 0, and `z`, which no keymap of the checks' states binds,
+as the key that prints. -/
+def vimSubjectOver (states : Vim.States) : SchemeContract.Subject :=
+  { scheme := Vim.scheme states vimModeKeys
     maps := vimNoMaps
     view := ⟨0⟩
     sequences := vimSequences.map keys
-    unbound := vimUnbound }
+    unbound := vimUnbound
+    printable := charKey "z" }
+
+/-- The subject the scheme contract is run on for the Vim scheme: the
+scheme over `vimStates`. -/
+def vimSubject : SchemeContract.Subject :=
+  vimSubjectOver vimStates
 
 /-- The checks of the Vim scheme's grammar (`Editor/InputScheme/Vim.lean`),
 on the registry written here: the keymaps a key is looked up in, and what a
@@ -8364,7 +8398,7 @@ def vimStateChecks : List Check :=
     { name :=
         "told that a view is the minibuffer's, the Vim scheme puts it in the state its registry names and leaves the other views in theirs: a key that prints and a digit typed for it are text, and the same keys for another view are not; told that the view is closed, its state is the scheme's initial state again"
       run :=
-        let states : Vim.States := { vimStates with minibuffer := some "insert" }
+        let states := vimStates
         let scheme := Vim.scheme states
         let told : Vim.State := scheme.openMinibuffer ⟨5⟩ vimInit
         let closed : Vim.State := scheme.closeView ⟨5⟩ told
@@ -8382,15 +8416,16 @@ def vimStateChecks : List Check :=
         "with no state named for the minibuffer, and with a name the registry does not have, a view the Vim scheme is told is the minibuffer's is in the initial state, and the scheme's state is as it was"
       run :=
         let nowhere : Vim.States := { vimStates with minibuffer := some "nowhere" }
-        let unnamed : Vim.State := (Vim.scheme vimStates).openMinibuffer ⟨5⟩ vimInit
+        let nameless : Vim.States := { vimStates with minibuffer := none }
+        let unnamed : Vim.State := (Vim.scheme nameless).openMinibuffer ⟨5⟩ vimInit
         let unknown : Vim.State := (Vim.scheme nowhere).openMinibuffer ⟨5⟩ vimInit
         pure
-          (vimStates.minibuffer == none && unnamed == vimInit && unknown == vimInit &&
+          (vimStates.minibuffer == some "insert" && unnamed == vimInit && unknown == vimInit &&
             unknown.stateOf nowhere ⟨5⟩ == "normal") },
     { name :=
         "the notice of the minibuffer's view keeps the edit begun and the last change, and the other views' states"
       run :=
-        let states : Vim.States := { vimStates with minibuffer := some "insert" }
+        let states := vimStates
         let (begun, _) := vimFedFrom (vimFed "x i" (states := states)).1 "d" (view := ⟨1⟩)
         let told : Vim.State := (Vim.scheme states).openMinibuffer ⟨5⟩ begun
         pure
@@ -8435,7 +8470,8 @@ def vimDefaultSubject : SchemeContract.Subject :=
     maps := vimNoMaps
     view := ⟨0⟩
     sequences := ["d 2 w", "2 d 3 w", "d d", "g g", "\" + y w", "i"].map keys
-    unbound := vimUnbound }
+    unbound := vimUnbound
+    printable := charKey "z" }
 
 /-- The checks of the Vim scheme's default states and bindings
 (`Editor/InputScheme/Vim/Default.lean`). They observe the defaults through
@@ -8602,7 +8638,13 @@ def vimContractChecks : List Check :=
         "a key that prints is not unbound after the register prefix, where it names the register: given one as its unbound key, the scheme contract reports that it does not reset"
       run :=
         pure
-          (failsOnly { vimSubject with unbound := charKey "z" } [SchemeContract.unboundResets]) }]
+          (failsOnly { vimSubject with unbound := charKey "z" } [SchemeContract.unboundResets]) },
+    { name :=
+        "the Vim scheme over a registry that names no state for the minibuffer leaves the minibuffer's view where a key that prints is no text: the scheme contract reports it, for that property alone"
+      run :=
+        pure
+          (failsOnly (vimSubjectOver { vimStates with minibuffer := none })
+            [SchemeContract.minibufferTakesText]) }]
 
 /-- A mode the mode checks run on: `listing`, which fills two roles and has
 one suffix, each with a command of its own. -/

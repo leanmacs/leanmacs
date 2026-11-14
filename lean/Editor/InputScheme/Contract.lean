@@ -15,8 +15,9 @@ depends on a scheme.
 
 A scheme's author supplies a `Subject`: the scheme, keymaps for it, a view,
 some inputs the author says are complete (`sequences`), each a key sequence
-whose last key yields an invocation, and one key that goes on with none of
-them (`unbound`). A property is a pure function of the subject: it steps
+whose last key yields an invocation, one key that goes on with none of
+them (`unbound`), and one key that prints and that nothing binds
+(`printable`). A property is a pure function of the subject: it steps
 the scheme from its initial state and looks at what each key yields and at
 the pending keys the scheme reports. Nothing here knows what a binding is.
 
@@ -47,6 +48,12 @@ the pending keys the scheme reports. Nothing here knows what a binding is.
   unreachable, and no check of one mode can see it.
 - `modeCommandRuns`: as `namedCommandRuns`, for `scheme.modeCommand`, what
   a key a mode binds (a role, a suffix) is bound to.
+- `minibufferTakesText`: once the scheme is told that the view is the
+  minibuffer's (`InputScheme.openMinibuffer`), a key that prints and that
+  nothing binds (`printable`), typed for that view, yields an invocation
+  and leaves nothing pending. So a prompt can be typed into under any
+  scheme. The contract says nothing of which invocation: the name of a
+  self-insert is the scheme's own.
 
 The contract compares no states: a scheme's state may hold what a reset
 must keep, such as its last edit, and the record carries no equality on it.
@@ -75,6 +82,10 @@ structure Subject where
   sequences : List (List Key)
   /-- A key that goes on with no strict prefix of a sequence. -/
   unbound : Key
+  /-- A key that prints (`Key.printed?`) and that no keymap of the subject,
+  and none of the scheme's own, binds where the scheme puts the
+  minibuffer's view. -/
+  printable : Key
 
 /-- One property of an input scheme. -/
 structure Property where
@@ -202,10 +213,23 @@ def modeCommandRuns : Property :=
           subject.scheme.init subject.unbound
       yielded.map (·.command) == some namedCommand && (subject.scheme.pending state).isEmpty }
 
+/-- Once the scheme is told that the subject's view is the minibuffer's
+(`InputScheme.openMinibuffer`, from the initial state), the key that
+prints, typed for that view, yields an invocation and leaves nothing
+pending. Which invocation is the scheme's own: the name of a self-insert is
+not the contract's. -/
+def minibufferTakesText : Property :=
+  { name :=
+      "once the scheme is told a view is the minibuffer's, a key that prints and that nothing binds, typed for that view, yields an invocation, and the scheme then reports no pending keys"
+    holds := fun subject =>
+      let told := subject.scheme.openMinibuffer subject.view subject.scheme.init
+      let (state, yielded) := subject.scheme.step subject.maps subject.view told subject.printable
+      yielded.isSome && (subject.scheme.pending state).isEmpty }
+
 /-- Every property of the contract. -/
 def properties : List Property :=
   [hasPrefixes, strictPrefixEmitsNothing, strictPrefixIsPending, completeEmits, unboundResets,
-    namedCommandRuns, everyRoleHasKey, leaderAndRolesApart, modeCommandRuns]
+    namedCommandRuns, everyRoleHasKey, leaderAndRolesApart, modeCommandRuns, minibufferTakesText]
 
 /-- The names of the properties that do not hold of `subject`; none when the
 scheme keeps the contract. -/
