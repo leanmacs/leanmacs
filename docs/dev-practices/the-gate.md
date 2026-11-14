@@ -76,7 +76,10 @@ edit compiles to, the registry of Vim states, the grammar (operators and
 their targets, counts, registers, resets) on a registry and keymaps written
 in the test, Vim states and the last change, the default states and
 bindings through what each default key parses to, and the scheme contract
-on the Vim scheme. The task shows by behaviour
+on the Vim scheme. So is the command loop's dispatch, on the models: keys
+stepped through the test scheme, the commands they run, rollback, the
+interrupt and the slow-command log, with the watch port's contract run on
+its model. The task shows by behaviour
 that they build without the library. It puts a `cargo` that always fails
 (`lean/no-cargo/cargo`) first on the `PATH`, and Lake runs `cargo` on every
 build that reaches the Rust archive, so the task passes only if the test
@@ -85,14 +88,17 @@ whatever `LEAN_NUM_THREADS` says: a bare `lake test` is enough.
 
 `mise run ffi-test` runs `lean/.lake/build/bin/ffi-test`, the test executable
 linked against the real library, then `contract-test`, `config-test`, and
-then the editor: once with no arguments, and three times in its headless
-mode on the fixture under `tests/headless`: with `script`, whose output must
+then the editor: once with no arguments, and four times in its headless
+mode on the fixtures under `tests/headless`: with `script`, whose output must
 be exactly `expected`; with `keys-script`, which sends keys with their
 identity through the library's window input and whose output must be exactly
-`keys-expected`; and with `scene-script`, which commits text through the
+`keys-expected`; with `scene-script`, which commits text through the
 window input, prints the scene the editor loop published, and reloads and
 runs a job once the frame exists, and whose output must be exactly
-`scene-expected`. Two more runs pin its failure statuses: a command
+`scene-expected`; and with `dispatch/script` on the config in
+`dispatch/config`, which sends the keys of a command that loops and the
+interrupt key, then the keys of a command that ends, and whose output must
+be exactly `dispatch/expected`. Two more runs pin its failure statuses: a command
 line it does not understand must give status 2, and a script that cannot be
 read status 1 with a line on stderr that says why. `contract-test` runs the
 text interface's contract, the same list of properties the model tests run,
@@ -129,7 +135,14 @@ their own.
 `config-test` also runs jobs through the headless host, on a fake clock it
 moves: a job's handler runs on the editor thread, a reload that installs
 cancels the old config's jobs and a rejected one does not, and a `join` that
-cannot finish says so.
+cannot finish says so. It sends keys to hosts over the test scheme, with
+compiled commands and bindings written in the test: a key runs its command,
+a failed command is rolled back, the interrupt key stops a command that
+loops and stops nothing when none runs, a reload replaces config's commands
+and bindings and leaves the compiled ones, and a slow command is logged, on
+the fake clock. `contract-test` runs the watch port's contract against its
+real binding, over the library's interrupt flag, and has the interrupt key
+arrive at a known request of a command.
 
 `config-test` (`lean/ConfigTest.lean`) is linked like the editor, with
 Lean's elaborator, and is given the toolchain's directory and the package's

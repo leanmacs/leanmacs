@@ -60,6 +60,22 @@ file than it expects is refused, with what is there, and writes nothing.
 A `setup` registers each command name and each job name once. One that
 registers a name twice is rejected, like a chunk that does not elaborate.
 
+`setup` also binds key sequences to command names, written as key strings
+(`C-c s`, `<Escape>`; the table in `docs/design/keymaps-and-modes.md`, "Key
+strings"):
+
+```lean
+def setup : SetupM Unit := do
+  command "greet" greet
+  bindKey "C-c g" "greet"
+```
+
+A key string that is not keys, or names none, is refused, and so is a
+`setup` that binds one sequence twice. A binding to a name nothing
+registers is accepted, and says `<name>: no such command` when the key
+runs. A reload replaces config's bindings with the new config's; one that
+is rejected keeps them.
+
 A script is one directive a line. Blank lines and lines that start with `#`
 are skipped.
 
@@ -71,7 +87,7 @@ are skipped.
 | `spawn <name>` | Starts the job registered under that name. It runs in the background, and the editor goes on answering. |
 | `join` | Waits, for up to 30 seconds, until everything asked so far has been handled and no job is running. |
 | `show` | Prints the commands, the texts and the stores. |
-| `key <logical> <physical> <modifiers>` | Sends a press of a key, with no text, as the window would report it: through the library's window input, in order with what was asked before. `<logical>` is one character (`a`) or a named key in angle brackets (`<Escape>`, a W3C UI Events `key` name); `<physical>` is a W3C UI Events `code` (`KeyA`) or `-`; `<modifiers>` is `shift`, `control`, `alt` and `super` joined with `+`, or `-`. The editor prints `key arrived:` with the three. The editor loop drops the key: key lookup comes later. |
+| `key <logical> <physical> <modifiers>` | Sends a press of a key, with no text, as the window would report it: through the library's window input, in order with what was asked before. `<logical>` is one character (`a`) or a named key in angle brackets (`<Escape>`, a W3C UI Events `key` name); `<physical>` is a W3C UI Events `code` (`KeyA`) or `-`; `<modifiers>` is `shift`, `control`, `alt` and `super` joined with `+`, or `-`. The editor prints `key arrived:` with the three. The editor loop steps the key through its input scheme, and runs the command a completed sequence is bound to. |
 | `commit <text>` | Sends the rest of the line, trimmed, as an input method's composition would end with it, the same way as `key`. The editor loop inserts it at the focused window's cursors. A `commit` with no text is refused. |
 | `scene` | Prints the last scene the editor loop published: the frame, then each view and the text its snapshot holds. |
 
@@ -116,7 +132,30 @@ scene 0x0, focused 0, echo "", preedit -, published 8
 view 0 0,0 0x0: "hello", scroll 0, selections 5..5
 ```
 
-The editor runs its command loop. The loop has no frame until the first
+A fourth, `tests/headless/dispatch/script`, runs on a config of its own,
+`tests/headless/dispatch/config`, which registers `spin`, a command that
+inserts `spin` and then asks the text its revision a thousand million
+times, and `mark`, which inserts `mark`, and binds `C-c s` and `C-c m` to
+them. It sends `C-c s` and then `C-g`, the interrupt key, which stops
+`spin` and rolls its insertion back, then `C-c m`, which runs to its end.
+Its output must be exactly `tests/headless/dispatch/expected`; were `spin`
+not stopped, the gate's time limit would end the run:
+
+```console
+$ .lake/build/bin/editor headless "$(lean --print-prefix)" .lake/build/lib/lean ../tests/headless/dispatch/config ../tests/headless/dispatch/script
+reload 1: installed, 1 chunks, 2 commands
+key arrived: c KeyC control
+key arrived: s KeyS -
+key arrived: g KeyG control
+scene 0x0, focused 0, echo "spin: interrupted", preedit -, published 3
+view 0 0,0 0x0: "", scroll 0, selections 0..0
+key arrived: c KeyC control
+key arrived: m KeyM -
+scene 0x0, focused 0, echo "", preedit -, published 6
+view 0 0,0 0x0: "mark", scroll 0, selections 4..4
+```
+
+The editor runs its command loop, under the Vim scheme. The loop has no frame until the first
 event from the window input arrives (a `key` or a `commit`): it then makes
 one, 0 by 0, with one window on a buffer called `scratch` of an empty text.
 So a script that sends no window event has no frame, and the texts its
@@ -128,13 +167,27 @@ second `scene` above, seven events after the first, shows that the reload
 and the job were each followed by one. A window's close request ends the
 loop.
 
+A key press is stepped through the scheme. Config's bindings are looked up
+first, then the scheme's own keymaps. The commands the Vim scheme's own
+keys name are not built yet, so such a key says `<name>: no such command`
+in the echo area. A command a key runs prints nothing: what became of it is
+in the next scene's echo area, `<name>: no such command`,
+`<name>: refused: <error>` or `<name>: interrupted`, and a command that was
+refused or interrupted is rolled back: its buffer's text and selections are
+as they were before it. `C-g` is the interrupt key: it stops a command that
+is running at its next request to the editor, and is then looked up like
+any other key. A command that takes longer than 100 ms is logged on stderr,
+`slow command: <name> took <n> ms`, and not on the output.
+
 The lines it can print:
 
 ```
 reload <n>: installed, <c> chunks, <k> commands
 reload <n>: rejected
 diagnostic: <source>:<line>:<column>: <severity>: <first line of the message>
-run <name>: ok            (or "refused: <error>", or "no such command")
+run <name>: ok            (or "refused: <error>", "no such command", or
+                           "no frame" for a compiled command given its call,
+                           before the first window event)
 spawn <name>: job <id>    (or "no such job")
 job <id> <name>: ok       (or "refused: <error>", "failed: <message>", "cancelled")
 event <source id> <code>

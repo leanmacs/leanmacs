@@ -289,6 +289,25 @@ keyboard reaches Lean:
   clock when the window reported it (`crates/editor-ffi/src/window.rs` has
   the table). The window is run by the main-thread service
   ([lean-runtime.md](lean-runtime.md), "Start-up and shutdown").
+- **The interrupt flag** (`crates/editor-ffi/src/interrupt.rs`): the
+  primitive under the command loop's interrupt, whose policy is Lean's
+  ([concurrency.md](concurrency.md), "Foreground: commands"). Lean sets the
+  key (`editor_ffi_interrupt_key_set`, as words: a logical key, the
+  modifiers and a mask of the modifiers to compare; Lean computes the mask
+  from its chord rule, so the library compares words and knows no chord
+  rule) and clears it. Every input reaches the queue through one arrival
+  function (`window::arrive`), from a window and from
+  `editor_ffi_window_post_input` alike: a press of the key counts one up
+  before the event is pushed, and the event carries the interrupt mark,
+  bit 3 of a key's code (`KEY_INTERRUPT`); an event the queue refuses
+  because it was quit counts it down again. The flag is up while the count
+  is above zero (`editor_ffi_interrupt_raised`), and Lean lowers it by one
+  when its loop takes a marked event off the queue
+  (`editor_ffi_interrupt_lower`, never below zero). `window::input` refuses
+  a code with the mark, so a poster cannot forge it. The state is one
+  process-wide static, so its C functions are tested in a process of their
+  own (`crates/editor-ffi/tests/interrupt.rs`) and the logic on instances
+  of its own.
 
 ## Text utilities
 

@@ -108,12 +108,17 @@ time, in order, on the editor thread.
   typed during a slow command are not reordered. Painting continues from the
   last published scene.
 - **Interrupt.** An interrupt key (Emacs's `C-g`) raises a flag in the Rust
-  library as the key arrives, before the key is queued. Decided as follows,
-  and not yet built.
+  library as the key arrives, before the key is queued. Built: the flag in
+  `crates/editor-ffi/src/interrupt.rs` ([rust-library.md](rust-library.md),
+  "Platform"), what the loop does with it in `lean/Editor/Loop.lean` ("The
+  interrupt") and `lean/Editor/Command/Guard.lean`, and the loop reaches the
+  flag through the watch port (`lean/Editor/Watch.lean`,
+  [lean-runtime.md](lean-runtime.md), "The editor's port is a composite").
   - **The primitive is the library's, the policy Lean's.** The library
-    raises the flag on the arrival path of the editor queue, and answers
-    whether it is up. Which key raises it, when it is asked and when it is
-    lowered are Lean's.
+    raises the flag on the arrival path of the editor queue
+    (`window::arrive`, which every window event and every posted one goes
+    through), and answers whether it is up. Which key raises it, when it is
+    asked and when it is lowered are Lean's.
   - **Which key.** Lean tells the library, when the loop starts: `C-g`.
     What "the same key" means is the chord's rule
     ([keymaps-and-modes.md](keymaps-and-modes.md), "A key as a binding
@@ -133,10 +138,18 @@ time, in order, on the editor thread.
     it. The lowering is a request of the editor's port, so it is in the
     pure loop, where the model tests see it.
   - **When it is asked.** Before each request of a command the loop
-    dispatched. Once the flag is up the command's continuation is dropped:
-    the command makes no further request. This is the job runner's rule
-    for cancellation ("Cancellation"): it is not a reply and nothing is
-    thrown, so a `try`/`catch` in a command cannot swallow an interrupt.
+    dispatched (`EditorM.guarded`, a pure transformation of the command's
+    program, so it runs on the models). Once the flag is up the command's
+    continuation is dropped: the command makes no further request, it is
+    rolled back, and the echo area reads `<name>: interrupted`. This is the
+    job runner's rule for cancellation ("Cancellation"): it is not a reply
+    and nothing is thrown, so a `try`/`catch` in a command cannot swallow
+    an interrupt. Asking costs one call into the library and one program
+    step for each request of a command.
+  - **Not guarded.** The headless driver's `run <name>` and a finished
+    job's command are not dispatched by a key, and are neither checked nor
+    rolled back. Routing them through the loop's dispatch goes with jobs
+    started from commands.
   - **Only the command is checked.** The loop's own requests (keeping what
     it rolls back to, rolling back, publishing) are not, so a flag that is
     up never stops a rollback or a scene.
@@ -152,7 +165,8 @@ time, in order, on the editor thread.
   command and reverts to it if the command fails, by one inverse of the run
   of revisions the command made. That state may be a point inside an insert
   session's open group, so a command's edits need no group of their own.
-  What the loop does with it is decided as follows, and not yet built.
+  What the loop does with it is built (`lean/Editor/Loop.lean`, "Rollback":
+  `Loop.keep` and `Loop.Kept.restore`), as follows.
   - **Before a command** the loop keeps, for each buffer, the state of its
     undo tree once told the text's revision, and, for each window, its
     selection marker and its scroll marker as read.
@@ -171,14 +185,17 @@ time, in order, on the editor thread.
   - **A rollback that is refused is said.** A command that released a
     buffer's text, gave up a window's marker or dropped the inverses of its
     own edits cannot be rolled back. The rest is still rolled back, and the
-    echo area says what was not.
+    echo area ends `; not rolled back: ` and the first refusal.
   - **A command that moved in the history** (an undo, a redo) is not taken
     back: the move stays. The move closed the group, so the kept state is
     no longer a state of the open group. The loop then reverts the group
     that is open when the command ends, which takes back the edits the
     command made after its last move and leaves the text at the node that
-    move reached. The echo area says the command moved in the history, and
-    the windows' markers are left where the store moved them.
+    move reached. The echo area ends `; the command moved in the history`,
+    and the windows' markers are left where the store moved them. No
+    command can move the loop's tree until commands have a request for it,
+    so this is pinned on a state whose history was moved by hand
+    (`ModelTest.dispatchChecks`).
     - *Why not move back.* The kept state can be one no move returns to.
       With edits pending, a command that edits and then undoes closes the
       group as one node, whose state is the one after the command's edit.
@@ -191,7 +208,14 @@ time, in order, on the editor thread.
       what the command undid can be redone and what it redid undone. The
       text is at a state of the history, never between two.
 - **Slow commands are logged**, with their duration, so a command that
-  should have been a job is easy to find.
+  should have been a job is easy to find. Built: the loop reads the job
+  port's clock, through the watch port, just before a command a key runs
+  and just after it, however it ended. When it took longer than the
+  threshold (100 ms by default, `Loop.slowAfter`) the step hands back one
+  entry, `slow command: <name> took <n> ms`, and the host writes it to its
+  log: stderr in the executable, so a fixture's output does not depend on
+  how loaded the machine is. Pinned on the models' clock and, through the
+  headless host, on the job port's fake clock.
 
 The type of a command is `EditorM α`. It offers no blocking operations: no
 "run this process and wait", no "read this file", no "wait for this job".

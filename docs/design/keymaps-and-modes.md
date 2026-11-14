@@ -18,13 +18,17 @@ states and bindings:
 | The scheme contract | `lean/Editor/InputScheme/Contract.lean` |
 | The Vim scheme's grammar: parts of speech, edits, counts, registers, Vim states, the last change | `lean/Editor/InputScheme/Vim.lean` |
 | The Vim scheme's default states and bindings, and the scheme that ships | `lean/Editor/InputScheme/Vim/Default.lean` |
+| The loop's one scheme, the keys it steps, running an invocation, rollback and the interrupt | `lean/Editor/Loop.lean` ("The loop runs one scheme" below) |
+| What a command is run with: its target, arguments and keys | `lean/Editor/Command/Call.lean` |
+| Compiled and config commands and key bindings, by owner, and the keymap of the bindings | `lean/Editor/Config/Registry.lean`, `lean/Editor/Setup.lean` (`bindKey`) |
 
-Nothing calls a scheme yet: the command loop drops keys, and running an
-invocation is not built. So the Vim scheme parses keys to invocations that
-nothing runs: no motion, operator or command it names is registered. The
-rest of this document (the vocabulary, modes, registering from config) is a
-proposal from a design discussion, and nothing is measured. The one settled
-input is the priority:
+The command loop steps every key press through its one scheme and runs the
+invocation it yields, as a command looked up by name in the registry. The
+Vim scheme ships, but no motion, operator or command its keys name is
+registered yet, so under it a default key echoes `<name>: no such command`.
+Of the rest of this document, the vocabulary and modes are a proposal from a
+design discussion, and nothing is measured. The one settled input is the
+priority:
 Vim-style editing is the scheme that ships and is polished; other schemes
 must stay possible without being paid for now.
 
@@ -158,8 +162,15 @@ structure InputScheme where
   step    : (ViewId → List (Keymap Binding)) → ViewId → State → Key
               → State × Option Invocation
   pending : State → List Key
+  command : String → Binding
 ```
 
+- **`command` is what a key bound to a command name is bound to** under the
+  scheme. Config and compiled code bind a key sequence to a command's name
+  and never name a scheme's `Binding`; the scheme turns the name into its
+  binding (the test scheme's is the invocation of that name with no
+  arguments, the Vim scheme's a named command). Completing a sequence bound
+  to it yields an invocation of that command.
 - **`step` is given the view the key is for**, beside the keymaps as a
   function of the view. A function of the view with no view to apply it to
   would need an ambient focus.
@@ -202,7 +213,11 @@ The simplest scheme there is, published for other modules' tests
 
 ### The loop runs one scheme
 
-Status: decided, and not yet built. The command loop still drops keys.
+Status: built (`lean/Editor/Loop.lean`, whose module docs have the detail;
+pinned on the models by `ModelTest.dispatchChecks` and through the headless
+host by `ConfigTest.dispatchChecks`). The headless host takes the scheme as
+a parameter; the executable runs `Vim.Default.scheme` and the tests the test
+scheme.
 
 - **One scheme for the editor.** The loop is given its scheme when it
   starts, and the scheme is fixed for the loop's life. The loop holds the
@@ -250,6 +265,20 @@ Status: decided, and not yet built. The command loop still drops keys.
   - Consequence: until the `insert` command is registered, `i` under the
     Vim scheme echoes `insert: no such command` and the view stays in
     normal state.
+- **What a command is run with** (`Call`): the focused window and its
+  buffer, the invocation's arguments unchanged, and the keys that yielded
+  it, which are what the scheme reported as pending before the last key,
+  then that key's chord. The count is one of the arguments, where the
+  scheme laid it out ("Counts"); `Invocation` has no count field, so a
+  command has one answer for its count.
+- **The scene shows the pending keys**, as a key string
+  (`Key.notations`): empty once a sequence completes and after an unbound
+  key.
+- **A failure is said in the echo area** and the editor keeps running:
+  `<name>: no such command`, `<name>: refused: <error>` or
+  `<name>: interrupted`. The echo is cleared when an invocation runs, and
+  not by a key that yields nothing. What the command did is rolled back
+  ([concurrency.md](concurrency.md), "Foreground: commands").
 
 ### Vocabulary
 
@@ -271,7 +300,19 @@ command.
 ### What stays in the core
 
 - Keyboard macros, because they replay keys and work under any scheme.
-- The command registry and `run`.
+- The command registry and `run`. Built: commands are registered by name
+  and by owner (`Config.Registry`), by compiled code for the owner
+  `compiled` when the host starts and by config's `setup` for the owner
+  `config`. The latest entry of a name is the one an invocation runs
+  (`Config.State.command?`), and a reload appends config's after the
+  compiled ones, so config's command of a compiled command's name runs in
+  its place until a reload drops it, and the compiled one runs again.
+- Key bindings, by owner in the same registry (`Registry.bindings`): a key
+  sequence and a command name. A reload replaces config's and never the
+  compiled ones, so compiled bindings run when config fails to load.
+- Vocabulary, once it exists: motions, operators and text objects follow
+  the same pattern (entries by owner, replaced as a set, the latest wins).
+  No table of them is built until they have a type.
 - The role table and leader convention described under Modes.
 
 ## The Vim scheme
@@ -656,6 +697,13 @@ def activeMaps : EditorState → ViewId → List (Keymap β)
 -- minor modes, then the major mode, then global
 ```
 
+As built, before modes: one keymap, the same for every view, of every
+owner's key bindings (`Config.Registry.keymap`), oldest entry first, so of
+two owners that bind one sequence the later wins. The host makes it from
+the registry for each key, so a reload's bindings hold from the next key.
+Under the Vim scheme the state's keymaps are walked after it ("Which keymaps
+a key is looked up in").
+
 ### Per-mode state
 
 Each mode wants state of its own type. Compiled modes use ordinary typed
@@ -671,8 +719,15 @@ version, which survives a reload that changes the type.
   registered.
 - A binding's keys are written as a key string, which `Key.parse` reads:
   an ordinary function, built, that gives the keys or a refusal that names
-  the stroke it could not read. Registering a binding from `setup` is not
-  built.
+  the stroke it could not read.
+- Built: `setup` binds a key sequence to a command name with
+  `bindKey "C-x C-s" "save"` (`lean/Editor/Setup.lean`). It is refused with
+  the parser's message for a string that is not keys, and with its own for
+  one that names none; a `setup` that binds one sequence twice is rejected,
+  as one that registers a command name twice is. A binding to a name that
+  is not registered is accepted: the name is looked up when the key runs.
+  It is `bindKey` and not `bind`, which would shadow the monad's `bind` for
+  config, which opens `Editor`.
 - A key-string macro (`kbd "C-x C-s"`) could parse at elaboration time, so
   a mistyped key is an error in config before it runs. It is not built. See
   the open questions for its cost.
@@ -781,13 +836,16 @@ is what makes the result hold for the real binding.
     `lean/Editor/InputScheme/Contract.lean`). A scheme's author gives it
     the scheme, keymaps, a view, inputs the author says are complete and a
     key that goes on with none of them, and it answers the names of the
-    properties that do not hold. There are five: some input has two keys or
+    properties that do not hold. There are six: some input has two keys or
     more, so the others are not vacuous; a strict prefix of a complete
     input emits nothing; after a strict prefix the scheme reports its keys
     as pending; the last key emits, and nothing is then pending; an unbound
     key after a strict prefix emits nothing, leaves nothing pending, and
-    the input typed next yields what it yields from the initial state. It
-    is pure and compares no states. "Every role has a key" joins it with
+    the input typed next yields what it yields from the initial state; and
+    the unbound key, bound in a keymap of its own to `scheme.command` of a
+    name, yields from the initial state an invocation of that name and
+    leaves nothing pending (`namedCommandRuns`). It is pure and compares no
+    states. "Every role has a key" joins it with
     roles.
   - The model tests run it on the test scheme, on schemes written there
     that each break one property and are reported, and on the Vim scheme.

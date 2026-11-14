@@ -639,7 +639,14 @@ the text port: the undo tree (`lean/Editor/UndoTree.lean`, decided
 - *Reverting.* A failed command is rolled back by keeping the tree's state
   before it and reverting to it, which may be a point inside an insert
   session's open group: groups need not nest. Reverting the whole open
-  group makes no node and leaves nothing to redo.
+  group makes no node and leaves nothing to redo. The command loop does
+  this for a command a key runs that is refused or interrupted
+  (`lean/Editor/Loop.lean`, "Rollback"), with the user's origin, and also
+  puts each window's selection and scroll markers back, since a marker
+  inside a deleted range does not come back with the inverse. When the
+  command moved in the history the kept state is no longer one of the open
+  group: the loop then reverts the open group alone and leaves the move
+  ([concurrency.md](concurrency.md), "Foreground: commands").
 - *Saved.* The tree keeps the state last marked as saved and answers
   whether the text is in another. A new tree is saved at its root. A
   boundary does not change the answer, whichever of the mark and the
@@ -1070,9 +1077,13 @@ decided 2026-11-13 by its phase 2):
   host is not left with a refusal to drop. The state's layout is not
   touched: a well-formed state stays well formed.
 - Until later phases choose them, every view's cursor is a bar in the face
-  `cursor`, with no decorations and an empty status line, and the pending
-  prefix is empty. The focused view is named only while the frame has the
-  keyboard focus, and the preedit is the input method's text for it.
+  `cursor`, with no decorations and an empty status line. The focused view
+  is named only while the frame has the keyboard focus, and the preedit is
+  the input method's text for it.
+- The pending prefix is the keys the loop's input scheme reports as
+  pending, as a key string (`C-x`): empty once a sequence completes and
+  after an unbound key ([keymaps-and-modes.md](keymaps-and-modes.md), "The
+  loop runs one scheme"). The headless `scene` line does not print it.
 
 ## Layout and rendering
 

@@ -202,7 +202,8 @@ elaborator.
 | Stores: a value of config's type as a plain tree with a version | `lean/Editor/Store.lean` |
 | Diagnostics: failure as data | `lean/Editor/Config/Diagnostic.lean` |
 | Owners: who registered or started something | `lean/Editor/Config/Owner.lean` |
-| The registry of commands and of jobs, replaced by owner, and the handler that collects a `setup` | `lean/Editor/Config/Registry.lean` |
+| The registry of commands, of jobs and of key bindings, replaced by owner, the keymap of the bindings, and the handler that collects a `setup` | `lean/Editor/Config/Registry.lean` |
+| What a command is run with when a key runs it: the focused window and its buffer, the arguments and the keys | `lean/Editor/Command/Call.lean` |
 | The cells of the stores, and the rule that installs a config's stores | `lean/Editor/Config/Stores.lean` |
 | One reload: the chunks, the plan, the build, over the two ports | `lean/Editor/Config/Session.lean` |
 | The reducer that serialises reloads and installs their outcomes | `lean/Editor/Config/Reload.lean` |
@@ -243,6 +244,23 @@ elaborator.
   The first of the two could never run, so it is a mistake in the config,
   and it is treated like a store declared twice. The number of commands a
   reload reports is therefore the number of names the config can be run by.
+- **Compiled commands are entries of the same registry**, for the owner
+  `compiled`, which a host registers when it starts, before any config. A
+  command is looked up by its name, and the latest entry of the name is
+  the one found (`Config.State.command?`): config's command of a compiled
+  command's name runs in its place while it is registered, and the
+  compiled one is found again once a reload drops it. A compiled command
+  may be given what it was called with (`Config.Action.call`, handed a
+  `Call`); config's commands are not, until a setup request for it exists.
+  The reload's report counts config's commands only.
+- **A key binding is data too**: `bindKey "C-c t" "two"` in `setup` binds a
+  key sequence to a command's name, tagged with its owner, and a reload
+  replaces config's bindings as a set and never the compiled ones. A
+  sequence bound twice in one `setup` rejects the reload. Bindings are not
+  counted in the report. A rejected reload changes no binding, so the
+  compiled bindings, and config's of the last config that loaded, still
+  run ([keymaps-and-modes.md](keymaps-and-modes.md), "Extending from
+  config").
 - **A job is the value `setup` registered, too**:
   `job "count" count fun n => …` registers a `Work`, the job with the
   handler that makes the command its result is taken to the editor with.
@@ -393,8 +411,8 @@ the monad.
 - A **port** is a type of requests and, for each request, the type of its
   reply. A **program** over a port is plain data: it is finished, or it
   makes a request and continues with the reply. `EditorM` is the type of
-  programs over the editor's port, a composite of the text and display
-  ports ("The editor's port is a composite", below), and `JobM` the type of
+  programs over the editor's port, a composite of the text, display and
+  watch ports ("The editor's port is a composite", below), and `JobM` the type of
   programs over the job port. Both are ordinary monads, and a command reads as a `do` block.
 - A port has two **handlers**. The model is a pure function from a request
   and the model's state to a reply and a new state. The real binding answers
@@ -530,16 +548,29 @@ text, the display and, later, buffers and windows through one port, whose
 shape is:
 
 - **Its requests are a sum of sub-ports**, one constructor a sub-port:
-  `EditorRequest.text` carries a request of the text port and
-  `EditorRequest.display` one of the display port. The reply to each is its
-  sub-port's reply. `editorPort` is an `abbrev`, as every port is.
+  `EditorRequest.text` carries a request of the text port,
+  `EditorRequest.display` one of the display port and `EditorRequest.watch`
+  one of the watch port. The reply to each is its sub-port's reply.
+  `editorPort` is an `abbrev`, as every port is.
+- **The watch port** (`lean/Editor/Watch.lean`, added by the command loop's
+  phase 6) is what the loop watches a command with: whether the interrupt
+  flag is up, lowering it once, and the job clock in milliseconds. It is a
+  sub-port, and not checked by the host, so that the loop stays one pure
+  program that runs the same on the models and against the library: the
+  loop asks the flag before each request of a command it runs
+  ([concurrency.md](concurrency.md), "Foreground: commands"). A flag check
+  inside each handler could not say "stop" for a request whose reply has
+  no refusal, and a host that ran a step in pieces would be a second
+  driver for the models that could drift. The clock is here and not in a
+  sub-port of its own because each sub-port costs a constructor, an
+  embedding and a case in each runner. Nothing on it is refused.
 - **A command is `EditorM := ExceptT TextError (Program editorPort)`.** A
   program over the text port alone is `TextM`, and every text operation and
   all logic over text alone (the undo tree, the text contract, `append`)
-  stays at it; the display's is `DisplayM`. `TextM.lift` and
-  `DisplayM.lift` embed each in a command, and they are `MonadLift`
-  instances, so an operation of either sub-port is used in a command as it
-  is. That is why every config source and fixture written before the port
+  stays at it; the display's is `DisplayM` and the watch port's `WatchM`.
+  `TextM.lift`, `DisplayM.lift` and `Watch.lift` embed each in a command,
+  and they are `MonadLift` instances, so an operation of any sub-port is
+  used in a command as it is. That is why every config source and fixture written before the port
   became a composite elaborates unchanged. There is no lift from `JobM`, so
   a job is still not a command, which `lean/Editor/Job.lean` checks at
   `TextM` and at `EditorM`.
@@ -550,13 +581,18 @@ shape is:
   throws a text refusal, and nothing needs it yet. The first sub-port whose
   refusal has no `TextError` counterpart widens it, in its own phase.
 - **A runner's state is the product of its sub-ports' states.** On the
-  models it is the text model and the display model side by side
-  (`EditorModel`); before each display request the display model's texts
-  are filled from the text model's snapshots, so a command that takes a
-  snapshot and asks the display about it is answered from that snapshot's
-  text. For real it is the text binding's table, with a display handler
-  (`DisplayHandler`) passed in: the recorder in a host with no window, the
-  display pipeline's binding in one with a window.
+  models it is the text model, the display model and the watch model side
+  by side (`EditorModel`); before each display request the display model's
+  texts are filled from the text model's snapshots, so a command that takes
+  a snapshot and asks the display about it is answered from that
+  snapshot's text. On the models time passes only with requests: the watch
+  model's clock moves on by its pace at each text and display request, and
+  a test has an interrupt key arrive at a command's n-th request. For real
+  it is the text binding's table, with a display handler (`DisplayHandler`)
+  passed in: the recorder in a host with no window, the display pipeline's
+  binding in one with a window; and a watch handler (`WatchHandler`),
+  `Watch.real` over the library's flag and the job clock in a host, and
+  `Watch.idle`, never interrupted, by default.
 - **Where it grows.** Requests about buffers and windows (the command
   loop's phase 8) are a third constructor, `EditorRequest.state`, whose
   handler is one pure function over the editor state, the same in the model
@@ -567,10 +603,15 @@ shape is:
 
 | Piece | Where |
 |---|---|
-| The composite port, `EditorM`, the two embeddings and lifts, and the mapping of the display's refusals | `lean/Editor/Command.lean` |
-| The composite's model runner, over the two models side by side | `lean/Editor/Command/Model.lean` |
-| The composite's real runner, over the text binding and a display handler | `lean/Editor/Command/Real.lean` |
+| The composite port, `EditorM`, the three embeddings and lifts, and the mapping of the display's refusals | `lean/Editor/Command.lean` |
+| The composite's model runner, over the three models side by side | `lean/Editor/Command/Model.lean` |
+| The composite's real runner, over the text binding, a display handler and a watch handler | `lean/Editor/Command/Real.lean` |
 | `DisplayHandler`, and running a display program against one | `lean/Editor/Display.lean` |
+| The watch port: the interrupt flag, lowering it, and the clock; `WatchHandler`; `Watch.idle`; the interrupt key, `C-g` | `lean/Editor/Watch.lean` |
+| Its pure model: the interrupt keys that arrived, one that arrives at a command's n-th request, and a clock with a pace | `lean/Editor/Watch/Model.lean` |
+| Its contract, imported from the port alone, run against the model by `lake test` and against the real binding by `contract-test` | `lean/Editor/Watch/Contract.lean` |
+| Its real binding, over the library's interrupt flag and the job port's clock | `lean/Editor/Watch/Real.lean` |
+| A guarded command: one that stops at its next request once the flag is up | `lean/Editor/Command/Guard.lean` |
 | What the model runner does with each sub-port, pinned | `ModelTest.commandPortChecks` |
 
 ## Where state lives
@@ -578,6 +619,8 @@ shape is:
 | State | Held by | Across a reload | Across a restart |
 |---|---|---|---|
 | Buffers, windows, keymaps, registers, the agent table | Compiled Lean, on the editor thread. Buffers, windows, the frame's split tree, the echo area and the preedit are the editor state (`lean/Editor/State.lean`), which the command loop (`lean/Editor/Loop.lean`) holds | Untouched | Lost unless its owner persists it |
+| The input scheme's state: the pending keys and what the scheme keeps for each view (the Vim scheme's states, its last change) | Compiled Lean, in the command loop, which runs one scheme for its life | Untouched | Lost |
+| Compiled commands and key bindings | Compiled Lean, in the registry, for the owner `compiled` | Untouched: a reload replaces config's | Registered again when the host starts |
 | Text, kept inverses, anchors | Rust, behind handles | Untouched | Files on disk; the kept inverses are lost |
 | The undo tree of each text: its nodes, where the text is in it, and the state last saved | Compiled Lean, with the buffer it is the history of, on the editor thread | Untouched | Lost |
 | A file's stamp (when it was last modified and how long it is, as the last load or save answered it), its path and its line ending | Compiled Lean, with the buffer that shows the file: the buffer's to keep, for the next save to expect. Nothing keeps one yet: buffers are the command loop's | Untouched | Lost; the file is loaded again |
