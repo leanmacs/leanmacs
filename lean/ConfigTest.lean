@@ -2,6 +2,7 @@ import ConfigFixture
 import Editor.Config.Directory
 import Editor.Config.Elaborate
 import Editor.Headless
+import Editor.InputScheme.Test
 import Editor.Job.Fake
 
 /-!
@@ -308,10 +309,11 @@ def patience : Nat :=
 /-- What a check hands a host of its own: the collaborators, and what the
 check keeps of them. The host's output goes to a buffer, with the thread
 that emitted each line; its jobs wait on a fake clock the check moves; and it
-posts under source ids no other host of this process has. -/
+posts under source ids no other host of this process has. Its input scheme
+is the test scheme, so no check names a shipped scheme's keys. -/
 structure Stage (σ : Type) where
   /-- What the host is started with. -/
-  collaborators : Headless.Collaborators σ
+  collaborators : Headless.Collaborators σ TestScheme.scheme
   /-- Every line the host has emitted, oldest first. -/
   output : IO.Ref (Array String)
   /-- The thread that emitted each line of `output`. -/
@@ -1202,7 +1204,7 @@ def fileChecks (context : Context) : List Check :=
             let stage ← Stage.new context context.elaborator (Config.Directory.source config)
             let completions := stage.collaborators.services.completions
             discard <| IO.asTask (prio := .dedicated) (Job.pump completions)
-            let collaborators :=
+            let collaborators : Headless.Collaborators Config.Elaborate.State TestScheme.scheme :=
               { stage.collaborators with
                 services :=
                   { stage.collaborators.services with
@@ -1395,7 +1397,7 @@ def scriptChecks (context : Context) : List Check :=
         let entered ← IO.mkRef false
         let stage ← Stage.new context context.elaborator { chunks := pure #[] }
         let host ←
-          Headless.start
+          Headless.start (scheme := TestScheme.scheme)
               { stage.collaborators with
                 emit := fun _ => do
                   entered.set true
@@ -1495,7 +1497,7 @@ def scriptChecks (context : Context) : List Check :=
       run := do
         let stage ← Stage.new context context.elaborator { chunks := pure #[] }
         let collaborators := stage.collaborators
-        let running : Headless.Running Config.Elaborate.State :=
+        let running : Headless.Running Config.Elaborate.State TestScheme.scheme :=
           { texts := RealTexts.over collaborators.published
             display := ← DisplayRecorder.new Headless.cells collaborators.published.reader
             jobs := { services := collaborators.services } }
@@ -1620,7 +1622,7 @@ def start (elaborator : Config.Elaborator Config.Elaborate.State) : IO Rig := do
   let completions ← Job.Completions.new
   let clock ← Job.FakeClock.new completions
   let host ←
-    Headless.start
+    Headless.start (scheme := TestScheme.scheme)
         { elaborator, source := { chunks := chunks.get }, emit,
           services := { completions, timers := clock.timers }, published := ← Snapshots.new,
           held := ← Job.HeldSnapshots.new, requests := 1, wakeups := 2, jobs := 3 }
@@ -1889,7 +1891,7 @@ def jobs (sysroot oleanDir : String) (samples : Nat) : IO UInt8 := do
     let requests ← ids.modifyGet fun next => (next, next + 3)
     reloads.set #[]
     let host ←
-      Headless.start
+      Headless.start (scheme := TestScheme.scheme)
           { elaborator, source := { chunks := pure jobsConfig }, emit,
             services := { completions, timers := counted }, published := ← Snapshots.new,
             held := ← Job.HeldSnapshots.new, requests, wakeups := requests + 1,

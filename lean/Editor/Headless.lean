@@ -3,6 +3,7 @@ import Editor.Config.Elaborate
 import Editor.Config.Reload
 import Editor.Display.Recorder
 import Editor.Event.Queue
+import Editor.InputScheme.Vim.Default
 import Editor.Job.Jobs
 import Editor.Job.Pool
 import Editor.Job.Real
@@ -44,6 +45,10 @@ The host runs the command loop (`Editor/Loop.lean`) beside the config
 session, and calls the same operations of the reducer and of the job table
 as before, so reload and job completion work as they did.
 
+- **The host is given its input scheme**, as a parameter of its
+  collaborators' type (`Collaborators σ scheme`), and its loop runs that one
+  (`Loop scheme`). The executable's is the Vim scheme over its default
+  states (`Vim.Default.scheme`); a test hands a host the test scheme.
 - **The frame is made at the first window event.** The host holds no frame
   (`Running.frame`) until the first event from the window input arrives, and
   then makes it (`Loop.start`) in a frame of 0 by 0, which a resize changes.
@@ -228,8 +233,10 @@ inductive Request where
   | scene
   deriving DecidableEq, Repr
 
-/-- What a host needs from outside. -/
-structure Collaborators (σ : Type) where
+/-- What a host that runs the input scheme `scheme` needs from outside. The
+scheme is a parameter, as it is of the loop (`Loop`): it is in `Type 1`, and
+cannot be a field of what a task is handed. -/
+structure Collaborators (σ : Type) (scheme : InputScheme) where
   /-- How config is elaborated. -/
   elaborator : Config.Elaborator σ
   /-- Where the config's chunks come from. -/
@@ -330,8 +337,9 @@ def reportLines (report : Config.Report) : Array String :=
 def firstLine (message : String) : String :=
   (message.splitOn "\n").headD ""
 
-/-- The loop's state: everything the editor thread owns. -/
-structure Running (σ : Type) where
+/-- The loop's state: everything the editor thread owns, for a host that
+runs the input scheme `scheme`. -/
+structure Running (σ : Type) (scheme : InputScheme) where
   /-- The config half of the editor's state. -/
   config : Config.State σ := {}
   /-- The texts and the snapshots made so far. -/
@@ -341,7 +349,7 @@ structure Running (σ : Type) where
   display : DisplayRecorder
   /-- The editor loop's frame: none until the first event from the window
   input arrives. -/
-  frame : Option Loop := none
+  frame : Option (Loop scheme) := none
   /-- The jobs that are running, with their owners. -/
   jobs : Job.Jobs
   /-- Where the reload job that is running will leave its outcome. -/
@@ -353,14 +361,14 @@ structure Running (σ : Type) where
 
 namespace Running
 
-variable {σ : Type}
+variable {σ : Type} {scheme : InputScheme}
 
 /-- The reload job, on a thread of its own: builds the config, hands the
 outcome over through `promise`, and wakes the editor thread with an event.
 The wake-up is posted whatever happens, so the editor thread never waits for
 a job that is gone. -/
-def reloadJob (collaborators : Collaborators σ) (base : Option σ) (chunks : Array (Config.Chunk σ))
-    (promise : IO.Promise (Config.Outcome σ)) : IO Unit := do
+def reloadJob (collaborators : Collaborators σ scheme) (base : Option σ)
+    (chunks : Array (Config.Chunk σ)) (promise : IO.Promise (Config.Outcome σ)) : IO Unit := do
   try
     promise.resolve (← Config.build collaborators.elaborator collaborators.source base chunks)
   finally
@@ -369,8 +377,8 @@ def reloadJob (collaborators : Collaborators σ) (base : Option σ) (chunks : Ar
 /-- Feeds `event` to the reload reducer and performs its effects. A reload
 job is started on a dedicated task, never run here: it reads files and
 elaborates, and the editor thread goes on to its next event. -/
-def reduce (collaborators : Collaborators σ) (running : Running σ) (event : Config.Event σ) :
-    IO (Running σ) := do
+def reduce (collaborators : Collaborators σ scheme) (running : Running σ scheme)
+    (event : Config.Event σ) : IO (Running σ scheme) := do
   let (config, effects) := Config.step running.config event
   let mut running := { running with config }
   for effect in effects do
@@ -393,7 +401,8 @@ def reduce (collaborators : Collaborators σ) (running : Running σ) (event : Co
 
 /-- Takes the finished reload job's outcome and feeds it to the reducer. This
 is where a reload is installed: on the editor thread, between two events. -/
-def finish (collaborators : Collaborators σ) (running : Running σ) : IO (Running σ) := do
+def finish (collaborators : Collaborators σ scheme) (running : Running σ scheme) :
+    IO (Running σ scheme) := do
   let some promise := running.job | return running
   let outcome :=
     promise.result?.get.getD
@@ -404,8 +413,8 @@ def finish (collaborators : Collaborators σ) (running : Running σ) : IO (Runni
 
 /-- Runs the command called `name` against the Rust library, writes back what
 it wrote, and prints how it went. -/
-def run (collaborators : Collaborators σ) (running : Running σ) (name : String) : IO (Running σ) :=
-  do
+def run (collaborators : Collaborators σ scheme) (running : Running σ scheme) (name : String) :
+    IO (Running σ scheme) := do
   let some program := running.config.program? name
     |
     collaborators.emit s!"run {name}: no such command"
@@ -424,8 +433,8 @@ def run (collaborators : Collaborators σ) (running : Running σ) (name : String
 and prints its id. The job runs on the pool; when it has ended the runner
 posts a wake-up to the editor queue, with the job's id, from whichever thread
 the job ended on. -/
-def spawn (collaborators : Collaborators σ) (running : Running σ) (name : String) :
-    IO (Running σ) := do
+def spawn (collaborators : Collaborators σ scheme) (running : Running σ scheme) (name : String) :
+    IO (Running σ scheme) := do
   let some (owner, work) := running.config.work? name
     |
     collaborators.emit s!"spawn {name}: no such job"
@@ -441,7 +450,8 @@ def spawn (collaborators : Collaborators σ) (running : Running σ) (name : Stri
 result, and for a job that finished runs the command it finished with, as any
 command is run, and prints how it went. A job that is no longer in the table,
 because its owner was removed, is not dealt with: its handler does not run. -/
-def ended (collaborators : Collaborators σ) (running : Running σ) (id : Nat) : IO (Running σ) := do
+def ended (collaborators : Collaborators σ scheme) (running : Running σ scheme) (id : Nat) :
+    IO (Running σ scheme) := do
   let (result, jobs) ← running.jobs.finish id
   let running := { running with jobs }
   let some (entry, outcome) := result | return running
@@ -472,8 +482,8 @@ programs put a refusal in the echo area and are not refused
 the same is never dropped in silence: it is printed,
 `loop: refused: <error>`, and hands back nothing. What it made before the
 refusal stays in the table of texts. -/
-def attempt {α : Type} (collaborators : Collaborators σ) (running : Running σ)
-    (program : EditorM α) : IO (Option α × Running σ) := do
+def attempt {α : Type} (collaborators : Collaborators σ scheme) (running : Running σ scheme)
+    (program : EditorM α) : IO (Option α × Running σ scheme) := do
   let (result, texts) ← program.runReal running.texts running.display.handle
   match result with
   | .ok value =>
@@ -485,7 +495,8 @@ def attempt {α : Type} (collaborators : Collaborators σ) (running : Running σ
 /-- Publishes a scene of the frame's state, if there is a frame: what the
 loop does after every event that is not the window's. A publish that is
 refused is printed (`attempt`), and the frame stays as it was. -/
-def publish (collaborators : Collaborators σ) (running : Running σ) : IO (Running σ) := do
+def publish (collaborators : Collaborators σ scheme) (running : Running σ scheme) :
+    IO (Running σ scheme) := do
   let some frame := running.frame | return running
   let (published, running) ← running.attempt collaborators frame.publish
   return { running with frame := some (published.getD frame) }
@@ -496,8 +507,8 @@ editor loop, which publishes a scene after it. A close request ends the
 loop. Making the frame and the step are each printed when refused
 (`attempt`): with no frame made the event is dropped, and after a refused
 step the frame stays as it was. -/
-def input (collaborators : Collaborators σ) (running : Running σ) (received : Received) :
-    IO (Running σ) := do
+def input (collaborators : Collaborators σ scheme) (running : Running σ scheme)
+    (received : Received) : IO (Running σ scheme) := do
   if let .key which true _ := received.event then
     collaborators.emit s!"key arrived: {which.describe}"
   let (made, running) ←
@@ -505,13 +516,13 @@ def input (collaborators : Collaborators σ) (running : Running σ) (received : 
     | some frame =>
       pure (some frame, running)
     | none =>
-      running.attempt collaborators (Loop.start ⟨0, 0⟩)
+      running.attempt collaborators (Loop.start scheme ⟨0, 0⟩)
   let some frame := made | return running
-  let (stepped, running) ← running.attempt collaborators (frame.step received.event)
+  let (stepped, running) ← running.attempt collaborators (frame.step {} received.event)
   match stepped with
-  | some (frame, next) =>
+  | some stepped =>
     return { running with
-        frame := some frame, stopped := running.stopped || next == .stop }
+        frame := some stepped.loop, stopped := running.stopped || stepped.next == .stop }
   | none =>
     return { running with frame := some frame }
 
@@ -543,7 +554,8 @@ def sceneLines (scene : Scene) (published : Nat) : TextM (Array String) := do
   return lines
 
 /-- Prints the last scene published, or that there is none. -/
-def scene (collaborators : Collaborators σ) (running : Running σ) : IO (Running σ) := do
+def scene (collaborators : Collaborators σ scheme) (running : Running σ scheme) :
+    IO (Running σ scheme) := do
   let some scene ← running.display.last? |
     collaborators.emit "scene: none"
     return running
@@ -557,7 +569,7 @@ def scene (collaborators : Collaborators σ) (running : Running σ) : IO (Runnin
   return { running with texts }
 
 /-- Prints the commands, the texts and the stores. -/
-def «show» (collaborators : Collaborators σ) (running : Running σ) : IO Unit := do
+def «show» (collaborators : Collaborators σ scheme) (running : Running σ scheme) : IO Unit := do
   collaborators.emit (" ".intercalate ("commands:" :: running.config.registry.names.toList))
   for index in [0:running.texts.documents.size] do
     -- A text a command released has no document, and no line.
@@ -567,8 +579,8 @@ def «show» (collaborators : Collaborators σ) (running : Running σ) : IO Unit
     collaborators.emit s!"store {cell.name} v{cell.version}: {render cell.value}"
 
 /-- Handles one event of the editor queue that is not the window's. -/
-def other (collaborators : Collaborators σ) (running : Running σ) (event : Ffi.Event) :
-    IO (Running σ) := do
+def other (collaborators : Collaborators σ scheme) (running : Running σ scheme)
+    (event : Ffi.Event) : IO (Running σ scheme) := do
   match event.source.kind with
   | .script =>
     collaborators.emit s!"event {event.source.id} {event.code}"
@@ -606,8 +618,8 @@ window input goes to the editor loop (`input`), which publishes a scene after
 it; after any other event, a scene is published once there is a frame,
 unless the driver has ended the loop. A window event that cannot be read is
 ignored. -/
-def handle (collaborators : Collaborators σ) (running : Running σ) (event : Ffi.Event) :
-    IO (Running σ) := do
+def handle (collaborators : Collaborators σ scheme) (running : Running σ scheme)
+    (event : Ffi.Event) : IO (Running σ scheme) := do
   if event.source.kind == .window then
     match Event.ofFfi event with
     | .ok received =>
@@ -643,8 +655,9 @@ def cells : Display.Cells :=
 end, until the driver ends the loop or the queues are quit. After each event
 it publishes in `progress` how many markers it has reached, whether a reload
 is running, and how many jobs are. -/
-def loop {σ : Type} (collaborators : Collaborators σ) (progress : IO.Ref Progress) : IO Unit := do
-  let mut running : Running σ :=
+def loop {σ : Type} {scheme : InputScheme} (collaborators : Collaborators σ scheme)
+    (progress : IO.Ref Progress) : IO Unit := do
+  let mut running : Running σ scheme :=
     { texts := RealTexts.over collaborators.published
       display := ← DisplayRecorder.new cells collaborators.published.reader
       jobs := { services := collaborators.services } }
@@ -673,7 +686,7 @@ structure Host where
   thread : Task (Except IO.Error Unit)
 
 /-- Starts a host: its loop runs on a dedicated task until `stop` or `halt`. -/
-def start {σ : Type} (collaborators : Collaborators σ) : IO Host := do
+def start {σ : Type} {scheme : InputScheme} (collaborators : Collaborators σ scheme) : IO Host := do
   let progress ← IO.mkRef {}
   let thread ← IO.asTask (prio := .dedicated) (loop collaborators progress)
   return { requests := collaborators.requests, posted := ← IO.mkRef 0, progress, thread }
@@ -963,8 +976,8 @@ A `settle` or a `join` that runs out ends the loop at once, whether a reload
 or a job is running or not. A rejected reload is something to print, not a
 failure, and so is a job that fails. A job the script leaves running is
 cancelled when the loop ends. -/
-def run {σ : Type} (collaborators : Collaborators σ) (script : Array Line) (patience : Nat) :
-    IO (Option Failure) := do
+def run {σ : Type} {scheme : InputScheme} (collaborators : Collaborators σ scheme)
+    (script : Array Line) (patience : Nat) : IO (Option Failure) := do
   let host ← start collaborators
   for line in script do
     let wait ←
@@ -1034,7 +1047,7 @@ def main (sysroot oleanDir configDir scriptPath : String) : IO UInt32 := do
   let published ← Snapshots.new
   let held ← Job.HeldSnapshots.new
   let failure ←
-    run
+    run (scheme := Vim.Default.scheme)
         { elaborator := Config.Elaborate.elaborator { sysroot, oleanDir },
           source := Config.Directory.source configDir, emit := IO.println,
           services :=

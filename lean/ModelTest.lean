@@ -3818,14 +3818,24 @@ def stateChecks : List Check :=
                 after == { state with frame := { state.frame with focused := ⟨1⟩ } }
             | _ => false }]
 
+/-- The loop the model tests run: one over the test scheme. -/
+abbrev TestLoop :=
+  Loop TestScheme.scheme
+
+/-- One step of `loop` with no keymap: the loop after `event` and what the
+step said to do next, for the checks that look at nothing else of a step. -/
+def stepped (loop : TestLoop) (event : Event) : EditorM (TestLoop × Loop.Next) := do
+  let after ← loop.step {} event
+  return (after.loop, after.next)
+
 /-- Starts a loop from the state `start` makes, feeds it `events` in order,
 and returns the loop and what each step said to do next. -/
 def stepsFrom (start : TextM EditorState) (events : List Event) :
-    EditorM (Loop × Array Loop.Next) := do
-  let mut loop : Loop := { state := ← start }
+    EditorM (TestLoop × Array Loop.Next) := do
+  let mut loop : TestLoop := { state := ← start }
   let mut nexts := #[]
   for event in events do
-    let (next, said) ← loop.step event
+    let (next, said) ← stepped loop event
     loop := next
     nexts := nexts.push said
   return (loop, nexts)
@@ -3834,7 +3844,7 @@ def stepsFrom (start : TextM EditorState) (events : List Event) :
 each step said, the scenes the display recorded, and the models. `none` when
 it was refused. -/
 def looped (start : TextM EditorState) (events : List Event) :
-    Option ((Loop × Array Loop.Next) × Array Scene × EditorModel) :=
+    Option ((TestLoop × Array Loop.Next) × Array Scene × EditorModel) :=
   match (stepsFrom start events).runModel editorModel with
   | (.ok result, model) => some (result, model.display.scenes, model)
   | (.error _, _) => none
@@ -3911,7 +3921,7 @@ def loopChecks : List Check :=
           let events : List Event :=
             [pressA, .pointer { action := .press, x := 3.0, y := 4.0, button := some .primary },
               .windowOpened "headless"]
-          let start : EditorM (EditorState × Loop × Array Loop.Next) := do
+          let start : EditorM (EditorState × TestLoop × Array Loop.Next) := do
             let state ← EditorState.initial ⟨640, 480⟩
             let (loop, nexts) ← stepsFrom (pure state) events
             return (state, loop, nexts)
@@ -3955,11 +3965,11 @@ def loopChecks : List Check :=
         "a commit once the focused buffer's text was released is not refused: it publishes a scene with the refusal in its echo and no view of that buffer, and the loop keeps the state as it was, well formed, with that echo"
       run :=
         pure <|
-          let program : EditorM (EditorState × Loop × Loop.Next) := do
+          let program : EditorM (EditorState × TestLoop × Loop.Next) := do
             let state ← EditorState.initial ⟨640, 480⟩
             let some target := state.focusedTarget? | throw .noSuchMarker
             target.buffer.text.release
-            let (loop, next) ← ({ state } : Loop).step (.commit "x")
+            let (loop, next) ← stepped { state } (.commit "x")
             return (state, loop, next)
           match program.runModel editorModel with
           | (.ok (state, loop, next), model) =>
@@ -3977,13 +3987,13 @@ def loopChecks : List Check :=
         "an event that changes nothing, once one buffer's text was released, publishes a scene with the refusal in its echo and the other buffer's view, and the other buffer's history is still recorded"
       run :=
         pure <|
-          let program : EditorM (EditorState × Loop × String) := do
+          let program : EditorM (EditorState × TestLoop × String) := do
             let state ← twoBuffers
             let some gone := state.buffers[0]? | throw .noSuchMarker
             let some other := state.buffers[1]? | throw .noSuchMarker
             gone.text.release
             other.text.insert 5 "!"
-            let (loop, _) ← ({ state } : Loop).step pressA
+            let (loop, _) ← stepped { state } pressA
             -- The loop recorded the insertion in the other buffer's history:
             -- one undo of it takes the insertion back.
             let some kept := loop.state.buffers[1]? | throw .noSuchMarker
@@ -4006,23 +4016,23 @@ def loopChecks : List Check :=
         "a released text no window shows still puts its refusal in the scene's echo, with every view shown; so does a view's text that refuses when no history did, and that view is left out"
       run :=
         pure <|
-          let hidden : EditorM Loop := do
+          let hidden : EditorM TestLoop := do
             let state ← EditorState.initial ⟨640, 480⟩
             let text ← createText "hidden"
             let history ← UndoTree.over text
             text.release
             let state :=
               { state with buffers := state.buffers.push { name := "hidden", text, history } }
-            return (← ({ state } : Loop).step pressA).1
+            return (← stepped { state } pressA).1
           -- A buffer whose history is over another text than its own: the
           -- history is recorded, and only the view is refused.
-          let astray : EditorM Loop := do
+          let astray : EditorM TestLoop := do
             let state ← EditorState.initial ⟨640, 480⟩
             let some buffer := state.buffers[0]? | throw .noSuchMarker
             let history ← UndoTree.over (← createText "elsewhere")
             buffer.text.release
             let state := { state with buffers := #[{ buffer with history }] }
-            return (← ({ state } : Loop).step pressA).1
+            return (← stepped { state } pressA).1
           (match hidden.runModel editorModel with
             | (.ok loop, model) =>
               loop.state.echo == "refused: no such text" &&
@@ -4042,16 +4052,16 @@ def loopChecks : List Check :=
         "when a snapshot the last scene named was released behind the loop, the next scene is still published and the loop keeps the new snapshot; the refusal of its release is in the state's echo, and in the scene after"
       run :=
         pure <|
-          let program : EditorM (Loop × String × Bool) := do
-            let mut loop ← Loop.start ⟨640, 480⟩
-            loop := (← loop.step (.commit "a")).1
+          let program : EditorM (TestLoop × String × Bool) := do
+            let mut loop ← Loop.start TestScheme.scheme ⟨640, 480⟩
+            loop := (← stepped loop (.commit "a")).1
             let some first := loop.shown[0]? | throw .noSuchMarker
             first.snapshot.release
-            loop := (← loop.step (.commit "b")).1
+            loop := (← stepped loop (.commit "b")).1
             let some second := loop.shown[0]? | throw .noSuchMarker
             let shown ← second.snapshot.read
             let echoed := loop.state.echo == "refused: no such snapshot"
-            loop := (← loop.step pressA).1
+            loop := (← stepped loop pressA).1
             return (loop, shown, echoed && first.snapshot != second.snapshot)
           match program.runModel editorModel with
           | (.ok (loop, shown, echoed), model) =>
@@ -4061,12 +4071,12 @@ def loopChecks : List Check :=
 
 /-- The focused window's buffer and window in `loop`'s state, or a refusal
 for a state with none. -/
-def focusedOf (loop : Loop) : EditorM Target := do
+def focusedOf (loop : TestLoop) : EditorM Target := do
   let some target := loop.state.focusedTarget? | throw .noSuchText
   return target
 
 /-- The ranges of the focused window's selection marker in `loop`'s state. -/
-def cursorsOf (loop : Loop) : EditorM (Array SelectionRange) := do
+def cursorsOf (loop : TestLoop) : EditorM (Array SelectionRange) := do
   let target ← focusedOf loop
   let .selection selection ← target.buffer.text.marker target.window.selection | throw .noSuchMarker
   return selection.ranges
@@ -4087,10 +4097,10 @@ def commitChecks : List Check :=
       run :=
         pure <|
           let program : EditorM (Array (SnapshotId × String × Array SelectionRange)) := do
-            let mut loop ← Loop.start ⟨640, 480⟩
+            let mut loop ← Loop.start TestScheme.scheme ⟨640, 480⟩
             let mut seen := #[]
             for text in ["a", "b", "c"] do
-              loop := (← loop.step (.commit text)).1
+              loop := (← stepped loop (.commit text)).1
               let some shown := loop.shown[0]? | throw .noSuchSnapshot
               seen := seen.push (shown.snapshot, ← shown.snapshot.read, ← cursorsOf loop)
             return seen
@@ -4108,9 +4118,9 @@ def commitChecks : List Check :=
       run :=
         pure <|
           let program : EditorM (String × String × String × Array Attribution) := do
-            let mut loop ← Loop.start ⟨640, 480⟩
-            loop := (← loop.step (.commit "hello")).1
-            loop := (← loop.step (.commit " world")).1
+            let mut loop ← Loop.start TestScheme.scheme ⟨640, 480⟩
+            loop := (← stepped loop (.commit "hello")).1
+            loop := (← stepped loop (.commit " world")).1
             let target ← focusedOf loop
             let before ← target.buffer.text.read
             let some moved ← target.buffer.history.undo | throw .noInverse
@@ -4128,8 +4138,8 @@ def commitChecks : List Check :=
       run :=
         pure <|
           let program : EditorM (String × Array SelectionRange) := do
-            let loop : Loop := { state := ← holding "abcd" #[⟨0, 1⟩, ⟨3, 3⟩] }
-            let (loop, _) ← loop.step (.commit "xy")
+            let loop : TestLoop := { state := ← holding "abcd" #[⟨0, 1⟩, ⟨3, 3⟩] }
+            let (loop, _) ← stepped loop (.commit "xy")
             return (← (← focusedOf loop).buffer.text.read, ← cursorsOf loop)
           match (program.runModel editorModel).1 with
           | .ok (text, cursors) => text == "xybcxyd" && cursors == #[⟨2, 2⟩, ⟨6, 6⟩]
@@ -4138,11 +4148,11 @@ def commitChecks : List Check :=
         "a commit whose selection marker was given up leaves the state as it was, with the refusal in the echo area"
       run :=
         pure <|
-          let program : EditorM (EditorState × Loop × Option String) := do
+          let program : EditorM (EditorState × TestLoop × Option String) := do
             let state ← EditorState.initial ⟨640, 480⟩
             let some target := state.focusedTarget? | throw .noSuchText
             target.buffer.text.unmark target.window.selection
-            let (loop, _) ← ({ state } : Loop).step (.commit "x")
+            let (loop, _) ← stepped { state } (.commit "x")
             return (state, loop, ← target.buffer.text.read)
           match program.runModel editorModel with
           | (.ok (state, loop, text), model) =>
@@ -4154,10 +4164,10 @@ def commitChecks : List Check :=
       run :=
         pure <|
           let program : EditorM (SnapshotId × SnapshotId × Bool) := do
-            let mut loop ← Loop.start ⟨640, 480⟩
-            loop := (← loop.step (.commit "a")).1
+            let mut loop ← Loop.start TestScheme.scheme ⟨640, 480⟩
+            loop := (← stepped loop (.commit "a")).1
             let some first := loop.shown[0]? | throw .noSuchSnapshot
-            loop := (← loop.step (.commit "b")).1
+            loop := (← stepped loop (.commit "b")).1
             let some second := loop.shown[0]? | throw .noSuchSnapshot
             let refused ←
               try

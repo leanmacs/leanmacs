@@ -1,17 +1,26 @@
 import Editor.Command
 import Editor.Event
+import Editor.InputScheme
 import Editor.State
 
 /-!
 # The command loop
 
 Events go in, the state changes, a scene comes out. `Loop.step` takes the
-loop (the editor state and what the last scene showed) and one event,
-handles it (`Loop.handle`), and publishes a scene of the state after it
-(`Loop.publish`). It is pure: a command (`EditorM`) over the editor's
-composite port, so the same loop runs on the models in `model-test` and
-against the Rust library in the headless host, which pulls the events and
-hands each to it.
+loop (the editor state, what the last scene showed and the input scheme's
+state) and one event, handles it (`Loop.handle`), and publishes a scene of
+the state after it (`Loop.publish`). It is pure: a command (`EditorM`) over
+the editor's composite port, so the same loop runs on the models in
+`model-test` and against the Rust library in the headless host, which pulls
+the events and hands each to it.
+
+## The scheme
+
+A loop runs one input scheme (`Editor/InputScheme.lean`), which it is given
+when it starts and keeps for its life: `Loop scheme`
+(`docs/design/keymaps-and-modes.md`, "The loop runs one scheme"). It holds
+the scheme's state. A step is also handed `Loop.Keys`: the active keymaps
+of each view, which the caller makes for each step.
 
 ## What each event does
 
@@ -122,14 +131,21 @@ structure Loop.Shown where
   snapshot : SnapshotId
   deriving DecidableEq, Repr
 
-/-- The loop's own state: the editor state, and the snapshots the last scene
-named. -/
-structure Loop where
+/-- The loop's own state, for a loop that runs the input scheme `scheme`:
+the editor state, the snapshots the last scene named, and the scheme's
+state.
+
+The scheme is a parameter and not a field: an `InputScheme` has type-valued
+fields, so it is in `Type 1`, and a loop is handed through `EditorM` and
+`IO`, whose values are in `Type`. It has no equality, since a scheme's state
+has none. -/
+structure Loop (scheme : InputScheme) where
   /-- The editor state. -/
   state : EditorState
   /-- The snapshots the last scene published named, one a text. -/
   shown : Array Loop.Shown := #[]
-  deriving BEq, Repr
+  /-- The scheme's state after the last key. -/
+  input : scheme.State := scheme.init
 
 /-- What the loop does after a step. -/
 inductive Loop.Next where
@@ -138,6 +154,21 @@ inductive Loop.Next where
   /-- End: the window was asked to close, or the queue was quit. -/
   | stop
   deriving DecidableEq, Repr
+
+/-- What a step is handed beside the loop and the event: what the keys are
+looked up in. It is rebuilt by the caller for each step, from the registry
+as it then is, so a reload changes it between two events. -/
+structure Loop.Keys (scheme : InputScheme) where
+  /-- The active keymaps of each view, in precedence order. -/
+  maps : ViewId → List (Keymap scheme.Binding) := fun _ => []
+
+/-- What a step hands back: the loop after it, and what to do next. A
+one-shot output of a step is a field here. -/
+structure Loop.Stepped (scheme : InputScheme) where
+  /-- The loop after the step. -/
+  loop : Loop scheme
+  /-- Whether to pull the next event. -/
+  next : Loop.Next
 
 namespace EditorState
 
@@ -170,9 +201,11 @@ end EditorState
 
 namespace Loop
 
-/-- A loop over the initial state, in a frame of `size`, with nothing shown
-yet. -/
-def start (size : Size) : TextM Loop :=
+variable {scheme : InputScheme}
+
+/-- A loop that runs `scheme`, over the initial state, in a frame of `size`,
+with nothing shown yet and no key typed. -/
+def start (scheme : InputScheme) (size : Size) : TextM (Loop scheme) :=
   return { state := ← EditorState.initial size }
 
 /-- How every view's cursors are drawn, until the phases that choose them. -/
@@ -184,7 +217,7 @@ name. A text at the revision it was last shown at keeps its snapshot; any
 other is given a new one. It is not refused: a view whose buffer's text
 refuses, because it was released, is left out, with nothing taken for it,
 and the first such refusal is handed back. -/
-def views (loop : Loop) : TextM (Array View × Array Shown × Option TextError) := do
+def views (loop : Loop scheme) : TextM (Array View × Array Shown × Option TextError) := do
   let state := loop.state
   let frame := state.frame
   let mut shown : Array Shown := #[]
@@ -228,9 +261,9 @@ snapshot the last scene named that this one does not. It is not refused
 ("When publishing is refused", in the module docs): a refusal of a buffer's
 text is in the echo area of the scene it publishes, and one of a release in
 the echo area of the state it returns. -/
-def publish (loop : Loop) : EditorM Loop := do
+def publish (loop : Loop scheme) : EditorM (Loop scheme) := do
   let (state, unrecorded) ← loop.state.recordHistories
-  let (views, shown, unshown) ← ({ loop with state } : Loop).views
+  let (views, shown, unshown) ← ({ loop with state } : Loop scheme).views
   let state := state.refusedBy (unrecorded <|> unshown)
   Display.publish (scene state views)
   let mut unreleased := none
@@ -238,7 +271,8 @@ def publish (loop : Loop) : EditorM Loop := do
     unless shown.any (·.snapshot == was.snapshot) do
       if let .error error← (observing was.snapshot.release : TextM (Except TextError Unit)) then
         unreleased := unreleased <|> some error
-  return { state := state.refusedBy unreleased, shown }
+  return { loop with
+      state := state.refusedBy unreleased, shown }
 
 /-- The changes that replace each of `extents`, sorted and apart, of a text
 of `length` bytes, with `text`, and the cursor after each insertion. -/
@@ -294,17 +328,17 @@ nothing. A handler that is refused leaves the state as it was, with the
 refusal in the echo area. The step itself is not refused: the publish puts
 a refusal of its own in the echo area too ("When publishing is refused", in
 the module docs). -/
-def step (loop : Loop) (event : Event) : EditorM (Loop × Next) := do
+def step (_ : Keys scheme) (loop : Loop scheme) (event : Event) : EditorM (Stepped scheme) := do
   match event with
   | .closeRequested | .quit =>
-    return (loop, .stop)
+    return { loop, next := .stop }
   | _ =>
     let state ←
       try
         handle loop.state event
       catch refusal =>
         pure (loop.state.refused refusal)
-    return (← { loop with state }.publish, .continue)
+    return { loop := ← { loop with state }.publish, next := .continue }
 
 end Loop
 
