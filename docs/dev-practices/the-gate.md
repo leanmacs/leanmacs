@@ -83,7 +83,20 @@ its model. So are modes, on the test scheme's role table and leader: the
 registered roles, the keymaps a mode makes for a scheme and what
 `Mode.check` reports, a buffer's major and minor modes, a mode's lineage
 and the active keymaps of a view, keys in the loop running a mode's
-command, the on-enter action, and `defineMode` and its refusals. The task
+command, the on-enter action, and `defineMode` and its refusals. So is the
+editor API a command is written with (`lean/Editor/Api.lean`): the state
+requests' pure handler, request by request, with every layout invariant
+kept; what the loop does with a command's state requests, rollback to the
+state from before it and the markers and texts given up after it; and the
+cases of the API (`lean/Editor/Api/Cases.lean`), each a command played as
+the loop plays one, on the editor's models: buffers, edits at positions
+and at selections, undo and redo, and windows. A command that starts a job
+is checked there too, on the loop's driver over the models and the job
+model (`lean/Editor/Loop/Driver.lean`): the job is handed its argument,
+its result comes back as a command, and events fed meanwhile are handled
+first. The build checks the theorem that inserting at a position and
+deleting what was inserted leaves the text
+(`lean/Editor/Api/Theorems.lean`). The task
 shows by behaviour
 that they build without the library. It puts a `cargo` that always fails
 (`lean/no-cargo/cargo`) first on the `PATH`, and Lake runs `cargo` on every
@@ -102,7 +115,9 @@ window input, prints the scene the editor loop published, and reloads and
 runs a job once the frame exists, and whose output must be exactly
 `scene-expected`; and with `dispatch/script` on the config in
 `dispatch/config`, which sends the keys of a command that loops and the
-interrupt key, then the keys of a command that ends, and whose output must
+interrupt key, then the keys of a command that ends, then the keys of a
+command that starts a job with an argument, whose result the job's command
+says in the echo area, and whose output must
 be exactly `dispatch/expected`. Two more runs pin its failure statuses: a command
 line it does not understand must give status 2, and a script that cannot be
 read status 1 with a line on stderr that says why. `contract-test` runs the
@@ -117,7 +132,10 @@ applying the inverse of a run of revisions and dropping kept inverses,
 reading one row and a range, and every motion from every position of one
 text against a table written out by hand, with each way a motion and a read
 are refused. It runs the
-cases of the undo tree through the same binding. It also
+cases of the undo tree through the same binding, and plays the cases of the
+editor API on it, with a recorder as the display, so every request an
+operation of the API makes of the library is answered the same by the model
+and by the binding. It also
 checks what only the real binding
 shows: the binding's table is the only holder of its documents and
 snapshots, and releasing one frees it at once. It
@@ -147,7 +165,13 @@ loops and stops nothing when none runs, a reload replaces config's commands
 and bindings and leaves the compiled ones, and a slow command is logged, on
 the fake clock; and a role's key runs the store command of a mode config
 defines, in a view of a buffer that has the mode, until a reload drops the
-mode and the key runs the global binding. `contract-test` runs the watch port's contract against its
+mode and the key runs the global binding. It runs commands no key ran
+through the host's loop as well: the driver's `run` makes the frame, is
+rolled back when it fails and is stopped by the interrupt key; a key's
+command starts a job with an argument, keys sent while the job sleeps on
+the fake clock are handled before its result, and its command then runs
+with the value the job computed; and a job's command that loops is stopped
+by the interrupt key. `contract-test` runs the watch port's contract against its
 real binding, over the library's interrupt flag, and has the interrupt key
 arrive at a known request of a command.
 

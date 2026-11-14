@@ -36,6 +36,26 @@ it runs in the background, and its result goes to the handler it was
 registered with, which makes a command the editor runs. A job is not a
 command, and a reload's report does not count it as one.
 
+A command can start a job, by the name it is registered under, and hand it
+arguments; a job that takes them is registered with `jobWith`. The command
+does not wait: the job's result comes back later, as the command its
+handler makes, here one that says the result in the echo area:
+
+```lean
+def double : List Argument → JobM Nat := fun arguments => do
+  let [.nat n] := arguments | throw "double takes one number"
+  sleep 1
+  return 2 * n
+
+def setup : SetupM Unit := do
+  jobWith "double" double fun n => message s!"doubled to {n}"
+  command "ask" (discard <| startJob "double" [.nat 21])
+```
+
+What else a command is written with (buffers, windows, selections, undo,
+modes, messages) is the editor API, `lean/Editor/Api.lean`
+(`docs/design/lean-runtime.md`, "The editor API").
+
 A job can also load a file and save one, which a command cannot: it waits
 for the library to do it. `File.load` takes an absolute path and the longest
 file to load, in bytes, and answers the file's text, as a snapshot the job
@@ -83,7 +103,7 @@ are skipped.
 |---|---|
 | `reload` | Asks for the config to be reloaded. Elaboration runs in the background, and the editor goes on answering. |
 | `settle` | Waits, for up to 30 seconds, until everything asked so far has been handled and no reload is running. |
-| `run <name>` | Runs the command registered under that name. |
+| `run <name>` | Runs the command registered under that name, through the editor loop, as a key would: with the focused window, guarded against the interrupt key, and rolled back if it does not run to its end. |
 | `spawn <name>` | Starts the job registered under that name. It runs in the background, and the editor goes on answering. |
 | `join` | Waits, for up to 30 seconds, until everything asked so far has been handled and no job is running. |
 | `show` | Prints the commands, the texts and the stores. |
@@ -100,13 +120,18 @@ reload 1: installed, 2 chunks, 1 commands
 run greet: ok
 run missing: no such command
 commands: greet
-text 0: "hello, world"
+text 0: ""
+text 1: "hello, world"
 spawn count: job 1
 job 1 count: ok
 commands: greet
-text 0: "hello, world"
-text 1: "counted 42"
+text 0: ""
+text 1: "hello, world"
+text 2: "counted 42"
 ```
+
+Text 0 is the scratch buffer's: the editor loop makes its frame, and that
+buffer, for the first command it runs.
 
 The gate runs a second script on the same config, `tests/headless/keys-script`,
 whose output must be exactly `tests/headless/keys-expected`:
@@ -138,12 +163,15 @@ inserts `spin` and then asks the text its revision a thousand million
 times, and `mark`, which inserts `mark`, and binds `C-c s` and `C-c m` to
 them. It sends `C-c s` and then `C-g`, the interrupt key, which stops
 `spin` and rolls its insertion back, then `C-c m`, which runs to its end.
+The config also registers the job `double` and the command `ask` shown
+above, on `C-c d`: the script sends `C-c d`, waits for the job with `join`,
+and asks for the scene, whose echo area holds what the job's command said.
 Its output must be exactly `tests/headless/dispatch/expected`; were `spin`
 not stopped, the gate's time limit would end the run:
 
 ```console
 $ .lake/build/bin/editor headless "$(lean --print-prefix)" .lake/build/lib/lean ../tests/headless/dispatch/config ../tests/headless/dispatch/script
-reload 1: installed, 1 chunks, 2 commands
+reload 1: installed, 1 chunks, 3 commands
 key arrived: c KeyC control
 key arrived: s KeyS -
 key arrived: g KeyG control
@@ -153,19 +181,26 @@ key arrived: c KeyC control
 key arrived: m KeyM -
 scene 0x0, focused 0, echo "", preedit -, published 6
 view 0 0,0 0x0: "mark", scroll 0, selections 4..4
+key arrived: c KeyC control
+key arrived: d KeyD -
+job 1 double: started
+job 1 double: ok
+scene 0x0, focused 0, echo "doubled to 42", preedit -, published 11
+view 0 0,0 0x0: "mark", scroll 0, selections 4..4
 ```
 
-The editor runs its command loop, under the Vim scheme. The loop has no frame until the first
-event from the window input arrives (a `key` or a `commit`): it then makes
-one, 0 by 0, with one window on a buffer called `scratch` of an empty text.
-So a script that sends no window event has no frame, and the texts its
-commands make keep the indices `show` prints. Once there is a frame, every
-event the editor handles is followed by a scene, published to a recorder
-that stands in for the window's display: a window event, a request, a
-reload that installs, a job's command. `published` counts them, so the
-second `scene` above, seven events after the first, shows that the reload
-and the job were each followed by one. A window's close request ends the
-loop.
+The editor runs its command loop, under the Vim scheme. The loop has no
+frame until it is first needed: for the first event from the window input
+(a `key` or a `commit`), the first `run`, or the first job's command. It
+then makes one, 0 by 0, with one window on a buffer called `scratch` of an
+empty text, which is text 0 in what `show` prints. Every command goes
+through the loop, whichever of the three ran it. Once there is a frame,
+every event the editor handles is followed by one scene, published to a
+recorder that stands in for the window's display: a window event, a
+request, a reload that installs, a job's command. `published` counts them,
+so the second `scene` of the third script, seven events after the first,
+shows that the reload and the job were each followed by one. A window's
+close request ends the loop.
 
 A key press is stepped through the scheme. Config's bindings are looked up
 first, then the scheme's own keymaps. The commands the Vim scheme's own
@@ -179,17 +214,27 @@ is running at its next request to the editor, and is then looked up like
 any other key. A command that takes longer than 100 ms is logged on stderr,
 `slow command: <name> took <n> ms`, and not on the output.
 
+A command run by `run <name>` and a job's command are treated the same way,
+and each also prints a line: how it ended. A job's command is named by its
+job in the echo area, `job <id> <name>: refused: <error>`. It does not
+clear the echo area as a key's command and a `run` do, so what it leaves
+there is what it said itself (`message`), or what the last command left.
+A job a command asks for is started once the command has run to its end,
+and printed, `job <id> <name>: started`; a command that fails starts none.
+
 The lines it can print:
 
 ```
 reload <n>: installed, <c> chunks, <k> commands
 reload <n>: rejected
 diagnostic: <source>:<line>:<column>: <severity>: <first line of the message>
-run <name>: ok            (or "refused: <error>", "no such command", or
-                           "no frame" for a compiled command given its call,
-                           before the first window event)
+run <name>: ok            (or "refused: <error>", "interrupted",
+                           "no such command", "no window", or "no frame"
+                           when the loop's frame could not be made)
 spawn <name>: job <id>    (or "no such job")
-job <id> <name>: ok       (or "refused: <error>", "failed: <message>", "cancelled")
+job <id> <name>: started  (a command asked for the job)
+job <id> <name>: ok       (or "refused: <error>", "interrupted",
+                           "failed: <message>", "cancelled", "no frame")
 event <source id> <code>
 key arrived: <logical> <physical> <modifiers>
 commands: <names>
@@ -206,8 +251,8 @@ not have the keyboard focus), the echo area, the input method's preedit
 (`-` when there is none) and how many scenes have been published; then, for
 each view in drawing order, its rectangle, the text of its snapshot, read
 from the library, and the offsets of its scroll anchor and of each range of
-its selection. `scene: none` means no scene has been published: no window
-event has arrived.
+its selection. `scene: none` means no scene has been published: the loop
+has not been needed yet.
 
 What the editor loop is refused is in the scene's echo area, as
 `refused: <error>`: a commit the library refused, and a text or a snapshot
@@ -218,7 +263,8 @@ program of the loop that was itself refused. None is today; the line is
 there so that one would not be dropped in silence.
 
 A job's line is printed when the editor has dealt with its result: `ok` when
-the handler's command ran, `refused` when the library refused that command,
+the handler's command ran, `refused` when the library refused that command
+and `interrupted` when the interrupt key stopped it, each rolled back,
 `failed` when the job threw, and `cancelled` when a reload that installed
 replaced the config that registered it. A job the script leaves running is
 cancelled when the script ends.

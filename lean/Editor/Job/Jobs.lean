@@ -7,7 +7,9 @@ import Editor.Job.Table
 The shell over the job table (`Editor/Job/Table.lean`) and the runner
 (`Editor/Job/Runner.lean`): what the editor thread calls to start a job, to
 take the result of one that has ended, and to remove an owner. The headless
-loop calls these today (`Editor/Headless.lean`), and the command loop will.
+host calls these (`Editor/Headless.lean`): the command loop holds no job
+table, and hands the jobs its commands ask for back to its host to start
+(`Editor/Loop.lean`, "Jobs from commands").
 
 A `Jobs` is a value the editor thread holds. Every operation here runs on
 that thread, so there is no race to close: a job is in the table from the

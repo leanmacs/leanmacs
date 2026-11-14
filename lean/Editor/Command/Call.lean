@@ -11,9 +11,13 @@ looks the name up and runs the command with a `Call`: the invocation's
 arguments, the keys that yielded it, and what the command acts on.
 
 - **The target is handed in** (`Call.target`): the focused window and its
-  buffer. The editor state has no ambient current buffer
-  (`Editor/State.lean`, "No ambient context"), and a command has no request
-  for buffers or windows yet, so what it acts on is an argument.
+  buffer, as they were when the command was called. The editor state has
+  no ambient current buffer (`Editor/State.lean`, "No ambient context"), so
+  what a command acts on is an argument. A command can also ask for
+  buffers and windows (`Editor/Api.lean`): the state it reads then is the
+  one its own requests have left, and the target is not updated by them,
+  so a command that shows another buffer in its window reads the window
+  again (`ViewId.target`).
 - **The arguments are the invocation's**, unchanged and in order. A count is
   one of them, where the scheme laid it out
   (`docs/design/keymaps-and-modes.md`, "Counts": `.nat n`, with `.nat 0` for
@@ -29,7 +33,7 @@ arguments, the keys that yielded it, and what the command acts on.
 |---|---|
 | Something every command is told about how it was called | A field of `Call`, filled where the loop makes the call (`Editor/Loop.lean`) |
 | A new kind of argument | A variant of `Argument` (`Editor/Invocation.lean`); nothing here |
-| Something a command asks of the editor | A request of the editor's port (`Editor/Command.lean`); nothing here |
+| Something a command asks of the editor | A request of the editor's port (`Editor/Command.lean`), and for the editor state an operation of the editor API (`Editor/Api.lean`); nothing here |
 
 Pinned by `ModelTest.reloadChecks`, where a command is handed its call.
 -/

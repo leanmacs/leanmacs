@@ -1298,8 +1298,8 @@ def fileChecks (context : Context) : List Check :=
               throw error }]
 
 /-- A config of one chunk with one command, `forget`, which releases the
-text of index 0: in a host whose commands have made no text, the text of the
-editor loop's scratch buffer, made at the first window event. -/
+text of index 0: the text of the editor loop's scratch buffer, made with the
+loop's frame, before any command runs. -/
 def forgetConfig : List (String × String) :=
   [("10-forget.lean",
       "def forget : EditorM Unit := do

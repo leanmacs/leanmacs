@@ -928,11 +928,13 @@ As built, with nothing new for it:
   so none is added.
 - **A config mode uses the store as built**: a `Store α` declared in the
   same `setup`, whose commands (`Store.command`) fill its roles and
-  suffixes. Per-buffer state of a config mode is kept inside its store's
-  value until phase 8 gives commands requests over buffers. Nothing new is
-  built for it; `ConfigTest.modeChecks` runs a config mode's role on a store
-  command.
+  suffixes. Per-buffer state of a config mode is a buffer-local value
+  (`BufferId.setValue`, `BufferId.value?`: a plain tree under a name, which
+  a reload leaves where it is), or is kept inside its store's value.
+  `ConfigTest.modeChecks` runs a config mode's role on a store command.
 - **An `onEnter` is a plain `EditorM` program** and cannot write a store.
+  It can set a buffer-local value, since that is a request of the editor's
+  port.
 
 ## Extending from config
 

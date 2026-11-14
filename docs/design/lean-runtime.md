@@ -424,7 +424,8 @@ the monad.
   reply. A **program** over a port is plain data: it is finished, or it
   makes a request and continues with the reply. `EditorM` is the type of
   programs over the editor's port, a composite of the text, display and
-  watch ports ("The editor's port is a composite", below), and `JobM` the type of
+  watch ports and the requests about the editor state ("The editor's port
+  is a composite", below), and `JobM` the type of
   programs over the job port. Both are ordinary monads, and a command reads as a `do` block.
 - A port has two **handlers**. The model is a pure function from a request
   and the model's state to a reply and a new state. The real binding answers
@@ -555,15 +556,16 @@ cancelled.
 
 ### The editor's port is a composite
 
-Decided 2026-11-13, by the command loop's phase 2. A command reaches the
-text, the display and, later, buffers and windows through one port, whose
-shape is:
+Decided 2026-11-13, by the command loop's phase 2; the state requests were
+added by its phase 8. A command reaches the text, the display, and the
+editor state's buffers and windows through one port, whose shape is:
 
 - **Its requests are a sum of sub-ports**, one constructor a sub-port:
   `EditorRequest.text` carries a request of the text port,
-  `EditorRequest.display` one of the display port and `EditorRequest.watch`
-  one of the watch port. The reply to each is its sub-port's reply.
-  `editorPort` is an `abbrev`, as every port is.
+  `EditorRequest.display` one of the display port, `EditorRequest.watch`
+  one of the watch port and `EditorRequest.state` a request about the
+  editor state. The reply to each is its sub-port's reply. `editorPort` is
+  an `abbrev`, as every port is.
 - **The watch port** (`lean/Editor/Watch.lean`, added by the command loop's
   phase 6) is what the loop watches a command with: whether the interrupt
   flag is up, lowering it once, and the job clock in milliseconds. It is a
@@ -591,8 +593,14 @@ shape is:
   offset that is not a position), so the display's lift maps each to its
   namesake. Widening the error to a sum now would break every config that
   throws a text refusal, and nothing needs it yet. The first sub-port whose
-  refusal has no `TextError` counterpart widens it, in its own phase.
-- **A runner's state is the product of its sub-ports' states.** On the
+  refusal has no `TextError` counterpart widens it, in its own phase. The
+  state requests did not: what the editor state refuses (a window that
+  would be the last, a buffer a window shows, a mode or a job no one
+  registered) is a **value**, an `Except` in the request's reply, which a
+  command matches on. Nothing is thrown for it, so a command's error is
+  still a `TextError`, and a layout operation's refusal keeps its type.
+- **A runner's state is the product of its sub-ports' states**, but for
+  the editor state, which is the loop's (below). On the
   models it is the text model, the display model and the watch model side
   by side (`EditorModel`); before each display request the display model's
   texts are filled from the text model's snapshots, so a command that takes
@@ -605,17 +613,50 @@ shape is:
   binding in one with a window; and a watch handler (`WatchHandler`),
   `Watch.real` over the library's flag and the job clock in a host, and
   `Watch.idle`, never interrupted, by default.
-- **Where it grows.** Requests about buffers and windows (the command
-  loop's phase 8) are a third constructor, `EditorRequest.state`, whose
-  handler is one pure function over the editor state, the same in the model
-  and in the real runner, as a store is: no Rust and no contract check.
-  Both runners' state then gains the editor state. A new sub-port is a
-  constructor and a lift. A new question about text or layout stays inside
-  its own sub-port and changes nothing here.
+- **The state requests are the loop's to answer.** Built by the command
+  loop's phase 8 (`lean/Editor/State/Request.lean`,
+  `lean/Editor/Command/Dispatch.lean`). A state request's handler is one
+  pure function over the editor state (`EditorState.handle`), as a store
+  is: no Rust, no model and no contract check. This section first had both
+  runners' state gain the editor state. What was built instead: the
+  command loop keeps holding the editor state, and answers the state
+  requests of each command it runs in place, by a pure transformation of
+  the command's program (`EditorM.dispatched`), before the program reaches
+  a runner. The reasons:
+  - the loop is the one writer of editor state
+    ([concurrency.md](concurrency.md)), and stays so;
+  - rolling a failed command back stays "keep the state from before it";
+  - the handler is the same function on the models and against the library
+    by construction, since it runs above both runners;
+  - the loop, and every test that builds one, is as it was.
+
+  A runner still answers every request of the port. Each answers a state
+  request that reaches it as an editor with no buffer and no window would
+  (`EditorState.none`), and keeps nothing: a command run where no loop
+  dispatched it finds nothing. Every command a host runs goes through the
+  loop; only a test runs one bare. A split of the port into one for
+  commands and a smaller one for runners, which the types would then check,
+  was set aside: it would rename the loop's monad and every call that runs
+  a command on the models.
+- **A request holds plain data.** A state request names a mode and a job;
+  it cannot hold the mode's on-enter action or the job, which are programs
+  over this port ("A request that carries a program over its own port",
+  above). The loop is told what the names stand for (`Loop.Registered`,
+  made by the host from the registry for each step), and answers those two
+  requests with it: it refuses a name no one registered, runs a mode's
+  on-enter actions inside the command, and hands the jobs a command asked
+  for back to the host to start.
+- **Where it grows.** A new request about the editor state is a constructor
+  of `StateRequest` and an operation of `lean/Editor/State.lean`
+  (`lean/Editor/State/Request.lean`, "Where an addition goes"). A new
+  sub-port is a constructor and a lift. A new question about text or
+  layout stays inside its own sub-port and changes nothing here.
 
 | Piece | Where |
 |---|---|
 | The composite port, `EditorM`, the three embeddings and lifts, and the mapping of the display's refusals | `lean/Editor/Command.lean` |
+| The state requests and their pure handler: one read of the whole state, and a request a write (a buffer, its history, values and modes; a window; the echo; a job to start), each refused with a value | `lean/Editor/State/Request.lean`, over the operations of `lean/Editor/State.lean` |
+| A dispatched command: its state requests answered from the loop's state, every other request guarded, a major mode's on-enter actions run inside it; and `Loop.Registered`, what the loop is told of the registry | `lean/Editor/Command/Dispatch.lean` |
 | The composite's model runner, over the three models side by side | `lean/Editor/Command/Model.lean` |
 | The composite's real runner, over the text binding, a display handler and a watch handler | `lean/Editor/Command/Real.lean` |
 | `DisplayHandler`, and running a display program against one | `lean/Editor/Display.lean` |
@@ -626,15 +667,70 @@ shape is:
 | A guarded command: one that stops at its next request once the flag is up | `lean/Editor/Command/Guard.lean` |
 | What the model runner does with each sub-port, pinned | `ModelTest.commandPortChecks` |
 
+### The editor API
+
+Built by the command loop's phase 8 (`lean/Editor/Api.lean`, whose module
+docs have each operation's rules). It is what a command is written with
+beyond the text port's own operations: programs over the composite port,
+made of state requests and text requests. Config sees it through
+`Editor.lean`.
+
+| A command can | With | Reaches the library |
+|---|---|---|
+| Read the editor state: its buffers, windows, focus, a buffer's values and modes | `editorState`, then pure functions over it (`buffer?`, `target?`, `findBuffer`, `value?`) | No |
+| Make, find and remove a buffer | `createBuffer`, `addBuffer`, `findBuffer`, `BufferId.remove` | To make the text and read its revision |
+| Read a buffer | `BufferId.text`, then the text port's reads (`read`, `rowContent`, `slice`, …) | Yes: the text port's own requests |
+| Insert and delete at positions | `BufferId.insertAt`, `BufferId.deleteRange`, over `TextId.replaceRange` | Yes: `apply`, with the user's origin |
+| Insert at a view's selections, delete what they cover, read and place them | `ViewId.insertAtSelections`, `deleteSelections`, `selection`, `select`, and the same on a `Target` | Yes: `apply` carrying the selection before and the cursors after, and the marker requests |
+| Close the undo group, undo and redo, each move handing back the selection to place | `BufferId.closeGroup`, `undo`, `redo`, over the buffer's undo tree | Yes: `applyInverse` and `dropInverses`, the undo tree's own; no new library call |
+| Split, close and focus a window, and show another buffer in one | `ViewId.split`, `close`, `focus`, `show` | To mark the new window's markers |
+| Set and read a buffer-local value; set the major mode, add and remove a minor mode | `BufferId.setValue`, `value?`, `ViewId.setMajorMode`, `BufferId.addMinorMode`, `removeMinorMode` | No |
+| Say something in the echo area | `message` | No |
+| Start a job, with arguments | `startJob`, for a job registered with `jobWith` or `job` | No: the host starts it once the command has ended |
+
+- **Edits go through `apply`**, as one transaction made by the user
+  (`Origin.user`): one revision, one entry of the edit log, and one step
+  for the buffer's history to be told of.
+- **A refusal of the state is a value** (above); what the text store
+  refuses is thrown, as everywhere in `EditorM`.
+- **Giving up is the loop's.** A request that closes a window or removes a
+  buffer changes the state alone. The loop gives up the window's markers
+  and releases the buffer's text once the command has run to its end
+  (`lean/Editor/Loop.lean`, "What a finished command gave up"), so a
+  command that fails afterwards is rolled back whole.
+- **The contract check.** Every operation that makes a request of the
+  library has a case in `lean/Editor/Api/Cases.lean`: a command, played as
+  the loop plays one, on the editor's models by `lake test` and on the real
+  text binding by `contract-test`. An operation over Lean state alone has
+  its one implementation, the state requests' handler, and is pinned once,
+  on the models (`ModelTest.stateRequestChecks`,
+  `ModelTest.apiStateChecks`).
+- **Proved on the text model** (`lean/Editor/Api/Theorems.lean`):
+  inserting a string at a character boundary and deleting the range it
+  occupies leaves the text's contents as they were
+  (`replaceRange_insert_delete`), from `TextModel.splice_insert_delete` and
+  `TextModel.applyChanges_replacing` (`lean/Editor/Text/Model.lean`). The
+  theorems are in a module of their own so that the API imports no model.
+- **Out of the API still**: files (phase 9), prompts (phase 10), and
+  commands that ask layout a question (phase 15).
+
+| Piece | Where |
+|---|---|
+| The operations | `lean/Editor/Api.lean` |
+| Their cases, played on the models and on the real binding | `lean/Editor/Api/Cases.lean` |
+| What is proved of them on the text model | `lean/Editor/Api/Theorems.lean` |
+| The loop on the models with jobs, for tests of a command that starts a job | `lean/Editor/Loop/Driver.lean` |
+
 ## Where state lives
 
 | State | Held by | Across a reload | Across a restart |
 |---|---|---|---|
-| Buffers, windows, keymaps, registers, the agent table | Compiled Lean, on the editor thread. Buffers, windows, the frame's split tree, the echo area and the preedit are the editor state (`lean/Editor/State.lean`), which the command loop (`lean/Editor/Loop.lean`) holds | Untouched | Lost unless its owner persists it |
+| Buffers, windows, keymaps, registers, the agent table | Compiled Lean, on the editor thread. Buffers, windows, the frame's split tree, the echo area and the preedit are the editor state (`lean/Editor/State.lean`), which the command loop (`lean/Editor/Loop.lean`) holds and is the one writer of: a command changes it by requests the loop answers. Buffers are kept in slots, so a buffer's id is never used again, and neither is a view's | Untouched | Lost unless its owner persists it |
+| A buffer's local values: plain trees by name (`Value`), as a store's cell holds | Compiled Lean, a field of the buffer in the editor state, set and read by a command (`BufferId.setValue`, `BufferId.value?`) | Untouched: a tree names no type of config's | Lost |
 | The input scheme's state: the pending keys and what the scheme keeps for each view (the Vim scheme's states, its last change) | Compiled Lean, in the command loop, which runs one scheme for its life | Untouched | Lost |
 | Compiled commands, key bindings and modes | Compiled Lean, in the registry, for the owner `compiled` | Untouched: a reload replaces config's | Registered again when the host starts |
 | A buffer's modes: its major mode and its minor modes, by name | Compiled Lean, a field of the buffer in the editor state | Untouched: a name whose mode a reload drops contributes nothing | Lost |
-| A mode's own state | A compiled mode's, a typed field where the editor state's table puts it (none ships); a config mode's, a store its `setup` declares, whose commands fill its roles and suffixes, with per-buffer state inside the store's value until commands get requests over buffers | As for compiled state, and as for a store | As for compiled state, and as for a store |
+| A mode's own state | A compiled mode's, a typed field where the editor state's table puts it (none ships); a config mode's, a store its `setup` declares, whose commands fill its roles and suffixes, with per-buffer state in the buffer's local values, or inside the store's value | As for compiled state, and as for a store | As for compiled state, and as for a store |
 | Text, kept inverses, anchors | Rust, behind handles | Untouched | Files on disk; the kept inverses are lost |
 | The undo tree of each text: its nodes, where the text is in it, and the state last saved | Compiled Lean, with the buffer it is the history of, on the editor thread | Untouched | Lost |
 | A file's stamp (when it was last modified and how long it is, as the last load or save answered it), its path and its line ending | Compiled Lean, with the buffer that shows the file: the buffer's to keep, for the next save to expect. Nothing keeps one yet: buffers are the command loop's | Untouched | Lost; the file is loaded again |

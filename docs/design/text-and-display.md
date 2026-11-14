@@ -647,6 +647,24 @@ the text port: the undo tree (`lean/Editor/UndoTree.lean`, decided
   command moved in the history the kept state is no longer one of the open
   group: the loop then reverts the open group alone and leaves the move
   ([concurrency.md](concurrency.md), "Foreground: commands").
+- *From commands.* Built by the command loop's phase 8
+  (`lean/Editor/Api.lean`, "Undo"), over the buffer's own tree, with no
+  new request of the library. A command closes the group
+  (`BufferId.closeGroup`), undoes and redoes (`BufferId.undo`,
+  `BufferId.redo`): each reads the buffer, tells its tree the text's
+  revision, does its part with the user's origin, and records the tree
+  that comes back as the buffer's by a request of the editor state. An
+  undo and a redo hand back the selection to place, the one from before
+  the step's first edit for an undo and from after its last for a redo,
+  and do not place it: whose cursor it becomes and in what shape is the
+  input scheme's to say. A selection comes back only for an edit that
+  carried one, which the API's selection edits do. The loop's boundary
+  after the event then makes no node, so a move is not itself a step. The
+  rollback of a command that moved works from the tree the command
+  recorded, since the tree from before does not know of the move and the
+  move dropped the inverses that tree's edges cross. Its cases run on the
+  models and on the real binding (`lean/Editor/Api/Cases.lean`: two
+  groups undone and redone, each text and each selection as it was).
 - *Saved.* The tree keeps the state last marked as saved and answers
   whether the text is in another. A new tree is saved at its root. A
   boundary does not change the answer, whichever of the mark and the
@@ -659,9 +677,10 @@ the text port: the undo tree (`lean/Editor/UndoTree.lean`, decided
   refusal; and the job's command marks that kept state saved on a stamp,
   and keeps the stamp for the next save to expect, or reports the refusal
   and marks nothing. It is built and played by hand as cases on the models
-  and on the library (`lean/Editor/File/Cases.lean`). Where a buffer keeps
-  its path, stamp, line ending and tree, the save command, and a command
-  that starts a job with arguments are the command loop's.
+  and on the library (`lean/Editor/File/Cases.lean`). A command that starts
+  a job with arguments is built (`startJob`, `lean/Editor/Api.lean`);
+  where a buffer keeps its path, stamp and line ending, and the save
+  command, are the command loop's phase 9.
 - *Other styles* are written over the same two requests: a linear history
   is two lists of runs; Vim's is this tree with moves by the order nodes
   were made and a time on each; Emacs's records the revision an inverse
@@ -973,14 +992,24 @@ echo area and the preedit.
   open (the command loop's phase 10) and the views tile the frame.
 - **The invariants**: the focused window is in the tree; there is exactly one
   minibuffer leaf; the tree's window ids are distinct and are the windows';
-  each window's buffer exists. Removing a window and focusing one are the two
-  operations that can break one, and they refuse with a `LayoutRefusal` and
-  the state unchanged: `onlyWindow` for the last window, `noSuchWindow` for
-  one not in the tree. The minibuffer's place has no id, so neither can
-  remove it; a later operation that could adds its own refusal. When the
-  focused window is removed, the focus moves to the first window, in drawing
-  order, of the subtree that took its place, or of the tree when that has
-  none.
+  each window's buffer exists. The operations that can break one refuse
+  with a `LayoutRefusal` and the state unchanged: removing a window
+  (`onlyWindow` for the last window, `noSuchWindow` for one not in the
+  tree), focusing one, splitting one, and showing another buffer in one
+  (`noSuchBuffer` for a buffer there is none of, `markersOfAnotherText` for
+  a marker that is not of the buffer's text). The minibuffer's place has no
+  id, so none can remove it; a later operation that could adds its own
+  refusal. When the focused window is removed, the focus moves to the first
+  window, in drawing order, of the subtree that took its place, or of the
+  tree when that has none.
+- **A command reaches them as requests** (the command loop's phase 8,
+  `lean/Editor/Api.lean`): `ViewId.split`, `close`, `focus` and `show`. A
+  split puts the new window second in a split with its source, below it or
+  to its right, on the same buffer, with markers of its own; closing it
+  gives back the tree from before the split, since a removed window's
+  sibling takes the place of their split. A view's id is never used again,
+  and a buffer's is not either: buffers are kept in slots, and a removed
+  buffer leaves its slot empty.
 - **No ambient context**: a handler is given the window it acts on and its
   buffer, never "the current buffer".
 

@@ -358,7 +358,7 @@ structure Collaborators (σ : Type) (scheme : InputScheme) where
   /-- The interrupt key, which the host tells the library when its loop
   starts. -/
   interruptKey : Key := Watch.interruptKey
-  /-- How the host makes the editor loop's frame at the first window event:
+  /-- How the host makes the editor loop's frame when it is first needed:
   `Loop.start` in a frame of 0 by 0, which a resize changes. A test hands
   one that is refused, to see what the host does with no frame. -/
   start : TextM (Loop scheme) := Loop.start scheme ⟨0, 0⟩

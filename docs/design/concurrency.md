@@ -142,18 +142,34 @@ time, in order, on the editor thread.
     loop's rule, and reads the mark of an event it cannot read with the
     decoder's, so the mark's encoding and the rule each have one home.
   - **When it is asked.** Before each request of a command the loop
-    dispatched (`EditorM.guarded`, a pure transformation of the command's
-    program, so it runs on the models). Once the flag is up the command's
-    continuation is dropped: the command makes no further request, it is
-    rolled back, and the echo area reads `<name>: interrupted`. This is the
-    job runner's rule for cancellation ("Cancellation"): it is not a reply
-    and nothing is thrown, so a `try`/`catch` in a command cannot swallow
-    an interrupt. Asking costs one call into the library and one program
-    step for each request of a command.
-  - **Not guarded.** The headless driver's `run <name>` and a finished
-    job's command are not dispatched by a key, and are neither checked nor
-    rolled back. Routing them through the loop's dispatch goes with jobs
-    started from commands.
+    dispatched that reaches the library: a text request, a display request
+    and a watch request (`EditorM.dispatched`,
+    `lean/Editor/Command/Dispatch.lean`, a pure transformation of the
+    command's program, so it runs on the models). Once the flag is up the
+    command's continuation is dropped: the command makes no further
+    request, it is rolled back, and the echo area reads
+    `<name>: interrupted`. This is the job runner's rule for cancellation
+    ("Cancellation"): it is not a reply and nothing is thrown, so a
+    `try`/`catch` in a command cannot swallow an interrupt. Asking costs
+    one call into the library and one program step for each such request.
+  - **A state request is answered without asking.** A request about the
+    editor state is pure Lean, answered by the loop from the state it
+    holds, not a call into the library, and what the guard bounds is the
+    calls into the library. It also keeps a move in the history whole
+    towards the guard: the last text request of an undo drops the inverses
+    it crossed, and the request after it records the moved tree in the
+    buffer. A check between the two could stop a command with the inverses
+    dropped and the move unrecorded, which no rollback could take back. A
+    check before the drop stops it with nothing dropped. So a command that
+    makes state requests alone is not interruptible, as one that makes no
+    request is not.
+  - **Every command is guarded.** A key's command, the driver's
+    `run <name>` and a finished job's command all go through the loop's
+    dispatch (`lean/Editor/Loop.lean`, "Every command goes through the
+    loop"): each is checked, rolled back if it does not run to its end,
+    and followed by a scene. So is a major mode's on-enter action, which
+    runs inside the command that set the mode. Built by the command loop's
+    phase 8; before it the driver's run and a job's command were run bare.
   - **Only the command is checked.** The loop's own requests (keeping what
     it rolls back to, rolling back, publishing) are not, so a flag that is
     up never stops a rollback or a scene.
@@ -177,7 +193,23 @@ time, in order, on the editor thread.
   - **After a command that was refused or interrupted** each kept buffer's
     tree is told the revision and reverted to the kept state, with the
     user's origin, and each kept marker is placed back. The editor state is
-    the one before the command.
+    the one before the command: whatever the command's state requests
+    changed (a window split or closed, a buffer added or removed, a mode,
+    the echo, a job asked for) is as it was.
+  - **The tree that is reverted is the one the command left.** A command
+    can move in a buffer's history and record the moved tree. The tree from
+    before the command does not know of the move, and the move dropped the
+    inverses that tree's edges cross: reverting it would be refused, or
+    would leave a tree out of step with the store. So each kept buffer is
+    reverted from the tree it has in the state the command left, when that
+    state still has the buffer over the same text, and the buffer of the
+    state the loop keeps gets the tree that comes back.
+  - **Nothing is given up until a command has ended.** A request that
+    closes a window or removes a buffer changes the editor state alone.
+    The loop gives up the window's markers and releases the buffer's text
+    once the command has run to its end, by comparing the state before
+    with the state after. So a command that fails after closing a window
+    is rolled back to a window whose markers still answer.
   - **Markers are placed back, not left to the inverse.** A marker moves
     with every transaction: a deletion and its inverse do not return a
     marker inside the deleted range to where it was, and a command can
@@ -196,10 +228,9 @@ time, in order, on the editor thread.
     that is open when the command ends, which takes back the edits the
     command made after its last move and leaves the text at the node that
     move reached. The echo area ends `; the command moved in the history`,
-    and the windows' markers are left where the store moved them. No
-    command can move the loop's tree until commands have a request for it,
-    so this is pinned on a state whose history was moved by hand
-    (`ModelTest.dispatchChecks`).
+    and the windows' markers are left where the store moved them. Pinned on
+    a command that undoes, records the move and is then refused, and on a
+    state whose history was moved by hand (`ModelTest.dispatchChecks`).
     - *Why not move back.* The kept state can be one no move returns to.
       With edits pending, a command that edits and then undoes closes the
       group as one node, whose state is the one after the command's edit.
@@ -334,16 +365,39 @@ transaction through. Where those come from is open.
   Lean source, with the job's id. The outcome (finished with a command,
   failed with a message, or cancelled) stays in the job's handle.
 - **The handler runs as a command.** The editor thread meets the wake-up in
-  its turn, takes the result from the job table, and runs the command
-  exactly as it runs any command. `config-test` records the thread each
-  line of output comes from and requires a job's line to come from the
-  thread that prints a command's.
+  its turn, takes the result from the job table, and has the command loop
+  run the command as it runs any command (`Loop.deliver`): guarded, rolled
+  back if it does not run to its end, and followed by a scene. It does not
+  clear the echo area, as an invocation does: a result that arrives in the
+  background should not wipe what the user is reading. `config-test`
+  records the thread each line of output comes from and requires a job's
+  line to come from the thread that prints a command's.
 - **Config registers a job by name** in `setup`:
-  `job "count" count fun n => …`, where `count : Unit → JobM Nat`. `setup`
-  starts nothing. The runtime that owns the job table starts a registered
-  job when it is asked to: the headless loop's `spawn <name>` today. A
-  command cannot start a job yet: `EditorM` has no such request, and adding
-  one is for the phase that grows the editor's port.
+  `job "count" count fun n => …`, where `count : Unit → JobM Nat`, or, for
+  a job that takes arguments, `jobWith "double" double fun n => …`, where
+  `double : List Argument → JobM Nat`. `setup` starts nothing. The runtime
+  that owns the job table starts a registered job when it is asked to: for
+  the headless driver's `spawn <name>`, and for a command.
+- **A command starts a job by its name, with arguments** (`startJob`,
+  `lean/Editor/Api.lean`; built by the command loop's phase 8). The
+  request is plain data, a name and arguments: it cannot carry the job,
+  which ends in a program over the port the request belongs to. So:
+  - the loop refuses, as a value the command sees, a name no job is
+    registered under (`noSuchJob`);
+  - the start is kept in the editor state until the command ends, and the
+    loop then hands the starts of a command that ran to its end back to
+    its host with the step (`Loop.Stepped.starts`). A command that is
+    refused or interrupted starts no job;
+  - the host starts each, for the owner that registered it, and the result
+    comes back as above, through the queue's wake-up. Events queued before
+    the wake-up are handled before it, by the queue's order, so a job's
+    result never lands in the middle of what the user typed meanwhile.
+  
+  An owner other than the registering one (a buffer or a view, whose jobs
+  end with it) is not built. On the models the loop's driver
+  (`lean/Editor/Loop/Driver.lean`) is the host: it runs each job on the job
+  model and delivers its command when the test says the job is finished
+  (`ModelTest.driverChecks`).
 
 ### Structured lifetimes
 

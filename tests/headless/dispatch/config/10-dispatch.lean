@@ -1,6 +1,5 @@
--- Text 0 is the scratch buffer's text only because the editor loop makes its
--- frame at the first window event, before any command has made a text: the
--- script reloads, then sends keys, and runs no command by name.
+-- Text 0 is the scratch buffer's text: the editor loop makes its frame, and
+-- that buffer, before it runs any command, so it is the first text made.
 def scratch : TextId := ⟨0⟩
 
 -- Inserts `spin`, then asks the text its revision a thousand million times:
