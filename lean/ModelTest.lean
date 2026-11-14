@@ -174,6 +174,12 @@ editor's models and the job model (`Editor/Loop/Driver.lean`):
   (`Editor/Minibuffer/Compiled.lean`) in a registry whose active keymaps
   the loop is handed: the phase's acceptance criteria, with the accept key
   and the cancel key read from the test scheme's role table;
+- `candidateChecks`: a prompt's candidates on that driver, with commands
+  written here: the listing the loop makes before each scene, for the
+  initial text and for the text typed so far, what a command that fails
+  is rolled back to, and what the listing costs in requests. What is
+  listed is compared with what the fuzzy model answers
+  (`FuzzyModel.rank`), never with an order written out;
 - `fileCommandChecks`: the file commands (`Editor/Files.lean`) on that
   driver, over the model of files (`Editor/File/Model.lean`), with keys
   bound to the commands and jobs registered as the test says: opening a
@@ -12574,6 +12580,183 @@ host's (`promptLoopChecks`), then the minibuffer's commands and its mode
 def promptChecks : List Check :=
   promptLoopChecks ++ promptModeChecks
 
+/-- The candidates the prompts of the candidate checks are asked with. The
+one a check types whole, `w`, is last, and two before it hold a `w`. -/
+def pickCandidates : Array String :=
+  #["wq", "edit", "rewrite", "w"]
+
+/-- The continuation the prompts of the candidate checks are asked with:
+the command `picked` and an argument of the asker's own. -/
+def pickContinuation : Invocation :=
+  { command := "picked", arguments := [.nat 7] }
+
+/-- What the command `picked` of the candidate checks says in the echo
+area: the arguments it was called with. -/
+def picked (arguments : List Argument) : String :=
+  s!"picked {arguments.map argumentText}"
+
+/-- The label of the prompts of the candidate checks. -/
+def pickLabel : String :=
+  "Pick: "
+
+/-- The commands of the candidate checks, by name.
+
+- `ask-pick` asks `Pick: ` with the candidates `pickCandidates`, from a
+  function, and the continuation `pickContinuation`; `ask-pick-w` asks the
+  same with the initial value `w`; `ask-plain` asks with no candidates.
+- `picked` says what it was called with (`picked`).
+- `accept` and `cancel` are the API's operations.
+- The test scheme's self-insert inserts its argument at its target's
+  cursors.
+- `still` does nothing, and `edit-then-fail` inserts `x` at its target's
+  cursors and is then refused. -/
+def candidateCommands : List (String × Dispatched) :=
+  let asks (initial : String) (candidates : EditorM (Array String)) : Dispatched := fun _ => do
+    discard <| prompt pickLabel pickContinuation initial (candidates := candidates)
+    return none
+  [("ask-pick", asks "" (pure pickCandidates)), ("ask-pick-w", asks "w" (pure pickCandidates)),
+    ("ask-plain", asks "" (pure #[])),
+    ("picked", fun call => do
+      message (picked call.arguments)
+      return none),
+    ("accept", fun _ => do
+      discard acceptPrompt
+      return none),
+    ("cancel", fun _ => do
+      discard cancelPrompt
+      return none),
+    ((TestScheme.selfInsert "").command, fun call => do
+      let [.str text] := call.arguments | throw .badRange
+      call.target.insertAtSelections text
+      return none),
+    ("still", fun _ => return none),
+    ("edit-then-fail", failingAfter fun call => call.target.insertAtSelections "x")]
+
+/-- What a step of the candidate checks is handed: one keymap, the same for
+every view, the minibuffer's among them, that binds a key sequence under
+`C-c` to each command of `candidateCommands` but the self-insert and
+`picked`, which no key runs. No key of it prints, so a key that prints is
+a self-insert. -/
+def candidateKeys : Loop.Keys TestScheme.scheme :=
+  dispatchKeys
+    [("C-c a", invoke "ask-pick"), ("C-c w", invoke "ask-pick-w"), ("C-c p", invoke "ask-plain"),
+      ("C-c y", invoke "accept"), ("C-c n", invoke "cancel"), ("C-c s", invoke "still"),
+      ("C-c f", invoke "edit-then-fail")]
+    candidateCommands
+
+/-- A driver over the initial state, with the commands of the candidate
+checks and the jobs of the driver checks, on the models `model`; `none` if
+making the state was refused. -/
+def candidateDriver (model : EditorModel := editorModel) : Option TestDriver :=
+  (Loop.Driver.over candidateKeys driverJobs (EditorState.initial ⟨640, 480⟩) model).toOption
+
+/-- The candidates of the prompt open in `driver`'s loop, with their listing
+and the choice. -/
+def candidatesOf (driver : TestDriver) : Option Candidates :=
+  driver.loop.state.prompt.map (·.candidates)
+
+/-- What a prompt asked with `pickCandidates` holds once they are listed
+for `pattern`, with `chosen` as its choice: the listing is what the fuzzy
+model answers for the pattern, so no order is written out here. -/
+def pickListed (pattern : String) (chosen : Option Nat := none) : Candidates :=
+  { all := pickCandidates, listedFor := some pattern
+    listed := (FuzzyModel.rank pattern pickCandidates).filterMap (pickCandidates[·]?), chosen }
+
+/-- `driver` with the choice of its open prompt moved by `steps`, through
+the state and not by a command. -/
+def chose (driver : TestDriver) (steps : List Candidates.Step) : TestDriver :=
+  { driver with
+    loop :=
+      { driver.loop with
+        state :=
+          steps.foldl (fun state step => (state.chooseCandidate step).2) driver.loop.state } }
+
+/-- The checks of a prompt's candidates through the loop
+(`Editor/Loop.lean`, "Prompts"), on the loop's driver over the editor's
+models and the test scheme, with commands written here: the listing the
+loop makes before each scene. What is listed is compared with what the
+fuzzy model answers for the same pattern and candidates. -/
+def candidateChecks : List Check :=
+  [{  name :=
+        "after the step that asked for a prompt with candidates the listing is for the initial text, the empty one or one given, and nothing is chosen"
+      run :=
+        pure <|
+          match candidateDriver with
+          | none => false
+          | some driver =>
+            let (asking, _) := fedTo driver (presses "C-c a")
+            let (given, _) := fedTo driver (presses "C-c w")
+            candidatesOf asking == some (pickListed "") &&
+              (candidatesOf asking).map (·.listed.size) == some pickCandidates.size &&
+              candidatesOf given == some (pickListed "w") &&
+              minibufferText given == some "w" },
+    { name :=
+        "after each key typed into a prompt with candidates the listing is for the text typed so far: a candidate that is the text is first though it is last among the candidates, a text one candidate matches lists that one, and a text none matches lists none"
+      run :=
+        pure <|
+          match candidateDriver with
+          | none => false
+          | some driver =>
+            let (one, _) := fedTo driver (presses "C-c a w")
+            let (two, _) := fedTo one (presses "q")
+            let (three, _) := fedTo two (presses "z")
+            candidatesOf one == some (pickListed "w") &&
+              (candidatesOf one).map (·.listed[0]?) == some (some "w") &&
+              (candidatesOf one).map (·.listed.size) == some 3 &&
+              pickCandidates.back? == some "w" &&
+              candidatesOf two == some (pickListed "wq") &&
+              (candidatesOf two).map (·.listed) == some #["wq"] &&
+              candidatesOf three == some (pickListed "wqz") &&
+              (candidatesOf three).map (·.listed) == some #[] &&
+              minibufferText three == some "wqz" },
+    { name :=
+        "a key whose command leaves the minibuffer's text as it was leaves the listing and a choice as they were, and a key typed after it forgets the choice with the listing it was made in"
+      run :=
+        pure <|
+          match candidateDriver with
+          | none => false
+          | some driver =>
+            let (typed, _) := fedTo driver (presses "C-c a w")
+            let chosen := chose typed [.next, .next]
+            let (still, _) := fedTo chosen (presses "C-c s")
+            let (more, _) := fedTo still (presses "q")
+            candidatesOf chosen == some (pickListed "w" (some 1)) &&
+              candidatesOf still == some (pickListed "w" (some 1)) &&
+              candidatesOf more == some (pickListed "wq") },
+    { name :=
+        "a command that edits the minibuffer and is then refused is rolled back to the text, the listing and the choice from before it"
+      run :=
+        pure <|
+          match candidateDriver with
+          | none => false
+          | some driver =>
+            let (typed, _) := fedTo driver (presses "C-c a w")
+            let chosen := chose typed [.next]
+            let (failed, _) := fedTo chosen (presses "C-c f")
+            minibufferText failed == some "w" &&
+              candidatesOf failed == some (pickListed "w" (some 0)) &&
+              failed.loop.state.prompt.isSome },
+    { name :=
+        "what the listing costs, counted on the watch model's clock: a prompt with candidates is published with one request more than one with none, the read of the minibuffer, while its text is as it was, and with two more, the read and the ranking, at the step that asked for it and at each step that changed the text"
+      run :=
+        pure <|
+          match candidateDriver countingModel with
+          | none => false
+          | some driver =>
+            -- How many requests the last of `keys` took.
+            let cost (keys : String) : Nat :=
+              let events := presses keys
+              let (before, _) := fedTo driver events.dropLast
+              let (after, _) := fedTo before (events.drop (events.length - 1))
+              after.model.watch.clock - before.model.watch.clock
+            let plainAsk := cost "C-c p"
+            let plainStill := cost "C-c p C-c s"
+            let plainTyped := cost "C-c p w"
+            plainAsk > 0 && plainStill > 0 && cost "C-c a" == plainAsk + 2 &&
+              cost "C-c a C-c s" == plainStill + 1 &&
+              cost "C-c a w" == plainTyped + 2 &&
+              cost "C-c a w C-c s" == plainStill + 1 }]
+
 /-- A file of three lines of which two end in CRLF and one in a line
 feed. -/
 def mostlyCrlf : ByteArray :=
@@ -16712,6 +16895,7 @@ def checks : List Check :=
     apiStateChecks ++
     driverChecks ++
     promptChecks ++
+    candidateChecks ++
     fileCommandChecks ++
     dispatchQuitChecks ++
     exChecks ++

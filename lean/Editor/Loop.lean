@@ -248,8 +248,34 @@ loop has little of its own to do.
 - **The minibuffer is given up by the rules that exist** ("What a finished
   command gave up"): the closing command removed its window and emptied
   its buffer's slot.
+- **The loop lists a prompt's candidates, before each scene**
+  (`Loop.listed`, in `Loop.publish`). While a prompt is open and has
+  candidates, the minibuffer's text is read; when it is not the text the
+  listing is for, the fuzzy matcher is asked which candidates it matches
+  and in what order (`Fuzzy.rank`, `Editor/Fuzzy.lean`), and the state
+  keeps the answer (`EditorState.listCandidates`, `Editor/State.lean`,
+  "Prompts"). Nothing else asks the matcher for a prompt.
+  - So the first listing is made by the scene of the asking step, for the
+    initial text, and every event ends in a scene: a command always finds
+    the listing of the text the last scene showed.
+  - **The typing command knows no prompt.** The listing is made here and
+    not by the command that typed because that is the scheme's
+    self-insert, and an undo, a put and a committed text change the text
+    too.
+  - **A text that did not change costs one read and no ranking**, and
+    leaves the listing and the choice as they were. A new listing has no
+    choice: the choice was an index of the old one.
+  - **A prompt with no candidates costs what it cost before**: nothing is
+    read and the matcher is not asked.
+  - It is the loop's own request, not a command's: it is not guarded, so
+    the interrupt flag never stops a scene. A refusal of the read leaves
+    the listing as it was and is in the echo area with the publish's other
+    refusals ("When publishing is refused").
+  - The listing is editor state, so a command that fails is rolled back
+    to the listing and the choice from before it.
 
-Pinned by `ModelTest.promptChecks`.
+Pinned by `ModelTest.promptChecks`, and the listing by
+`ModelTest.candidateChecks`.
 
 ## Reload from a command
 
@@ -935,9 +961,31 @@ otherwise ("Quit", in the module docs). -/
 def nextOf (loop : Loop scheme) : Next :=
   if loop.state.leaves then .stop else .continue
 
+/-- `state` with the open prompt's listing brought up to date ("Prompts", in
+the module docs): while a prompt is open and has candidates, the
+minibuffer's text is read, and when it is not the text the listing is for,
+the fuzzy matcher is asked and the state keeps the candidates it answers,
+in its order, with nothing chosen. A state with no prompt, or a prompt with
+no candidates, is as it was, and nothing is asked. It is not refused: a
+refusal of the read is handed back, with the state as it was. -/
+def listed (state : EditorState) : EditorM (EditorState × Option TextError) := do
+  let some asked := state.prompt | return (state, none)
+  if asked.candidates.all.isEmpty then
+    return (state, none)
+  let some minibuffer := state.target? asked.view | return (state, none)
+  match ← (observing minibuffer.buffer.text.read : TextM (Except TextError String)) with
+  | .error error =>
+    return (state, some error)
+  | .ok pattern =>
+    if asked.candidates.listedFor == some pattern then
+      return (state, none)
+    let ranked ← Fuzzy.rank pattern asked.candidates.all
+    return ((state.listCandidates pattern ranked).2, none)
+
 /-- Records the histories, leaving open the group of each buffer in an insert
 session (`sessions`), withdraws a quit that cannot go ahead
-(`EditorState.settleQuit`), publishes a scene of the state, and releases each
+(`EditorState.settleQuit`), brings an open prompt's listing up to date
+(`listed`), publishes a scene of the state, and releases each
 snapshot the last scene named that this one does not. It is not refused
 ("When publishing is refused", in the module docs): a refusal of a buffer's
 text is in the echo area of the scene it publishes, and one of a release in
@@ -946,8 +994,9 @@ def publish (loop : Loop scheme) : EditorM (Loop scheme) := do
   let (state, unrecorded) ← loop.state.recordHistories loop.sessions
   -- The histories know their texts' revisions now, so "unsaved" is right.
   let state := state.settleQuit
+  let (state, unlisted) ← listed state
   let (views, shown, unshown) ← ({ loop with state } : Loop scheme).views
-  let state := state.refusedBy (unrecorded <|> unshown)
+  let state := state.refusedBy (unrecorded <|> unlisted <|> unshown)
   Display.publish (scene state views loop.pending)
   let mut unreleased := none
   for was in loop.shown do
