@@ -12471,7 +12471,55 @@ def exChecks : List Check :=
           | some driver =>
             let (refused, _) := fedTo driver (exLine "w")
             promptEcho refused == Files.noFile "scratch" && refused.pending.isEmpty &&
-              closed refused }]
+              closed refused },
+    { name :=
+        "the ex name q in an editor with nothing modified stops the driver; and so does q after text was typed in the scratch buffer alone, which holds no file"
+      run :=
+        pure <|
+          match exDriver Ex.bindings with
+          | none => false
+          | some driver =>
+            let (fresh, _) := fedTo driver (exLine "q")
+            let (typed, _) := fedTo driver ([.commit "typed"] ++ exLine "q")
+            !driver.stopped && fresh.stopped && typed.stopped && driverText typed == some "typed" },
+    { name :=
+        "the ex name q while a file's buffer is modified says the quit command's refusal, with the buffer's name, and the editor goes on: the driver has not stopped and the next key's command runs"
+      run :=
+        pure <|
+          match exNoteOpen with
+          | none => false
+          | some opened =>
+            let (refused, _) := fedTo opened ([.commit "x"] ++ exLine "q")
+            let (after, _) := fedTo refused (presses "C-e o")
+            promptEcho refused == Ex.notQuitting (.unsaved "note.txt") && !refused.stopped &&
+              !refused.loop.state.quitting &&
+              closed refused &&
+              promptEcho after == "other" },
+    { name :=
+        "criterion 1 on the models: w and then q with the save not yet finished does not stop the driver until the save is finished, and then the file holds the buffer's text"
+      run :=
+        pure <|
+          match exNoteOpen with
+          | none => false
+          | some opened =>
+            let path := inFiles "note.txt"
+            let text := "x" ++ FileCases.noteText
+            let (asked, _) := fedTo opened ([.commit "x"] ++ exLine "w" ++ exLine "q")
+            let (left, _) := asked.finish 2
+            asked.pending.size == 1 && !asked.stopped && asked.loop.state.quitting &&
+              promptEcho asked == "" &&
+              left.stopped &&
+              bytesOf left path == some (FileModel.encode text) &&
+              (showing left).map (·.buffer.isModified) == some false },
+    { name := "the ex name q with an argument says it takes none and does not stop the driver"
+      run :=
+        pure <|
+          match exDriver Ex.bindings with
+          | none => false
+          | some driver =>
+            let (refused, _) := fedTo driver (exLine "q now")
+            promptEcho refused == Ex.noArgument "q" && !refused.stopped &&
+              !refused.loop.state.quitting }]
 
 /-- Texts of the resting rule's checks, each with every position it has, in
 order, and where each rests under `onCell` and under `offLineBreak`,

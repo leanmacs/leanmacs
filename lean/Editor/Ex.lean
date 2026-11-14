@@ -8,9 +8,10 @@ import Editor.Ex.Line
 The ex line is a prompt whose answer is run as a named ex command
 (`docs/design/keymaps-and-modes.md`, "The ex command line"). It is one
 command, `ex`, written over the editor API (`Editor/Api.lean`): it asks for
-a line and then runs it. `Editor.lean` imports this module, so config calls
-it. The commands as compiled code registers them, and the ex names that
-ship, are in `Editor/Ex/Compiled.lean`.
+a line and then runs it. The commands the shipped ex names run that are the
+ex line's own are here too: `quit`. `Editor.lean` imports this module, so
+config calls them. The commands as compiled code registers them, and the ex
+names that ship, are in `Editor/Ex/Compiled.lean`.
 
 ## The ex command
 
@@ -50,6 +51,26 @@ ship, are in `Editor/Ex/Compiled.lean`.
 - **So an ex command's error goes to the echo area as a command's does**,
   with no rule here: a refusal of the bound command is the loop's to say,
   and an unknown ex name is a message of `ex`, which ran to its end.
+
+## Quit
+
+- **`quit`** (`quitName`, `quitCommand`) asks the editor to quit (`quit`,
+  `Editor/Api.lean`; `docs/design/concurrency.md`, "Quit"). The ex name
+  `q` is bound to it.
+- **It is refused while a buffer that holds a file has unsaved changes**,
+  and says so in the echo area (`notQuitting`): `quit: <name> has unsaved
+  changes`, with the first such buffer's name. The editor goes on.
+- **A buffer with no file never blocks it.** The scratch buffer cannot be
+  saved, and `!` is not built, so a rule that counted it would leave no
+  way to quit once anything was typed there. This departs from Vim, which
+  refuses.
+- **It waits for a save in flight.** The command asks, and the loop says
+  stop once the save's result has been delivered (`Editor/Loop.lean`,
+  "Quit"): `w` then `q`, typed as fast as you like, writes the file and
+  quits. If that save is refused the quit is withdrawn, and the save's
+  refusal is what the echo area says.
+- **It quits the editor, not a window.** Vim's `q` closes the current
+  window and quits when it is the last.
 
 ## Where an addition goes
 
@@ -113,5 +134,21 @@ def exCommand (call : Call) : EditorM Unit := do
   | _ =>
     if let .error refusal← prompt label { command := name } then
       message (notAsking refusal)
+
+/-- The name the quit command is registered under. -/
+def quitName : String :=
+  "quit"
+
+/-- What the echo area says when the quit command was refused: its name,
+then why. -/
+def notQuitting : QuitRefusal → String
+  | .unsaved name => s!"{quitName}: {name} has unsaved changes"
+
+/-- The quit command as it is called: asks the editor to quit (`quit`,
+`Editor/Api.lean`), and says a refusal in the echo area (`notQuitting`). It
+reads nothing of its call. -/
+def quitCommand (_ : Call) : EditorM Unit := do
+  if let .error refusal← quit then
+    message (notQuitting refusal)
 
 end Editor.Ex

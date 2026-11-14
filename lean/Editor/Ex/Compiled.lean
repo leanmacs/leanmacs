@@ -13,10 +13,13 @@ so they hold when config fails to load, a reload does not replace them, and
 config's binding of a shipped ex name runs in its place until a reload
 drops it.
 
-- **`Ex.commands`**: `ex`, a command that is given what it was called with
-  (`Action.call`): it opens the ex line, and runs the line it is answered
-  (`Ex.exCommand`). A host must be handed the minibuffer's commands too
-  (`Editor/Minibuffer/Compiled.lean`) for that prompt to be answered.
+- **`Ex.commands`**: each a command that is given what it was called with
+  (`Action.call`).
+  - `ex` opens the ex line, and runs the line it is answered
+    (`Ex.exCommand`). A host must be handed the minibuffer's commands too
+    (`Editor/Minibuffer/Compiled.lean`) for that prompt to be answered.
+  - `quit` asks the editor to quit, and says a refusal in the echo area
+    (`Ex.quitCommand`).
 - **`Ex.bindings`**: the ex names that ship. Each is bound to a command by
   its name, so a host must be handed that command too.
   - `w` runs `save-buffer` (`Editor/Files.lean`) and takes nothing: it
@@ -27,6 +30,8 @@ drops it.
     whole, spaces included. `e` with no argument runs `open-file` with
     none, which asks for a path, by that command's own rule. Vim's `e`
     with no argument reads the current file again, which is not built.
+  - `q` runs `quit` and takes nothing. It quits the editor, not the
+    window the line was asked from: no shipped command splits a window.
 
 This module is apart from `Editor/Ex.lean` because it names the registry,
 which is the config session's: `Editor.lean` imports the commands, so that
@@ -40,12 +45,13 @@ namespace Editor.Ex
 /-- The ex line's commands, as a host registers them for the owner
 `compiled`. -/
 def commands : Array Config.Registration :=
-  #[{ name := name, action := .call exCommand }]
+  #[{ name := name, action := .call exCommand }, { name := quitName, action := .call quitCommand }]
 
 /-- The ex names that ship, as a host registers them for the owner
 `compiled`. -/
 def bindings : Array Binding :=
   #[{ name := "w", command := Files.saveName },
-    { name := "e", command := Files.openName, takes := .text }]
+    { name := "e", command := Files.openName, takes := .text },
+    { name := "q", command := quitName }]
 
 end Editor.Ex
