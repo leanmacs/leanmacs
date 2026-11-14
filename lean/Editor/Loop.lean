@@ -24,7 +24,10 @@ A loop runs one input scheme (`Editor/InputScheme.lean`), which it is given
 when it starts and keeps for its life: `Loop scheme`
 (`docs/design/keymaps-and-modes.md`, "The loop runs one scheme"). It holds
 the scheme's state. A step is also handed `Loop.Keys`: the active keymaps
-of each view, which the caller makes for each step.
+of each view, as a function of the editor state and the view, which the
+caller makes for each step. The loop applies it to its own state
+(`Loop.key`): the active keymaps depend on the buffers' modes, which only
+the loop's state holds, so a mode set by one key holds from the next.
 
 - **Which keys are stepped** (`Loop.stepped?`). A key press, a repeat among
   them, whose key is not a modifier by itself (`Key.isModifier`). A release
@@ -307,8 +310,9 @@ looked up in, and what an invocation runs. It is rebuilt by the caller for
 each step, from the registry as it then is, so a reload changes it between
 two events. -/
 structure Loop.Keys (scheme : InputScheme) where
-  /-- The active keymaps of each view, in precedence order. -/
-  maps : ViewId → List (Keymap scheme.Binding) := fun _ => []
+  /-- The active keymaps of each view in an editor state, in precedence
+  order. The loop applies it to its own state. -/
+  maps : EditorState → ViewId → List (Keymap scheme.Binding) := fun _ _ => []
   /-- What an invocation of the command of a name runs: given what it is
   called with, the program, whose value is what the command asks to be
   written; `none` for a name no command is registered under. -/
@@ -652,7 +656,7 @@ first key of the sequence. -/
 def key (keys : Keys scheme) (loop : Loop scheme) (key : Key) :
     EditorM (Loop scheme × Option Config.Write × Array String) := do
   let before := scheme.pending loop.input
-  let (input, yielded) := scheme.step keys.maps loop.state.frame.focused loop.input key
+  let (input, yielded) := scheme.step (keys.maps loop.state) loop.state.frame.focused loop.input key
   let some invocation := yielded |
     return ({ loop with
           input, atRest := if (scheme.pending input).isEmpty then input else loop.atRest },

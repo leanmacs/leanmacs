@@ -220,7 +220,12 @@ names a scheme's key:
   hand-tuned keys for it ahead of both; and what `Mode.check` reports;
 - `modeRegistryChecks`: modes in the registry
   (`Editor/Config/Registry.lean`): a mode's lineage, and the active keymaps
-  of a view, in precedence order.
+  of a view, in precedence order;
+- `modeDispatchChecks`: keys in the loop over the registry's active
+  keymaps, on the editor's models: a role's key runs the major mode's
+  command in a view of its buffer and the global binding elsewhere, a minor
+  mode's wins over the major mode's, a derived mode falls to its parent,
+  and the leader then a suffix runs the mode's local command.
 -/
 
 namespace ModelTest
@@ -4716,7 +4721,7 @@ every view, that binds each key string of `bindings` to the invocation
 beside it, and the commands `commands`, by name. -/
 def dispatchKeys (bindings : List (String × Invocation))
     (commands : List (String × Dispatched) := []) : Loop.Keys TestScheme.scheme :=
-  { maps := fun _ =>
+  { maps := fun _ _ =>
       [Keymap.ofList (bindings.map fun (text, invocation) => (keys text, invocation))]
     command? := fun name => (commands.find? (·.1 == name)).map (·.2) }
 
@@ -4817,7 +4822,7 @@ def dispatchKeyChecks : List Check :=
         "a key is for the focused view: it is looked up in that view's keymaps, and in no other's"
       run :=
         let onlyFirst : Loop.Keys TestScheme.scheme :=
-          { maps := fun view => if view == ⟨1⟩ then saves.maps view else [] }
+          { maps := fun state view => if view == ⟨1⟩ then saves.maps state view else [] }
         let focusedOn (view : ViewId) : TextM EditorState := do
           return ((← threeWindows).focusWindow view).2
         pure
@@ -5065,7 +5070,7 @@ def dispatchRollbackChecks : List Check :=
       run :=
         pure <|
           let keys : Loop.Keys tallying :=
-            { maps := fun _ =>
+            { maps := fun _ _ =>
                 [Keymap.ofList
                     [(ModelTest.keys "C-c b", invoke "boom"),
                       (ModelTest.keys "C-c s", invoke "stamp")]]
@@ -6822,6 +6827,67 @@ def modeRegistryChecks : List Check :=
             (modeRegistry.activeMaps TestScheme.scheme state ⟨9⟩).length == 1 &&
               activeLookup modeRegistry state ⟨9⟩ Role.nextItem == .bound (invoke "global-next") }]
 
+/-- What a step of the mode dispatch checks is handed: the active keymaps
+`registry` makes for the test scheme from the loop's state, and, for every
+name, a command that inserts its name at the cursors of the window it acts
+on. -/
+def modeKeys (registry : Config.Registry) : Loop.Keys TestScheme.scheme :=
+  { maps := registry.activeMaps TestScheme.scheme
+    command? := fun name =>
+      some fun call => do
+        Loop.insert call.target name
+        return none }
+
+/-- The text each view shows after the keys `role` is on are pressed in a
+loop over `registry`'s active keymaps, from the state `start` makes with
+the focus on `view`; none when the run was refused. -/
+def roleTyped (registry : Config.Registry) (start : TextM EditorState) (keys : List Key)
+    (view : ViewId := ⟨0⟩) : Option (Array (Option String)) :=
+  let focused : TextM EditorState := do
+    return ((← start).focusWindow view).2
+  (lastScene (modeKeys registry) (keys.map press) focused).map (·.2.2)
+
+/-- The checks of modes in the loop (`Editor/Loop.lean`), on the editor's
+models and the test scheme: a key a mode binds runs its command in a view
+of a buffer that has the mode, and the global binding elsewhere. Each key
+is the test scheme's for a role, or its leader, so no check names a key of
+a scheme. -/
+def modeDispatchChecks : List Check :=
+  [{  name :=
+        "a key of a role the buffer's major mode fills runs the mode's command in a view of that buffer, and the global binding of the key in a view of a buffer without the mode"
+      run :=
+        let start := withModes "major" []
+        pure
+          (roleTyped modeRegistry start (roleKeys Role.nextItem) ==
+              some #[some "major-next-item", some "other"] &&
+            roleTyped modeRegistry start (roleKeys Role.nextItem) ⟨1⟩ ==
+              some #[some "", some "global-nextother"]) },
+    { name :=
+        "when a minor mode and the major mode fill the same role, the minor mode's command runs"
+      run :=
+        pure
+          (roleTyped modeRegistry (withModes "major" ["m2"]) (roleKeys Role.nextItem) ==
+            some #[some "m2-next-item", some "other"]) },
+    { name :=
+        "a derived mode runs its parent's command for a role it does not fill, and its own for one it does"
+      run :=
+        let start := withModes "child" []
+        pure
+          (roleTyped modeRegistry start (roleKeys Role.refresh) ==
+              some #[some "base-refresh", some "other"] &&
+            roleTyped modeRegistry start (roleKeys Role.mark) ==
+              some #[some "child-mark", some "other"]) },
+    { name := "the scheme's leader followed by a mode's suffix runs that mode's local command"
+      run :=
+        let registry :=
+          modeRegistry.replaceModes .config
+            #[{ filling "major" [Role.nextItem] with locals := [("C-x", "major-local")] }]
+        let typed := TestScheme.scheme.leader ++ keys "C-x"
+        pure
+          (roleTyped registry (withModes "major" []) typed ==
+              some #[some "major-local", some "other"] &&
+            roleTyped registry (withModes "major" []) typed ⟨1⟩ == some #[some "", some "other"]) }]
+
 /-- Every check, in the order they run.
 
 The order matters where the process's one pool is measured. `poolChecks` run
@@ -6865,7 +6931,8 @@ def checks : List Check :=
     vimDefaultChecks ++
     vimContractChecks ++
     modeRecordChecks ++
-    modeRegistryChecks
+    modeRegistryChecks ++
+    modeDispatchChecks
 
 /-- Runs `checks` and returns the names of those that failed. A check that
 throws has failed, and its error is reported with its name. -/

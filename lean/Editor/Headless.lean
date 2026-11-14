@@ -65,19 +65,22 @@ as before, so reload and job completion work as they did.
 - **A key press is dispatched.** The loop steps it through the host's
   scheme and runs the command it yields (`Editor/Loop.lean`, "Running an
   invocation"). What the keys are looked up in is made for each window
-  event from the registry as it then is (`Running.keys`): one keymap, the
-  same for every view, of every owner's key bindings, and the registry's
-  lookup of a command by its name. So a reload's bindings and commands hold
-  from the next key. What a command over a store asked to be written is
-  written back to the stores.
-- **Compiled commands and bindings are registered when the loop starts**
-  (`compiled`), for the owner `compiled`, before any config: they are what
-  the host's collaborators hand it. A reload replaces config's commands and
-  bindings and never these, so they run when config fails to load, and
-  config's command of a compiled command's name runs in its place until a
-  reload drops it. The executable is handed none: the commands its scheme's
-  keys name are not built yet, so a key of the Vim scheme says
-  `<name>: no such command` in the echo area.
+  event from the registry as it then is (`Running.keys`): the registry's
+  active keymaps of each view (`Config.Registry.activeMaps`: the modes of
+  the view's buffer, then every owner's key bindings), which the loop
+  applies to its own state, and the registry's lookup of a command by its
+  name. So a reload's modes, bindings and commands hold from the next key.
+  What a command over a store asked to be written is written back to the
+  stores.
+- **Compiled commands, bindings and modes are registered when the loop
+  starts** (`compiled`), for the owner `compiled`, before any config: they
+  are what the host's collaborators hand it. A reload replaces config's
+  commands, bindings and modes and never these, so they run when config
+  fails to load, and config's command of a compiled command's name runs in
+  its place until a reload drops it. The executable is handed none: the
+  commands its scheme's keys name are not built yet, so a key of the Vim
+  scheme says `<name>: no such command` in the echo area, and no mode
+  ships.
 - **The interrupt key.** When the loop starts the host tells the library
   which key raises the interrupt flag (`Collaborators.interruptKey`, `C-g`),
   and leaves it with none when the loop ends. The loop's programs are run
@@ -115,7 +118,7 @@ through, the services the loop's jobs wait on, which a test makes of a fake
 clock, and the two tables the host makes before those services: the table of
 snapshots the loop's text binding publishes, of which the loop is the one
 writer, and what the jobs hold. Beside them, each with a default: the
-compiled commands and bindings, the log, the threshold for a slow command,
+compiled commands, bindings and modes, the log, the threshold for a slow command,
 the interrupt key and how the frame is made (`Collaborators.start`).
 
 The driver's `run <name>` and a finished job's command are not dispatched by
@@ -318,6 +321,9 @@ structure Collaborators (σ : Type) (scheme : InputScheme) where
   /-- The compiled key bindings: registered for the owner `compiled` when
   the loop starts, before any config. -/
   bindings : Array Config.KeyBinding := #[]
+  /-- The compiled modes: registered for the owner `compiled` when the loop
+  starts, before any config. -/
+  modes : Array Mode := #[]
   /-- Where a log entry goes: a command that took longer than `slowAfter`.
   The editor thread calls it. It is not `emit`: the output is what a test
   compares, and a log entry depends on how long the machine took. -/
@@ -590,14 +596,14 @@ def publish (collaborators : Collaborators σ scheme) (running : Running σ sche
   let (published, running) ← running.attempt collaborators frame.publish
   return { running with frame := some (published.getD frame) }
 
-/-- What a step of the loop is handed, from the registry as it is now: one
-keymap, the same for every view, of every owner's key bindings
-(`Config.Registry.keymap`); the lookup an invocation uses
-(`Config.State.command?`); and the host's threshold for a slow command. It
-is made for each window event, so a reload changes it between two events. -/
+/-- What a step of the loop is handed, from the registry as it is now: the
+active keymaps of each view (`Config.Registry.activeMaps`: the modes of the
+view's buffer, then every owner's key bindings), which the loop applies to
+its own state; the lookup an invocation uses (`Config.State.command?`); and
+the host's threshold for a slow command. It is made for each window event,
+so a reload changes it between two events. -/
 def keys (collaborators : Collaborators σ scheme) (running : Running σ scheme) : Loop.Keys scheme :=
-  let keymap := running.config.registry.keymap scheme
-  { maps := fun _ => [keymap], command? := running.config.command?
+  { maps := running.config.registry.activeMaps scheme, command? := running.config.command?
     slowAfter := collaborators.slowAfter }
 
 /-- Handles an event from the window input: prints a key press with its
@@ -768,8 +774,9 @@ def cells : Display.Cells :=
 owner `compiled`, before any config. -/
 def compiled {σ : Type} {scheme : InputScheme} (collaborators : Collaborators σ scheme) :
     Config.Registry :=
-  (({} : Config.Registry).replace .compiled collaborators.commands).replaceBindings .compiled
-    collaborators.bindings
+  ((({} : Config.Registry).replace .compiled collaborators.commands).replaceBindings .compiled
+        collaborators.bindings).replaceModes
+    .compiled collaborators.modes
 
 /-- What the editor thread holds as its loop starts: the compiled registry
 (`compiled`), no texts, a recorder in `cells` over the table of snapshots

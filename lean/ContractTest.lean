@@ -859,7 +859,7 @@ def stamp : Dispatched := fun call => do
 which binds `C-c l` to `spin` and `C-c s` to `stamp`, and those two
 commands. -/
 def watchKeys : Loop.Keys TestScheme.scheme :=
-  { maps := fun _ =>
+  { maps := fun _ _ =>
       [Keymap.ofList
           [(keys "C-c l", ({ command := "spin" } : Invocation)),
             (keys "C-c s", { command := "stamp" })]]
