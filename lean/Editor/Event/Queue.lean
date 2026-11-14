@@ -1,5 +1,6 @@
 import Editor.Event
 import Editor.Ffi
+import Editor.Keymap
 
 /-!
 # The events of the editor queue
@@ -17,9 +18,26 @@ modifier bit past the system key's, and a dead bit with no dead key are each
 an error, never a guess. A message's words are the source's and are not read;
 every other kind with no words in the table must have none.
 
+## The interrupt key
+
+The library raises its interrupt flag as the interrupt key arrives ("The
+interrupt flag", in `Editor/Ffi.lean`). What crosses for it is here too:
+
+- `Event.setInterruptKey` tells the library which key it is, as the words
+  `EventWords.interruptWords` makes. Which keys are the same key is the
+  chord's rule (`Key.chord`, `Editor/Keymap.lean`), and it crosses as data:
+  the modifiers of the key's chord, and a mask of the modifiers a chord of
+  that key keeps. The library compares words and knows no rule.
+- `Event.ofFfi` reads the library's mark, bit 3 of a key event's code, into
+  `Received.interrupt`. The loop lowers the flag for those events
+  (`Loop.take`, `Editor/Loop.lean`).
+- `Event.post` never sends the mark: the library sets it, for a press it
+  counted.
+
 Tests: `FfiTest.eventDecodeChecks`, on events built by hand, one row of the
 table at a time; `FfiTest.eventChecks`, against the library: the scripted
-window's sample, and `Event.post` round trips.
+window's sample, and `Event.post` round trips; `FfiTest.interruptChecks`,
+against the library: the interrupt key and its mark.
 -/
 
 namespace Editor
@@ -118,25 +136,46 @@ def key (code : UInt64) : Reader (Key × Bool) := do
     throw "the key's dead bit and its logical key disagree"
   return ({ logical, physical, modifiers, repeated := code &&& 2 != 0 }, code &&& 1 != 0)
 
+/-- The words of a logical key: its tag, then its characters or its name. -/
+def logicalWords : LogicalKey → Array UInt64
+  | .unidentified => #[0, 0]
+  | .character text => #[1] ++ scalarWords text
+  | .named name => #[2] ++ scalarWords name.name
+  | .dead none => #[3, 0]
+  | .dead (some char) => #[3, 1, char.toNat.toUInt64]
+
 /-- The words of a key. -/
 def keyWords (key : Key) : Array UInt64 :=
-  let logical :=
-    match key.logical with
-    | .unidentified => #[0, 0]
-    | .character text => #[1] ++ scalarWords text
-    | .named name => #[2] ++ scalarWords name.name
-    | .dead none => #[3, 0]
-    | .dead (some char) => #[3, 1, char.toNat.toUInt64]
   let physical :=
     match key.physical with
     | .unidentified => #[0, 0]
     | .code name => #[1] ++ scalarWords name
-  logical ++ physical |>.push (modifierBits key.modifiers)
+  logicalWords key.logical ++ physical |>.push (modifierBits key.modifiers)
 
-/-- A key's code: bit 0 pressed, bit 1 repeat, bit 2 dead. -/
+/-- A key's code: bit 0 pressed, bit 1 repeat, bit 2 dead. The interrupt
+mark, bit 3, is the library's to set and is never posted. -/
 def keyCode (key : Key) (pressed : Bool) : UInt64 :=
   (if pressed then (1 : UInt64) else 0) ||| (if key.repeated then (2 : UInt64) else 0) |||
     (if key.logical matches .dead _ then (4 : UInt64) else 0)
+
+/-- The bit of a key event's code that the library sets for a press it
+counted as the interrupt key when it arrived. -/
+def interruptMark : UInt64 :=
+  8
+
+/-- The words that tell the library `key` is the interrupt key: its logical
+key, the modifiers held, and the mask of the modifiers the library is to
+compare.
+
+Which keys are the same key is the chord's rule (`Key.chord`), and it stays
+here: the modifiers are the chord's, and the mask is the modifiers a chord of
+this key keeps, found by taking the chord of the key with every modifier
+held. So shift is left out of the mask for a character, which already says
+whether it is shifted, and is in it for a named key. -/
+def interruptWords (key : Key) : Array UInt64 :=
+  let every : Modifiers := { shift := true, control := true, alt := true, superKey := true }
+  let mask := modifierBits ({ key with modifiers := every } : Key).chord.modifiers
+  logicalWords key.logical ++ #[modifierBits key.chord.modifiers, mask]
 
 /-- A pointer's words, with its code as the action. -/
 def pointer (code : UInt64) : Reader Pointer := do
@@ -222,14 +261,23 @@ def EventSource.ofFfi (source : Ffi.Source) : EventSource :=
       | .window => .window
     id := source.id }
 
-/-- The `Event` an event of the editor queue is, with its stamp, or why it
-cannot be read: one variant for each kind and code of the table in
-`crates/editor-ffi/src/window.rs`. -/
+/-- The `Event` an event of the editor queue is, with its stamp and whether
+the library marked it as a press of the interrupt key, or why it cannot be
+read: one variant for each kind and code of the table in
+`crates/editor-ffi/src/window.rs`.
+
+The interrupt mark is bit 3 of a key event's code, and of no other kind's.
+It is taken off before the key is read, so a key's code is still refused
+for any higher bit, and a mark on a key that was not pressed is refused: the
+library marks presses only. -/
 def Event.ofFfi (event : Ffi.Event) : Except String Received := do
   let none (value : Event) : Except String Event :=
     if event.words.isEmpty then .ok value else .error "the event has words its kind does not have"
+  let interrupt := event.kind == .key && event.code &&& EventWords.interruptMark != 0
+  if interrupt && event.code &&& 1 == 0 then
+    throw "the interrupt mark is on a key that was not pressed"
   let decoded ←
-    match event.kind, event.code with
+    match event.kind, if interrupt then event.code ^^^ EventWords.interruptMark else event.code with
     | .quit, _ =>
       none .quit
     | .message, code =>
@@ -265,7 +313,7 @@ def Event.ofFfi (event : Ffi.Event) : Except String Received := do
       none .closeRequested
     | kind, code =>
       throw s!"{repr kind} has no code {code}"
-  return { event := decoded, stamp := event.stamp }
+  return { event := decoded, stamp := event.stamp, interrupt }
 
 /-- Posts `event` to the editor queue as the process's window would report it,
 through the library's window input (`Ffi.postInput`), so that it takes the
@@ -288,5 +336,16 @@ def Event.post : Event → IO Bool
     Ffi.postInput .resize 0 "" #[size.width.toUInt64, size.height.toUInt64, size.scale.toBits]
   | .closeRequested => Ffi.postInput .closeRequested 0 "" #[]
   | .message .. | .completion .. | .quit => pure false
+
+/-- Tells the library which key is the interrupt key, or that there is none:
+from then on a press of that key, as a chord names it, raises the library's
+interrupt flag as it arrives, and its event comes back marked
+(`Received.interrupt`). `false` when the library did not take the key. The
+flag itself is left as it is. -/
+def Event.setInterruptKey : Option Key → IO Bool
+  | some which => Ffi.interruptKeySet (EventWords.interruptWords which)
+  | none => do
+    Ffi.interruptKeyClear
+    return true
 
 end Editor

@@ -903,6 +903,41 @@ lean_obj_res editor_glue_window_post_input(uint8_t kind, uint64_t code,
       byte_array_len(words))));
 }
 
+// ---- The interrupt flag ----
+//
+// The library raises a flag as the interrupt key arrives on the editor queue,
+// before the key is queued. Lean tells it which key that is, asks the flag,
+// and lowers it. None of these blocks.
+
+bool editor_ffi_interrupt_key_set(const uint8_t *words, size_t words_len);
+void editor_ffi_interrupt_key_clear(void);
+bool editor_ffi_interrupt_raised(void);
+void editor_ffi_interrupt_lower(void);
+
+// `Editor.Ffi.interruptKeySetRaw : @& ByteArray → IO Bool`. The words are
+// borrowed for the call.
+lean_obj_res editor_glue_interrupt_key_set(b_lean_obj_arg words) {
+  return lean_io_result_mk_ok(lean_box(editor_ffi_interrupt_key_set(
+      byte_array_bytes(words), byte_array_len(words))));
+}
+
+// `Editor.Ffi.interruptKeyClear : IO Unit`
+lean_obj_res editor_glue_interrupt_key_clear(void) {
+  editor_ffi_interrupt_key_clear();
+  return lean_io_result_mk_ok(lean_box(0));
+}
+
+// `Editor.Ffi.interruptRaised : IO Bool`
+lean_obj_res editor_glue_interrupt_raised(void) {
+  return lean_io_result_mk_ok(lean_box(editor_ffi_interrupt_raised()));
+}
+
+// `Editor.Ffi.interruptLower : IO Unit`
+lean_obj_res editor_glue_interrupt_lower(void) {
+  editor_ffi_interrupt_lower();
+  return lean_io_result_mk_ok(lean_box(0));
+}
+
 // ---- The process entry point ----
 //
 // Lean's generated `main` runs the Lean `main` on a thread Lean creates, so

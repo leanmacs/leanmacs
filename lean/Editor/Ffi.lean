@@ -180,7 +180,7 @@ arrives on the editor queue.
 
   | Kind | Code | Words |
   |---|---|---|
-  | `key` | Bit 0 pressed, bit 1 repeat, bit 2 dead | `[logical tag, n, n scalars, physical tag, m, m scalars, modifiers]`; logical 0 unidentified, 1 character, 2 named (a W3C UI Events `key` name), 3 dead (n is 0 or 1); physical 0 unidentified, 1 a W3C UI Events `code` |
+  | `key` | Bit 0 pressed, bit 1 repeat, bit 2 dead, bit 3 the interrupt mark ("The interrupt flag") | `[logical tag, n, n scalars, physical tag, m, m scalars, modifiers]`; logical 0 unidentified, 1 character, 2 named (a W3C UI Events `key` name), 3 dead (n is 0 or 1); physical 0 unidentified, 1 a W3C UI Events `code` |
   | `pointer` | 0 press, 1 drag, 2 release, 3 wheel | `[x, y, button tag, other, modifiers, delta tag, dx, dy]`; button 0 none, 1 primary, 2 secondary, 3 middle, 4 back, 5 forward, 6 another (its number in `other`); delta 0 none, 1 lines, 2 pixels |
   | `resize` | 0 | `[width, height, scale]` |
 
@@ -210,6 +210,37 @@ the keyboard check's loop over them; the unit tests of `window.rs` and
 in `editor-ffi`, which need no Lean. Nothing in the gate runs the real
 platform: `mise run window-check` and `mise run window-contract` do, on
 demand.
+
+### The interrupt flag
+
+The library raises a flag as the interrupt key arrives on the editor queue,
+before the key is queued, so that a command that holds the editor thread can
+be asked to stop. The primitive is the library's
+(`crates/editor-ffi/src/interrupt.rs`); the policy is Lean's
+(`Editor/Watch.lean`, `Editor/Loop.lean`).
+
+- `interruptKeySet` tells the library which key raises the flag, as words:
+  `[logical tag, n, n scalars, modifiers, mask]`, the logical key as in a
+  key event's words, and the modifiers and the mask each a word of modifier
+  bits. A press is the interrupt key when it has that logical key and, of
+  the modifiers the mask names, exactly those held. The mask is how Lean's
+  rule for a chord crosses: the library compares words and knows no rule.
+  `interruptKeyClear` leaves it with no key. The one place on the Lean side
+  that makes the words is `Editor/Event/Queue.lean` (`Event.setInterruptKey`).
+- The flag is a count of the presses that have arrived and not been lowered
+  for. `interruptRaised` asks whether it is up, and `interruptLower` takes
+  one off. Pulling an event lowers nothing.
+- The event of a press the library counted carries the interrupt mark, bit 3
+  of a key event's code. `Event.ofFfi` reads it into `Received.interrupt`,
+  and the loop lowers the flag for exactly those events. The mark cannot be
+  posted: `postInput` refuses a code that carries it.
+- None of these blocks, and each may be called from any thread.
+
+Tests: `FfiTest.interruptChecks`, against the library;
+`FfiTest.eventDecodeChecks` for the mark, on events built by hand; the
+watch port's contract against its real binding in `contract-test`; the unit
+tests of `interrupt.rs` and `window.rs` and `tests/interrupt.rs` in
+`editor-ffi`, which need no Lean.
 
 ### Calls go one way
 
@@ -1668,5 +1699,35 @@ it is never 0. The time from an event's stamp to this reading is how long the
 event took to reach whoever reads it. -/
 @[extern "editor_glue_input_clock"]
 opaque inputClock : IO UInt64
+
+/-- `interruptKeySet` as it crosses: the words as bytes. -/
+@[extern "editor_glue_interrupt_key_set"]
+private opaque interruptKeySetRaw (words : @& ByteArray) : IO Bool
+
+/-- Makes the key `words` stand for the library's interrupt key ("The
+interrupt flag", in the module docs): `[logical tag, n, n scalars,
+modifiers, mask]`. From then on a press of that key, with exactly those of
+the masked modifiers held, raises the flag as it arrives.
+
+`false`, changing nothing, for words that do not read as a key. The flag is
+left as it is either way. -/
+def interruptKeySet (words : Array UInt64) : IO Bool :=
+  interruptKeySetRaw (words.foldl pushWord ByteArray.empty)
+
+/-- Leaves the library with no interrupt key: nothing raises the flag until
+one is set again. The flag is left as it is. -/
+@[extern "editor_glue_interrupt_key_clear"]
+opaque interruptKeyClear : IO Unit
+
+/-- Whether the library's interrupt flag is up: a press of the interrupt key
+has arrived on the editor queue and has not been lowered for. Asking does
+not lower it. -/
+@[extern "editor_glue_interrupt_raised"]
+opaque interruptRaised : IO Bool
+
+/-- Tells the library that one press of the interrupt key was taken off the
+queue: one fewer holds the flag up. With none counted, nothing. -/
+@[extern "editor_glue_interrupt_lower"]
+opaque interruptLower : IO Unit
 
 end Editor.Ffi
