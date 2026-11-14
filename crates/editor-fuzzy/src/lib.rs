@@ -27,6 +27,16 @@
 //! |---|---|---|
 //! | A rule of the order | [`rank`] | The tests here, on a scorer that answers canned scores |
 //! | Something more a scorer is asked (a case rule, a limit) | An argument of [`Scorer::scores`], as data | The tests here |
+//! | A rule every scorer keeps about which candidates match | A property of [`contract`] | Its own tests, on the fake and on scorers written to break it |
+//!
+//! # The fake and the contract
+//!
+//! [`InOrder`] is the port's fake, and everything above the port is tested
+//! on it. [`contract::check`] is what a real adapter is held to: it passes
+//! on the fake in this crate's tests, and each real adapter runs it in its
+//! own.
+
+pub mod contract;
 
 /// The port: what scores candidates against a pattern.
 pub trait Scorer {
@@ -71,6 +81,39 @@ pub fn rank(scorer: &mut impl Scorer, pattern: &str, candidates: &[&str]) -> Vec
     matched.into_iter().map(|(_, index)| index).collect()
 }
 
+/// The fake scorer: a candidate matches when the pattern's Unicode scalar
+/// values all occur in it, in the pattern's order, adjacent or apart, and
+/// every match scores 0.
+///
+/// So [`rank`] over it answers the candidates that are the pattern first
+/// and the other matches after, each group in the order the candidates
+/// came in. It is public, not `cfg(test)`, so the tests of any crate above
+/// the port run on it.
+#[derive(Debug, Default, Clone, Copy)]
+pub struct InOrder;
+
+impl Scorer for InOrder {
+    fn scores(&mut self, pattern: &str, candidates: &[&str]) -> Vec<Option<u32>> {
+        candidates
+            .iter()
+            .map(|candidate| in_order(pattern, candidate).then_some(0))
+            .collect()
+    }
+}
+
+/// Whether the scalar values of `pattern` all occur in `candidate`, in
+/// order: each is looked for after the place the one before it was found.
+fn in_order(pattern: &str, candidate: &str) -> bool {
+    let mut rest = candidate;
+    pattern.chars().all(|wanted| match rest.split_once(wanted) {
+        Some((_, after)) => {
+            rest = after;
+            true
+        }
+        None => false,
+    })
+}
+
 /// What a matched candidate is ordered by. A later variant is a better
 /// match, and of two `Scored` the higher score: the derived order.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -84,7 +127,36 @@ enum Standing {
 
 #[cfg(test)]
 mod tests {
-    use super::{Scorer, rank};
+    use super::{InOrder, Scorer, contract, rank};
+
+    #[test]
+    fn the_fake_matches_a_pattern_in_order_adjacent_or_apart_and_scores_every_match_zero() {
+        assert_eq!(
+            InOrder.scores("ace", &["ace", "abcde", "axe", "eca", ""]),
+            [Some(0), Some(0), None, None, None]
+        );
+        // Each character of the pattern is found after the one before it.
+        assert_eq!(
+            InOrder.scores("aa", &["a", "aba", "ba"]),
+            [None, Some(0), None]
+        );
+        // The empty pattern is in order in everything.
+        assert_eq!(InOrder.scores("", &["", "a"]), [Some(0), Some(0)]);
+        assert_eq!(InOrder.scores("a", &[]), [None; 0]);
+    }
+
+    #[test]
+    fn the_fake_keeps_the_contract() {
+        assert_eq!(contract::check(&mut InOrder), [""; 0]);
+    }
+
+    #[test]
+    fn the_fake_ranks_what_is_the_pattern_first_and_the_rest_in_the_candidates_order() {
+        assert_eq!(
+            rank(&mut InOrder, "w", &["wq", "edit", "rewrite", "w"]),
+            [3, 0, 2]
+        );
+    }
 
     /// A scorer that answers the scores it was made with, whatever it is
     /// asked, and records what it was asked.
