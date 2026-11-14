@@ -20,6 +20,7 @@ import Editor.Mode
 import Editor.Role
 import Editor.Scene
 import Editor.State
+import Editor.State.Request
 import Editor.Text.Contract
 import Editor.UndoTree.Cases
 import Editor.Watch.Contract
@@ -3996,6 +3997,303 @@ def stateChecks : List Check :=
             refused (state.setMajorMode ⟨5⟩ "listing") && refused (state.addMinorMode ⟨5⟩ "one") &&
               refused (state.removeMinorMode ⟨5⟩ "one") }]
 
+/-- A reply that may be refused, as a sum, which has an equality: the
+refusal on the left. -/
+def replied {ε α : Type} : Except ε α → ε ⊕ α
+  | .ok value => .inr value
+  | .error refusal => .inl refusal
+
+/-- `twoBuffers` with a third buffer, `hidden`, over a text of its own that
+no window shows, and that text. -/
+def hiddenBuffer : TextM (EditorState × TextId) := do
+  let state ← twoBuffers
+  let text ← createText "hidden"
+  let history ← UndoTree.over text
+  return ({ state with buffers := state.buffers.push (some { name := "hidden", text, history }) },
+      text)
+
+/-- The requests a well-formed state is seen to stay well formed under, on
+`hiddenBuffer`, whose buffers' texts are 0, 1 and 2: each kind of request,
+accepted and refused. -/
+def stateRequests : List StateRequest :=
+  let marker (text index : Nat) : MarkerId := ⟨⟨text⟩, index⟩
+  [.read, .addBuffer "new" ⟨3⟩ (UndoTree.new ⟨3⟩ 0), .addBuffer "other" ⟨3⟩ (UndoTree.new ⟨3⟩ 0),
+    .removeBuffer ⟨2⟩, .removeBuffer ⟨1⟩, .removeBuffer ⟨9⟩, .setHistory ⟨0⟩ (UndoTree.new ⟨0⟩ 4),
+    .setHistory ⟨0⟩ (UndoTree.new ⟨1⟩ 0), .setValue ⟨0⟩ "count" (.nat 1),
+    .setValue ⟨9⟩ "count" .null, .setMajorMode ⟨0⟩ "listing", .setMajorMode ⟨9⟩ "listing",
+    .addMinorMode ⟨1⟩ "one", .removeMinorMode ⟨1⟩ "one", .split ⟨0⟩ .rows (marker 0 8) (marker 0 9),
+    .split ⟨1⟩ .columns (marker 1 8) (marker 1 9), .split ⟨0⟩ .rows (marker 1 8) (marker 0 9),
+    .split ⟨9⟩ .rows (marker 0 8) (marker 0 9), .removeWindow ⟨1⟩, .removeWindow ⟨9⟩, .focus ⟨1⟩,
+    .focus ⟨9⟩, .show ⟨0⟩ ⟨2⟩ (marker 2 0) (marker 2 1), .show ⟨0⟩ ⟨9⟩ (marker 2 0) (marker 2 1),
+    .show ⟨0⟩ ⟨2⟩ (marker 0 0) (marker 2 1), .show ⟨9⟩ ⟨2⟩ (marker 2 0) (marker 2 1), .message "hi",
+    .startJob "count" [.nat 1]]
+
+/-- The checks of the state requests' pure handler (`EditorState.handle`,
+`Editor/State/Request.lean`), on states made on the text model. The handler
+asks the text store nothing, so a marker's id is written out by hand. -/
+def stateRequestChecks : List Check :=
+  let marker (text index : Nat) : MarkerId := ⟨⟨text⟩, index⟩
+  [{  name := "a read hands back the whole state and changes nothing"
+      run :=
+        pure <|
+          match onTextModel twoBuffers with
+          | none => false
+          | some state =>
+            let (read, after) := state.handle .read
+            read == state && after == state },
+    { name :=
+        "adding a buffer gives it the next slot's id and finds it by its name; a name a buffer has is refused with nameTaken, and a history over another text with notItsHistory, each with the state as it was"
+      run :=
+        pure <|
+          match onTextModel twoBuffers with
+          | none => false
+          | some state =>
+            let tree := UndoTree.new ⟨2⟩ 0
+            let (added, after) := state.handle (.addBuffer "third" ⟨2⟩ tree)
+            let (taken, same) := state.handle (.addBuffer "other" ⟨2⟩ tree)
+            let (astray, still) := state.handle (.addBuffer "third" ⟨3⟩ tree)
+            replied added == .inr ⟨2⟩ && after.findBuffer "third" == some ⟨2⟩ &&
+              after.buffer? ⟨2⟩ == some { name := "third", text := ⟨2⟩, history := tree } &&
+              state.findBuffer "third" == none &&
+              state.findBuffer "other" == some ⟨1⟩ &&
+              replied taken == .inl (.nameTaken "other") &&
+              same == state &&
+              replied astray == .inl .notItsHistory &&
+              still == state },
+    { name :=
+        "removing a buffer empties its slot, and its id is not given to the next buffer; a buffer a window shows is refused with shown and that view, and one there is none of with noSuchBuffer, each with the state as it was"
+      run :=
+        pure <|
+          match onTextModel hiddenBuffer with
+          | none => false
+          | some (state, _) =>
+            let (removed, after) := state.handle (.removeBuffer ⟨2⟩)
+            let (again, gone) := after.handle (.removeBuffer ⟨2⟩)
+            let (next, _) := after.handle (.addBuffer "next" ⟨3⟩ (UndoTree.new ⟨3⟩ 0))
+            let (shown, same) := state.handle (.removeBuffer ⟨1⟩)
+            let (absent, still) := state.handle (.removeBuffer ⟨9⟩)
+            replied removed == .inr () && after.buffers[2]? == some none &&
+              after.buffer? ⟨2⟩ == none &&
+              after.findBuffer "hidden" == none &&
+              after.buffers.size == 3 &&
+              replied again == .inl (.noSuchBuffer ⟨2⟩) &&
+              gone == after &&
+              replied next == .inr ⟨3⟩ &&
+              replied shown == .inl (.shown ⟨1⟩) &&
+              same == state &&
+              replied absent == .inl (.noSuchBuffer ⟨9⟩) &&
+              still == state },
+    { name :=
+        "setting a buffer's history replaces its tree; a tree over another text is refused with notItsHistory, and a buffer there is none of with noSuchBuffer, each with the state as it was"
+      run :=
+        pure <|
+          match onTextModel twoBuffers with
+          | none => false
+          | some state =>
+            let tree := UndoTree.new ⟨1⟩ 7
+            let (set, after) := state.handle (.setHistory ⟨1⟩ tree)
+            let (astray, same) := state.handle (.setHistory ⟨0⟩ tree)
+            let (absent, still) := state.handle (.setHistory ⟨9⟩ tree)
+            replied set == .inr () && (after.buffer? ⟨1⟩).map (·.history) == some tree &&
+              after.buffer? ⟨0⟩ == state.buffer? ⟨0⟩ &&
+              replied astray == .inl .notItsHistory &&
+              same == state &&
+              replied absent == .inl (.noSuchBuffer ⟨9⟩) &&
+              still == state },
+    { name :=
+        "a buffer-local value is set under its name and read back, a second value of the name replaces the first, and other names and other buffers are left; a buffer there is none of is refused with noSuchBuffer"
+      run :=
+        pure <|
+          match onTextModel twoBuffers with
+          | none => false
+          | some state =>
+            let (set, one) := state.handle (.setValue ⟨1⟩ "count" (.nat 1))
+            let (_, two) := one.handle (.setValue ⟨1⟩ "label" (.str "a"))
+            let (_, three) := two.handle (.setValue ⟨1⟩ "count" (.nat 2))
+            let (absent, same) := state.handle (.setValue ⟨9⟩ "count" (.nat 1))
+            replied set == .inr () && state.value? ⟨1⟩ "count" == none &&
+              one.value? ⟨1⟩ "count" == some (.nat 1) &&
+              three.value? ⟨1⟩ "count" == some (.nat 2) &&
+              three.value? ⟨1⟩ "label" == some (.str "a") &&
+              ((three.buffer? ⟨1⟩).map (·.locals.size)) == some 2 &&
+              three.value? ⟨0⟩ "count" == none &&
+              three.value? ⟨9⟩ "count" == none &&
+              replied absent == .inl (.noSuchBuffer ⟨9⟩) &&
+              same == state },
+    { name :=
+        "the minor-mode requests are the state's operations: one added is first, one removed is gone, and a buffer there is none of is refused with noSuchBuffer"
+      run :=
+        pure <|
+          match onTextModel twoBuffers with
+          | none => false
+          | some state =>
+            let (added, one) := state.handle (.addMinorMode ⟨0⟩ "one")
+            let (removed, bare) := one.handle (.removeMinorMode ⟨0⟩ "one")
+            let (absent, same) := state.handle (.addMinorMode ⟨9⟩ "one")
+            replied added == .inr () && one == (state.addMinorMode ⟨0⟩ "one").2 &&
+              ((one.buffer? ⟨0⟩).map (·.minors)) == some #["one"] &&
+              replied removed == .inr () &&
+              bare == state &&
+              replied absent == .inl (.noSuchBuffer ⟨9⟩) &&
+              same == state },
+    { name :=
+        "the major-mode request sets the mode of the buffer its view shows and says whether it became the major mode; a view with no window is refused with noSuchWindow, with the state as it was"
+      run :=
+        pure <|
+          match onTextModel twoBuffers with
+          | none => false
+          | some state =>
+            let (set, listed) := state.handle (.setMajorMode ⟨1⟩ "listing")
+            let (again, same) := listed.handle (.setMajorMode ⟨1⟩ "listing")
+            let (absent, still) := state.handle (.setMajorMode ⟨9⟩ "listing")
+            replied set == .inr true && listed == (state.setMajorMode ⟨1⟩ "listing").2 &&
+              ((listed.buffer? ⟨1⟩).bind (·.major)) == some "listing" &&
+              replied again == .inr false &&
+              same == listed &&
+              replied absent == .inl (.noSuchWindow ⟨9⟩) &&
+              still == state },
+    { name :=
+        "a split gives the new window an id no window has or had, shows the source window's buffer in it with the markers handed in, puts it second in a split where the source was, and leaves the focus"
+      run :=
+        pure <|
+          match onTextModel threeWindows with
+          | none => false
+          | some state =>
+            let (made, after) := state.handle (.split ⟨1⟩ .rows (marker 0 8) (marker 0 9))
+            let (closed, without) := after.handle (.removeWindow ⟨3⟩)
+            let (next, later) := without.handle (.split ⟨0⟩ .columns (marker 0 10) (marker 0 11))
+            replied made == .inr ⟨3⟩ && after.wellFormed &&
+              after.window? ⟨3⟩ ==
+                some { id := ⟨3⟩, buffer := ⟨0⟩, scroll := marker 0 8, selection := marker 0 9 } &&
+              after.frame.tree ==
+                .split .rows
+                  (.split .columns (.window ⟨0⟩) (.split .rows (.window ⟨1⟩) (.window ⟨3⟩)))
+                  (.split .rows (.window ⟨2⟩) .minibuffer) &&
+              after.frame.focused == state.frame.focused &&
+              after.windows.extract 0 3 == state.windows &&
+              (replied closed).isRight &&
+              replied next == .inr ⟨4⟩ &&
+              later.frame.tree ==
+                .split .rows
+                  (.split .columns (.split .columns (.window ⟨0⟩) (.window ⟨4⟩)) (.window ⟨1⟩))
+                  (.split .rows (.window ⟨2⟩) .minibuffer) },
+    { name :=
+        "a split is refused with noSuchWindow for a view with no window, and with markersOfAnotherText when a marker handed in is not of the source buffer's text, each with the state as it was"
+      run :=
+        pure <|
+          match onTextModel twoBuffers with
+          | none => false
+          | some state =>
+            let (absent, same) := state.handle (.split ⟨9⟩ .rows (marker 0 8) (marker 0 9))
+            let (scroll, still) := state.handle (.split ⟨0⟩ .rows (marker 1 8) (marker 0 9))
+            let (selection, yet) := state.handle (.split ⟨0⟩ .rows (marker 0 8) (marker 1 9))
+            replied absent == .inl (.noSuchWindow ⟨9⟩) && same == state &&
+              replied scroll == .inl .markersOfAnotherText &&
+              still == state &&
+              replied selection == .inl .markersOfAnotherText &&
+              yet == state },
+    { name :=
+        "splitting a window and removing the new window gives back the tree, the windows and the focus from before the split, along either axis and from one window or three"
+      run :=
+        pure <|
+          [onTextModel threeWindows, onTextModel (EditorState.initial ⟨640, 480⟩)].all fun
+            | none => false
+            | some state =>
+              [Axis.rows, Axis.columns].all fun axis =>
+                state.windows.all fun window =>
+                  let (made, split) :=
+                    state.handle (.split window.id axis (marker 0 8) (marker 0 9))
+                  match made with
+                  | .error _ => false
+                  | .ok view =>
+                    let (closed, after) := split.handle (.removeWindow view)
+                    split.frame.tree != state.frame.tree && (replied closed).isRight &&
+                      after.frame == state.frame &&
+                      after.windows == state.windows &&
+                      after.buffers == state.buffers },
+    { name :=
+        "the request to remove the only window is refused with onlyWindow, and the tree and the state are as they were"
+      run :=
+        pure <|
+          match onTextModel (EditorState.initial ⟨640, 480⟩) with
+          | none => false
+          | some state =>
+            let (closed, after) := state.handle (.removeWindow ⟨0⟩)
+            replied closed == .inl .onlyWindow && after.frame.tree == state.frame.tree &&
+              after == state },
+    { name :=
+        "the focus request focuses a window in the tree, and refuses one that is not with noSuchWindow"
+      run :=
+        pure <|
+          match onTextModel threeWindows with
+          | none => false
+          | some state =>
+            let (focused, after) := state.handle (.focus ⟨2⟩)
+            let (absent, same) := state.handle (.focus ⟨9⟩)
+            replied focused == .inr () && after.frame.focused == ⟨2⟩ &&
+              after == (state.focusWindow ⟨2⟩).2 &&
+              replied absent == .inl (.noSuchWindow ⟨9⟩) &&
+              same == state },
+    { name :=
+        "showing another buffer in a window sets its buffer and its markers and leaves the other windows; a buffer there is none of is refused with noSuchBuffer, a view with no window with noSuchWindow, and a marker of another text with markersOfAnotherText, each with the state as it was"
+      run :=
+        pure <|
+          match onTextModel twoBuffers with
+          | none => false
+          | some state =>
+            let (shown, after) := state.handle (.show ⟨0⟩ ⟨1⟩ (marker 1 8) (marker 1 9))
+            let (absent, same) := state.handle (.show ⟨0⟩ ⟨9⟩ (marker 1 8) (marker 1 9))
+            let (unseen, still) := state.handle (.show ⟨9⟩ ⟨1⟩ (marker 1 8) (marker 1 9))
+            let (astray, yet) := state.handle (.show ⟨0⟩ ⟨1⟩ (marker 0 8) (marker 1 9))
+            replied shown == .inr () && after.wellFormed &&
+              after.window? ⟨0⟩ ==
+                some { id := ⟨0⟩, buffer := ⟨1⟩, scroll := marker 1 8, selection := marker 1 9 } &&
+              after.window? ⟨1⟩ == state.window? ⟨1⟩ &&
+              after.frame == state.frame &&
+              replied absent == .inl (.noSuchBuffer ⟨9⟩) &&
+              same == state &&
+              replied unseen == .inl (.noSuchWindow ⟨9⟩) &&
+              still == state &&
+              replied astray == .inl .markersOfAnotherText &&
+              yet == state },
+    { name := "a message sets the echo area's text, and the last of two is the one kept"
+      run :=
+        pure <|
+          match onTextModel twoBuffers with
+          | none => false
+          | some state =>
+            let ((), one) := state.handle (.message "first")
+            let ((), two) := one.handle (.message "second")
+            one == { state with echo := "first" } && two == { state with echo := "second" } },
+    { name :=
+        "a request to start a job is appended to the state's starts, with its name and its arguments, in order"
+      run :=
+        pure <|
+          match onTextModel twoBuffers with
+          | none => false
+          | some state =>
+            let (first, one) := state.handle (.startJob "count" [.nat 3])
+            let (_, two) := one.handle (.startJob "load" [.str "a", .bool true])
+            replied first == .inr () && state.starts == #[] &&
+              two.starts ==
+                #[{ name := "count", arguments := [.nat 3] },
+                  { name := "load", arguments := [.str "a", .bool true] }] &&
+              { two with starts := #[] } == state },
+    { name :=
+        "every kind of request, accepted and refused, leaves a well-formed state well formed, and the state with nothing in it answers each without a buffer or a window"
+      run := do
+        let some (state, _) := onTextModel hiddenBuffer | return false
+        let spoiled := stateRequests.filter fun request => !(state.handle request).2.wellFormed
+        unless spoiled.isEmpty do
+          throw
+              (IO.userError
+                s!"{spoiled.length} of the requests left a state that is not well formed")
+        let (read, _) := EditorState.none.handle .read
+        return state.wellFormed && read.buffers.isEmpty && read.windows.isEmpty &&
+            stateRequests.all fun request =>
+              let (_, after) := EditorState.none.handle request
+              after.windows.isEmpty && after.frame == EditorState.none.frame }]
+
 /-- The loop the model tests run: one over the test scheme. -/
 abbrev TestLoop :=
   Loop TestScheme.scheme
@@ -7077,6 +7375,7 @@ def checks : List Check :=
     guardChecks ++
     originChecks ++
     stateChecks ++
+    stateRequestChecks ++
     loopChecks ++
     commitChecks ++
     keymapChecks ++
