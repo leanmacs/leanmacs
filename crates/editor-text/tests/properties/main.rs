@@ -37,6 +37,7 @@ mod changes;
 mod files;
 mod inverses;
 mod log;
+mod motions;
 mod selections;
 
 /// Runs `property` on `cases` values of `strategy`, from a fixed seed, and

@@ -184,6 +184,18 @@
 //!   on an empty line it covers the line break, and at the end of the text
 //!   it covers nothing. No end is clamped: keeping a cursor off a line
 //!   break is the editor's rule.
+//! - **A motion** ([`Motion`]) leads from a position of a text to another
+//!   ([`Snapshot::motion`]), and is refused from an offset that is none.
+//!   It moves by the cell, so the next cell from a position is the end of
+//!   what an inclusive cursor there covers. A *cell start* is a position
+//!   where a cell starts: every position but the one between a carriage
+//!   return and the line feed after it, and not the end of the text. The
+//!   next cell is the first cell start after a position, or the end of the
+//!   text; the previous cell the last before it, or 0. The line break is a
+//!   cell like any other, so both cross lines. A motion walks the rope
+//!   from the position and builds nothing. No answer is clamped: which
+//!   motion a key runs, counts and keeping a cursor on a line are the
+//!   editor's rules.
 //! - **An origin** ([`Origin`]) says who made an edit. It is an opaque
 //!   number given when a transaction is applied, not part of the
 //!   transaction. The crate keeps it in the transaction's log entry
@@ -330,7 +342,8 @@
 //! | Something more of the rope library | A method of the private `rope::Rope`, in this crate's terms | The tests of the read that needs it |
 //! | Another shape of selection | A variant of [`Shape`], with its overlap rule and its biases in `selection`, and what it covers in `extent` | The unit tests of both, and the properties in `tests/properties/selections.rs`, whose generator and reference gain the shape |
 //! | Another kind of marker | A variant of [`Marker`], with its check in [`Text::mark`] and its ends in the private `marker::Markers` | The unit tests of `text`, and a property in `tests/properties/anchors.rs` that compares it with mapping it by hand |
-//! | A change to what a cell is | The private module `cell`, and nowhere else | Its unit tests, and `extents_agree_with_a_reference_on_a_string`, whose reference changes with it |
+//! | A change to what a cell is | The private module `cell`, and nowhere else | Its unit tests, and `extents_agree_with_a_reference_on_a_string` and the reference of `tests/properties/motions.rs`, which change with it |
+//! | Another motion | A variant of [`Motion`], with its arm in [`Snapshot::motion`] | Its unit tests beside it, on the fixture's table, and the reference of `tests/properties/motions.rs`, which gains the motion |
 //! | Another thing the crate needs of a file system | A method of [`fs::Fs`], as the module docs of [`fs`] say | Its rule in [`fs::contract::check`], with a fake written to break it, which the fake and every real adapter are then held to |
 
 mod anchor;
@@ -343,6 +356,7 @@ pub mod fs;
 mod inverse;
 mod log;
 mod marker;
+mod motion;
 mod patch;
 mod point;
 mod rope;
@@ -357,6 +371,7 @@ pub use change::{Bias, Change, ChangeSet, Mapper};
 pub use inverse::{InverseError, Inverted};
 pub use log::{Attribution, LogEntry, LogError, Origin, Source, Subscription};
 pub use marker::{MarkError, Marker, MarkerId};
+pub use motion::Motion;
 pub use patch::{Edit, InputEdit, Patch, Span};
 pub use point::{Point, PointUtf16};
 pub use selection::{Selection, SelectionRange, Shape};

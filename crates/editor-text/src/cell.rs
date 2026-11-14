@@ -5,7 +5,8 @@
 //! this crate: not an extended grapheme cluster, so a letter and a
 //! combining mark after it are two cells. This module is the one place
 //! that says so. What a selection covers ([`Snapshot::extents`]) is
-//! counted in cells, and so must the motions that move a cursor be.
+//! counted in cells, and the motions that move a cursor
+//! ([`Snapshot::motion`]) step by them, forward and back.
 
 use std::ops::Range;
 
@@ -25,6 +26,21 @@ impl Snapshot {
         offset.saturating_add(len)
     }
 
+    /// Where the last cell that starts before the position `offset`
+    /// starts: at the character that ends there, or at the carriage return
+    /// before it when that character is a line feed with one. From between
+    /// a carriage return and its line feed it is the carriage return. At
+    /// the start of the text, where no cell is before, it is 0. This is
+    /// the step back that [`Snapshot::cell_end`] is the step forward of.
+    pub(crate) fn cell_start_before(&self, offset: usize) -> usize {
+        let Some(character) = self.char_before(offset) else {
+            return 0;
+        };
+        let start = offset - character.len_utf8();
+        let paired = character == '\n' && self.char_before(start) == Some('\r');
+        start - usize::from(paired)
+    }
+
     /// The content of the row `row`: its bytes without its line break, so
     /// without the carriage return of a row that ends in a carriage return
     /// and a line feed. A carriage return with no line feed after it is
@@ -40,15 +56,94 @@ impl Snapshot {
 
     /// The character that starts at the position `offset`. `None` at the
     /// end of the text and past it, and for an offset inside a character.
-    fn char_at(&self, offset: usize) -> Option<char> {
+    pub(crate) fn char_at(&self, offset: usize) -> Option<char> {
         let (chunk, start) = self.chunk_at(offset)?;
         chunk.get(offset.checked_sub(start)?..)?.chars().next()
+    }
+
+    /// The character that ends at the position `offset`. `None` at the
+    /// start of the text and past its end, and for an offset inside a
+    /// character.
+    pub(crate) fn char_before(&self, offset: usize) -> Option<char> {
+        // A piece ends on a character boundary, so the piece that holds
+        // the byte before the offset holds all of the character.
+        let (chunk, start) = self.chunk_at(offset.checked_sub(1)?)?;
+        chunk.get(..offset.checked_sub(start)?)?.chars().next_back()
     }
 }
 
 #[cfg(test)]
 mod tests {
     use crate::Text;
+
+    /// Where the last cell before each of `offsets` starts in `text`.
+    fn cell_starts_before(text: &str, offsets: &[usize]) -> Vec<usize> {
+        let snapshot = Text::from(text).snapshot();
+        offsets
+            .iter()
+            .map(|&offset| snapshot.cell_start_before(offset))
+            .collect()
+    }
+
+    #[test]
+    fn the_cell_before_is_one_character_whatever_its_length_in_bytes() {
+        // One, two, three and four bytes.
+        assert_eq!(
+            cell_starts_before("aé€😀b", &[1, 3, 6, 10, 11]),
+            [0, 1, 3, 6, 10]
+        );
+    }
+
+    #[test]
+    fn a_carriage_return_and_the_line_feed_after_it_are_stepped_back_over_as_one() {
+        assert_eq!(cell_starts_before("a\r\nb", &[1, 3, 4]), [0, 1, 3]);
+        assert_eq!(cell_starts_before("\r\n", &[2]), [0]);
+        assert_eq!(cell_starts_before("\r\n\r\n", &[2, 4]), [0, 2]);
+    }
+
+    #[test]
+    fn a_carriage_return_alone_is_stepped_back_over_alone() {
+        assert_eq!(cell_starts_before("a\rb", &[2, 3]), [1, 2]);
+        assert_eq!(cell_starts_before("a\r", &[2]), [1]);
+        assert_eq!(cell_starts_before("\r\r\n", &[1, 3]), [0, 1]);
+    }
+
+    #[test]
+    fn from_between_a_carriage_return_and_its_line_feed_the_cell_before_is_theirs() {
+        assert_eq!(cell_starts_before("a\r\nb", &[2]), [1]);
+        // A line feed alone is a cell of its own.
+        assert_eq!(cell_starts_before("a\nb", &[2]), [1]);
+        assert_eq!(cell_starts_before("\n\n", &[1, 2]), [0, 1]);
+    }
+
+    #[test]
+    fn at_the_start_of_the_text_no_cell_is_before() {
+        assert_eq!(cell_starts_before("", &[0]), [0]);
+        assert_eq!(cell_starts_before("ab", &[0]), [0]);
+        assert_eq!(cell_starts_before("\r\n", &[0]), [0]);
+    }
+
+    #[test]
+    fn a_text_of_many_pieces_is_walked_back_from_its_end_cell_by_cell() {
+        // A few hundred kilobytes, with a line break of each kind.
+        let string = "héllo 😀\r\nwörld\n".repeat(20_000);
+        let snapshot = Text::from(string.as_str()).snapshot();
+        // Where every cell starts, by walking forward.
+        let mut starts = Vec::new();
+        let mut offset = 0;
+        while offset < string.len() {
+            starts.push(offset);
+            offset = snapshot.cell_end(offset);
+        }
+        assert_eq!(starts.len(), 14 * 20_000);
+
+        let mut offset = string.len();
+        for &start in starts.iter().rev() {
+            assert_eq!(snapshot.cell_start_before(offset), start, "{offset}");
+            offset = start;
+        }
+        assert_eq!(offset, 0);
+    }
 
     /// Where the cell at each of `offsets` ends in `text`.
     fn cell_ends(text: &str, offsets: &[usize]) -> Vec<usize> {
