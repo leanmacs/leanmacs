@@ -13,7 +13,7 @@
 //! |---|---|---|---|---|
 //! | `Opened` | `WindowOpened` | 0 | The platform's name | None |
 //! | `Focus` | `WindowFocus` | 1 gained, 0 lost | Empty | None |
-//! | `Key` | `Key` | Bit 0 pressed, bit 1 repeat, bit 2 a dead logical key | What the key produced, or empty | The logical key, the physical key, the modifiers |
+//! | `Key` | `Key` | Bit 0 pressed, bit 1 repeat, bit 2 a dead logical key, bit 3 the interrupt mark | What the key produced, or empty | The logical key, the physical key, the modifiers |
 //! | `Composition` | `Composition` | 0 enabled, 1 preedit, 2 commit, 3 disabled | The preedit or the committed text | None |
 //! | `Pointer` | `Pointer` | 0 press, 1 drag, 2 release, 3 wheel | Empty | The position, the button, the modifiers, the wheel's delta |
 //! | `Resized` | `Resize` | 0 | Empty | The width, the height, the scale |
@@ -38,6 +38,15 @@
 //! [`MODIFIER_CONTROL`], alt [`MODIFIER_ALT`] and the system key
 //! [`MODIFIER_SUPER`]. A float (a position, a delta, a scale) crosses as its
 //! IEEE 754 bits ([`f64::to_bits`]); Lean reads it back with `Float.ofBits`.
+//!
+//! Every input takes one path onto a queue, [`arrive`], whether a window
+//! reported it or it was posted. That path is where the interrupt flag is
+//! raised ([`crate::interrupt`]): the flag is told of the input before the
+//! event is queued, and the event of a press it counted as the interrupt
+//! key carries the interrupt mark, bit 3 of its code ([`KEY_INTERRUPT`]).
+//! The mark is not part of the input: [`event`] never sets it and [`input`]
+//! refuses it, so `input(event(i))` is still `i`, and nothing posted can
+//! carry a mark the library did not set.
 //!
 //! A window is run by the main-thread service: "run the window" is a request
 //! of it ([`crate::main_thread::Request::RunWindow`]), so the window's loop
@@ -64,6 +73,7 @@ use editor_platform::{
 use editor_platform_winit::WinitPlatform;
 
 use crate::events::{Event, EventKind, Queue, QueueId, Source, SourceKind};
+use crate::interrupt::{INTERRUPT, Interrupt};
 use crate::main_thread::{self, Reply, Request};
 use crate::words::Reader;
 use crate::{text, words};
@@ -83,6 +93,13 @@ pub const KEY_REPEAT: u64 = 1 << 1;
 /// The bit of a key event's code that is set for a dead key.
 pub const KEY_DEAD: u64 = 1 << 2;
 
+/// The bit of a key event's code that is set when the key was counted as a
+/// press of the interrupt key as it arrived ([`arrive`]). It is the
+/// library's mark, set after the input is encoded: no input stands for an
+/// event that carries it, so [`input`] refuses it and a poster cannot forge
+/// it.
+pub const KEY_INTERRUPT: u64 = 1 << 3;
+
 /// The bit of a modifier word that is set when shift is held.
 pub const MODIFIER_SHIFT: u64 = 1;
 
@@ -94,6 +111,9 @@ pub const MODIFIER_ALT: u64 = 1 << 2;
 
 /// The bit of a modifier word that is set when the system key is held.
 pub const MODIFIER_SUPER: u64 = 1 << 3;
+
+/// Every bit a modifier word may have set.
+pub(crate) const MODIFIERS: u64 = MODIFIER_SHIFT | MODIFIER_CONTROL | MODIFIER_ALT | MODIFIER_SUPER;
 
 /// The tags of a key's logical key in its words.
 const LOGICAL_UNIDENTIFIED: u64 = 0;
@@ -249,7 +269,7 @@ pub fn event(input: Input, stamp: u64) -> Event {
 }
 
 /// The bits of `modifiers`, as a word ([`MODIFIER_SHIFT`] and the rest).
-fn modifier_bits(modifiers: Modifiers) -> u64 {
+pub(crate) fn modifier_bits(modifiers: Modifiers) -> u64 {
     let bit = |set: bool, bit: u64| if set { bit } else { 0 };
     bit(modifiers.shift, MODIFIER_SHIFT)
         | bit(modifiers.control, MODIFIER_CONTROL)
@@ -393,8 +413,7 @@ pub fn input(kind: EventKind, code: u64, text: &str, words: &[u8]) -> Option<Inp
 /// The modifiers the word `bits` holds; `None` with a bit past the system
 /// key's.
 fn read_modifiers(bits: u64) -> Option<Modifiers> {
-    let all = MODIFIER_SHIFT | MODIFIER_CONTROL | MODIFIER_ALT | MODIFIER_SUPER;
-    (bits & !all == 0).then_some(Modifiers {
+    (bits & !MODIFIERS == 0).then_some(Modifiers {
         shift: bits & MODIFIER_SHIFT != 0,
         control: bits & MODIFIER_CONTROL != 0,
         alt: bits & MODIFIER_ALT != 0,
@@ -414,11 +433,11 @@ fn read_scalars(reader: &mut Reader<'_>) -> Option<String> {
     (0..count).map(|_| read_char(reader.word()?)).collect()
 }
 
-/// A key's words and its code, as the key that produced `text`.
-fn read_key(reader: &mut Reader<'_>, code: u64, text: &str) -> Option<Key> {
-    let all = KEY_PRESSED | KEY_REPEAT | KEY_DEAD;
-    (code & !all == 0).then_some(())?;
-    let logical = match reader.word()? {
+/// A logical key's words, `[logical tag, n, n scalars]`, as the logical
+/// key: the first part of a key's words, and of the interrupt key's
+/// ([`crate::interrupt`]).
+pub(crate) fn read_logical(reader: &mut Reader<'_>) -> Option<LogicalKey> {
+    Some(match reader.word()? {
         LOGICAL_UNIDENTIFIED => (reader.word()? == 0).then_some(LogicalKey::Unidentified)?,
         LOGICAL_CHARACTER => LogicalKey::Character(read_scalars(reader)?),
         LOGICAL_NAMED => LogicalKey::Named(read_scalars(reader)?),
@@ -428,7 +447,16 @@ fn read_key(reader: &mut Reader<'_>, code: u64, text: &str) -> Option<Key> {
             _ => return None,
         }),
         _ => return None,
-    };
+    })
+}
+
+/// A key's words and its code, as the key that produced `text`. A code
+/// with the interrupt mark ([`KEY_INTERRUPT`]) is refused like any bit past
+/// the dead bit: the mark is the library's to set.
+fn read_key(reader: &mut Reader<'_>, code: u64, text: &str) -> Option<Key> {
+    let all = KEY_PRESSED | KEY_REPEAT | KEY_DEAD;
+    (code & !all == 0).then_some(())?;
+    let logical = read_logical(reader)?;
     let physical = match reader.word()? {
         PHYSICAL_UNIDENTIFIED => (reader.word()? == 0).then_some(PhysicalKey::Unidentified)?,
         PHYSICAL_CODE => PhysicalKey::Code(read_scalars(reader)?),
@@ -489,46 +517,74 @@ fn read_pointer(reader: &mut Reader<'_>, code: u64) -> Option<Pointer> {
     })
 }
 
+/// The arrival of `input`, said to have happened at `stamp`, on `queue`:
+/// the one path a window's input takes onto a queue, whether a window
+/// reported it ([`run`]) or it was posted ([`post_input`]). Returns whether
+/// the event was queued: false when the queue has been quit.
+///
+/// `interrupt` is told of the input first ([`Interrupt::arrived`]), so the
+/// flag is up before the event can be pulled. When the input counted as a
+/// press of the interrupt key, the event carries the mark
+/// ([`KEY_INTERRUPT`]), so whoever pulls it lowers the flag for it. An
+/// event the queue refuses will never be pulled, so the flag is lowered
+/// for it here.
+pub fn arrive(queue: &Queue, interrupt: &Interrupt, input: Input, stamp: u64) -> bool {
+    let interrupts = interrupt.arrived(&input);
+    let mut event = event(input, stamp);
+    if interrupts {
+        event.code |= KEY_INTERRUPT;
+    }
+    let queued = queue.push(event);
+    if interrupts && !queued {
+        interrupt.lower();
+    }
+    queued
+}
+
 /// Reads an input of `kind` with `code`, `text` and `words` ([`input`]) and
-/// pushes the event it is onto `queue` from the window source, stamped with
-/// `clock`'s reading: what a window does when it reports that input. Returns
-/// whether the event was queued: false, queueing nothing, when the words do
-/// not read as an input or the queue has been quit.
+/// has it arrive on `queue` ([`arrive`]) from the window source, stamped
+/// with `clock`'s reading: what a window does when it reports that input.
+/// Returns whether the event was queued: false, queueing nothing, when the
+/// words do not read as an input or the queue has been quit.
 pub fn post_input(
     queue: &Queue,
+    interrupt: &Interrupt,
     clock: &impl InputClock,
     kind: EventKind,
     code: u64,
     text: &str,
     words: &[u8],
 ) -> bool {
-    input(kind, code, text, words).is_some_and(|input| queue.push(event(input, clock.now_ns())))
+    input(kind, code, text, words)
+        .is_some_and(|input| arrive(queue, interrupt, input, clock.now_ns()))
 }
 
 /// Runs `platform`'s window on the calling thread, opened as `options` say,
-/// until the platform is asked to close, and pushes each thing the window
-/// reports onto `queue`, stamped with `clock`'s reading when it was
-/// reported.
+/// until the platform is asked to close, and has each thing the window
+/// reports arrive on `queue` ([`arrive`]), stamped with `clock`'s reading
+/// when it was reported, with `interrupt` told of it first.
 ///
 /// Returns the platform's failure, having queued nothing, when no window
 /// could be opened.
-pub fn run<P, C, Q>(
+pub fn run<P, C, Q, I>(
     platform: &P,
     options: WindowOptions,
     clock: C,
     queue: Q,
+    interrupt: I,
 ) -> Result<(), CannotOpen>
 where
     P: Platform + ?Sized,
     C: InputClock + 'static,
     Q: Deref<Target = Queue> + Send + Sync + 'static,
+    I: Deref<Target = Interrupt> + Send + Sync + 'static,
 {
     let report: Report = Arc::new(move |input| {
         // The clock is read first: the stamp is when the window reported the
         // input, not when the event was built. A queue that has been quit
         // drops the event, and there is nobody to tell.
         let stamp = clock.now_ns();
-        queue.push(event(input, stamp));
+        arrive(&queue, &interrupt, input, stamp);
     });
     platform.run(options, report)
 }
@@ -610,6 +666,7 @@ pub(crate) fn run_on_this_thread(
         options,
         &CLOCK,
         QueueId::Editor.queue(),
+        &INTERRUPT,
     )
 }
 
@@ -713,7 +770,15 @@ pub unsafe extern "C" fn editor_ffi_window_post_input(
             words::borrow(words, words_len),
         )
     };
-    post_input(QueueId::Editor.queue(), &CLOCK, kind, code, &text, words)
+    post_input(
+        QueueId::Editor.queue(),
+        &INTERRUPT,
+        &CLOCK,
+        kind,
+        code,
+        &text,
+        words,
+    )
 }
 
 /// The time on the process's input clock, in nanoseconds since the clock
@@ -726,6 +791,7 @@ pub extern "C" fn editor_ffi_input_clock_now() -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::interrupt::InterruptKey;
     use editor_platform::{
         Button, Key, LogicalKey, Modifiers, PhysicalKey, Pointer, PointerAction, Resize, WheelDelta,
     };
@@ -780,19 +846,37 @@ mod tests {
     }
 
     /// Starts [`run`] of `platform` on a thread of its own, onto `queue`,
-    /// stamped by a clock that counts its readings, and returns where its
-    /// result arrives. The thread is detached, so a run that never returns
-    /// cannot keep the test from ending.
+    /// stamped by a clock that counts its readings, with an interrupt flag
+    /// of its own that has no key, and returns where its result arrives.
+    /// The thread is detached, so a run that never returns cannot keep the
+    /// test from ending.
     fn start(
         platform: &Arc<ScriptedPlatform>,
         options: WindowOptions,
         queue: &Arc<Queue>,
     ) -> Receiver<Result<(), CannotOpen>> {
+        start_watched(platform, options, queue, &Arc::new(Interrupt::new()))
+    }
+
+    /// [`start`], with `interrupt` as the flag the run tells of each input.
+    fn start_watched(
+        platform: &Arc<ScriptedPlatform>,
+        options: WindowOptions,
+        queue: &Arc<Queue>,
+        interrupt: &Arc<Interrupt>,
+    ) -> Receiver<Result<(), CannotOpen>> {
         let (finished, done) = mpsc::channel();
         let platform = Arc::clone(platform);
         let queue = Arc::clone(queue);
+        let interrupt = Arc::clone(interrupt);
         thread::spawn(move || {
-            let _ = finished.send(run(&*platform, options, CountingClock::new(), queue));
+            let _ = finished.send(run(
+                &*platform,
+                options,
+                CountingClock::new(),
+                queue,
+                interrupt,
+            ));
         });
         done
     }
@@ -1347,6 +1431,7 @@ mod tests {
 
         assert!(post_input(
             &queue,
+            &Interrupt::new(),
             &clock,
             posted.kind,
             posted.code,
@@ -1363,6 +1448,7 @@ mod tests {
 
         assert!(!post_input(
             &queue,
+            &Interrupt::new(),
             &CountingClock::new(),
             EventKind::Resize,
             0,
@@ -1372,6 +1458,145 @@ mod tests {
         queue.quit();
 
         assert_eq!(queue.next(), Event::quit());
+    }
+
+    /// A press of the character `g` with control held, and the flag whose
+    /// interrupt key it is: every modifier but shift is compared.
+    fn interrupt_key() -> (Input, Arc<Interrupt>) {
+        let interrupt = Interrupt::new();
+        interrupt.set_key(Some(InterruptKey {
+            logical: LogicalKey::Character("g".into()),
+            modifiers: MODIFIER_CONTROL,
+            mask: MODIFIER_CONTROL | MODIFIER_ALT | MODIFIER_SUPER,
+        }));
+        let key = Input::Key(Key {
+            pressed: true,
+            logical: LogicalKey::Character("g".into()),
+            modifiers: held(false, true, false, false),
+            ..Key::unidentified()
+        });
+        (key, Arc::new(interrupt))
+    }
+
+    #[test]
+    fn a_press_of_the_interrupt_key_arrives_marked_and_the_flag_is_up_when_it_is_pulled() {
+        let (key, interrupt) = interrupt_key();
+        let queue = Arc::new(Queue::new());
+        // The puller is parked before the key arrives, and reads the flag
+        // the moment it has the event.
+        let (pulled, events) = mpsc::channel();
+        let puller = (Arc::clone(&queue), Arc::clone(&interrupt));
+        thread::spawn(move || {
+            let event = puller.0.next();
+            let _ = pulled.send((event, puller.1.raised()));
+        });
+
+        assert!(arrive(&queue, &interrupt, key.clone(), 7));
+
+        let (event, raised) = events
+            .recv_timeout(DEADLINE)
+            .expect("the key reaches the puller");
+        let unmarked = super::event(key, 7);
+        assert_eq!(event.code, unmarked.code | KEY_INTERRUPT);
+        assert_eq!(event.code, KEY_PRESSED | KEY_INTERRUPT);
+        assert_eq!(
+            Event {
+                code: unmarked.code,
+                ..event
+            },
+            unmarked
+        );
+        assert!(raised, "the flag is up before the event can be pulled");
+        assert!(interrupt.raised(), "pulling the event does not lower it");
+    }
+
+    #[test]
+    fn an_input_that_is_not_the_interrupt_key_arrives_as_its_event_and_raises_nothing() {
+        let (key, interrupt) = interrupt_key();
+        let queue = Queue::new();
+        let Input::Key(key) = key else {
+            unreachable!("the interrupt key is a key")
+        };
+        let release = Input::Key(Key {
+            pressed: false,
+            ..key
+        });
+
+        for input in [release, Input::Focus(true), pointer_press()] {
+            assert!(arrive(&queue, &interrupt, input.clone(), 3));
+
+            assert_eq!(queue.next(), event(input, 3));
+        }
+        assert!(!interrupt.raised());
+    }
+
+    #[test]
+    fn an_interrupt_key_a_quit_queue_refuses_leaves_the_flag_down() {
+        let (key, interrupt) = interrupt_key();
+        let queue = Queue::new();
+        queue.quit();
+
+        assert!(!arrive(&queue, &interrupt, key, 1));
+
+        assert!(!interrupt.raised(), "nothing will pull the key");
+    }
+
+    #[test]
+    fn a_posted_press_of_the_interrupt_key_takes_the_arrival_path() {
+        let (key, interrupt) = interrupt_key();
+        let queue = Queue::new();
+        let posted = event(key, 0);
+        let bytes = crate::words::tests::buffer(&posted.words);
+
+        assert!(post_input(
+            &queue,
+            &interrupt,
+            &CountingClock::new(),
+            posted.kind,
+            posted.code,
+            "",
+            &bytes
+        ));
+
+        assert_eq!(queue.next().code, posted.code | KEY_INTERRUPT);
+        assert!(interrupt.raised());
+    }
+
+    #[test]
+    fn a_window_that_reports_the_interrupt_key_raises_the_flag_and_marks_the_event() {
+        let (key, interrupt) = interrupt_key();
+        let platform = Arc::new(ScriptedPlatform::new(vec![key, Input::Focus(true)]));
+        let queue = Arc::new(Queue::new());
+
+        let done = start_watched(&platform, WindowOptions::default(), &queue, &interrupt);
+
+        let codes: Vec<(EventKind, u64)> = pull(&queue, 3)
+            .into_iter()
+            .map(|event| (event.kind, event.code))
+            .collect();
+        assert_eq!(
+            codes,
+            [
+                (EventKind::WindowOpened, 0),
+                (EventKind::Key, KEY_PRESSED | KEY_INTERRUPT),
+                (EventKind::WindowFocus, 1),
+            ]
+        );
+        assert!(interrupt.raised());
+        platform.close();
+        assert_eq!(done.recv_timeout(DEADLINE), Ok(Ok(())));
+    }
+
+    #[test]
+    fn a_key_code_with_the_interrupt_mark_reads_as_no_input() {
+        assert_eq!(KEY_INTERRUPT, 8);
+        let key = event(interrupt_key().0, 0);
+
+        assert!(read(EventKind::Key, key.code, "", &key.words).is_some());
+        assert_eq!(
+            read(EventKind::Key, key.code | KEY_INTERRUPT, "", &key.words),
+            None
+        );
     }
 
     #[test]
@@ -1458,6 +1683,7 @@ mod tests {
                 WindowOptions::default(),
                 CountingClock::new(),
                 queue,
+                Arc::new(Interrupt::new()),
             );
 
             assert_eq!(

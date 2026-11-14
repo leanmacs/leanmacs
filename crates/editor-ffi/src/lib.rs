@@ -249,6 +249,34 @@
 //! in `tests/window.rs`, an integration test of its own because the queue
 //! is process-wide and `tests/c_api.rs` quits it.
 //!
+//! ## The interrupt flag
+//!
+//! A flag the library raises as the interrupt key arrives, before the key
+//! is queued, so that Lean can ask between the steps of a command whether
+//! the user wants it stopped. [`interrupt`] has the detail. Its rules:
+//!
+//! - **The primitive is here; the policy is Lean's.** The library counts
+//!   the presses of the interrupt key that have arrived, and marks each of
+//!   their events ([`window::KEY_INTERRUPT`]). Which key that is, when the
+//!   flag is asked and when it is lowered are Lean's.
+//! - **The key goes in as words**
+//!   ([`interrupt::editor_ffi_interrupt_key_set`]): a logical key, the
+//!   modifiers and a mask of the modifiers to compare, so Lean's rule for
+//!   which keys are the same stays in Lean.
+//! - **The flag is raised on the arrival path** ([`window::arrive`]), the
+//!   one path a window's input takes onto the editor queue, reported or
+//!   posted.
+//! - **The flag is a count, and Lean lowers it**
+//!   ([`interrupt::editor_ffi_interrupt_lower`]), once for each marked event
+//!   it takes off the queue. Pulling an event lowers nothing.
+//!
+//! Tests: the unit tests of `interrupt.rs`, and those of `window.rs` for the
+//! arrival path, each on a flag and a queue of their own;
+//! `the_interrupt_key_raises_the_flag_as_it_arrives_and_lean_lowers_it` in
+//! `tests/interrupt.rs`, an integration test of its own because the flag
+//! and the queue are process-wide. On the Lean side: `interruptChecks` of
+//! `ffi-test`.
+//!
 //! ## Calls go one way
 //!
 //! Lean calls this library. The library never calls a Lean function and
@@ -328,6 +356,7 @@ pub mod counter;
 pub mod document;
 pub mod events;
 pub mod files;
+pub mod interrupt;
 pub mod inverse;
 pub mod log;
 pub mod main_thread;
