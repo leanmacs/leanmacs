@@ -77,6 +77,21 @@ a rename, and is told what to expect on disk: the stamp a load or the last
 save answered, no file, or whatever is there. A save that finds another
 file than it expects is refused, with what is there, and writes nothing.
 
+The editor ships two commands over those, compiled in, so they are there
+with no config and `show` lists them before config's
+(`lean/Editor/Files.lean`):
+
+| Command | Does |
+|---|---|
+| `open-file` | Opens the file at the path that is its first argument in the window it is called with: it starts the job `load-file`, and when the file is loaded a buffer of its text, called by its base name, is shown there. A path a buffer already holds is shown at once. A file that is not there, or is refused for another reason, is said in the echo area, `cannot open <path>: <why>`, and the window shows what it showed. |
+| `save-buffer` | Saves the buffer of the window it is called with to its file: it starts the job `save-file`, and when the file is written the echo area says `wrote <path>` and the buffer is no longer modified. A file that changed on disk since it was loaded is left as it is, and the echo area says `cannot save <path>: <why>`. With `true` as its first argument it writes whatever is on disk. |
+
+`run <name>` hands a command no argument, so a script cannot give
+`open-file` its path. Config's own command calls the operation the command
+is written with, `Files.open view path`, as the fifth fixture below does;
+`Files.save buffer` is the save. While a load or a save is in flight the
+editor goes on answering: what is typed meanwhile is handled first.
+
 A `setup` registers each command name and each job name once. One that
 registers a name twice is rejected, like a chunk that does not elaborate.
 

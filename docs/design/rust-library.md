@@ -101,7 +101,14 @@ the job interface's file requests, which a job awaits
 ([lean-runtime.md](lean-runtime.md), "Interfaces and models";
 [concurrency.md](concurrency.md), "Sharing state", says how a job names a
 snapshot). Lean's own interface for small reads and writes, and watching,
-are not built.
+are not built. The editor's commands over them are built
+(`lean/Editor/Files.lean`, the command loop's phase 9;
+[concurrency.md](concurrency.md), "Getting results back"): the open command
+loads under a limit of 1 GiB, which is the editor's policy and a round
+number with no measurement behind it, and the save command expects the
+stamp the buffer holds, or whatever is there when it is forced. Nothing
+reloads a buffer whose file changed on disk, and nothing watches one: a
+change is found when a save is asked for.
 
 - **The port.** `editor_text::fs::Fs`, defined by `editor-text` in its own
   terms, with seven methods. `stat` says what is at a path, following links,

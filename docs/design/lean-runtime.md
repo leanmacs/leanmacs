@@ -686,6 +686,8 @@ made of state requests and text requests. Config sees it through
 | Set and read a buffer-local value; set the major mode, add and remove a minor mode | `BufferId.setValue`, `value?`, `ViewId.setMajorMode`, `BufferId.addMinorMode`, `removeMinorMode` | No |
 | Say something in the echo area | `message` | No |
 | Start a job, with arguments | `startJob`, for a job registered with `jobWith` or `job` | No: the host starts it once the command has ended |
+| Break a line with the buffer's line ending, and ask whether a buffer is modified | `ViewId.insertLineBreak`, `Target.insertLineBreak`; `BufferId.isModified` | Yes: `apply`, and the text's revision |
+| Open a file into a buffer and save a buffer to its file | `Files.open`, `Files.save` (`lean/Editor/Files.lean`), each of which starts a compiled job | For the snapshot a save writes; the file is the job's to load or save |
 
 - **Edits go through `apply`**, as one transaction made by the user
   (`Origin.user`): one revision, one entry of the edit log, and one step
@@ -710,14 +712,27 @@ made of state requests and text requests. Config sees it through
   (`replaceRange_insert_delete`), from `TextModel.splice_insert_delete` and
   `TextModel.applyChanges_replacing` (`lean/Editor/Text/Model.lean`). The
   theorems are in a module of their own so that the API imports no model.
-- **Out of the API still**: files (phase 9), prompts (phase 10), and
-  commands that ask layout a question (phase 15).
+- **Files are commands over the API, not requests of the port**
+  (`lean/Editor/Files.lean`, built by the command loop's phase 9). A
+  command cannot wait, so opening and saving are each a command that
+  starts a job and the command the job finishes with
+  ([concurrency.md](concurrency.md), "Getting results back"). What they
+  needed of the state is three requests: one that attaches a file to a
+  buffer, and two that begin and end a save in flight. The jobs are
+  compiled, registered beside the commands
+  (`lean/Editor/Files/Compiled.lean`), which is the one module of the two
+  that names the registry: config sees the commands through `Editor.lean`
+  and not the registrations.
+- **Out of the API still**: prompts (phase 10), and commands that ask
+  layout a question (phase 15).
 
 | Piece | Where |
 |---|---|
 | The operations | `lean/Editor/Api.lean` |
 | Their cases, played on the models and on the real binding | `lean/Editor/Api/Cases.lean` |
 | What is proved of them on the text model | `lean/Editor/Api/Theorems.lean` |
+| The file commands, their jobs' work, their orders and what they say in the echo area | `lean/Editor/Files.lean` |
+| The file commands and their jobs as compiled code registers them | `lean/Editor/Files/Compiled.lean` |
 | The loop on the models with jobs, for tests of a command that starts a job: a job reads the snapshots commands took, and its command is handed what the job loaded | `lean/Editor/Loop/Driver.lean` |
 
 ## Where state lives
@@ -727,7 +742,8 @@ made of state requests and text requests. Config sees it through
 | Buffers, windows, keymaps, registers, the agent table | Compiled Lean, on the editor thread. Buffers, windows, the frame's split tree, the echo area and the preedit are the editor state (`lean/Editor/State.lean`), which the command loop (`lean/Editor/Loop.lean`) holds and is the one writer of: a command changes it by requests the loop answers. Buffers are kept in slots, so a buffer's id is never used again, and neither is a view's | Untouched | Lost unless its owner persists it |
 | A buffer's local values: plain trees by name (`Value`), as a store's cell holds | Compiled Lean, a field of the buffer in the editor state, set and read by a command (`BufferId.setValue`, `BufferId.value?`) | Untouched: a tree names no type of config's | Lost |
 | The input scheme's state: the pending keys and what the scheme keeps for each view (the Vim scheme's states, its last change) | Compiled Lean, in the command loop, which runs one scheme for its life | Untouched | Lost |
-| Compiled commands, key bindings and modes | Compiled Lean, in the registry, for the owner `compiled` | Untouched: a reload replaces config's | Registered again when the host starts |
+| Compiled commands, jobs, key bindings and modes | Compiled Lean, in the registry, for the owner `compiled`. The executable ships the file commands, `open-file` and `save-buffer`, and their jobs, `load-file` and `save-file` (`lean/Editor/Files/Compiled.lean`) | Untouched: a reload replaces config's, and cancels config's jobs only, so a compiled job that is running goes on | Registered again when the host starts |
+| A save in flight: the snapshot a save writes and the state its text was in | Compiled Lean, with the buffer's file in the editor state, from the save command until the save's result is delivered | Untouched | Lost with the buffer |
 | A buffer's modes: its major mode and its minor modes, by name | Compiled Lean, a field of the buffer in the editor state | Untouched: a name whose mode a reload drops contributes nothing | Lost |
 | A mode's own state | A compiled mode's, a typed field where the editor state's table puts it (none ships); a config mode's, a store its `setup` declares, whose commands fill its roles and suffixes, with per-buffer state in the buffer's local values, or inside the store's value | As for compiled state, and as for a store | As for compiled state, and as for a store |
 | Text, kept inverses, anchors | Rust, behind handles | Untouched | Files on disk; the kept inverses are lost |

@@ -67,6 +67,14 @@ are in `Editor/Files/Compiled.lean`.
 - **What the state refuses is said too** (`notShown`): a buffer that could
   not be added, or shown in the asking view. The buffer and its text, if
   they were made, stay.
+- **A delivery that is interrupted leaves a text nobody holds.** The job's
+  command makes requests of the text store, so the interrupt key can stop
+  it. Its buffer and its window are rolled back, and the text it made is
+  not released, as for every command (`Editor/Loop.lean`, "What is not
+  undone"). The file is opened again.
+- **Not built**: a buffer for a file that is not there yet. Opening a path
+  with no file is an error, and saving under another name waits for a
+  prompt or a command line to name it.
 
 ## Save
 
@@ -136,6 +144,12 @@ and that sentence. So "cannot read" and "cannot write", which are one
 refusal of the port (`denied`), read differently. What a refusal says is
 `Editor/File.lean`'s to change: a test compares the echo area with these
 functions applied to the refusal it expects, never with the sentence.
+
+No check produces `denied`. The model of files has no permissions, and a
+check that took a permission from a real file would fail where the gate
+runs as root, in the Linux container. The route is the same for every
+refusal, and the checks take it with `notFound`, `changed`, `tooLarge` and
+`relativePath`.
 
 ## An order crosses as arguments
 

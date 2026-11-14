@@ -210,6 +210,29 @@ arrived before it (`Editor/Loop.lean`, "Jobs from commands").
 
 Pinned by `ModelTest.driverChecks`.
 
+## Files
+
+Opening a file and saving a buffer are not operations here: each is a
+command that starts a job, in `Editor/Files.lean` (`Files.open`,
+`Files.save`), written over this API. What they need of the editor state is
+here:
+
+- `BufferId.attachFile` has a buffer hold a file ("Buffers", above).
+- `BufferId.beginSave id snapshot state` records a save of the buffer as
+  in flight, with the snapshot it writes and the state the text was in,
+  and `BufferId.endSave id snapshot stamp` ends it with what the save
+  answered: with a stamp, the buffer's file has it and that state is the
+  one marked as saved; with none, neither changes (`Editor/State.lean`, "A
+  buffer's file"). The loop releases the snapshot once the command that
+  ended the save has run to its end. A command that is not a save has no
+  use for either.
+- `BufferId.isModified` ("Undo", above) and `insertLineBreak`
+  ("Selections", above) read what a file left with its buffer: the saved
+  state and the line ending.
+
+The three state requests ask the library nothing, and are pinned once, on
+the models (`ModelTest.stateRequestChecks`, `ModelTest.fileCommandChecks`).
+
 Each operation that makes a text request has a case in
 `Editor/Api/Cases.lean`, played on the editor's models and on the real
 binding.

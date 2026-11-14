@@ -27,7 +27,11 @@ with (`setup` and stores, `Editor/Setup.lean`). The job port
 and with the job port the file requests a job makes (`Editor/File.lean`):
 config loads and saves files with `File.load` and `File.save`. The file
 commands are here too (`Editor/Files.lean`): a command of config's opens a
-file into a buffer with `Files.open`, which starts the job that loads it.
+file into a buffer with `Files.open`, which starts the job that loads it,
+and saves a buffer to its file with `Files.save`, which starts the job that
+writes it. Their registrations as compiled commands and jobs
+(`Editor/Files/Compiled.lean`) name the registry, which is the config
+session's, and are not imported.
 
 How a key becomes an invocation is here too, so config can come to write
 bindings: input schemes (`Editor/InputScheme.lean`), with the keymaps they

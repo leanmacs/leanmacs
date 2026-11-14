@@ -180,6 +180,7 @@ Cargo for the static library:
 | `Editor` | The interfaces and their models, editor state, the command loop, jobs, the config session. The command loop runs one input scheme: each key press is stepped through it, and the invocation it yields is looked up in the registry of compiled and config commands and run as a command, which the loop rolls back when it is refused or interrupted. |
 | `Editor.UndoTree` | The undo tree: a text's history as a tree of states, in plain Lean over the text interface. Groups, undo, redo, branches, reverting the open group, and the saved state. |
 | `Editor.File` | Loading and saving as a job asks for them: the two file requests of the job interface, with their data (a stamp, line endings, what a save expects, the refusals), and a pure model of the files a job reaches. The work is the library's; a file's bytes never pass through a Lean string. |
+| `Editor.Files` | The file commands: opening a file into a buffer and saving a buffer to its file, each a command that starts a job and the command the job finishes with, so the editor thread never waits for a file. `Editor.Files.Compiled` registers them and their jobs as compiled code, which the executable ships. |
 | Standard library | evil, the minibuffer; later agents, review, version control, the rdm client. |
 | `Main` | Wires the real bindings together and starts the loop. |
 

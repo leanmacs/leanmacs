@@ -95,12 +95,32 @@ registered command:
   with its arguments and its keys;
 - `dispatchRollbackChecks`: a command that fails leaves the texts, the
   windows' markers, the history and the scheme's state as they were, what
-  cannot be rolled back is said, and a move in the history is not taken
-  back;
+  cannot be rolled back is said, a move in the history is not taken back,
+  and a mark of the saved state is;
 - `dispatchInterruptChecks`: on the watch model, an interrupt key that
   arrives while a command runs, before one and between two;
 - `dispatchSlowChecks`: on the watch model's clock, which a command's
-  requests move, a command slower than the threshold is logged once.
+  requests move, a command slower than the threshold is logged once;
+- `dispatchGiveUpChecks`: what the loop gives up once a command has run to
+  its end, and not before: a closed window's markers, a removed buffer's
+  text, and the snapshot of a save that is no longer in flight.
+
+Jobs started from commands are checked on the loop's driver over the
+editor's models and the job model (`Editor/Loop/Driver.lean`):
+
+- `driverChecks`: a command starts a job by its name, the job's result
+  comes back as a command, events fed meanwhile are handled first, a job
+  reads a snapshot its command took, and a job's command is handed what its
+  own job loaded;
+- `fileCommandChecks`: the file commands (`Editor/Files.lean`) on that
+  driver, over the model of files (`Editor/File/Model.lean`), with keys
+  bound to the commands and jobs registered as the test says: opening a
+  file into a buffer, a path that is open, a file that is not there, and
+  what is typed while a load is in flight; saving a buffer, a file that
+  changed on disk, a save that reports late, a forced save, and what each
+  command says when it starts nothing; and the commands and jobs as
+  compiled code registers them (`Editor/Files/Compiled.lean`). They touch
+  no file.
 
 The undo tree (`Editor/UndoTree.lean`) is plain Lean over the text port, so
 its cases (`Editor/UndoTree/Cases.lean`) are properties of the same kind and

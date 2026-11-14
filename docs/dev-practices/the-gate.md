@@ -95,8 +95,23 @@ is checked there too, on the loop's driver over the models and the job
 model (`lean/Editor/Loop/Driver.lean`): the job is handed its argument,
 its result comes back as a command, and events fed meanwhile are handled
 first; a job saves a snapshot its command took, and a job's command is
-handed what its job loaded and no other job's. The build checks the theorem that inserting at a position and
-deleting what was inserted leaves the text
+handed what its job loaded and no other job's. The file commands
+(`lean/Editor/Files.lean`) are checked on that driver, over the model of
+files, with no file touched (`ModelTest.fileCommandChecks`): opening a file
+makes a buffer of its text, named by its base name, with its file's stamp
+and dominant line ending; what is typed while a load is in flight is
+handled first; a path that is open is shown and not loaded again; a save
+writes the buffer's text and leaves the buffer not modified, with the
+status line's modified field gone; a save of a file that changed on disk
+leaves the file and says so; open then save with no edit writes the file
+and leaves its bytes as they were, for LF, CRLF, both and bytes that are
+not UTF-8; a second save while one is in flight, a buffer with no file and
+a job that is not registered are each said in the echo area; and a save
+that reports late marks the state it wrote. The editor state's side of a
+save in flight, the snapshot the loop releases once a save has ended and
+the saved mark a rollback takes back are checked with the state requests
+and the loop's dispatch. The build checks the theorem that inserting at a
+position and deleting what was inserted leaves the text
 (`lean/Editor/Api/Theorems.lean`). The task
 shows by behaviour
 that they build without the library. It puts a `cargo` that always fails
@@ -160,7 +175,21 @@ to the editor's table of snapshots until the job's command takes it in, and
 that what a job loaded is freed when the job is settled. `ffi-test` checks
 the bindings of the file service, and `config-test` a job from config that
 loads a file through the headless host, each in temporary directories of
-their own.
+their own. `config-test` also runs the file commands and their jobs as
+compiled code registers them (`ConfigTest.fileChecks`), through headless
+hosts over the real elaborator, queue, text binding and file service, on
+real files: each check makes its temporary directories, writes its files'
+bytes itself and hands its host the paths. They are the phase's acceptance
+tests on the real library: a file is opened into a buffer the focused view
+shows, named by its base name; a modified buffer is saved, the file's bytes
+are its text and the status line loses its modified field; a path already
+open starts no second load; a file with LF endings and one with CRLF
+endings, each opened and saved with no edit, have the bytes they had, with
+the save job seen to end `ok` and the echo area to say the file was
+written; a file changed on disk is left as it is, with the changed-on-disk
+refusal and the file's stamp in the echo area; and a path with no file
+says so and leaves the window. These hosts share one table of waits and
+one completion pump.
 
 `config-test` also runs jobs through the headless host, on a fake clock it
 moves: a job's handler runs on the editor thread, a reload that installs
@@ -177,8 +206,10 @@ through the host's loop as well: the driver's `run` makes the frame, is
 rolled back when it fails and is stopped by the interrupt key; a key's
 command starts a job with an argument, keys sent while the job sleeps on
 the fake clock are handled before its result, and its command then runs
-with the value the job computed; and a job's command that loops is stopped
-by the interrupt key. `contract-test` runs the watch port's contract against its
+with the value the job computed; a job's command that loops is stopped
+by the interrupt key; and a compiled job a host is handed is started by a
+compiled command before any config is loaded, and is not cancelled by a
+reload. `contract-test` runs the watch port's contract against its
 real binding, over the library's interrupt flag, and has the interrupt key
 arrive at a known request of a command.
 
