@@ -453,8 +453,9 @@ The steps:
    the display, a little over half that size at scale 2. **Weight.**
    Pass: by eye, the window's text is not lighter than TextEdit's in
    the same family and size. Check it in Menlo (`--family Menlo`, as
-   above) and in the fixture's default family (`mise run
-   window-by-hand`). On macOS the window draws to Core Text's weight
+   above): `mise run window-by-hand` lays the fixture out in Noto Sans,
+   which TextEdit shows only where Noto Sans is installed. On macOS the
+   window draws to Core Text's weight
    (`Settings::core_text()`, "The renderer, as built" in
    `docs/design/text-and-display.md`); before that change it was known
    to look lighter. Record what was seen under "The weight beside
@@ -601,9 +602,8 @@ seen at steps 2 to 6.
 **For the owner.** This is the check that the window's text, drawn on
 macOS to Core Text's weight, no longer looks lighter than TextEdit's
 (rdm task `editor-render-text-lighter-than-core-text`). The weight was
-fitted to Core Text drawing offscreen, and the window was never seen
-beside TextEdit since; only a person at the display can say whether it
-now looks right.
+fitted to Core Text drawing offscreen; only a person at the display can
+say whether it looks right beside TextEdit.
 
 On macOS, at a display of scale 2, run
 
@@ -611,16 +611,29 @@ On macOS, at a display of scale 2, run
 cargo run --locked --package editor-ffi --example window -- --until-closed --no-picture --family Menlo
 ```
 
-and then `mise run window-by-hand`, and put each beside TextEdit
-showing `the window draws this` in the same family, regular, 14 points,
-at 100%. Pass: the window's text is not lighter than TextEdit's.
+and put it beside TextEdit showing `the window draws this` in Menlo
+Regular, 14 points, at 100%. Pass: the window's text is not lighter than
+TextEdit's. (`mise run window-by-hand` is not this check: it lays the
+fixture out in its default family, Noto Sans, and TextEdit shows that
+only where Noto Sans is installed.)
 
 Record here, and in the task: the date, the machine and the display's
-scale; for Menlo and for the fixture's default family, whether the
-window's text looked lighter, as heavy, or heavier than TextEdit's; and,
-if it helps, a screenshot of each pair.
+scale; whether the window's text looked lighter, as heavy, or heavier
+than TextEdit's; and, if it helps, a screenshot of the pair.
 
-Not yet run.
+What the owner saw, on 2026-11-14, on the Mac the checks above ran on
+(Apple M5 Max; the display's scale not stated):
+
+- In Menlo, by the command above, beside TextEdit in Menlo Regular 14 pt
+  at 100%: the weight looks right, as heavy as TextEdit's and not
+  lighter. **Passes.**
+- In the fixture's default family: not compared. The first run was `mise
+  run window-by-hand`, in Noto Sans, beside TextEdit in Menlo; the owner
+  saw the family was wrong. TextEdit shows Noto Sans only where it is
+  installed, so that pair was not made like with like.
+- Outside this check: "some of the spacing and maybe the 'w' are not
+  quite the same" as TextEdit's. That is rdm task
+  `editor-render-glyph-spacing-and-shape-vs-core-text`.
 
 ## The system's fonts, on demand
 

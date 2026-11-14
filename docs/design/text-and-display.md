@@ -1487,10 +1487,13 @@ and the journal read from Lean.
   25 px ("Risks", in [rendering-prior-art.md](rendering-prior-art.md);
   read, not verified): at other sizes the match is not measured (rdm
   task `editor-render-weight-at-other-sizes`). The target is Core Text
-  drawing offscreen into a bitmap, not TextEdit on screen; whether the
-  window now looks as heavy as TextEdit is the owner's to say by eye
-  (`docs/dev-practices/on-demand-checks.md`, "The weight beside
-  TextEdit, by eye"), and is not yet said.
+  drawing offscreen into a bitmap, not TextEdit on screen. Beside
+  TextEdit, by eye, the owner saw on 2026-11-14 that the window in Menlo
+  14 pt is as heavy as TextEdit in Menlo Regular 14 pt at 100%, not
+  lighter (`docs/dev-practices/on-demand-checks.md`, "The weight beside
+  TextEdit, by eye"; the display's scale not stated). Some of the
+  spacing, and maybe the `w`, are not quite the same as TextEdit's: rdm
+  task `editor-render-glyph-spacing-and-shape-vs-core-text`.
 
   Pinned in `crates/editor-render-wgpu/src/weight_tests.rs`: the macOS
   setting within a tenth of both counts, and no worse than its
@@ -2104,8 +2107,8 @@ frame journal and the renderer's counters.
 - **What only a person at a display can tune.** Hinting (on by
   default, off at the macOS weight), the weight of text (a per-platform
   setting: linear by default, and on macOS fitted to Core Text's drawing
-  of one sentence at one size, "The renderer, as built"; whether it
-  looks right beside TextEdit is the owner's to say by eye), the
+  of one sentence at one size, "The renderer, as built"; beside
+  TextEdit in Menlo the owner saw it as heavy, by eye), the
   amount of synthetic bold, where an underline and a
   strike-through sit (the frame carries no metric for either), and the
   default atlas budget and page size. The order of a display's colour
