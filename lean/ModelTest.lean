@@ -18,6 +18,7 @@ import Editor.Job.Model
 import Editor.Job.Pool
 import Editor.Key.Notation
 import Editor.Loop.Driver
+import Editor.Minibuffer.Compiled
 import Editor.Mode
 import Editor.Role
 import Editor.Scene
@@ -112,12 +113,16 @@ editor's models and the job model (`Editor/Loop/Driver.lean`):
   comes back as a command, events fed meanwhile are handled first, a job
   reads a snapshot its command took, and a job's command is handed what its
   own job loaded;
-- `promptChecks`: prompts on that driver, with commands written here under
-  keys of the global keymap: an accepted prompt's answer is handed back
-  with the step, and the answer's command runs before the next event, with
-  the asking view as its target; a continuation with no command, one that
-  is refused and one that asks again; and rollback and the interrupt around
-  an open prompt;
+- `promptChecks`: prompts on that driver. `promptLoopChecks`, with commands
+  written here under keys of the global keymap: an accepted prompt's
+  answer is handed back with the step, and the answer's command runs
+  before the next event, with the asking view as its target; a
+  continuation with no command, one that is refused and one that asks
+  again; and rollback and the interrupt around an open prompt.
+  `promptModeChecks`, with the minibuffer's commands and its mode
+  (`Editor/Minibuffer/Compiled.lean`) in a registry whose active keymaps
+  the loop is handed: the phase's acceptance criteria, with the accept key
+  and the cancel key read from the test scheme's role table;
 - `fileCommandChecks`: the file commands (`Editor/Files.lean`) on that
   driver, over the model of files (`Editor/File/Model.lean`), with keys
   bound to the commands and jobs registered as the test says: opening a
@@ -9564,7 +9569,7 @@ def promptEcho (driver : TestDriver) : String :=
 and the test scheme, with commands written here under keys of the global
 keymap: the answer a step hands back, the answer's command run before the
 next event, and rollback and the interrupt around an open prompt. -/
-def promptChecks : List Check :=
+def promptLoopChecks : List Check :=
   let answer (text : String) : List Argument := [.str text, .nat 7]
   let closed (driver : TestDriver) : Bool :=
     let state := driver.loop.state
@@ -9727,6 +9732,265 @@ def promptChecks : List Check :=
             accepted.pending.map (fun job => (job.id, job.name)) == #[(1, "double")] &&
               closed accepted &&
               driverText finished == some "[42]" }]
+
+/-- The commands of the minibuffer checks that `promptCommands` does not
+have, by name: `ask-ada` asks as `ask` does, with the initial value `Ada`;
+`to-window` focuses view 0, and `to-minibuffer` the minibuffer's view;
+`close-asker` closes the view the open prompt was asked from. -/
+def minibufferCommands : List (String × Dispatched) :=
+  let ran (run : EditorM Unit) : Dispatched := fun _ => do
+    run
+    return none
+  [("ask-ada", ran (discard <| prompt "Name: " asked "Ada")),
+    ("to-window", ran (discard <| (⟨0⟩ : ViewId).focus)),
+    ("to-minibuffer",
+      ran do
+        if let some view := (← editorState).minibufferView? then
+          discard view.focus),
+    ("close-asker",
+      ran do
+        if let some asking := (← editorState).prompt then
+          discard asking.asker.close)]
+
+/-- The global bindings of the minibuffer checks: a key sequence under `C-c`
+and the name of the command it runs. The last two run the minibuffer's own
+commands by their names, from any view. -/
+def minibufferBindings : List (String × String) :=
+  [("C-c a", "ask"), ("C-c i", "ask-ada"), ("C-c s", "start"), ("C-c w", "to-window"),
+    ("C-c v", "to-minibuffer"), ("C-c k", "close-asker"), ("C-c 1", Minibuffer.acceptName),
+    ("C-c 2", Minibuffer.cancelName)]
+
+/-- The registry of the minibuffer checks: the minibuffer's commands and its
+mode registered for the owner `compiled`, as a host registers them, and the
+checks' bindings as config's. -/
+def minibufferRegistry : Config.Registry :=
+  ((({} : Config.Registry).replace .compiled Minibuffer.commands).replaceModes .compiled
+        Minibuffer.modes).replaceBindings
+    .config (minibufferBindings.toArray.map fun (text, command) => { keys := keys text, command })
+
+/-- What a step of the minibuffer checks is handed: the active keymaps the
+registry makes for the test scheme from the loop's state, so the
+minibuffer's mode holds in the minibuffer's view and nowhere else; the
+registry's commands, each given its call; and, for any other name, the
+commands of the prompt checks and of these. -/
+def minibufferKeys : Loop.Keys TestScheme.scheme :=
+  { maps := minibufferRegistry.activeMaps TestScheme.scheme
+    command? := fun name =>
+      match minibufferRegistry.find? name with
+      | some { registration := { action := .call run, .. }, .. } =>
+        some fun call => do
+          run call
+          return none
+      | _ => ((promptCommands ++ minibufferCommands).find? (·.1 == name)).map (·.2) }
+
+/-- A driver of the minibuffer checks over the state `start` makes, with the
+jobs of the driver checks; `none` if making the state was refused. -/
+def minibufferDriver (start : TextM EditorState := EditorState.initial ⟨640, 480⟩) :
+    Option TestDriver :=
+  (Loop.Driver.over minibufferKeys driverJobs start editorModel).toOption
+
+/-- A press of each key the test scheme has `role` on. -/
+def rolePresses (role : Role) : List Event :=
+  (roleKeys role).map press
+
+/-- What reading the text `text` comes to on `driver`'s models. -/
+def readOn (driver : TestDriver) (text : TextId) : TextError ⊕ String :=
+  let read : EditorM String := text.read
+  resulted (read.runModel driver.model).1
+
+/-- The text of the minibuffer's buffer in `driver`'s state, while a prompt
+is open. -/
+def minibufferTextId (driver : TestDriver) : Option TextId := do
+  let state := driver.loop.state
+  return (← state.buffer? (← state.minibufferBuffer?)).text
+
+/-- What the last scene `driver`'s display recorded shows of the open
+prompt: the text and the status line of the minibuffer's view, whether it
+is the focused view, and the status line of view 0. `none` when no prompt
+is open or the scene lacks either view. -/
+def promptScene (driver : TestDriver) :
+    Option (Option String × Array StatusField × Bool × Array StatusField) := do
+  let scene ← driver.model.display.scenes.back?
+  let view ← driver.loop.state.minibufferView?
+  let minibuffer ← scene.views.find? (·.id == view)
+  let window ← scene.views.find? (·.id == ⟨0⟩)
+  return (shownText driver.model minibuffer, minibuffer.status, scene.focused == some view,
+      window.status)
+
+/-- The checks of the minibuffer's commands and its mode
+(`Editor/Minibuffer.lean`, `Editor/Minibuffer/Compiled.lean`), on the
+loop's driver over the editor's models and the test scheme, with the
+registry's active keymaps: the phase's acceptance criteria on the models.
+The accept key and the cancel key are the test scheme's keys for the roles
+the mode fills (`InputScheme.roleKey`), so no check names a key of
+either. -/
+def promptModeChecks : List Check :=
+  let accept := rolePresses Role.activate
+  let cancel := rolePresses Role.quit
+  let answer (text : String) : List Argument := [.str text, .nat 7]
+  let closed (driver : TestDriver) (view : ViewId := ⟨0⟩) : Bool :=
+    let state := driver.loop.state
+    state.prompt == none && state.frame.focused == view && state.answered.isEmpty &&
+      state.wellFormed
+  [{  name :=
+        "criterion 1: a command prompts, keys are typed and the accept key is pressed: the continuation's command receives the typed string, with the asking view as its target, and the minibuffer's window is closed; the state has no prompt, one window, the tree it had and the focus on the asking view, the minibuffer's buffer slot is empty and its text refuses noSuchText, and the scene has one view"
+      run :=
+        pure <|
+          match minibufferDriver with
+          | none => false
+          | some driver =>
+            let (typed, _) := fedTo driver (presses "C-c a h i")
+            let (accepted, _) := fedTo typed accept
+            !accept.isEmpty && minibufferText typed == some "hi" &&
+              typed.loop.state.minibufferBuffer? == some ⟨1⟩ &&
+              (minibufferTextId typed).map (readOn typed) == some (.inr "hi") &&
+              promptEcho accepted == greeted (answer "hi") &&
+              closed accepted &&
+              accepted.loop.state.windows.map (·.id) == #[⟨0⟩] &&
+              accepted.loop.state.frame.tree == driver.loop.state.frame.tree &&
+              accepted.loop.state.buffers[1]? == some none &&
+              (minibufferTextId typed).map (readOn accepted) == some (.inl .noSuchText) &&
+              (accepted.model.display.scenes.back?.map (·.views.map (·.id))) == some #[⟨0⟩] },
+    { name :=
+        "criterion 2: a prompt given an initial value and accepted with no key typed: the continuation's command receives the initial value"
+      run :=
+        pure <|
+          match minibufferDriver with
+          | none => false
+          | some driver =>
+            let (asking, _) := fedTo driver (presses "C-c i")
+            let (accepted, _) := fedTo asking accept
+            minibufferText asking == some "Ada" && promptEcho accepted == greeted (answer "Ada") &&
+              closed accepted },
+    { name :=
+        "criterion 3: the prompt is cancelled: the continuation's command does not run, nothing is answered, the focus returns to the view that had it, and the minibuffer's text is released; the same keys with the accept key in place of the cancel key do run it"
+      run :=
+        pure <|
+          match minibufferDriver with
+          | none => false
+          | some driver =>
+            let (typed, _) := fedTo driver (presses "C-c a h i")
+            let (cancelled, steps) := fedTo typed cancel
+            let (accepted, _) := fedTo typed accept
+            !cancel.isEmpty && cancel != accept && typed.loop.state.frame.focused == ⟨1⟩ &&
+              promptEcho cancelled == "" &&
+              steps.all (·.all (·.answered.isEmpty)) &&
+              closed cancelled &&
+              cancelled.loop.state.windows.map (·.id) == #[⟨0⟩] &&
+              (minibufferTextId typed).map (readOn cancelled) == some (.inl .noSuchText) &&
+              cancelled.model.display.scenes.all (·.echo != greeted (answer "hi")) &&
+              promptEcho accepted == greeted (answer "hi") },
+    { name :=
+        "criterion 4: a job completes while a prompt is open: its result's command runs, to its end, before the prompt is answered, and inserts in the window's buffer; the prompt is still open, with its text and the focus, and the keys typed afterwards and the accept key answer it with everything typed"
+      run :=
+        pure <|
+          match minibufferDriver with
+          | none => false
+          | some driver =>
+            let (typed, _) := fedTo driver (presses "C-c s C-c a h")
+            let (delivered, step) := typed.finish 1
+            let (accepted, _) := fedTo delivered (presses "i" ++ accept)
+            typed.pending.map (·.id) == #[1] && driverText typed == some "" &&
+              (step.map (·.ended)) == some (some .finished) &&
+              driverText delivered == some "[42]" &&
+              delivered.loop.state.prompt == typed.loop.state.prompt &&
+              delivered.loop.state.prompt.isSome &&
+              delivered.loop.state.frame.focused == ⟨1⟩ &&
+              minibufferText delivered == some "h" &&
+              promptEcho accepted == greeted (answer "hi") &&
+              closed accepted &&
+              driverText accepted == some "[42]" },
+    { name :=
+        "criterion 5: while a prompt is open the scene shows the prompt text and the input typed so far in the minibuffer's view: after the prompt is asked for and after each key that prints, the last scene has that view with the text so far, the label alone as its status line, in the prompt's face, and the focus, and view 0 with its own status line"
+      run :=
+        pure <|
+          match minibufferDriver with
+          | none => false
+          | some driver =>
+            let (asking, _) := fedTo driver (presses "C-c a")
+            let (one, _) := fedTo asking (presses "h")
+            let (two, _) := fedTo one (presses "i")
+            let showing (text : String) :=
+              some
+                (some text, #[({ text := "Name: ", face := Loop.promptFace } : StatusField)], true,
+                  #[({ text := "scratch", face := Loop.nameFace } : StatusField)])
+            promptScene driver == none && promptScene asking == showing "" &&
+              promptScene one == showing "h" &&
+              promptScene two == showing "hi" },
+    { name :=
+        "with no prompt open the minibuffer's accept command and its cancel command, each run by a key of the global keymap, say that no prompt is open and change nothing else; and the keys of the two roles, typed in a view whose buffer does not have the minibuffer's mode, run no command"
+      run :=
+        pure <|
+          match minibufferDriver with
+          | none => false
+          | some driver =>
+            let said (typed : String) : Bool :=
+              let (after, _) := fedTo driver (presses typed)
+              after.loop.state == { driver.loop.state with echo := Minibuffer.notOpen }
+            let (unbound, steps) := fedTo driver (accept ++ cancel)
+            !Minibuffer.notOpen.isEmpty && said "C-c 1" && said "C-c 2" &&
+              steps.all (·.all (·.ended.isNone)) &&
+              unbound.loop.state == driver.loop.state },
+    { name :=
+        "a second prompt asked for while one is open, by a key of the global keymap typed in the minibuffer: the command says the refusal, the first prompt is still open with its text, and no text was made"
+      run :=
+        pure <|
+          match minibufferDriver with
+          | none => false
+          | some driver =>
+            let (typed, _) := fedTo driver (presses "C-c a h")
+            let (again, _) := fedTo typed (presses "C-c a")
+            promptEcho again == s!"not asked: {(PromptRefusal.alreadyOpen ⟨1⟩).describe}" &&
+              again.loop.state.prompt == typed.loop.state.prompt &&
+              again.loop.state.prompt.isSome &&
+              minibufferText again == some "h" &&
+              again.model.texts.texts.size == typed.model.texts.texts.size },
+    { name :=
+        "a prompt does not capture the keyboard: with the focus moved to the window while the prompt is open, a key that prints goes to the window's buffer and the prompt waits; with the focus moved back, the accept key answers with what the minibuffer held"
+      run :=
+        pure <|
+          match minibufferDriver with
+          | none => false
+          | some driver =>
+            let (away, _) := fedTo driver (presses "C-c a h C-c w x")
+            let (back, _) := fedTo away (presses "C-c v")
+            let (accepted, _) := fedTo back accept
+            away.loop.state.frame.focused == ⟨0⟩ && away.loop.state.prompt.isSome &&
+              driverText away == some "x" &&
+              minibufferText away == some "h" &&
+              back.loop.state.frame.focused == ⟨1⟩ &&
+              promptEcho accepted == greeted (answer "h") &&
+              closed accepted &&
+              driverText accepted == some "x" },
+    { name :=
+        "with the asking view closed while the prompt is open: the prompt stays open, and after the accept key the focus is on the first window of the tree, which is the target of the continuation's command"
+      run :=
+        pure <|
+          match minibufferDriver twoBuffers with
+          | none => false
+          | some driver =>
+            let (closing, _) := fedTo driver (presses "C-c a h C-c k")
+            let (accepted, _) := fedTo closing accept
+            closing.loop.state.prompt.map (·.asker) == some ⟨0⟩ &&
+              closing.loop.state.windows.map (·.id) == #[⟨1⟩, ⟨2⟩] &&
+              closing.loop.state.frame.focused == ⟨2⟩ &&
+              promptEcho accepted == greeted (answer "h") 1 &&
+              closed accepted ⟨1⟩ &&
+              accepted.loop.state.windows.map (·.id) == #[⟨1⟩] },
+    { name :=
+        "the minibuffer's commands are registered under their two names, and its one mode is called by the name the minibuffer's buffer is made with and has no problem under the test scheme"
+      run :=
+        pure
+          (Minibuffer.commands.map (·.name) == #[Minibuffer.acceptName, Minibuffer.cancelName] &&
+            Minibuffer.acceptName != Minibuffer.cancelName &&
+            Minibuffer.modes.map (·.name) == #[Prompt.mode] &&
+            Minibuffer.modes.all fun mode => mode.check TestScheme.scheme == []) }]
+
+/-- The checks of prompts on the loop's driver: the loop's part and its
+host's (`promptLoopChecks`), then the minibuffer's commands and its mode
+(`promptModeChecks`). -/
+def promptChecks : List Check :=
+  promptLoopChecks ++ promptModeChecks
 
 /-- A file of three lines of which two end in CRLF and one in a line
 feed. -/

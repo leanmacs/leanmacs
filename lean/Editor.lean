@@ -2,6 +2,7 @@ import Editor.Api.Theorems
 import Editor.Command.Append
 import Editor.Files
 import Editor.InputScheme.Vim.Default
+import Editor.Minibuffer
 import Editor.Setup
 
 /-!
@@ -31,7 +32,11 @@ file into a buffer with `Files.open`, which starts the job that loads it,
 and saves a buffer to its file with `Files.save`, which starts the job that
 writes it. Their registrations as compiled commands and jobs
 (`Editor/Files/Compiled.lean`) name the registry, which is the config
-session's, and are not imported.
+session's, and are not imported. A command of config's asks for a string
+with `prompt` (`Editor/Api.lean`), and the commands that accept and cancel
+a prompt and the minibuffer's mode are here as well
+(`Editor/Minibuffer.lean`); their registrations
+(`Editor/Minibuffer/Compiled.lean`) are not, for the same reason.
 
 How a key becomes an invocation is here too, so config can come to write
 bindings: input schemes (`Editor/InputScheme.lean`), with the keymaps they
