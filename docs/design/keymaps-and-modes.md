@@ -26,9 +26,12 @@ The command loop steps every key press through its one scheme and runs the
 invocation it yields, as a command looked up by name in the registry. The
 Vim scheme ships, but no motion, operator or command its keys name is
 registered yet, so under it a default key echoes `<name>: no such command`.
-Of the rest of this document, the vocabulary and modes are a proposal from a
-design discussion, and nothing is measured. The one settled input is the
-priority:
+Of the rest of this document, the vocabulary is a proposal from a design
+discussion, and nothing is measured. Modes are decided and not built: the
+starting set of roles and the rule for adding one, each scheme's role table
+and leader, the mode record, hand-tuned keys, a buffer's major and minor
+modes, the order of the active keymaps and where a mode's state lives
+(Modes, below). The one settled input is the priority:
 Vim-style editing is the scheme that ships and is polished; other schemes
 must stay possible without being paid for now.
 
@@ -573,8 +576,21 @@ first, in their own order, then the state's.
   the scheme was built work after every operator with no further binding.
 - **Consequence**: an active keymap's binding holds in every Vim state,
   insert included. A binding meant for one state belongs in that state's
-  keymaps. Limiting a mode's key to some states is not built (open
-  questions).
+  keymaps.
+- **A mode's keys hold only where typing is not text** (decided, not
+  built). Without that, a buffer whose mode fills a role on `j`, or has a
+  suffix under `\`, could not have `j` or `\` typed in insert state. Every
+  key a mode binds (a role, a suffix, a hand-tuned key) is bound to what
+  the scheme says a mode's key is bound to (`InputScheme.modeCommand`,
+  which is `command` unless a scheme says otherwise). The Vim scheme's is
+  `Bound.mode (.command { name })`: a new constructor, "a binding a mode
+  contributes", which the grammar reaches as what it wraps. `Vim.parse`
+  leaves the `.mode` bindings out of the active keymaps for a view whose
+  state's record has `insertsText`, the field that already says "typing is
+  text" (and "a digit is not a count"), through `Keymap.filter`, which keeps
+  the bindings a predicate keeps. The scheme wraps its hand-tuned keys in
+  `.mode`, so they follow the same rule. A binding from config's `bindKey`
+  is not a mode's and still holds in every state.
 
 ### The last change
 
@@ -644,17 +660,33 @@ add modes.
 
 ```lean
 structure Mode where
-  name    : Name
-  parent  : Option Name             -- derived modes
-  roles   : List (Role × Command)
-  locals  : Keymap Command          -- suffixes under the scheme's leader
-  onEnter : ViewId → EditorM Unit
-  owner   : Owner                   -- replaced as a unit on reload
+  name    : String
+  parent  : Option String := none                -- derived modes
+  roles   : List (Role × String) := []           -- role, command name
+  locals  : List (String × String) := []         -- suffix as a key string, command name
+  onEnter : ViewId → EditorM Unit := fun _ => pure ()
 ```
 
 No `Key` for a top-level binding and no scheme's `Binding` type appears in
 `Mode`. A mode cannot name the binding type of a scheme it has never heard
 of, and it does not need to.
+
+- **Commands are named by `String`**, as everywhere in the registry: a
+  role's command and a suffix's are looked up when the key runs.
+- **A suffix is a key string**, as every binding table in the repository
+  is (`bindKey`, `Vim.Default`), so a suffix written twice is visible (a
+  `Keymap` would merge it), and suffixes are compared as parsed chords
+  (`TAB` and `<Tab>` are one suffix). A string can fail to parse, so
+  `Mode.check` reports an unreadable suffix too.
+- **The owner is on the registry entry** (`Config.ModeEntry { owner, mode
+  }`), as for commands, jobs and key bindings, not on the record: `setup`
+  cannot choose its owner, and a reload replaces an owner's modes
+  (`Registry.replaceModes`).
+- **`setup` refuses** a mode name defined twice, and a mode with a problem
+  that needs no scheme (an unregistered role, a suffix used twice, an
+  unreadable suffix), with a message naming the mode and the problem: the
+  same rule as a key sequence bound twice. Shadowing needs a scheme, which
+  the registry does not know, so only `Mode.check` reports it.
 
 ### How a mode declares keys
 
@@ -668,6 +700,108 @@ of, and it does not need to.
 - **Roles** are registered names, an open set curated by the core.
 - **Hand-tuned keys** live in the scheme, not in the mode record. The
   standard library writes them for Vim only.
+
+### Roles
+
+Decided, not built.
+
+**The starting set** is seven roles, the ones the table above names:
+`next-item`, `previous-item`, `activate`, `quit`, `refresh`, `toggle` and
+`mark`. They are the actions list-like special buffers share (what
+evil-collection rebinds most), and no other action has two unrelated users
+yet.
+
+**The rule for adding a role.** A role is a standard action that recurs,
+with one meaning, in modes that have nothing else in common. An action of
+one mode, or of one family of related modes, is a leader suffix (or lives
+on a parent mode). Roles are curated by the core: config cannot add one,
+and a mode that names a role that is not registered is reported by
+`Mode.check` and refused by `setup`. Adding a role is one core commit: its
+name in `Role.registered`, and a row in the role table of every scheme in
+the repository (the Vim scheme's and the test scheme's). The scheme
+contract fails a scheme without the row. Renaming or removing a role
+changes every mode that fills it.
+
+- **A role is a name** (`structure Role where name : String`), with a
+  constant for each registered role and `Role.registered`. The set is open
+  to the core, and a mode may name a role that is not registered, which
+  `Mode.check` must be able to report; a closed inductive could not
+  represent that mistake.
+- **Each scheme's role table and leader are fields of `InputScheme`**
+  (`roles : List (Role × List Key)`, `leader : List Key`), so the scheme
+  contract and a mode's keymaps read them without knowing the scheme.
+
+| Role | Test scheme | Vim scheme |
+|---|---|---|
+| `next-item` | `C-n` | `j` |
+| `previous-item` | `C-p` | `k` |
+| `activate` | `RET` | `RET` |
+| `quit` | `C-q` | `q` |
+| `refresh` | `<F5>` | `g r` |
+| `toggle` | `TAB` | `TAB` |
+| `mark` | `C-SPC` | `m` |
+| **leader** | `C-c` | `\` |
+
+- **The test scheme's keys print nothing**, so none is ever a self-insert,
+  and `C-c` is Emacs's prefix for a mode's keys.
+- **The Vim scheme's are evil-collection's usual keys for list buffers.**
+  `j` and `k` replace the motions only in buffers whose modes fill those
+  roles, which is the design's intent; `g r` merges with the `g g` prefix;
+  `\` is Vim's own default `maplocalleader`, and begins no binding of any
+  default state, so a suffix under it reaches nothing of the scheme's.
+- **The scheme contract gains three properties**: every registered role has
+  a key (`everyRoleHasKey`); the leader is not empty, no two roles share a
+  key sequence, and no role's keys begin with the leader or are a prefix of
+  it (`leaderAndRolesApart`), since a role key that collided with a leader
+  suffix would make one of them unreachable, which no check of one mode can
+  see; and the key bound to what the scheme says a mode's key is bound to
+  (`modeCommand`) of a name yields an invocation of that name and leaves
+  nothing pending (`modeCommandRuns`), as `namedCommandRuns` does for
+  `command`.
+
+**A mode's keymaps.** A mode makes, for a scheme, a keymap of its hand-tuned
+keys (below), then one of its roles and suffixes: each role it fills bound
+at the scheme's key for the role, and each suffix bound at the scheme's
+leader followed by the suffix, each to `scheme.modeCommand` of the command's
+name. A role the scheme's table lacks, and an unreadable suffix, bind
+nothing.
+
+### Hand-tuned keys
+
+Decided, not built. A hand-tuned key is an entry of a scheme's own table
+(`InputScheme.tuned`: a mode's name, a key sequence, and a binding of the
+scheme's type), beside the scheme's own keymaps (`InputScheme.defaults`;
+the Vim scheme's are every state's keymaps). A mode's tuned entries are a
+keymap consulted with the mode, ahead of its roles and suffixes, so one
+wins over a role on the same key.
+
+- **A tuned key shadows a scheme binding** when the scheme's own keymaps
+  bind exactly the same sequence (`Keymap.resolve scheme.defaults keys` is
+  bound). `Mode.check` reports it. A tuned key that is a strict prefix of a
+  default stays under the open question "Unreachable bindings".
+- **The Vim scheme's table is empty**: no mode ships.
+
+### A buffer's modes
+
+Decided, not built. A buffer has one major mode, or none
+(`Buffer.major : Option String`), and minor modes (`Buffer.minors`, the one
+added last first). They are names: a buffer can hold a name no registered
+mode has (a reload may drop it), which contributes nothing.
+
+- **Pure state operations** set the major mode and add or remove a minor
+  mode, shaped like `removeWindow`. Setting the major mode says whether the
+  mode became the major mode; it did not when the buffer already had it.
+  Adding a minor mode already there, and removing one not there, change
+  nothing. Phase 8 offers them as requests.
+- **`onEnter` runs when a mode becomes a buffer's major mode**, through the
+  registry's operation given a view (`Registry.setMajorMode`), with that
+  view, once. Setting the major mode the buffer already has changes nothing
+  and runs nothing. For a derived mode the actions of its lineage run root
+  first, each once, as Emacs's derived modes run their parent's body first.
+  Setting a name no registered mode has as the major mode through the
+  registry is refused (`noSuchMode`), while the pure operation takes any
+  name.
+- **Adding a minor mode runs no action** yet (left open).
 
 ### Why this shape
 
@@ -704,12 +838,43 @@ the registry for each key, so a reload's bindings hold from the next key.
 Under the Vim scheme the state's keymaps are walked after it ("Which keymaps
 a key is looked up in").
 
+Decided, not built: the order with modes.
+
+- **A mode's lineage** is the mode, then its parent, and so on, stopping at
+  a name with no registered mode or one already in the lineage (so a cycle
+  ends), bounded by the registry's size.
+- **The keymaps of a mode** are, for each mode of its lineage, nearest
+  first: its tuned keymap, then its role-and-suffix keymap. So a derived
+  mode's own role wins, and a role it does not fill falls to its parent;
+  the same for suffixes.
+- **`activeMaps`** is each minor mode's keymaps, the minor added last
+  first, then the major mode's, then the global keymap (every owner's key
+  bindings). A view with no window has the global keymap alone.
+- **The loop computes them from its own state.** The active keymaps depend
+  on the buffers' modes, which only the loop's state holds, so the loop's
+  `Keys.maps` is a function of the editor state and the view, and the host
+  supplies the registry's `activeMaps` for each event: a reload's modes
+  hold from the next key.
+
 ### Per-mode state
 
 Each mode wants state of its own type. Compiled modes use ordinary typed
 fields. Modes defined in config use the store from
 [lean-runtime.md](lean-runtime.md): a named cell with an encoding and a
 version, which survives a reload that changes the type.
+
+Decided, not built:
+
+- **A compiled mode's state is a typed field** where the editor state's
+  "Where a new field goes" table puts it (a field of `Buffer` for state of
+  one buffer's mode, of `EditorState` for one per editor). No mode ships,
+  so none is added.
+- **A config mode uses the store as built**: a `Store α` declared in the
+  same `setup`, whose commands (`Store.command`) fill its roles and
+  suffixes. Per-buffer state of a config mode is kept inside its store's
+  value until phase 8 gives commands requests over buffers. Nothing new is
+  built for it.
+- **An `onEnter` is a plain `EditorM` program** and cannot write a store.
 
 ## Extending from config
 
@@ -845,13 +1010,14 @@ is what makes the result hold for the real binding.
     the unbound key, bound in a keymap of its own to `scheme.command` of a
     name, yields from the initial state an invocation of that name and
     leaves nothing pending (`namedCommandRuns`). It is pure and compares no
-    states. "Every role has a key" joins it with
-    roles.
+    states. Three properties join it with roles (decided, not built:
+    "Roles" under Modes): every role has a key, the leader and the roles
+    are apart, and a mode's key runs its command.
   - The model tests run it on the test scheme, on schemes written there
     that each break one property and are reported, and on the Vim scheme.
-  - For modes: `Mode.check : Mode → List Problem` reports unregistered
-    roles, duplicate suffixes, and hand-tuned keys that shadow a scheme
-    binding.
+  - For modes: `Mode.check mode scheme` reports unregistered roles,
+    duplicate suffixes, unreadable suffixes, and hand-tuned keys that
+    shadow a scheme binding (decided, not built).
 
 ### Config
 
@@ -873,8 +1039,6 @@ every build); the second is a proposal.
   type. Type classes would make it `Keymap m`, against the constraint that
   config is evaluated at one concrete type. A record of functions passed by
   reader, or a free-monad program, keeps it concrete.
-- **The role set.** Which roles exist at the start, and the rule for adding
-  one.
 - **How the minibuffer takes keys.** Which scheme is active where is
   decided: one for the editor ("The loop runs one scheme"). What the
   minibuffer's keys are looked up in goes with the minibuffer.
@@ -891,9 +1055,6 @@ every build); the second is a proposal.
   a bound sequence is never also a prefix, so they cannot also begin a text
   object after an operator. The grammar accepts a text object after an
   operator; which keys the default ones are on is not decided.
-- **A mode's key in some Vim states only.** An active keymap's binding
-  holds in every Vim state. Whether a mode's role key can be limited to
-  some states goes with the Vim role table.
 - **The Vim state of a view that is closed.** The scheme's state keeps an
   entry for each view that is not in the initial state, and the scheme
   interface gives no notice that a view is gone.
