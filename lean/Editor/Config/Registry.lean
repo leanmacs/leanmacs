@@ -1,5 +1,6 @@
 import Editor.Command.Call
 import Editor.Config.Owner
+import Editor.InputScheme
 import Editor.Setup
 
 /-!
@@ -26,11 +27,29 @@ it (`Editor/Job/Jobs.lean`).
 handler of the setup port and then checked. `Registrations.ofSetup` is the
 whole of it: the registrations, or the message the `setup` is refused with.
 A `setup` is refused when it declares a store name twice, registers a
-command name twice or a job name twice, or registers a command over a store
-it does not declare (`Registrations.problem?`). So one owner's entries have
-different names, and the number of commands a config registers is the number
-of names it can be run by. Two owners may still register one name: a lookup
-then finds the later entry.
+command name twice or a job name twice, binds a key sequence twice or binds
+no keys, or registers a command over a store it does not declare
+(`Registrations.problem?`). So one owner's entries have different names, and
+the number of commands a config registers is the number of names it can be
+run by. Two owners may still register one name: a lookup then finds the
+later entry.
+
+## Key bindings
+
+A key binding is a key sequence and a command's name (`KeyBinding`), held by
+owner like a command and replaced as a set (`replaceBindings`). The registry
+holds no scheme's binding type: `Registry.keymap` makes the keymap for a
+scheme by asking the scheme what a key bound to a command name is
+(`InputScheme.command`). The entries are bound oldest first, so of two
+owners that bind one sequence the later owner's binding is the keymap's, as
+`Keymap.ofList` has it. The name is not looked up here: a binding to a name
+nobody registered is kept, and the name is looked up when the keys are
+typed.
+
+Motions, operators and text objects will be registered the same way, as
+vocabulary: entries by owner, replaced as a set, the latest of a name
+winning. No table of them is here, since no type for their entries exists
+yet.
 
 ## Compiled commands
 
@@ -90,12 +109,32 @@ structure JobEntry where
   /-- The job. -/
   registration : JobRegistration
 
-/-- The editor's table of commands and of jobs, oldest entry first. -/
+/-- A key sequence bound to a command's name. -/
+structure KeyBinding where
+  /-- The keys, in order, as chords. -/
+  keys : List Key
+  /-- The name of the command the keys run, looked up when they are
+  typed. -/
+  command : String
+  deriving DecidableEq, Repr
+
+/-- A binding entry of the registry: a key binding and its owner. -/
+structure BindingEntry where
+  /-- Who bound the keys. -/
+  owner : Owner
+  /-- The binding. -/
+  binding : KeyBinding
+  deriving DecidableEq, Repr
+
+/-- The editor's table of commands, of jobs and of key bindings, oldest entry
+first. -/
 structure Registry where
   /-- The command entries. -/
   entries : Array Entry := #[]
   /-- The job entries. A job is not a command: these are apart. -/
   jobs : Array JobEntry := #[]
+  /-- The key bindings. -/
+  bindings : Array BindingEntry := #[]
 
 namespace Registry
 
@@ -132,6 +171,24 @@ def names (registry : Registry) : Array String :=
       if names.contains entry.registration.name then names else names.push entry.registration.name)
     #[]
 
+/-- `registry` with every key binding of `owner` removed and `bindings` added
+as its bindings. -/
+def replaceBindings (registry : Registry) (owner : Owner) (bindings : Array KeyBinding) :
+    Registry :=
+  { registry with
+    bindings :=
+      registry.bindings.filter (·.owner != owner) ++
+        bindings.map fun binding => { owner, binding } }
+
+/-- The keymap of every owner's bindings for `scheme`: each key sequence
+bound to what the scheme says runs the command of its name. The entries are
+bound oldest first, so of two owners that bind one sequence the later
+owner's is the keymap's. -/
+def keymap (registry : Registry) (scheme : InputScheme) : Keymap scheme.Binding :=
+  Keymap.ofList
+    (registry.bindings.toList.map fun entry =>
+      (entry.binding.keys, scheme.command entry.binding.command))
+
 end Registry
 
 /-- What one run of a `setup` registers. -/
@@ -142,6 +199,8 @@ structure Registrations where
   stores : Array StoreDeclaration := #[]
   /-- The jobs, in the order they were registered. -/
   jobs : Array JobRegistration := #[]
+  /-- The key bindings, in the order they were made, their keys as chords. -/
+  bindings : Array KeyBinding := #[]
 
 namespace Registrations
 
@@ -156,24 +215,30 @@ def collect : (request : SetupRequest) → Registrations → request.Reply × Re
     ((),
       { collected with commands := collected.commands.push { name, action := .store store step } })
   | .job name work, collected => ((), { collected with jobs := collected.jobs.push { name, work } })
+  | .bind keys command, collected =>
+    ((),
+      { collected with
+        bindings := collected.bindings.push { keys := keys.map Key.chord, command } })
 
-/-- The first of `names` that an earlier one already is, if any. -/
-def repeated? (names : Array String) : Option String := do
-  for index in [0:names.size] do
-    if let some name := names[index]? then
-      if (names.extract 0 index).contains name then
-        return name
+/-- The first of `items` that an earlier one already is, if any. -/
+def repeated? {α : Type} [BEq α] (items : Array α) : Option α := do
+  for index in [0:items.size] do
+    if let some item := items[index]? then
+      if (items.extract 0 index).contains item then
+        return item
   none
 
 /-- What is wrong with what was collected, if anything: a store declared
-twice, a command name or a job name registered twice, or a command over a
-store that is not declared.
+twice, a command name or a job name registered twice, a key sequence bound
+twice, a binding of no keys, or a command over a store that is not declared.
 
 One config's names are each registered once. A second command under a name
 would make the first unreachable, which is a mistake in the config and never
 what it meant, so it is refused like a second store of a name; and so is a
-second job. A job and a command may share a name: one is run and the other
-is spawned. -/
+second job, and a second binding of one key sequence, to the same command
+or to another. A job and a command may share a name: one is run and the
+other is spawned. A binding's command is not looked up: it may be compiled,
+or not registered at all. -/
 def problem? (collected : Registrations) : Option String := do
   let stores := collected.stores.map (·.name)
   if let some name := repeated? stores then
@@ -182,6 +247,11 @@ def problem? (collected : Registrations) : Option String := do
     return s!"the command `{name}` is registered twice"
   if let some name := repeated? (collected.jobs.map (·.name)) then
     return s!"the job `{name}` is registered twice"
+  for binding in collected.bindings do
+    if binding.keys.isEmpty then
+      return boundToNoKeys binding.command
+  if let some keys := repeated? (collected.bindings.map (·.keys)) then
+    return s!"the keys `{Key.notations keys}` are bound twice"
   for registration in collected.commands do
     if let .store store _ := registration.action then
       unless stores.contains store do

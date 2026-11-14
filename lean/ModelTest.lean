@@ -1380,6 +1380,17 @@ def fileRunnerChecks : List Check :=
         return (← asks.endedAs (.finished #["true"])) &&
             (← rig.services.completions.waiting) == 0 }]
 
+/-- The keys the key string `text` names, for a fixture; none when it is
+refused, which `schemeChecks` checks of no fixture string. -/
+def keys (text : String) : List Key :=
+  match Key.parse text with
+  | .ok named => named
+  | .error _ => []
+
+/-- The invocation of the command `name` with no arguments. -/
+def invoke (name : String) : Invocation :=
+  { command := name }
+
 /-- The texts a registered command leaves when it is a plain command, run
 against a text model with none; `none` for a command over a store and for
 one that is given its call. -/
@@ -1497,7 +1508,52 @@ def setupChecks : List Check :=
           command "count" (makes "1")
           job "count" (fun _ => pure 1) fun n => makes (toString n)
         pure
-          (refusal twice == some "the job `count` is registered twice" && refusal shared == none) }]
+          (refusal twice == some "the job `count` is registered twice" && refusal shared == none) },
+    { name :=
+        "a setup that binds key strings to command names collects each as its chords and the name, in order, and registers no command"
+      run :=
+        let setup : SetupM Unit := do
+          bindKey "C-x C-s" "save"
+          bindKey "<Escape>" "quit"
+          bindKey "A" "save"
+        match Config.Registrations.ofSetup setup with
+        | .error _ => pure false
+        | .ok collected =>
+          pure
+            (collected.bindings.map (fun binding => (binding.keys, binding.command)) ==
+                #[(keys "C-x C-s", "save"), (keys "<Escape>", "quit"), (keys "A", "save")] &&
+              collected.commands.isEmpty) },
+    { name :=
+        "a setup that binds a key string that is not keys is refused with the key parser's message, which names the stroke, and one that names no keys with a message that names the command"
+      run :=
+        let unreadable : SetupM Unit := do
+          command "save" (makes "1")
+          bindKey "C-x nope" "save"
+        let parsed : Option String :=
+          match Key.parse "C-x nope" with
+          | .error message => some message
+          | .ok _ => none
+        pure
+          (parsed.isSome && refusal unreadable == parsed &&
+            refusal (bindKey "" "save") == some "the command `save` is bound to no keys" &&
+            refusal (bindKey "  " "save") == some "the command `save` is bound to no keys") },
+    { name :=
+        "a setup that binds one key sequence twice is refused with a message that names the keys, whether to one command or to two; two sequences to one command are not"
+      run :=
+        let twice : SetupM Unit := do
+          bindKey "C-x C-s" "save"
+          bindKey "C-q" "quit"
+          bindKey "C-x C-s" "save-as"
+        let same : SetupM Unit := do
+          bindKey "C-q" "quit"
+          bindKey "C-q" "quit"
+        let apart : SetupM Unit := do
+          bindKey "C-x C-s" "save"
+          bindKey "C-x s" "save"
+        pure
+          (refusal twice == some "the keys `C-x C-s` are bound twice" &&
+            refusal same == some "the keys `C-q` are bound twice" &&
+            refusal apart == none) }]
 
 /-- A registration of the plain command `name`, which makes the text `text`. -/
 def registration (name text : String) : Config.Registration :=
@@ -1522,6 +1578,16 @@ def other : Config.Owner :=
 text model with none; `none` if there is no such plain command. -/
 def registeredTexts (registry : Config.Registry) (name : String) : Option (Array String) :=
   (registry.find? name).bind (plainTexts ·.registration.action)
+
+/-- The binding of the keys the key string `text` names to the command
+`command`. -/
+def binding (text command : String) : Config.KeyBinding :=
+  { keys := keys text, command }
+
+/-- What the keys the key string `text` names are bound to in the keymap
+`registry` makes for the test scheme, whose binding is an invocation. -/
+def boundTo (registry : Config.Registry) (text : String) : Option Invocation :=
+  (registry.keymap TestScheme.scheme).find? (keys text)
 
 /-- The checks of the registry (`Editor/Config/Registry.lean`). -/
 def registryChecks : List Check :=
@@ -1585,7 +1651,36 @@ def registryChecks : List Check :=
             registeredTexts overridden "only" == some #["compiled"] &&
             overridden.names == #["stamp", "only"] &&
             registeredTexts dropped "stamp" == some #["compiled"] &&
-            dropped.entries.all (·.owner == .compiled)) }]
+            dropped.entries.all (·.owner == .compiled)) },
+    { name :=
+        "replacing an owner's bindings removes its old ones and leaves another owner's, and touches no command"
+      run :=
+        let registry : Config.Registry :=
+          ((({} : Config.Registry).replace .config #[registration "greet" "1"]).replaceBindings
+                .compiled #[binding "C-c a" "theirs"]).replaceBindings
+            .config #[binding "C-c b" "one", binding "C-c c" "old"]
+        let replaced := registry.replaceBindings .config #[binding "C-c b" "two"]
+        pure
+          (boundTo registry "C-c a" == some (invoke "theirs") &&
+            boundTo registry "C-c b" == some (invoke "one") &&
+            boundTo registry "C-c c" == some (invoke "old") &&
+            boundTo replaced "C-c a" == some (invoke "theirs") &&
+            boundTo replaced "C-c b" == some (invoke "two") &&
+            boundTo replaced "C-c c" == none &&
+            replaced.bindings.size == 2 &&
+            replaced.names == #["greet"]) },
+    { name :=
+        "of two owners' bindings of one key sequence, the registry's keymap gives the later owner's, and the earlier's again once the later owner binds nothing"
+      run :=
+        let registry : Config.Registry :=
+          (({} : Config.Registry).replaceBindings .compiled
+                #[binding "C-c t" "compiled", binding "C-c u" "kept"]).replaceBindings
+            .config #[binding "C-c t" "config"]
+        pure
+          (boundTo registry "C-c t" == some (invoke "config") &&
+            boundTo registry "C-c u" == some (invoke "kept") &&
+            boundTo (registry.replaceBindings .config #[]) "C-c t" == some (invoke "compiled") &&
+            (registry.keymap TestScheme.scheme).continues (keys "C-c")) }]
 
 /-- A declaration of the store `name` at `version`, which starts at the
 number 0 and accepts any number. It migrates a number written at version 1 by
@@ -1993,10 +2088,6 @@ text of `label` and what it was called with (`callText`). -/
 def callRegistration (name label : String) : Config.Registration :=
   { name, action := .call fun call => makes (callText label call) }
 
-/-- The keys `C-x i`, as chords. -/
-def controlXThenI : List Key :=
-  [{ logical := .character "x", modifiers := { control := true } }, { logical := .character "i" }]
-
 /-- Runs the command called `name` the way an invocation does
 (`Config.State.command?`), against the editor's models, with a call for the
 focused window of a new editor state, `arguments` and the keys `typed`: what
@@ -2240,7 +2331,7 @@ def reloadChecks : List Check :=
       run :=
         let state := compiledWith #[callRegistration "stamp" "stamp"]
         pure
-          ((calls state "stamp" [.nat 3, .str "w"] controlXThenI).map (·.2) ==
+          ((calls state "stamp" [.nat 3, .str "w"] (keys "C-x i")).map (·.2) ==
               some #["", "stamp 3 w C-x i"] &&
             ((calls state "stamp").bind (·.1)).isNone) },
     { name :=
@@ -2267,7 +2358,29 @@ def reloadChecks : List Check :=
             (match program.runModel editorModel with
             | (.ok (some true), model) => model.texts.contents == #["", "stamp "]
             | _ => false) &&
-            runTexts state "plain" == some #["p"]) }]
+            runTexts state "plain" == some #["p"]) },
+    { name :=
+        "an accepted outcome replaces the config's key bindings and leaves compiled ones: a key the new config binds to another command is bound to that one alone, and one it no longer binds is unbound; a rejected outcome keeps them"
+      run :=
+        let compiled : Config.State Elaborated :=
+          { registry := ({} : Config.Registry).replaceBindings .compiled #[binding "C-c k" "kept"] }
+        let first : SetupM Unit := do
+          bindKey "C-c t" "one"
+          bindKey "C-c o" "old"
+        let (loaded, _) := reduceFrom compiled [.requested, .finished (accepted ["a"] first)]
+        let (reloaded, effects) :=
+          reduceFrom loaded [.requested, .finished (accepted ["a"] (bindKey "C-c t" "two"))]
+        let (kept, _) := reduceFrom loaded [.requested, .finished (rejected "a")]
+        pure
+          (boundTo loaded.registry "C-c t" == some (invoke "one") &&
+            boundTo loaded.registry "C-c o" == some (invoke "old") &&
+            boundTo reloaded.registry "C-c t" == some (invoke "two") &&
+            boundTo reloaded.registry "C-c o" == none &&
+            boundTo reloaded.registry "C-c k" == some (invoke "kept") &&
+            reloaded.registry.bindings.size == 2 &&
+            effects == #[.start (some #[]) #["a"], .cancelJobs "config", .report 2 true #[] 1 0] &&
+            boundTo kept.registry "C-c t" == some (invoke "one") &&
+            boundTo kept.registry "C-c o" == some (invoke "old")) }]
 
 /-- A key press that produced `text`. -/
 def pressed (text : String) : WindowCheck.Input :=
@@ -4168,17 +4281,6 @@ def invocationChecks : List Check :=
             decide
               (({ command := "move", arguments := [.nat 1, .nat 2] } : Invocation) ≠
                 { command := "move", arguments := [.nat 2, .nat 1] })) }]
-
-/-- The keys the key string `text` names, for a fixture; none when it is
-refused, which `schemeChecks` checks of no fixture string. -/
-def keys (text : String) : List Key :=
-  match Key.parse text with
-  | .ok named => named
-  | .error _ => []
-
-/-- The invocation of the command `name` with no arguments. -/
-def invoke (name : String) : Invocation :=
-  { command := name }
 
 /-- The key strings the scheme fixtures are written with. -/
 def schemeKeyStrings : List String :=

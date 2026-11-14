@@ -1,4 +1,5 @@
 import Editor.Job
+import Editor.Key.Notation
 import Editor.Store
 
 /-!
@@ -18,6 +19,7 @@ def count : Unit → JobM Nat := fun _ => do
 
 def setup : SetupM Unit := do
   command "greet" greet
+  bindKey "C-c g" "greet"
   job "count" count fun n => discard <| createText s!"counted {n}"
 ```
 
@@ -25,6 +27,14 @@ A job is registered with the handler that makes the command its result is
 taken to the editor with. `setup` starts nothing: it is a collected program,
 and nothing of a config exists until it is installed. A job is not a
 command, and is not counted as one.
+
+A key sequence is bound to a command's name (`bindKey`), written as a key
+string (`Editor/Key/Notation.lean`). The name is looked up when the keys
+are typed, so a binding may name a compiled command, or a command that is
+not registered, which then says so in the echo area. A binding is not a
+command and is not counted as one. It is called `bindKey` and not `bind`,
+which would shadow the monad's inside `namespace Editor` and for config,
+which opens it.
 
 `setup` is a program over a port of its own, the *setup port*, whose requests
 carry what is registered. It is plain data like any program
@@ -40,9 +50,11 @@ with that message, and the config that was loaded before stays.
 
 The editor refuses a `setup` too, the same way, when what it registered
 cannot be meant: a command name or a job name registered twice (the first
-could never run), a store name declared twice, or a command over a store the
-`setup` does not declare. The diagnostic names the command, the job or the
-store.
+could never run), a key sequence bound twice (the first binding could never
+run), a store name declared twice, or a command over a store the `setup`
+does not declare. The diagnostic names the command, the job, the keys or
+the store. `bindKey` itself refuses a key string that is not keys, with the
+key parser's reason, and one that names no keys.
 
 A request of this port can carry an `EditorM`, which a request of the
 editor's own port could not: the setup port is not the port `EditorM` runs
@@ -52,7 +64,7 @@ type of a job's result never reaches the registry.
 
 ## Adding to the port
 
-A new kind of registration (a key binding, a subscription, an option) is a
+A new kind of registration (a subscription, an option) is a
 constructor of `SetupRequest` with its case in `SetupRequest.Reply`, and an
 operation here that makes the request. It then needs a clause in the
 collecting handler (`Config.Registrations.collect`), which is where it
@@ -76,6 +88,9 @@ inductive SetupRequest where
   /-- Register `work` as the job called `name`: a job that finishes with the
   command that takes its result to the editor (`Editor/Job.lean`). -/
   | job (name : String) (work : Work)
+  /-- Bind the key sequence `keys` to the command called `command`. The
+  name is looked up when the keys are typed. -/
+  | bind (keys : List Key) (command : String)
 
 /-- The type of the reply to each request: nothing, for all of them. -/
 def SetupRequest.Reply : SetupRequest → Type
@@ -83,6 +98,7 @@ def SetupRequest.Reply : SetupRequest → Type
   | .store _ => Unit
   | .storeCommand .. => Unit
   | .job .. => Unit
+  | .bind .. => Unit
 
 /-- The setup port: `SetupRequest` and the reply to each request. -/
 abbrev setupPort : Port :=
@@ -118,5 +134,25 @@ the handler makes on the editor thread when the job has finished.
 def job {α : Type} (name : String) (run : Unit → JobM α) (handler : α → EditorM Unit) :
     SetupM Unit :=
   ExceptT.lift (Program.request (port := setupPort) (.job name (Work.of run handler)))
+
+/-- The message a binding of no keys to the command called `command` is
+refused with. -/
+def boundToNoKeys (command : String) : String :=
+  s!"the command `{command}` is bound to no keys"
+
+/-- Binds the key sequence the key string `keys` names (`Key.parse`:
+`"C-x C-s"`) to the command called `command`. The name is looked up when
+the keys are typed, so the command need not be one this `setup` registers.
+
+Refuses the `setup` for a key string that is not keys, with the key
+parser's reason, which names the stroke, and for one that names no keys. -/
+def bindKey (keys : String) (command : String) : SetupM Unit := do
+  match Key.parse keys with
+  | .error reason =>
+    throw reason
+  | .ok [] =>
+    throw (boundToNoKeys command)
+  | .ok chords =>
+    ExceptT.lift (Program.request (port := setupPort) (.bind chords command))
 
 end Editor
