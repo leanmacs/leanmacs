@@ -1,3 +1,4 @@
+import Editor.Command.Call
 import Editor.Job
 import Editor.Key.Notation
 import Editor.Mode
@@ -47,6 +48,26 @@ def setup : SetupM Unit := do
 
 A job registered with `job` takes none, and is the same job whatever it is
 started with.
+
+A command may be given what it was called with (`commandWith`, named as
+`jobWith` is beside `job`): the `Call` (`Editor/Command/Call.lean`), which
+holds the window it acts on, the invocation's arguments and the keys that
+yielded it. A command registered with `command` is told none of it. So a
+command of config's can read a count, and can be the continuation of a
+prompt, which receives the answer as its first argument (`prompt`,
+`Editor/Api.lean`):
+
+```lean
+def setup : SetupM Unit := do
+  commandWith "greet-named" fun call =>
+    match call.arguments with
+    | .str name :: _ => message s!"hello {name}"
+    | _ => message "hello"
+  command "ask-name" (discard <| prompt "Name: " { command := "greet-named" })
+```
+
+Both kinds are commands under one set of names: a name registered twice is
+refused whichever the two are.
 
 A mode (`Editor/Mode.lean`) is defined with `defineMode`: the roles it
 fills and its suffixes name commands, which are looked up when the keys are
@@ -108,6 +129,9 @@ namespace Editor
 inductive SetupRequest where
   /-- Register `run` as the command called `name`. -/
   | command (name : String) (run : EditorM Unit)
+  /-- Register `run` as the command called `name`, which is given what it
+  was called with (`Editor/Command/Call.lean`). -/
+  | commandWith (name : String) (run : Call → EditorM Unit)
   /-- Declare a store: a cell whose value survives a reload
   (`Editor/Store.lean`). -/
   | store (declaration : StoreDeclaration)
@@ -127,6 +151,7 @@ inductive SetupRequest where
 /-- The type of the reply to each request: nothing, for all of them. -/
 def SetupRequest.Reply : SetupRequest → Type
   | .command .. => Unit
+  | .commandWith .. => Unit
   | .store _ => Unit
   | .storeCommand .. => Unit
   | .job .. => Unit
@@ -145,6 +170,12 @@ abbrev SetupM :=
 /-- Registers `run` as the command called `name`. -/
 def command (name : String) (run : EditorM Unit) : SetupM Unit :=
   ExceptT.lift (Program.request (port := setupPort) (.command name run))
+
+/-- Registers `run` as the command called `name`, which is given what it was
+called with (`Call`): the window it acts on, the invocation's arguments and
+the keys that yielded it. -/
+def commandWith (name : String) (run : Call → EditorM Unit) : SetupM Unit :=
+  ExceptT.lift (Program.request (port := setupPort) (.commandWith name run))
 
 /-- Declares `store`: the editor keeps a cell of that name for it, whose value
 survives a reload. -/

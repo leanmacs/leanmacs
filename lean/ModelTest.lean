@@ -1557,6 +1557,24 @@ def setupChecks : List Check :=
         pure
           (refusal plain == some "the command `greet` is registered twice" &&
             refusal mixed == some "the command `bump` is registered twice") },
+    { name :=
+        "a setup registers a command that is given its call under its name, beside its other commands, in order; a name registered as a plain command and as one given its call is refused as registered twice"
+      run :=
+        let setup : SetupM Unit := do
+          command "first" (makes "1")
+          commandWith "greet" fun _ => makes "2"
+          command "second" (makes "3")
+        let twice : SetupM Unit := do
+          command "greet" (makes "1")
+          commandWith "greet" fun _ => makes "2"
+        match Config.Registrations.ofSetup setup with
+        | .error _ => pure false
+        | .ok collected =>
+          pure
+            (collected.commands.map (·.name) == #["first", "greet", "second"] &&
+              collected.commands.map (·.action matches .call _) == #[false, true, false] &&
+              collected.commands.map (plainTexts ·.action) == #[some #["1"], none, some #["3"]] &&
+              refusal twice == some "the command `greet` is registered twice") },
     { name := "a store step decodes the tree, runs the command and encodes the result"
       run :=
         let step :=
@@ -2537,6 +2555,22 @@ def reloadChecks : List Check :=
           ((calls state "stamp" [.nat 3, .str "w"] (keys "C-x i")).map (·.2) ==
               some #["", "stamp 3 w C-x i"] &&
             ((calls state "stamp").bind (·.1)).isNone) },
+    { name :=
+        "a command config registers as one given its call is handed the call an invocation runs it with: it acts on the call's target and reads its arguments and its keys; an install replaces it with config's other commands, and a config that no longer registers it drops it"
+      run :=
+        let greets (label : String) : SetupM Unit :=
+          commandWith "greet" fun call => Loop.insert call.target (callText label call)
+        let called (state : Config.State Elaborated) : Option (Array String) :=
+          (calls state "greet" [.nat 3, .str "w"] (keys "C-x i")).map (·.2)
+        let (loaded, _) := reduce [.requested, .finished (accepted ["a"] (greets "one"))]
+        let (reloaded, _) :=
+          reduceFrom loaded [.requested, .finished (accepted ["a"] (greets "two"))]
+        let (dropped, _) :=
+          reduceFrom loaded [.requested, .finished (accepted ["a"] (command "other" (makes "o")))]
+        pure
+          (called loaded == some #["one 3 w C-x i"] && called reloaded == some #["two 3 w C-x i"] &&
+            (called dropped).isNone &&
+            loaded.registry.names == #["greet"]) },
     { name :=
         "a command over a store, run as an invocation runs it, hands back what to write: the owner, the store and the new tree, which the state then holds"
       run :=

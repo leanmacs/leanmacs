@@ -96,10 +96,11 @@ name, so config's command of a name a compiled command has is the one that
 runs while config registers it, and the compiled one runs again once a
 reload drops it.
 
-A compiled command may be given what it was called with (`Action.call`,
+A command may be given what it was called with (`Action.call`,
 `Editor/Command/Call.lean`): the window it acts on, the invocation's
-arguments and the keys. `setup` registers a plain command, which is told
-nothing of its call.
+arguments and the keys. Compiled code registers one as such, and `setup`
+does with `commandWith`; `setup`'s `command` registers a plain command,
+which is told nothing of its call.
 
 Compiled jobs are registered the same way, with `replaceJobs .compiled …`
 when the host starts, and a command starts one by its name as it starts
@@ -323,6 +324,8 @@ and what has been registered after it. -/
 def collect : (request : SetupRequest) → Registrations → request.Reply × Registrations
   | .command name run, collected =>
     ((), { collected with commands := collected.commands.push { name, action := .plain run } })
+  | .commandWith name run, collected =>
+    ((), { collected with commands := collected.commands.push { name, action := .call run } })
   | .store declaration, collected =>
     ((), { collected with stores := collected.stores.push declaration })
   | .storeCommand name store step, collected =>
