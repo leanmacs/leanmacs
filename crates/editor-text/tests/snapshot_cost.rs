@@ -1,5 +1,5 @@
-//! What a snapshot, a transaction and a pull cost, counted as bytes
-//! allocated and never as time.
+//! What a snapshot, a transaction, a pull, a motion and a read of a part of
+//! the text cost, counted as bytes allocated and never as time.
 //!
 //! A snapshot is taken for every reader of a text, so it must not copy the
 //! text, and the edit that follows one must copy only the part of the tree
@@ -7,7 +7,10 @@
 //! copy neither the text nor the log it is recorded in; and a consumer
 //! that pulls what changed across many entries must not pay for each entry
 //! again for every later one. A file is loaded once for a buffer, and must
-//! not be copied a third time on the way to the rope. All are counted here
+//! not be copied a third time on the way to the rope. A motion is asked
+//! for every key that moves a cursor, so it must walk the rope and copy
+//! none of the text out to scan it; and reading one row or a range must
+//! not read the whole text. All are counted here
 //! with an allocator that adds up what each thread asks for. A count is
 //! the same on every machine, where a duration is not.
 //!
@@ -26,7 +29,9 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use editor_text::fs::{
     FakeFs, Fs, FsError, FsErrorKind, Kind, Modified, Permissions, Pieces, Stat,
 };
-use editor_text::{Anchor, Bias, ChangeSet, Marker, Origin, Revision, Text, Transaction, file};
+use editor_text::{
+    Anchor, Bias, ChangeSet, Marker, Motion, Origin, Revision, Text, Transaction, WordKind, file,
+};
 
 /// The system allocator, counting the bytes each thread asks it for.
 struct Counting;
@@ -404,6 +409,93 @@ fn a_text_made_from_a_snapshot_copies_none_of_the_text() {
     // tree; making it from the snapshot's string would be the megabyte of
     // the rope again. The bound leaves room for a small header.
     assert!(counted < 1024, "{counted} bytes allocated");
+}
+
+/// Every motion: the fifteen that take nothing but a kind of word, and one
+/// each way by rows.
+fn motions() -> [Motion; 17] {
+    [
+        Motion::NextCell,
+        Motion::PreviousCell,
+        Motion::NextWordStart(WordKind::Word),
+        Motion::NextWordEnd(WordKind::Word),
+        Motion::PreviousWordStart(WordKind::Word),
+        Motion::PreviousWordEnd(WordKind::Word),
+        Motion::NextWordStart(WordKind::BigWord),
+        Motion::NextWordEnd(WordKind::BigWord),
+        Motion::PreviousWordStart(WordKind::BigWord),
+        Motion::PreviousWordEnd(WordKind::BigWord),
+        Motion::LineStart,
+        Motion::LineEnd,
+        Motion::LineFirstNonBlank,
+        Motion::TextStart,
+        Motion::TextEnd,
+        Motion::RowsUp {
+            count: 1_000,
+            column: 7,
+        },
+        Motion::RowsDown {
+            count: 1_000,
+            column: 30,
+        },
+    ]
+}
+
+#[test]
+fn a_motion_in_a_megabyte_of_text_allocates_nothing_sized_by_the_text() {
+    let string = megabyte();
+    let snapshot = Text::from(string.as_str()).snapshot();
+    // Inside the second word of the line in the middle of the text.
+    let middle = LINE.len() * (string.len() / LINE.len() / 2) + 3;
+
+    for motion in motions() {
+        let (answer, counted) = allocated_by(|| snapshot.motion(motion, middle));
+
+        assert!(answer.is_some(), "{motion:?}");
+        // Measured: 0 bytes for each. A motion walks the rope from the
+        // position, a cell at a time; a copy of the text to scan would be
+        // the megabyte, and a list of its cells more.
+        assert!(counted < 1024, "{motion:?}: {counted} bytes allocated");
+    }
+}
+
+#[test]
+fn a_word_motion_across_a_megabyte_of_blanks_walks_it_and_allocates_nothing() {
+    // One row with no word in it: the motion passes every cell of the
+    // text.
+    let string = " ".repeat(LENGTH);
+    let snapshot = Text::from(string.as_str()).snapshot();
+
+    let (forward, counted_forward) =
+        allocated_by(|| snapshot.motion(Motion::NextWordStart(WordKind::Word), 0));
+    let (back, counted_back) =
+        allocated_by(|| snapshot.motion(Motion::PreviousWordEnd(WordKind::Word), LENGTH));
+
+    assert_eq!(forward, Some(LENGTH));
+    assert_eq!(back, Some(0));
+    // Measured: 0 bytes each way.
+    assert!(counted_forward < 1024, "{counted_forward} bytes allocated");
+    assert!(counted_back < 1024, "{counted_back} bytes allocated");
+}
+
+#[test]
+fn reading_a_row_or_a_range_of_a_megabyte_allocates_what_it_returns_and_not_the_text() {
+    let string = megabyte();
+    let snapshot = Text::from(string.as_str()).snapshot();
+    let row = string.len() / LINE.len() / 2;
+    let start = LINE.len() * row;
+
+    let (content, counted_row) = allocated_by(|| snapshot.row_to_string(row));
+    let (slice, counted_slice) = allocated_by(|| snapshot.slice_to_string(start..start + 100));
+
+    assert_eq!(content.as_deref(), Some(LINE.trim_end_matches('\n')));
+    assert_eq!(slice.as_deref(), Some(&string[start..start + 100]));
+    // Measured: 164 bytes for the row, whose content is 36, and 228 for
+    // the range of 100: the string returned, grown as its pieces are
+    // joined, with every size it had counted. Reading the whole text to
+    // cut either out would be the megabyte.
+    assert!(counted_row < 1024, "{counted_row} bytes allocated");
+    assert!(counted_slice < 1024, "{counted_slice} bytes allocated");
 }
 
 /// Where the file the costs are counted on is, in the fake.
