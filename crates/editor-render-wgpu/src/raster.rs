@@ -69,6 +69,13 @@ impl SwashRasterizer {
             dilation,
         }
     }
+
+    /// How many pixels thicker it draws each stem than its outline: what
+    /// it was made with ([`SwashRasterizer::dilated`]).
+    #[cfg(test)]
+    pub fn dilation(&self) -> f32 {
+        self.dilation
+    }
 }
 
 /// The bytes of the file of `font`.

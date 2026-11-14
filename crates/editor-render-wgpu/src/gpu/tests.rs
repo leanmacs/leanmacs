@@ -669,6 +669,23 @@ fn a_renderer_draws_with_its_settings_contrast() {
 }
 
 #[test]
+fn a_renderer_rasterises_at_its_settings_dilation() {
+    // Two dilations, so that no one dilation put in place of the
+    // settings' (none, or Core Text's) passes for both.
+    for dilation in [0.3, Weight::CORE_TEXT.dilation] {
+        let settings = Settings {
+            weight: Weight {
+                contrast: 0.0,
+                dilation,
+            },
+            ..Settings::default()
+        };
+        let renderer = WgpuRenderer::over(&noop(), settings, true).expect("the no-op adapter");
+        assert_eq!(renderer.painter.rasterizer().dilation(), dilation);
+    }
+}
+
+#[test]
 fn a_renderer_with_another_weight_draws_real_glyphs_with_no_validation_error() {
     let settings = Settings {
         weight: Weight {
