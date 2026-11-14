@@ -27,7 +27,7 @@
 //! out nothing the frame laid out, and a frame after a query likewise.
 //!
 //! **A view's status row is kept by view**, not by text
-//! ([`StatusKept`]): its fields are the scene's own text. It is shaped
+//! (`StatusKept`): its fields are the scene's own text. It is shaped
 //! again when its text, its font runs or the shaper's generation change,
 //! and dropped when a scene does not name its view. It is no segment of a
 //! text, so the counters below do not count it; a test bounds it by the
