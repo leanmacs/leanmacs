@@ -205,6 +205,15 @@ does not run to its end leaves no message: the echo area then says what
 became of it (`Editor/Loop.lean`, "Running an invocation"). Pinned by
 `ModelTest.loopChecks`.
 
+## Ex bindings
+
+`exBinding name` asks which command the ex name `name` is bound to, and
+what the name takes (`Ex.Binding`, `Editor/Ex/Line.lean`). The loop that
+runs the command answers from the registry as it is at that step
+(`Editor/Command/Dispatch.lean`); `none` is a name nobody bound. It is how
+the ex command (`Editor/Ex.lean`) finds what a line runs: a command is a
+program over the editor's port and cannot hold the registry.
+
 ## Jobs
 
 `startJob name arguments` asks for the job registered under `name` to be
@@ -314,6 +323,12 @@ later, as the command its handler makes. Refused with `noSuchJob` for a
 name no job is registered under. -/
 def startJob (name : String) (arguments : List Argument := []) : EditorM (Except JobRefusal Unit) :=
   EditorState.ask (.startJob name arguments)
+
+/-- The ex binding of the ex name `name`: the command a line of that name
+runs, and what the name takes (`Ex.Binding`, `Editor/Ex/Line.lean`). `none`
+for a name nobody bound, and where no loop runs the command. -/
+def exBinding (name : String) : EditorM (Option Ex.Binding) :=
+  EditorState.ask (.ex name)
 
 /-- Asks for a string: opens a prompt labelled `label`, whose minibuffer
 holds `initial`, with the cursor after it, and returns the minibuffer's

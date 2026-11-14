@@ -4779,7 +4779,7 @@ def stateRequests : List StateRequest :=
     .openPrompt "Name: " asked ⟨8⟩ (UndoTree.new ⟨8⟩ 0) (marker 0 0) (marker 8 1),
     .closePrompt none, .closePrompt (some "typed"),
     .setWanted ⟨0⟩ (some { column := .cells 3, head := 7 }), .setWanted ⟨1⟩ none,
-    .setWanted ⟨9⟩ (some { column := .lineEnd, head := 0 })]
+    .setWanted ⟨9⟩ (some { column := .lineEnd, head := 0 }), .ex "w"]
 
 /-- The checks of the state requests' pure handler (`EditorState.handle`,
 `Editor/State/Request.lean`), on states made on the text model. The handler
@@ -5202,6 +5202,16 @@ def stateRequestChecks : List Check :=
               answered.answered.size == 1 &&
               replied refused == .inl .notOpen &&
               same == state },
+    { name :=
+        "the handler knows no registry: asked which command an ex name is bound to, it answers none for any name, and leaves the state as it was"
+      run :=
+        pure <|
+          match onTextModel twoBuffers with
+          | none => false
+          | some state =>
+            ["w", "greet", ""].all fun name =>
+              let (bound, after) := state.handle (.ex name)
+              bound == none && after == state },
     { name :=
         "every kind of request, accepted and refused, leaves a well-formed state well formed, with no prompt open and with one open, and the state with nothing in it answers each without a buffer or a window"
       run := do
@@ -7131,7 +7141,34 @@ def dispatchStateChecks : List Check :=
           (program.runModel editorModel).1.toOption ==
             some
               ("", "moving: refused: bad range; the command moved in the history", #["window"],
-                "one") }]
+                "one") },
+    { name :=
+        "a command that asks which command an ex name is bound to is answered what the loop was told of the registry: the binding of a name it knows, with what it takes, and none for another name; the state is as it was"
+      run :=
+        pure <|
+          let greet : Ex.Binding := { name := "greet", command := "greet-named", takes := .text }
+          let registered : Loop.Registered :=
+            { ex := fun name => if name == "greet" then some greet else none }
+          let command : EditorM (Option Ex.Binding × Option Ex.Binding) := do
+            return (← exBinding "greet", ← exBinding "other")
+          let program : EditorM (Guarded (Option Ex.Binding × Option Ex.Binding) × Bool) := do
+            let start ← EditorState.initial ⟨640, 480⟩
+            let (outcome, state) ← command.dispatched registered start
+            return (outcome, state == start)
+          (program.runModel editorModel).1.toOption == some (.finished (some greet, none), true) },
+    { name :=
+        "what the loop is told of a registry's ex bindings is the latest entry of each name: config's binding of a name a compiled binding has, the compiled one of a name config does not bind, and none for a name nobody bound"
+      run :=
+        let registry : Config.Registry :=
+          (({} : Config.Registry).replaceEx .compiled
+                #[{ name := "w", command := "compiled" },
+                  { name := "q", command := "kept" }]).replaceEx
+            .config #[{ name := "w", command := "config", takes := .text }]
+        let told := registry.registered
+        pure
+          (told.ex "w" == some { name := "w", command := "config", takes := .text } &&
+            told.ex "q" == some { name := "q", command := "kept" } &&
+            told.ex "missing" == none) }]
 
 /-- The refusal `program` ends with, if it is refused. -/
 def refusalOf {α : Type} (program : TextM α) : TextM (Option TextError) := do

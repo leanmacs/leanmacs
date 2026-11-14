@@ -1,3 +1,4 @@
+import Editor.Ex.Line
 import Editor.Invocation
 import Editor.State
 
@@ -29,11 +30,13 @@ the models and against the library alike (`Editor/Command/Dispatch.lean`).
 - **A request holds plain data.** It cannot hold a command or a job, which
   are programs over ports that would then refer to themselves: a mode is
   named, and so is a job, and what the name stands for is the registry's.
-  So two requests are answered with more than this handler by the loop,
+  So three requests are answered with more than this handler by the loop,
   which knows the registry: `setMajorMode`, which there refuses a name no
-  mode is registered under and runs the mode's on-enter actions, and
-  `startJob`, which there refuses a name no job is registered under. Here
-  each takes any name.
+  mode is registered under and runs the mode's on-enter actions,
+  `startJob`, which there refuses a name no job is registered under, and
+  `ex`, which there is answered the binding the registry has for an ex
+  name (`Editor/Ex/Line.lean`). Here the first two take any name, and
+  `ex` is answered `none`: this handler knows no registry.
 - **A marker is made by the caller.** `split` and `show` are handed the
   markers of the window they make or change, which the command marked on
   the buffer's text first: the handler asks the text store nothing.
@@ -129,6 +132,8 @@ inductive StateRequest where
   | closePrompt (answer : Option String)
   /-- Have the window `view` keep `wanted` as its wanted column, or none. -/
   | setWanted (view : ViewId) (wanted : Option Window.Wanted)
+  /-- Which command the ex name `name` is bound to, and what it takes. -/
+  | ex (name : String)
 
 /-- The type of the reply to each request. -/
 abbrev StateRequest.Reply : StateRequest → Type
@@ -152,6 +157,7 @@ abbrev StateRequest.Reply : StateRequest → Type
   | .openPrompt .. => Except PromptRefusal ViewId
   | .closePrompt _ => Except PromptRefusal Unit
   | .setWanted .. => Except LayoutRefusal Unit
+  | .ex _ => Option Ex.Binding
 
 namespace EditorState
 
@@ -194,6 +200,7 @@ def handle : (request : StateRequest) → EditorState → request.Reply × Edito
     state.openPrompt label continuation text history scroll selection
   | .closePrompt answer, state => state.closePrompt answer
   | .setWanted view wanted, state => state.setWanted view wanted
+  | .ex _, state => (none, state)
 
 end EditorState
 

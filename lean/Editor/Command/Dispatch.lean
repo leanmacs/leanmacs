@@ -95,6 +95,11 @@ from the next command.
   state as it was. Otherwise the start is kept in the state, for the loop
   to hand to its host once the command has run to its end
   (`Editor/Loop.lean`, "Jobs from commands").
+- **Asking for an ex binding** (`StateRequest.ex`) is answered the binding
+  the registry has for the ex name (`Loop.Registered.ex`): the command the
+  name runs and what it takes, or `none` for a name nobody bound. The
+  state is not read and not changed. What the answer is used for, the ex
+  line's rules, is the asking command's (`Editor/Ex.lean`).
 
 Putting an action's program before the rest of the command makes the
 transformation recurse into a program that is no part of the one it was
@@ -135,6 +140,9 @@ structure Loop.Registered where
   /-- Whether a job is registered under this name, for a command to
   start. -/
   jobs : String → Bool := fun _ => false
+  /-- The ex binding of an ex name (`Editor/Ex/Line.lean`): the command it
+  runs and what it takes. `none` for a name nobody bound. -/
+  ex : String → Option Ex.Binding := fun _ => none
 
 /-- A program that ends at once, interrupted, with no state: what the
 compiler is shown for `Program.dispatched`, which is `partial`. -/
@@ -149,7 +157,9 @@ with that request and everything after it not made.
 
 A request to set a major mode is answered with what `registered` says of
 the mode ("Requests that name something registered", in the module docs):
-the on-enter actions it runs are put before the rest of the program. -/
+the on-enter actions it runs are put before the rest of the program. A
+request to start a job and one for an ex binding are answered with what
+`registered` says of the name. -/
 partial def Program.dispatched {α : Type} (registered : Loop.Registered) :
     EditorState →
       Program editorPort (Except TextError α) → Program editorPort (Guarded α × EditorState)
@@ -175,6 +185,7 @@ partial def Program.dispatched {α : Type} (registered : Loop.Registered) :
       let (reply, state) := state.handle (.startJob name arguments)
       dispatched registered state (next reply)
     else dispatched registered state (next (.error (.noSuchJob name)))
+  | state, .step (.state (.ex name)) next => dispatched registered state (next (registered.ex name))
   | state, .step (.state request) next =>
     let (reply, state) := state.handle request
     dispatched registered state (next reply)
