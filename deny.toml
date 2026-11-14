@@ -90,6 +90,15 @@
 # banned"). `editor-platform-arboard` itself has no entry: nothing depends
 # on it yet, and binding it is the display pipeline's phase 6.
 #
+# For `raw-window-handle` (2026-11-14), whose entry came in the commit in
+# which an adapter first named its types: `editor-platform-winit` turns
+# the handles winit gives into the port's `NativeWindow`, through winit's
+# re-export. The entry's wrappers are the third-party crates that depend
+# on it in the resolved graph (winit and its `ndk`, and wgpu's four), so
+# that no crate of the workspace can: with it added to
+# `editor-platform-winit`'s dependencies, it fails ("crate
+# 'raw-window-handle = 0.6.2' is explicitly banned").
+#
 # One rule has no entry: "no crate depends on `editor-ffi`", the one crate
 # that knows about Lean. No entry for it passes the gate. With
 # `wrappers = ["editor-ffi"]` the wrapper matches nothing and
@@ -105,6 +114,7 @@ no-default-features = false
 multiple-versions = "allow"
 deny = [
   { crate = "winit", wrappers = ["editor-platform-winit"], reason = "winit stays behind the window port: only its adapter crate may name its types" },
+  { crate = "raw-window-handle", wrappers = ["winit", "wgpu", "wgpu-core", "wgpu-hal", "wgpu-types", "ndk"], reason = "a window's handles cross between the window adapter and the renderer as the port's own data (`editor_platform::NativeWindow`): each adapter reaches this crate through the library it wraps (`winit::raw_window_handle`, `wgpu::rwh`), and no crate of the workspace depends on it; the wrappers are the third-party crates that do" },
   { crate = "editor-platform-winit", wrappers = ["editor-ffi"], reason = "the window adapter is linked only by the crate that wires the library together; everything else reaches a window through the port" },
   { crate = "editor-platform", wrappers = ["editor-ffi", "editor-platform-winit", "editor-platform-arboard"], reason = "the window port has two users today, its adapter and the crate that runs it onto the event queue; the clipboard port beside it has one, its adapter; another is a decision, so it is made here" },
   { crate = "arboard", wrappers = ["editor-platform-arboard"], reason = "arboard stays behind the clipboard port: only its adapter crate may name its types" },

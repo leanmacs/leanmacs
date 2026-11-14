@@ -100,7 +100,7 @@ pub mod contract;
 pub mod scripted;
 
 use std::error::Error;
-use std::ffi::c_void;
+use std::ffi::{c_int, c_ulong, c_void};
 use std::fmt;
 use std::ptr::NonNull;
 use std::sync::Arc;
@@ -384,17 +384,20 @@ pub enum NativeWindow {
         /// The window's `NSView`.
         view: NonNull<c_void>,
     },
-    /// A window of an X11 server, as Xlib names it.
+    /// A window of an X11 server, as Xlib names it. Its numbers are of the
+    /// C types Xlib defines them in, so that they cross unchanged whatever
+    /// the machine's word is.
     Xlib {
         /// The connection's `Display`; `None` when the platform does not
         /// say, and the library then opens the default display.
         display: Option<NonNull<c_void>>,
         /// The number of the screen the window is on.
-        screen: i32,
-        /// The window's id.
-        window: u64,
-        /// The id of the window's visual; 0 when the platform does not say.
-        visual: u64,
+        screen: c_int,
+        /// The window's id: an Xlib `Window`.
+        window: c_ulong,
+        /// The id of the window's visual: an Xlib `VisualID`; 0 when the
+        /// platform does not say.
+        visual: c_ulong,
     },
     /// A window of a Wayland compositor.
     Wayland {

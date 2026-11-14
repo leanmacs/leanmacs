@@ -2,15 +2,19 @@
 //! [`Platform`] over winit.
 //!
 //! The port, its fake and its contract are `editor-platform`'s. This crate
-//! is thin: it opens one window, translates what winit reports about it into
-//! the port's [`Input`], and ends its loop when it is asked to close. No
-//! winit type is public, and no other crate depends on winit (`deny.toml`).
+//! is thin: it opens one window, translates what winit says of it into the
+//! port's [`Input`] and [`Canvas`], and ends its loop when it is asked to
+//! close. No winit type is public, and no other crate depends on winit
+//! (`deny.toml`).
 //!
 //! The translation is the module `translate`'s, with a key's names in
-//! `names`: every key with its logical key, physical key and modifiers; the
-//! pointer's press, drag, release and wheel; a resize with the size and the
-//! scale; the focus; a composition; and a request to close. Their docs say
-//! what is decided where winit and the port differ.
+//! `names` and the window's native handles in `native`: every key with its
+//! logical key, physical key and modifiers; the pointer's press, drag,
+//! release and wheel; a resize with the size and the scale; the focus; a
+//! composition; a request to close; and, for whatever draws in the window,
+//! its native window, its size, its display's refresh rate, damage, and
+//! whether it is hidden. Their docs say what is decided where winit and the
+//! port differ.
 //!
 //! What it does beyond translating:
 //!
@@ -21,7 +25,11 @@
 //! - **It says how large the window is when it opens**: a
 //!   [`Input::Resized`] with the window's size and scale straight after
 //!   [`Input::Opened`], since nothing else in the port says so.
-//!
+//! - **It leaves winit's loop waiting.** The loop's control flow is never
+//!   set, so it is winit's default, a wait for the next event, and the
+//!   adapter never asks winit for a redraw: a window nobody touches turns
+//!   its loop not at all. What draws is woken by what the drawer is told,
+//!   on a thread of its own, and never by this loop.
 //! - **It refuses to run off the process's main thread**, with a reason,
 //!   before it touches winit: winit panics there. Whether the calling thread
 //!   is the main one is asked of a function the caller supplies, since the
@@ -39,27 +47,47 @@
 //! # Tests
 //!
 //! The gate (`mise run ci`) opens no window, so what it covers here is the
-//! translation from winit's values to [`Input`] and the refusal off the main
-//! thread. The event loop itself needs a display, and so do the handler's
-//! two lines that take apart the events no test can build (a key, a change
-//! of scale) and its reading of the window's size as it opens. It is held to the port's
-//! contract by `examples/contract.rs`, which two opt-in tasks run:
-//! `mise run linux-window`, under Xvfb in a container, and
-//! `mise run window-contract`, on the desktop it is started from. Run the
-//! first after a change to this crate.
+//! translation from winit's values to [`Input`] and [`Canvas`] and the
+//! refusal off the main thread. The event loop itself needs a display, and
+//! so do the lines here that only a real window runs. They are few, and
+//! each is a reading of the window or a call with no decision in it:
+//!
+//! - the handler's two arms that take apart the events no test can build,
+//!   a key and a change of scale;
+//! - the readings of the window as it opens: its size and scale, its raw
+//!   handles (`native_window`), and its display's refresh rate
+//!   (`refresh_rate`, which reads `current_monitor` and its
+//!   `refresh_rate_millihertz`);
+//! - that same reading of the refresh rate when the translation asks for
+//!   it, after a move, a resize or a change of scale. Which events ask,
+//!   and what is told of the answer, are the translation's, and tested;
+//! - handing what an event comes to on: each `Canvas` to the drawer, then
+//!   the `Input` to the report;
+//! - telling the drawer the window is closing once the loop has ended.
+//!
+//! They are held to the port's contract by `examples/contract.rs`, which
+//! two opt-in tasks run: `mise run linux-window`, under Xvfb in a
+//! container, and `mise run window-contract`, on the desktop it is started
+//! from. Run the first after a change to this crate. Under Xvfb the
+//! display says no refresh rate, so the reading is run there and what a
+//! real display answers is not seen.
 
 mod names;
+mod native;
 mod translate;
 
 use std::sync::{Mutex, MutexGuard, PoisonError};
 
-use editor_platform::{CannotOpen, Canvas, Drawer, Input, Platform, Report, WindowOptions};
+use editor_platform::{
+    CannotOpen, Canvas, Drawer, Input, NativeWindow, Platform, Report, WindowOptions,
+};
 use winit::application::ApplicationHandler;
 use winit::event::WindowEvent;
 use winit::event_loop::{ActiveEventLoop, EventLoop, EventLoopProxy};
+use winit::raw_window_handle::{HasDisplayHandle, HasWindowHandle};
 use winit::window::{Window, WindowId};
 
-use crate::translate::{KeyParts, Seen};
+use crate::translate::{KeyParts, Seen, Told};
 
 /// The window port over winit. It opens one window, on the process's main
 /// thread, once in a process.
@@ -171,15 +199,15 @@ impl ApplicationHandler for App {
             Ok(window) => {
                 window.set_ime_allowed(self.options.composition);
                 window.focus_window();
-                let size = self.seen.opened(window.inner_size(), window.scale_factor());
+                let (opened, size) = self.seen.opened(
+                    window.inner_size(),
+                    window.scale_factor(),
+                    native_window(&window),
+                    refresh_rate(&window),
+                );
                 self.window = Some(window);
                 // The drawer hears of the window before anyone else does.
-                // The native window and the refresh rate are still to come.
-                (self.drawer)(Canvas::Opened {
-                    window: None,
-                    size: self.seen.size(),
-                    refresh_millihertz: None,
-                });
+                (self.drawer)(opened);
                 (self.report)(Input::Opened {
                     platform: WinitPlatform::NAME.into(),
                 });
@@ -197,24 +225,53 @@ impl ApplicationHandler for App {
     }
 
     fn window_event(&mut self, _: &ActiveEventLoop, _: WindowId, event: WindowEvent) {
+        // How often the window's display refreshes, read when the
+        // translation asks: it decides after which events to.
+        let window = self.window.as_ref();
+        let display = || window.and_then(refresh_rate);
         // Two of winit's events cannot be built in a test, a key and a change
         // of scale, so each is taken apart here and translated from its
         // parts. These two arms are all this handler decides.
-        let input = match &event {
-            WindowEvent::KeyboardInput { event, .. } => Some(self.seen.key(&KeyParts {
-                state: event.state,
-                repeat: event.repeat,
-                logical: &event.logical_key,
-                physical: event.physical_key,
-                text: event.text.as_deref(),
-            })),
-            WindowEvent::ScaleFactorChanged { scale_factor, .. } => self.seen.scale(*scale_factor),
-            other => self.seen.window_event(other),
+        let told = match &event {
+            WindowEvent::KeyboardInput { event, .. } => Told {
+                input: Some(self.seen.key(&KeyParts {
+                    state: event.state,
+                    repeat: event.repeat,
+                    logical: &event.logical_key,
+                    physical: event.physical_key,
+                    text: event.text.as_deref(),
+                })),
+                canvas: Vec::new(),
+            },
+            WindowEvent::ScaleFactorChanged { scale_factor, .. } => {
+                self.seen.scale(*scale_factor, &display)
+            }
+            other => self.seen.window_event(other, &display),
         };
-        if let Some(input) = input {
+        // The drawer first, as when the window opened: a size is known to
+        // what draws before anyone is told to lay out for it.
+        for canvas in told.canvas {
+            (self.drawer)(canvas);
+        }
+        if let Some(input) = told.input {
             (self.report)(input);
         }
     }
+}
+
+/// The window as the system knows it, in the port's terms: `None` when
+/// winit does not give its handles, or gives handles the port has no
+/// variant for.
+fn native_window(window: &Window) -> Option<NativeWindow> {
+    let handle = window.window_handle().ok()?.as_raw();
+    let display = window.display_handle().ok()?.as_raw();
+    native::native(handle, display)
+}
+
+/// How often the display the window is on refreshes, in thousandths of a
+/// hertz, when winit says.
+fn refresh_rate(window: &Window) -> Option<u32> {
+    window.current_monitor()?.refresh_rate_millihertz()
 }
 
 /// Builds the event loop, without winit's default menu where it has one.
