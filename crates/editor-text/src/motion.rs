@@ -65,6 +65,28 @@ pub enum Motion {
     TextStart,
     /// The end of the text: `n`.
     TextEnd,
+    /// In the row `count` rows above `p`'s, or the first row when the text
+    /// has none that far up: the position `column` cells from the row's
+    /// start, or where the row's content ends when it has fewer. The
+    /// column is counted as a [`PointCells`](crate::PointCells) counts it.
+    /// A count of 0 stays in `p`'s row. The answer is never past the row's
+    /// content, whatever the column.
+    RowsUp {
+        /// How many rows up.
+        count: usize,
+        /// How many cells into the row.
+        column: usize,
+    },
+    /// The same as [`Motion::RowsUp`] in the row `count` rows below `p`'s,
+    /// or the last row when the text has none that far down. The empty
+    /// last row of a text that ends in a line feed is a row like any
+    /// other.
+    RowsDown {
+        /// How many rows down.
+        count: usize,
+        /// How many cells into the row.
+        column: usize,
+    },
 }
 
 impl Snapshot {
@@ -91,7 +113,37 @@ impl Snapshot {
             Motion::LineFirstNonBlank => self.first_non_blank(self.content_at(offset)?),
             Motion::TextStart => 0,
             Motion::TextEnd => self.len(),
+            Motion::RowsUp { count, column } => {
+                let (row, _) = self.row_of_position(offset)?;
+                self.at_column(row.saturating_sub(count), column)?
+            }
+            Motion::RowsDown { count, column } => {
+                let (row, _) = self.row_of_position(offset)?;
+                let last = self.row_count().saturating_sub(1);
+                self.at_column(row.saturating_add(count).min(last), column)?
+            }
         })
+    }
+
+    /// The position `column` cells into the content of the row `row`, or
+    /// where the content ends when it has fewer. `None` when the text has
+    /// no such row.
+    fn at_column(&self, row: usize, column: usize) -> Option<usize> {
+        let content = self.row_content(row)?;
+        // A cell is at least a byte, so a column that is not below the
+        // content's length in bytes is past its cells: no walk is needed
+        // to say so, however long the row.
+        if column >= content.len() {
+            return Some(content.end);
+        }
+        let mut at = content.start;
+        for _ in 0..column {
+            if at >= content.end {
+                break;
+            }
+            at = self.cell_end(at);
+        }
+        Some(at)
     }
 
     /// The content of the row the position `offset` is in. `None` when
@@ -281,7 +333,15 @@ mod tests {
     }
 
     /// Every motion, to ask what holds of them all.
-    const MOTIONS: [Motion; 15] = [
+    const MOTIONS: [Motion; 17] = [
+        Motion::RowsUp {
+            count: 1,
+            column: 4,
+        },
+        Motion::RowsDown {
+            count: 1,
+            column: 2,
+        },
         Motion::NextCell,
         Motion::PreviousCell,
         Motion::NextWordStart(WordKind::Word),
@@ -676,6 +736,95 @@ mod tests {
         assert_eq!(answers(FIXTURE, Motion::TextStart), [0; 27]);
         assert_eq!(answers(FIXTURE, Motion::TextEnd), [30; 27]);
         assert_eq!(answers("a\n", Motion::TextEnd), [2, 2, 2]);
+    }
+
+    /// The motion `count` rows down at the column `column`.
+    fn down(count: usize, column: usize) -> Motion {
+        Motion::RowsDown { count, column }
+    }
+
+    /// The motion `count` rows up at the column `column`.
+    fn up(count: usize, column: usize) -> Motion {
+        Motion::RowsUp { count, column }
+    }
+
+    #[test]
+    fn a_row_motion_answers_the_position_that_many_cells_into_the_row_or_the_end_of_its_content() {
+        // One row down at column 2: row 1 is empty, in row 2 the column is
+        // `e`, in row 3 `d`, and below the last row there is none, so the
+        // motion stays in it.
+        assert_eq!(
+            answers(FIXTURE, down(1, 2)),
+            [
+                12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 16, 16, 29, 29, 29, 29, 29, 29, 29,
+                29, 29, 29, 29, 29, 29
+            ]
+        );
+        // One row up at column 4: `b` in row 0, also from row 0, which has
+        // no row above; the empty row 1; and "😀" in row 2, the fifth cell
+        // after a tab, two letters and a combining mark.
+        assert_eq!(
+            answers(FIXTURE, up(1, 4)),
+            [
+                4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 12, 12, 12, 12, 12, 12, 12, 12, 12, 19,
+                19, 19, 19
+            ]
+        );
+    }
+
+    #[test]
+    fn a_row_motion_of_no_rows_is_the_position_at_the_column_of_the_positions_own_row() {
+        // Column 3: `.` in row 0, the combining mark in row 2, and the end
+        // of row 3, which has three cells.
+        assert_eq!(
+            answers(FIXTURE, down(0, 3)),
+            [
+                3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 12, 12, 17, 17, 17, 17, 17, 17, 17, 17, 17, 30,
+                30, 30, 30
+            ]
+        );
+        assert_eq!(answers(FIXTURE, up(0, 3)), answers(FIXTURE, down(0, 3)));
+    }
+
+    #[test]
+    fn a_row_motion_past_the_first_or_the_last_row_stops_there() {
+        assert_eq!(answers(FIXTURE, down(9, 99)), [30; 27]);
+        assert_eq!(answers(FIXTURE, up(9, 0)), [0; 27]);
+        // A count and a column as large as there are.
+        assert_eq!(answers(FIXTURE, down(usize::MAX, 0)), [27; 27]);
+        assert_eq!(answers(FIXTURE, up(usize::MAX, usize::MAX)), [10; 27]);
+        assert_eq!(answers(FIXTURE, down(usize::MAX, usize::MAX)), [30; 27]);
+    }
+
+    #[test]
+    fn a_row_motion_never_answers_past_the_content_of_a_row() {
+        // Row 0 ends in a carriage return and a line feed: a column past
+        // its two cells is where the content ends, at the carriage return,
+        // never the position between the two bytes.
+        let text = "ab\r\ncd";
+        assert_eq!(answers(text, up(1, 2)), [2, 2, 2, 2, 2, 2, 2]);
+        assert_eq!(answers(text, up(1, 3)), [2, 2, 2, 2, 2, 2, 2]);
+        assert_eq!(answers(text, up(1, usize::MAX)), [2, 2, 2, 2, 2, 2, 2]);
+        assert_eq!(answers(text, down(0, 9)), [2, 2, 2, 2, 6, 6, 6]);
+        // With a line feed alone, and in a line of blanks.
+        assert_eq!(
+            answers("a\n \t\n\nb\n", down(1, 1)),
+            [3, 3, 5, 5, 5, 7, 8, 8, 8]
+        );
+    }
+
+    #[test]
+    fn a_row_motion_reaches_the_empty_last_row_of_a_text_that_ends_in_a_line_feed() {
+        assert_eq!(answers("a\n", down(1, 5)), [2, 2, 2]);
+        assert_eq!(answers("\n", down(1, 1)), [1, 1]);
+        assert_eq!(answers("a\n", up(1, 5)), [1, 1, 1]);
+    }
+
+    #[test]
+    fn a_row_motion_counts_a_character_of_several_bytes_as_one_column() {
+        // "é" is two bytes and "😀" four.
+        assert_eq!(answers("aé😀b\nx", up(1, 2)), [3, 3, 3, 3, 3, 3, 3]);
+        assert_eq!(answers("aé😀b\nx", up(1, 3)), [7, 7, 7, 7, 7, 7, 7]);
     }
 
     #[test]

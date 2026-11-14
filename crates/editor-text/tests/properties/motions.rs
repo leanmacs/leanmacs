@@ -272,11 +272,53 @@ impl Reference {
             }
             Motion::TextStart => 0,
             Motion::TextEnd => self.len,
+            Motion::RowsUp { count, column } => {
+                self.at_column(self.row_index_of(offset).saturating_sub(count), column)
+            }
+            Motion::RowsDown { count, column } => {
+                let row = self.row_index_of(offset).saturating_add(count);
+                self.at_column(row.min(self.rows.len() - 1), column)
+            }
         }
+    }
+
+    /// Which row the position `offset` is in.
+    fn row_index_of(&self, offset: usize) -> usize {
+        self.rows.partition_point(|row| row.start <= offset) - 1
+    }
+
+    /// Where the cell `column` of the content of the row `row` starts, or
+    /// where the content ends when it has no such cell.
+    fn at_column(&self, row: usize, column: usize) -> usize {
+        let row = self.rows[row];
+        self.content_of(row)
+            .nth(column)
+            .map_or(row.content, |(start, _)| start)
     }
 }
 
-/// Every motion the properties ask.
+/// A count of rows or a column for a row motion: small ones, which land
+/// inside a text, and the largest there is.
+fn count_or_column() -> impl Strategy<Value = usize> {
+    prop_oneof![
+        8 => 0..12_usize,
+        1 => Just(usize::MAX),
+    ]
+}
+
+/// The row motions, up and down, with each count and column of `rows`.
+fn row_motions(rows: &[(usize, usize)]) -> Vec<Motion> {
+    rows.iter()
+        .flat_map(|&(count, column)| {
+            [
+                Motion::RowsUp { count, column },
+                Motion::RowsDown { count, column },
+            ]
+        })
+        .collect()
+}
+
+/// Every motion the properties ask that takes no count and no column.
 fn motions() -> Vec<Motion> {
     vec![
         Motion::NextCell,
@@ -315,13 +357,17 @@ fn cursor_end(snapshot: &Snapshot, offset: usize) -> Result<usize, TestCaseError
 
 #[test]
 fn every_motion_agrees_with_a_reference_on_a_string_at_every_position() {
-    check(128, text_and_edits(), |(initial, steps)| {
+    let rows = vec((count_or_column(), count_or_column()), 3);
+
+    check(128, (text_and_edits(), rows), |((initial, steps), rows)| {
         let (snapshot, string) = edited(initial, &steps);
         let reference = Reference::of(&string);
+        let mut motions = motions();
+        motions.extend(row_motions(&rows));
 
         // To two past the end: those offsets are not positions either.
         for offset in 0..=string.len() + 2 {
-            for motion in motions() {
+            for &motion in &motions {
                 let answer = snapshot.motion(motion, offset);
                 if string.is_char_boundary(offset) {
                     prop_assert_eq!(
@@ -354,6 +400,51 @@ fn the_next_cell_is_where_what_an_inclusive_cursor_covers_ends() {
                 "from {}",
                 offset
             );
+        }
+        Ok(())
+    });
+}
+
+#[test]
+fn a_row_motion_of_no_rows_at_a_positions_own_column_gives_the_position_back() {
+    // A column in cells is counted by walking the row, so asking every
+    // position of a row costs the square of its length, and a generated
+    // text may be one row: the long texts are kilobytes here.
+    let short = || vec(select(FRAGMENTS), 0..=24).prop_map(|pieces| pieces.concat());
+    let text = prop_oneof![
+        7 => short(),
+        1 => (short(), 20..60_usize).prop_map(|(text, times)| text.repeat(times)),
+    ];
+
+    check(128, (text, steps(8)), |(initial, steps)| {
+        let (snapshot, string) = edited(initial, &steps);
+        let reference = Reference::of(&string);
+
+        for offset in (0..=string.len()).filter(|&offset| string.is_char_boundary(offset)) {
+            let Some(point) = snapshot.offset_to_point_cells(offset) else {
+                return Err(TestCaseError::fail(format!("{offset} has no point")));
+            };
+            for stay in [
+                Motion::RowsDown {
+                    count: 0,
+                    column: point.column,
+                },
+                Motion::RowsUp {
+                    count: 0,
+                    column: point.column,
+                },
+            ] {
+                // A position in or after its row's line break is past the
+                // content, which the motion never passes.
+                let content = reference.row_of(offset).content;
+                prop_assert_eq!(
+                    snapshot.motion(stay, offset),
+                    Some(offset.min(content)),
+                    "{:?} from {}",
+                    stay,
+                    offset
+                );
+            }
         }
         Ok(())
     });

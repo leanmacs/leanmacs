@@ -215,6 +215,13 @@
 //!   next start or end of a word is the first after a position, or the end
 //!   of the text; the previous one the last before it, or 0. The next end
 //!   passes over empty lines, and the other three stop on one.
+//! - **A motion to another row** takes a count of rows and a column in
+//!   cells ([`Motion::RowsUp`], [`Motion::RowsDown`]). It answers the
+//!   position that many cells into the content of the row that many rows
+//!   up or down, or where that content ends when it has fewer cells, and
+//!   never a position past the content. Past the first or the last row it
+//!   stops there, and a count of 0 stays in the position's own row. The
+//!   column of a position is its [`PointCells`] column.
 //! - **A motion walks the rope** from the position, a cell at a time, and
 //!   builds nothing: no string and no list of the text's cells or words.
 //!   No answer is clamped: which motion a key runs, a count as repetition
