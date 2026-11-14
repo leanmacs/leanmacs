@@ -1028,6 +1028,51 @@ mod tests {
         assert_eq!(rig.render.step(), Step::Wait(None));
     }
 
+    /// A window that is being resized, or is entering or leaving
+    /// fullscreen, tells a size for each step of the change, faster than
+    /// the display refreshes.
+    #[test]
+    fn sizes_within_one_refresh_are_one_draw_on_the_last() {
+        let frame = frame_of("one");
+        let mut rig = Rig::showing(&frame);
+        // The first new size is drawn on at once.
+        let first_size = Target {
+            width: 500,
+            ..TARGET
+        };
+        rig.handle.resize(first_size);
+        let first = rig.drew();
+        assert_eq!(rig.render.renderer().requests()[1].target, first_size);
+        // Five more sizes, each different, within the refresh after that
+        // draw: each waits for the refresh.
+        let due = first.draw_ns + REFRESH;
+        let mut asked = Vec::new();
+        let mut last = first_size;
+        for step in 1..=5_u32 {
+            rig.clock.advance(100);
+            asked.push(rig.clock.peek());
+            last = Target {
+                width: 500 + step * 100,
+                height: 300 + step * 50,
+                ..TARGET
+            };
+            rig.handle.resize(last);
+            assert_eq!(rig.render.step(), Step::Wait(Some(due)));
+        }
+        rig.clock.set(due);
+        let second = rig.drew();
+        // One draw, of the frame shown, on the last of them, which answers
+        // the first.
+        assert_eq!(second.input_ns, asked[0]);
+        let requests = rig.render.renderer().requests();
+        assert_eq!(requests.len(), 3);
+        assert!(Arc::ptr_eq(&requests[2].frame, &frame));
+        assert_eq!(requests[2].target, last);
+        // And nothing is left to draw.
+        assert_eq!(rig.render.step(), Step::Wait(None));
+        assert_eq!(rig.requests(), 3);
+    }
+
     #[test]
     fn a_frame_is_drawn_at_an_animation_deadline() {
         let frame = frame_of("one");
