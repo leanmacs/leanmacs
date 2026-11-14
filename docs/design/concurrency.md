@@ -249,7 +249,11 @@ time, in order, on the editor thread.
     a command that writes the clipboard does so as its last request: one
     that wrote it ran to its end. Evil's yank and deletion that name the
     clipboard register edit, place the cursor, and then store, the write
-    last ([keymaps-and-modes.md](keymaps-and-modes.md), "Registers").
+    last ([keymaps-and-modes.md](keymaps-and-modes.md), "Registers"). A
+    command that goes on after such a store, which dot repeat's replay of
+    a change with an insert session is, has the store keep what it would
+    write in the editor state, and writes it itself once everything else
+    is done.
   What the loop does with it is built (`lean/Editor/Loop.lean`, "Rollback":
   `Loop.keep` and `Loop.Kept.restore`), as follows.
   - **Before a command** the loop keeps, for each buffer, the state of its

@@ -15633,6 +15633,27 @@ def evilRegisterChecks : List Check :=
             evilHistory put == some (2, false) && evilText put == some "aab b cd" &&
               evilText (evilUndone put) == some "ab cd" },
     { name :=
+        "the name a command names the clipboard by when it will write it itself: a yank under that name sets the unnamed register and keeps the same text under the name, and writes nothing to the clipboard; a put under it puts what the clipboard holds; and it is no name a key types, being longer than one character"
+      run :=
+        pure <|
+          let ran (fixture : String) (invocation : Invocation) (clipboard : ClipboardModel) :
+            Option (EvilEdited × Option String × Option Register) :=
+            (evilRegistered fixture { editorModel with clipboard }).map fun driver =>
+              let after := (driver.stepped (driver.loop.invoke driver.handed invocation)).1
+              (evilLeft after, after.model.clipboard.held,
+                after.loop.state.register? Evil.clipboardLater)
+          Evil.clipboardLater.length > 1 &&
+            ran "foo |bar baz"
+                { command := Vim.operateCommand
+                  arguments :=
+                    [.str Evil.yank.name, .str "motion", .str Evil.wordForward.name, .nat 0,
+                      .str Evil.clipboardLater] }
+                { held := some "before" } ==
+              some (⟨"foo |bar baz", charwise "bar ", false, ""⟩, some "before", charwise "bar ") &&
+            ran "a|b" { command := "put-after", arguments := [.nat 0, .str Evil.clipboardLater] }
+                { held := some "XY" } ==
+              some (⟨"abX|Y", asItWas, false, ""⟩, some "XY", none) },
+    { name :=
         "in a buffer whose lines end in a carriage return and line feed, a line-wise put keeps that line break: y y p on a middle line puts the line below it, y y P above it, and below a last line with no line break the buffer's line break goes before the lines and their last one is left out whole, with a count too"
       run :=
         pure <|
@@ -15989,7 +16010,55 @@ def evilRepeatChecks : List Check :=
               | .command command => if command.changes then some command.name else none
               | _ => none
           !changing.isEmpty &&
-            (Vim.operateCommand :: changing).all fun name => Evil.commands.any (·.name == name) }]
+            (Vim.operateCommand :: changing).all fun name => Evil.commands.any (·.name == name) },
+    { name :=
+        "a replayed change that names the clipboard register and began an insert session writes the clipboard as the replay's last request: run to its end it leaves the clipboard model holding the word it changed, and stopped by the interrupt before any one of its requests it is rolled back with the clipboard model holding what it held before"
+      run :=
+        pure <|
+          match evilRegistered "|foo bar baz" with
+          | none => false
+          | some driver =>
+            let changed := evilFed driver "\" + c w X <Escape> w"
+            -- The replay with an interrupt key that arrives once it has made
+            -- `asks` of its requests, or with none.
+            let replayed (asks : Option Nat) : EvilEdited × Option String :=
+              let after :=
+                evilFed
+                  { changed with
+                    model :=
+                      { changed.model with
+                        watch := { changed.model.watch with arrivesAfter := asks } } }
+                  "."
+              (evilLeft after, after.model.clipboard.held)
+            let before : EvilEdited × Option String :=
+              (⟨"X |bar baz", charwise "foo", false, ""⟩, some "foo")
+            let whole : EvilEdited × Option String :=
+              (⟨"X |X baz", charwise "bar", false, ""⟩, some "bar")
+            let stopped : EvilEdited × Option String :=
+              ({ before.1 with echo := s!"{Vim.repeatCommand}: interrupted" }, some "foo")
+            let runs := (List.range 80).map fun asks => replayed (some asks)
+            (evilLeft changed, changed.model.clipboard.held) == before && replayed none == whole &&
+              runs.all (fun run => run == stopped || run == whole) &&
+              (runs.filter (· == stopped)).length > 8 &&
+              runs.getLast? == some whole },
+    { name :=
+        "the clipboard a replayed change writes is the text the replay took, whatever the unnamed register held: where the clipboard model was set to another text since the change, and the word the replay changes is the one the unnamed register already holds, the replay writes that word; a replayed change that takes no cell writes nothing; and with a clipboard that is not available the replay runs to its end and says so in the echo area"
+      run :=
+        pure <|
+          let replayed (fixture typed : String) (clipboard : ClipboardModel) :
+            Option (EvilEdited × Option String) :=
+            (evilRegistered fixture).map fun driver =>
+              let changed := evilFed driver typed
+              let after := evilFed { changed with model := { changed.model with clipboard } } "."
+              (evilLeft after, after.model.clipboard.held)
+          replayed "|foo foo baz" "\" + c w X <Escape> w" { held := some "other" } ==
+              some (⟨"X |X baz", charwise "foo", false, ""⟩, some "foo") &&
+            replayed "|ab\ncd" "\" + c h X <Escape> j" { held := some "other" } ==
+              some (⟨"Xab\n|Xcd", asItWas, false, ""⟩, some "other") &&
+            replayed "|foo bar baz" "\" + c w X <Escape> w" { available := false } ==
+              some (⟨"X |X baz", charwise "bar", false, Evil.clipboardUnavailable⟩, none) &&
+            replayed "|a b c d" "\" + d w" {} ==
+              some (⟨"|c d", charwise "b ", false, ""⟩, some "b ") }]
 
 /-- Every check, in the order they run.
 

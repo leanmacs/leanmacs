@@ -776,9 +776,11 @@ here (`lean/Editor/Evil/Compiled.lean`), and all four are built.
     table is by name so that a named register is one more name and no new
     request.
   - **The names evil knows**: the empty name, which is a call that named
-    none, and `"`, which are the unnamed register; and `+`, the system
-    clipboard. Any other name gives the command up (`Evil.noRegister`),
-    before anything is taken: named registers are not built.
+    none, and `"`, which are the unnamed register; `+`, the system
+    clipboard; and the name a command names the clipboard by when it
+    writes it itself (below). Any other name gives the command up
+    (`Evil.noRegister`), before anything is taken: named registers are
+    not built.
   - **Every yank and every deletion sets the unnamed register**, whatever
     register was named, as Vim's does.
   - **The clipboard is a port** (`lean/Editor/Clipboard.lean`): two
@@ -798,6 +800,23 @@ here (`lean/Editor/Evil/Compiled.lean`), and all four are built.
     ([concurrency.md](concurrency.md), "Foreground: commands"). A write
     that is refused is said in the echo area, and the text is in the
     unnamed register. A yank that took no cell writes nothing.
+  - **A command that goes on after a store has the write kept for it.**
+    Dot repeat's replay of a change that began an insert session
+    (`"+cw`, text, escape, then `.`) inserts the typed text and leaves
+    the insert after the change, so the change's store is not the
+    replay's last request: an interrupt or a refusal after it would roll
+    the text back with the clipboard already written. The replay runs
+    such a change under another name for the clipboard
+    (`Evil.clipboardLater`, which no key types): a store under it sets
+    the unnamed register, keeps the same register under that name in the
+    editor state, and asks the clipboard nothing. Once the insert is
+    left, the replay writes what was kept (`Evil.writeKept`), as its
+    last request. What is kept is editor state, so it is rolled back
+    with the command; it is kept apart from the unnamed register so that
+    a change that stored nothing writes nothing, and one that stored the
+    text the unnamed register already held writes it. Pinned by
+    `evilRepeatChecks`, with an interrupt placed before each request of
+    a replay in turn.
   - **A text read from the clipboard is line-wise when it ends in a line
     feed**: the clipboard holds a text and no flag.
   - **`p` and `P`** put the register the call names ("Operators as

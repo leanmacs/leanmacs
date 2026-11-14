@@ -1,4 +1,4 @@
-import Editor.Evil
+import Editor.Evil.Registers
 import Editor.InputScheme.Vim
 
 /-!
@@ -40,6 +40,20 @@ table of them.
   `<Escape>` does.
 - **It is one command in normal state**, so it is one step of the history
   and is rolled back whole when any part of it gives up or is refused.
+- **The clipboard is written last** (`Editor/Evil/Registers.lean`, "The
+  clipboard is written last"). A change with no insert session is the
+  replay's last request, and its own store writes the clipboard. A change
+  with an insert session is not: the typed text and the leaving of the
+  insert come after it, and an interrupt or a refusal there rolls the
+  text back, which a write of the clipboard would survive. So where the
+  change names the clipboard register, which is the last of its
+  arguments in both layouts the scheme compiles a change to
+  (`Editor/InputScheme/Vim.lean`, "Edits"), the replay runs it with the
+  name `clipboardLater` in that place, under which a store keeps what it
+  would write, and writes what was kept once the insert is left
+  (`writeKept`), as its last request. A change's command that does not
+  know that name gives the replay up, by its own rule for a register it
+  has none of.
 - **A change that breaks off breaks the replay off**: an operator whose
   motion failed after it moved leaves the cursor where the motion got to
   (`Editor/Evil/Operators.lean`, "What an operator takes") and ends the
@@ -102,6 +116,12 @@ def «repeat» (call : Call) : EditorM Unit := do
     unless ← runCommand command call do
       giveUp (notRepeated command)
   if session then
+    -- A change that names the clipboard is not this command's last request:
+    -- it is told to keep what it would write, which is written below.
+    let later := arguments.getLast? == some (.str clipboard)
+    let arguments := if later then arguments.dropLast ++ [.str clipboardLater] else arguments
+    if later then
+      keepClipboard
     -- The change, as a key that enters insert state runs it: told of an
     -- exclusive selection that no motion extends, which is all a command
     -- that begins an insert reads of insert state's report.
@@ -115,6 +135,8 @@ def «repeat» (call : Call) : EditorM Unit := do
       call.target.insertAtSelections text
     -- The session ends as `<Escape>` ends one, for the state the view is in.
     enter call
+    if later then
+      writeKept
   else
     change { call with arguments }
 
