@@ -228,11 +228,12 @@ inside_drawing_window() {
   grep -qF -- ": 14 points are 14 pixels" "$log" ||
     die "no frame said its 14 points are 14 pixels: the fixture's size did not reach the shaper as it was stated"
   # Each input as the port documents it, read back from its event. The key
-  # with modifiers is matched up to its text, which the X server decides.
+  # with control held carries no text, whatever the X server gave it (`A`,
+  # seen): a key pressed with control or the system key inserts nothing.
   for wanted in \
     "input: key press 'a' at KeyA with none, text \"a\"" \
     "input: key press Escape at Escape with none, text \"\"" \
-    "input: key press 'A' at KeyA with shift+control, text " \
+    "input: key press 'A' at KeyA with shift+control, text \"\"" \
     "input: pointer press primary at (10, 20) with none" \
     "input: pointer drag primary at (30, 40) with none" \
     "input: pointer release primary at (30, 40) with none" \

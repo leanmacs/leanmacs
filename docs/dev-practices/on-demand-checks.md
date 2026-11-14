@@ -458,8 +458,18 @@ The steps:
    click the green button. When it has settled, wait a second. Pass: the
    window is its old size, with the status row at its bottom reading that
    size.
-7. Press `a` and click once in the window, then close it with the red
-   button. Expected, after the lines `window-contract` already documents:
+7. Press `a`, then Control-A, then Command-S, and click once in the
+   window, then close it with the red button. Expected as the keys are
+   pressed, among the lines of the modifiers' own presses and of the
+   releases: `input: key press 'a' at KeyA with none, text "a"`, `input:
+   key press 'a' at KeyA with control, text ""` and `input: key press
+   's' at KeyS with super, text ""`. A key pressed with Control or
+   Command held carries no text; winit gives it `a` and `s` there (read,
+   not seen), and the adapter drops them. A line that says `with none`
+   for the second or the third, or a text that is not empty, is a
+   finding: the first would mean macOS says a modifier is held after
+   the key it was held for. Expected, after the lines `window-contract`
+   already documents:
    in the timeline, `the window told its drawer Hidden(true)` and
    `Hidden(false)` around step 5, with no draw between them; draws at
    scale 2 ending `its glyphs as plain masks` and those at scale 1 `as
@@ -615,7 +625,9 @@ fails:
    driver, llvmpipe, and with `--require-picture`, which that task does
    not give. Once it says it is ready, xdotool gives it `a`, Escape,
    Control-Shift-A, a press, a drag, a release, a turn of the wheel and
-   a resize. The part fails if the example fails (a frame whose glyphs
+   a resize. The key with Control held must come off with no text: the
+   X server gives it `A` (seen), and a key pressed with Control produced
+   nothing to insert. The part fails if the example fails (a frame whose glyphs
    are not drawn at 14 points times the window's scale; no frame
    presented; a frame whose picture was not read back from the surface
    and compared, whatever the reason; a picture more than 3 of 255 from

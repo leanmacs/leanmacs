@@ -18,6 +18,22 @@
 //!   text U+001B, and Enter, Tab and Backspace theirs. Such a key produced
 //!   nothing to insert and is known by its name, so text that holds a
 //!   control character is no text.
+//! - **A key pressed with Control or the system key held carries no
+//!   text.** winit on macOS gives such a key the character it types
+//!   without them: Control-A arrives with the text `a` and Command-S with
+//!   `s` (read at the pin, `platform_impl/macos/event.rs`: a key's text
+//!   is its logical key's, and the logical key leaves Control and Command
+//!   out; not seen). On X11 Control-A arrives with the text U+0001, which
+//!   is no text already, and Control-Shift-A with `A` (seen). Such a key
+//!   is a command and produced nothing to insert, so its text is dropped
+//!   and it keeps its identity and its modifiers. Shift and Alt leave the
+//!   text as winit gives it: Alt composes characters on macOS. The
+//!   modifiers are the ones winit last reported, as below, so a system
+//!   that says a modifier is held after the key it was held for would
+//!   keep that key its text; and one that reports AltGr as Control and
+//!   Alt together, as Windows does, would lose what AltGr types. The
+//!   adapter has been run on neither. This rule is the adapter's reading
+//!   of the port's words, and the owner has not confirmed it.
 //!
 //! # What winit says once
 //!
@@ -179,7 +195,7 @@ impl Seen {
             logical: names::logical(parts.logical),
             physical: names::physical(parts.physical),
             modifiers: self.modifiers,
-            text: text(pressed, parts.text),
+            text: text(pressed, self.modifiers, parts.text),
         })
     }
 
@@ -370,11 +386,13 @@ fn button_of(button: MouseButton) -> Button {
 }
 
 /// The text a key produced, as the port documents it, from what winit says
-/// it produced: none for a release, and none where what winit gives holds a
+/// it produced: none for a release, none for a key pressed with control or
+/// the system key among `held`, and none where what winit gives holds a
 /// control character.
-fn text(pressed: bool, given: Option<&str>) -> String {
+fn text(pressed: bool, held: Modifiers, given: Option<&str>) -> String {
+    let inserts = pressed && !held.control && !held.super_key;
     given
-        .filter(|text| pressed && !text.chars().any(char::is_control))
+        .filter(|text| inserts && !text.chars().any(char::is_control))
         .unwrap_or_default()
         .to_owned()
 }
@@ -458,15 +476,15 @@ mod tests {
     #[test]
     fn a_key_carries_the_modifiers_winit_last_reported() {
         let mut seen = Seen::default();
-        let logical = character("A");
-        let parts = press(&logical, KeyCode::KeyA, Some("A"));
+        // A key that produces no text, so that only the modifiers differ.
+        let logical = WinitKey::Named(NamedKey::ArrowLeft);
+        let parts = press(&logical, KeyCode::ArrowLeft, None);
         let pressed = |modifiers| {
             Input::Key(Key {
                 pressed: true,
-                logical: LogicalKey::Character("A".into()),
-                physical: code("KeyA"),
+                logical: named("ArrowLeft"),
+                physical: code("ArrowLeft"),
                 modifiers,
-                text: "A".into(),
                 ..Key::unidentified()
             })
         };
@@ -1290,5 +1308,82 @@ mod tests {
                 ..Key::unidentified()
             })
         );
+    }
+
+    /// What the port reports for a press of the character `logical` on the
+    /// key `KeyA` to which winit gives the text `logical`, in a window
+    /// where winit last said the modifiers `state` are held.
+    fn typed_holding(state: ModifiersState, logical: &str) -> Input {
+        let mut seen = Seen::default();
+        seen.input(&modifiers_changed(state));
+        seen.key(&press(&character(logical), KeyCode::KeyA, Some(logical)))
+    }
+
+    /// The press of the character `logical` on the key `KeyA` with
+    /// `modifiers` held that produced `text`, as the port reports it.
+    fn typed(logical: &str, modifiers: Modifiers, text: &str) -> Input {
+        Input::Key(Key {
+            pressed: true,
+            logical: LogicalKey::Character(logical.into()),
+            physical: code("KeyA"),
+            modifiers,
+            text: text.into(),
+            ..Key::unidentified()
+        })
+    }
+
+    #[test]
+    fn a_key_pressed_with_control_or_the_system_key_held_carries_no_text() {
+        // winit on macOS gives such a key the character it types without
+        // them, and winit on X11 gives a letter with control and shift its
+        // capital. The key keeps its identity and its modifiers.
+        for (state, logical, modifiers) in [
+            (
+                ModifiersState::CONTROL,
+                "a",
+                held(false, true, false, false),
+            ),
+            (ModifiersState::SUPER, "a", held(false, false, false, true)),
+            (
+                ModifiersState::CONTROL | ModifiersState::SHIFT,
+                "A",
+                held(true, true, false, false),
+            ),
+            // With one that leaves the text held too.
+            (
+                ModifiersState::SUPER | ModifiersState::ALT,
+                "å",
+                held(false, false, true, true),
+            ),
+            (ModifiersState::all(), "Å", held(true, true, true, true)),
+        ] {
+            assert_eq!(
+                typed_holding(state, logical),
+                typed(logical, modifiers, ""),
+                "{state:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_key_pressed_with_alt_or_shift_or_no_modifier_keeps_its_text() {
+        // Alt composes characters on macOS, and shift chooses a capital:
+        // what they give is what the key produced to insert.
+        for (state, logical, modifiers) in [
+            (ModifiersState::empty(), "a", Modifiers::default()),
+            (ModifiersState::ALT, "å", held(false, false, true, false)),
+            (ModifiersState::SHIFT, "A", held(true, false, false, false)),
+            (
+                ModifiersState::ALT | ModifiersState::SHIFT,
+                "Å",
+                held(true, false, true, false),
+            ),
+        ] {
+            assert_eq!(
+                typed_holding(state, logical),
+                typed(logical, modifiers, logical),
+                "{state:?}"
+            );
+        }
     }
 }

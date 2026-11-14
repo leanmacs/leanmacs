@@ -1510,7 +1510,17 @@ window is still run with nothing drawing in it. The threads are in
   that a key known by its name produces none. So a release carries none,
   and text that holds a control character is no text: Escape, Enter, Tab
   and Backspace are known by their names. This decides what Lean sees
-  for those keys.
+  for those keys. A key pressed with Control or the system key held
+  carries none either: winit on macOS gives Control-A the text `a` and
+  Command-S the text `s` (read at the pin, not seen), and on X11
+  Control-Shift-A arrived with `A` (seen), where Control-A arrives with
+  U+0001. Such a key is a command and inserted nothing, and whatever
+  inserts a key's text would otherwise insert `a` on Control-A on macOS
+  and nothing on Linux. Shift and Alt leave the text: Alt composes
+  characters on macOS. The modifiers are the ones winit last reported.
+  The port's fake is not changed: its sample script's first key has
+  Control held and the text `a`, and tests on both sides of the Lean
+  boundary read it.
 - **Modifiers are those winit last reported**, and are not put right. On
   X11 a modifier's own press arrives before the change that names it, so
   the press of Control carries no `control`. No command binds a bare
@@ -1979,7 +1989,18 @@ frame journal and the renderer's counters.
   through a second listener of the port, with its native window as the
   port's own data; that a key's text is none for a release and for a
   control character, which decides what Lean sees for Escape and Enter;
-  and where the clipboard's port lives.
+  that a key's text is none when Control or the system key is held, and
+  kept under Shift and Alt, which decides what Lean sees for Control-A
+  and Command-S and is the adapter's reading of the port's "what it
+  produced to insert", made after a review and confirmed by nobody (if
+  it stands, the text of the fake's sample key with Control held is the
+  next thing to change; if it does not, the port says that text is not
+  dropped under those modifiers and whoever inserts it checks them); and
+  where the clipboard's port lives. What that rule does on macOS has
+  been read and not seen: step 7 of the owner's check by hand presses
+  Control-A and Command-S
+  ([on-demand-checks.md](../dev-practices/on-demand-checks.md), "Scale
+  and fullscreen, by hand").
 - **The GPU's picture is checked on demand only.** The gate checks the
   wgpu adapter's calls, on a back end that draws nothing, and the CPU
   compositor's picture. That a real GPU draws the same is seen when

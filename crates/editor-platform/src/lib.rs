@@ -33,7 +33,14 @@
 //!   puts that right.
 //! - **A key's text is what it produced to insert.** A release produces
 //!   none, and neither does a key known by its name (`Escape`, `Enter`,
-//!   `Tab`, `Backspace`): a control character is not text.
+//!   `Tab`, `Backspace`): a control character is not text. A key pressed
+//!   with Control or the system key held produces none either, whatever
+//!   character it types without them: it is a command, and inserts
+//!   nothing. Shift and Alt leave a key its text, since Alt composes
+//!   characters on macOS. That last rule, of Control and the system key,
+//!   is one reading of "what it produced to insert" and awaits the owner.
+//!   The fake reports what its script says: the first key of its sample
+//!   script, written before the rule, has Control held and the text `a`.
 //! - **A wheel's delta is positive when the content moves right and down**,
 //!   in lines or in pixels as the device counts.
 //! - **A window says how large it is in a [`Input::Resized`].** A platform
