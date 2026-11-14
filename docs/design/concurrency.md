@@ -107,18 +107,89 @@ time, in order, on the editor thread.
 - **Ordering.** While a command runs, later input queues behind it, so keys
   typed during a slow command are not reordered. Painting continues from the
   last published scene.
-- **Interrupt.** An interrupt key (Emacs's `C-g`) sets a flag in the Rust
-  library as the key arrives. Editor API calls check it, so an interrupted
-  command unwinds as an ordinary exception at its next call.
+- **Interrupt.** An interrupt key (Emacs's `C-g`) raises a flag in the Rust
+  library as the key arrives, before the key is queued. Decided as follows,
+  and not yet built.
+  - **The primitive is the library's, the policy Lean's.** The library
+    raises the flag on the arrival path of the editor queue, and answers
+    whether it is up. Which key raises it, when it is asked and when it is
+    lowered are Lean's.
+  - **Which key.** Lean tells the library, when the loop starts: `C-g`.
+    What "the same key" means is the chord's rule
+    ([keymaps-and-modes.md](keymaps-and-modes.md), "A key as a binding
+    names it") and stays in Lean: the library is given the key with a mask
+    of the modifiers to compare, and compares words. So shift is not
+    compared on a character and is on a named key. Changing the key from
+    config is not built.
+  - **The flag is a count.** It is up while an interrupt key that arrived
+    has not been taken off the queue, and the library counts them. With
+    `A`, `C-g`, `B`, `C-g` queued, taking the first `C-g` must not lower
+    the flag for `B`, which is still ahead of an interrupt key.
+  - **When it is lowered.** The library decides once, at arrival, which
+    event is an interrupt key, and marks that event. The loop lowers the
+    flag when it takes a marked event off the queue, and for no other
+    event, so the two cannot disagree after the key is changed. The key is
+    then stepped through the scheme like any other, so a scheme can bind
+    it. The lowering is a request of the editor's port, so it is in the
+    pure loop, where the model tests see it.
+  - **When it is asked.** Before each request of a command the loop
+    dispatched. Once the flag is up the command's continuation is dropped:
+    the command makes no further request. This is the job runner's rule
+    for cancellation ("Cancellation"): it is not a reply and nothing is
+    thrown, so a `try`/`catch` in a command cannot swallow an interrupt.
+  - **Only the command is checked.** The loop's own requests (keeping what
+    it rolls back to, rolling back, publishing) are not, so a flag that is
+    up never stops a rollback or a scene.
+  - **Consequences.** A command for a key queued ahead of the interrupt key
+    finds the flag up at its first check and makes no request. An
+    interrupt key that arrives while nothing runs interrupts nothing: the
+    flag is down again before the next key's command starts. A command
+    that makes no request is not interruptible ("Runaway code is not a
+    design driver").
 - **Rollback.** A failed or interrupted command's edits are reverted as a
   unit. The mechanism is built, in the undo tree
   (`lean/Editor/UndoTree.lean`): the loop keeps the tree's state before a
   command and reverts to it if the command fails, by one inverse of the run
   of revisions the command made. That state may be a point inside an insert
-  session's open group, so a command's edits need no group of their own. A
-  command that moved in the history (an undo, a redo) is not rolled back
-  this way, since the move closed the group; what the loop does then is the
-  command loop's to decide. The loop that does this is not built yet.
+  session's open group, so a command's edits need no group of their own.
+  What the loop does with it is decided as follows, and not yet built.
+  - **Before a command** the loop keeps, for each buffer, the state of its
+    undo tree once told the text's revision, and, for each window, its
+    selection marker and its scroll marker as read.
+  - **After a command that was refused or interrupted** each kept buffer's
+    tree is told the revision and reverted to the kept state, with the
+    user's origin, and each kept marker is placed back. The editor state is
+    the one before the command.
+  - **Markers are placed back, not left to the inverse.** A marker moves
+    with every transaction: a deletion and its inverse do not return a
+    marker inside the deleted range to where it was, and a command can
+    place a marker with no edit. A revert hands back only the selection a
+    transaction carried.
+  - **What is not undone**: the texts, snapshots and markers the command
+    made, and the scenes it published. The loop publishes the true scene
+    right after.
+  - **A rollback that is refused is said.** A command that released a
+    buffer's text, gave up a window's marker or dropped the inverses of its
+    own edits cannot be rolled back. The rest is still rolled back, and the
+    echo area says what was not.
+  - **A command that moved in the history** (an undo, a redo) is not taken
+    back: the move stays. The move closed the group, so the kept state is
+    no longer a state of the open group. The loop then reverts the group
+    that is open when the command ends, which takes back the edits the
+    command made after its last move and leaves the text at the node that
+    move reached. The echo area says the command moved in the history, and
+    the windows' markers are left where the store moved them.
+    - *Why not move back.* The kept state can be one no move returns to.
+      With edits pending, a command that edits and then undoes closes the
+      group as one node, whose state is the one after the command's edit.
+      The kept state is then a point inside a closed group, and the run's
+      inverses are dropped once the edge is crossed, so no request reaches
+      it. A rule that works only sometimes is worse than one that always
+      does.
+    - *Why this is sound.* Every move is whole: one inverse an edge, and a
+      move that throws has dropped nothing. The tree keeps every node, so
+      what the command undid can be redone and what it redid undone. The
+      text is at a state of the history, never between two.
 - **Slow commands are logged**, with their duration, so a command that
   should have been a job is easy to find.
 

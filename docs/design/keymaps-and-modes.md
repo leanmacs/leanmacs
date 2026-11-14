@@ -200,6 +200,57 @@ The simplest scheme there is, published for other modules' tests
   scheme's (`Vim.selfInsert`, under "Edits" below): it is yielded only in a
   Vim state that inserts text.
 
+### The loop runs one scheme
+
+Status: decided, and not yet built. The command loop still drops keys.
+
+- **One scheme for the editor.** The loop is given its scheme when it
+  starts, and the scheme is fixed for the loop's life. The loop holds the
+  scheme's state. One view differs from another by its active keymaps,
+  which are already a function of the view in `step`, and by what the
+  scheme keeps for each view (the Vim scheme's `current`).
+- **Why not one a view.** There is one keyboard, and a sequence begun in
+  one view is one pending input ("Vim states": the pending edit is one for
+  the scheme). A scheme for each view would need a table of states of
+  different types and a rule for a prefix that is pending when the focus
+  moves. No second scheme ships.
+- **A terminal view** takes keys through its keymaps, which modes supply.
+  **How the minibuffer takes keys** is still open, and goes with the
+  minibuffer.
+- **The scheme is a parameter of the loop, not a field.** `InputScheme`
+  has type-valued fields, so it is in `Type 1`, and a value that flows
+  through `EditorM` or `IO` must be in `Type`. So the loop's type is
+  `Loop scheme`, and its field for the scheme's state is of type
+  `scheme.State`.
+- **Which keys are stepped.** A key event is stepped when it is a press (a
+  repeat is a press) and its key is not a modifier by itself. A release is
+  not stepped. A modifier key by itself is not stepped either: a window
+  reports the Shift press before `G`, and stepped it would be an unbound
+  key that resets the `d` of `dG`. Which keys those are is one rule for
+  every scheme (`Key.isModifier`, beside `Key.printed?`): a named key
+  whose W3C `key` value is `Shift`, `Control`, `Alt`, `AltGraph`, `Meta`,
+  `Super`, `Hyper`, `CapsLock`, `NumLock`, `ScrollLock`, `Fn`, `FnLock`,
+  `Symbol` or `SymbolLock`.
+- **The key is for the focused view**, the frame's. The event's text is not
+  read: a scheme asks `Key.printed?`.
+- **A command that fails after its key entered a state.** The loop keeps
+  two states of the scheme: the one after the last key, and the last one in
+  which nothing was pending. When the invocation a key yields does not run
+  to its end (no such command, a refusal, an interrupt), the scheme goes
+  back to the second: it is as it was before the first key of the
+  sequence. When the invocation runs to its end, or a key yields nothing
+  and leaves nothing pending, the second becomes the first.
+  - For the Vim scheme this needs no change to the scheme or its
+    interface. A failed `cw` leaves the view in the Vim state it was in, a
+    failed edit is not the last change, and no prefix is left pending.
+  - Keeping the state the key left would leave a view in insert state with
+    nothing changed, and make a failed edit what dot repeat replays. Going
+    back to the state before the key alone would leave the failed
+    sequence's prefix pending.
+  - Consequence: until the `insert` command is registered, `i` under the
+    Vim scheme echoes `insert: no such command` and the view stays in
+    normal state.
+
 ### Vocabulary
 
 Motions, operators and text objects are registered in the core as data,
@@ -766,8 +817,9 @@ every build); the second is a proposal.
   reader, or a free-monad program, keeps it concrete.
 - **The role set.** Which roles exist at the start, and the rule for adding
   one.
-- **Which scheme is active where.** One per editor or one per view; how a
-  terminal view or the minibuffer takes keys.
+- **How the minibuffer takes keys.** Which scheme is active where is
+  decided: one for the editor ("The loop runs one scheme"). What the
+  minibuffer's keys are looked up in goes with the minibuffer.
 - **The wanted column and the selection's shape** in the Vim scheme. How
   counts, registers and the visual selection appear in the scheme's state
   and in an edit, and where the current Vim state is held, are built ("The
@@ -787,8 +839,6 @@ every build); the second is a proposal.
 - **The Vim state of a view that is closed.** The scheme's state keeps an
   entry for each view that is not in the initial state, and the scheme
   interface gives no notice that a view is gone.
-- **A command that fails after its key entered a state.** The scheme enters
-  the state when the key is parsed, before the invocation runs.
 - **The `kbd` macro.** Macros need the `Lean` package at elaboration time,
   and importing it at runtime is what the memory figures in
   [lean-runtime.md](lean-runtime.md) argue against. Not measured, and not
