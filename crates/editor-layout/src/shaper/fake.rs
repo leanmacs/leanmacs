@@ -20,6 +20,13 @@
 //! - Ids are given in the order specs are first asked for, from 1; the
 //!   default spec is font 0. An id it never gave has the default font's
 //!   metrics.
+//! - The glyphs of a run in a font are drawn in the resolved font of the
+//!   same number ([`CellShaper::resolved_of`]): there is no fallback. The
+//!   table ([`Shaper::resolved`]) has one entry for each spec asked for,
+//!   in the order of their ids: the spec's size, no bytes, file 0, no
+//!   variation and no synthesis. It only grows, and a change of fonts
+//!   ([`CellShaper::change_fonts`]) leaves it as it is. A run in a font it
+//!   never gave is drawn in the default font.
 //!
 //! That is the rule of the display interface's model in Lean
 //! (`lean/Editor/Display/Model.lean`), so a binding over this fake answers
@@ -32,11 +39,11 @@
 
 use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
-use std::sync::{Mutex, MutexGuard, PoisonError};
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 use super::{
-    BASE_SIZE, FontId, FontSpec, Glyph, LineHeight, Metrics, ShapeInput, ShapedLine, Shaper,
-    VisualLine,
+    BASE_SIZE, FontId, FontSpec, Glyph, LineHeight, Metrics, ResolvedFont, ResolvedFontId,
+    ShapeInput, ShapedLine, Shaper, VisualLine,
 };
 
 /// The fake shaper: fixed-size glyphs per font.
@@ -124,6 +131,12 @@ impl CellShaper {
         self.generation.fetch_add(1, Ordering::Relaxed);
     }
 
+    /// The font the glyphs of a run in `font` are drawn in: the resolved
+    /// font of the same number.
+    pub const fn resolved_of(font: FontId) -> ResolvedFontId {
+        ResolvedFontId(font.0)
+    }
+
     /// The metrics of `font`: the default font's for an id never given.
     fn metrics_of(&self, font: FontId) -> Metrics {
         let fonts = self.fonts();
@@ -152,8 +165,8 @@ struct Cell {
     offset: usize,
     /// Its glyph id: the character's scalar value.
     id: u32,
-    /// Its font.
-    font: FontId,
+    /// The font it is drawn in.
+    font: ResolvedFontId,
     /// Its font's advance.
     advance: f32,
     /// Its font's line height.
@@ -236,16 +249,21 @@ impl Shaper for CellShaper {
                 .find(|run| run.bytes.contains(&offset))
                 .map_or(FontId::default(), |run| run.font)
         };
+        let given = self.fonts().len();
         let cells = input
             .text
             .char_indices()
             .map(|(offset, character)| {
                 let font = font_at(offset);
                 let metrics = self.metrics_of(font);
+                // A font it never gave has the default font's metrics, and
+                // is drawn in the default font.
+                let known = usize::try_from(font.0).is_ok_and(|index| index < given);
+                let drawn = if known { font } else { FontId::default() };
                 Cell {
                     offset,
                     id: u32::from(character),
-                    font,
+                    font: Self::resolved_of(drawn),
                     advance: metrics.advance,
                     height: metrics.line_height,
                 }
@@ -261,6 +279,21 @@ impl Shaper for CellShaper {
 
     fn generation(&self) -> u64 {
         self.generation.load(Ordering::Relaxed)
+    }
+
+    fn resolved(&self) -> Arc<[ResolvedFont]> {
+        self.fonts()
+            .iter()
+            .map(|spec| ResolvedFont {
+                data: Arc::new([0_u8; 0]),
+                file: 0,
+                index: 0,
+                size: spec.size.as_pixels(),
+                coords: Vec::new(),
+                embolden: false,
+                skew: None,
+            })
+            .collect()
     }
 
     fn font(&self, spec: &FontSpec) -> FontId {
@@ -286,8 +319,8 @@ mod tests {
 
     use super::CellShaper;
     use crate::shaper::{
-        FontId, FontRun, FontSpec, Length, LineHeight, ShapeInput, ShapedLine, Shaper, Slant,
-        VisualLine, Weight,
+        FontId, FontRun, FontSpec, Length, LineHeight, ResolvedFontId, ShapeInput, ShapedLine,
+        Shaper, Slant, VisualLine, Weight,
     };
 
     /// `text` in the default font.
@@ -490,8 +523,97 @@ mod tests {
             }],
         };
         let lines = shaper.shape(&input).break_lines(None);
-        let fonts: Vec<FontId> = lines[0].glyphs.iter().map(|glyph| glyph.font).collect();
-        assert_eq!(fonts, vec![FontId(0), ids[1]]);
+        let fonts: Vec<ResolvedFontId> = lines[0].glyphs.iter().map(|glyph| glyph.font).collect();
+        assert_eq!(
+            fonts,
+            vec![
+                CellShaper::resolved_of(FontId(0)),
+                CellShaper::resolved_of(ids[1])
+            ]
+        );
+    }
+
+    #[test]
+    fn a_specs_glyphs_are_drawn_in_the_resolved_font_of_its_number() {
+        let shaper = CellShaper::new(10.0, 16.0);
+        let big = shaper.font(&sized(32));
+        assert_eq!(CellShaper::resolved_of(FontId(0)), ResolvedFontId(0));
+        assert_eq!(CellShaper::resolved_of(big), ResolvedFontId(big.0));
+        let input = ShapeInput {
+            text: "abc".to_owned(),
+            runs: vec![FontRun {
+                bytes: 1..2,
+                font: big,
+            }],
+        };
+        let lines = shaper.shape(&input).break_lines(None);
+        let fonts: Vec<ResolvedFontId> = lines[0].glyphs.iter().map(|glyph| glyph.font).collect();
+        assert_eq!(
+            fonts,
+            vec![ResolvedFontId(0), ResolvedFontId(big.0), ResolvedFontId(0)]
+        );
+        // Each names an entry of the table.
+        let table = shaper.resolved();
+        assert!(fonts.iter().all(|font| (font.0 as usize) < table.len()));
+    }
+
+    #[test]
+    fn the_table_has_an_entry_for_each_spec_asked_for_with_its_size_and_no_bytes() {
+        let shaper = CellShaper::new(10.0, 16.0);
+        // Before any spec is asked for, the default font's.
+        let sizes = |shaper: &CellShaper| {
+            shaper
+                .resolved()
+                .iter()
+                .map(|font| font.size)
+                .collect::<Vec<f32>>()
+        };
+        assert_eq!(sizes(&shaper), vec![16.0]);
+        let big = shaper.font(&sized(32));
+        let small = shaper.font(&sized(8));
+        assert_eq!(sizes(&shaper), vec![16.0, 32.0, 8.0]);
+        let table = shaper.resolved();
+        assert_eq!(table[big.0 as usize].size, 32.0);
+        assert_eq!(table[small.0 as usize].size, 8.0);
+        for font in table.iter() {
+            assert!((*font.data).as_ref().is_empty());
+            assert_eq!((font.file, font.index), (0, 0));
+            assert_eq!(
+                (font.coords.as_slice(), font.embolden, font.skew),
+                (&[][..], false, None)
+            );
+        }
+    }
+
+    #[test]
+    fn the_table_only_grows_and_an_entry_stays_as_it_was_given() {
+        let shaper = CellShaper::new(10.0, 16.0);
+        shaper.font(&sized(32));
+        let before = shaper.resolved();
+        // A spec asked for again adds nothing; a new one adds an entry
+        // after those there.
+        shaper.font(&sized(32));
+        assert_eq!(shaper.resolved(), before);
+        shaper.font(&sized(8));
+        shaper.shape(&plain("abc")).break_lines(Some(10.0));
+        let after = shaper.resolved();
+        assert_eq!(after.len(), before.len() + 1);
+        assert_eq!(after[..before.len()], before[..]);
+    }
+
+    #[test]
+    fn a_run_in_a_font_it_never_gave_is_drawn_in_the_default_font() {
+        let shaper = CellShaper::new(10.0, 16.0);
+        let input = ShapeInput {
+            text: "a".to_owned(),
+            runs: vec![FontRun {
+                bytes: 0..1,
+                font: FontId(7),
+            }],
+        };
+        let lines = shaper.shape(&input).break_lines(None);
+        assert_eq!(lines[0].glyphs[0].font, ResolvedFontId(0));
+        assert_eq!(shaper.resolved().len(), 1);
     }
 
     #[test]
@@ -537,7 +659,7 @@ mod tests {
         let lines = shaper.shape(&input).break_lines(Some(40.0));
         // a (10) and b (20) fit 40 and c (10) makes 40; d is on the next line.
         assert_eq!(ranges(&lines), vec![0..3, 3..4]);
-        assert_eq!(lines[0].glyphs[1].font, tall);
+        assert_eq!(lines[0].glyphs[1].font, CellShaper::resolved_of(tall));
         assert_eq!(lines[0].glyphs[2].x, 30.0);
         assert_eq!(
             (lines[0].height, lines[0].baseline, lines[1].height),

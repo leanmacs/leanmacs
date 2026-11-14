@@ -77,7 +77,7 @@ use crate::decoration::{DecorationSource, FaceSpanSource, SelectionSource, Span,
 use crate::face::{Color, FaceId, MODE_LINE_FACE, Paint, SELECTION_FACE, UnderlineStyle};
 use crate::query::{Visual, Walker};
 use crate::scene::{CursorShape, Rect, Scene, TextKey, View, ViewId};
-use crate::shaper::{FontId, FontRun, ShapeInput, ShapedLine, Shaper, VisualLine};
+use crate::shaper::{FontRun, ResolvedFontId, ShapeInput, ShapedLine, Shaper, VisualLine};
 use crate::tabs::boundary_at_or_before;
 use crate::wrap::Outcome;
 
@@ -279,7 +279,7 @@ fn describe_line(out: &mut String, line: &VisualLine, runs: &[(Range<usize>, Pai
         if glyph.dx != 0.0 || glyph.dy != 0.0 {
             let _ = write!(out, "^{},{}", glyph.dx, glyph.dy);
         }
-        if glyph.font != FontId::default() {
+        if glyph.font != ResolvedFontId::default() {
             let _ = write!(out, "#{}", glyph.font.0);
         }
     }
@@ -695,7 +695,9 @@ mod tests {
     };
     use crate::shaper::fake::CellShaper;
     use crate::shaper::scripted::{ScriptedShaper, glyph, line};
-    use crate::shaper::{FontId, FontSpec, Glyph, Length, Shaper, VisualLine, Weight};
+    use crate::shaper::{
+        FontId, FontSpec, Glyph, Length, ResolvedFontId, Shaper, VisualLine, Weight,
+    };
 
     const RED: Color = Color::rgb(0xcc, 0, 0);
     const GREEN: Color = Color::rgb(0, 0xcc, 0);
@@ -1649,7 +1651,8 @@ mod tests {
             weight: Weight::BOLD,
             ..FontSpec::default()
         });
-        assert!(shown.line.glyphs.iter().all(|glyph| glyph.font == bold));
+        let drawn = CellShaper::resolved_of(bold);
+        assert!(shown.line.glyphs.iter().all(|glyph| glyph.font == drawn));
         assert_ne!(bold, FontId(0));
         // A change of the default face's background changes both runs'.
         layout.define(&faces(BLUE));
@@ -2189,19 +2192,20 @@ mod tests {
                 ..FontSpec::default()
             });
             let row = frame(&mut layout, view).rows.remove(0);
-            let glyphs: Vec<(FontId, f32)> = row
+            let glyphs: Vec<(ResolvedFontId, f32)> = row
                 .line
                 .glyphs
                 .iter()
                 .map(|glyph| (glyph.font, glyph.advance))
                 .collect();
-            (glyphs, small, big, row.height)
+            let drawn = CellShaper::resolved_of;
+            (glyphs, drawn(small), drawn(big), row.height)
         };
         // The later decoration of the list is over the earlier one: the
         // overlap, 4..6, is in the later one's font.
         let (glyphs, small, big, height) = frame_of("small", "big");
-        let base = (FontId(0), 10.0);
-        let expected: Vec<(FontId, f32)> = [
+        let base = (CellShaper::resolved_of(FontId(0)), 10.0);
+        let expected: Vec<(ResolvedFontId, f32)> = [
             [base; 2],
             [(small, 5.0); 2],
             [(big, 20.0); 2],
@@ -2214,7 +2218,7 @@ mod tests {
         // Listed the other way round, the overlap is in the small one,
         // which is now the later.
         let (glyphs, small, big, _) = frame_of("big", "small");
-        let expected: Vec<(FontId, f32)> = [
+        let expected: Vec<(ResolvedFontId, f32)> = [
             [base; 2],
             [(big, 20.0); 2],
             [(small, 5.0); 2],

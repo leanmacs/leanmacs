@@ -11,10 +11,16 @@
 //! bidirectional text. They shape only in the default font, [`FontId`] 0,
 //! which every adapter has. Of the other fonts they say only how ids stand
 //! for specs ([`FONTS`]): what a spec's glyphs measure is each adapter's.
+//! Which font a glyph is drawn in is the adapter's too (a fallback font, a
+//! synthesis); the rule is that the shaper describes it ([`RESOLVED`]):
+//! the glyph names an entry of the table as it was when its line was
+//! shaped, and the table keeps every entry as it was for the generation.
+
+use std::sync::Arc;
 
 use super::{
-    FontId, FontRun, FontSpec, Length, LineHeight, ShapeInput, ShapedLine, Shaper, Slant,
-    VisualLine, Weight,
+    FontId, FontRun, FontSpec, Length, LineHeight, ResolvedFont, ShapeInput, ShapedLine, Shaper,
+    Slant, VisualLine, Weight,
 };
 
 /// The visual lines cover the input's bytes in order, with no gap and no
@@ -36,8 +42,14 @@ pub const HEIGHTS: &str = "every visual line, and the default font's line, is ta
 pub const FONTS: &str =
     "the default spec is font 0, equal specs are one font, and different specs are different fonts";
 
+/// Every glyph names a font of the shaper's table, and the table keeps
+/// what it said.
+pub const RESOLVED: &str = "every glyph is drawn in a font the shaper describes, and a description stays as given for the generation";
+
 /// Every property, by name.
-pub const PROPERTIES: [&str; 7] = [COVER, FIT, UNBROKEN, KEPT, CLUSTERS, HEIGHTS, FONTS];
+pub const PROPERTIES: [&str; 8] = [
+    COVER, FIT, UNBROKEN, KEPT, CLUSTERS, HEIGHTS, FONTS, RESOLVED,
+];
 
 /// The texts the properties are run over: empty, one character, a long
 /// run of one script, characters of two to four bytes, and words with
@@ -72,6 +84,7 @@ pub fn check<S: Shaper>(shaper: &S) -> Vec<&'static str> {
     if !(metrics.line_height > 0.0 && metrics.advance > 0.0) {
         failed[5] = true;
     }
+    let mut described = Described::of(shaper);
     for text in texts() {
         let input = ShapeInput {
             text: text.to_owned(),
@@ -81,6 +94,11 @@ pub fn check<S: Shaper>(shaper: &S) -> Vec<&'static str> {
             }],
         };
         let kept = shaper.shape(&input);
+        failed[7] |= !described.still(shaper);
+        // The fonts described when the line was shaped: its glyphs name
+        // one of them at whatever width it is broken, and however the
+        // table grows after.
+        let known = described.fonts.len();
         failed[2] |= kept.break_lines(None).len() != 1;
         for width in widths() {
             let lines = kept.break_lines(width);
@@ -92,19 +110,59 @@ pub fn check<S: Shaper>(shaper: &S) -> Vec<&'static str> {
                     .all(|glyph| line.bytes.contains(&glyph.cluster))
             });
             failed[5] |= !lines.iter().all(|line| line.height > 0.0);
+            failed[7] |= !lines.iter().all(|line| {
+                line.glyphs
+                    .iter()
+                    .all(|glyph| usize::try_from(glyph.font.0).is_ok_and(|font| font < known))
+            });
             // Broken at every other width first, then at this one.
             for other in widths() {
                 kept.break_lines(other);
                 failed[3] |= kept.break_lines(width) != shaper.shape(&input).break_lines(width);
             }
         }
+        failed[7] |= !described.still(shaper);
     }
     failed[6] = !fonts_are_told_apart(shaper);
+    failed[7] |= !described.still(shaper);
     PROPERTIES
         .iter()
         .zip(failed)
         .filter_map(|(name, failed)| failed.then_some(*name))
         .collect()
+}
+
+/// A shaper's table of resolved fonts as it was last read, to see that it
+/// keeps what it said ([`RESOLVED`]).
+struct Described {
+    /// The shaper's generation when it was read.
+    generation: u64,
+    /// The table.
+    fonts: Arc<[ResolvedFont]>,
+}
+
+impl Described {
+    /// The table of `shaper` as it is now.
+    fn of<S: Shaper>(shaper: &S) -> Self {
+        Self {
+            generation: shaper.generation(),
+            fonts: shaper.resolved(),
+        }
+    }
+
+    /// Reads the table of `shaper` again: whether, under the generation it
+    /// was last read under, it still holds every entry it held, each as it
+    /// was. Under another generation it may hold anything.
+    fn still<S: Shaper>(&mut self, shaper: &S) -> bool {
+        let now = Self::of(shaper);
+        let kept = now.generation != self.generation
+            || now
+                .fonts
+                .get(..self.fonts.len())
+                .is_some_and(|held| held == &self.fonts[..]);
+        *self = now;
+        kept
+    }
 }
 
 /// The specs [`FONTS`] is run over: the default, and one that differs from
@@ -190,11 +248,14 @@ fn fits(lines: &[VisualLine], width: f32) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Mutex;
+    use std::sync::{Arc, Mutex};
 
-    use super::{CLUSTERS, COVER, FIT, FONTS, HEIGHTS, KEPT, UNBROKEN, check};
+    use super::{CLUSTERS, COVER, FIT, FONTS, HEIGHTS, KEPT, RESOLVED, UNBROKEN, check};
     use crate::shaper::fake::{CellLine, CellShaper};
-    use crate::shaper::{FontId, FontSpec, Metrics, ShapeInput, ShapedLine, Shaper, VisualLine};
+    use crate::shaper::{
+        FontId, FontSpec, Metrics, ResolvedFont, ResolvedFontId, ShapeInput, ShapedLine, Shaper,
+        VisualLine,
+    };
 
     /// How a [`Wrong`] shaper breaks the contract.
     #[derive(Debug, Clone, Copy, PartialEq)]
@@ -213,12 +274,19 @@ mod tests {
         Flat,
         /// Every spec is font 0.
         OneFont,
+        /// Its glyphs name a font its table has no entry for.
+        UnknownFont,
+        /// It forgets what it said of a font: each time its table is asked
+        /// for, every entry is a pixel larger.
+        ForgetsFonts,
     }
 
     /// A shaper that is the fake with one fault.
     struct Wrong {
         fault: Fault,
         fake: CellShaper,
+        /// How often its table was asked for.
+        asked: Mutex<u32>,
     }
 
     /// What [`Wrong`] keeps.
@@ -245,6 +313,11 @@ mod tests {
                         }
                     }
                     Fault::Flat => line.height = 0.0,
+                    Fault::UnknownFont => {
+                        for glyph in &mut line.glyphs {
+                            glyph.font = ResolvedFontId(glyph.font.0 + 1000);
+                        }
+                    }
                     _ => {}
                 }
             }
@@ -272,6 +345,22 @@ mod tests {
             0
         }
 
+        fn resolved(&self) -> Arc<[ResolvedFont]> {
+            let table = self.fake.resolved();
+            if self.fault != Fault::ForgetsFonts {
+                return table;
+            }
+            let mut asked = self.asked.lock().unwrap();
+            *asked += 1;
+            table
+                .iter()
+                .map(|font| ResolvedFont {
+                    size: font.size + *asked as f32,
+                    ..font.clone()
+                })
+                .collect()
+        }
+
         fn font(&self, spec: &FontSpec) -> FontId {
             match self.fault {
                 Fault::OneFont => FontId::default(),
@@ -289,7 +378,18 @@ mod tests {
         check(&Wrong {
             fault,
             fake: CellShaper::new(10.0, 16.0),
+            asked: Mutex::new(0),
         })
+    }
+
+    #[test]
+    fn a_shaper_whose_glyphs_name_a_font_it_does_not_describe_fails_the_resolved_rule() {
+        assert_eq!(failures(Fault::UnknownFont), vec![RESOLVED]);
+    }
+
+    #[test]
+    fn a_shaper_whose_description_of_a_font_changes_fails_the_resolved_rule() {
+        assert_eq!(failures(Fault::ForgetsFonts), vec![RESOLVED]);
     }
 
     #[test]
@@ -343,6 +443,10 @@ mod tests {
 
         fn generation(&self) -> u64 {
             0
+        }
+
+        fn resolved(&self) -> Arc<[ResolvedFont]> {
+            self.fake.resolved()
         }
 
         fn font(&self, spec: &FontSpec) -> FontId {

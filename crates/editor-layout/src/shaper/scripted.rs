@@ -9,9 +9,13 @@
 
 use std::collections::HashMap;
 use std::ops::Range;
+use std::sync::Arc;
 
 use super::fake::{CellLine, CellShaper};
-use super::{FontId, FontSpec, Glyph, Metrics, ShapeInput, ShapedLine, Shaper, VisualLine};
+use super::{
+    FontId, FontSpec, Glyph, Metrics, ResolvedFont, ResolvedFontId, ShapeInput, ShapedLine, Shaper,
+    VisualLine,
+};
 
 /// The fake, but for the texts it has a script for.
 pub(crate) struct ScriptedShaper {
@@ -40,12 +44,12 @@ impl ScriptedShaper {
 }
 
 /// The glyph of `character` for the cluster at byte `cluster`, at `x` and
-/// `advance` across, in font 0 and with no offset: the fake's glyph, placed
-/// by hand.
+/// `advance` across, drawn in the default font and with no offset: the
+/// fake's glyph, placed by hand.
 pub(crate) fn glyph(character: char, cluster: usize, x: f32, advance: f32) -> Glyph {
     Glyph {
         id: u32::from(character),
-        font: FontId::default(),
+        font: ResolvedFontId::default(),
         cluster,
         x,
         dx: 0.0,
@@ -99,6 +103,10 @@ impl Shaper for ScriptedShaper {
 
     fn generation(&self) -> u64 {
         self.fake.generation()
+    }
+
+    fn resolved(&self) -> Arc<[ResolvedFont]> {
+        self.fake.resolved()
     }
 
     fn font(&self, spec: &FontSpec) -> FontId {

@@ -358,7 +358,7 @@ mod tests {
 
     use super::{LineEntry, Source, lay_out};
     use crate::shaper::fake::{CellLine, CellShaper};
-    use crate::shaper::{FontId, FontSpec, Shaper};
+    use crate::shaper::{FontId, FontSpec, ResolvedFontId, Shaper};
     use crate::tabs::{TabSnapshot, expand, row_content};
 
     /// The font of the family `tall` of [`shaper`], whose cells are 20 by
@@ -414,12 +414,21 @@ mod tests {
         )
     }
 
-    /// The font of each glyph of the first visual line of `entry`.
-    fn glyph_fonts(entry: &LineEntry<CellLine>) -> Vec<FontId> {
+    /// The font each glyph of the first visual line of `entry` is drawn
+    /// in.
+    fn glyph_fonts(entry: &LineEntry<CellLine>) -> Vec<ResolvedFontId> {
         entry.lines()[0]
             .glyphs
             .iter()
             .map(|glyph| glyph.font)
+            .collect()
+    }
+
+    /// The fonts the fake draws runs in `fonts` in.
+    fn drawn(fonts: &[FontId]) -> Vec<ResolvedFontId> {
+        fonts
+            .iter()
+            .map(|font| CellShaper::resolved_of(*font))
             .collect()
     }
 
@@ -494,7 +503,10 @@ mod tests {
     #[test]
     fn a_span_in_another_font_is_shaped_in_it() {
         let entry = row_with("abcd", 0, &[(1..3, TALL)], None);
-        assert_eq!(glyph_fonts(&entry), vec![FontId(0), TALL, TALL, FontId(0)]);
+        assert_eq!(
+            glyph_fonts(&entry),
+            drawn(&[FontId(0), TALL, TALL, FontId(0)])
+        );
         assert_eq!(entry.lines()[0].height, 32.0);
         assert_eq!(glyph_x(&entry, 3), 50.0);
     }
@@ -503,12 +515,12 @@ mod tests {
     fn a_segment_under_a_base_that_is_not_font_0_is_shaped_in_it() {
         // No span: every byte is in the base font.
         let entry = row_in("abc", 0, &[], TALL, None);
-        assert_eq!(glyph_fonts(&entry), vec![TALL; 3]);
+        assert_eq!(glyph_fonts(&entry), drawn(&[TALL; 3]));
         assert_eq!(entry.lines()[0].height, 32.0);
         assert_eq!(glyph_x(&entry, 2), 40.0);
         // A span of font 0 is in font 0, and the rest in the base.
         let entry = row_in("abc", 0, &[(1..2, FontId(0))], TALL, None);
-        assert_eq!(glyph_fonts(&entry), vec![TALL, FontId(0), TALL]);
+        assert_eq!(glyph_fonts(&entry), drawn(&[TALL, FontId(0), TALL]));
         // An empty row is as tall as the base font.
         let entry = row_in("ab\n\ncd", 1, &[], TALL, Some(40.0));
         assert_eq!(entry.lines()[0].height, 32.0);

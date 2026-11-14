@@ -19,12 +19,18 @@
 //!   the port's term for a font. Layout resolves the faces over a run to
 //!   a spec ([`face`](crate::face)), asks the shaper for the spec's
 //!   [`FontId`] ([`Shaper::font`]) and names the run's font by it; the
-//!   table from an id to its spec is the adapter's. Only what changes a glyph or a line's height is a font
-//!   attribute: colours, underlines and strike-through are paint, and never
-//!   reach a shaper.
+//!   table from an id to its spec is the adapter's. Only what changes a
+//!   glyph or a line's height is a font attribute: colours, underlines and
+//!   strike-through are paint, and never reach a shaper.
 //! - **A shaping feature** (an OpenType feature, a language): data on
 //!   [`ShapeInput`] or on [`FontRun`], read by the adapter.
 //! - **A metric layout needs** of a font: a field of [`Metrics`].
+//! - **What a renderer needs of the font a glyph is drawn in** (its bytes,
+//!   its face, a variation, a synthesis): a field of [`ResolvedFont`].
+//!   The font a glyph is drawn in is not the font its run asked for: a
+//!   glyph names a [`ResolvedFontId`], an entry of [`Shaper::resolved`].
+//! - **Where a glyph's outline is drawn**, when that is not its pen
+//!   position: [`Glyph::dx`] and [`Glyph::dy`].
 //!
 //! # The published fake and the contract
 //!
@@ -32,17 +38,96 @@
 //! layout's tests are exact. [`contract`] is the list of rules the fake and
 //! every real adapter (Parley, the display pipeline's phase 3) are held to.
 
+use std::fmt;
 use std::ops::Range;
+use std::sync::Arc;
 
 pub mod contract;
 pub mod fake;
 #[cfg(test)]
 pub(crate) mod scripted;
 
-/// Which font: a number the shaper's adapter gives a [`FontSpec`]
-/// ([`Shaper::font`]). Font 0 is the default font, [`FontSpec::default`].
+/// Which font a run asks for: a number the shaper's adapter gives a
+/// [`FontSpec`] ([`Shaper::font`]). Font 0 is the default font,
+/// [`FontSpec::default`]. It is what a run is shaped in and what
+/// [`Shaper::metrics`] is asked about; the font a glyph is drawn in is a
+/// [`ResolvedFontId`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
 pub struct FontId(pub u32);
+
+/// Which font a glyph is drawn in: an index into the table the shaper
+/// describes its fonts in ([`Shaper::resolved`]). It is not the font the
+/// glyph's run asked for ([`FontId`]): a character the font asked for has
+/// no glyph for is drawn in a fallback font, and two specs that differ
+/// only in line height are drawn in one font.
+///
+/// An id means one font for one generation of its shaper
+/// ([`Shaper::generation`]), and may mean another under the next.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
+pub struct ResolvedFontId(pub u32);
+
+/// A font a glyph is drawn in, with what a rasteriser needs to draw it:
+/// one face of one font file, at a size.
+///
+/// Two resolved fonts are equal when they name the same face of the same
+/// file ([`ResolvedFont::file`]) with the same size, coordinates and
+/// synthesis. The bytes are never compared, and `Debug` prints their
+/// length in place of them.
+#[derive(Clone)]
+pub struct ResolvedFont {
+    /// The bytes of the font file; none for a shaper that draws from no
+    /// file, as the fake.
+    pub data: Arc<dyn AsRef<[u8]> + Send + Sync>,
+    /// The shaper's number for the file: within one shaper, two resolved
+    /// fonts of one number have the same bytes, so they are compared
+    /// without reading them.
+    pub file: u64,
+    /// Which face of the file, for a file that holds several.
+    pub index: u32,
+    /// The size glyphs are drawn at, in pixels.
+    pub size: f32,
+    /// The face's normalised variation coordinates, one for each axis, as
+    /// the font format's 2.14 fixed-point numbers; none for a face that
+    /// does not vary.
+    pub coords: Vec<i16>,
+    /// Whether the outlines are to be made bolder, for a weight the family
+    /// has no face of.
+    pub embolden: bool,
+    /// How far the outlines are to be slanted, in degrees, for a slant the
+    /// family has no face of.
+    pub skew: Option<f32>,
+}
+
+/// Equal by what is named and never by the bytes, which
+/// [`ResolvedFont::file`] stands for.
+impl PartialEq for ResolvedFont {
+    fn eq(&self, other: &Self) -> bool {
+        self.file == other.file
+            && self.index == other.index
+            && self.size == other.size
+            && self.coords == other.coords
+            && self.embolden == other.embolden
+            && self.skew == other.skew
+    }
+}
+
+/// Every field as it is, but for the bytes: `data` is printed as their
+/// length, `5 bytes`.
+impl fmt::Debug for ResolvedFont {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let bytes = (*self.data).as_ref().len();
+        formatter
+            .debug_struct("ResolvedFont")
+            .field("data", &format_args!("{bytes} bytes"))
+            .field("file", &self.file)
+            .field("index", &self.index)
+            .field("size", &self.size)
+            .field("coords", &self.coords)
+            .field("embolden", &self.embolden)
+            .field("skew", &self.skew)
+            .finish()
+    }
+}
 
 /// A length in 64ths of a physical pixel: a whole number, so it is exact as
 /// an `f32` and can be hashed and compared.
@@ -158,8 +243,8 @@ pub struct ShapeInput {
 pub struct Glyph {
     /// The glyph's id in its font.
     pub id: u32,
-    /// Its font.
-    pub font: FontId,
+    /// The font it is drawn in: an entry of [`Shaper::resolved`].
+    pub font: ResolvedFontId,
     /// The byte offset in [`ShapeInput::text`] of the cluster it draws.
     pub cluster: usize,
     /// Where its pen position is, in pixels from its visual line's left
@@ -220,8 +305,17 @@ pub trait Shaper {
 
     /// A number that changes whenever what [`Shaper::shape`] would give
     /// changes for the same input: fonts loaded, a size changed. Layout
-    /// shapes again every line it shaped under another generation.
+    /// shapes again every line it shaped under another generation. A
+    /// [`ResolvedFontId`] is valid for one generation: under another the
+    /// same number may be another font.
     fn generation(&self) -> u64;
+
+    /// The fonts glyphs are drawn in, by [`ResolvedFontId`]: every glyph
+    /// of a shaped line names an entry of the table as it is when
+    /// [`Shaper::shape`] returns, whenever the line is broken. Within one
+    /// generation the table only grows and an entry never changes, so a
+    /// table read later describes every glyph shaped before it.
+    fn resolved(&self) -> Arc<[ResolvedFont]>;
 
     /// The id of the font `spec`: equal specs have one id and different
     /// specs different ids, for the shaper's life, and
@@ -230,4 +324,78 @@ pub trait Shaper {
 
     /// The metrics of `font`, an id [`Shaper::font`] gave or font 0.
     fn metrics(&self, font: FontId) -> Metrics;
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use super::ResolvedFont;
+
+    /// A resolved font of the file numbered `file`, whose bytes are
+    /// `bytes`, at 16 pixels.
+    fn font(file: u64, bytes: &[u8]) -> ResolvedFont {
+        ResolvedFont {
+            data: Arc::new(bytes.to_vec()),
+            file,
+            index: 0,
+            size: 16.0,
+            coords: vec![],
+            embolden: false,
+            skew: None,
+        }
+    }
+
+    #[test]
+    fn resolved_fonts_are_equal_by_what_they_name_and_never_by_their_bytes() {
+        let plain = font(1, b"abc");
+        assert_eq!(plain, font(1, b"abc"));
+        // The bytes are not read: the file's number stands for them.
+        assert_eq!(plain, font(1, b"other bytes"));
+        assert_ne!(plain, font(2, b"abc"));
+        // Each other field alone tells two apart.
+        let others = [
+            ResolvedFont {
+                index: 1,
+                ..plain.clone()
+            },
+            ResolvedFont {
+                size: 24.0,
+                ..plain.clone()
+            },
+            ResolvedFont {
+                coords: vec![0],
+                ..plain.clone()
+            },
+            ResolvedFont {
+                embolden: true,
+                ..plain.clone()
+            },
+            ResolvedFont {
+                skew: Some(14.0),
+                ..plain.clone()
+            },
+        ];
+        for other in others {
+            assert_ne!(plain, other);
+            assert_eq!(other, other.clone());
+        }
+    }
+
+    #[test]
+    fn a_resolved_font_is_printed_with_the_length_of_its_bytes() {
+        let printed = format!(
+            "{:?}",
+            ResolvedFont {
+                coords: vec![3],
+                skew: Some(14.0),
+                ..font(7, b"abcde")
+            }
+        );
+        assert_eq!(
+            printed,
+            "ResolvedFont { data: 5 bytes, file: 7, index: 0, size: 16.0, coords: [3], \
+             embolden: false, skew: Some(14.0) }"
+        );
+    }
 }
