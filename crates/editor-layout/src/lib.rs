@@ -12,8 +12,8 @@
 //! Its tests pin layout's rules, on the fake shaper:
 //!
 //! - the fake's own geometry: one glyph per character, an advance and a
-//!   line height per font, greedy breaks with at least one glyph per line
-//!   ([`shaper::fake`]);
+//!   line height per font, greedy breaks with at least one glyph per line,
+//!   and a resolved font per spec ([`shaper::fake`]);
 //! - tab stops, the cut of a long row into segments and the content of a
 //!   row ([`tabs`]);
 //! - where a position is in a laid-out row: at a wrap, at a row's end,
@@ -33,8 +33,10 @@
 //!   selection geometry, the paint each run, cursor and view resolves to,
 //!   content hashes that cover paint and that a cursor move leaves alone,
 //!   the status row at a view's bottom and the text rows that fit above
-//!   it, decorations asked for the rows shown only ([`frame`]), and the fixture
-//!   frame checked in at `tests/display/frame.expected`
+//!   it, decorations asked for the rows shown only, the shaper's
+//!   generation and its table of resolved fonts carried by the frame, with
+//!   every glyph naming an entry ([`frame`]), and the fixture frame
+//!   checked in at `tests/display/frame.expected`
 //!   (`tests/frame_fixture.rs`);
 //! - what is kept between calls and what it costs, by the counters
 //!   ([`cache`], `tests/counters.rs`): a change of a face's paint shapes

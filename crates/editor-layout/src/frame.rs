@@ -30,12 +30,23 @@
 //! **Every value is resolved.** A frame names no face: a run carries the
 //! [`Paint`] its faces come to ([`face`](crate::face), "The precedence":
 //! lowest first, the view's decorations in the scene's order and then the
-//! selection, over the default face), a glyph the id of its font, a
+//! selection, over the default face), a glyph the id of the font it is
+//! drawn in, a
 //! cursor the paint of the face the scene names for it over the default
 //! face, and a view the default face's background and the selection
 //! face's, which its selection areas are filled with. Neighbouring runs of
 //! one paint are one run, so two faces that come to the same paint cannot
 //! be told apart in a frame.
+//!
+//! **The fonts travel with the frame.** A glyph's font id is an index into
+//! [`Frame::fonts`], the shaper's table of the fonts glyphs are drawn in
+//! ([`Shaper::resolved`]), read once the views are laid out: the bytes of
+//! each font's file, its face, its size and its synthesis, which is what a
+//! rasteriser needs. [`Frame::generation`] is the shaper's generation the
+//! frame was laid out under. Within one generation an id never changes
+//! meaning, so whatever takes frames may key what it keeps by font id and
+//! glyph id, and drops it all when a frame of another generation arrives.
+//! The frame holds no atlas id and no rasterised glyph.
 //!
 //! A row's runs cover its glyphs from the first to the last and nothing
 //! past them, and a selection's area on a row is as wide as the glyphs it
@@ -60,7 +71,8 @@
 //! nearest position at or before them, and past the end to the end.
 //!
 //! [`Frame::describe`] is the frame as text, for tests: geometry, glyph
-//! ids, font ids and paints, no hash.
+//! ids, font ids and paints; no hash, no generation and no table of
+//! fonts.
 
 use std::fmt::Write as _;
 use std::hash::{DefaultHasher, Hash, Hasher};
@@ -77,7 +89,9 @@ use crate::decoration::{DecorationSource, FaceSpanSource, SelectionSource, Span,
 use crate::face::{Color, FaceId, MODE_LINE_FACE, Paint, SELECTION_FACE, UnderlineStyle};
 use crate::query::{Visual, Walker};
 use crate::scene::{CursorShape, Rect, Scene, TextKey, View, ViewId};
-use crate::shaper::{FontRun, ResolvedFontId, ShapeInput, ShapedLine, Shaper, VisualLine};
+use crate::shaper::{
+    FontRun, ResolvedFont, ResolvedFontId, ShapeInput, ShapedLine, Shaper, VisualLine,
+};
 use crate::tabs::boundary_at_or_before;
 use crate::wrap::Outcome;
 
@@ -183,32 +197,51 @@ pub struct ViewFrame {
     pub selection: Color,
 }
 
-/// What to draw: every view, in drawing order.
+/// What to draw: every view, in drawing order, and the fonts their glyphs
+/// are drawn in.
+///
+/// Two frames are equal when their views, their generations and their
+/// tables of fonts are: a font is compared by what it names and never by
+/// its bytes ([`ResolvedFont`]).
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct Frame {
     /// The views.
     pub views: Vec<ViewFrame>,
+    /// The shaper's generation the frame was laid out under
+    /// ([`Shaper::generation`]). A glyph's font id means one font for one
+    /// generation, so whatever is kept by font id and glyph id from the
+    /// frames of one generation is dropped when a frame of another
+    /// arrives.
+    pub generation: u64,
+    /// The fonts, by the id a glyph names its font with
+    /// ([`Shaper::resolved`]): every glyph of every row and status row of
+    /// the frame names an entry. Within a generation an entry never
+    /// changes and the table only grows, so the table of a later frame
+    /// describes the glyphs of an earlier one too.
+    pub fonts: Arc<[ResolvedFont]>,
 }
 
 impl Frame {
     /// The frame as text: per view its rectangle, its background and its
     /// selection colour, then per row its geometry, its glyphs and its
     /// runs, then its status row if it has one, then its cursors and
-    /// selections. No hash.
+    /// selections. No hash, and neither the generation nor the table of
+    /// fonts.
     ///
     /// - A colour is its eight hexadecimal digits, `rrggbbaa`.
     /// - A glyph is `id@x`, with `^dx,dy` after it when its outline is
-    ///   drawn off its pen position, and then `#font` in a font other than
-    ///   font 0.
+    ///   drawn off its pen position, and then `#font` when it is drawn in
+    ///   a font other than entry 0 of the table.
     /// - A run is `start..end:paint`, and a paint is
     ///   `foreground/background`, then `+style:colour` when it has an
     ///   underline and `+strike` when it is struck through.
     ///
-    /// A font's id is its shaper's, given in the order the shaper was first
-    /// asked for each font. So the text of a frame depends on which fonts
+    /// A font's id is its shaper's, given in the order the shaper first
+    /// drew a glyph in each font (on the fake, the order it was first
+    /// asked for each spec). So the text of a frame depends on which fonts
     /// its layout resolved before: two layouts are compared by their
-    /// frames' texts only when they were handed the same scenes, with the
-    /// same faces, in the same order.
+    /// frames' texts, or by their frames, only when they were handed the
+    /// same scenes, with the same faces, in the same order.
     pub fn describe(&self) -> String {
         let mut out = String::new();
         for view in &self.views {
@@ -325,12 +358,17 @@ impl<S: Shaper> Layout<S> {
         if let Some(definitions) = &scene.faces {
             self.define(definitions);
         }
+        let views = scene
+            .views
+            .iter()
+            .map(|view| self.view_frame(view, &[]))
+            .collect();
+        // Read once the views are laid out, so the table holds every font
+        // a glyph of theirs names.
         let frame = Frame {
-            views: scene
-                .views
-                .iter()
-                .map(|view| self.view_frame(view, &[]))
-                .collect(),
+            views,
+            generation: self.shaper.generation(),
+            fonts: self.shaper.resolved(),
         };
         // The buffer rows each view shows, by text.
         let mut shown: HashMap<TextKey, Vec<Range<usize>>> = HashMap::new();
@@ -2275,6 +2313,100 @@ mod tests {
                 .all(|bytes| bytes.start >= 2000 && bytes.end <= 2019),
             "{asked:?}"
         );
+    }
+
+    /// A scene of one view of `ab\ncd` with a status field, its second
+    /// row in the face `big` and its status field in the face `name`.
+    fn two_fonts_scene() -> Scene {
+        let view = decorated(view("ab\ncd", 20, 80, 0, &[]), &[(3..5, "big")]);
+        Scene {
+            views: vec![with_status(view, &[("x", "name")])],
+            ..Scene::default()
+        }
+    }
+
+    /// The faces of [`two_fonts_scene`]: `big` at twice the base size and
+    /// `name` in bold.
+    fn two_fonts_faces() -> Vec<FaceDef> {
+        let bold = Face {
+            weight: Some(Weight::BOLD),
+            ..Face::default()
+        };
+        vec![def("big", sized(32)), def("name", bold)]
+    }
+
+    #[test]
+    fn a_frame_carries_the_generation_and_every_font_its_glyphs_name() {
+        let mut layout = layout_with(&two_fonts_faces());
+        let frame = layout.frame(&two_fonts_scene());
+        assert_eq!(frame.generation, layout.shaper().generation());
+        // The table is the shaper's, as it is once the views are laid
+        // out: the default font, and the two the faces came to.
+        assert_eq!(frame.fonts, layout.shaper().resolved());
+        assert_eq!(frame.fonts.len(), 3);
+        let view = &frame.views[0];
+        let status = view.status.as_ref().expect("a status row");
+        let lines = view.rows.iter().map(|row| &row.line).chain([&status.line]);
+        let mut named = Vec::new();
+        for glyph in lines.flat_map(|line| &line.glyphs) {
+            let font = frame.fonts.get(glyph.font.0 as usize);
+            assert!(
+                font.is_some(),
+                "{glyph:?} names no font of {:?}",
+                frame.fonts
+            );
+            named.push(glyph.font);
+        }
+        // Each of the three is named by a glyph, and the big one is
+        // described at its size.
+        named.sort_unstable();
+        named.dedup();
+        assert_eq!(named.len(), 3);
+        let big = view.rows[1].line.glyphs[0].font;
+        assert_eq!(frame.fonts[big.0 as usize].size, 32.0);
+    }
+
+    #[test]
+    fn a_frame_after_the_fonts_change_has_another_generation() {
+        let mut layout = layout_with(&two_fonts_faces());
+        let before = layout.frame(&two_fonts_scene());
+        assert_eq!(
+            layout.frame(&two_fonts_scene()).generation,
+            before.generation
+        );
+        layout.shaper().change_fonts();
+        let after = layout.frame(&two_fonts_scene());
+        assert_ne!(after.generation, before.generation);
+        assert_eq!(after.generation, layout.shaper().generation());
+        // The frame of an empty scene carries both too.
+        let empty = layout.frame(&Scene::default());
+        assert_eq!(empty.generation, after.generation);
+        assert_eq!(empty.fonts, layout.shaper().resolved());
+    }
+
+    #[test]
+    fn two_frames_are_equal_when_their_views_generations_and_fonts_are() {
+        let mut layout = layout_with(&two_fonts_faces());
+        let frame = layout.frame(&two_fonts_scene());
+        // Another layout handed the same scene and faces asks its shaper
+        // for the same fonts in the same order.
+        let mut other = layout_with(&two_fonts_faces());
+        assert_eq!(other.frame(&two_fonts_scene()), frame);
+        // The same views under another generation.
+        other.shaper().change_fonts();
+        let changed = other.frame(&two_fonts_scene());
+        assert_eq!(changed.views, frame.views);
+        assert_ne!(changed, frame);
+        // The same views, with one more font described after theirs.
+        let mut more = layout_with(&two_fonts_faces());
+        more.frame(&two_fonts_scene());
+        more.shaper().font(&FontSpec {
+            size: Length::pixels(48),
+            ..FontSpec::default()
+        });
+        let wider = more.frame(&two_fonts_scene());
+        assert_eq!(wider.views, frame.views);
+        assert_ne!(wider, frame);
     }
 
     #[test]
