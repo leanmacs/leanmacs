@@ -1042,6 +1042,51 @@ mod tests {
     }
 
     #[test]
+    fn a_failed_present_keeps_a_dirty_mark_to_serve() {
+        // A mark and nothing else: no frame and no new size asks for the
+        // draw to be tried again.
+        let frame = frame_of("one");
+        let mut rig = Rig::showing(&frame);
+        let marked = rig.clock.peek();
+        rig.handle.mark_dirty();
+        rig.clock.advance(10);
+        rig.render.renderer_mut().fail_next_present();
+        let tried = rig.clock.peek();
+        assert_eq!(rig.render.step(), Step::Wait(Some(tried + REFRESH)));
+        rig.clock.advance(REFRESH);
+        let entry = rig.drew();
+        // The frame shown again, answering the mark as it was stamped.
+        assert_eq!(entry.input_ns, marked);
+        assert_eq!(rig.requests(), 3);
+        assert!(Arc::ptr_eq(
+            &rig.render.renderer().requests()[2].frame,
+            &frame
+        ));
+        // And the mark is served once.
+        rig.clock.advance(REFRESH);
+        assert_eq!(rig.render.step(), Step::Wait(None));
+    }
+
+    #[test]
+    fn a_failed_present_keeps_a_deadline_that_had_come_to_serve() {
+        // A deadline and nothing else.
+        let mut rig = Rig::showing(&frame_of("one"));
+        let deadline = rig.clock.peek() + 5;
+        rig.handle.animate_at(deadline);
+        rig.clock.set(deadline + 5);
+        rig.render.renderer_mut().fail_next_present();
+        let tried = rig.clock.peek();
+        assert_eq!(rig.render.step(), Step::Wait(Some(tried + REFRESH)));
+        rig.clock.advance(REFRESH);
+        let entry = rig.drew();
+        assert_eq!(entry.input_ns, deadline);
+        assert_eq!(rig.requests(), 3);
+        // And the deadline is served once.
+        rig.clock.advance(REFRESH);
+        assert_eq!(rig.render.step(), Step::Wait(None));
+    }
+
+    #[test]
     fn every_drawn_frame_has_an_entry_with_its_three_stamps() {
         // A clock that moves on a nanosecond at every reading, and a
         // renderer that takes 250 more to draw.
