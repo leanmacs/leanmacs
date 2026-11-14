@@ -52,10 +52,12 @@ fakes. The checks here pin what only real collaborators can show:
 - `modeChecks`: modes through the host, with the test scheme: a role's key
   runs the command of a mode config defines, a store command among them,
   in a view of a buffer that has the mode, and once a reload drops the mode
-  it runs the global binding. The host's frame is made with the scratch
-  buffer's major mode set (`Compiled.major`), since no command can set one
-  yet, and the key pressed is the test scheme's for the role
-  (`Session.pressKeys`), so no check names a scheme's key;
+  it runs the global binding; and a role's key runs the command of a mode
+  compiled code hands the host (`Compiled.modes`), before any reload and
+  after a reload of a config that defines none. The host's frame is made
+  with the scratch buffer's major mode set (`Compiled.major`), since no
+  command can set one yet, and the key pressed is the test scheme's for the
+  role (`Session.pressKeys`), so no check names a scheme's key;
 - `fileChecks`: a job from config that loads a file through the host, over
   the library's file service, and whose handler makes a text of it. It is
   the one check whose host is over a real service, so it is the one that
@@ -1978,6 +1980,16 @@ def listingCompiled : Compiled :=
     bindings := #[{ keys := nextItemKeys, command := "global" }]
     major := some "listing" }
 
+/-- What compiled code hands the host of the compiled mode's check: `global`
+as in `listingCompiled`, the mode `compiled-listing`, which fills the role
+`next-item` with `mode-next`, a command that makes a text holding `mode`,
+and the scratch buffer in that mode. -/
+def compiledListing : Compiled :=
+  { listingCompiled with
+    commands := listingCompiled.commands.push (making "mode-next" "mode")
+    modes := #[{ name := "compiled-listing", roles := [(Role.nextItem, "mode-next")] }]
+    major := some "compiled-listing" }
+
 /-- The checks of modes through the headless host, with the test scheme and
 the real elaborator: a mode config defines holds while config defines it.
 The key a check presses is the test scheme's for a role, so no check names
@@ -1999,7 +2011,25 @@ def modeChecks (context : Context) : List Check :=
                 !first.any (·.endsWith "\"compiled\"") &&
                 second.contains "store counter v1: 1" &&
                 second.any (·.endsWith "\"compiled\""))
-          listingCompiled }]
+          listingCompiled },
+    { name :=
+        "a role's key runs the command of a mode compiled code hands the host in a view of a buffer that has the mode, before any reload and after a reload of a config that defines no mode"
+      run :=
+        withHost context [("10-listing.lean", listingChunk false)]
+          (fun session => do
+            session.pressKeys nextItemKeys
+            let first ← session.shown
+            session.ask [.reload]
+            session.pressKeys nextItemKeys
+            let second ← session.shown
+            let made (shown : Array String) (text : String) :=
+              (shown.filter (·.endsWith text.quote)).size
+            return nextItemKeys.length > 0 && made first "mode" == 1 &&
+                made first "compiled" == 0 &&
+                second.contains "store counter v1: 0" &&
+                made second "mode" == 2 &&
+                made second "compiled" == 0)
+          compiledListing }]
 
 /-- Every check, in the order they run. -/
 def checks (context : Context) : List Check :=
