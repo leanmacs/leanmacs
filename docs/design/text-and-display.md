@@ -1019,6 +1019,8 @@ part are in the module docs; these are the decisions.
 - **A glyph says where it is drawn and in which font.** A glyph has a pen
   position and an advance, which positions are found by, and an offset
   from the pen position and the baseline, which only a renderer reads.
+  The offset counts to the right and down: a glyph drawn left of its pen
+  position, or raised above where it would be, has one less than nothing.
   The font it is drawn in is not the font its run asked for: a character
   the font asked for lacks is drawn in a fallback, and two specs that
   differ in line height are one font. So there are two kinds of id. A
@@ -1044,6 +1046,8 @@ part are in the module docs; these are the decisions.
   which a wiring test counts against layout's own counters. Layouts are
   quantised: a line's height and baseline are whole pixels, and advances
   are the font's own. A font's metrics are those of a space shaped in it.
+  A glyph's offset is Parley's as it is: Parley's counts to the right and
+  down too, having turned over the font's own, which counts up.
   **It is linked by nothing yet.** The display handle stays on the fake:
   Lean's display contract passes over the fake by construction and has no
   way to name fonts, and a display over real fonts needs a constructor

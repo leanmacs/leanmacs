@@ -234,6 +234,12 @@ impl Placed for Cluster<'_, ()> {
     }
 
     fn drawn(&self) -> impl Iterator<Item = (u32, f32, f32, f32)> {
+        // Parley's offsets are the port's as they are: `x` is to the right
+        // and `y` is down, in pixels at the run's size. A font's own
+        // offsets count up, and Parley turns them over when it shapes
+        // (`parley_engine/src/shape/shaped_text.rs` at 0.13.0), so nothing
+        // is negated here. `tests/shaping.rs` pins the axis and the sign
+        // of each.
         self.glyphs()
             .map(|glyph| (glyph.id, glyph.x, glyph.y, glyph.advance))
     }

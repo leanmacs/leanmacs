@@ -65,8 +65,12 @@
 //!   right-to-left run in the reverse of their order in the text. A
 //!   glyph's `x` is its pen position, counted from the left edge through
 //!   the advances before it, and its `dx` and `dy` are the offsets Parley
-//!   gives its outline. A ligature's glyph starts at the left edge of the
-//!   leftmost of its clusters.
+//!   gives its outline, as Parley gives them. Parley's are the port's: to
+//!   the right, and down from the baseline, in pixels. So a glyph drawn
+//!   left of its pen position has a `dx` less than nothing, and one that
+//!   is raised, as a mark over a tall letter is, a `dy` less than nothing.
+//!   A ligature's glyph starts at the left edge of the leftmost of its
+//!   clusters.
 //! - **The base direction of every line is left to right**, whatever its
 //!   first character: a line that starts in Hebrew still starts at the
 //!   left edge, with its Hebrew run reordered, as a code editor shows it.
@@ -120,7 +124,8 @@
 //!
 //! - visual order: Latin then Hebrew in the order of the bidirectional
 //!   algorithm, written out by hand, the base direction, cluster order on
-//!   a left-to-right line, and a glyph's offset carried
+//!   a left-to-right line, and a glyph's offset carried, each of `dx` and
+//!   `dy` on its own axis and with its sign
 //!   (`tests/shaping.rs`); where a ligature's glyph starts in each
 //!   direction, on clusters written out by hand (`src/shaper.rs`), since
 //!   no fixture font has a ligature in a right-to-left script.

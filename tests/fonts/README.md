@@ -17,15 +17,17 @@ whole upstream files are 7.7 MB; these are 119 KB.
 
 ## What the tests rest on
 
-Three facts of these files, and no other: no test states a glyph id, an
-advance or a height of a font.
+Four facts of these files, and no other: no test states a glyph id, an
+advance, an offset or a height of a font.
 
 - Noto Sans has a ligature for `fi`: the two characters are one glyph.
 - Noto Sans has no glyph for U+65E5 (日), U+1F600 (😀) or U+0E01 (ก). Noto
   Sans JP has the first and Noto Emoji the second; no fixture has the
   third.
 - Noto Sans Hebrew draws the vav of `שלום` with an offset from its pen
-  position.
+  position: to the left of it, and no higher or lower.
+- Noto Sans draws the combining acute accent, U+0301, at its own height
+  over `x`, and raises it over `X`.
 
 ## Where they come from
 

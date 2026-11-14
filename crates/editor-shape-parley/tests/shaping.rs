@@ -2,10 +2,10 @@
 //! ligature, a combining mark, two families on one line, and a spec's
 //! attributes reaching the font a glyph is drawn in.
 //!
-//! The tests rest on the three facts of the fixture files their README
-//! states, and on no number of a font's: a glyph is "the one glyph of the
-//! line", "not the glyph `f` has alone", "drawn in the bytes of this
-//! file".
+//! The tests rest on the facts of the fixture files their README states,
+//! and on no number of a font's: a glyph is "the one glyph of the line",
+//! "not the glyph `f` has alone", "drawn in the bytes of this file",
+//! "raised".
 
 mod common;
 
@@ -377,16 +377,19 @@ fn a_left_to_right_lines_glyphs_are_in_cluster_order() {
 #[test]
 fn a_glyph_drawn_off_its_pen_position_carries_its_offset() {
     let shaper = shaper();
-    // The Hebrew fixture draws the vav of this word off its pen position,
-    // and the other three letters on theirs.
+    // The Hebrew fixture draws the vav of this word to the left of its pen
+    // position and no higher or lower, and the other three letters on
+    // theirs. `dx` is how far to the right, so the vav's is less than
+    // nothing, and it has no `dy`.
     let line = one_line(&shaper, &plain("שלום"));
     assert_eq!(clusters(&line), vec![6, 4, 2, 0]);
-    let offsets: Vec<bool> = line
-        .glyphs
-        .iter()
-        .map(|glyph| glyph.dx != 0.0 || glyph.dy != 0.0)
-        .collect();
-    assert_eq!(offsets, vec![false, true, false, false]);
+    let vav = &line.glyphs[1];
+    assert!(vav.dx < 0.0, "{vav:?}");
+    assert_eq!(vav.dy, 0.0, "{vav:?}");
+    for letter in [0, 2, 3] {
+        let glyph = &line.glyphs[letter];
+        assert_eq!((glyph.dx, glyph.dy), (0.0, 0.0), "{glyph:?}");
+    }
     // The offset moves the outline and not the pen: each glyph still
     // starts where the one before it ends.
     assert!(end_to_end(&line));
@@ -397,4 +400,32 @@ fn a_glyph_drawn_off_its_pen_position_carries_its_offset() {
             .iter()
             .all(|glyph| glyph.dx == 0.0 && glyph.dy == 0.0)
     );
+}
+
+#[test]
+fn a_glyph_drawn_above_where_it_would_be_has_a_dy_less_than_nothing() {
+    let shaper = shaper();
+    // The primary draws the combining acute accent, U+0301, at its own
+    // height over `x`, and raises it over `X`, which is taller. Each is
+    // the letter's glyph and then the accent's, in one cluster.
+    let accent_over = |letter: &str| {
+        let text = format!("{letter}\u{301}");
+        let line = one_line(&shaper, &plain(&text));
+        assert_eq!(clusters(&line), vec![0, 0], "{text:?}");
+        let (base, accent) = (line.glyphs[0], line.glyphs[1]);
+        assert_eq!(base.id, glyph_of(&shaper, letter));
+        assert_eq!((base.dx, base.dy), (0.0, 0.0), "{base:?}");
+        // The accent moves the outline and not the pen: the line is as
+        // wide as the letter.
+        assert_eq!(accent.advance, 0.0);
+        assert!(end_to_end(&line));
+        accent
+    };
+    let (over_small, over_capital) = (accent_over("x"), accent_over("X"));
+    assert_eq!(over_small.id, over_capital.id);
+    // `dy` is how far below the baseline: down is more, so a glyph that
+    // is raised has less than nothing, and one that is neither raised nor
+    // lowered has none.
+    assert_eq!(over_small.dy, 0.0, "{over_small:?}");
+    assert!(over_capital.dy < 0.0, "{over_capital:?}");
 }
