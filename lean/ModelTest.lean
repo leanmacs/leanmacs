@@ -1381,10 +1381,12 @@ def fileRunnerChecks : List Check :=
             (← rig.services.completions.waiting) == 0 }]
 
 /-- The texts a registered command leaves when it is a plain command, run
-against a text model with none; `none` for a command over a store. -/
+against a text model with none; `none` for a command over a store and for
+one that is given its call. -/
 def plainTexts : Config.Action → Option (Array String)
   | .plain run => some (textsOf run)
   | .store .. => none
+  | .call _ => none
 
 /-- How `work` ends when it runs against the job model from a clock at 0 that
 nothing cancels, as a check compares it. -/
@@ -1567,7 +1569,23 @@ def registryChecks : List Check :=
             registeredWork replaced "theirs" == some (.finished #["t"]) &&
             registeredWork replaced "old" == none &&
             replaced.names == #["greet"] &&
-            (replaced.find? "count").isNone) }]
+            (replaced.find? "count").isNone) },
+    { name :=
+        "compiled code is an owner of its own: config's entry of a name a compiled entry has is the one a lookup finds, and once config no longer registers it the compiled one is found again"
+      run :=
+        let compiled : Config.Registry :=
+          ({} : Config.Registry).replace .compiled
+            #[registration "stamp" "compiled", registration "only" "compiled"]
+        let overridden := compiled.replace .config #[registration "stamp" "config"]
+        let dropped := overridden.replace .config #[]
+        pure
+          (Config.Owner.compiled != Config.Owner.config &&
+            registeredTexts compiled "stamp" == some #["compiled"] &&
+            registeredTexts overridden "stamp" == some #["config"] &&
+            registeredTexts overridden "only" == some #["compiled"] &&
+            overridden.names == #["stamp", "only"] &&
+            registeredTexts dropped "stamp" == some #["compiled"] &&
+            dropped.entries.all (·.owner == .compiled)) }]
 
 /-- A declaration of the store `name` at `version`, which starts at the
 number 0 and accepts any number. It migrates a number written at version 1 by
@@ -1958,6 +1976,48 @@ def runTexts (state : Config.State Elaborated) (name : String) : Option (Array S
 def stored (state : Config.State Elaborated) (name : String) : Option Value :=
   (state.cells.find? .config name).map (·.value)
 
+/-- An argument as a check's command writes it. -/
+def argumentText : Argument → String
+  | .nat value => toString value
+  | .int value => toString value
+  | .str value => value
+  | .bool value => toString value
+
+/-- What a command that is given its call was called with, as one line: its
+label, its arguments, and its keys as a key string. -/
+def callText (label : String) (call : Call) : String :=
+  " ".intercalate (label :: call.arguments.map argumentText ++ [Key.notations call.keys])
+
+/-- A registration of the command `name` that is given its call, and makes a
+text of `label` and what it was called with (`callText`). -/
+def callRegistration (name label : String) : Config.Registration :=
+  { name, action := .call fun call => makes (callText label call) }
+
+/-- The keys `C-x i`, as chords. -/
+def controlXThenI : List Key :=
+  [{ logical := .character "x", modifiers := { control := true } }, { logical := .character "i" }]
+
+/-- Runs the command called `name` the way an invocation does
+(`Config.State.command?`), against the editor's models, with a call for the
+focused window of a new editor state, `arguments` and the keys `typed`: what
+the command asks to write, and the texts after it, the scratch buffer's
+first. `none` if there is no such command or it was refused. -/
+def calls (state : Config.State Elaborated) (name : String) (arguments : List Argument := [])
+    (typed : List Key := []) : Option (Option Config.Write × Array String) :=
+  (state.command? name).bind fun run =>
+    let program : EditorM (Option Config.Write) := do
+      let editor ← EditorState.initial ⟨640, 480⟩
+      let some target := editor.focusedTarget? | throw .noSuchText
+      run { target, arguments, keys := typed }
+    match program.runModel editorModel with
+    | (.ok write, model) => some (write, model.texts.contents)
+    | (.error _, _) => none
+
+/-- A config state in which compiled code has registered `registrations`,
+before any config. -/
+def compiledWith (registrations : Array Config.Registration) : Config.State Elaborated :=
+  { registry := ({} : Config.Registry).replace .compiled registrations }
+
 /-- The checks of the reload reducer (`Editor/Config/Reload.lean`), with
 outcomes built by hand. -/
 def reloadChecks : List Check :=
@@ -2158,7 +2218,56 @@ def reloadChecks : List Check :=
             reloaded.registry.jobs.size == 1 &&
             startable kept "count" == some ("config", .finished #["v1"]) &&
             startable kept "old" == some ("config", .finished #["old"]) &&
-            startable loaded "missing" == none) }]
+            startable loaded "missing" == none) },
+    { name :=
+        "config registers a command under a compiled command's name: an invocation of the name runs config's, the report counts config's commands alone, and after a reload without the registration the invocation runs the compiled one"
+      run :=
+        let compiled := compiledWith #[registration "stamp" "compiled"]
+        let (overridden, effects) :=
+          reduceFrom compiled
+            [.requested, .finished (accepted ["a"] (command "stamp" (makes "config")))]
+        let (dropped, later) :=
+          reduceFrom overridden [.requested, .finished (accepted ["a"] (greets "hello"))]
+        pure
+          ((calls compiled "stamp").map (·.2) == some #["", "compiled"] &&
+            (calls overridden "stamp").map (·.2) == some #["", "config"] &&
+            effects == #[.start none #[], .cancelJobs "config", .report 1 true #[] 1 1] &&
+            (calls dropped "stamp").map (·.2) == some #["", "compiled"] &&
+            later == #[.start (some #[]) #["a"], .cancelJobs "config", .report 2 true #[] 1 1] &&
+            (calls dropped "missing").isNone) },
+    { name :=
+        "a command that is given its call is handed the call an invocation runs it with: its arguments and its keys"
+      run :=
+        let state := compiledWith #[callRegistration "stamp" "stamp"]
+        pure
+          ((calls state "stamp" [.nat 3, .str "w"] controlXThenI).map (·.2) ==
+              some #["", "stamp 3 w C-x i"] &&
+            ((calls state "stamp").bind (·.1)).isNone) },
+    { name :=
+        "a command over a store, run as an invocation runs it, hands back what to write: the owner, the store and the new tree, which the state then holds"
+      run :=
+        let (loaded, _) := reduce [.requested, .finished (accepted ["a"] (bumps 4))]
+        pure <|
+          match calls loaded "bump" with
+          | some (some write, _) =>
+            write.owner == .config && write.store == "counter" && write.value == .nat 4 &&
+              stored (loaded.written (some write)) "counter" == some (.nat 4)
+          | _ => false },
+    { name :=
+        "the driver's run of a command that is given its call runs it with the target it is handed and nothing else, and runs nothing when it is handed none"
+      run :=
+        let state := compiledWith #[callRegistration "stamp" "stamp", registration "plain" "p"]
+        let program : EditorM (Option Bool) := do
+          let editor ← EditorState.initial ⟨640, 480⟩
+          let some target := editor.focusedTarget? | throw .noSuchText
+          let some run := state.program? "stamp" (some target) | return none
+          return some (← run).isNone
+        pure
+          ((state.program? "stamp").isNone &&
+            (match program.runModel editorModel with
+            | (.ok (some true), model) => model.texts.contents == #["", "stamp "]
+            | _ => false) &&
+            runTexts state "plain" == some #["p"]) }]
 
 /-- A key press that produced `text`. -/
 def pressed (text : String) : WindowCheck.Input :=

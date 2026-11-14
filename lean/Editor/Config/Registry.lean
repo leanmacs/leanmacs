@@ -1,3 +1,4 @@
+import Editor.Command.Call
 import Editor.Config.Owner
 import Editor.Setup
 
@@ -31,8 +32,20 @@ different names, and the number of commands a config registers is the number
 of names it can be run by. Two owners may still register one name: a lookup
 then finds the later entry.
 
-Dispatch by key, command names in keymaps and overriding a compiled command
-are for the command loop to build on this table.
+## Compiled commands
+
+Compiled code is an owner too (`Owner.compiled`). A host registers its
+compiled commands with `replace .compiled …` when it starts, before any
+config, and nothing replaces them afterwards. `replace` puts an owner's
+entries after every other owner's, and `find?` returns the latest entry of a
+name, so config's command of a name a compiled command has is the one that
+runs while config registers it, and the compiled one runs again once a
+reload drops it.
+
+A compiled command may be given what it was called with (`Action.call`,
+`Editor/Command/Call.lean`): the window it acts on, the invocation's
+arguments and the keys. `setup` registers a plain command, which is told
+nothing of its call.
 -/
 
 namespace Editor.Config
@@ -44,6 +57,9 @@ inductive Action where
   /-- A command over the store called `name`: `step` takes the tree of the
   store's cell to its new tree. -/
   | store (name : String) (step : Value → EditorM Value)
+  /-- A command that is given what it was called with: the window it acts
+  on, the invocation's arguments and the keys that yielded it. -/
+  | call (run : Call → EditorM Unit)
 
 /-- A command as `setup` registers it. -/
 structure Registration where

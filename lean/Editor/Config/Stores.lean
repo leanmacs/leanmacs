@@ -9,6 +9,11 @@ version and a plain tree. The cells are editor state, held on the editor
 thread. A cell holds no type of config's, so a reload leaves it where it is,
 and `install` is the rule that meets the stores a new config declares with
 the cells there are.
+
+A command over a store does not write its cell: it hands back a `Write`,
+the cell's new tree, and whoever ran it writes that back. `Write` is here,
+beside the cells, so that the command loop (`Editor/Loop.lean`) can hand one
+on without importing the reload reducer.
 -/
 
 namespace Editor.Config
@@ -97,5 +102,16 @@ def install (cells : Cells) (owner : Owner) (declarations : Array StoreDeclarati
   ({ cells := others ++ met.map (·.1) }, dropped ++ met.filterMap (·.2))
 
 end Cells
+
+/-- What a command asks the editor to write when it has run: the new tree of
+a store's cell. Whoever ran the command writes it back
+(`Config.State.written`, `Editor/Config/Reload.lean`). -/
+structure Write where
+  /-- Whose store it is. -/
+  owner : Owner
+  /-- The store's name. -/
+  store : String
+  /-- The cell's new tree. -/
+  value : Value
 
 end Editor.Config

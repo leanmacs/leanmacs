@@ -39,8 +39,12 @@ thread, and performs the effects: the headless loop today
 (`Editor/Headless.lean`), the command loop later.
 
 Running a command is here too, because what a command over a store reads and
-writes is this state: `State.program?` is the program to run against the
-editor's port, and `State.written` takes what it wrote back.
+writes is this state. `State.command?` is the lookup an invocation uses:
+given what the command is called with (`Editor/Command/Call.lean`), the
+program to run against the editor's port. `State.program?` is the same for a
+command run by its name alone, as the driver's `run <name>` does. Each
+program's value is what the command asks to be written
+(`Write`, `Editor/Config/Stores.lean`), and `State.written` takes it back.
 -/
 
 namespace Editor.Config
@@ -149,40 +153,67 @@ def step {σ : Type} (state : State σ) : Event σ → State σ × Array (Effect
       (state, installed ++ effects)
     else (state, installed)
 
-/-- What a command asks the editor to write when it has run: the new tree of
-a store's cell. -/
-structure Write where
-  /-- Whose store it is. -/
-  owner : Owner
-  /-- The store's name. -/
-  store : String
-  /-- The cell's new tree. -/
-  value : Value
-
 namespace State
 
 variable {σ : Type}
 
-/-- The program that running the command called `name` runs against the
-editor's port, and whose value is what to write back if it succeeds; `none`
-if there is no such command.
+/-- The program of a plain command: `run`, which asks for nothing to be
+written. -/
+private def plainly (run : EditorM Unit) : EditorM (Option Write) := do
+  run
+  return none
 
-A command over a store is its step applied to the tree of the store's cell.
+/-- The program of `owner`'s command over the store called `store`: `step`
+applied to the tree of the store's cell, whose value is what to write back;
+`none` if there is no such cell.
+
 The install rule makes a cell for every store a config declares, and a
 `setup` that registers a command over a store it does not declare is
 refused, so such a command always finds its cell. -/
-def program? (state : State σ) (name : String) : Option (EditorM (Option Write)) := do
+private def overStore? (state : State σ) (owner : Owner) (store : String)
+    (step : Value → EditorM Value) : Option (EditorM (Option Write)) := do
+  let cell ← state.cells.find? owner store
+  return do
+    let value ← step cell.value
+    return some { owner, store, value }
+
+/-- What an invocation of the command called `name` runs: given the call,
+the program to run against the editor's port, whose value is what to write
+back if it succeeds; `none` if there is no such command. It is the latest
+entry of the name, so config's command runs in place of a compiled one of
+the same name.
+
+A plain command and a command over a store are not told of the call; a
+command that is given its call is handed it. -/
+def command? (state : State σ) (name : String) : Option (Call → EditorM (Option Write)) := do
   let entry ← state.registry.find? name
   match entry.registration.action with
   | .plain run =>
-    return do
-      run
-      return none
+    return fun _ => plainly run
+  | .call run =>
+    return fun call => plainly (run call)
   | .store store step =>
-    let cell ← state.cells.find? entry.owner store
-    return do
-      let value ← step cell.value
-      return some { owner := entry.owner, store, value }
+    let program ← state.overStore? entry.owner store step
+    return fun _ => program
+
+/-- The program that running the command called `name` by its name runs
+against the editor's port, as the driver's `run <name>` does, and whose
+value is what to write back if it succeeds; `none` if there is no such
+command.
+
+No key ran it, so a command that is given its call is handed `target` and
+nothing else: no arguments and no keys. With no target there is no call to
+hand it, and it is not run: `none`. -/
+def program? (state : State σ) (name : String) (target : Option Target := none) :
+    Option (EditorM (Option Write)) := do
+  let entry ← state.registry.find? name
+  match entry.registration.action with
+  | .plain run =>
+    return plainly run
+  | .call run =>
+    target.map fun target => plainly (run { target })
+  | .store store step =>
+    state.overStore? entry.owner store step
 
 /-- The state once what a command wrote is written back. -/
 def written (state : State σ) : Option Write → State σ

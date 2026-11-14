@@ -25,4 +25,10 @@ structure Owner where
 def Owner.config : Owner :=
   { name := "config" }
 
+/-- The owner of everything compiled code registers: the commands and the
+bindings a host is handed when it starts, before any config. A reload never
+replaces them. -/
+def Owner.compiled : Owner :=
+  { name := "compiled" }
+
 end Editor.Config
