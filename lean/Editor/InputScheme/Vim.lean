@@ -170,6 +170,11 @@ The scheme is given a role table and a leader beside its states
 active keymaps. The tables that ship are data in
 `Editor/InputScheme/Vim/Default.lean`.
 
+A key a mode binds is bound to `Bound.mode` of what it runs
+(`InputScheme.modeCommand`: `.mode (.command { name })`). The grammar
+reaches a `.mode` binding as the binding it wraps, so a mode's motion is a
+move like any other.
+
 ## Where an addition goes
 
 | Addition | Where |
@@ -225,7 +230,15 @@ inductive Bound where
   /-- The register prefix: the key after it names the register of the edit
   being typed. It is no part of speech. -/
   | register
+  /-- A binding a mode contributes: the grammar reaches it as `bound`, and
+  it does not hold where typing is text. -/
+  | mode (bound : Bound)
   deriving DecidableEq, Repr
+
+/-- Whether the binding is one a mode contributes. -/
+def Bound.isMode : Bound → Bool
+  | .mode _ => true
+  | _ => false
 
 /-- What an operator acts on. -/
 inductive Over where
@@ -484,6 +497,7 @@ private def State.reached (states : States) (view : ViewId) (state : State) (typ
       ({ state with
           typed, multiplier := state.count, digits := none, awaitsRegister := true, walked := [] },
         .nothing)
+  | .mode bound => State.reached states view state typed bound
 
 /-- One key of the grammar, a key for `view`: the state it leaves, and what
 it parsed to (the rules in the module docs). A digit of a count is taken
@@ -547,11 +561,13 @@ structure ModeKeys where
 leader `modes`. Its bindings are parts of speech, and it reports every key
 of the edit begun as pending. A key bound to a command name is bound to the
 command of that name, which changes no text and enters no state: the
-grammar cannot look either up. -/
+grammar cannot look either up. A key a mode binds is bound to the same
+command, marked as a mode's (`Bound.mode`). -/
 def scheme (states : States) (modes : ModeKeys := {}) : InputScheme :=
   { State, Binding := Bound, init := {}, step := step states, pending := (·.typed)
     command := fun name => .command { name }
     roles := modes.roles
-    leader := modes.leader }
+    leader := modes.leader
+    modeCommand := fun name => .mode (.command { name }) }
 
 end Editor.Vim

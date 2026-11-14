@@ -51,6 +51,10 @@ suffixes are bound under. Both default to empty, which the scheme contract
 reports for a scheme that is run: every registered role has a key, and the
 leader and the roles are apart.
 
+A scheme also says what a key a mode binds is bound to (`modeCommand`),
+which is `command` unless the scheme treats a mode's keys apart: the Vim
+scheme marks them, so that they do not hold where typing is text.
+
 ## What every scheme must do
 
 `Editor/InputScheme/Contract.lean` is the contract check every scheme runs:
@@ -106,6 +110,11 @@ structure InputScheme where
   /-- The leader, as chords: the prefix a mode's suffixes are bound
   under. -/
   leader : List Key := []
+  /-- The binding a key a mode binds (a role, a suffix) is bound to, to run
+  the command of this name: `command`, unless the scheme treats a mode's
+  keys apart. Completing a sequence bound to it yields an invocation of
+  that command. -/
+  modeCommand : String → Binding := command
 
 /-- The keys `role` is on in `scheme`'s role table, if it has a row. -/
 def InputScheme.roleKey (scheme : InputScheme) (role : Role) : Option (List Key) :=

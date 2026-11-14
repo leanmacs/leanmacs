@@ -5343,6 +5343,12 @@ def misnaming : InputScheme :=
   { TestScheme.scheme with command := fun name => { command := name ++ "-not" } }
 
 /-- A scheme written for the test that breaks the contract: the test scheme,
+except that what it says a mode's key is bound to runs a command of another
+name. -/
+def modeMisnaming : InputScheme :=
+  { TestScheme.scheme with modeCommand := fun name => { command := name ++ "-not" } }
+
+/-- A scheme written for the test that breaks the contract: the test scheme,
 with a role table that lacks the role `mark`. -/
 def roleless : InputScheme :=
   { TestScheme.scheme with roles := TestScheme.roles.filter (·.1 != Role.mark) }
@@ -5428,15 +5434,21 @@ def schemeContractChecks : List Check :=
             (subject.scheme.pending state).isEmpty &&
             (subject.feedFrom state (keys "C-x C-s")).2 == (subject.feed (keys "C-x C-s")).2) },
     { name :=
-        "the scheme contract reports a scheme that still reports pending keys after the key that completes an input, for a bound sequence and for a key bound to a named command"
+        "the scheme contract reports a scheme that still reports pending keys after the key that completes an input, for a bound sequence, for a key bound to a named command and for a mode's key"
       run :=
         let subject := subjectOf lingering schemeMaps
         pure
-          (failsOnly subject [SchemeContract.completeEmits, SchemeContract.namedCommandRuns] &&
+          (failsOnly subject
+              [SchemeContract.completeEmits, SchemeContract.namedCommandRuns,
+                SchemeContract.modeCommandRuns] &&
             (subject.feed (keys "C-x C-s")).2.getLast? == some (some (invoke "save"))) },
     { name :=
         "the scheme contract reports a scheme whose binding for a command name runs a command of another name, for that property alone"
       run := pure (failsOnly (subjectOf misnaming schemeMaps) [SchemeContract.namedCommandRuns]) },
+    { name :=
+        "the scheme contract reports a scheme whose binding for a mode's key runs a command of another name, for that property alone"
+      run :=
+        pure (failsOnly (subjectOf modeMisnaming schemeMaps) [SchemeContract.modeCommandRuns]) },
     { name :=
         "the scheme contract reports a scheme whose role table lacks a registered role, for that property alone"
       run := pure (failsOnly (subjectOf roleless schemeMaps) [SchemeContract.everyRoleHasKey]) },

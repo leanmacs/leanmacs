@@ -45,6 +45,8 @@ the pending keys the scheme reports. Nothing here knows what a binding is.
   key sequence, and no role's keys begin with the leader or are a prefix of
   it. A role key that collided with a leader suffix would make one of them
   unreachable, and no check of one mode can see it.
+- `modeCommandRuns`: as `namedCommandRuns`, for `scheme.modeCommand`, what
+  a key a mode binds (a role, a suffix) is bound to.
 
 The contract compares no states: a scheme's state may hold what a reset
 must keep, such as its last edit, and the record carries no equality on it.
@@ -186,10 +188,24 @@ def leaderAndRolesApart : Property :=
       !leader.isEmpty && sequences.eraseDups.length == sequences.length &&
         sequences.all fun keys => !leader.isPrefixOf keys && !keys.isPrefixOf leader }
 
+/-- With the unbound key bound to `scheme.modeCommand` of a name in a keymap
+put before the subject's, that key, typed from the initial state, yields an
+invocation of the command of that name and leaves nothing pending. -/
+def modeCommandRuns : Property :=
+  { name :=
+      "a key bound to what the scheme says a mode's key is bound to yields an invocation of the command of that name, and the scheme then reports no pending keys"
+    holds := fun subject =>
+      let bound : Keymap subject.scheme.Binding :=
+        Keymap.ofList [([subject.unbound], subject.scheme.modeCommand namedCommand)]
+      let (state, yielded) :=
+        subject.scheme.step (fun view => bound :: subject.maps view) subject.view
+          subject.scheme.init subject.unbound
+      yielded.map (·.command) == some namedCommand && (subject.scheme.pending state).isEmpty }
+
 /-- Every property of the contract. -/
 def properties : List Property :=
   [hasPrefixes, strictPrefixEmitsNothing, strictPrefixIsPending, completeEmits, unboundResets,
-    namedCommandRuns, everyRoleHasKey, leaderAndRolesApart]
+    namedCommandRuns, everyRoleHasKey, leaderAndRolesApart, modeCommandRuns]
 
 /-- The names of the properties that do not hold of `subject`; none when the
 scheme keeps the contract. -/
