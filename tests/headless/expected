@@ -2,9 +2,11 @@ reload 1: installed, 2 chunks, 1 commands
 run greet: ok
 run missing: no such command
 commands: greet
-text 0: "hello, world"
+text 0: ""
+text 1: "hello, world"
 spawn count: job 1
 job 1 count: ok
 commands: greet
-text 0: "hello, world"
-text 1: "counted 42"
+text 0: ""
+text 1: "hello, world"
+text 2: "counted 42"

@@ -25,8 +25,9 @@ the config session.
 editor queue and handles one event to its end before the next. It owns the
 config half of the editor's state (`Config.State`) and the table of texts
 (`RealTexts`), feeds the reload reducer (`Config.step`) and performs its
-effects, and runs commands with `EditorM.runReal`, with a display recorder
-(`Editor/Display/Recorder.lean`) as the display.
+effects, and runs the command loop's programs with `EditorM.runReal`, with
+a display recorder (`Editor/Display/Recorder.lean`) as the display. Every
+command it runs, it runs through the command loop ("The editor loop").
 
 A reload does not run on the editor thread. The reducer's `start` effect
 becomes a dedicated task, the reload job, which reads the source, elaborates
@@ -50,13 +51,25 @@ as before, so reload and job completion work as they did.
   collaborators' type (`Collaborators σ scheme`), and its loop runs that one
   (`Loop scheme`). The executable's is the Vim scheme over its default
   states (`Vim.Default.scheme`); a test hands a host the test scheme.
-- **The frame is made at the first window event.** The host holds no frame
-  (`Running.frame`) until the first event from the window input arrives, and
-  then makes it (`Loop.start`) in a frame of 0 by 0, which a resize changes.
-  A real window reports before anything is typed, so that is also when a
-  real frame would first have a size. Until then nothing is in the text
-  store but what commands made, so the indices `show` prints are what they
-  were before there was a loop.
+- **The frame is made when the loop is first needed** (`Running.framed`):
+  at the first event from the window input, the first command run by name
+  or the first job's command to deliver, whichever comes first. The host
+  holds no frame (`Running.frame`) until then, and then makes it
+  (`Loop.start`) in a frame of 0 by 0, which a resize changes. A command
+  may ask for buffers and windows, which only the loop's state has, so no
+  command runs without one. So the scratch buffer's text is the first text
+  made, and `show` prints it as text 0. A host whose frame cannot be made (`Collaborators.start` is refused)
+  prints the refusal and says `no frame` for the command it could not run.
+- **Every command goes through the loop** (`Editor/Loop.lean`, "Every
+  command goes through the loop"): a key's, the driver's `run <name>`
+  (`Running.run`, `Loop.runNamed`) and a finished job's
+  (`Running.ended`, `Loop.deliver`). Each is guarded against the interrupt
+  flag, has its state requests answered, is rolled back if it does not run
+  to its end, and is followed by a scene. What the step handed back is
+  taken in the same way for all three (`Running.took`).
+- **The jobs a command asked for are started** when its step is taken in:
+  each for the owner that registered it, printed
+  `job <id> <name>: started`.
 - **A window event goes to the loop** (`Running.input`): `Loop.take`, run
   against the library with the recorder as the display, handles it and
   publishes a scene. A key press is still printed with its identity, as the
@@ -97,9 +110,10 @@ as before, so reload and job completion work as they did.
   executable's log is stderr, so a fixture's output does not depend on how
   long the machine took.
 - **After every other event**, a scene is published once there is a frame
-  (`Running.publish`): a driver's request, a reload's install, a job's
-  command may each have edited a text a view shows. The driver's `stop`
-  publishes nothing.
+  (`Running.publish`), unless the loop took a step for the event and
+  published its own: a reload's install, a `show` and a marker are each
+  followed by one, so the count of scenes says how many events there were.
+  The driver's `stop` publishes nothing.
 - **A refusal is never dropped.** The loop puts a refusal in the echo area
   of the scene, a handler's and one met while publishing alike
   (`Editor/Loop.lean`, "When publishing is refused"), so `scene` prints it.
@@ -121,17 +135,13 @@ writer, and what the jobs hold. Beside them, each with a default: the
 compiled commands, bindings and modes, the log, the threshold for a slow command,
 the interrupt key and how the frame is made (`Collaborators.start`).
 
-The driver's `run <name>` and a finished job's command are not dispatched by
-a key, and are run as before: neither is guarded against the interrupt flag
-nor rolled back. A `run` of a compiled command that is given its call hands
-it the focused window, and says `no frame` before there is one.
-
 ## Jobs
 
-The loop owns the job table (`Job.Jobs`, `Editor/Job/Jobs.lean`), so it is
-the one thing that starts a job: a `spawn` request starts the job `setup`
-registered under that name, for the owner that registered it. A command
-cannot start one, and neither can `setup`.
+The host owns the job table (`Job.Jobs`, `Editor/Job/Jobs.lean`), so it is
+the one thing that starts a job, for the owner that registered it
+(`Running.startJob`): for the driver's `spawn <name>`, with no arguments,
+and for each job a command asked for (`startJob`, `Editor/Api.lean`), with
+the arguments the command gave. `setup` starts none.
 
 - **A job runs on the pool**, and holds no thread while it waits
   (`Editor/Job/Runner.lean`). The editor thread goes on to its next event.
@@ -139,15 +149,19 @@ cannot start one, and neither can `setup`.
   ended, the runner posts a wake-up to the editor queue from the job's
   thread, with the job's id. The outcome stays in the job's handle. The
   editor thread meets the wake-up in its turn, takes the result, and, for a
-  job that finished, runs the command it finished with exactly as it runs
-  any command. So a handler runs on the editor thread, between two events.
+  job that finished, has the loop run the command it finished with as it
+  runs any command (`Loop.deliver`). So a handler runs on the editor
+  thread, between two events, after every event that was queued before the
+  wake-up.
 - **A finished job's command is handed what the job held.** A job that
-  loaded a file holds the snapshot the load made. The loop runs the job's
-  command with `Job.finishWith` (`Editor/Job/Real.lean`): the run is handed
+  loaded a file holds the snapshot the load made. The host runs the
+  delivery with `Job.finishWith` (`Editor/Job/Real.lean`): the run is handed
   those snapshots, so the command can take one into the text store
   (`JobSnapshotId.adopt`, `JobSnapshotId.toText`), and the job is settled
-  once the command has run, which releases what it held. A job that failed
-  or was cancelled settled itself.
+  once the delivery has run, which releases what it held. It hands
+  `finishWith` what its loop watches (`Running.watch`), so the command's
+  guard asks the library's interrupt flag. A job that failed or was
+  cancelled settled itself.
 - **A reload that installs cancels the old config's jobs**: the reducer's
   `cancelJobs` effect, performed before the reload's report, takes the
   owner's jobs out of the table and cancels them. A wake-up one of them had
@@ -171,12 +185,14 @@ dropped. `stop` ends this loop only; quitting the queues is for the process
 reload <n>: installed, <c> chunks, <k> commands
 reload <n>: rejected
 diagnostic: <source>:<line>:<column>: <severity>: <first line of the message>
-run <name>: ok            (or "refused: <error>", "no such command", or
-                           "no frame" for a compiled command that is given
-                           its call, before the first window event)
+run <name>: ok            (or "refused: <error>", "interrupted",
+                           "no such command", "no window", or "no frame"
+                           for a host whose frame could not be made)
 spawn <name>: job <id>    (or "no such job")
+job <id> <name>: started  (a command asked for the job)
 job <id> <name>: ok       (the handler's command ran; or "refused: <error>",
-                           "failed: <first line of the message>", "cancelled")
+                           "interrupted", "failed: <first line of the
+                           message>", "cancelled", "no frame")
 event <source id> <code>  (an event from the library's scripted source)
 key arrived: <logical> <physical> <modifiers>
                           (a key press from the window, `Key.describe`)
@@ -196,7 +212,9 @@ selection, as the markers are when it is asked.
 
 A command a key runs prints nothing: what became of it is in the echo area
 of the scene, `<name>: no such command`, `<name>: refused: <error>` or
-`<name>: interrupted`, and a slow one is on the log.
+`<name>: interrupted`, and a slow one is on the log. A command run by name
+and a job's command are printed and are in the echo area too, a job's under
+its label, `job <id> <name>`.
 
 `commands`, `text` and `store` answer `show`, which lists commands, the
 compiled ones among them, not jobs. The loop keeps
@@ -260,14 +278,20 @@ the test scheme, with compiled commands and bindings written there: a key
 runs its command, a failed command is rolled back, the interrupt key stops
 a command that loops, a reload replaces config's commands and bindings and
 leaves the compiled ones, and a slow command is logged, on the fake clock.
+`ConfigTest.hostLoopChecks` are the commands no key ran: a `run` goes
+through the loop, makes the frame, is rolled back when it fails and is
+stopped by the interrupt key; a key's command starts a job, whose result
+comes back as a command after the keys sent meanwhile; and a job's command
+that loops is stopped by the interrupt key.
 The `ffi-test` task runs the real executable
 once, on the fixture under `tests/headless`, which covers the command line,
 the pump and the timer service: the fixture's job sleeps on the real clock.
 It runs it a second time on `tests/headless/keys-script`, which sends keys
-with their identity through the library's window input, and a third on
+with their identity through the library's window input, a third on
 `tests/headless/scene-script`, which commits text, asks for the scene, and
 then reloads and runs a job once the frame exists, each followed by a
-scene.
+scene, and a fourth on `tests/headless/dispatch`, whose keys run commands
+config binds, one of which starts a job with an argument.
 -/
 
 namespace Editor.Headless
@@ -423,9 +447,12 @@ structure Running (σ : Type) (scheme : InputScheme) where
   /-- The display: with no window, a recorder of what is published, over the
   snapshots `texts` publishes. -/
   display : DisplayRecorder
-  /-- The editor loop's frame: none until the first event from the window
-  input arrives. -/
+  /-- The editor loop's frame: none until the first event the loop takes or
+  the first command it runs. -/
   frame : Option (Loop scheme) := none
+  /-- Whether the loop took a step for the event being handled, and so
+  published a scene after it: the host then publishes no second one. -/
+  stepped : Bool := false
   /-- The jobs that are running, with their owners. -/
   jobs : Job.Jobs
   /-- Where the reload job that is running will leave its outcome. -/
@@ -487,74 +514,31 @@ def finish (collaborators : Collaborators σ scheme) (running : Running σ schem
         built := none }
   { running with job := none }.reduce collaborators (.finished outcome)
 
-/-- Runs the command called `name` against the Rust library, writes back what
-it wrote, and prints how it went. It is the driver's run by name, not a
-key's: the command is not guarded and not rolled back. A command that is
-given its call (`Config.Action.call`) is handed the focused window of the
-frame, and is not run before there is a frame. -/
-def run (collaborators : Collaborators σ scheme) (running : Running σ scheme) (name : String) :
-    IO (Running σ scheme) := do
-  let target := running.frame.bind (·.state.focusedTarget?)
-  let some program := running.config.program? name target
-    |
-    let why := if (running.config.registry.find? name).isSome then "no frame" else "no such command"
-    collaborators.emit s!"run {name}: {why}"
-    return running
-  let (result, texts) ← program.runReal running.texts running.display.handle
-  match result with
-  | .ok write =>
-    collaborators.emit s!"run {name}: ok"
-    return { running with
-        config := running.config.written write, texts }
-  | .error refusal =>
-    collaborators.emit s!"run {name}: refused: {refusal.describe}"
-    return { running with texts }
-
-/-- Starts the job registered under `name`, for the owner that registered it,
-and prints its id. The job runs on the pool; when it has ended the runner
-posts a wake-up to the editor queue, with the job's id, from whichever thread
-the job ended on. -/
-def spawn (collaborators : Collaborators σ scheme) (running : Running σ scheme) (name : String) :
-    IO (Running σ scheme) := do
-  let some (owner, work) := running.config.work? name
-    |
-    collaborators.emit s!"spawn {name}: no such job"
-    return running
+/-- Starts the job registered under `name` with `arguments`, for the owner
+that registered it: its id, and the jobs with it, or `none` for a name no
+job is registered under. The job runs on the pool; when it has ended the
+runner posts a wake-up to the editor queue, with the job's id, from
+whichever thread the job ended on. -/
+def startJob (collaborators : Collaborators σ scheme) (running : Running σ scheme) (name : String)
+    (arguments : List Argument := []) : IO (Option Nat × Running σ scheme) := do
+  let some (owner, work) := running.config.work? name arguments | return (none, running)
   let wake (id : Nat) : BaseIO Unit :=
     (discard <| Ffi.postEvent .editor collaborators.jobs id.toUInt64 "" : IO Unit).catchExceptions
       fun _ => pure ()
   let (id, jobs) ← running.jobs.start owner name work wake
-  collaborators.emit s!"spawn {name}: job {id}"
-  return { running with jobs }
+  return (some id, { running with jobs })
 
-/-- Deals with the job `id`, which has ended, on the editor thread: takes its
-result, and for a job that finished runs the command it finished with, as any
-command is run, and prints how it went. A job that is no longer in the table,
-because its owner was removed, is not dealt with: its handler does not run. -/
-def ended (collaborators : Collaborators σ scheme) (running : Running σ scheme) (id : Nat) :
+/-- Starts the job registered under `name`, with no arguments, as the driver
+asks, and prints its id. -/
+def spawn (collaborators : Collaborators σ scheme) (running : Running σ scheme) (name : String) :
     IO (Running σ scheme) := do
-  let (result, jobs) ← running.jobs.finish id
-  let running := { running with jobs }
-  let some (entry, outcome) := result | return running
-  let label := s!"job {entry.id} {entry.name}"
-  match outcome with
-  | .finished command =>
-    -- The command is handed what the job held, and the job is settled once
-    -- it has run.
-    let (result, texts) ←
-      Job.finishWith collaborators.held entry.handle command running.texts running.display.handle
-    match result with
-    | .ok () =>
-      collaborators.emit s!"{label}: ok"
-    | .error refusal =>
-      collaborators.emit s!"{label}: refused: {refusal.describe}"
-    return { running with texts }
-  | .failed message =>
-    collaborators.emit s!"{label}: failed: {firstLine message}"
-    return running
-  | .cancelled =>
-    collaborators.emit s!"{label}: cancelled"
-    return running
+  let (id?, running) ← running.startJob collaborators name
+  match id? with
+  | some id =>
+    collaborators.emit s!"spawn {name}: job {id}"
+  | none =>
+    collaborators.emit s!"spawn {name}: no such job"
+  return running
 
 /-- What the loop's programs watch: the library's interrupt flag, and the
 clock the host's jobs wait on, so a test moves one clock for both. -/
@@ -608,12 +592,53 @@ def keys (collaborators : Collaborators σ scheme) (running : Running σ scheme)
   { maps := running.config.registry.activeMaps scheme, command? := running.config.command?
     slowAfter := collaborators.slowAfter, registered := running.config.registry.registered }
 
+/-- The loop's frame, made if there is none (`Collaborators.start`): the
+frame is made when the loop is first needed, for a window event, a command
+run by name or a job's command. Making it is printed when refused
+(`attempt`), and there is then no frame. -/
+def framed (collaborators : Collaborators σ scheme) (running : Running σ scheme) :
+    IO (Option (Loop scheme) × Running σ scheme) := do
+  if let some frame := running.frame then
+    return (some frame, running)
+  let (made, running) ← running.attempt collaborators collaborators.start
+  return (made, { running with frame := made })
+
+/-- How a command the loop ran ended, as the host prints it after
+`run <name>: ` or `job <id> <name>: `. -/
+def describeEnding : Loop.Ending → String
+  | .finished => "ok"
+  | .refused refusal => s!"refused: {refusal.describe}"
+  | .interrupted => "interrupted"
+  | .noSuchCommand => "no such command"
+  | .noWindow => "no window"
+
+/-- Takes in what a step of the loop handed back: the loop after it is the
+frame, what the step has to log is logged, what its command asked to be
+written is written back to the stores, and each job its command asked for
+is started, for the owner that registered it, and printed,
+`job <id> <name>: started`. A step that said stop ends the loop. -/
+def took (collaborators : Collaborators σ scheme) (running : Running σ scheme)
+    (stepped : Loop.Stepped scheme) : IO (Running σ scheme) := do
+  for entry in stepped.log do
+    collaborators.log entry
+  let mut running :=
+    { running with
+      frame := some stepped.loop, stepped := true, config := running.config.written stepped.write
+      stopped := running.stopped || stepped.next == .stop }
+  for start in stepped.starts do
+    let (id?, started) ← running.startJob collaborators start.name start.arguments
+    running := started
+    -- The loop refused a name no job is registered under when the command
+    -- asked, from the registry as it is in this event: one is found.
+    if let some id := id? then
+      collaborators.emit s!"job {id} {start.name}: started"
+  return running
+
 /-- Handles an event from the window input: prints a key press with its
 identity, makes the frame if there is none, and has the editor loop take the
 event (`Loop.take`), which lowers the interrupt flag for an interrupt key,
 steps the event, runs the command a key yields and publishes a scene. What
-the command asked to be written is written back to the stores, and what the
-step has to log is logged. A close request ends the loop.
+the step handed back is taken in (`took`). A close request ends the loop.
 
 Making the frame and the step are each printed when refused (`attempt`):
 after a refused step the frame stays as it was. With no frame made the event
@@ -623,12 +648,7 @@ def input (collaborators : Collaborators σ scheme) (running : Running σ scheme
     (received : Received) : IO (Running σ scheme) := do
   if let .key which true _ := received.event then
     collaborators.emit s!"key arrived: {which.describe}"
-  let (made, running) ←
-    match running.frame with
-    | some frame =>
-      pure (some frame, running)
-    | none =>
-      running.attempt collaborators collaborators.start
+  let (made, running) ← running.framed collaborators
   let some frame := made |
     drop collaborators received.interrupt
     return running
@@ -636,13 +656,70 @@ def input (collaborators : Collaborators σ scheme) (running : Running σ scheme
     running.attempt collaborators (frame.take (running.keys collaborators) received)
   match stepped with
   | some stepped =>
-    for entry in stepped.log do
-      collaborators.log entry
-    return { running with
-        frame := some stepped.loop, config := running.config.written stepped.write
-        stopped := running.stopped || stepped.next == .stop }
+    running.took collaborators stepped
   | none =>
-    return { running with frame := some frame }
+    return running
+
+/-- Runs the command called `name` through the loop (`Loop.runNamed`), as
+the driver asks, and prints how it went: the command is guarded, its state
+requests are answered, it is rolled back if it does not run to its end, and
+a scene is published after it. The frame is made if there is none. What the
+step handed back is taken in (`took`). With no frame made, which the refusal
+printed before it explains, it says `no frame` and runs nothing. -/
+def run (collaborators : Collaborators σ scheme) (running : Running σ scheme) (name : String) :
+    IO (Running σ scheme) := do
+  let (made, running) ← running.framed collaborators
+  let some frame := made |
+    collaborators.emit s!"run {name}: no frame"
+    return running
+  let (stepped, running) ←
+    running.attempt collaborators (frame.runNamed (running.keys collaborators) name)
+  let some stepped := stepped | return running
+  collaborators.emit s!"run {name}: {describeEnding ((stepped.ended).getD .finished)}"
+  running.took collaborators stepped
+
+/-- Deals with the job `id`, which has ended, on the editor thread: takes its
+result, and for a job that finished has the loop run the command it
+finished with (`Loop.deliver`), as every command is run, and prints how it
+went. The frame is made if there is none. A job that is no longer in the
+table, because its owner was removed, is not dealt with: its handler does
+not run.
+
+The delivery is run by `Job.finishWith`, which hands the run what the job
+held and settles the job once it has run, with what the loop's programs
+watch (`watch`): the command's guard asks the library's interrupt flag. -/
+def ended (collaborators : Collaborators σ scheme) (running : Running σ scheme) (id : Nat) :
+    IO (Running σ scheme) := do
+  let (result, jobs) ← running.jobs.finish id
+  let running := { running with jobs }
+  let some (entry, outcome) := result | return running
+  let label := s!"job {entry.id} {entry.name}"
+  match outcome with
+  | .finished command =>
+    let (made, running) ← running.framed collaborators
+    let some frame := made |
+      -- No loop will run the command: what the job held is released.
+      entry.handle.settle
+      collaborators.emit s!"{label}: no frame"
+      return running
+    let (result, texts) ←
+      Job.finishWith collaborators.held entry.handle
+          (frame.deliver (running.keys collaborators) label command) running.texts
+          running.display.handle (watch collaborators)
+    let running := { running with texts }
+    match result with
+    | .ok stepped =>
+      collaborators.emit s!"{label}: {describeEnding ((stepped.ended).getD .finished)}"
+      running.took collaborators stepped
+    | .error refusal =>
+      collaborators.emit s!"loop: refused: {refusal.describe}"
+      return running
+  | .failed message =>
+    collaborators.emit s!"{label}: failed: {firstLine message}"
+    return running
+  | .cancelled =>
+    collaborators.emit s!"{label}: cancelled"
+    return running
 
 /-- A scene as `scene` prints it, read from the text store as it is now: its
 frame, then each view, its snapshot's text and its markers' offsets.
@@ -733,11 +810,12 @@ def other (collaborators : Collaborators σ scheme) (running : Running σ scheme
 
 /-- Handles one event of the editor queue to its end. An event from the
 window input goes to the editor loop (`input`), which publishes a scene after
-it; after any other event, a scene is published once there is a frame,
-unless the driver has ended the loop. A window event that cannot be read is
-dropped (`drop`), which lowers the interrupt flag for a key that carries the
-library's mark (`Event.interruptMarked`), since the event has been taken off
-the queue. -/
+it. So does a command the loop runs for another event: the driver's `run`,
+and a finished job's command. After any other event, a scene is published
+once there is a frame, unless the driver has ended the loop. A window event
+that cannot be read is dropped (`drop`), which lowers the interrupt flag for
+a key that carries the library's mark (`Event.interruptMarked`), since the
+event has been taken off the queue. -/
 def handle (collaborators : Collaborators σ scheme) (running : Running σ scheme)
     (event : Ffi.Event) : IO (Running σ scheme) := do
   if event.source.kind == .window then
@@ -748,8 +826,9 @@ def handle (collaborators : Collaborators σ scheme) (running : Running σ schem
       drop collaborators (Event.interruptMarked event)
       return running
   else
-    let running ← running.other collaborators event
-    if running.stopped then
+    let running ← ({ running with stepped := false }).other collaborators event
+    -- A step of the loop published its own scene.
+    if running.stopped || running.stepped then
       return running
     else
       running.publish collaborators

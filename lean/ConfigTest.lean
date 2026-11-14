@@ -691,8 +691,9 @@ def hostChecks (context : Context) : List Check :=
          session.ask [.run "greet", .show]
          return (← session.lines) ==
              #["reload 1: installed, 2 chunks, 1 commands", "run greet: ok", "commands: greet",
-               "text 0: \"v1\"", "reload 2: installed, 2 chunks, 1 commands", "run greet: ok",
-               "commands: greet", "text 0: \"v1\"", "text 1: \"v2\""] },
+               "text 0: \"\"", "text 1: \"v1\"", "reload 2: installed, 2 chunks, 1 commands",
+               "run greet: ok", "commands: greet", "text 0: \"\"", "text 1: \"v1\"",
+               "text 2: \"v2\""] },
     { name := "a type error keeps the old config"
       run :=
         withHost context greetConfig fun session => do
@@ -703,7 +704,7 @@ def hostChecks (context : Context) : List Check :=
           return (← session.lines) ==
               #["reload 1: installed, 2 chunks, 1 commands", "reload 2: rejected",
                 "diagnostic: 10-greet.lean: error", "run greet: ok", "commands: greet",
-                "text 0: \"v1\""] },
+                "text 0: \"\"", "text 1: \"v1\""] },
     { name := "a throwing setup keeps the old config"
       run :=
         withHost context greetConfig fun session => do
@@ -716,7 +717,7 @@ def hostChecks (context : Context) : List Check :=
           return (← session.output.get) ==
               #["reload 1: installed, 2 chunks, 1 commands", "reload 2: rejected",
                 "diagnostic: setup:0:0: error: no thanks", "run other: no such command",
-                "commands: greet"] },
+                "commands: greet", "text 0: \"\""] },
     { name :=
         "a setup that registers a command name twice keeps the old config, and the diagnostic names the command"
       run :=
@@ -730,7 +731,7 @@ def hostChecks (context : Context) : List Check :=
           return (← session.output.get) ==
               #["reload 1: installed, 2 chunks, 1 commands", "reload 2: rejected",
                 "diagnostic: setup:0:0: error: the command `greet` is registered twice",
-                "run greet: ok", "commands: greet", "text 0: \"v1\""] },
+                "run greet: ok", "commands: greet", "text 0: \"\"", "text 1: \"v1\""] },
     { name := "a reload does not double-register"
       run :=
         withHost context greetConfig fun session => do
@@ -743,7 +744,7 @@ def hostChecks (context : Context) : List Check :=
               #["reload 1: installed, 2 chunks, 1 commands",
                 "reload 2: installed, 2 chunks, 1 commands",
                 "reload 3: installed, 2 chunks, 1 commands", "run greet: ok", "commands: greet",
-                "text 0: \"v1\""] },
+                "text 0: \"\"", "text 1: \"v1\""] },
     { name := "a store value survives a reload"
       run :=
         withHost context [("config.lean", counterChunk 1)] fun session => do
@@ -754,9 +755,10 @@ def hostChecks (context : Context) : List Check :=
           session.ask [.show, .run "bump", .show]
           return (← session.lines) ==
               #["reload 1: installed, 1 chunks, 1 commands", "run bump: ok", "run bump: ok",
-                "commands: bump", "store counter v1: 2",
-                "reload 2: installed, 1 chunks, 1 commands", "commands: bump",
-                "store counter v1: 2", "run bump: ok", "commands: bump", "store counter v1: 12"] },
+                "commands: bump", "text 0: \"\"", "store counter v1: 2",
+                "reload 2: installed, 1 chunks, 1 commands", "commands: bump", "text 0: \"\"",
+                "store counter v1: 2", "run bump: ok", "commands: bump", "text 0: \"\"",
+                "store counter v1: 12"] },
     { name := "a store migrates when a reload changes its type and raises its version"
       run :=
         withHost context [("config.lean", counterChunk 1)] fun session => do
@@ -767,9 +769,9 @@ def hostChecks (context : Context) : List Check :=
           session.ask [.show, .run "bump", .show]
           return (← session.lines) ==
               #["reload 1: installed, 1 chunks, 1 commands", "run bump: ok", "run bump: ok",
-                "reload 2: installed, 1 chunks, 1 commands", "commands: bump",
+                "reload 2: installed, 1 chunks, 1 commands", "commands: bump", "text 0: \"\"",
                 "store counter v2: {n: 2, label: \"migrated\"}", "run bump: ok", "commands: bump",
-                "store counter v2: {n: 3, label: \"migrated\"}"] },
+                "text 0: \"\"", "store counter v2: {n: 3, label: \"migrated\"}"] },
     { name :=
         "a reload that installs prints the config's warnings, then a warning for the store value it lost"
       run :=
@@ -782,7 +784,8 @@ def hostChecks (context : Context) : List Check :=
           return (← session.lines) ==
               #["reload 1: installed, 1 chunks, 1 commands", "run bump: ok",
                 "reload 2: installed, 1 chunks, 1 commands", "diagnostic: config.lean: warning",
-                "diagnostic: store counter: warning", "commands: bump", "store counter v2: 0"] },
+                "diagnostic: store counter: warning", "commands: bump", "text 0: \"\"",
+                "store counter v2: 0"] },
     { name := "a chunk that declares initialize keeps the old config"
       run :=
         withHost context greetConfig fun session => do
@@ -795,7 +798,7 @@ def hostChecks (context : Context) : List Check :=
           return (← session.lines) ==
               #["reload 1: installed, 2 chunks, 1 commands", "reload 2: rejected",
                 "diagnostic: 15-state.lean: error", "run greet: ok", "commands: greet",
-                "text 0: \"v1\""] },
+                "text 0: \"\"", "text 1: \"v1\""] },
     { name :=
         "a store command the library refuses is reported as refused: the store keeps its value, and the text the command made before the refusal stays"
       run :=
@@ -804,8 +807,8 @@ def hostChecks (context : Context) : List Check :=
           session.ask [.run "bump", .run "broken", .show]
           return (← session.lines) ==
               #["reload 1: installed, 1 chunks, 2 commands", "run bump: ok",
-                "run broken: refused: no such text", "commands: bump broken",
-                "text 0: \"made before the refusal\"", "store counter v1: 1"] },
+                "run broken: refused: no such text", "commands: bump broken", "text 0: \"\"",
+                "text 1: \"made before the refusal\"", "store counter v1: 1"] },
     { name :=
         "show lists no text a command released, and the texts made before and after it keep the index they were made with"
       run :=
@@ -814,7 +817,8 @@ def hostChecks (context : Context) : List Check :=
           session.ask [.run "drop", .show]
           return (← session.lines) ==
               #["reload 1: installed, 1 chunks, 3 commands", "run drop: ok",
-                "commands: drop inside stale", "text 0: \"before\"", "text 2: \"after\""] },
+                "commands: drop inside stale", "text 0: \"\"", "text 1: \"before\"",
+                "text 3: \"after\""] },
     { name :=
         "a command refused for an offset that is no position, and one refused for a snapshot that does not exist, are each reported with that refusal's name"
       run :=
@@ -1030,7 +1034,7 @@ def threadChecks (context : Context) : List Check :=
                   (← session.lines) ==
                     #["reload 1: installed, 3 chunks, 1 commands",
                       "reload 2: installed, 3 chunks, 1 commands", "run greet: ok",
-                      "commands: greet", "text 0: \"v2\""]
+                      "commands: greet", "text 0: \"\"", "text 1: \"v2\""]
             finally
               gate.open },
     { name :=
@@ -1123,8 +1127,8 @@ def jobChecks (context : Context) : List Check :=
               joined == .settled &&
               (← session.output.get) ==
                 waiting ++
-                  #["job 1 count: ok", "commands: greet", "text 0: \"v1\"", "text 1: \"v1\"",
-                    "text 2: \"counted 42\""] &&
+                  #["job 1 count: ok", "commands: greet", "text 0: \"\"", "text 1: \"v1\"",
+                    "text 2: \"v1\"", "text 3: \"counted 42\""] &&
               command.isSome &&
               handler == command &&
               command != some (← IO.getTID) },
@@ -1247,7 +1251,7 @@ exits explicitly, which a pump parked in its pull needs. -/
 def fileChecks (context : Context) : List Check :=
   [{
       name :=
-        "a job loads a file through the host and its handler makes a text of it, with its two-byte character: the job's line says ok, show prints the text, and the library then holds no snapshot more than before; a job whose file is not there fails with the refusal's description",
+        "a job loads a file through the host and its handler makes a text of it, with its two-byte character: the job's line says ok, show prints the text, and the library then holds no snapshot more than before but the one of the loop's scene; a job whose file is not there fails with the refusal's description",
       run :=
         IO.FS.withTempDir fun files =>
           IO.FS.withTempDir fun config => do
@@ -1277,15 +1281,18 @@ def fileChecks (context : Context) : List Check :=
               ask [.spawn "missing"]
               let missed ← host.join patience
               ask [.show]
-              let freed ← eventually (return (← Ffi.Snapshot.live) == snapshots)
+              -- The loop delivered the job's command, so it has a frame: the
+              -- one snapshot more is the one its scene holds of the scratch
+              -- buffer's text, which is text 0.
+              let freed ← eventually (return (← Ffi.Snapshot.live) == snapshots + 1)
               let stopped ← host.stop patience
               return opened == .settled && missed == .settled && freed && stopped &&
                   (← stage.collaborators.held.size) == 0 &&
                   (← stage.output.get) ==
                     #["reload 1: installed, 1 chunks, 0 commands", "spawn open: job 1",
                       "job 1 open: ok", "spawn missing: job 2",
-                      "job 2 missing: failed: nothing is at the path", "commands:",
-                      "text 0: \"héllo\\n\""]
+                      "job 2 missing: failed: nothing is at the path", "commands:", "text 0: \"\"",
+                      "text 1: \"héllo\\n\""]
             catch error =>
               discard <| host.halt patience
               throw error }]
@@ -1387,7 +1394,7 @@ def scriptChecks (context : Context) : List Check :=
           return failure == none &&
               (← stage.output.get) ==
                 #["reload 1: installed, 2 chunks, 1 commands", "run greet: ok", "commands: greet",
-                  "text 0: \"v1\""] },
+                  "text 0: \"\"", "text 1: \"v1\""] },
     { name :=
         "a script whose settle cannot be satisfied fails, it does not hang, and the failure names the settle's line and says a reload was still running"
       run := do
@@ -1914,7 +1921,7 @@ def dispatchChecks (context : Context) : List Check :=
                 !(← session.output.get).any (·.startsWith "slow command"))
           { dispatchCompiled with slowAfter := 50 } },
     { name :=
-        "the driver's run of a compiled command that is given its call says there is no frame before the first window event, and once there is one runs it for the focused window"
+        "the driver's run of a compiled command that is given its call makes the frame before the first window event and runs it for the focused window, as it does once a window event has arrived"
       run :=
         withHost context []
           (fun session => do
@@ -1923,8 +1930,8 @@ def dispatchChecks (context : Context) : List Check :=
               return false
             session.ask [.run "stamp"]
             return (← session.output.get) ==
-                  #["run stamp: no frame", "run missing: no such command", "run stamp: ok"] &&
-                (← session.scene) == ("".quote, #[viewLine "a!" 2]))
+                  #["run stamp: ok", "run missing: no such command", "run stamp: ok"] &&
+                (← session.scene) == ("".quote, #[viewLine "!a!" 3]))
           dispatchCompiled },
     { name :=
         "a window key the library marked as the interrupt key that cannot be read is dropped, and the flag is lowered for it, since it has been taken off the queue"
@@ -2031,12 +2038,153 @@ def modeChecks (context : Context) : List Check :=
                 made second "compiled" == 0)
           compiledListing }]
 
+/-- The compiled command `split`: it splits the window it is called on along
+rows. -/
+def splitCommand : Config.Registration :=
+  { name := "split"
+    action :=
+      .call fun call => do
+        discard <| call.target.window.id.split .rows }
+
+/-- A chunk whose `setup` registers two jobs, a command and a key. `double`
+takes one number, sleeps 10 ms, and its command inserts the double, in
+brackets, at the cursor of view 0 and messages it. `spinner` sleeps 10 ms,
+and its command inserts `spun` and then asks the scratch buffer's text its
+revision a thousand million times. `ask`, on `C-c a`, starts `double` with
+21. -/
+def startingChunk : String :=
+  "def setup : SetupM Unit := do
+  jobWith \"double\"
+      (fun arguments => do
+        let [.nat n] := arguments | throw \"double takes one number\"
+        sleep 10
+        return 2 * n)
+      fun n => do
+        discard <| (⟨0⟩ : ViewId).insertAtSelections s!\"[{n}]\"
+        message s!\"doubled to {n}\"
+  job \"spinner\" (fun _ => sleep 10) fun _ => do
+    discard <| (⟨0⟩ : ViewId).insertAtSelections \"spun\"
+    for _ in [0:1000000000] do
+      discard <| (⟨0⟩ : TextId).revision
+  command \"ask\" (discard <| startJob \"double\" [.nat 21])
+  bindKey \"C-c a\" \"ask\"
+"
+
+/-- The checks of commands the headless host runs through its loop that no
+key ran, and of the jobs commands start (`Editor/Headless.lean`), on the
+real queue, the real text binding, the library's interrupt flag and the
+real elaborator, with the test scheme. -/
+def hostLoopChecks (context : Context) : List Check :=
+  [{  name :=
+        "the driver's run of a command goes through the loop: a command that splits its window leaves two views in the scene, and a run before any window event makes the frame"
+      run :=
+        withHost context []
+          (fun session => do
+            session.ask [.run "split", .run "stamp", .run "missing"]
+            let (echo, views) ← session.scene
+            return (← session.output.get).extract 0 3 ==
+                  #["run split: ok", "run stamp: ok", "run missing: no such command"] &&
+                echo == "missing: no such command".quote &&
+                views ==
+                  #["view 0 0,0 0x0: \"!\", scroll 0, selections 1..1",
+                    "view 1 0,0 0x0: \"!\", scroll 0, selections 1..1"])
+          { dispatchCompiled with commands := dispatchCompiled.commands.push splitCommand } },
+    { name :=
+        "the driver's run of a command that fails is rolled back and says so: the output names the refusal, the scene's echo is its error, and the view's text is that before the command"
+      run :=
+        withHost context []
+          (fun session => do
+            unless ← Event.post (.commit "abcd") do
+              return false
+            session.ask [.run "boom"]
+            return (← session.output.get) == #["run boom: refused: bad range"] &&
+                (← session.scene) == ("boom: refused: bad range".quote, #[viewLine "abcd" 4]))
+          dispatchCompiled },
+    { name :=
+        "the driver's run of a command is guarded: with the interrupt key arrived the command that loops over requests is stopped, the output says it was interrupted, and the flag is down once the loop has taken the key"
+      run :=
+        withHost context []
+          (fun session => do
+            -- The loop has started, so the library knows the interrupt key:
+            -- the press raises the flag as it arrives, whether the loop has
+            -- begun the command by then or not.
+            session.ask []
+            session.host.send (.run "spin")
+            session.host.press Watch.interruptKey
+            unless ← session.host.settle patience do
+              return false
+            return ((← session.output.get).filter (·.startsWith "run ")) ==
+                  #["run spin: interrupted"] &&
+                !(← Ffi.interruptRaised) &&
+                (← session.scene) == ("spin: interrupted".quote, #[viewLine "" 0]))
+          dispatchCompiled },
+    { name :=
+        "a host that cannot make its frame says so for a run, with the refusal that stopped it, and runs nothing"
+      run :=
+        withRunning context
+          (fun collaborators =>
+            { collaborators with
+              start := throw .noSuchText, commands := dispatchCompiled.commands })
+          fun collaborators running stage => do
+          let running ← running.run collaborators "stamp"
+          return running.frame.isNone &&
+              (← stage.output.get) == #["loop: refused: no such text", "run stamp: no frame"] },
+    { name :=
+        "a key's command starts a job with an argument: the host says it started, keys sent while the job sleeps are handled before its result, and once the clock lets it go its command runs after them, with the value the job computed in the text and in the scene's echo"
+      run :=
+        withHost context [("10-starting.lean", startingChunk)]
+          (fun session => do
+            session.ask [.reload]
+            session.typed "C-c a"
+            unless ← eventually (return (← session.clock.waiting) == 1) do
+              return false
+            session.typed "C-c s C-c s"
+            let sleeping ← session.scene
+            let before ← session.output.get
+            session.clock.advance 10
+            let joined ← session.host.join patience
+            let after := (← session.output.get).extract before.size
+            return before.contains "job 1 double: started" &&
+                !before.any (·.startsWith "job 1 double: ok") &&
+                sleeping == ("".quote, #[viewLine "!!" 2]) &&
+                joined == .settled &&
+                after == #["job 1 double: ok"] &&
+                (← session.scene) == ("doubled to 42".quote, #[viewLine "!![42]" 6]))
+          dispatchCompiled },
+    { name :=
+        "a finished job's command is guarded as a key's is: the interrupt key that arrives as it is delivered stops the command that loops over requests, the output says the job was interrupted, the view's text is that before the delivery, and the flag is down once the loop has taken the key"
+      run :=
+        withHost context [("10-starting.lean", startingChunk)] fun session => do
+          session.ask [.reload]
+          unless ← Event.post (.commit "ab") do
+            return false
+          session.ask [.spawn "spinner"]
+          unless ← eventually (return (← session.clock.waiting) == 1) do
+            return false
+          -- The loop reads the clock just before a command it runs: held
+          -- there, the editor thread is inside the delivery, and the
+          -- job's command has not started.
+          let arrivals ← session.clock.held
+          let hold ← session.clock.holdReads
+          session.clock.advance 10
+          unless ← eventually (return (← session.clock.held) == arrivals + 1) do
+            hold.resolve ()
+            return false
+          session.host.press Watch.interruptKey
+          hold.resolve ()
+          unless ← session.host.settle patience do
+            return false
+          return (← session.output.get).contains "job 1 spinner: interrupted" &&
+              !(← Ffi.interruptRaised) &&
+              (← session.scene) == ("job 1 spinner: interrupted".quote, #[viewLine "ab" 2]) }]
+
 /-- Every check, in the order they run. -/
 def checks (context : Context) : List Check :=
   elaboratorChecks context ++ directoryChecks () ++ hostChecks context ++ threadChecks context ++
     jobChecks context ++
     scriptChecks context ++
     dispatchChecks context ++
+    hostLoopChecks context ++
     modeChecks context ++
     fileChecks context
 

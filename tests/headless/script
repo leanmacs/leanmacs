@@ -3,6 +3,10 @@
 
 reload
 settle
+
+# A command run by its name goes through the editor loop, which makes its
+# frame for the first one: text 0 is the scratch buffer's, and the text
+# `greet` makes comes after it.
 run greet
 run missing
 show

@@ -15,8 +15,23 @@ def spin : EditorM Unit := do
 def mark : EditorM Unit :=
   append scratch "mark"
 
+-- A job that takes one number: after a millisecond on the real clock, its
+-- double.
+def double : List Argument → JobM Nat := fun arguments => do
+  let [.nat n] := arguments | throw "double takes one number"
+  sleep 1
+  return 2 * n
+
+-- Starts `double` with 21. The job's result comes back as the command its
+-- handler makes, which says it in the echo area.
+def ask : EditorM Unit :=
+  discard <| startJob "double" [.nat 21]
+
 def setup : SetupM Unit := do
   command "spin" spin
   command "mark" mark
+  command "ask" ask
+  jobWith "double" double fun n => message s!"doubled to {n}"
   bindKey "C-c s" "spin"
   bindKey "C-c m" "mark"
+  bindKey "C-c d" "ask"
