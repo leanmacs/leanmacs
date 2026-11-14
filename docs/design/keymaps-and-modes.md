@@ -254,8 +254,11 @@ scheme.
   different types and a rule for a prefix that is pending when the focus
   moves. No second scheme ships.
 - **A terminal view** takes keys through its keymaps, which modes supply.
-  **How the minibuffer takes keys** is still open, and goes with the
-  minibuffer.
+- **The minibuffer takes keys as the focused window**, through its
+  buffer's mode, under the same scheme: there is no second path for keys.
+  A scheme is told when the minibuffer's view opens, by a second notice
+  beside `closeView`, and takes typed text there ("The minibuffer", under
+  Modes; decided, not yet built).
 - **The scheme is a parameter of the loop, not a field.** `InputScheme`
   has type-valued fields, so it is in `Type 1`, and a value that flows
   through `EditorM` or `IO` must be in `Type`. So the loop's type is
@@ -936,6 +939,93 @@ As built, with nothing new for it:
   It can set a buffer-local value, since that is a request of the editor's
   port.
 
+### The minibuffer
+
+Status: decided 2026-11-14, with the command loop's phase 10, and not yet
+built. How a command waits for a prompt's answer, and what accept and
+cancel do, is in [concurrency.md](concurrency.md), "Prompts".
+
+While a prompt is open the minibuffer is a buffer shown in a window of its
+own, and that window has the focus.
+
+- **There is no second path for keys.** The loop steps every key for the
+  focused view, and while a prompt is open that is the minibuffer's view.
+  The active keymaps of that view are its buffer's modes' and then the
+  global keymap ("Active keymaps"), as for any view.
+- **"Its own keymap" is a compiled major mode**, `minibuffer`, which fills
+  two roles: `activate` with the command `minibuffer-accept`, and `quit`
+  with `minibuffer-cancel`. So any scheme has an accept key and a cancel
+  key from its role table, with no binding written for the scheme, which
+  is what roles are for. Under the test scheme they are the keys of those
+  two roles.
+- **The buffer is made with the mode**: opening the prompt sets the name.
+  No on-enter action runs, and the mode has none. A host that was not
+  handed the mode has a minibuffer whose mode contributes nothing.
+- **A prompt does not capture the keyboard.** A command may focus another
+  window while the prompt is open; keys then go there, and the prompt
+  waits. A binding of the global keymap holds in the minibuffer's view as
+  in any view.
+
+**A scheme is told when the minibuffer's view opens, and every scheme
+takes text there.**
+
+- **A second notice**, beside `closeView`: `openMinibuffer`, the scheme's
+  state with what the scheme keeps for a view that is the minibuffer's. It
+  defaults to changing nothing.
+- **The loop tells it** after a command that ran to its end left a prompt
+  open that was not open before it, for both states of the scheme it keeps
+  (the one after the last key and the one at rest), after it has told them
+  of the views the command closed. A command that did not run to its end
+  opened nothing, and the scheme is told nothing.
+- **What the scheme kept is forgotten by the notice that exists**: closing
+  the prompt closes the view, and the loop tells `closeView`.
+- **The scheme contract gains one property**, `minibufferTakesText`: after
+  the scheme is told a view is the minibuffer's, a key that prints and
+  that nothing binds, typed for that view, yields an invocation and leaves
+  nothing pending. The contract says nothing of which invocation: the name
+  of a self-insert is the scheme's own.
+- **A notice for the minibuffer alone**, and not a general one with a kind
+  of view: there is one kind of view a scheme must treat apart today. A
+  terminal view can widen it when it exists.
+- **The edit begun is not reset by the notice.** A prompt opened by a
+  key's command opens with nothing pending. One opened from the background
+  while a sequence is pending finds the scheme mid-sequence, and the next
+  key goes on with it, as a key for another view does today.
+
+**Under the Vim scheme the minibuffer's view is in a Vim state of its
+own.**
+
+- **The registry names the state** (`Vim.States.minibuffer`, a name or
+  none). Told that a view is the minibuffer's, the Vim scheme enters that
+  state for the view, as an edit that names a state enters it, so a name
+  the registry does not have is the initial state. With none the view
+  stays in the initial state. Nothing matches on a state's name.
+- **The default registry gains a fifth state, `minibuffer`**: typing is
+  text (so a digit is text too), the cursor is a bar, and its one keymap
+  binds `RET` to `minibuffer-accept` and `<Escape>` to
+  `minibuffer-cancel`. This is Vim's own command-line mode.
+- **Why a state of its own and not `insert`.** In `insert`, `<Escape>`
+  enters normal state and `RET` is bound to nothing, so answering would
+  take `<Escape>` and then a key of normal state.
+- **Why the accept and cancel keys are in the state's table.** The view's
+  state inserts text, so the mode's role keys do not hold there ("Which
+  keymaps a key is looked up in"), and the Vim key for `quit` is `q`,
+  which must be text. A binding meant for one state belongs in that
+  state's keymaps. The mode still fills the roles, for any scheme whose
+  role keys hold where it types.
+- **How the per-view state is made and forgotten.** It is an entry of
+  `current`, made by the notice and dropped by `closeView` when the prompt
+  closes. The asking view's Vim state is its own entry and does not
+  change.
+- **The interrupt key is not bound there**, as it is not in Vim's command
+  line.
+
+**No command that inserts typed text ships with the minibuffer.**
+`self-insert` goes with insert state, with the rule for an insert session
+and its undo step. Until then no view of the executable takes text from a
+key, and the minibuffer is no exception: a committed text is inserted
+there, and a key that prints says `self-insert: no such command`.
+
 ## Extending from config
 
 - Config registers modes, commands, vocabulary and bindings from `setup`,
@@ -1128,9 +1218,6 @@ every build); the second is a proposal.
   type. Type classes would make it `Keymap m`, against the constraint that
   config is evaluated at one concrete type. A record of functions passed by
   reader, or a free-monad program, keeps it concrete.
-- **How the minibuffer takes keys.** Which scheme is active where is
-  decided: one for the editor ("The loop runs one scheme"). What the
-  minibuffer's keys are looked up in goes with the minibuffer.
 - **The wanted column and the selection's shape** in the Vim scheme. How
   counts, registers and the visual selection appear in the scheme's state
   and in an edit, and where the current Vim state is held, are built ("The
