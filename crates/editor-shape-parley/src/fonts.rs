@@ -10,7 +10,16 @@
 use std::fmt;
 use std::sync::Arc;
 
-use parley::fontique::{Blob, Collection, CollectionOptions};
+use parley::fontique::{Blob, Collection, CollectionOptions, GenericFamily};
+
+/// The family a spec with no family is shaped in.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum DefaultFamily {
+    /// A family, by its name.
+    Named(String),
+    /// Whichever families the system gives for the generic `monospace`.
+    Monospace,
+}
 
 /// The fonts a shaper draws in, and the order it looks for a character in
 /// them: the family a run's spec names, then the default family, then the
@@ -19,9 +28,11 @@ pub struct FontSet {
     /// The fonts.
     pub(crate) collection: Collection,
     /// The default family: what a spec with no family is shaped in.
-    pub(crate) default: String,
+    pub(crate) default: DefaultFamily,
     /// The fallback families, in the order they are tried.
     pub(crate) fallbacks: Vec<String>,
+    /// The name of the default family, when it has one.
+    default_name: Option<String>,
     /// The families it holds, sorted.
     families: Vec<String>,
 }
@@ -96,14 +107,56 @@ impl FontSet {
         }
         Ok(Self {
             collection,
-            default: default.to_owned(),
+            default: DefaultFamily::Named(default.to_owned()),
             fallbacks: fallbacks.iter().map(|name| (*name).to_owned()).collect(),
+            default_name: Some(default.to_owned()),
             families,
         })
+    }
+
+    /// The fonts of the machine: what the editor draws in. The default
+    /// family is the system's monospace family, and a character the
+    /// family asked for lacks is looked for in the families the system
+    /// gives for its script, and for an emoji in the system's emoji
+    /// family, as fontique finds them.
+    ///
+    /// What it holds depends on the machine, so no test calls it
+    /// (`clippy.toml`); `mise run shaper-system` holds a shaper over it to
+    /// the port's contract, on demand.
+    pub fn system() -> Self {
+        // The one place the system's fonts are turned on.
+        let mut collection = Collection::new(CollectionOptions {
+            shared: false,
+            system_fonts: true,
+        });
+        let monospace: Vec<_> = collection
+            .generic_families(GenericFamily::Monospace)
+            .collect();
+        let default_name = monospace
+            .first()
+            .and_then(|family| collection.family_name(*family))
+            .map(str::to_owned);
+        let mut families: Vec<String> = collection.family_names().map(str::to_owned).collect();
+        families.sort_unstable();
+        families.dedup();
+        Self {
+            collection,
+            default: DefaultFamily::Monospace,
+            fallbacks: Vec::new(),
+            default_name,
+            families,
+        }
     }
 
     /// The names of the families it holds, sorted.
     pub fn families(&self) -> Vec<String> {
         self.families.clone()
+    }
+
+    /// The name of its default family: the family a spec with no family
+    /// is shaped in. For the system's fonts it is the first family the
+    /// system gives for `monospace`, and `None` when it gives none.
+    pub fn default_family(&self) -> Option<&str> {
+        self.default_name.as_deref()
     }
 }

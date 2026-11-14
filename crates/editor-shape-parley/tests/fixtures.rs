@@ -29,6 +29,13 @@ fn a_font_set_holds_exactly_the_families_it_was_given() {
 }
 
 #[test]
+fn a_font_set_names_its_default_family() {
+    assert_eq!(fixture_set().default_family(), Some(SANS_FAMILY));
+    let mono = FontSet::only(MONO_FAMILY, &FALLBACKS, files()).expect("the fixture fonts");
+    assert_eq!(mono.default_family(), Some(MONO_FAMILY));
+}
+
+#[test]
 fn a_default_family_the_files_do_not_hold_is_refused_by_name() {
     let refused = FontSet::only("No Such Family", &FALLBACKS, files()).err();
     assert_eq!(

@@ -6,6 +6,24 @@
 //! types back, and `deny.toml` lets no other crate depend on either
 //! library. Both are pinned to an exact version (`Cargo.toml`).
 //!
+//! # Where the fonts come from
+//!
+//! A [`FontSet`] is the one seam: the fonts a shaper draws in, the family
+//! a spec with no family is shaped in, and where a character the family
+//! asked for lacks is looked for.
+//!
+//! - [`FontSet::only`] holds exactly the font files it is handed, as
+//!   bytes, with the system's fonts off, a default family and fallback
+//!   families by name. What a shaper over it gives depends on the text and
+//!   those bytes alone: it reads no file, no environment variable and no
+//!   locale. Every test uses it, over the fixture fonts.
+//! - [`FontSet::system`] is the fonts of the machine, for the editor: the
+//!   default family is the system's monospace family, and fallback is by
+//!   script and for emoji as fontique finds the system's. No test calls
+//!   it (`clippy.toml`). Its check is on demand, `mise run shaper-system`:
+//!   the example `examples/system.rs` holds a shaper over it to the port's
+//!   contract and says which family the default is.
+//!
 //! # How a text is shaped
 //!
 //! - **One Parley layout for each [`shape`] call**, of the text it is
@@ -131,6 +149,11 @@
 //!    U+2029 and at no other character short of a line feed (the
 //!    stand-ins), and still makes a line at least as tall as the default
 //!    style (the default style of no height).
+//! 4. Run `mise run shaper-system` on each platform at hand: the gate
+//!    never asks for the system's fonts, so only it shows that fontique
+//!    still finds them.
+//! 5. Run `mise run linux-ci`: the feature `fontconfig-dlopen` is what
+//!    lets the pin build on Linux with cargo alone.
 //!
 //! [`shape`]: editor_layout::shaper::Shaper::shape
 //! [`resolved`]: editor_layout::shaper::Shaper::resolved

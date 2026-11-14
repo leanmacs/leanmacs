@@ -10,13 +10,13 @@ use editor_layout::shaper::{
     FontId, FontRun, FontSpec, Glyph, LineHeight, Metrics, ResolvedFont, ResolvedFontId,
     ShapeInput, ShapedLine, Shaper, Slant, VisualLine,
 };
-use parley::fontique::SourceCache;
+use parley::fontique::{GenericFamily, SourceCache};
 use parley::{
     BaseDirection, Cluster, FontContext, FontFamily, FontFamilyName, FontStyle, FontWeight, Layout,
     LayoutContext, Line, OverflowWrap, Run, StyleProperty, WhiteSpaceCollapse,
 };
 
-use crate::fonts::FontSet;
+use crate::fonts::{DefaultFamily, FontSet};
 
 /// Parley's layout of one text. Nothing is painted from it, so its brush,
 /// the value Parley carries per style for a renderer, is the unit.
@@ -37,7 +37,7 @@ struct State {
     layouts: LayoutContext<()>,
     /// The default family: what a spec with no family is shaped in, and
     /// the second family a character is looked for in.
-    default: String,
+    default: DefaultFamily,
     /// The fallback families, in the order a character is looked for in
     /// them after the default family.
     fallbacks: Vec<String>,
@@ -171,16 +171,20 @@ fn stand_ins(text: &str) -> Cow<'_, str> {
 /// Parley, so a new one must be stated here too.
 fn properties<'a>(
     spec: &'a FontSpec,
-    default: &'a str,
+    default: &'a DefaultFamily,
     fallbacks: &'a [String],
 ) -> [StyleProperty<'a, ()>; 5] {
+    let named = |name: &'a String| FontFamilyName::named(name);
+    let default = match default {
+        DefaultFamily::Named(name) => named(name),
+        DefaultFamily::Monospace => FontFamilyName::Generic(GenericFamily::Monospace),
+    };
     let families: Vec<FontFamilyName<'a>> = spec
         .family
         .iter()
-        .map(String::as_str)
+        .map(named)
         .chain([default])
-        .chain(fallbacks.iter().map(String::as_str))
-        .map(FontFamilyName::named)
+        .chain(fallbacks.iter().map(named))
         .collect();
     [
         StyleProperty::FontFamily(FontFamily::List(families.into())),

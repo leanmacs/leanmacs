@@ -15,9 +15,18 @@
 # list of names does not hold, and after it the ways Parley and fontique
 # reach the machine's fonts or its disk.
 #
+# The system's fonts come through one function, `FontSet::system`, which is
+# on the list: no test may call it. Its one caller is the example
+# `examples/system.rs` (`mise run shaper-system`, on demand), under an
+# `expect` that states why. Seen to bite once by hand, on 2026-11-13: with
+# a test added to `tests/fixtures.rs` that calls `FontSet::system()`,
+# `mise run lint` fails with "use of a disallowed method
+# `editor_shape_parley::FontSet::system`".
+#
 # What this list cannot hold: system fonts are turned on by a field of a
 # struct literal (`CollectionOptions { system_fonts: true, .. }`), which no
-# list of names forbids. What holds that instead is a test of behaviour,
+# list of names forbids; the one such literal is inside `FontSet::system`.
+# What holds that no other is written is a test of behaviour,
 # `a_character_no_fixture_covers_is_the_primary_fonts_missing_glyph`
 # (`tests/fixtures.rs`): a Thai letter, which no fixture font has and the
 # fonts of any machine do, is the missing glyph of the primary fixture.
@@ -80,6 +89,7 @@ disallowed-methods = [
   { path = "std::time::SystemTime::now", reason = "the adapter reads no clock; a cost is counted (`ShapeCounters`), never timed" },
   { path = "std::time::Instant::now", reason = "the adapter reads no clock; a cost is counted (`ShapeCounters`), never timed" },
   # The fonts of the machine, and fonts read from its disk.
+  { path = "editor_shape_parley::FontSet::system", reason = "the system's fonts differ from machine to machine: a test is handed the fixture fonts by `FontSet::only`, and the one caller of this is the on-demand example" },
   { path = "parley::FontContext::new", reason = "a font context of Parley's own making holds the system's fonts; a `FontSet` says where fonts come from" },
   { path = "fontique::Collection::load_system_fonts", reason = "the system's fonts come only through a `FontSet`, and no test uses them" },
   { path = "fontique::Collection::load_fonts_from_paths", reason = "the adapter reads no font from the disk: fonts reach it as bytes" },
