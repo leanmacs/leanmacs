@@ -3118,6 +3118,46 @@ mod tests {
     }
 
     #[test]
+    fn the_examples_own_idle_second_neither_breaks_a_stretch_nor_makes_two_of_one() {
+        // More than a second before the idle second begins, the second
+        // itself, and less than one after it: one stretch, of the window's.
+        let records = timed(&[
+            (
+                0,
+                Happened::Opened {
+                    size: SMALL,
+                    refresh: None,
+                },
+            ),
+            (10, Happened::Published(1)),
+            (11, began(1, SMALL)),
+            (20, PRESENTED),
+            (1100, Happened::Idle(true)),
+            (2100, Happened::Idle(false)),
+            (2500, Happened::Told("Closing".to_owned())),
+        ]);
+        assert_eq!(left_alone(&records, &[SMALL]).lines, [alone(1)]);
+        // Less than a second on either side of it, and more than one in
+        // all.
+        let records = timed(&[
+            (
+                0,
+                Happened::Opened {
+                    size: SMALL,
+                    refresh: None,
+                },
+            ),
+            (10, Happened::Published(1)),
+            (11, began(1, SMALL)),
+            (20, PRESENTED),
+            (500, Happened::Idle(true)),
+            (510, Happened::Idle(false)),
+            (1200, Happened::Told("Closing".to_owned())),
+        ]);
+        assert_eq!(left_alone(&records, &[SMALL]).lines, [alone(1)]);
+    }
+
+    #[test]
     fn left_alone_a_window_that_shows_a_frame_laid_out_for_another_size_or_scale_fails_and_says_which()
      {
         let opened = [
