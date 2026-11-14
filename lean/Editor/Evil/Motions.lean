@@ -134,14 +134,32 @@ def backward (name : String) (kind : WordKind) : Vocabulary.Motion :=
 (`taken`), which is Vim's special case for a word motion with an operator:
 it stops where its line's content ends, so the last word of a line is taken
 with the blanks after it and not the line break; and from an empty line it
-goes to the next line's start, so that line is what is taken. -/
+goes to the next line's start, so that line is what is taken.
+
+For an operator that puts an insert in place of what it takes, on a cell
+that is neither a blank (a space or a tab) nor a line break, it leads to
+the end of the word instead, and is taken inclusively: Vim's `cw`, which
+changes a word and leaves the blanks after it. The word under the cursor
+counts as the first of a count, also when the cursor is on its last cell,
+which it is when the next word's start is not after the next word's end;
+then `count - 1` word ends on. -/
 def forward (name : String) (kind : WordKind) : Vocabulary.Motion :=
   let step : Motion := .nextWordStart kind
+  let wordEnd : Motion := .nextWordEnd kind
   { name
     target := fun text origin =>
       return { head := ← stepped text step (origin.count.getD 1) (fun _ => false) origin.head }
-    taken := fun _ text origin => do
-      let last ← stepped text step (origin.count.getD 1 - 1) (fun _ => false) origin.head
+    taken := fun replaces text origin => do
+      let head := origin.head
+      if replaces && head < (← text.motion .lineEnd head) then
+        let cell ← text.slice head (← text.motion .nextCell head)
+        unless cell == " " || cell == "\t" do
+          let stop ← text.motion wordEnd head
+          let first := if (← text.motion step head) ≤ stop then head else stop
+          return {
+              head := ← stepped text wordEnd (origin.count.getD 1 - 1) (fun _ => false) first
+              reach := .inclusive }
+      let last ← stepped text step (origin.count.getD 1 - 1) (fun _ => false) head
       let stop ← text.motion .lineEnd last
       if last < (← text.byteLength) && (← text.motion .lineStart last) == stop then
         return { head := ← text.motion .nextCell last, reach := .exclusive }

@@ -14434,10 +14434,26 @@ def wordForwardRows : List OperatorRow :=
     .rests bareEndText "d W" "ab cd\n  ef |g" (charwise "h"),
     .rests bareEndText "y W" "ab cd\n  ef g|h" (charwise "h")]
 
+/-- The oracle table's rows for `c` over `w` and `W`, in its five
+situations. On a cell that is not a blank a change goes to the end of the
+word and not to the next word's start. -/
+def changeWordRows : List OperatorRow :=
+  [.inserts plainText "c w" "ab\ncd\n  ef |.ij kl\nmn\nop\n" (charwise "gh"),
+    .inserts plainText "c W" "ab\ncd\n  ef | kl\nmn\nop\n" (charwise "gh.ij"),
+    .inserts plainText "c 2 w" "ab\ncd\n  ef |ij kl\nmn\nop\n" (charwise "gh."),
+    .inserts plainText "c 2 W" "ab\ncd\n  ef |\nmn\nop\n" (charwise "gh.ij kl"),
+    .inserts emptyLineText "c w" "ab cd\n|\n  ef gh\n" (linewise "\n"),
+    .inserts emptyLineText "c W" "ab cd\n|\n  ef gh\n" (linewise "\n"),
+    .inserts endText "c w" "ab cd\n  ef g|\n" (charwise "h"),
+    .inserts endText "c W" "ab cd\n  ef g|\n" (charwise "h"),
+    .inserts bareEndText "c w" "ab cd\n  ef g|" (charwise "h"),
+    .inserts bareEndText "c W" "ab cd\n  ef g|" (charwise "h")]
+
 /-- The rows of the operator × motion table, in the order the motions were
 built. -/
 def operatorTable : List OperatorRow :=
-  deleteAlongRows ++ yankChangeAlongRows ++ lineEndRows ++ wordEndBackRows ++ wordForwardRows
+  deleteAlongRows ++ yankChangeAlongRows ++ lineEndRows ++ wordEndBackRows ++ wordForwardRows ++
+    changeWordRows
 
 /-- Whether `left` is what a command that gave up with `reason` leaves: the
 text and the cursor `shown`, the register as it was, the view not in insert
@@ -14539,6 +14555,21 @@ def evilOperatorChecks : List Check :=
             .rests "|ab\n  cd  \nef" "d 2 e" "|ef" (linewise "ab\n  cd  \n"),
             .rests "ab\n|\ncd" "d e" "|ab" (linewise "\ncd\n"),
             .rests "  |ab\n\tcd \t\nef\n" "d 2 $" "|ef\n" (linewise "  ab\n\tcd \t\n")] },
+    { name :=
+        "c w on a cell that is not a blank changes to the end of the word, where d w takes the blanks after it too: the word under the cursor counts as the first of a count, also from its last character; a run of punctuation and a WORD are changed whole; on a blank c w is d w; the last word of a line is changed up to the line break; on an empty line the line is changed"
+      run :=
+        operatorRows
+          [.inserts "foo |bar baz" "c w" "foo | baz" (charwise "bar"),
+            .rests "foo |bar baz" "d w" "foo |baz" (charwise "bar "),
+            .inserts "foo ba|r baz" "c w" "foo ba| baz" (charwise "r"),
+            .inserts "foo |bar baz qux" "c 2 w" "foo | qux" (charwise "bar baz"),
+            .inserts "foo ba|r baz qux" "c 2 w" "foo ba| qux" (charwise "r baz"),
+            .inserts "foo |.,bar" "c w" "foo |bar" (charwise ".,"),
+            .inserts "foo |b.r baz" "c W" "foo | baz" (charwise "b.r"),
+            .inserts "foo|   bar" "c w" "foo|bar" (charwise "   "),
+            .inserts "foo|\t bar" "c w" "foo|bar" (charwise "\t "),
+            .inserts "foo |bar\nbaz" "c w" "foo |\nbaz" (charwise "bar"),
+            .inserts "ab\n|\ncd" "c w" "ab\n|\ncd" (linewise "\n")] },
     { name :=
         "a departure from Vim, recorded: when b with a count comes to rest on an empty first line with steps left over, the motion fails and the operator gives up, and the cursor stays where it was, where Vim leaves it on the empty line; the text, the register and the state are Vim's"
       run := operatorRows [.givesUp "\nab |cd" "d 3 b", .givesUp "\nab |cd" "c 3 B"] },
