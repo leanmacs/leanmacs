@@ -1,3 +1,4 @@
+import Editor.Clipboard.Model
 import Editor.Command
 import Editor.Display.Model
 import Editor.Text.Model
@@ -7,9 +8,9 @@ import Editor.Watch.Model
 # The editor's models
 
 The models a command runs against (`Editor/Command.lean`): the text model,
-the display model and the watch model side by side (`EditorModel`), each
-answering its own sub-port's requests, so a command's requests of each go
-to the same model they would go to alone.
+the display model, the watch model and the clipboard model side by side
+(`EditorModel`), each answering its own sub-port's requests, so a command's
+requests of each go to the same model they would go to alone.
 
 The display model sees a snapshot's text through its `texts`, and here they
 come from the text model: before each display request they are set to the
@@ -19,10 +20,15 @@ answered from the text the snapshot holds, and a snapshot the command has
 released is one the display does not know.
 
 On the models time passes only with requests, which is all a command can
-do: each text request and each display request moves the watch model's
-clock on by its pace (`WatchModel.paced`), and a watch request moves
-nothing. So a command of six requests takes six paces, and a test of the
-loop says how long a command took by how much it asked.
+do: each text request, each display request and each clipboard request
+moves the watch model's clock on by its pace (`WatchModel.paced`), and a
+watch request moves nothing. So a command of six requests takes six paces,
+and a test of the loop says how long a command took by how much it asked.
+
+The clipboard model is a field here, so a test reads what a command left
+on the clipboard from the models the command ran against, and takes the
+clipboard away (`ClipboardModel.available`) to see what a command does
+with a refusal.
 
 There is no model of the editor state here. A state request is the loop's
 to answer, from the state the loop holds (`Editor/Command.lean`, "The state
@@ -34,8 +40,8 @@ run bare, is answered as an editor with no buffer and no window would
 
 namespace Editor
 
-/-- The state of the editor's models: the text model's, the display model's
-and the watch model's. -/
+/-- The state of the editor's models: the text model's, the display model's,
+the watch model's and the clipboard model's. -/
 structure EditorModel where
   /-- The text model. -/
   texts : TextModel := {}
@@ -43,8 +49,12 @@ structure EditorModel where
   display request. -/
   display : DisplayModel
   /-- The watch model: the interrupt flag and the clock. Its clock moves on
-  by its pace at each text request and each display request. -/
+  by its pace at each text request, each display request and each clipboard
+  request. -/
   watch : WatchModel := {}
+  /-- The clipboard model: available, and holding nothing, unless a test
+  says otherwise. -/
+  clipboard : ClipboardModel := {}
 
 namespace EditorModel
 
@@ -58,10 +68,10 @@ def snapshotTexts (texts : TextModel) : Array (SnapshotId × String) :=
         slot.map fun content => (⟨index⟩, content.contents)).filterMap
     id
 
-/-- Answers `request` with its sub-port's model. A text request and a
-display request each move the watch model's clock on by its pace. A state
-request is answered from an editor with nothing in it, and changes
-nothing. -/
+/-- Answers `request` with its sub-port's model. A text request, a display
+request and a clipboard request each move the watch model's clock on by its
+pace. A state request is answered from an editor with nothing in it, and
+changes nothing. -/
 def handle : (request : EditorRequest) → EditorModel → request.Reply × EditorModel
   | .state request, model => ((EditorState.none.handle request).1, model)
   | .text request, model =>
@@ -78,6 +88,11 @@ def handle : (request : EditorRequest) → EditorModel → request.Reply × Edit
   | .watch request, model =>
     let (reply, watch) := WatchModel.handle request model.watch
     (reply, { model with watch })
+  | .clipboard request, model =>
+    let (reply, clipboard) := ClipboardModel.handle request model.clipboard
+    (reply,
+      { model with
+        clipboard, watch := model.watch.paced })
 
 end EditorModel
 

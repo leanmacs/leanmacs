@@ -1,3 +1,4 @@
+import Editor.Clipboard
 import Editor.Display
 import Editor.State.Request
 import Editor.Watch
@@ -8,22 +9,24 @@ import Editor.Watch
 A command is a value of `EditorM`: a program over the editor's port that may
 be refused. The editor's port is a composite: its requests are a sum of the
 requests of its sub-ports, one constructor a sub-port (`EditorRequest`), and
-the reply to each is its sub-port's reply. Today it has four:
+the reply to each is its sub-port's reply. Today it has five:
 
 - **text** (`Editor/Text.lean`): texts, snapshots, markers, the edit log;
 - **display** (`Editor/Display.lean`): publishing a scene, and the two
   questions of layout;
 - **watch** (`Editor/Watch.lean`): the interrupt flag and a clock, which the
   command loop asks round the commands it runs;
+- **clipboard** (`Editor/Clipboard.lean`): the text the system clipboard
+  holds, and having it hold another;
 - **state** (`Editor/State/Request.lean`): the editor state's buffers and
   windows, the echo area and the jobs to start.
 
-The first three keep their own programs (`TextM`, `DisplayM`, `WatchM`),
-operations, model, real binding and contract, unchanged. `TextM.lift`,
-`DisplayM.lift` and `Watch.lift` embed a sub-port's programs in a command,
-and they are `MonadLift` instances, so an operation of any is used in a
-command as it is: `do let text ← createText "a"; Display.publish scene`
-elaborates at `EditorM`. Config is written at `EditorM`, and the lift is
+The first four keep their own programs (`TextM`, `DisplayM`, `WatchM`,
+`ClipboardM`), operations, model and contract, unchanged. `TextM.lift`,
+`DisplayM.lift`, `Watch.lift` and `Clipboard.lift` embed a sub-port's
+programs in a command, and they are `MonadLift` instances, so an operation
+of any is used in a command as it is: `do let text ← createText "a";
+Display.publish scene` elaborates at `EditorM`. Config is written at `EditorM`, and the lift is
 what lets every text operation it calls keep its own type. There is no lift
 from `JobM`, so a job is still not a command.
 
@@ -52,12 +55,23 @@ port's refusals of the same names mean (a snapshot that names nothing, an
 offset that is not a position), so `DisplayM.lift` maps each to its
 namesake (`DisplayError.toTextError`). A sub-port whose refusal has no
 `TextError` counterpart widens the error to a sum, in the phase that adds
-it. The watch port refuses nothing.
+it. The watch port refuses nothing. **The clipboard's refusal is a value**,
+the reply to its request, as a state request's is: a clipboard that cannot
+be reached is nothing the text store refused, so the error is not widened
+and a command matches on the reply (`Editor/Clipboard.lean`, "A refusal is
+a value").
 
-A command runs against the three models (`EditorM.runModel`,
+A clipboard request is guarded like any request that is not the state's:
+the loop asks the interrupt flag before it
+(`Editor/Command/Dispatch.lean`, "The guard"). What a command wrote to the
+clipboard is not taken back when the command is rolled back: the clipboard
+is outside the editor.
+
+A command runs against the four models (`EditorM.runModel`,
 `Editor/Command/Model.lean`), whose state is the product of theirs, and
-against the text port's real binding with a display handler and a watch
-handler (`EditorM.runReal`, `Editor/Command/Real.lean`).
+against the text port's real binding with a display handler, a watch
+handler and a clipboard handler (`EditorM.runReal`,
+`Editor/Command/Real.lean`).
 `docs/design/lean-runtime.md` ("The editor's port is a composite") records
 why it has this shape.
 
@@ -85,6 +99,8 @@ inductive EditorRequest where
   | display (request : DisplayRequest)
   /-- A request of the watch port. -/
   | watch (request : WatchRequest)
+  /-- A request of the clipboard port. -/
+  | clipboard (request : ClipboardRequest)
   /-- A request about the editor state, which the loop that runs the
   command answers. -/
   | state (request : StateRequest)
@@ -94,6 +110,7 @@ def EditorRequest.Reply : EditorRequest → Type
   | .text request => request.Reply
   | .display request => request.Reply
   | .watch request => request.Reply
+  | .clipboard request => request.Reply
   | .state request => request.Reply
 
 /-- The editor's port: `EditorRequest` and the reply to each request. -/
@@ -128,6 +145,12 @@ def embedWatch : Program watchPort α → Program editorPort α
   | .done value => .done value
   | .step request next => .step (.watch request) fun reply => embedWatch (next reply)
 
+/-- `program`, a program over the clipboard port, as one over the editor's
+port: each of its requests is the clipboard constructor's. -/
+def embedClipboard : Program clipboardPort α → Program editorPort α
+  | .done value => .done value
+  | .step request next => .step (.clipboard request) fun reply => embedClipboard (next reply)
+
 end Program
 
 /-- The text port's refusal of the same name as the display's: both ports
@@ -157,5 +180,13 @@ instance : MonadLift DisplayM EditorM where
 
 instance : MonadLift WatchM EditorM where
   monadLift := Watch.lift
+
+/-- A program over the clipboard port as a command. It is never refused: a
+clipboard request that is refused is answered so, as a value. -/
+def Clipboard.lift {α : Type} (program : ClipboardM α) : EditorM α :=
+  ExceptT.lift program.embedClipboard
+
+instance : MonadLift ClipboardM EditorM where
+  monadLift := Clipboard.lift
 
 end Editor

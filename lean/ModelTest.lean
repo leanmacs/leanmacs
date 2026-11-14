@@ -3905,6 +3905,47 @@ def commandPortChecks : List Check :=
             model.texts.contents == #[] &&
             model.display.scenes == #[] },
     { name :=
+        "a program over the clipboard port, lifted to a command, gives the same replies on the editor's models as on the clipboard model and leaves the same clipboard, with the texts and the display as they were; a clipboard that is not available answers unavailable as a value, and the command is not refused"
+      run := do
+        let program :
+          ClipboardM
+            (Except ClipboardError (Option String) × Except ClipboardError (Option String)) :=
+          do
+          let before ← Clipboard.read
+          discard <| Clipboard.write "copied"
+          return (before, ← Clipboard.read)
+        let (alone, clipboard) :=
+          Program.run (port := clipboardPort) ClipboardModel.handle program {}
+        let (onEditor, model) := (Clipboard.lift program).runModel editorModel
+        let away : ClipboardModel := { held := some "kept", available := false }
+        let (refused, after) :=
+          (Clipboard.lift program).runModel { editorModel with clipboard := away }
+        return (match onEditor with
+            | .ok (before, written) =>
+              replied before == replied alone.1 && replied written == replied alone.2 &&
+                replied before == .inr none &&
+                replied written == .inr (some "copied")
+            | .error _ => false) &&
+            model.clipboard == clipboard &&
+            model.texts.contents == #[] &&
+            model.display.scenes == #[] &&
+            (match refused with
+            | .ok (before, written) =>
+              replied before == .inl .unavailable && replied written == .inl .unavailable
+            | .error _ => false) &&
+            after.clipboard == away },
+    { name :=
+        "a clipboard request inside a command moves the watch model's clock on by its pace, as a text request does: a read and then a write take two paces"
+      run := do
+        let command : EditorM (List Nat) := do
+          let start ← Watch.now
+          discard <| Clipboard.read
+          let afterRead ← Watch.now
+          discard <| Clipboard.write "copied"
+          return [start, afterRead, ← Watch.now]
+        let paced := (command.runModel { editorModel with watch := { clock := 100, pace := 10 } }).1
+        return resulted paced == .inr [100, 110, 120] },
+    { name :=
         "a state request of a command no loop runs is answered as an editor with no buffer and no window answers it, and nothing is kept: a read sees none, a buffer added is not there at the next read, and neither the watch model's clock nor the other models move"
       run := do
         let command :
@@ -4114,7 +4155,18 @@ def guardChecks : List Check :=
       run := do
         let (ended, model) :=
           (guarded (pure 7 : EditorM Nat)).runModel (countingModel { arrived := 1 })
-        return resulted ended == .inr (.finished 7) && model.watch.arrived == 1 }]
+        return resulted ended == .inr (.finished 7) && model.watch.arrived == 1 },
+    { name :=
+        "a clipboard request is guarded like a text request: with the interrupt flag up before a clipboard write the write is not made and the clipboard holds what it held, and with the flag down the same command writes"
+      run := do
+        let command : EditorM Unit := discard <| Clipboard.write "copied"
+        let (ended, model) := (guarded command).runModel (countingModel { arrived := 1 })
+        let (finished, wrote) := (guarded command).runModel countingModel
+        return resulted ended == .inr .interrupted && model.clipboard.held == none &&
+            model.watch.clock == 0 &&
+            resulted finished == .inr (.finished ()) &&
+            wrote.clipboard.held == some "copied" &&
+            wrote.watch.clock == 1 }]
 
 /-- The checks of the user's origin (`Origin.user`) and of how a refusal is
 described to the user (`TextError.describe`). -/

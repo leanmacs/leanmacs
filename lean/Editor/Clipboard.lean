@@ -6,7 +6,9 @@ import Editor.Program
 What the editor asks of the system clipboard: the text it holds, and to
 hold another. It is a port like the others (`Editor/Program.lean`):
 requests, a pure model (`Editor/Clipboard/Model.lean`) and a contract every
-implementation is held to (`Editor/Clipboard/Contract.lean`).
+implementation is held to (`Editor/Clipboard/Contract.lean`). It is a
+sub-port of the editor's port (`Editor/Command.lean`), so a command asks it
+as it asks a text.
 
 The clipboard is outside the editor. Another program writes it between two
 of the editor's requests, and what the editor writes there stays when a
@@ -29,6 +31,10 @@ is an `Except`, a value the asker matches on, as a state request's refusal
 is (`Editor/State/Request.lean`): nothing is thrown, so a clipboard program
 is a `Program` with no error (`ClipboardM`), and what a command does when
 the clipboard is not there is the command's to say.
+
+Where no clipboard is handed in, every request is answered so
+(`Clipboard.unavailable`, the handler a runner of commands takes by
+default, `Editor/Command/Real.lean`).
 
 ## Where an addition goes
 
@@ -76,6 +82,12 @@ that is refused is answered so, as a value. -/
 abbrev ClipboardM :=
   Program clipboardPort
 
+/-- An answerer of the clipboard port's requests in `IO`: a binding to a
+clipboard, or `Clipboard.unavailable` where there is none. A runner of
+commands is handed one. -/
+abbrev ClipboardHandler :=
+  (request : ClipboardRequest) → IO request.Reply
+
 namespace Clipboard
 
 /-- The text the clipboard holds, or `none` when it holds no text. Refused
@@ -87,6 +99,12 @@ def read : ClipboardM (Except ClipboardError (Option String)) :=
 nothing written, with `unavailable` when the clipboard cannot be reached. -/
 def write (text : String) : ClipboardM (Except ClipboardError Unit) :=
   Program.request (port := clipboardPort) (.write text)
+
+/-- The handler of a host that was handed no clipboard: a read and a write
+are each answered `unavailable`, and nothing is kept. -/
+def unavailable : ClipboardHandler
+  | .read => pure (.error .unavailable)
+  | .write _ => pure (.error .unavailable)
 
 end Clipboard
 
