@@ -79,7 +79,12 @@ bindings through what each default key parses to, and the scheme contract
 on the Vim scheme. So is the command loop's dispatch, on the models: keys
 stepped through the test scheme, the commands they run, rollback, the
 interrupt and the slow-command log, with the watch port's contract run on
-its model. The task shows by behaviour
+its model. So are modes, on the test scheme's role table and leader: the
+registered roles, the keymaps a mode makes for a scheme and what
+`Mode.check` reports, a buffer's major and minor modes, a mode's lineage
+and the active keymaps of a view, keys in the loop running a mode's
+command, the on-enter action, and `defineMode` and its refusals. The task
+shows by behaviour
 that they build without the library. It puts a `cargo` that always fails
 (`lean/no-cargo/cargo`) first on the `PATH`, and Lake runs `cargo` on every
 build that reaches the Rust archive, so the task passes only if the test
@@ -140,7 +145,9 @@ compiled commands and bindings written in the test: a key runs its command,
 a failed command is rolled back, the interrupt key stops a command that
 loops and stops nothing when none runs, a reload replaces config's commands
 and bindings and leaves the compiled ones, and a slow command is logged, on
-the fake clock. `contract-test` runs the watch port's contract against its
+the fake clock; and a role's key runs the store command of a mode config
+defines, in a view of a buffer that has the mode, until a reload drops the
+mode and the key runs the global binding. `contract-test` runs the watch port's contract against its
 real binding, over the library's interrupt flag, and has the interrupt key
 arrive at a known request of a command.
 

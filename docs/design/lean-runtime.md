@@ -261,6 +261,18 @@ elaborator.
   compiled bindings, and config's of the last config that loaded, still
   run ([keymaps-and-modes.md](keymaps-and-modes.md), "Extending from
   config").
+- **A mode is data too**: `defineMode { name := "listing", roles :=
+  [(Role.nextItem, "bump")] }` in `setup` defines a mode (`Mode`,
+  `lean/Editor/Mode.lean`), which the registry holds by owner, and a
+  reload replaces config's modes as a set and never the compiled ones. A
+  mode name defined twice in one `setup`, and a mode with a role that is
+  not registered, a suffix used twice or a suffix that is not keys, reject
+  the reload with a diagnostic that names the mode and the problem. Modes
+  are not counted in the report. The active keymaps are made from the
+  registry for each key, so a reload's modes hold from the next key, and a
+  buffer that had a mode a reload drops keeps its name, which then
+  contributes nothing ([keymaps-and-modes.md](keymaps-and-modes.md),
+  "Modes").
 - **A job is the value `setup` registered, too**:
   `job "count" count fun n => …` registers a `Work`, the job with the
   handler that makes the command its result is taken to the editor with.
@@ -620,7 +632,9 @@ shape is:
 |---|---|---|---|
 | Buffers, windows, keymaps, registers, the agent table | Compiled Lean, on the editor thread. Buffers, windows, the frame's split tree, the echo area and the preedit are the editor state (`lean/Editor/State.lean`), which the command loop (`lean/Editor/Loop.lean`) holds | Untouched | Lost unless its owner persists it |
 | The input scheme's state: the pending keys and what the scheme keeps for each view (the Vim scheme's states, its last change) | Compiled Lean, in the command loop, which runs one scheme for its life | Untouched | Lost |
-| Compiled commands and key bindings | Compiled Lean, in the registry, for the owner `compiled` | Untouched: a reload replaces config's | Registered again when the host starts |
+| Compiled commands, key bindings and modes | Compiled Lean, in the registry, for the owner `compiled` | Untouched: a reload replaces config's | Registered again when the host starts |
+| A buffer's modes: its major mode and its minor modes, by name | Compiled Lean, a field of the buffer in the editor state | Untouched: a name whose mode a reload drops contributes nothing | Lost |
+| A mode's own state | A compiled mode's, a typed field where the editor state's table puts it (none ships); a config mode's, a store its `setup` declares, whose commands fill its roles and suffixes, with per-buffer state inside the store's value until commands get requests over buffers | As for compiled state, and as for a store | As for compiled state, and as for a store |
 | Text, kept inverses, anchors | Rust, behind handles | Untouched | Files on disk; the kept inverses are lost |
 | The undo tree of each text: its nodes, where the text is in it, and the state last saved | Compiled Lean, with the buffer it is the history of, on the editor thread | Untouched | Lost |
 | A file's stamp (when it was last modified and how long it is, as the last load or save answered it), its path and its line ending | Compiled Lean, with the buffer that shows the file: the buffer's to keep, for the next save to expect. Nothing keeps one yet: buffers are the command loop's | Untouched | Lost; the file is loaded again |
