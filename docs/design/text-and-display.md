@@ -347,8 +347,9 @@ the text port: the undo tree (`lean/Editor/UndoTree.lean`, decided
 - No end is clamped. Evil's rules that are not the representation's stay in
   Lean with the command loop: keeping the normal-state cursor off the line
   break, what each operator does with an extent (whether `dd` on a last row
-  takes the line feed before it), `curswant`, and the motions, which must
-  move by the same cell.
+  takes the line feed before it), `curswant`, and evil's motions. The
+  motion primitives are the library's and move by the same cell ("Motions,
+  words and WORDs", below); evil's motions compose them.
 - Block-wise here is the shape, its two corners and its extent with columns
   counted in cells. On text with no tab and no wide character that is Vim's
   block. What is left is in the open questions.
@@ -362,6 +363,133 @@ the text port: the undo tree (`lean/Editor/UndoTree.lean`, decided
   words in both directions, and extents come back as words. The text port
   has four requests for markers and one question for extents, with thirteen
   and ten properties in its contract.
+
+**Motions, words and WORDs** (decided 2026-11-13; to be built by the
+command loop's phase on text motions).
+
+- A *motion* is a question of a text or a snapshot: from a position to a
+  position. The library answers it by walking the rope from the position, so
+  a motion is as fast on a large file as on a small one, and Lean only
+  composes them. Every motion moves by the text's cell, the one a selection
+  is counted in, so a step forward moves over exactly what an inclusive
+  cursor covers: `l` moves over what `v` selects.
+- A *cell start* is a position where a cell starts: every position but the
+  one between a carriage return and the line feed after it. The end of the
+  text is no cell start. For the position `p` in a text of length `n`:
+
+  | Motion | Answers |
+  |---|---|
+  | Next cell | The first cell start after `p`, or `n`. It is where the cell at `p` ends |
+  | Previous cell | The last cell start before `p`, or 0 |
+
+  - In `"a\r\nb"`: from 1 the next cell is 3 and from 3 the previous is 1;
+    from 2, between the two bytes, the next is 3 and the previous 1.
+  - A character of several bytes is one step: in `"a😀b"` from 1 the next
+    is 5. A letter and a combining mark after it are two cells, so the step
+    from the letter lands on the mark; that is the cell's open question.
+  - The line break is a cell like any other, so these two cross lines.
+    Staying on a line is `h` and `l`'s rule, and evil's.
+- What a word is:
+  - A *line break* is the cell that ends a row: a line feed, or a carriage
+    return and the line feed after it.
+  - A *blank* is a space (U+0020) or a tab (U+0009). A line break separates
+    words as a blank does.
+  - A *word character* is an ASCII letter, an ASCII digit, an underscore, or
+    any character from U+0080 up. Every other character is *punctuation*:
+    the rest of ASCII, its control characters and NUL included, and so a
+    carriage return with no line feed after it.
+  - An *empty line* is a row with no content that has a line break. The
+    empty last row of a text that ends in a line feed has no cell and is not
+    one.
+  - A *word* is a longest run of neighbouring cells that are all word
+    characters or all punctuation; or the line break of an empty line,
+    alone. A *WORD* is a longest run of cells that are not blank; or the
+    line break of an empty line, alone. A line of blanks only holds no word.
+  - A word *starts* where its first cell starts and *ends* where its last
+    cell starts: the position of a cursor on its last character, where `e`
+    rests, and not the position after it.
+
+  | Motion, for a word or a WORD | Answers |
+  |---|---|
+  | Next word start | The first start of a word after `p`, or `n` |
+  | Previous word start | The last start of a word before `p`, or 0 |
+  | Next word end | The first end of a word after `p`, empty lines not counted, or `n` |
+  | Previous word end | The last end of a word before `p`, or 0 |
+
+  - "After" and "before" are strict, so from a word's start the next start
+    is the next word's. The next word end passes over empty lines because
+    Vim's `e` and `E` do, while `w`, `b` and `ge` stop on one.
+  - In `"foo.bar  x"` the words are `foo`, `.`, `bar` and `x`, and the WORDs
+    `foo.bar` and `x`: from 1 the next word start is 3 and the next WORD
+    start 9; the next word end is 2 and the next WORD end 6.
+- Lines and the text:
+
+  | Motion | Answers |
+  |---|---|
+  | Line start | Where `p`'s row starts |
+  | Line end | Where the content of `p`'s row ends: where its line break starts, or `n` in the last row. This is where `v$` puts a head and `A` inserts |
+  | Line first non-blank | The first position of the row's content whose character is not a blank; the line end when there is none, so the row's start on an empty line |
+  | Text start | 0 |
+  | Text end | `n` |
+
+  The position of a line feed belongs to the row it ends. From the position
+  between a carriage return and its line feed, the line end is the position
+  before it: in `"ab\r\ncd"` the line end is 2 from 0, from 2 and from 3.
+- Rows up and down, for `p` in row `r`, with a count and a column:
+
+  | Motion | Answers |
+  |---|---|
+  | Rows up | In row `r - count`, or the first row when there is none: the position `column` cells from the row's start, or the end of its content when it has fewer |
+  | Rows down | The same in row `r + count`, or the last row when there is none |
+
+  - The column is counted in cells from the row's start, as a block's
+    columns are, so `j` moves a cursor as a block's corner moves. A point's
+    column can be counted in cells too, beside bytes and UTF-16 code units:
+    how many cells of its row start before the position. That is how a
+    caller learns the column to ask for. In a row whose content has `k`
+    cells and that ends in a carriage return and a line feed, column `k` is
+    the carriage return's position, column `k + 1` the position between the
+    two bytes, and column `k + 2` names none. A row motion never answers
+    past the content, whatever the column.
+  - A count of 0 stays in the row: "the position at this column of this
+    row". A motion past the first or the last row stops there, as Vim's
+    `10k` and `10j` do, and is not refused. The empty last row of a text
+    that ends in a line feed is a row like any other.
+  - Vim's `curswant` is a display column. Tab stops and wide characters are
+    the display pipeline's; the open question on a block's columns covers
+    both.
+- At the ends of the text: where there is no such cell or word the answer
+  is the end of the text going forward and 0 going back. An operator wants
+  the end itself (`dw` on the last word); putting a normal-state cursor
+  back on a cell is evil's.
+- A motion from an offset that is not a position is refused, whichever
+  motion it is, the text's start and end included.
+- What is not here and stays evil's, in Lean with the command loop: which
+  key runs which motion, a count as repetition, the wanted column and where
+  it is kept, keeping a normal-state cursor off the line break and inside
+  the buffer, `cw` acting as `ce`, `dw` on a line's last word not taking
+  the line break, and a motion's type for an operator.
+- Two reads beside the motions, so that a caller need not read the whole
+  text: one row's content, and the text between two positions.
+- Why this rule for a word character. The pure Lean model answers every
+  question of the port without the Rust library, so a character's class has
+  to be a rule both sides can state in a line. Rust's
+  `char::is_alphanumeric` reads Unicode tables Lean's core does not have,
+  and Vim's own classes are a table of some seventy ranges plus emoji. That
+  is the reasoning that kept UAX #29 out of the cell. The class of a
+  character is one function in one private Rust module and one in the
+  model, so a later table replaces both and nothing else. Where the rule
+  differs from Vim is in the open questions.
+- No library: motions over our snapshot are ours. A crate that has Vim's
+  motions brings its buffer or its engine, or reads the text as strings,
+  and what a word is must be restated in the Lean model whatever computes
+  it in Rust. crates.io, 2026-11-13: `vim-navigation` 0.2.1 reads a slice
+  of line strings with a viewport, clamps as a Vim cursor does and classes
+  characters with `char::is_alphanumeric`; `vim-line` 7.7.5 reads a `&str`
+  for a one-line input; `reovim-module-motions` 0.14.4 is a module of its
+  own editor's kernel. `unicode-segmentation` 1.13.3 is not added: its
+  words are UAX #29's, which are not Vim's (they split `foo.bar`
+  differently and know no WORD), and the model could not hold them.
 
 **Kept inverses** (the Rust half of undo).
 
@@ -1082,6 +1210,19 @@ these hunks" is a fact the editor can state.
   module, and the motions must use the same cell, so it is decided once,
   with the command loop's motions and the display pipeline's shaping, which
   knows clusters, in view.
+- **Character classes for words outside ASCII.** For the motions a word
+  character is an ASCII letter, digit or underscore, or any character from
+  U+0080 up; Vim has a table of classes for other scripts, punctuation and
+  emoji, which is not copied. Measured against Vim 9.1 (patches 1-1752):
+  the two agree on ASCII text and on `é`. They differ in that an emoji, CJK
+  text and punctuation outside ASCII (`—`, `“`, `”`) are word characters
+  here and classes of their own in Vim; a no-break space and the other
+  Unicode spaces are word characters here and blank in Vim; and a combining
+  mark is a cell and a word character here and part of the character before
+  it in Vim, which the word motions show after punctuation (`!` and a mark
+  are two words here). `×` and `÷` are word characters in both. A fix is
+  one table, in the library's private module for a character's class and in
+  the Lean model, and nothing else changes.
 - **A block's columns by display width, and a block to every line's end.**
   A block's columns are counted in cells. Vim counts them in display
   columns, which needs tab stops (a view's setting) and character widths
