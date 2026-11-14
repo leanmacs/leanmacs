@@ -1,7 +1,9 @@
 import Editor.Command.Call
 import Editor.Config.Owner
 import Editor.InputScheme
+import Editor.Mode
 import Editor.Setup
+import Editor.State
 
 /-!
 # The registry, and what a `setup` registers
@@ -45,6 +47,27 @@ owners that bind one sequence the later owner's binding is the keymap's, as
 `Keymap.ofList` has it. The name is not looked up here: a binding to a name
 nobody registered is kept, and the name is looked up when the keys are
 typed.
+
+## Modes
+
+A mode (`Editor/Mode.lean`) is held by owner like a command, in a
+`ModeEntry`, and replaced as a set (`replaceModes`): the owner is on the
+entry, never on the mode, so `setup` cannot choose it. The latest entry of a
+name is the one found (`mode?`), so config's mode of a compiled mode's name
+is used in its place until a reload drops it.
+
+- **A mode's lineage** (`lineage`) is the mode, then its parent, and so
+  on, nearest first, stopping at a name no mode is registered under and at
+  a mode already in it, so a cycle ends.
+- **The keymaps a mode contributes** for a scheme (`modeKeymaps`) are its
+  lineage's, nearest first, each mode's tuned keymap then its roles and
+  suffixes (`Mode.keymaps`): a derived mode's own role wins, and a role it
+  does not fill falls to the nearest parent that fills it.
+- **The active keymaps of a view** (`activeMaps`) are its buffer's minor
+  modes', the one added last first, then its major mode's, then the global
+  keymap (`keymap`). A name no mode is registered under contributes
+  nothing, and a view with no window has the global keymap alone. The host
+  makes them for each key, so a reload's modes hold from the next key.
 
 Motions, operators and text objects will be registered the same way, as
 vocabulary: entries by owner, replaced as a set, the latest of a name
@@ -126,8 +149,15 @@ structure BindingEntry where
   binding : KeyBinding
   deriving DecidableEq, Repr
 
-/-- The editor's table of commands, of jobs and of key bindings, oldest entry
-first. -/
+/-- A mode entry of the registry: a mode and its owner. -/
+structure ModeEntry where
+  /-- Who registered it. -/
+  owner : Owner
+  /-- The mode. -/
+  mode : Mode
+
+/-- The editor's table of commands, of jobs, of key bindings and of modes,
+oldest entry first. -/
 structure Registry where
   /-- The command entries. -/
   entries : Array Entry := #[]
@@ -135,6 +165,8 @@ structure Registry where
   jobs : Array JobEntry := #[]
   /-- The key bindings. -/
   bindings : Array BindingEntry := #[]
+  /-- The mode entries. -/
+  modes : Array ModeEntry := #[]
 
 namespace Registry
 
@@ -188,6 +220,59 @@ def keymap (registry : Registry) (scheme : InputScheme) : Keymap scheme.Binding 
   Keymap.ofList
     (registry.bindings.toList.map fun entry =>
       (entry.binding.keys, scheme.command entry.binding.command))
+
+/-- `registry` with every mode entry of `owner` removed and `modes` added as
+its mode entries. -/
+def replaceModes (registry : Registry) (owner : Owner) (modes : Array Mode) : Registry :=
+  { registry with
+    modes := registry.modes.filter (·.owner != owner) ++ modes.map fun mode => { owner, mode } }
+
+/-- The mode called `name`: the latest entry of that name. -/
+def mode? (registry : Registry) (name : String) : Option Mode :=
+  (registry.modes.findRev? (·.mode.name == name)).map (·.mode)
+
+/-- The lineage of the mode called `name`: that mode, then its parent, and
+so on, nearest first. It stops at a name no mode is registered under, and
+at a mode already in it, so a cycle ends; it has at most as many modes as
+the registry has entries. -/
+def lineage (registry : Registry) (name : String) : List Mode :=
+  go registry.modes.size name []
+where
+  /-- The lineage from `name`, with `found` the modes already in it, the
+  nearest last, and at most `fuel` more. -/
+  go : Nat → String → List Mode → List Mode
+    | 0, _, found => found.reverse
+    | fuel + 1, name, found =>
+      match registry.mode? name with
+      | none => found.reverse
+      | some mode =>
+        if found.any (·.name == name) then found.reverse
+        else
+          match mode.parent with
+          | some parent => go fuel parent (mode :: found)
+          | none => (mode :: found).reverse
+
+/-- The keymaps the mode called `name` contributes for `scheme`, in
+precedence order: for each mode of its lineage, nearest first, its keymaps
+(`Mode.keymaps`). None for a name no mode is registered under. -/
+def modeKeymaps (registry : Registry) (scheme : InputScheme) (name : String) :
+    List (Keymap scheme.Binding) :=
+  (registry.lineage name).flatMap (Mode.keymaps scheme)
+
+/-- The active keymaps of `view` in `state` for `scheme`, in precedence
+order: the keymaps of each minor mode of the view's buffer, the one added
+last first, then its major mode's, then the global keymap of every owner's
+key bindings (`keymap`). A view with no window has the global keymap
+alone. -/
+def activeMaps (registry : Registry) (scheme : InputScheme) (state : EditorState) (view : ViewId) :
+    List (Keymap scheme.Binding) :=
+  let global := registry.keymap scheme
+  match state.target? view with
+  | none => [global]
+  | some target =>
+    let minors := target.buffer.minors.toList.flatMap (registry.modeKeymaps scheme)
+    let major := (target.buffer.major.map (registry.modeKeymaps scheme)).getD []
+    minors ++ major ++ [global]
 
 end Registry
 

@@ -217,7 +217,10 @@ names a scheme's key:
 - `modeRecordChecks`: the registered roles (`Editor/Role.lean`), and the
   keymaps a mode makes for a scheme (`Editor/Mode.lean`): its roles at the
   scheme's keys for them, its suffixes under the leader, and the scheme's
-  hand-tuned keys for it ahead of both; and what `Mode.check` reports.
+  hand-tuned keys for it ahead of both; and what `Mode.check` reports;
+- `modeRegistryChecks`: modes in the registry
+  (`Editor/Config/Registry.lean`): a mode's lineage, and the active keymaps
+  of a view, in precedence order.
 -/
 
 namespace ModelTest
@@ -1720,7 +1723,27 @@ def registryChecks : List Check :=
           (boundTo registry "C-c t" == some (invoke "config") &&
             boundTo registry "C-c u" == some (invoke "kept") &&
             boundTo (registry.replaceBindings .config #[]) "C-c t" == some (invoke "compiled") &&
-            (registry.keymap TestScheme.scheme).continues (keys "C-c")) }]
+            (registry.keymap TestScheme.scheme).continues (keys "C-c")) },
+    { name :=
+        "replacing an owner's modes leaves the others', and the latest mode of a name is the one found"
+      run :=
+        let named (name parent : String) : Mode := { name, parent := some parent }
+        let registry : Config.Registry :=
+          (({} : Config.Registry).replaceModes .compiled
+                #[named "listing" "compiled", named "kept" "compiled"]).replaceModes
+            .config #[named "listing" "config", named "gone" "config"]
+        let replaced := registry.replaceModes .config #[named "new" "config"]
+        let parentOf (registry : Config.Registry) (name : String) : Option String :=
+          (registry.mode? name).bind (·.parent)
+        pure
+          (parentOf registry "listing" == some "config" &&
+            parentOf registry "kept" == some "compiled" &&
+            parentOf registry "gone" == some "config" &&
+            parentOf replaced "listing" == some "compiled" &&
+            (replaced.mode? "gone").isNone &&
+            parentOf replaced "new" == some "config" &&
+            replaced.modes.map (·.mode.name) == #["listing", "kept", "new"] &&
+            (registry.mode? "none").isNone) }]
 
 /-- A declaration of the store `name` at `version`, which starts at the
 number 0 and accepts any number. It migrates a number written at version 1 by
@@ -6703,6 +6726,102 @@ def modeRecordChecks : List Check :=
                 Role.mark] ==
               Role.registered) }]
 
+/-- A mode called `name` that fills each of `roles` with a command named
+after the mode and the role, and derives from `parent`, if given. -/
+def filling (name : String) (roles : List Role) (parent : Option String := none) : Mode :=
+  { name, parent, roles := roles.map fun role => (role, s!"{name}-{role.name}") }
+
+/-- The invocation of the command `filling name` fills `role` with. -/
+def filled (name : String) (role : Role) : Invocation :=
+  invoke s!"{name}-{role.name}"
+
+/-- What the active keymaps `registry` makes for the test scheme, in
+`state`, for `view`, make of the keys `role` is on. -/
+def activeLookup (registry : Config.Registry) (state : EditorState) (view : ViewId) (role : Role) :
+    Lookup Invocation :=
+  Keymap.resolve (registry.activeMaps TestScheme.scheme state view) (roleKeys role)
+
+/-- `twoBuffers` with the major mode `major` set on buffer 0 and the minor
+modes `minors` added to it, in order. -/
+def withModes (major : String) (minors : List String) : TextM EditorState := do
+  let state := (← twoBuffers).setMajorMode ⟨0⟩ major |>.2
+  return minors.foldl (fun state minor => (state.addMinorMode ⟨0⟩ minor).2) state
+
+/-- The registry of the mode registry checks: a global binding of the keys
+of `quit` and of `next-item`, two minor modes and a major mode that fill
+roles over one another, and a derived mode whose parent derives from a
+root. -/
+def modeRegistry : Config.Registry :=
+  (({} : Config.Registry).replaceBindings .compiled
+        #[{ keys := roleKeys Role.quit, command := "global-quit" },
+          { keys := roleKeys Role.nextItem, command := "global-next" }]).replaceModes
+    .compiled
+    #[filling "m1" [Role.nextItem, Role.previousItem], filling "m2" [Role.nextItem],
+      filling "major" [Role.nextItem, Role.previousItem, Role.activate],
+      filling "root" [Role.toggle, Role.mark],
+      filling "base" [Role.refresh, Role.mark] (some "root"),
+      filling "child" [Role.mark] (some "base")]
+
+/-- The checks of modes in the registry (`Editor/Config/Registry.lean`): a
+mode's lineage, and the active keymaps of a view. -/
+def modeRegistryChecks : List Check :=
+  [{  name :=
+        "a lineage is the mode then its parents, and ends at a name with no mode and at a cycle"
+      run :=
+        let looped :=
+          modeRegistry.replaceModes .config
+            #[filling "a" [] (some "b"), filling "b" [] (some "a"),
+              filling "orphan" [] (some "missing")]
+        pure
+          ((modeRegistry.lineage "child").map (·.name) == ["child", "base", "root"] &&
+            (modeRegistry.lineage "root").map (·.name) == ["root"] &&
+            (looped.lineage "a").map (·.name) == ["a", "b"] &&
+            (looped.lineage "orphan").map (·.name) == ["orphan"] &&
+            (looped.lineage "missing").isEmpty) },
+    { name :=
+        "the active keymaps of a view are its buffer's minor modes', the last added first, then its major mode's lineage's, then the global keymap"
+      run :=
+        pure <|
+          match onTextModel (withModes "major" ["m1", "m2"]) with
+          | none => false
+          | some state =>
+            let lookup := activeLookup modeRegistry state ⟨0⟩
+            (modeRegistry.activeMaps TestScheme.scheme state ⟨0⟩).length == 7 &&
+              lookup Role.nextItem == .bound (filled "m2" Role.nextItem) &&
+              lookup Role.previousItem == .bound (filled "m1" Role.previousItem) &&
+              lookup Role.activate == .bound (filled "major" Role.activate) &&
+              lookup Role.quit == .bound (invoke "global-quit") &&
+              lookup Role.mark == .unbound &&
+              activeLookup modeRegistry state ⟨1⟩ Role.nextItem == .bound (invoke "global-next") },
+    { name :=
+        "a derived mode's own role wins over its parents', and a role it does not fill falls to the nearest that fills it"
+      run :=
+        pure <|
+          match onTextModel (withModes "child" []) with
+          | none => false
+          | some state =>
+            let lookup := activeLookup modeRegistry state ⟨0⟩
+            lookup Role.mark == .bound (filled "child" Role.mark) &&
+              lookup Role.refresh == .bound (filled "base" Role.refresh) &&
+              lookup Role.toggle == .bound (filled "root" Role.toggle) &&
+              lookup Role.quit == .bound (invoke "global-quit") },
+    { name := "a mode name no mode is registered under contributes nothing"
+      run :=
+        pure <|
+          match onTextModel (withModes "ghost" ["phantom"]) with
+          | none => false
+          | some state =>
+            (modeRegistry.activeMaps TestScheme.scheme state ⟨0⟩).length == 1 &&
+              activeLookup modeRegistry state ⟨0⟩ Role.nextItem == .bound (invoke "global-next") },
+    { name := "a view with no window has the global keymap alone"
+      run :=
+        pure <|
+          match onTextModel (withModes "major" ["m1"]) with
+          | none => false
+          | some state =>
+            (modeRegistry.activeMaps TestScheme.scheme state ⟨9⟩).length == 1 &&
+              activeLookup modeRegistry state ⟨9⟩ Role.nextItem == .bound (invoke "global-next") }]
+
 /-- Every check, in the order they run.
 
 The order matters where the process's one pool is measured. `poolChecks` run
@@ -6745,7 +6864,8 @@ def checks : List Check :=
     vimStateChecks ++
     vimDefaultChecks ++
     vimContractChecks ++
-    modeRecordChecks
+    modeRecordChecks ++
+    modeRegistryChecks
 
 /-- Runs `checks` and returns the names of those that failed. A check that
 throws has failed, and its error is reported with its name. -/
