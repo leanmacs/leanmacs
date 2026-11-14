@@ -316,6 +316,8 @@ structure Registrations where
   jobs : Array JobRegistration := #[]
   /-- The key bindings, in the order they were made, their keys as chords. -/
   bindings : Array KeyBinding := #[]
+  /-- The modes, in the order they were defined. -/
+  modes : Array Mode := #[]
 
 namespace Registrations
 
@@ -334,6 +336,7 @@ def collect : (request : SetupRequest) → Registrations → request.Reply × Re
     ((),
       { collected with
         bindings := collected.bindings.push { keys := keys.map Key.chord, command } })
+  | .mode mode, collected => ((), { collected with modes := collected.modes.push mode })
 
 /-- The first of `items` that an earlier one already is, if any. -/
 def repeated? {α : Type} [BEq α] (items : Array α) : Option α := do
@@ -345,15 +348,17 @@ def repeated? {α : Type} [BEq α] (items : Array α) : Option α := do
 
 /-- What is wrong with what was collected, if anything: a store declared
 twice, a command name or a job name registered twice, a key sequence bound
-twice, a binding of no keys, or a command over a store that is not declared.
+twice, a binding of no keys, a command over a store that is not declared, a
+mode name defined twice, or a mode with a problem under any scheme
+(`Mode.problems`), of which the first is named.
 
 One config's names are each registered once. A second command under a name
 would make the first unreachable, which is a mistake in the config and never
 what it meant, so it is refused like a second store of a name; and so is a
-second job, and a second binding of one key sequence, to the same command
-or to another. A job and a command may share a name: one is run and the
-other is spawned. A binding's command is not looked up: it may be compiled,
-or not registered at all. -/
+second job, a second binding of one key sequence, to the same command or to
+another, and a second mode of a name. A job and a command may share a name:
+one is run and the other is spawned. A binding's command is not looked up:
+it may be compiled, or not registered at all; nor is a mode's. -/
 def problem? (collected : Registrations) : Option String := do
   let stores := collected.stores.map (·.name)
   if let some name := repeated? stores then
@@ -371,6 +376,11 @@ def problem? (collected : Registrations) : Option String := do
     if let .store store _ := registration.action then
       unless stores.contains store do
         return s!"the command `{registration.name}` is over the store `{store}`, which is not declared"
+  if let some name := repeated? (collected.modes.map (·.name)) then
+    return s!"the mode `{name}` is defined twice"
+  for mode in collected.modes do
+    if let some problem := mode.problems.head? then
+      return s!"the mode `{mode.name}` cannot be meant: {problem.describe}"
   none
 
 /-- What `setup` registers, or the message it is refused with: the one it

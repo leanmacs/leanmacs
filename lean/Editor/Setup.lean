@@ -1,5 +1,6 @@
 import Editor.Job
 import Editor.Key.Notation
+import Editor.Mode
 import Editor.Store
 
 /-!
@@ -21,12 +22,18 @@ def setup : SetupM Unit := do
   command "greet" greet
   bindKey "C-c g" "greet"
   job "count" count fun n => discard <| createText s!"counted {n}"
+  defineMode { name := "greeting", roles := [(Role.activate, "greet")], locals := [("g", "greet")] }
 ```
 
 A job is registered with the handler that makes the command its result is
 taken to the editor with. `setup` starts nothing: it is a collected program,
 and nothing of a config exists until it is installed. A job is not a
 command, and is not counted as one.
+
+A mode (`Editor/Mode.lean`) is defined with `defineMode`: the roles it
+fills and its suffixes name commands, which are looked up when the keys are
+typed. Its owner is the registry's to say, never the mode's. A mode is not a
+command and is not counted as one.
 
 A key sequence is bound to a command's name (`bindKey`), written as a key
 string (`Editor/Key/Notation.lean`). The name is looked up when the keys
@@ -51,9 +58,13 @@ with that message, and the config that was loaded before stays.
 The editor refuses a `setup` too, the same way, when what it registered
 cannot be meant: a command name or a job name registered twice (the first
 could never run), a key sequence bound twice (the first binding could never
-run), a store name declared twice, or a command over a store the `setup`
-does not declare. The diagnostic names the command, the job, the keys or
-the store. `bindKey` itself refuses a key string that is not keys, with the
+run), a store name declared twice, a command over a store the `setup`
+does not declare, a mode name defined twice, or a mode that cannot be meant
+under any scheme (`Mode.problems`: a role that is not registered, a suffix
+used twice, a suffix that is not keys). The diagnostic names the command,
+the job, the keys, the store or the mode, and a mode's problem. Whether a
+scheme's hand-tuned key shadows one of its own needs a scheme, which the
+registry does not know: only `Mode.check` reports it. `bindKey` itself refuses a key string that is not keys, with the
 key parser's reason, and one that names no keys.
 
 A request of this port can carry an `EditorM`, which a request of the
@@ -91,6 +102,8 @@ inductive SetupRequest where
   /-- Bind the key sequence `keys` to the command called `command`. The
   name is looked up when the keys are typed. -/
   | bind (keys : List Key) (command : String)
+  /-- Define the mode `mode`. -/
+  | mode (mode : Mode)
 
 /-- The type of the reply to each request: nothing, for all of them. -/
 def SetupRequest.Reply : SetupRequest → Type
@@ -99,6 +112,7 @@ def SetupRequest.Reply : SetupRequest → Type
   | .storeCommand .. => Unit
   | .job .. => Unit
   | .bind .. => Unit
+  | .mode _ => Unit
 
 /-- The setup port: `SetupRequest` and the reply to each request. -/
 abbrev setupPort : Port :=
@@ -154,5 +168,12 @@ def bindKey (keys : String) (command : String) : SetupM Unit := do
     throw (boundToNoKeys command)
   | .ok chords =>
     ExceptT.lift (Program.request (port := setupPort) (.bind chords command))
+
+/-- Defines the mode `mode`: its roles and suffixes name commands, looked
+up when the keys are typed, so they need not be ones this `setup`
+registers. The editor refuses the `setup` for a mode name defined twice and
+for a mode with a problem (`Mode.problems`). -/
+def defineMode (mode : Mode) : SetupM Unit :=
+  ExceptT.lift (Program.request (port := setupPort) (.mode mode))
 
 end Editor

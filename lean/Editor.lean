@@ -29,7 +29,9 @@ scheme is the scheme that ships (`Editor/InputScheme/Vim.lean`, with its
 default states and bindings in `Editor/InputScheme/Vim/Default.lean`), and
 config will bind against its parts of speech (`Vim.Bound`). That module
 is the one import here that brings all of these, the scheme interface and
-key strings with it. The test
+key strings with it. Modes come with `Editor/Setup.lean`, which defines
+them (`defineMode`): the mode record (`Editor/Mode.lean`) and the roles a
+mode fills (`Editor/Role.lean`). The test
 scheme and the scheme contract (`Editor/InputScheme/Test.lean`,
 `Editor/InputScheme/Contract.lean`) are for tests, and are not imported.
 

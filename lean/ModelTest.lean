@@ -149,8 +149,8 @@ service.
 
 The config session's decisions are tested here too, with no elaborator:
 
-- `setupChecks`: what a `setup` registers, commands, stores and jobs, and
-  when it is refused;
+- `setupChecks`: what a `setup` registers, commands, stores, jobs, key
+  bindings and modes, and when it is refused;
 - `registryChecks`: the registry, its commands and its jobs, replaced by
   owner;
 - `storeChecks`: the rule that meets a new config's stores with the cells
@@ -1604,7 +1604,41 @@ def setupChecks : List Check :=
         pure
           (refusal twice == some "the keys `C-x C-s` are bound twice" &&
             refusal same == some "the keys `C-q` are bound twice" &&
-            refusal apart == none) }]
+            refusal apart == none) },
+    { name := "defineMode registers the mode, in order, beside the commands"
+      run :=
+        let setup : SetupM Unit := do
+          defineMode { name := "listing", roles := [(Role.nextItem, "listing-next")] }
+          command "listing-next" (makes "1")
+          defineMode { name := "derived", parent := some "listing" }
+        match Config.Registrations.ofSetup setup with
+        | .error _ => pure false
+        | .ok collected =>
+          pure
+            (collected.modes.map (·.name) == #["listing", "derived"] &&
+              collected.modes.map (·.parent) == #[none, some "listing"] &&
+              collected.modes.map (·.roles) == #[[(Role.nextItem, "listing-next")], []] &&
+              collected.commands.map (·.name) == #["listing-next"]) },
+    { name := "a setup that defines a mode name twice is refused with a message that names the mode"
+      run :=
+        let setup : SetupM Unit := do
+          defineMode { name := "listing" }
+          defineMode { name := "other" }
+          defineMode { name := "listing", parent := some "other" }
+        pure (refusal setup == some "the mode `listing` is defined twice") },
+    { name :=
+        "a setup that defines a mode with an unregistered role, a suffix used twice or a suffix that is not keys is refused, naming the mode and the problem"
+      run :=
+        let refused (mode : Mode) (problem : Mode.Problem) : Bool :=
+          refusal (defineMode mode) ==
+            some s!"the mode `{mode.name}` cannot be meant: {problem.describe}"
+        pure
+          (refused { name := "roles", roles := [(Role.mk "frobnicate", "f")] }
+              (.unregisteredRole (Role.mk "frobnicate")) &&
+            refused { name := "twice", locals := [("x", "a"), ("x", "b")] }
+              (.duplicateSuffix (keys "x")) &&
+            refused { name := "unreadable", locals := [("S-a", "a")] } (.unreadableSuffix "S-a") &&
+            refusal (defineMode { name := "fine", locals := [("x", "a")] }) == none) }]
 
 /-- A registration of the plain command `name`, which makes the text `text`. -/
 def registration (name text : String) : Config.Registration :=
