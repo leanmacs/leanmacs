@@ -28,3 +28,16 @@ etagere = "=0.3.0"
 # Parley's. Checked in a spike on three fixture fonts, on macOS and on
 # Linux (`docs/design/rendering-prior-art.md`).
 swash = "=0.2.10"
+
+[dev-dependencies]
+# Reads the reference image in `tests/reference.rs`, and writes it in the
+# example that makes it (`examples/reference.rs`). Pinned exactly; a
+# dev-dependency only, so no build of the library links it. `deny.toml`
+# lets no other crate depend on it.
+png = "=0.18.1"
+# The real shaper, for one thing: the fixture frame of real text
+# (`tests/common/mod.rs`), which the two tests the port's module docs
+# name as wiring lay out, `tests/reference.rs` and `tests/reuse.rs`, and
+# which the examples draw. No other test of this crate runs a shaper.
+# `deny.toml` lists this crate as its one wrapper.
+editor-shape-parley = { path = "../editor-shape-parley" }

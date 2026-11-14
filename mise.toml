@@ -308,6 +308,24 @@ run = "cargo run --locked --package editor-platform-winit --example contract"
 description = "Opt-in, never part of ci: hold the Parley shaper over this machine's fonts to the shaper port's contract. Its result depends on the fonts installed"
 run = "cargo run --locked --package editor-shape-parley --example system"
 
+# Opt-in: run it by hand, and do not add it to `ci` or to hk.pkl. It writes
+# a file of the repository, which no gate may do.
+#
+# It runs the renderer's example (`crates/editor-render-wgpu/examples/
+# reference.rs`): the fixture frame of real text, drawn by the headless
+# adapter at scale 1 with subpixel antialiasing, written to
+# `tests/render/frame.png`. That file is the reference image the gate's
+# test compares the same frame with (`crates/editor-render-wgpu/tests/
+# reference.rs`). The gate builds the example and never runs it.
+#
+# Run it when the picture is meant to change: the fixture frame, the
+# painter, the blend, or the pin of Parley or of swash. Then look at the
+# file before committing it: a reference nobody looked at pins whatever
+# was drawn. `tests/render/README.md` says what it should show.
+[tasks.render-reference]
+description = "Opt-in, never part of ci: draw the renderer's fixture frame with the headless adapter and write it to tests/render/frame.png, the reference image. Look at the file before committing it"
+run = "cargo run --locked --package editor-render-wgpu --example reference -- tests/render/frame.png"
+
 # Opt-in: run it by hand, and do not add it to `ci` or to hk.pkl. It needs
 # Docker and, the first time, the network.
 #

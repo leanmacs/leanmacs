@@ -19,6 +19,23 @@
 # `src/quads.rs` that calls `std::fs::read("/nonexistent")`, `mise run lint`
 # fails with "use of a disallowed method `std::fs::read`". With the test
 # taken out it passes.
+#
+# The exceptions. This file governs the crate's examples too, and each
+# example exists to do one thing no test may. Each call of a listed name
+# in an example is under its own `#[expect(clippy::disallowed_methods,
+# reason = "…")]`, as `crates/editor-shape-parley/examples/system.rs`
+# does. An `expect` that nothing fulfils is itself a warning, which
+# `mise run lint` denies: so the gate fails on a listed call without its
+# `expect`, and on an `expect` left over a call that is gone. Neither
+# example names any other listed method or any listed type.
+#
+# - `examples/reference.rs`, `std::fs::write`, at one call site: it
+#   writes the reference image to the path given on the command line
+#   (`mise run render-reference`). The image is encoded into bytes in
+#   memory first, so no listed type is named, and the path is handed over
+#   as given. Seen to bite once by hand, on 2026-11-14: with the `expect`
+#   taken off, `mise run lint` fails with "use of a disallowed method
+#   `std::fs::write`".
 
 disallowed-methods = [
   # Every free function of `std::fs`.
