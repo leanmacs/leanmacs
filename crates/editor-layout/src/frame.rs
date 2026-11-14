@@ -50,7 +50,12 @@
 //!
 //! A row's runs cover its glyphs from the first to the last and nothing
 //! past them, and a selection's area on a row is as wide as the glyphs it
-//! covers there. A tab whose spaces cross a soft wrap is drawn on both
+//! covers there. Cursor boxes and selection areas are read from a row's
+//! cells ([`line`](mod@crate::line), "Cells"), not from its glyphs as they
+//! are listed: a cursor on one character of a glyph that draws two is half
+//! the glyph wide, and a selection that crosses a change of direction is
+//! an area for each stretch of the row it covers. A tab whose spaces cross
+//! a soft wrap is drawn on both
 //! rows, so each row takes the tab's faces and its selection over the
 //! spaces it holds, though the tab's position is on the earlier row alone
 //! ([`line`](mod@crate::line), which also says which of a tab's spaces are
@@ -136,8 +141,10 @@ pub struct FrameRow {
 /// One cursor of a view.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct CursorBox {
-    /// The cell it is on: the glyph at its position, or past a line's last
-    /// glyph one advance of the default face's font.
+    /// The cell it is on ([`line`](mod@crate::line), "Cells"): its
+    /// character's share of the glyphs that draw it, which is the glyph
+    /// where a glyph draws one character; or at a line's end, where there
+    /// is no character, one advance of the default face's font.
     pub area: Area,
     /// Its shape.
     pub shape: CursorShape,
@@ -190,8 +197,11 @@ pub struct ViewFrame {
     /// Its cursors on the rows shown: the head of every range of every
     /// selection.
     pub cursors: Vec<CursorBox>,
-    /// What its selections cover on the rows shown, one area per row and
-    /// span.
+    /// What its selections cover on the rows shown: for each row and
+    /// span, an area for each run of cells next to each other on the row
+    /// that the span holds. That is one area where the text runs in one
+    /// direction, and several where a span crosses a change of direction,
+    /// each as wide as the cells it covers.
     pub selections: Vec<Area>,
     /// The colour of those areas: the selection face's background.
     pub selection: Color,
@@ -600,15 +610,21 @@ impl<S: Shaper> Layout<S> {
                     face: span.face,
                 })
             };
+            // What each selected span covers of the row: an area for each
+            // run of cells next to each other that it holds, so one area
+            // in text of one direction, and several where it crosses a
+            // change of direction.
             for span in spans[below..].iter().filter_map(on_row) {
-                let left = entry.x_of_column(visual.line, columns.start + span.bytes.start);
-                let right = entry.x_of_column(visual.line, columns.start + span.bytes.end);
-                frame.selections.push(Area {
-                    x: left,
-                    y,
-                    width: right - left,
-                    height: line.height,
-                });
+                let held = columns.start + span.bytes.start..columns.start + span.bytes.end;
+                let covered = entry.cells(visual.line).map(|cells| cells.covered(held));
+                for (left, right) in covered.unwrap_or_default() {
+                    frame.selections.push(Area {
+                        x: left,
+                        y,
+                        width: right - left,
+                        height: line.height,
+                    });
+                }
             }
             let spans: Vec<Span> = spans.iter().filter_map(on_row).collect();
             // Each run with what its faces come to, neighbours of one
@@ -656,17 +672,16 @@ impl<S: Shaper> Layout<S> {
             };
             let row = &frame.rows[index];
             let row_start = snapshot.row_range(visual.row).map_or(0, |row| row.start);
+            // As wide as the cell it is on, which is a share of its glyph
+            // where the glyph draws several characters; at a line's end,
+            // where there is no cell, as wide as a space of the base font.
             let width = walker
                 .entry(visual.row, visual.segment)
                 .and_then(|entry| {
                     let column = entry.column(head - row_start);
-                    row.line
-                        .glyphs
-                        .iter()
-                        .find(|glyph| glyph.cluster == column)
-                        .map(|glyph| glyph.advance)
+                    entry.cell_of_column(visual.line, column)
                 })
-                .unwrap_or(advance);
+                .map_or(advance, |cell| cell.width);
             frame.cursors.push(CursorBox {
                 area: Area {
                     x,
@@ -2191,6 +2206,83 @@ mod tests {
         // wide family, every glyph and the cell past the last are 20.
         layout.define(&[def("default", family("wide"))]);
         assert_eq!(cursor(&mut layout, 3), area(60.0, 0.0, 20.0, 16.0));
+    }
+
+    /// A layout whose shaper shapes `afib` with `fi` as one glyph 30
+    /// across, and `abcd` as `ab` left to right and then `cd` right to
+    /// left: a, b, d, c from the left.
+    fn real_layout() -> Layout<ScriptedShaper> {
+        let ligature = vec![
+            glyph('a', 0, 0.0, 10.0),
+            glyph('f', 1, 10.0, 30.0),
+            glyph('b', 3, 40.0, 10.0),
+        ];
+        let two_directions = vec![
+            glyph('a', 0, 0.0, 10.0),
+            glyph('b', 1, 10.0, 10.0),
+            glyph('d', 3, 20.0, 10.0),
+            glyph('c', 2, 30.0, 10.0),
+        ];
+        let shaper = ScriptedShaper::new(10.0, 16.0)
+            .with("afib", vec![line(0..4, ligature)])
+            .with("abcd", vec![line(0..4, two_directions)]);
+        let mut layout = Layout::new(shaper);
+        layout.define(&[def("selection", bg(BLUE))]);
+        layout
+    }
+
+    #[test]
+    fn a_cursor_on_a_character_of_a_glyph_of_two_is_half_the_glyph_wide() {
+        let mut layout = real_layout();
+        let mut cursor = |head: usize| {
+            frame(&mut layout, view("afib", 10, 16, 0, &[(head, head)])).cursors[0].area
+        };
+        assert_eq!(cursor(0), area(0.0, 0.0, 10.0, 16.0));
+        // `f` is the left half of the glyph and `i` the right half, from
+        // its middle.
+        assert_eq!(cursor(1), area(10.0, 0.0, 15.0, 16.0));
+        assert_eq!(cursor(2), area(25.0, 0.0, 15.0, 16.0));
+        assert_eq!(cursor(3), area(40.0, 0.0, 10.0, 16.0));
+        assert_eq!(cursor(4), area(50.0, 0.0, 10.0, 16.0));
+    }
+
+    #[test]
+    fn a_cursor_in_reordered_text_is_on_its_own_glyph() {
+        let mut layout = real_layout();
+        let mut cursor = |head: usize| {
+            frame(&mut layout, view("abcd", 10, 16, 0, &[(head, head)])).cursors[0].area
+        };
+        // `c` is the rightmost glyph and `d` the one before it.
+        assert_eq!(cursor(2), area(30.0, 0.0, 10.0, 16.0));
+        assert_eq!(cursor(3), area(20.0, 0.0, 10.0, 16.0));
+        // The line's end is at its right edge.
+        assert_eq!(cursor(4), area(40.0, 0.0, 10.0, 16.0));
+    }
+
+    #[test]
+    fn a_selection_across_a_direction_change_is_an_area_for_each_run_of_glyphs_it_covers() {
+        let mut layout = real_layout();
+        let mut selected = |anchor: usize, head: usize| {
+            frame(&mut layout, view("abcd", 10, 16, 0, &[(anchor, head)])).selections
+        };
+        // `b` and `c`: `b` is the second glyph and `c` the fourth, with
+        // `d`, which is not selected, between them.
+        assert_eq!(
+            selected(1, 3),
+            vec![area(10.0, 0.0, 10.0, 16.0), area(30.0, 0.0, 10.0, 16.0)]
+        );
+        // Inside one direction, one area: `a` and `b`, and `c` and `d`,
+        // whose glyphs are next to each other in the other order.
+        assert_eq!(selected(0, 2), vec![area(0.0, 0.0, 20.0, 16.0)]);
+        assert_eq!(selected(2, 4), vec![area(20.0, 0.0, 20.0, 16.0)]);
+        // `b`, `c` and `d` are next to each other on the line, though not
+        // in the text's order: one area.
+        assert_eq!(selected(1, 4), vec![area(10.0, 0.0, 30.0, 16.0)]);
+        // All of it is one area as wide as the line.
+        assert_eq!(selected(0, 4), vec![area(0.0, 0.0, 40.0, 16.0)]);
+        // One character of a glyph of two is half the glyph.
+        let half = frame(&mut layout, view("afib", 10, 16, 0, &[(2, 3)])).selections;
+        assert_eq!(half, vec![area(25.0, 0.0, 15.0, 16.0)]);
     }
 
     /// A face of the size `pixels` and nothing else.

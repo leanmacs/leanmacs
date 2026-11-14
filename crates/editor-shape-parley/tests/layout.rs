@@ -129,3 +129,30 @@ fn no_parley_layout_holds_a_whole_long_row() {
     assert!(shaped.bytes <= segment * laid.shaped, "{shaped:?}");
     assert!(shaped.bytes < u64::try_from(row.len()).expect("a length"));
 }
+
+#[test]
+fn a_selection_across_latin_and_hebrew_covers_the_glyphs_of_what_is_selected() {
+    // `abc`, a space, then four Hebrew letters of two bytes each, drawn
+    // right to left. Bytes 2 to 8 are `c`, the space and the first two
+    // Hebrew letters, which are the two rightmost glyphs of the line: what
+    // is selected is not one stretch of the line.
+    let selected = 2..8;
+    let scene = Scene::of_text("abc שלום", rect(800)).selecting(selected.clone());
+    let mut layout = Layout::new(shaper());
+    let frame = layout.frame(&scene);
+    let view = &frame.views[0];
+    let glyphs = &view.rows[0].line.glyphs;
+    let advances: f32 = glyphs
+        .iter()
+        .filter(|glyph| selected.contains(&glyph.cluster))
+        .map(|glyph| glyph.advance)
+        .sum();
+    assert!(advances > 0.0);
+    // Every area is wider than nothing, and together they are as wide as
+    // the glyphs of the selected characters: no more and no less is
+    // covered.
+    assert!(!view.selections.is_empty());
+    assert!(view.selections.iter().all(|area| area.width > 0.0));
+    let covered: f32 = view.selections.iter().map(|area| area.width).sum();
+    assert!((covered - advances).abs() < 0.01, "{covered} of {advances}");
+}

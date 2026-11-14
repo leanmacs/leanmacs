@@ -32,7 +32,9 @@
 //!   whatever height a font gives its lines, and where a move goes, with
 //!   its goal x ([`query`]);
 //! - the frame: rows from a view's anchor stacked by height, cursor and
-//!   selection geometry, the paint each run, cursor and view resolves to,
+//!   selection geometry read from cells (a cursor a share of its glyph, a
+//!   selection an area for each stretch of a row it covers), the paint
+//!   each run, cursor and view resolves to,
 //!   content hashes that cover paint and that a cursor move leaves alone,
 //!   the status row at a view's bottom and the text rows that fit above
 //!   it, decorations asked for the rows shown only, the shaper's

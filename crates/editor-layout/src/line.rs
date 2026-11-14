@@ -163,6 +163,26 @@ impl Cells {
     fn at(&self, x: f32) -> Option<&Cell> {
         self.cells.iter().find(|cell| x < cell.x + cell.width)
     }
+
+    /// What the characters of `columns` cover of the line: the left and
+    /// the right edge of each run of cells next to each other on the line
+    /// that all hold one of them, from the left. Text in one direction is
+    /// one run; a range that crosses a change of direction may be several,
+    /// with cells it does not hold between them.
+    pub fn covered(&self, columns: Range<usize>) -> Vec<(f32, f32)> {
+        let mut runs: Vec<(f32, f32)> = Vec::new();
+        let mut open = false;
+        for cell in &self.cells {
+            let held = columns.contains(&cell.column);
+            match runs.last_mut() {
+                Some(run) if held && open => run.1 = cell.x + cell.width,
+                _ if held => runs.push((cell.x, cell.x + cell.width)),
+                _ => {}
+            }
+            open = held;
+        }
+        runs
+    }
 }
 
 /// One laid-out segment of a buffer row.
@@ -445,6 +465,17 @@ impl<L> LineEntry<L> {
     /// last.
     pub fn cells(&self, index: usize) -> Option<&Cells> {
         self.cells.get(index)
+    }
+
+    /// The cell of visual line `index` that holds the expanded column
+    /// `column`. `None` at or past the line's end, where there is no
+    /// character, and before its first cell.
+    pub fn cell_of_column(&self, index: usize, column: usize) -> Option<Cell> {
+        let (line, cells) = (self.lines.get(index)?, self.cells.get(index)?);
+        if column >= line.bytes.end {
+            return None;
+        }
+        cells.holding(column).copied()
     }
 
     /// The x of `offset`, relative to the row's start, on visual line
