@@ -53,15 +53,23 @@ order:
 - **The stretch stops no later than where the last line's content ends**
   (`lastLine`): a text that ends in a line feed has an empty last row,
   which is no line, and Vim cannot address the line feed before it.
+- **An exclusive stretch that stops at a line's start, and so starts on an
+  earlier line**: when it starts at or before its own line's first
+  non-blank, it is the whole lines from its first to the line before its
+  stop. Otherwise it stops where the line before ends. These are Vim's two
+  exceptions for an exclusive motion whose end is in column 1.
 - **Otherwise the stretch is those cells, with the motion's reach.**
 
 ## What an operator does
 
-| | Cells that are not empty | No cell |
-|---|---|---|
-| `delete` | The register is the cells' text. They are deleted. The cursor goes to their start, rested | Nothing is done, and the register is as it was |
-| `yank` | The register is the cells' text. The cursor goes to their start, rested | The register is the empty text. The cursor stays |
-| `change` | The register is the cells' text. They are deleted. The selection is a bar at their start | Nothing is deleted. The register is as it was, unless the reach is `inclusive` and the text is not empty, when it is the empty text. The selection is a bar where the cells would start |
+| | Cells that are not empty | No cell | Lines |
+|---|---|---|---|
+| `delete` | The register is the cells' text. They are deleted. The cursor goes to their start, rested | Nothing is done, and the register is as it was | The register is the lines, line-wise. They are deleted. The cursor goes to the first non-blank of the line now where the first was |
+| `yank` | The register is the cells' text. The cursor goes to their start, rested | The register is the empty text. The cursor stays | The register is the lines, line-wise. The cursor goes to the operand's `rest`, rested |
+| `change` | The register is the cells' text. They are deleted. The selection is a bar at their start | Nothing is deleted. The register is as it was, unless the reach is `inclusive` and the text is not empty, when it is the empty text. The selection is a bar where the cells would start | The register is the lines, line-wise. The text from the first line's start to where the last line's content ends is deleted, so one line break stays. The selection is a bar at that line's start |
+
+- **A line-wise register's text** is the lines from the first line's start
+  through the last line's line break (`linesOf`).
 
 - **The no-cell column is Vim's**, quirks included: `yh` at a line's start
   empties the register, `dh` and `ch` there leave it, and `c$` on an empty
@@ -106,6 +114,11 @@ could not be made. -/
 def cannotMove (name : String) : String :=
   s!"{name} cannot move"
 
+/-- The row of `text` the position `offset` is in. Rows are asked in cells,
+so a carriage return and line feed is one line break. -/
+def rowOf (text : TextId) (offset : Nat) : TextM Nat :=
+  return (← text.pointOf offset .cells).row
+
 /-- What an operator acts on in `text` when its head is at `head` and the
 motion it waits for leads to `taken` ("What an operator takes", in the
 module docs). -/
@@ -120,14 +133,48 @@ def stretch (text : TextId) (head : Nat) (taken : Vocabulary.Taken) : TextM Voca
   let limit ← text.motion .lineEnd (← text.offsetOf ⟨← lastLine text, 0⟩)
   let stop := min through limit
   let start := min (min head taken.head) stop
+  -- An exclusive stretch that stops at a line's start began on an earlier
+  -- line: from that line's indent it is whole lines, and otherwise it stops
+  -- where the line before ends.
+  if taken.reach == .exclusive && start < stop && (← text.motion .lineStart stop) == stop then
+    if start ≤ (← text.motion .lineFirstNonBlank start) then
+      return .lines (← rowOf text start) ((← rowOf text stop) - 1)
+    return .cells ⟨start, ← text.motion .previousCell stop⟩ taken.reach
   return .cells ⟨start, stop⟩ taken.reach
+
+/-- One range of the shape the call's report says, with both ends at
+`offset`: the cursor an operator's edit carries as the one it leaves. -/
+def cursorAt (call : Call) (offset : Nat) : Selection :=
+  { ranges := #[⟨offset, offset⟩], shape := call.report.shape }
 
 /-- Leaves the selection of the call's window as one range of the shape the
 call's report says, with both ends where a head at `offset` rests under the
 report's rule. -/
 def settle (call : Call) (offset : Nat) : TextM Unit := do
-  let head ← rested (restOf call.report) call.target.buffer.text offset
-  call.target.select { ranges := #[⟨head, head⟩], shape := call.report.shape }
+  call.target.select (cursorAt call (← rested (restOf call.report) call.target.buffer.text offset))
+
+/-- Whole lines of a text, as offsets. -/
+structure Lines where
+  /-- Where the first line starts. -/
+  start : Nat
+  /-- Where the last line's content ends. -/
+  content : Nat
+  /-- Where the line after the last starts, past the last line's line break,
+  or the text's end. -/
+  stop : Nat
+  /-- The lines' text, from `start` up to `stop`. -/
+  taken : String
+
+/-- The lines of `text` from the row `first` through the row `last`. -/
+def linesOf (text : TextId) (first last : Nat) : TextM Lines := do
+  let start ← text.offsetOf ⟨first, 0⟩
+  let content ← text.motion .lineEnd (← text.offsetOf ⟨last, 0⟩)
+  let stop ←
+    if last + 1 < (← text.rowCount) then
+      text.offsetOf ⟨last + 1, 0⟩
+    else
+      text.byteLength
+  return { start, content, stop, taken := ← text.slice start stop }
 
 /-- The operator that deletes what it is handed into the register ("What an
 operator does", in the module docs). -/
@@ -138,12 +185,19 @@ def delete : Vocabulary.Operator :=
       | .cells extent _ =>
         unless extent.start == extent.stop do
           let taken ← call.target.buffer.text.slice extent.start extent.stop
-          call.target.replaceCarrying extent "" operand.before
-              { ranges := #[⟨extent.start, extent.start⟩], shape := call.report.shape }
+          call.target.replaceCarrying extent "" operand.before (cursorAt call extent.start)
           settle call extent.start
           store operand.register { text := taken }
-      | .lines .. =>
-        pure () }
+      | .lines first last =>
+        let text := call.target.buffer.text
+        let lines ← linesOf text first last
+        -- The first non-blank of the line that follows, in the text the
+        -- deletion leaves.
+        let after := (← text.motion .lineFirstNonBlank lines.stop) - (lines.stop - lines.start)
+        call.target.replaceCarrying ⟨lines.start, lines.stop⟩ "" operand.before
+            (cursorAt call after)
+        settle call after
+        store operand.register { text := lines.taken, linewise := true } }
 
 /-- The operator that puts an insert in place of what it is handed, which
 goes into the register ("What an operator does", in the module docs). It
@@ -162,12 +216,18 @@ def change : Vocabulary.Operator :=
             store operand.register { text := "" }
         else
           let taken ← call.target.buffer.text.slice extent.start extent.stop
-          call.target.replaceCarrying extent "" operand.before
-              { ranges := #[⟨extent.start, extent.start⟩], shape := call.report.shape }
+          call.target.replaceCarrying extent "" operand.before (cursorAt call extent.start)
           settle call extent.start
           store operand.register { text := taken }
-      | .lines .. =>
-        pure () }
+      | .lines first last =>
+        let lines ← linesOf call.target.buffer.text first last
+        -- One line break stays: the lines' content goes, and not the last
+        -- line's line break.
+        unless lines.start == lines.content do
+          call.target.replaceCarrying ⟨lines.start, lines.content⟩ "" operand.before
+              (cursorAt call lines.start)
+        settle call lines.start
+        store operand.register { text := lines.taken, linewise := true } }
 
 /-- The operator that copies what it is handed into the register and
 changes no text ("What an operator does", in the module docs). -/
@@ -180,8 +240,10 @@ def yank : Vocabulary.Operator :=
         unless extent.start == extent.stop do
           settle call extent.start
         store operand.register { text := taken }
-      | .lines .. =>
-        pure () }
+      | .lines first last =>
+        let lines ← linesOf call.target.buffer.text first last
+        settle call operand.rest
+        store operand.register { text := lines.taken, linewise := true } }
 
 /-- The table the operate command looks an operator's name up in: one entry
 for each name the Vim scheme's default tables bind a key to. -/

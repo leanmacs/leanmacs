@@ -104,10 +104,30 @@ def right : Vocabulary.Motion :=
 count, and stops when a step moves no further: where the text has no such
 place further on, the primitive answers the text's end going forward and 0
 going back, and answers it again from there. -/
-def repeating (name : String) (step : Motion) : Vocabulary.Motion :=
+def repeating (name : String) (step : Motion) (reach : Vocabulary.Reach := .exclusive) :
+    Vocabulary.Motion :=
   { name
+    reach
     target := fun text origin =>
       return { head := ← stepped text step (origin.count.getD 1) (fun _ => false) origin.head } }
+
+/-- The motion called `name` to the start of the word of `kind` before,
+`count` times, 1 with no count, and no further than the text's start. It
+has failed, as Vim's does, when a step is asked of it at the text's start:
+when it starts there, and when it has come to rest on an empty first line
+with steps left over. Come to rest at the start of a first line that has
+content, it has not. -/
+def backward (name : String) (kind : WordKind) : Vocabulary.Motion :=
+  { name
+    target := fun text origin => do
+      let mut head := origin.head
+      let mut failed := false
+      for _ in [0:origin.count.getD 1] do
+        if head == 0 then
+          failed := origin.head == 0 || (← text.byteLength) > 0 && (← text.motion .lineEnd 0) == 0
+          break
+        head ← text.motion (.previousWordStart kind) head
+      return { head, failed } }
 
 /-- To the start of the next word. -/
 def wordForward : Vocabulary.Motion :=
@@ -115,11 +135,11 @@ def wordForward : Vocabulary.Motion :=
 
 /-- To the start of the word before. -/
 def wordBackward : Vocabulary.Motion :=
-  repeating "word-backward" (.previousWordStart .word)
+  backward "word-backward" .word
 
-/-- To the end of the next word. -/
+/-- To the end of the next word. An operator takes that end's cell. -/
 def wordEnd : Vocabulary.Motion :=
-  repeating "word-end" (.nextWordEnd .word)
+  repeating "word-end" (.nextWordEnd .word) .inclusive
 
 /-- To the start of the next WORD. -/
 def bigwordForward : Vocabulary.Motion :=
@@ -127,11 +147,11 @@ def bigwordForward : Vocabulary.Motion :=
 
 /-- To the start of the WORD before. -/
 def bigwordBackward : Vocabulary.Motion :=
-  repeating "bigword-backward" (.previousWordStart .bigWord)
+  backward "bigword-backward" .bigWord
 
-/-- To the end of the next WORD. -/
+/-- To the end of the next WORD. An operator takes that end's cell. -/
 def bigwordEnd : Vocabulary.Motion :=
-  repeating "bigword-end" (.nextWordEnd .bigWord)
+  repeating "bigword-end" (.nextWordEnd .bigWord) .inclusive
 
 /-- The last line of `text`, as a row: the last row a cursor may rest in
 outside insert state. A text that ends in a line feed has an empty last row

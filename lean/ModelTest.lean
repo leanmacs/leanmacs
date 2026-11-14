@@ -14342,10 +14342,76 @@ def lineEndRows : List OperatorRow :=
     .inserts bareEndText "c $" "ab cd\n  ef g|" (charwise "h"),
     .rests bareEndText "y $" "ab cd\n  ef g|h" (charwise "h")]
 
+/-- The oracle table's rows for the three operators over `e`, `E`, `b` and
+`B`, in its five situations. A motion to a word's end takes that end's
+cell. A backward motion that stops at a line's start, from another line,
+stops where the line before ends. -/
+def wordEndBackRows : List OperatorRow :=
+  [.rests plainText "d b" "ab\ncd\n  |gh.ij kl\nmn\nop\n" (charwise "ef "),
+    .inserts plainText "c b" "ab\ncd\n  |gh.ij kl\nmn\nop\n" (charwise "ef "),
+    .rests plainText "y b" "ab\ncd\n  |ef gh.ij kl\nmn\nop\n" (charwise "ef "),
+    .rests plainText "d e" "ab\ncd\n  ef |.ij kl\nmn\nop\n" (charwise "gh"),
+    .inserts plainText "c e" "ab\ncd\n  ef |.ij kl\nmn\nop\n" (charwise "gh"),
+    .rests plainText "y e" "ab\ncd\n  ef |gh.ij kl\nmn\nop\n" (charwise "gh"),
+    .rests plainText "d B" "ab\ncd\n  |gh.ij kl\nmn\nop\n" (charwise "ef "),
+    .inserts plainText "c B" "ab\ncd\n  |gh.ij kl\nmn\nop\n" (charwise "ef "),
+    .rests plainText "y B" "ab\ncd\n  |ef gh.ij kl\nmn\nop\n" (charwise "ef "),
+    .rests plainText "d E" "ab\ncd\n  ef | kl\nmn\nop\n" (charwise "gh.ij"),
+    .inserts plainText "c E" "ab\ncd\n  ef | kl\nmn\nop\n" (charwise "gh.ij"),
+    .rests plainText "y E" "ab\ncd\n  ef |gh.ij kl\nmn\nop\n" (charwise "gh.ij"),
+    .rests plainText "d 2 b" "ab\n|gh.ij kl\nmn\nop\n" (charwise "cd\n  ef "),
+    .inserts plainText "c 2 b" "ab\n|gh.ij kl\nmn\nop\n" (charwise "cd\n  ef "),
+    .rests plainText "y 2 b" "ab\n|cd\n  ef gh.ij kl\nmn\nop\n" (charwise "cd\n  ef "),
+    .rests plainText "d 2 e" "ab\ncd\n  ef |ij kl\nmn\nop\n" (charwise "gh."),
+    .inserts plainText "c 2 e" "ab\ncd\n  ef |ij kl\nmn\nop\n" (charwise "gh."),
+    .rests plainText "y 2 e" "ab\ncd\n  ef |gh.ij kl\nmn\nop\n" (charwise "gh."),
+    .rests plainText "d 2 B" "ab\n|gh.ij kl\nmn\nop\n" (charwise "cd\n  ef "),
+    .inserts plainText "c 2 B" "ab\n|gh.ij kl\nmn\nop\n" (charwise "cd\n  ef "),
+    .rests plainText "y 2 B" "ab\n|cd\n  ef gh.ij kl\nmn\nop\n" (charwise "cd\n  ef "),
+    .rests plainText "d 2 E" "ab\ncd\n  ef| \nmn\nop\n" (charwise "gh.ij kl"),
+    .inserts plainText "c 2 E" "ab\ncd\n  ef |\nmn\nop\n" (charwise "gh.ij kl"),
+    .rests plainText "y 2 E" "ab\ncd\n  ef |gh.ij kl\nmn\nop\n" (charwise "gh.ij kl"),
+    .rests emptyLineText "d b" "ab| \n\n  ef gh\n" (charwise "cd"),
+    .inserts emptyLineText "c b" "ab |\n\n  ef gh\n" (charwise "cd"),
+    .rests emptyLineText "y b" "ab |cd\n\n  ef gh\n" (charwise "cd"),
+    .rests emptyLineText "d e" "ab cd\n| gh\n" (charwise "\n  ef"),
+    .inserts emptyLineText "c e" "ab cd\n| gh\n" (charwise "\n  ef"),
+    .rests emptyLineText "y e" "ab cd\n|\n  ef gh\n" (charwise "\n  ef"),
+    .rests emptyLineText "d B" "ab| \n\n  ef gh\n" (charwise "cd"),
+    .inserts emptyLineText "c B" "ab |\n\n  ef gh\n" (charwise "cd"),
+    .rests emptyLineText "y B" "ab |cd\n\n  ef gh\n" (charwise "cd"),
+    .rests emptyLineText "d E" "ab cd\n| gh\n" (charwise "\n  ef"),
+    .inserts emptyLineText "c E" "ab cd\n| gh\n" (charwise "\n  ef"),
+    .rests emptyLineText "y E" "ab cd\n|\n  ef gh\n" (charwise "\n  ef"),
+    .rests endText "d b" "ab cd\n  ef |h\n" (charwise "g"),
+    .inserts endText "c b" "ab cd\n  ef |h\n" (charwise "g"),
+    .rests endText "y b" "ab cd\n  ef |gh\n" (charwise "g"),
+    .rests endText "d e" "ab cd\n  ef |g\n" (charwise "h"),
+    .inserts endText "c e" "ab cd\n  ef g|\n" (charwise "h"),
+    .rests endText "y e" "ab cd\n  ef g|h\n" (charwise "h"),
+    .rests endText "d B" "ab cd\n  ef |h\n" (charwise "g"),
+    .inserts endText "c B" "ab cd\n  ef |h\n" (charwise "g"),
+    .rests endText "y B" "ab cd\n  ef |gh\n" (charwise "g"),
+    .rests endText "d E" "ab cd\n  ef |g\n" (charwise "h"),
+    .inserts endText "c E" "ab cd\n  ef g|\n" (charwise "h"),
+    .rests endText "y E" "ab cd\n  ef g|h\n" (charwise "h"),
+    .rests bareEndText "d b" "ab cd\n  ef |h" (charwise "g"),
+    .inserts bareEndText "c b" "ab cd\n  ef |h" (charwise "g"),
+    .rests bareEndText "y b" "ab cd\n  ef |gh" (charwise "g"),
+    .rests bareEndText "d e" "ab cd\n  ef |g" (charwise "h"),
+    .inserts bareEndText "c e" "ab cd\n  ef g|" (charwise "h"),
+    .rests bareEndText "y e" "ab cd\n  ef g|h" (charwise "h"),
+    .rests bareEndText "d B" "ab cd\n  ef |h" (charwise "g"),
+    .inserts bareEndText "c B" "ab cd\n  ef |h" (charwise "g"),
+    .rests bareEndText "y B" "ab cd\n  ef |gh" (charwise "g"),
+    .rests bareEndText "d E" "ab cd\n  ef |g" (charwise "h"),
+    .inserts bareEndText "c E" "ab cd\n  ef g|" (charwise "h"),
+    .rests bareEndText "y E" "ab cd\n  ef g|h" (charwise "h")]
+
 /-- The rows of the operator × motion table, in the order the motions were
 built. -/
 def operatorTable : List OperatorRow :=
-  deleteAlongRows ++ yankChangeAlongRows ++ lineEndRows
+  deleteAlongRows ++ yankChangeAlongRows ++ lineEndRows ++ wordEndBackRows
 
 /-- Whether `left` is what a command that gave up with `reason` leaves: the
 text and the cursor `shown`, the register as it was, the view not in insert
@@ -14401,6 +14467,25 @@ def evilOperatorChecks : List Check :=
         return held &&
             evilGaveUp (evilEdited "ab\n|cd" "d 2 $") "ab\n|cd"
               (Evil.cannotMove Evil.lineEnd.name) },
+    { name :=
+        "e and b under an operator: d e on a text's last character takes it, and d 2 e takes through the second word's end; a backward motion that stops at a line's start takes the whole line before when it starts at or before its own line's first non-blank, with d, y and c, and otherwise stops where the line before ends; d 3 b with one word before the cursor takes it; at the text's start b fails and the operator gives up"
+      run := do
+        let held ←
+          operatorRows
+              [.rests "ab|c\n" "d e" "a|b\n" (charwise "c"),
+                .rests "a|b c" "d 2 e" "|a" (charwise "b c"),
+                .rests "foo\n|bar" "d b" "|bar" (linewise "foo\n"),
+                .rests "foo\n|bar" "y b" "|foo\nbar" (linewise "foo\n"),
+                .inserts "foo\n|bar" "c b" "|\nbar" (linewise "foo\n"),
+                .rests "abc foo\n|bar" "d b" "abc| \nbar" (charwise "foo"),
+                .rests "foo\n  |bar" "d b" "|bar" (charwise "foo\n  "),
+                .rests "ab |cd" "d 3 b" "|cd" (charwise "ab "), .givesUp "|abc" "d b",
+                .givesUp "|abc" "c b", .givesUp "|abc" "y B", .givesUp "|" "d b"]
+        return held &&
+            evilGaveUp (evilEdited "|abc" "d b") "|abc" (Evil.cannotMove Evil.wordBackward.name) },
+    { name :=
+        "a departure from Vim, recorded: when b with a count comes to rest on an empty first line with steps left over, the motion fails and the operator gives up, and the cursor stays where it was, where Vim leaves it on the empty line; the text, the register and the state are Vim's"
+      run := operatorRows [.givesUp "\nab |cd" "d 3 b", .givesUp "\nab |cd" "c 3 B"] },
     { name :=
         "a change and the text typed after it are one step of the history: c l deletes the cell and leaves its group open, the typed text joins it, <Escape> closes it as one node, and one undo request gives the text from before the change"
       run :=
