@@ -250,6 +250,18 @@ def rested (rest : Rest) (text : TextId) (offset : Nat) : TextM Nat := do
   else
     return cell
 
+/-- One range of the shape the call's report says, with both ends at
+`offset`: the cursor a command's edit carries as the one it leaves, before
+it is rested. -/
+def cursorAt (call : Call) (offset : Nat) : Selection :=
+  { ranges := #[⟨offset, offset⟩], shape := call.report.shape }
+
+/-- Leaves the selection of the call's window as one range of the shape the
+call's report says, with both ends where a head at `offset` rests under the
+report's rule: where a command that edits leaves its cursor. -/
+def settle (call : Call) (offset : Nat) : TextM Unit := do
+  call.target.select (cursorAt call (← rested (restOf call.report) call.target.buffer.text offset))
+
 /-- What the move command says in the echo area for a name the vocabulary
 has no motion of. -/
 def noSuchMotion (name : String) : String :=

@@ -191,17 +191,6 @@ def stretch (operator : Vocabulary.Operator) (text : TextId) (head : Nat)
       return .lines first last
   return .cells ⟨start, stop⟩ taken.reach
 
-/-- One range of the shape the call's report says, with both ends at
-`offset`: the cursor an operator's edit carries as the one it leaves. -/
-def cursorAt (call : Call) (offset : Nat) : Selection :=
-  { ranges := #[⟨offset, offset⟩], shape := call.report.shape }
-
-/-- Leaves the selection of the call's window as one range of the shape the
-call's report says, with both ends where a head at `offset` rests under the
-report's rule. -/
-def settle (call : Call) (offset : Nat) : TextM Unit := do
-  call.target.select (cursorAt call (← rested (restOf call.report) call.target.buffer.text offset))
-
 /-- Whole lines of a text, as offsets. -/
 structure Lines where
   /-- Where the first line starts. -/

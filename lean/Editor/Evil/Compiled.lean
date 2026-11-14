@@ -24,6 +24,7 @@ they hold when config fails to load, and a reload does not replace them.
   | `self-insert` (`Vim.selfInsertCommand`) | `Evil.selfInsert`: typed text, in insert state and in the minibuffer |
   | `operate` (`Vim.operateCommand`) | `Evil.operate` over the compiled vocabulary, `Evil.operators` and `Evil.motions` (`Editor/Evil/Operators.lean`) |
   | `delete-char` | `Evil.deleteChar`: the cell under the cursor, which is the operator `delete` over the motion `right` |
+  | `put-after`, `put-before` | `Evil.putAfter`, `Evil.putBefore`: the register the call names, after and before the cursor (`Editor/Evil/Registers.lean`) |
 
   The seven of the second and third rows enter a state only when a key
   that enters it runs them: the scheme enters the state, at the key, and
@@ -57,6 +58,8 @@ def commands : Array Config.Registration :=
     { name := "append-line-end", action := .call appendLineEnd },
     { name := Vim.selfInsertCommand, action := .call selfInsert },
     { name := Vim.operateCommand, action := .call (operate operators motions) },
-    { name := "delete-char", action := .call deleteChar }]
+    { name := "delete-char", action := .call deleteChar },
+    { name := "put-after", action := .call putAfter },
+    { name := "put-before", action := .call putBefore }]
 
 end Editor.Evil

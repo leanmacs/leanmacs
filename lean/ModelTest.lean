@@ -14990,7 +14990,70 @@ def evilRegisterChecks : List Check :=
       run :=
         pure <|
           evilClipped "|abc" "\" + y h" { held := some "before" } ==
-            some (⟨"|abc", charwise "", false, ""⟩, some "before") }]
+            some (⟨"|abc", charwise "", false, ""⟩, some "before") },
+    { name :=
+        "p and P put a character-wise register after and before the cursor's cell, count times, and leave the cursor on the last cell put, or on the first when the text holds a line break; on an empty line p puts at the cursor"
+      run :=
+        operatorRows
+          [.rests "foo |bar baz" "y w p" "foo bbar| ar baz" (charwise "bar "),
+            .rests "foo |bar baz" "y w P" "foo bar| bar baz" (charwise "bar "),
+            .rests "|ab cd" "y w 2 p" "aab ab| b cd" (charwise "ab "),
+            .rests "|ab cd\n\nef" "y w j p" "ab cd\nab| \nef" (charwise "ab "),
+            .rests "|ab" "x p" "b|a" (charwise "a"),
+            .rests "a|bc\ndef\nghi" "v j y p" "ab|bc\ndec\ndef\nghi" (charwise "bc\nde"),
+            .rests "a|bc\ndef\nghi" "v j y P" "a|bc\ndebc\ndef\nghi" (charwise "bc\nde")] },
+    { name :=
+        "p and P put a line-wise register below and above the cursor's line, count times, and leave the cursor on the first non-blank of the first line put; below a last line with no line break the line break goes before the lines and their last one is left out"
+      run :=
+        operatorRows
+          [.rests "ab\nc|d\nef" "y y p" "ab\ncd\n|cd\nef" (linewise "cd\n"),
+            .rests "ab\nc|d\nef" "y y P" "ab\n|cd\ncd\nef" (linewise "cd\n"),
+            .rests "ab\nc|d\nef" "y y 2 p" "ab\ncd\n|cd\ncd\nef" (linewise "cd\n"),
+            .rests "ab\n  c|d\nef" "y y j p" "ab\n  cd\nef\n  |cd" (linewise "  cd\n"),
+            .rests "ab\nc|d" "y y p" "ab\ncd\n|cd" (linewise "cd\n"),
+            .rests "a|b\n" "y y p" "ab\n|ab\n" (linewise "ab\n"),
+            .rests "|ab\ncd" "d d p" "cd\n|ab" (linewise "ab\n"),
+            .rests "ab\n|cd" "d d P" "|cd\nab" (linewise "cd\n"),
+            .rests "a|b" "y y 2 p" "ab\n|ab\nab" (linewise "ab\n")] },
+    { name :=
+        "a put from the clipboard register inserts what the clipboard model holds, character-wise for a text with no final line feed and line-wise for one that ends in one, and leaves the unnamed register as it was"
+      run :=
+        pure <|
+          evilClipped "a|b" "\" + p" { held := some "XY" } ==
+              some (⟨"abX|Y", asItWas, false, ""⟩, some "XY") &&
+            evilClipped "a|b" "\" + P" { held := some "XY" } ==
+              some (⟨"aX|Yb", asItWas, false, ""⟩, some "XY") &&
+            evilClipped "a|b" "\" + p" { held := some "cd\n" } ==
+              some (⟨"ab\n|cd", asItWas, false, ""⟩, some "cd\n") &&
+            evilClipped "a|b\n" "\" + P" { held := some "  cd\n" } ==
+              some (⟨"  |cd\nab\n", asItWas, false, ""⟩, some "  cd\n") },
+    { name :=
+        "a put with nothing to put gives up, with the sentence its function makes, and changes nothing: an unnamed register nothing was set in, one that holds the empty text, a clipboard that holds no text, and one that is not available; and a register evil has none of"
+      run :=
+        pure <|
+          let unset :=
+            (evilDriver "a|b").map fun driver =>
+              let put := evilFed driver "p"
+              (evilShown put, put.loop.state.echo.endsWith Evil.nothingToPut, evilHistory put)
+          let emptied :=
+            (evilEdited "|ab" "y h p").map fun left =>
+              (left.shown, left.echo.endsWith Evil.nothingToPut)
+          !Evil.nothingToPut.isEmpty && unset == some ("a|b", true, some (1, false)) &&
+            emptied == some ("|ab", true) &&
+            evilGaveUp ((evilClipped "a|b" "\" + p").map (·.1)) "a|b" Evil.nothingToPut &&
+            evilGaveUp ((evilClipped "a|b" "\" + P" { available := false }).map (·.1)) "a|b"
+              Evil.clipboardUnavailable &&
+            evilGaveUp (evilEdited "a|b" "\" a p") "a|b" (Evil.noRegister "a") },
+    { name :=
+        "a put is one step of the history: after y w p the buffer's tree has one node more and nothing pending, and one undo request gives the text from before the put"
+      run :=
+        pure <|
+          match evilDriver "|ab cd" with
+          | none => false
+          | some driver =>
+            let put := evilFed driver "y w p"
+            evilHistory put == some (2, false) && evilText put == some "aab b cd" &&
+              evilText (evilUndone put) == some "ab cd" }]
 
 /-- Every check, in the order they run.
 
