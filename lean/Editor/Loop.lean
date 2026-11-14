@@ -82,8 +82,11 @@ command's name and plain arguments, and the loop runs it (`Loop.run`):
    writes no log itself: the host does, with what the step hands back.
 8. **The jobs the command asked for are handed back** with the step
    (`Loop.Stepped.starts`), for the host to start ("Jobs from commands").
-9. **The step says how the command ended** (`Loop.Stepped.ended`, a
-   `Loop.Ending`), for a host that prints it.
+9. **The prompts the command accepted are handed back** with the step
+   (`Loop.Stepped.answered`), each as the invocation to run with its
+   answer, for the host to run before its next event ("Prompts").
+10. **The step says how the command ended** (`Loop.Stepped.ended`, a
+    `Loop.Ending`), for a host that prints it.
 
 A call into a config command is not guarded against the interpreter: an
 exception thrown by interpreted code ends the process
@@ -99,11 +102,14 @@ rolled back if it does not run to its end; what it gave up is given up, its
 jobs are handed back, and a scene is published after it.
 
 - **A key's invocation** (`Loop.key`, above).
-- **A command run by its name** (`Loop.runNamed`), for a host's driver. It
-  is an invocation with no arguments and no keys: the echo area is cleared,
-  the name is looked up, and the command is called with the focused window.
-  The scheme's states are left as they are but for a view the command
-  closed: no key was typed.
+- **An invocation no key yielded** (`Loop.invoke`): the echo area is
+  cleared, the name is looked up, and the command is called with the
+  focused window, the invocation's arguments and no keys. The scheme's
+  states are left as they are but for a view the command closed: no key
+  was typed. Two things are run this way: a command run by its name
+  (`Loop.runNamed`), for a host's driver, which is an invocation with no
+  arguments; and the continuation of a prompt that was accepted
+  ("Prompts").
 - **A command the loop is handed** (`Loop.deliver`), with a label for it: a
   finished job's command, which is no invocation. The echo area is **not**
   cleared, because a result that arrives in the background should not wipe
@@ -138,6 +144,45 @@ holds no job table.
   ended with until a test says the job is finished.
 
 Pinned by `ModelTest.driverChecks`.
+
+## Prompts
+
+A command asks for a string and does not wait for it (`prompt`,
+`Editor/Api.lean`): it names the command that receives the answer, as an
+invocation, and runs to its end (`docs/design/concurrency.md`, "Prompts").
+The open prompt is editor state (`Editor/State.lean`, "Prompts"), so the
+loop has little of its own to do.
+
+- **An answer is kept in the state** until the accepting command ends
+  (`EditorState.answered`): the prompt's continuation with the answer as
+  its first argument, recorded by the request that closed the prompt.
+  After a command that ran to its end the loop takes the answers out of
+  the state and hands them back with the step (`Loop.Stepped.answered`),
+  as it does the jobs to start. A command that did not run to its end
+  answers nothing: its answers go with the state it left.
+- **The host runs each answered invocation with `Loop.invoke`, with keys
+  made anew, before it pulls another event**, and takes that step in as it
+  takes any step in: its write, its log, its jobs, and the answers it
+  hands back in turn. So a key typed after the accept key is handled after
+  the answer's command. Every host must do this; `Loop.Driver` does on
+  the models and the headless host against the library.
+- **Why the host and not this step.** The host holds the cells of the
+  stores, and a command over a store is made over the cell as it is when
+  the command is looked up. Run inside the accepting command's step, the
+  answer's command would be looked up before that step's write was
+  written back. As a step of its own it is like every other command: one
+  rollback, one scene, one log entry, one ending.
+- **Rollback needs no rule of its own.** A command that asks and then
+  fails is rolled back to a state with no prompt; one that fails while a
+  prompt is open, an accept among them, to a state in which it is open,
+  with the minibuffer's history and markers kept and restored like any
+  buffer's and window's; and an answer's command that fails to the state
+  after the accept, with the prompt closed.
+- **The minibuffer is given up by the rules that exist** ("What a finished
+  command gave up"): the closing command removed its window and emptied
+  its buffer's slot.
+
+Pinned by `ModelTest.promptChecks`.
 
 **The scheme after a command that failed.** The loop keeps two states of
 the scheme: the one after the last key (`Loop.input`), and the last one at
@@ -518,6 +563,12 @@ structure Loop.Stepped (scheme : InputScheme) where
   asked, for the host to start. None for a step that ran no command, and
   for one whose command did not run to its end. -/
   starts : Array JobStart := #[]
+  /-- The continuations of the prompts the command the step ran accepted,
+  each with its answer as its first argument, in order: invocations for the
+  host to run, each as a step of its own (`Loop.invoke`), before it pulls
+  another event. None for a step that ran no command, and for one whose
+  command did not run to its end. -/
+  answered : Array Invocation := #[]
   /-- How the command the step ran ended; `none` for a step that ran no
   command. -/
   ended : Option Loop.Ending := none
@@ -870,6 +921,9 @@ structure Ran where
   log : Array String := #[]
   /-- The jobs the command asked to be started, when it ran to its end. -/
   starts : Array JobStart := #[]
+  /-- The continuations of the prompts the command accepted, each with its
+  answer, when it ran to its end. -/
+  answered : Array Invocation := #[]
 
 /-- Whether the command ran to its end. -/
 def Ran.finished (ran : Ran) : Bool :=
@@ -917,12 +971,15 @@ def dispatch (keys : Keys scheme) (state : EditorState) (name : String)
   | .finished write =>
     let ungiven ← gaveUp state left
     return {
-        state := { left.refusedBy ungiven with starts := #[] }
+        state :=
+          { left.refusedBy ungiven with
+            starts := #[], answered := #[] }
         ending := .finished
         closed := closedViews state left
         write
         log
-        starts := left.starts }
+        starts := left.starts
+        answered := left.answered }
   | .refused refusal =>
     failed s!"refused: {refusal.describe}" (.refused refusal)
   | .interrupted =>
@@ -958,6 +1015,7 @@ def ranInto (loop : Loop scheme) (ran : Ran) : Stepped scheme :=
     write := ran.write
     log := ran.log
     starts := ran.starts
+    answered := ran.answered
     ended := some ran.ending }
 
 /-- One key through the scheme, for the focused view, and the invocation it

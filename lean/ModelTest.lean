@@ -112,6 +112,12 @@ editor's models and the job model (`Editor/Loop/Driver.lean`):
   comes back as a command, events fed meanwhile are handled first, a job
   reads a snapshot its command took, and a job's command is handed what its
   own job loaded;
+- `promptChecks`: prompts on that driver, with commands written here under
+  keys of the global keymap: an accepted prompt's answer is handed back
+  with the step, and the answer's command runs before the next event, with
+  the asking view as its target; a continuation with no command, one that
+  is refused and one that asks again; and rollback and the interrupt around
+  an open prompt;
 - `fileCommandChecks`: the file commands (`Editor/Files.lean`) on that
   driver, over the model of files (`Editor/File/Model.lean`), with keys
   bound to the commands and jobs registered as the test says: opening a
@@ -9296,6 +9302,253 @@ def driverChecks : List Check :=
               delivered.isNone &&
               finished.model.texts.contents == #[""] }]
 
+/-- What the command `greet` of the prompt checks says in the echo area: the
+arguments it was called with, the view of its target, and how many keys it
+was told of. -/
+def greeted (arguments : List Argument) (view : Nat := 0) (keys : Nat := 0) : String :=
+  s!"greet {arguments.map argumentText} in view {view} with {keys} keys"
+
+/-- The commands of the prompt checks, by name.
+
+- `ask` asks `Name: ` with the continuation `asked`, the command `greet`
+  and the argument 7, and says the refusal when it is refused. `ask-missing`,
+  `ask-boom`, `ask-again` and `ask-job` ask the same with the continuations
+  `nobody`, which no command is registered under, `boom`, `ask` and `start`.
+  `ask-then-fail` asks and is then refused.
+- `accept` and `cancel` are the API's operations.
+- `greet` says what it was called with (`greeted`).
+- The test scheme's self-insert inserts its argument at its target's
+  cursors.
+- `boom` inserts and is then refused, `other` says `other`, and `start`
+  starts the job `double`. -/
+def promptCommands : List (String × Dispatched) :=
+  let asks (continuation : Invocation) : Dispatched := fun _ => do
+    if let .error refusal← prompt "Name: " continuation then
+      message s!"not asked: {refusal.describe}"
+    return none
+  let says (text : String) : Dispatched := fun _ => do
+    message text
+    return none
+  [("ask", asks asked), ("ask-missing", asks { command := "nobody" }),
+    ("ask-boom", asks { command := "boom" }), ("ask-again", asks { command := "ask" }),
+    ("ask-job", asks { command := "start" }),
+    ("ask-then-fail", failingAfter fun _ => discard <| prompt "Name: " asked),
+    ("accept", fun _ => do
+      discard acceptPrompt
+      return none),
+    ("cancel", fun _ => do
+      discard cancelPrompt
+      return none),
+    ("greet", fun call =>
+      says (greeted call.arguments call.target.window.id.index call.keys.length) call),
+    ((TestScheme.selfInsert "").command, fun call => do
+      let [.str text] := call.arguments | throw .badRange
+      call.target.insertAtSelections text
+      return none),
+    ("boom", boom), ("other", says "other"),
+    ("start", fun _ => do
+      discard <| startJob "double" [.nat 21]
+      return none)]
+
+/-- What a step of the prompt checks is handed: one keymap, the same for
+every view, the minibuffer's among them, that binds a key sequence under
+`C-c` to each command of `promptCommands` but the self-insert, `greet` and
+`start`, which no key runs. No key of it prints, so a key that prints is a
+self-insert. -/
+def promptKeys : Loop.Keys TestScheme.scheme :=
+  dispatchKeys
+    [("C-c a", invoke "ask"), ("C-c m", invoke "ask-missing"), ("C-c x", invoke "ask-boom"),
+      ("C-c r", invoke "ask-again"), ("C-c j", invoke "ask-job"), ("C-c f", invoke "ask-then-fail"),
+      ("C-c y", invoke "accept"), ("C-c n", invoke "cancel"), ("C-c b", invoke "boom"),
+      ("C-c o", invoke "other")]
+    promptCommands
+
+/-- A driver over the initial state, with the commands of the prompt checks
+and the jobs of the driver checks; `none` if making the state was
+refused. -/
+def promptDriver : Option TestDriver :=
+  (Loop.Driver.over promptKeys driverJobs (EditorState.initial ⟨640, 480⟩) editorModel).toOption
+
+/-- What the minibuffer holds in `driver`'s text model, while a prompt is
+open. -/
+def minibufferText (driver : TestDriver) : Option String := do
+  let state := driver.loop.state
+  let buffer ← state.buffer? (← state.minibufferBuffer?)
+  (← driver.model.texts.texts[buffer.text.index]?).map (·.contents)
+
+/-- The echo area of `driver`'s loop. -/
+def promptEcho (driver : TestDriver) : String :=
+  driver.loop.state.echo
+
+/-- The checks of prompts through the loop and its host (`Editor/Loop.lean`,
+`Editor/Loop/Driver.lean`), on the loop's driver over the editor's models
+and the test scheme, with commands written here under keys of the global
+keymap: the answer a step hands back, the answer's command run before the
+next event, and rollback and the interrupt around an open prompt. -/
+def promptChecks : List Check :=
+  let answer (text : String) : List Argument := [.str text, .nat 7]
+  let closed (driver : TestDriver) : Bool :=
+    let state := driver.loop.state
+    state.prompt == none && state.windows.map (·.id) == #[⟨0⟩] && state.frame.focused == ⟨0⟩ &&
+      state.answered.isEmpty &&
+      state.wellFormed
+  [{  name :=
+        "ask, then accept: the accepting step hands back one answered invocation, the continuation with the answer first, and the answer's command has then run with those arguments, the asking view as its target and no keys; the loop's state keeps no answer, and the scene after it has one view"
+      run :=
+        pure <|
+          match promptDriver with
+          | none => false
+          | some driver =>
+            let (asking, _) := fedTo driver (presses "C-c a")
+            let (accepted, steps) := fedTo asking (presses "C-c y")
+            asking.loop.state.prompt.map (·.continuation) == some asked &&
+              asking.loop.state.frame.focused == ⟨1⟩ &&
+              steps.map (·.map (·.answered)) ==
+                #[some #[], some #[{ command := "greet", arguments := answer "" }]] &&
+              promptEcho accepted == greeted (answer "") &&
+              closed accepted &&
+              accepted.model.display.scenes.size == asking.model.display.scenes.size + 3 &&
+              (accepted.model.display.scenes.back?.map fun scene =>
+                  (scene.views.map (·.id), scene.echo)) ==
+                some (#[⟨0⟩], greeted (answer "")) },
+    { name :=
+        "ask, two keys that print, then accept: the keys are typed into the minibuffer and not into the asking window, and the answer's command receives the two characters, in order"
+      run :=
+        pure <|
+          match promptDriver with
+          | none => false
+          | some driver =>
+            let (typed, _) := fedTo driver (presses "C-c a h i")
+            let (accepted, _) := fedTo typed (presses "C-c y")
+            minibufferText typed == some "hi" && driverText typed == some "" &&
+              promptEcho accepted == greeted (answer "hi") &&
+              closed accepted &&
+              driverText accepted == some "" },
+    { name :=
+        "ask, accept, then a key bound to another command: the answer's command ran before that key was handled, and the echo area is then the other command's"
+      run :=
+        pure <|
+          match promptDriver with
+          | none => false
+          | some driver =>
+            let (asking, _) := fedTo driver (presses "C-c a")
+            let (after, _) := fedTo asking (presses "C-c y C-c o")
+            (after.model.display.scenes.map (·.echo)).extract asking.model.display.scenes.size ==
+                #["", "", greeted (answer ""), greeted (answer ""), "other"] &&
+              promptEcho after == "other" },
+    { name :=
+        "a continuation no command is registered under: the echo area says there is no such command, by the continuation's name, and the prompt is closed with the focus on the asking view"
+      run :=
+        pure <|
+          match promptDriver with
+          | none => false
+          | some driver =>
+            let (accepted, _) := fedTo driver (presses "C-c m C-c y")
+            promptEcho accepted == "nobody: no such command" && closed accepted },
+    { name :=
+        "a continuation that is refused after an edit: the echo area says the refusal under the continuation's name, the edit is rolled back, the prompt stays closed, and nothing is answered again"
+      run :=
+        pure <|
+          match promptDriver with
+          | none => false
+          | some driver =>
+            let (accepted, steps) := fedTo driver (presses "C-c x C-c y")
+            promptEcho accepted == "boom: refused: bad range" && driverText accepted == some "" &&
+              closed accepted &&
+              (steps.back?.join.map (·.answered.map (·.command))) == some #["boom"] },
+    { name :=
+        "a command that asks and is then refused opens no prompt: there is one window, with the focus, and the echo area says the refusal under the command's name"
+      run :=
+        pure <|
+          match promptDriver with
+          | none => false
+          | some driver =>
+            let (failed, _) := fedTo driver (presses "C-c f")
+            promptEcho failed == "ask-then-fail: refused: bad range" && closed failed },
+    { name :=
+        "a command that fails in the minibuffer while a prompt is open is rolled back with the prompt open: its edit is taken back, and the minibuffer holds what was typed"
+      run :=
+        pure <|
+          match promptDriver with
+          | none => false
+          | some driver =>
+            let (typed, _) := fedTo driver (presses "C-c a h i")
+            let (failed, _) := fedTo typed (presses "C-c b")
+            promptEcho failed == "boom: refused: bad range" &&
+              failed.loop.state.prompt == typed.loop.state.prompt &&
+              failed.loop.state.prompt.isSome &&
+              failed.loop.state.frame.focused == ⟨1⟩ &&
+              minibufferText failed == some "hi" &&
+              failed.loop.state.wellFormed },
+    { name :=
+        "the interrupt key arriving as the accept command reads the minibuffer: the echo area says the command was interrupted, the prompt is open with its text, and nothing was answered; once the key is taken off the queue a second accept answers"
+      run :=
+        pure <|
+          match promptDriver with
+          | none => false
+          | some driver =>
+            let (typed, _) := fedTo driver (presses "C-c a h i")
+            -- The accept command's first request of the library is its read
+            -- of the minibuffer's text: the key arrives as the flag is asked
+            -- before it.
+            let arriving : TestDriver :=
+              { typed with model := { typed.model with watch := { arrivesAfter := some 0 } } }
+            let (stopped, steps) := fedTo arriving (presses "C-c y")
+            let (lowered, _) := stopped.feed interruptArrives
+            let (accepted, _) := fedTo lowered (presses "C-c y")
+            (steps.back?.join.map fun step => (step.ended, step.answered)) ==
+                some (some .interrupted, #[]) &&
+              promptEcho stopped == "accept: interrupted" &&
+              stopped.loop.state.prompt == typed.loop.state.prompt &&
+              stopped.loop.state.answered.isEmpty &&
+              minibufferText stopped == some "hi" &&
+              stopped.model.watch.arrived == 1 &&
+              lowered.model.watch.arrived == 0 &&
+              lowered.loop.state.prompt.isSome &&
+              promptEcho accepted == greeted (answer "hi") &&
+              closed accepted },
+    { name :=
+        "cancel makes no request of the library: with the interrupt flag up it still closes the prompt, and the continuation does not run"
+      run :=
+        pure <|
+          match promptDriver with
+          | none => false
+          | some driver =>
+            let (asking, _) := fedTo driver (presses "C-c a")
+            let raised : TestDriver :=
+              { asking with model := { asking.model with watch := { arrived := 1 } } }
+            let (cancelled, steps) := fedTo raised (presses "C-c n")
+            (steps.back?.join.map fun step => (step.ended, step.answered)) ==
+                some (some .finished, #[]) &&
+              promptEcho cancelled == "" &&
+              closed cancelled },
+    { name :=
+        "a continuation that asks again leaves a second prompt open, in a view no view had, whose asker is the first asking view"
+      run :=
+        pure <|
+          match promptDriver with
+          | none => false
+          | some driver =>
+            let (again, _) := fedTo driver (presses "C-c r C-c y")
+            again.loop.state.prompt ==
+                some { label := "Name: ", view := ⟨2⟩, asker := ⟨0⟩, continuation := asked } &&
+              again.loop.state.frame.focused == ⟨2⟩ &&
+              again.loop.state.windows.map (·.id) == #[⟨0⟩, ⟨2⟩] &&
+              promptEcho again == "" &&
+              again.loop.state.wellFormed },
+    { name :=
+        "an answer's command that starts a job has the job started: the driver holds it as started and not delivered, and its result's command runs when it is finished"
+      run :=
+        pure <|
+          match promptDriver with
+          | none => false
+          | some driver =>
+            let (accepted, _) := fedTo driver (presses "C-c j C-c y")
+            let (finished, _) := accepted.finish 1
+            accepted.pending.map (fun job => (job.id, job.name)) == #[(1, "double")] &&
+              closed accepted &&
+              driverText finished == some "[42]" }]
+
 /-- A file of three lines of which two end in CRLF and one in a line
 feed. -/
 def mostlyCrlf : ByteArray :=
@@ -10066,6 +10319,7 @@ def checks : List Check :=
     modeEnterChecks ++
     apiStateChecks ++
     driverChecks ++
+    promptChecks ++
     fileCommandChecks
 
 /-- Runs `checks` and returns the names of those that failed. A check that

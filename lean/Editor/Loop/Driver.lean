@@ -27,6 +27,13 @@ operations take it on:
   command, and nothing is delivered. The jobs a delivered command starts
   are run as a fed step's are.
 
+Each step is taken in as a host takes one in (`took`): the jobs it asked
+for are started, and each invocation it answered, the continuation of a
+prompt its command accepted, is run as a step of its own with
+`Loop.invoke` before anything else is fed, and taken in the same way
+(`Editor/Loop.lean`, "Prompts"). So an event fed after the accept key is
+handled after the answer's command.
+
 ## The rules
 
 - **The test says when a job ends.** A real job ends when its waits are
@@ -67,7 +74,8 @@ two ports are played (`Editor/File/Cases.lean`):
   feeds an event, and changes them between two events to stand for another
   program writing a file.
 
-Pinned by `ModelTest.driverChecks`.
+Pinned by `ModelTest.driverChecks`, and the answers by
+`ModelTest.promptChecks`.
 -/
 
 namespace Editor
@@ -164,18 +172,38 @@ def started (driver : Loop.Driver scheme) (starts : Array JobStart) : Loop.Drive
           next := driver.next + 1 })
     driver
 
+/-- Takes in `stepped`, a step the driver's loop took, which left the models
+as `model`, as a host does: the driver with the loop the step left, the
+jobs it asked for started, and each invocation it answered run as a step
+of its own (`Loop.invoke`), which is taken in the same way, before anything
+else is fed. An answer's step that is refused changes the models and not
+the loop.
+
+It has no termination proof: an answer's command can ask and accept again,
+for ever, which is runaway code (`docs/design/concurrency.md`, "Runaway
+code is not a design driver"). -/
+partial def took (driver : Loop.Driver scheme) (stepped : Loop.Stepped scheme)
+    (model : EditorModel) : Loop.Driver scheme :=
+  let driver :=
+    ({ driver with
+          loop := stepped.loop, model }).started
+      stepped.starts
+  stepped.answered.foldl
+    (fun driver invocation =>
+      match (driver.loop.invoke driver.handed invocation).runModel driver.model with
+      | (.ok answered, model) => driver.took answered model
+      | (.error _, model) => { driver with model })
+    driver
+
 /-- Runs `step`, a program of the loop that hands back a step, on the
-models: the driver with the loop the step left and the jobs it asked for
-started, and the step, or the refusal of a program that was refused, with
-the loop as it was. -/
+models, and takes the step in (`took`): the driver after it, and the step,
+or the refusal of a program that was refused, with the loop as it was. The
+step handed back is the program's own: the steps of the invocations it
+answered are taken in and not handed back. -/
 def stepped (driver : Loop.Driver scheme) (step : EditorM (Loop.Stepped scheme)) :
     Loop.Driver scheme × Except TextError (Loop.Stepped scheme) :=
   match step.runModel driver.model with
-  | (.ok stepped, model) =>
-    (({ driver with
-            loop := stepped.loop, model }).started
-        stepped.starts,
-      .ok stepped)
+  | (.ok stepped, model) => (driver.took stepped model, .ok stepped)
   | (.error refusal, model) => ({ driver with model }, .error refusal)
 
 /-- Takes `received` off the queue, as a host does (`Loop.take`), and starts
