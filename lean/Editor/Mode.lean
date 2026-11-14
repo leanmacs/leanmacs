@@ -29,8 +29,11 @@ scheme are made from that (`Mode.keymaps`).
   cannot choose it.
 - **`onEnter` runs when the mode becomes a buffer's major mode**, with the
   view it was set through, once (`Config.Registry.setMajorMode`, which
-  refuses with a `ModeRefusal`). It is a plain `EditorM` program, and
-  cannot write a store.
+  refuses with a `ModeRefusal`). It also runs, before the derived mode's,
+  when a mode derived from this one becomes the major mode: the registry
+  runs the on-enter of each mode of the new major mode's lineage, root
+  first. So the buffer's major mode, as it runs, may be a mode derived from
+  this one. It is a plain `EditorM` program, and cannot write a store.
 
 ## A mode's keymaps for a scheme
 
@@ -82,7 +85,9 @@ structure Mode where
   scheme's leader, and the name of the command it runs. -/
   locals : List (String × String) := []
   /-- What runs, given the view, when the mode becomes a buffer's major
-  mode. -/
+  mode, and also, before the derived mode's own, when a mode derived from
+  this one does (`Config.Registry.setMajorMode` runs the lineage's, root
+  first): the buffer's major mode may then be the derived one. -/
   onEnter : ViewId → EditorM Unit := fun _ => pure ()
 
 namespace Mode
