@@ -49,6 +49,15 @@ id is never used again (`Editor/State.lean`), so what a scheme kept for a
 closed view could never come to mean another view: the notice is so that it
 does not keep it for ever.
 
+A scheme is told when a view is opened as the minibuffer's
+(`openMinibuffer`): the state with what the scheme keeps for a view that
+typed text goes into. It defaults to the state as it was. Whoever runs the
+scheme tells it once, when a prompt opens (the command loop), and the
+notice of a closed view is what forgets it: closing the prompt closes the
+view. It is a notice for the minibuffer alone and not a general one with a
+kind of view: there is one kind of view a scheme must treat apart today.
+The notice resets nothing the scheme keeps of a sequence begun.
+
 ## What a scheme reports for modes
 
 A mode names roles and suffixes, never keys (`Editor/Role.lean`,
@@ -136,6 +145,10 @@ structure InputScheme where
   /-- The state once the view is closed: without what the scheme kept for
   that view. A scheme that keeps nothing by view leaves it as it was. -/
   closeView : ViewId → State → State := fun _ state => state
+  /-- The state once the view is opened as the minibuffer's: with what the
+  scheme keeps for a view that typed text goes into. A scheme that treats
+  no view apart leaves it as it was. -/
+  openMinibuffer : ViewId → State → State := fun _ state => state
   /-- The scheme's hand-tuned keys: each a mode's name, a key sequence as
   chords, and its binding, consulted with that mode ahead of its roles and
   suffixes. -/

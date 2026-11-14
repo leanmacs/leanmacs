@@ -5810,7 +5810,13 @@ def schemeChecks : List Check :=
       run :=
         let (pending, _) := fed ⟨0⟩ "C-x"
         let closed : TestScheme.State := TestScheme.scheme.closeView ⟨0⟩ pending
-        pure (decide (closed = pending) && TestScheme.scheme.pending closed == keys "C-x") }]
+        pure (decide (closed = pending) && TestScheme.scheme.pending closed == keys "C-x") },
+    { name :=
+        "a scheme that says nothing of the minibuffer's view keeps its state as it was: the notice defaults to changing nothing"
+      run :=
+        let (pending, _) := fed ⟨0⟩ "C-x"
+        let told : TestScheme.State := TestScheme.scheme.openMinibuffer ⟨1⟩ pending
+        pure (decide (told = pending) && TestScheme.scheme.pending told == keys "C-x") }]
 
 /-- A press of `key` with no text, as a window reports one. -/
 def press (key : Key) : Event :=
@@ -6993,6 +6999,79 @@ def dispatchCloseViewChecks : List Check :=
           ((program "C-c f").runModel editorModel).1.toOption ==
             some (([⟨0⟩, ⟨1⟩], [⟨0⟩, ⟨1⟩]), #[⟨0⟩, ⟨1⟩, ⟨2⟩]) }]
 
+/-- What `noticing` was told of a view. -/
+inductive Notice where
+  /-- The view is the minibuffer's. -/
+  | minibuffer (view : ViewId)
+  /-- The view is closed. -/
+  | closed (view : ViewId)
+  deriving DecidableEq, Repr
+
+/-- A scheme written for the minibuffer-notice checks: the test scheme, with
+what it was told kept beside its state, in the order it was told. -/
+def noticing : InputScheme :=
+  { State := TestScheme.State × List Notice
+    Binding := Invocation
+    init := ({}, [])
+    step := fun maps view state key =>
+      let (next, yielded) := TestScheme.step maps view state.1 key
+      ((next, state.2), yielded)
+    pending := (·.1.pending)
+    command := fun name => { command := name }
+    closeView := fun view state => (state.1, state.2 ++ [.closed view])
+    openMinibuffer := fun view state => (state.1, state.2 ++ [.minibuffer view]) }
+
+/-- What `noticing` was told, in a loop's two states of the scheme: the one
+after the last key, and the one at rest. -/
+def noticed (loop : Loop noticing) : List Notice × List Notice :=
+  let input : TestScheme.State × List Notice := loop.input
+  let atRest : TestScheme.State × List Notice := loop.atRest
+  (input.2, atRest.2)
+
+/-- The checks of the scheme's notice of the minibuffer's view in the loop
+(`Editor/Loop.lean`), on the editor's models. -/
+def dispatchMinibufferNoticeChecks : List Check :=
+  let asks : EditorM Unit := discard <| prompt "Name: " asked
+  let ran (run : EditorM Unit) : Dispatched := fun _ => do
+    run
+    return none
+  let keys : Loop.Keys noticing :=
+    { maps := fun _ _ =>
+        [Keymap.ofList
+            [(ModelTest.keys "C-c a", invoke "ask"), (ModelTest.keys "C-c f", invoke "fail"),
+              (ModelTest.keys "C-c y", invoke "accept"), (ModelTest.keys "C-c s", invoke "swap")]]
+      command? := fun name =>
+        ([("ask", ran asks), ("fail", failingAfter fun _ => asks),
+                  ("accept", ran (discard acceptPrompt)),
+                  ("swap",
+                    ran do
+                      discard cancelPrompt
+                      asks)].find?
+              (·.1 == name)).map
+          (·.2) }
+  let told (typed : String) : Option ((List Notice × List Notice) × Option ViewId) :=
+    let program : EditorM ((List Notice × List Notice) × Option ViewId) := do
+      let loop : Loop noticing := { state := ← EditorState.initial ⟨640, 480⟩ }
+      let (loop, _) ← stepsWith keys loop (presses typed)
+      return (noticed loop, loop.state.minibufferView?)
+    (program.runModel editorModel).1.toOption
+  let both (notices : List Notice) := (notices, notices)
+  [{  name :=
+        "after a command that asked for a prompt, the loop has told its scheme that the new view is the minibuffer's, once, in both states of the scheme it keeps"
+      run := pure (told "C-c a" == some (both [.minibuffer ⟨1⟩], some ⟨1⟩)) },
+    { name :=
+        "a command that asked for a prompt and was then refused opened nothing: the scheme is told nothing"
+      run := pure (told "C-c f" == some (both [], none)) },
+    { name :=
+        "after the command that accepted the prompt, the loop has told both states of its scheme that the minibuffer's view is closed"
+      run := pure (told "C-c a C-c y" == some (both [.minibuffer ⟨1⟩, .closed ⟨1⟩], none)) },
+    { name :=
+        "a command that closes one prompt and asks for another tells the scheme the first view is closed and then that the second is the minibuffer's"
+      run :=
+        pure
+          (told "C-c a C-c s" ==
+            some (both [.minibuffer ⟨1⟩, .closed ⟨1⟩, .minibuffer ⟨2⟩], some ⟨2⟩)) }]
+
 /-- The checks of undo from a command in the loop (`Editor/Api.lean`,
 `Editor/Loop.lean`), on the editor's models: a move in the history a key's
 command made is the loop's after the step, and a boundary set by a command
@@ -7138,6 +7217,7 @@ def dispatchChecks : List Check :=
     dispatchStateChecks ++
     dispatchGiveUpChecks ++
     dispatchCloseViewChecks ++
+    dispatchMinibufferNoticeChecks ++
     dispatchUndoChecks
 
 /-- A scheme written for the test that breaks the contract: it yields the

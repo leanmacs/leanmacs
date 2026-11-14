@@ -46,6 +46,16 @@ the loop's state holds, so a mode set by one key holds from the next.
   the state before it had a window of and the state it left has none of is
   told to both states of the scheme the loop keeps. A command that did not
   run to its end closed nothing, and the scheme is told nothing.
+- **The scheme is told when the minibuffer's view opens**
+  (`Loop.toldViews`, `InputScheme.openMinibuffer`). After a command that
+  ran to its end and left a prompt open that was not open before it
+  (`Loop.openedMinibuffer`), both states of the scheme are told that the
+  prompt's view is the minibuffer's, after they are told of the views the
+  command closed: a command that closes one prompt and asks for another
+  tells the first view closed and then the second opened. A command that
+  did not run to its end opened nothing, and the scheme is told nothing.
+  Closing the prompt closes the view, so the notice above is what forgets
+  it.
 
 ## Running an invocation
 
@@ -907,6 +917,23 @@ def closedViews (before after : EditorState) : Array ViewId :=
 def forgetViews (views : Array ViewId) (state : scheme.State) : scheme.State :=
   views.foldl (fun state view => scheme.closeView view state) state
 
+/-- The minibuffer's view a command that took `before` to `after` opened:
+the view of the prompt that is open in `after`, unless it was the open
+prompt's in `before`. -/
+def openedMinibuffer (before after : EditorState) : Option ViewId :=
+  after.minibufferView?.filter (some · != before.minibufferView?)
+
+/-- `state`, a state of the loop's scheme, once it is told of what a command
+did to the views: that each of `closed` is closed (`forgetViews`), and then
+that `opened`, if there is one, is the minibuffer's
+(`InputScheme.openMinibuffer`). -/
+def toldViews (closed : Array ViewId) (opened : Option ViewId) (state : scheme.State) :
+    scheme.State :=
+  let state := forgetViews closed state
+  match opened with
+  | some view => scheme.openMinibuffer view state
+  | none => state
+
 /-- What running a command came to. -/
 structure Ran where
   /-- The editor state after it, with what it left in the echo area. -/
@@ -915,6 +942,9 @@ structure Ran where
   ending : Ending
   /-- The views the command closed, when it ran to its end. -/
   closed : Array ViewId := #[]
+  /-- The minibuffer's view the command opened, when it ran to its end and
+  left a prompt open that was not open before it. -/
+  opened : Option ViewId := none
   /-- What the command asked to be written, when it ran to its end. -/
   write : Option Config.Write := none
   /-- The log entry of a command that took longer than the threshold. -/
@@ -976,6 +1006,7 @@ def dispatch (keys : Keys scheme) (state : EditorState) (name : String)
             starts := #[], answered := #[] }
         ending := .finished
         closed := closedViews state left
+        opened := openedMinibuffer state left
         write
         log
         starts := left.starts
@@ -1004,13 +1035,14 @@ def run (keys : Keys scheme) (state : EditorState) (invocation : Invocation) (ty
 
 /-- What a step that ran a command hands back, before its scene is
 published: `loop` with the state the command left, and the scheme's two
-states told of each view the command closed (`forgetViews`). -/
+states told of each view the command closed and of the minibuffer's view it
+opened (`toldViews`). -/
 def ranInto (loop : Loop scheme) (ran : Ran) : Stepped scheme :=
   { loop :=
       { loop with
         state := ran.state
-        input := forgetViews ran.closed loop.input
-        atRest := forgetViews ran.closed loop.atRest }
+        input := toldViews ran.closed ran.opened loop.input
+        atRest := toldViews ran.closed ran.opened loop.atRest }
     next := .continue
     write := ran.write
     log := ran.log
