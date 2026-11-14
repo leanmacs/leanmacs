@@ -2747,12 +2747,38 @@ def setup : SetupM Unit := do
       { call with arguments := [.str ((Evil.motions[0]?.map (·.name)).getD \"\")] }
 "
 
+/-- A chunk whose `setup` registers three commands that are given their
+call, over the tables the editor ships, each named by the chunk and none
+restated: `delete-word` moves to the line's start (`Evil.move`) and runs
+evil's operate command (`Evil.operate Evil.operators Evil.motions`) with
+the arguments the Vim scheme compiles `d w` to; `again` hands evil's repeat
+command (`Evil.repeat Evil.changes`) that same change, as the scheme's
+repeat key would; and `back` is evil's undo (`Evil.undo`). The names of the
+operator, the motions and the command are read off the editor's own
+entries. -/
+def operatorsChunk : String :=
+  "def deleteWord : List Argument :=
+  [.str Evil.delete.name, .str \"motion\", .str Evil.wordForward.name, .nat 0, .str \"\"]
+
+def setup : SetupM Unit := do
+  commandWith \"delete-word\" fun call => do
+    Evil.move Evil.motions { call with arguments := [.str Evil.lineStart.name] }
+    Evil.operate Evil.operators Evil.motions { call with arguments := deleteWord }
+  commandWith \"again\" fun call =>
+    Evil.repeat Evil.changes
+      { call with
+        arguments := [.bool false, .str \"\", .str Vim.operateCommand] ++ deleteWord }
+  commandWith \"back\" Evil.undo
+"
+
 /-- The checks of evil from config through the headless host
 (`Editor/Headless.lean`), on the real queue, the real text binding and the
 real elaborator, with the test scheme: what `Editor.lean` lets config name
-of evil (`Editor/Evil.lean`, `Editor/Evil/Motions.lean`). Where a motion
-leads is evil's, pinned by `ModelTest.evilMotionChecks`, and is not said
-here. -/
+of evil (`Editor/Evil.lean`, `Editor/Evil/Motions.lean`,
+`Editor/Evil/Operators.lean`, `Editor/Evil/Repeat.lean`,
+`Editor/Evil/Undo.lean`). Where a motion leads and what an operator takes
+are evil's, pinned by `ModelTest.evilMotionChecks` and
+`ModelTest.evilOperatorChecks`, and are not said here. -/
 def evilChecks (context : Context) : List Check :=
   [{  name :=
         "config names the vocabulary the editor ships and hands it to evil's move command: a command of config's that moves by a motion of config's own, added to that vocabulary, puts the cursor where that motion says, and one that moves by the name of the vocabulary's first entry runs to its end and says nothing in the echo area, so the entry was found"
@@ -2772,7 +2798,28 @@ def evilChecks (context : Context) : List Check :=
               echo == "".quote &&
               lines.contains "reload 1: installed, 1 chunks, 2 commands" &&
               lines.contains "run own: ok" &&
-              lines.contains "run first-shipped: ok" }]
+              lines.contains "run first-shipped: ok" },
+    { name :=
+        "config names the operators the editor ships and hands them, with the motions, to evil's operate command: a command of config's that runs it with the arguments of d w from the line's start deletes a word; one that hands the repeat command the same change, over the table of changes that ships, deletes the next; and one that runs evil's undo gives that word back"
+      run :=
+        withHost context [("10-operators.lean", operatorsChunk)] fun session => do
+          session.ask [.reload]
+          unless ← Event.post (.commit "one two three") do
+            return false
+          session.ask [.run "delete-word"]
+          let deleted ← session.scene
+          session.ask [.run "again"]
+          let again ← session.scene
+          session.ask [.run "back"]
+          let back ← session.scene
+          let lines ← session.lines
+          return deleted == ("".quote, #[viewLine "two three" 0]) &&
+              again == ("".quote, #[viewLine "three" 0]) &&
+              back == ("".quote, #[viewLine "two three" 0]) &&
+              lines.contains "reload 1: installed, 1 chunks, 3 commands" &&
+              lines.contains "run delete-word: ok" &&
+              lines.contains "run again: ok" &&
+              lines.contains "run back: ok" }]
 
 /-- A chunk whose `setup` registers two jobs that each load a file and whose
 handler makes a text of what was loaded: `open`, of `note.txt` in
