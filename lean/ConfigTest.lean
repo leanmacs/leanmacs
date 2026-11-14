@@ -38,6 +38,13 @@ fakes. The checks here pin what only real collaborators can show:
   has released the focused buffer's text, the line the host prints for a
   program of the loop that is refused, and a window's close request ending
   the loop;
+- `dispatchChecks`: keys through the host, with the test scheme and
+  compiled commands and bindings written here: a compiled binding runs its
+  command, a command that fails is rolled back and says so, the interrupt
+  key stops a command that loops and stops nothing when none runs, config's
+  command of a compiled command's name runs until a reload drops it, a
+  reload rebinds a key, compiled bindings run when config fails to load,
+  and a command slower than the threshold is logged, on the fake clock;
 - `fileChecks`: a job from config that loads a file through the host, over
   the library's file service, and whose handler makes a text of it. It is
   the one check whose host is over a real service, so it is the one that
@@ -318,16 +325,29 @@ structure Stage (σ : Type) where
   output : IO.Ref (Array String)
   /-- The thread that emitted each line of `output`. -/
   threads : IO.Ref (Array UInt64)
-  /-- The clock the host's jobs wait on. -/
+  /-- The clock the host's jobs wait on, and the loop times a command on. -/
   clock : Job.FakeClock
+  /-- Every entry the host has logged, oldest first. -/
+  log : IO.Ref (Array String)
 
-/-- A stage for a host over `elaborator` and `source`. Hosts follow one
-another on one queue: each gets source ids of its own, so none takes a late
-event of an earlier one for its own. -/
+/-- What compiled code hands a host: its commands, its key bindings, and how
+long a command may take before it is logged. -/
+structure Compiled where
+  /-- The compiled commands. -/
+  commands : Array Config.Registration := #[]
+  /-- The compiled key bindings. -/
+  bindings : Array Config.KeyBinding := #[]
+  /-- How long a command may take before it is logged, in milliseconds. -/
+  slowAfter : Nat := Loop.slowAfter
+
+/-- A stage for a host over `elaborator` and `source`, with what `compiled`
+hands it. Hosts follow one another on one queue: each gets source ids of its
+own, so none takes a late event of an earlier one for its own. -/
 def Stage.new {σ : Type} (context : Context) (elaborator : Config.Elaborator σ)
-    (source : Config.Source) : IO (Stage σ) := do
+    (source : Config.Source) (compiled : Compiled := {}) : IO (Stage σ) := do
   let output ← IO.mkRef #[]
   let threads ← IO.mkRef #[]
+  let log ← IO.mkRef #[]
   let completions ← Job.Completions.new
   let clock ← Job.FakeClock.new completions
   let requests ← context.ids.modifyGet fun next => (next, next + 3)
@@ -338,9 +358,10 @@ def Stage.new {σ : Type} (context : Context) (elaborator : Config.Elaborator σ
             threads.modify (·.push (← IO.getTID))
             output.modify (·.push line),
           services := { completions, timers := clock.timers }, published := ← Snapshots.new,
-          held := ← Job.HeldSnapshots.new, requests, wakeups := requests + 1,
-          jobs := requests + 2 },
-      output, threads, clock }
+          held := ← Job.HeldSnapshots.new, requests, wakeups := requests + 1, jobs := requests + 2,
+          commands := compiled.commands, bindings := compiled.bindings,
+          log := fun entry => log.modify (·.push entry), slowAfter := compiled.slowAfter },
+      output, threads, clock, log }
 
 /-- A host running for one check: the headless loop on the real queue and the
 real text binding, over a config directory the check owns. -/
@@ -355,6 +376,8 @@ structure Session where
   threads : IO.Ref (Array UInt64)
   /-- The clock the host's jobs wait on, which the check moves. -/
   clock : Job.FakeClock
+  /-- Every entry the host has logged, oldest first. -/
+  log : IO.Ref (Array String)
 
 namespace Session
 
@@ -387,11 +410,12 @@ def lines (session : Session) : IO (Array String) :=
 end Session
 
 /-- Runs `check` against a host started on a stage of its own over
-`elaborator` and `source`, and stops the host. `false` if the check did not
-hold or the host did not stop. -/
+`elaborator` and `source`, with what `compiled` hands it, and stops the
+host. `false` if the check did not hold or the host did not stop. -/
 def staged {σ : Type} (context : Context) (elaborator : Config.Elaborator σ)
-    (source : Config.Source) (check : Headless.Host → Stage σ → IO Bool) : IO Bool := do
-  let stage ← Stage.new context elaborator source
+    (source : Config.Source) (check : Headless.Host → Stage σ → IO Bool)
+    (compiled : Compiled := {}) : IO Bool := do
+  let stage ← Stage.new context elaborator source compiled
   let host ← Headless.start stage.collaborators
   try
     let held ← check host stage
@@ -414,21 +438,23 @@ real one and its source `through` the directory's: a check that controls
 elaboration or counts reads passes a decorator. The directory is removed. -/
 def withHostOver (context : Context) (files : List (String × String))
     (around : Config.Elaborator Config.Elaborate.State → Config.Elaborator Config.Elaborate.State)
-    (through : Config.Source → Config.Source) (check : Session → IO Bool) : IO Bool :=
+    (through : Config.Source → Config.Source) (check : Session → IO Bool)
+    (compiled : Compiled := {}) : IO Bool :=
   IO.FS.withTempDir fun directory => do
     writeFiles directory files
     staged context (around context.elaborator) (through (Config.Directory.source directory))
-        fun host stage =>
-        check
-          { host, directory, output := stage.output, threads := stage.threads,
-            clock := stage.clock }
+        (fun host stage =>
+          check
+            { host, directory, output := stage.output, threads := stage.threads,
+              clock := stage.clock, log := stage.log })
+        compiled
 
 /-- Runs `check` against a host started on a fresh temporary directory
 holding `files`, with the real elaborator, and stops the host. `false` if the
 check did not hold or the host did not stop. The directory is removed. -/
-def withHost (context : Context) (files : List (String × String)) (check : Session → IO Bool) :
-    IO Bool :=
-  withHostOver context files id id check
+def withHost (context : Context) (files : List (String × String)) (check : Session → IO Bool)
+    (compiled : Compiled := {}) : IO Bool :=
+  withHostOver context files id id check compiled
 
 /-- A chunk that defines the command `greet`, which makes a text holding
 `text`. -/
@@ -1537,11 +1563,297 @@ def scriptChecks (context : Context) : List Check :=
             (unanswered.splitOn "line 12").length == 2 &&
             (atEnd.splitOn "line").length == 1) }]
 
+/-- The keys the key string `text` names; none when it is refused. -/
+def keysOf (text : String) : List Key :=
+  (Key.parse text).toOption.getD []
+
+namespace Session
+
+/-- Sends a press of each key the key string `text` names, in order, as the
+window would report them. -/
+def type (session : Session) (text : String) : IO Unit := do
+  for key in keysOf text do
+    session.host.press key
+
+/-- Sends a press of each key the key string `text` names, and waits until
+the editor thread has handled them. Throws if that takes longer than
+`patience`. -/
+def typed (session : Session) (text : String) : IO Unit := do
+  session.type text
+  session.ask []
+
+/-- Asks the host for the scene, and returns what it printed of it: the echo
+area's text, quoted as the scene line has it, and each view's line. -/
+def scene (session : Session) : IO (String × Array String) := do
+  let before := (← session.output.get).size
+  session.ask [.scene]
+  let printed := (← session.output.get).extract before
+  let echo :=
+    match printed[0]?.map (·.splitOn ", echo ") with
+    | some [_, rest] => (rest.splitOn ", preedit ").headD ""
+    | _ => ""
+  return (echo, printed.filter (·.startsWith "view "))
+
+/-- Asks the host to show its commands, texts and stores, and returns the
+lines it printed for them. -/
+def shown (session : Session) : IO (Array String) := do
+  let before := (← session.output.get).size
+  session.ask [.show]
+  return (← session.output.get).extract before
+
+end Session
+
+/-- A compiled command called `name` that replaces what the focused window's
+selection covers with `text`. -/
+def inserting (name text : String) : Config.Registration :=
+  { name,
+    action :=
+      .call fun call => do
+        Loop.insert call.target text }
+
+/-- A compiled command called `name` that makes a text holding `text`. -/
+def making (name text : String) : Config.Registration :=
+  { name, action := .plain (discard <| createText text) }
+
+/-- The compiled command `boom`: it replaces what the selection covers with
+`boom`, and then deletes a range the text does not have, which the library
+refuses. -/
+def boomCommand : Config.Registration :=
+  { name := "boom"
+    action :=
+      .call fun call => do
+        Loop.insert call.target "boom"
+        call.target.buffer.text.delete 9 99 }
+
+/-- The compiled command `spin`: it replaces what the selection covers with
+`spin`, and then asks the text its revision a thousand million times. -/
+def spinCommand : Config.Registration :=
+  { name := "spin"
+    action :=
+      .call fun call => do
+        Loop.insert call.target "spin"
+        for _ in [0:1000000000] do
+          discard <| call.target.buffer.text.revision }
+
+/-- The binding of the keys the key string `text` names to the command
+`command`. -/
+def bound (text command : String) : Config.KeyBinding :=
+  { keys := keysOf text, command }
+
+/-- What compiled code hands the hosts of the dispatch checks: `stamp`, which
+inserts `!` at the cursor, on `C-c s`; `boom` on `C-c b`; and `spin` on
+`C-c l`. -/
+def dispatchCompiled : Compiled :=
+  { commands := #[inserting "stamp" "!", boomCommand, spinCommand]
+    bindings := #[bound "C-c s" "stamp", bound "C-c b" "boom", bound "C-c l" "spin"] }
+
+/-- What compiled code hands a host whose compiled `stamp` makes a text
+holding `compiled`, on `C-c s`. -/
+def stampCompiled : Compiled :=
+  { commands := #[making "stamp" "compiled"], bindings := #[bound "C-c s" "stamp"] }
+
+/-- A chunk whose `setup` registers a command `stamp` that makes a text
+holding `config`. -/
+def stampChunk : String :=
+  "def setup : SetupM Unit := do\n  command \"stamp\" (discard <| createText \"config\")\n"
+
+/-- A chunk whose `setup` registers nothing. -/
+def emptyChunk : String :=
+  "def setup : SetupM Unit := pure ()\n"
+
+/-- A chunk with two commands, `one` and `two`, each of which makes a text
+holding its name, and a `setup` that binds `C-c t` to `command`. -/
+def bindingChunk (command : String) : String :=
+  "def setup : SetupM Unit := do
+  command \"one\" (discard <| createText \"one\")
+  command \"two\" (discard <| createText \"two\")
+  bindKey \"C-c t\" \"" ++
+    command ++
+    "\"
+"
+
+/-- A chunk with a store of one number, a command `bump` over it that adds
+one, and a `setup` that binds `C-c u` to it. -/
+def boundCounterChunk : String :=
+  "def counter : Store Nat :=
+  { name := \"counter\", version := 1, initial := 0, encode := .nat,
+    decode := fun
+      | .nat n => some n
+      | _ => none }
+
+def setup : SetupM Unit := do
+  counter.declare
+  counter.command \"bump\" fun n => pure (n + 1)
+  bindKey \"C-c u\" \"bump\"
+"
+
+/-- The line of a view 0 that fills a frame of no size, showing `text` with
+its one cursor at `cursor`. -/
+def viewLine (text : String) (cursor : Nat) : String :=
+  s!"view 0 0,0 0x0: {text.quote}, scroll 0, selections {cursor}..{cursor}"
+
+/-- The checks of key dispatch through the headless host, on the real queue,
+the real text binding, the library's interrupt flag and the real elaborator,
+with the test scheme and compiled commands and bindings written here. -/
+def dispatchChecks (context : Context) : List Check :=
+  [{  name :=
+        "a key a compiled binding binds runs its compiled command for the focused window, and the scene shows its effect"
+      run :=
+        withHost context []
+          (fun session => do
+            session.typed "C-c s"
+            return (← session.scene) == ("".quote, #[viewLine "!" 1]))
+          dispatchCompiled },
+    { name :=
+        "a command that fails after editing: the scene's echo is its error, the view's text and its selection are those before the command, and the next key runs its command"
+      run :=
+        withHost context []
+          (fun session => do
+            unless ← Event.post (.commit "abcd") do
+              return false
+            let before ← session.scene
+            session.typed "C-c b"
+            let failed ← session.scene
+            session.typed "C-c s"
+            let after ← session.scene
+            return before == ("".quote, #[viewLine "abcd" 4]) &&
+                failed == ("boom: refused: bad range".quote, #[viewLine "abcd" 4]) &&
+                after == ("".quote, #[viewLine "abcd!" 5]))
+          dispatchCompiled },
+    { name :=
+        "the interrupt key arrives while a command loops over requests: the command stops, the scene's echo says so, the view's text is that before the command, and the next key runs its command"
+      run :=
+        withHost context []
+          (fun session => do
+            session.type "C-c l"
+            -- The loop has taken the key that runs the command: it is in the
+            -- command, or about to be.
+            unless ← eventually (return (← session.output.get).contains "key arrived: l - -") do
+              return false
+            session.host.press Watch.interruptKey
+            unless ← session.host.settle patience do
+              return false
+            let interrupted ← session.scene
+            let lowered ← Ffi.interruptRaised
+            session.typed "C-c s"
+            let after ← session.scene
+            return interrupted == ("spin: interrupted".quote, #[viewLine "" 0]) && !lowered &&
+                after == ("".quote, #[viewLine "!" 1]))
+          dispatchCompiled },
+    { name :=
+        "the interrupt key arrives while no command is running: the flag is down once the loop has taken it, and the next key's command runs to its end"
+      run :=
+        withHost context []
+          (fun session => do
+            session.host.press Watch.interruptKey
+            session.ask []
+            let lowered ← Ffi.interruptRaised
+            session.typed "C-c s"
+            return !lowered && (← session.scene) == ("".quote, #[viewLine "!" 1]))
+          dispatchCompiled },
+    { name :=
+        "config registers a command under a compiled command's name: the key bound to the name runs config's command, and after a reload without the registration it runs the compiled one"
+      run :=
+        withHost context [("10-stamp.lean", stampChunk)]
+          (fun session => do
+            session.ask [.reload]
+            session.typed "C-c s"
+            let overridden ← session.shown
+            session.write "10-stamp.lean" emptyChunk
+            session.ask [.reload]
+            session.typed "C-c s"
+            let dropped ← session.shown
+            return overridden == #["commands: stamp", "text 0: \"\"", "text 1: \"config\""] &&
+                dropped ==
+                  #["commands: stamp", "text 0: \"\"", "text 1: \"config\"",
+                    "text 2: \"compiled\""] &&
+                ((← session.lines).filter (·.startsWith "reload ")) ==
+                  #["reload 1: installed, 1 chunks, 1 commands",
+                    "reload 2: installed, 1 chunks, 0 commands"])
+          stampCompiled },
+    { name :=
+        "a reload binds a key to a different command: the key then runs the new command, and the old one does not run again"
+      run :=
+        withHost context [("10-bind.lean", bindingChunk "one")] fun session => do
+          session.ask [.reload]
+          session.typed "C-c t"
+          session.write "10-bind.lean" (bindingChunk "two")
+          session.ask [.reload]
+          session.typed "C-c t"
+          return (← session.shown) ==
+              #["commands: one two", "text 0: \"\"", "text 1: \"one\"", "text 2: \"two\""] },
+    { name :=
+        "config fails to load: the reload is rejected, and the key a compiled binding binds still runs its compiled command; and it runs it with no reload asked at all"
+      run := do
+        let rejected ←
+          withHost context [("10-bad.lean", "def setup : SetupM Unit := \"not a setup\"\n")]
+              (fun session => do
+                session.ask [.reload]
+                session.typed "C-c s"
+                let shown ← session.shown
+                return ((← session.lines).filter (!·.startsWith "key arrived")).extract 0 2 ==
+                      #["reload 1: rejected", "diagnostic: 10-bad.lean: error"] &&
+                    shown == #["commands: stamp", "text 0: \"\"", "text 1: \"compiled\""])
+              stampCompiled
+        let unasked ←
+          withHost context []
+              (fun session => do
+                session.typed "C-c s"
+                return (← session.shown) ==
+                    #["commands: stamp", "text 0: \"\"", "text 1: \"compiled\""])
+              stampCompiled
+        return rejected && unasked },
+    { name :=
+        "a key bound from config to a command over a store runs it, and what it wrote is written back: two presses leave the store at 2"
+      run :=
+        withHost context [("10-counter.lean", boundCounterChunk)] fun session => do
+          session.ask [.reload]
+          session.typed "C-c u C-c u"
+          return (← session.shown).contains "store counter v1: 2" },
+    { name :=
+        "a command that takes longer than the threshold on the fake clock produces one log entry with its name and how long it took, on the log and not on the output; a press with the clock not moved adds none"
+      run :=
+        withHost context []
+          (fun session => do
+            -- The loop reads the clock just before the command and just
+            -- after it. Each reading is held, so the clock is moved between
+            -- the two and at no other time.
+            let first ← session.clock.holdReads
+            session.type "C-c s"
+            unless ← eventually (return (← session.clock.held) == 1) do
+              return false
+            let second ← session.clock.holdReads
+            first.resolve ()
+            unless ← eventually (return (← session.clock.held) == 2) do
+              return false
+            session.clock.advance 60
+            second.resolve ()
+            session.ask []
+            let once ← session.log.get
+            session.typed "C-c s"
+            return once == #["slow command: stamp took 60 ms"] && (← session.log.get) == once &&
+                !(← session.output.get).any (·.startsWith "slow command"))
+          { dispatchCompiled with slowAfter := 50 } },
+    { name :=
+        "the driver's run of a compiled command that is given its call says there is no frame before the first window event, and once there is one runs it for the focused window"
+      run :=
+        withHost context []
+          (fun session => do
+            session.ask [.run "stamp", .run "missing"]
+            unless ← Event.post (.commit "a") do
+              return false
+            session.ask [.run "stamp"]
+            return (← session.output.get) ==
+                  #["run stamp: no frame", "run missing: no such command", "run stamp: ok"] &&
+                (← session.scene) == ("".quote, #[viewLine "a!" 2]))
+          dispatchCompiled }]
+
 /-- Every check, in the order they run. -/
 def checks (context : Context) : List Check :=
   elaboratorChecks context ++ directoryChecks () ++ hostChecks context ++ threadChecks context ++
     jobChecks context ++
     scriptChecks context ++
+    dispatchChecks context ++
     fileChecks context
 
 /-- Runs `checks` and returns the names of those that failed. A check that
