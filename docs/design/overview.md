@@ -181,7 +181,8 @@ Cargo for the static library:
 | `Editor.UndoTree` | The undo tree: a text's history as a tree of states, in plain Lean over the text interface. Groups, undo, redo, branches, reverting the open group, and the saved state. |
 | `Editor.File` | Loading and saving as a job asks for them: the two file requests of the job interface, with their data (a stamp, line endings, what a save expects, the refusals), and a pure model of the files a job reaches. The work is the library's; a file's bytes never pass through a Lean string. |
 | `Editor.Files` | The file commands: opening a file into a buffer and saving a buffer to its file, each a command that starts a job and the command the job finishes with, so the editor thread never waits for a file. `Editor.Files.Compiled` registers them and their jobs as compiled code, which the executable ships. |
-| Standard library | evil, the minibuffer; later agents, review, version control, the rdm client. |
+| `Editor.Minibuffer` | The minibuffer's commands and its mode: `minibuffer-accept` and `minibuffer-cancel`, which answer and cancel the open prompt, and the mode the minibuffer's buffer is made with, which fills the roles `activate` and `quit` with them. A command asks for a string by naming the command that receives the answer, and never waits; the open prompt is editor state, and the minibuffer a buffer and a window of it (`Editor.State`, `Editor.Api`). `Editor.Minibuffer.Compiled` registers the commands and the mode as compiled code, which the executable ships. |
+| Standard library | evil; later completion and the command line in the minibuffer, agents, review, version control, the rdm client. |
 | `Main` | Wires the real bindings together and starts the loop. |
 
 ## Milestones

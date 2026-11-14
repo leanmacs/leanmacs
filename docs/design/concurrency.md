@@ -199,7 +199,11 @@ time, in order, on the editor thread.
     user's origin, and each kept marker is placed back. The editor state is
     the one before the command: whatever the command's state requests
     changed (a window split or closed, a buffer added or removed, a mode,
-    the echo, a job asked for) is as it was.
+    the echo, a job asked for, a prompt opened or closed) is as it was. An
+    open prompt is editor state, so the rollback returns it with
+    everything else: a command that asked and then failed leaves no
+    prompt, and one that accepted and then failed leaves the prompt open,
+    with its text as typed ("Prompts").
   - **The tree that is reverted is the one the command left**, when the
     kept state is a state of its open group. A command can move in a
     buffer's history and record the moved tree. The tree from before the
@@ -472,7 +476,10 @@ transaction through. Where those come from is open.
     again when the result is delivered, so two opens of one path in flight
     make one buffer: the second delivery shows it and takes nothing in;
   - the buffer is shown in the view the command was called in, or in the
-    focused view if that view was closed while the file loaded.
+    focused view if that view was closed while the file loaded;
+  - the command as it is registered (`open-file`) opens the path that is
+    its first argument, and with no path asks for one with a prompt
+    ("Prompts"), naming itself as the command that receives the answer.
 
   An empty buffer made when the command runs and filled later was set
   aside: the window would change before the file is known to exist, and a
@@ -514,8 +521,25 @@ transaction through. Where those come from is open.
 
 ### Prompts
 
-Status: decided 2026-11-14, with the command loop's phase 10, and not yet
-built.
+Status: decided 2026-11-14 and built, by the command loop's phase 10.
+
+| Built | Where |
+|---|---|
+| The open prompt, the minibuffer's buffer and window, opening and closing | `lean/Editor/State.lean` ("Prompts"), `lean/Editor/State/Request.lean` |
+| `prompt`, `acceptPrompt`, `cancelPrompt` | `lean/Editor/Api.lean` ("Prompts") |
+| The answer handed back with the step; an invocation no key yielded | `lean/Editor/Loop.lean` ("Prompts": `Loop.Stepped.answered`, `Loop.invoke`) |
+| The hosts that run the answer's command before the next event | `lean/Editor/Loop/Driver.lean` (`Loop.Driver.took`), `lean/Editor/Headless.lean` (`Running.took`) |
+| `minibuffer-accept`, `minibuffer-cancel` and the minibuffer's mode | `lean/Editor/Minibuffer.lean`, `lean/Editor/Minibuffer/Compiled.lean` |
+| `open-file` asking for its path | `lean/Editor/Files.lean` (`openCommand`) |
+
+Pinned on the models by `ModelTest.stateChecks` and `stateRequestChecks`
+(the state's operations), `promptChecks` (the loop, its host on the
+models, the commands and the mode: the acceptance criteria) and
+`dispatchGiveUpChecks` (what is given up); on the models and the real text
+binding by the cases of `lean/Editor/Api/Cases.lean`; through the headless
+host over the real library and the real elaborator by
+`ConfigTest.promptChecks`; and on the executable by the fixture
+`tests/headless/prompt`.
 
 A command can need a string from the user: a file name, an ex command. It
 cannot wait for one. A command may not block, and while a command runs no
@@ -578,8 +602,10 @@ What was set aside:
 - **A recursive edit**, as above.
 
 **One prompt at a time.** Asking for a prompt while one is open is
-refused, as a value the command sees, with nothing made and nothing
-changed. The command says so or does something else. A continuation can
+refused, as a value the command sees (`alreadyOpen`), with nothing made and
+nothing changed. So is asking where no window is focused to ask from
+(`noWindow`), which is the editor with nothing in it that a command run
+bare finds. The command says so or does something else. A continuation can
 ask for the next prompt, because its own is closed by then. Replacing the
 open prompt was set aside: it would drop the first command's continuation
 without a word. So was a stack of prompts: it needs several minibuffer
@@ -627,9 +653,10 @@ runs meanwhile is one whole command.
 event.**
 
 - The answered invocation is kept in the editor state until the accepting
-  command ends, as the jobs a command asked for are. After a command that
-  ran to its end the loop takes it out and hands it back with the step. A
-  command that did not run to its end answers nothing.
+  command ends (`EditorState.answered`), as the jobs a command asked for
+  are. After a command that ran to its end the loop takes it out and hands
+  it back with the step (`Loop.Stepped.answered`). A command that did not
+  run to its end answers nothing.
 - **The host runs each answered invocation before it pulls another
   event**, as an invocation no key yielded: the echo area is cleared, the
   command is looked up, and it is called with the focused window, the
@@ -643,6 +670,12 @@ event.**
   command's step, an answer's command would be looked up before that
   step's write was written back. As a step of its own it is like every
   other command: one rollback, one scene, one log entry, one ending.
+  `ConfigTest.promptChecks` pins the case: a command over a store that
+  accepts and adds one, and a continuation over the same store that adds
+  one, leave two. Two hosts carry the rule, the driver on the models and
+  the headless host, each with a check that a key sent after the accept
+  key is handled after the answer's command; a third host must do the
+  same.
   Running it inside the accepting command, as an on-enter action runs
   inside the command that set the mode, was set aside for this, and
   because a refused answer's command would then roll the prompt open again
@@ -682,8 +715,19 @@ event.**
 - **A reload leaves the prompt open.** It is compiled state. Its
   continuation is a name, looked up when the answer arrives.
 
+**What ships that asks.** `open-file`, run with no path as its first
+argument, asks `Open file: ` with itself as the continuation, so the
+answer is the path it opens, in the view it was asked from ("Getting
+results back"). `save-buffer` does not ask: a buffer with a file needs no
+name, and one with no file needs a file that is not there yet, which is
+more than a prompt. Config asks with `prompt`, and registers the command
+that receives the answer with `commandWith`, which is given its call
+([lean-runtime.md](lean-runtime.md), "The config session as built").
+
 How the minibuffer takes keys is in
-[keymaps-and-modes.md](keymaps-and-modes.md), "The minibuffer".
+[keymaps-and-modes.md](keymaps-and-modes.md), "The minibuffer", and how
+the scene shows it in [text-and-display.md](text-and-display.md), "Views
+as built".
 
 ### Structured lifetimes
 
@@ -972,6 +1016,7 @@ handler never runs.
 |---|---|
 | One thread; a slow command freezes input and painting | Painting never waits; input queues behind the command |
 | Blocking subprocess calls are the easy path | Blocking is a type error in a command; jobs await |
+| A minibuffer read blocks its command in a recursive edit, and can wedge the process | A command that asks names the command that receives the answer and returns; the open prompt is editor state, and keys, jobs' results and reloads go on while it is open |
 | Async work means process sentinels and callback chains | Jobs are written top to bottom with awaits |
 | Threads share mutable state under a global lock | Immutable values, snapshots, one writer |
 | An interrupted command can leave half its edits behind | An interrupted command's edits roll back as one group |
@@ -1104,6 +1149,21 @@ handler never runs.
   does it reject? A rule per kind of edit, or one conservative rule?
 - **Backpressure.** What happens when jobs or events pile up faster than
   the foreground drains them?
+- **Prompts** ("Prompts"). Each of these was decided one way, and the
+  other is still possible:
+  - the answer is the continuation's first argument, and not its last;
+  - a second prompt is refused, and neither replaces the first nor is
+    stacked on it;
+  - an answer's command that fails does not open the prompt again with the
+    text typed, which would need the answer kept across the failure;
+  - the continuation's name is not checked when the prompt is asked for;
+  - when the asking view was closed the prompt stays open and the answer
+    goes to the first window of the tree, where cancelling the prompt
+    with its asker is the alternative;
+  - the answer's command is a step of its own that the host runs, where
+    running it in the accepting command's step would keep the rule in the
+    loop alone, at the cost of a stale store cell and of a step that
+    stands for two commands.
 - **Raw `IO`.** Lean code can reach `IO` directly (files, processes) and
   bypass the interfaces, which breaks the pure model and the fakes, and for
   processes leaves orphans. For commands and jobs this is answered: neither

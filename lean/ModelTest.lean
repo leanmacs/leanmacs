@@ -104,7 +104,11 @@ registered command:
   requests move, a command slower than the threshold is logged once;
 - `dispatchGiveUpChecks`: what the loop gives up once a command has run to
   its end, and not before: a closed window's markers, a removed buffer's
-  text, and the snapshot of a save that is no longer in flight.
+  text, the snapshot of a save that is no longer in flight, and the
+  minibuffer of a prompt that was accepted or cancelled;
+- `dispatchMinibufferNoticeChecks`: the loop tells its scheme when a
+  command that ran to its end opened the minibuffer's view, in both states
+  of the scheme it keeps, after the views the command closed.
 
 Jobs started from commands are checked on the loop's driver over the
 editor's models and the job model (`Editor/Loop/Driver.lean`):

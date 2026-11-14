@@ -249,10 +249,20 @@ elaborator.
   command is looked up by its name, and the latest entry of the name is
   the one found (`Config.State.command?`): config's command of a compiled
   command's name runs in its place while it is registered, and the
-  compiled one is found again once a reload drops it. A compiled command
-  may be given what it was called with (`Config.Action.call`, handed a
-  `Call`); config's commands are not, until a setup request for it exists.
-  The reload's report counts config's commands only.
+  compiled one is found again once a reload drops it. The reload's report
+  counts config's commands only.
+- **A command may be given what it was called with**
+  (`Config.Action.call`, handed a `Call`: the window it acts on, the
+  invocation's arguments and its keys). Compiled code registers one as
+  such, and `setup` does with `commandWith "greet" fun call => …`, a
+  request of the setup port beside `command`, named as `jobWith` is
+  beside `job` (built by the command loop's phase 10). A command
+  registered with `command` is told nothing of its call. So a command of
+  config's reads a count, and can be the command a prompt names, which
+  receives the answer as its first argument; without it only a compiled
+  command could read an answer. The two kinds are commands under one set
+  of names: a name registered with both is refused as registered twice,
+  and a reload replaces them together.
 - **A key binding is data too**: `bindKey "C-c t" "two"` in `setup` binds a
   key sequence to a command's name, tagged with its owner, and a reload
   replaces config's bindings as a set and never the compiled ones. A
@@ -688,6 +698,7 @@ made of state requests and text requests. Config sees it through
 | Start a job, with arguments | `startJob`, for a job registered with `jobWith` or `job` | No: the host starts it once the command has ended |
 | Break a line with the buffer's line ending, and ask whether a buffer is modified | `ViewId.insertLineBreak`, `Target.insertLineBreak`; `BufferId.isModified` | Yes: `apply`, and the text's revision |
 | Open a file into a buffer and save a buffer to its file | `Files.open`, `Files.save` (`lean/Editor/Files.lean`), each of which starts a compiled job | For the snapshot a save writes; the file is the job's to load or save |
+| Ask for a string, without waiting for it, and accept or cancel the open prompt | `prompt label continuation initial`, which names the command that receives the answer as an invocation; `acceptPrompt`, `cancelPrompt` | To make the minibuffer's text and its markers, and to read the answer; a cancel reaches nothing |
 
 - **Edits go through `apply`**, as one transaction made by the user
   (`Origin.user`): one revision, one entry of the edit log, and one step
@@ -723,8 +734,21 @@ made of state requests and text requests. Config sees it through
   (`lean/Editor/Files/Compiled.lean`), which is the one module of the two
   that names the registry: config sees the commands through `Editor.lean`
   and not the registrations.
-- **Out of the API still**: prompts (phase 10), and commands that ask
-  layout a question (phase 15).
+- **A prompt is a request and a named command, not a wait** (built by the
+  command loop's phase 10; [concurrency.md](concurrency.md), "Prompts").
+  A command cannot wait for an answer, and a request of the editor's port
+  cannot carry the program that would receive it ("A request that carries
+  a program over its own port", above). So `prompt` names the command
+  that receives the answer, as an invocation, and returns at once; the
+  open prompt is editor state; and accepting is one state request that
+  closes the prompt and records the invocation with the answer as its
+  first argument, which the loop's host runs as a step of its own. The
+  commands a key runs for it, `minibuffer-accept` and `minibuffer-cancel`,
+  and the minibuffer's mode are compiled (`lean/Editor/Minibuffer.lean`),
+  registered by `lean/Editor/Minibuffer/Compiled.lean`, the one module of
+  the two that names the registry.
+- **Out of the API still**: commands that ask layout a question (phase
+  15).
 
 | Piece | Where |
 |---|---|
@@ -733,6 +757,8 @@ made of state requests and text requests. Config sees it through
 | What is proved of them on the text model | `lean/Editor/Api/Theorems.lean` |
 | The file commands, their jobs' work, their orders and what they say in the echo area | `lean/Editor/Files.lean` |
 | The file commands and their jobs as compiled code registers them | `lean/Editor/Files/Compiled.lean` |
+| The commands that accept and cancel a prompt, and the minibuffer's mode | `lean/Editor/Minibuffer.lean` |
+| The minibuffer's commands and its mode as compiled code registers them | `lean/Editor/Minibuffer/Compiled.lean` |
 | The loop on the models with jobs, for tests of a command that starts a job: a job reads the snapshots commands took, and its command is handed what the job loaded | `lean/Editor/Loop/Driver.lean` |
 
 ## Where state lives
@@ -742,10 +768,11 @@ made of state requests and text requests. Config sees it through
 | Buffers, windows, keymaps, registers, the agent table | Compiled Lean, on the editor thread. Buffers, windows, the frame's split tree, the echo area and the preedit are the editor state (`lean/Editor/State.lean`), which the command loop (`lean/Editor/Loop.lean`) holds and is the one writer of: a command changes it by requests the loop answers. Buffers are kept in slots, so a buffer's id is never used again, and neither is a view's | Untouched | Lost unless its owner persists it |
 | A buffer's local values: plain trees by name (`Value`), as a store's cell holds | Compiled Lean, a field of the buffer in the editor state, set and read by a command (`BufferId.setValue`, `BufferId.value?`) | Untouched: a tree names no type of config's | Lost |
 | The input scheme's state: the pending keys and what the scheme keeps for each view (the Vim scheme's states, its last change) | Compiled Lean, in the command loop, which runs one scheme for its life | Untouched | Lost |
-| Compiled commands, jobs, key bindings and modes | Compiled Lean, in the registry, for the owner `compiled`. The executable ships the file commands, `open-file` and `save-buffer`, and their jobs, `load-file` and `save-file` (`lean/Editor/Files/Compiled.lean`) | Untouched: a reload replaces config's, and cancels config's jobs only, so a compiled job that is running goes on | Registered again when the host starts |
+| Compiled commands, jobs, key bindings and modes | Compiled Lean, in the registry, for the owner `compiled`. The executable ships the file commands, `open-file` and `save-buffer`, and their jobs, `load-file` and `save-file` (`lean/Editor/Files/Compiled.lean`), and the minibuffer's commands, `minibuffer-accept` and `minibuffer-cancel`, and its mode, `minibuffer` (`lean/Editor/Minibuffer/Compiled.lean`) | Untouched: a reload replaces config's, and cancels config's jobs only, so a compiled job that is running goes on | Registered again when the host starts |
+| An open prompt: its label, the minibuffer's view, the asking view and the continuation, with the minibuffer's buffer and window | Compiled Lean, a field of the editor state (`EditorState.prompt`, `lean/Editor/State.lean`) and a buffer and a window of it, from the command that asks until the one that accepts or cancels | Untouched: the prompt stays open, and its continuation is a name, looked up in the registry as it is when the answer arrives | Lost |
 | A save in flight: the snapshot a save writes and the state its text was in | Compiled Lean, with the buffer's file in the editor state, from the save command until the save's result is delivered | Untouched | Lost with the buffer |
 | A buffer's modes: its major mode and its minor modes, by name | Compiled Lean, a field of the buffer in the editor state | Untouched: a name whose mode a reload drops contributes nothing | Lost |
-| A mode's own state | A compiled mode's, a typed field where the editor state's table puts it (none ships); a config mode's, a store its `setup` declares, whose commands fill its roles and suffixes, with per-buffer state in the buffer's local values, or inside the store's value | As for compiled state, and as for a store | As for compiled state, and as for a store |
+| A mode's own state | A compiled mode's, a typed field where the editor state's table puts it (the one mode that ships, the minibuffer's, keeps none); a config mode's, a store its `setup` declares, whose commands fill its roles and suffixes, with per-buffer state in the buffer's local values, or inside the store's value | As for compiled state, and as for a store | As for compiled state, and as for a store |
 | Text, kept inverses, anchors | Rust, behind handles | Untouched | Files on disk; the kept inverses are lost |
 | The undo tree of each text: its nodes, where the text is in it, and the state last saved | Compiled Lean, with the buffer it is the history of, on the editor thread | Untouched | Lost |
 | A file's stamp (when it was last modified and how long it is, as the last load or save answered it), its path and its line ending | Compiled Lean, fields of the buffer that shows the file, in the editor state (`Buffer.file`, `Buffer.lineEnding`, `lean/Editor/State.lean`): the path a buffer is found by, the stamp the next save expects, and the line break a command inserts. A command sets them by one request (`BufferId.attachFile`) | Untouched | Lost; the file is loaded again |

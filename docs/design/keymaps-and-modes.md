@@ -27,13 +27,17 @@ states and bindings, and modes:
 | Modes by owner, a mode's lineage, the active keymaps of a view, setting a major mode through a view and its on-enter action | `lean/Editor/Config/Registry.lean` |
 | Defining a mode from `setup`, and its refusals | `lean/Editor/Setup.lean` (`defineMode`), `lean/Editor/Config/Registry.lean` (`Registrations.problem?`) |
 | A buffer's major and minor modes, and the state operations that set them | `lean/Editor/State.lean` |
+| The notice a scheme is told when the minibuffer's view opens, and the contract's property that a key that prints is text there | `lean/Editor/InputScheme.lean` (`openMinibuffer`), `lean/Editor/InputScheme/Contract.lean` (`minibufferTakesText`), `lean/Editor/Loop.lean` (`Loop.toldViews`) |
+| The minibuffer's mode and its two commands, and their registrations | `lean/Editor/Minibuffer.lean`, `lean/Editor/Minibuffer/Compiled.lean` |
+| The Vim state of the minibuffer's view, and its default keys | `lean/Editor/InputScheme/Vim.lean` (`States.minibuffer`, `State.openMinibuffer`), `lean/Editor/InputScheme/Vim/Default.lean` (`minibufferCommands`) |
 
 The command loop steps every key press through its one scheme and runs the
 invocation it yields, as a command looked up by name in the registry. The
 Vim scheme ships, but no motion, operator or command its keys name is
-registered yet, so under it a default key echoes `<name>: no such command`.
-No mode ships either: modes are built and tested with the modes their tests
-define. Of the rest of this document, the vocabulary is a proposal from a
+registered yet, so under it a default key echoes `<name>: no such command`,
+but for the two keys of the minibuffer's state, whose commands are. One
+mode ships, the minibuffer's ("The minibuffer"); the others are built and
+tested with the modes their tests define. Of the rest of this document, the vocabulary is a proposal from a
 design discussion, and nothing is measured. The one settled input is the
 priority:
 Vim-style editing is the scheme that ships and is polished; other schemes
@@ -257,8 +261,8 @@ scheme.
 - **The minibuffer takes keys as the focused window**, through its
   buffer's mode, under the same scheme: there is no second path for keys.
   A scheme is told when the minibuffer's view opens, by a second notice
-  beside `closeView`, and takes typed text there ("The minibuffer", under
-  Modes; decided, not yet built).
+  beside `closeView`, `openMinibuffer`, and takes typed text there ("The
+  minibuffer", under Modes).
 - **The scheme is a parameter of the loop, not a field.** `InputScheme`
   has type-valued fields, so it is in `Type 1`, and a value that flows
   through `EditorM` or `IO` must be in `Type`. So the loop's type is
@@ -538,8 +542,9 @@ structure StateRecord where
   operatesOnSelection : Bool := false   -- an operator acts on the selection at once
 
 structure States where
-  initial : StateRecord
-  others  : List StateRecord := []
+  initial    : StateRecord
+  others     : List StateRecord := []
+  minibuffer : Option String := none      -- the state the minibuffer's view is put in
 ```
 
 - **The registry always has an initial record**, so looking a state up is
@@ -578,6 +583,12 @@ state.
 - **A name the registry does not have is the initial state**, when it is
   read and when a command enters it, so a registry that loses a state
   strands no view.
+- **The minibuffer's view enters the state the registry names for it**
+  (`States.minibuffer`), when the scheme is told the view is the
+  minibuffer's, and its entry is dropped when the view is closed ("The
+  minibuffer", under Modes). With none named the view stays in the initial
+  state, where a key that prints is no text, which the scheme contract
+  reports.
 - **A record has no equality.** It holds keymaps, and a keymap derives
   none, so neither `StateRecord` nor `States` does. The scheme's `State`
   holds names and edits only and has a decidable equality. A check compares
@@ -636,7 +647,7 @@ changed text, as a value: what dot repeat replays.
 ### Default bindings
 
 `Vim.Default` holds the scheme's default keys as data: tables of key string
-and `Bound`, the keymaps made from them, the four state records, and
+and `Bound`, the keymaps made from them, the five state records, and
 `Vim.Default.scheme`, the scheme that ships. The root module imports it, so
 config sees `Vim.Bound`. The grammar's module names no key.
 
@@ -653,6 +664,7 @@ a default, so renaming one breaks none.
 | `insertCommands` | `<Escape>` normal (enters normal) |
 | `visualCommands` | `<Escape>` and `v` normal, `V` visual-line, `"` |
 | `visualLineCommands` | `<Escape>` and `V` normal, `v` visual, `"` |
+| `minibufferCommands` | `RET` minibuffer-accept, `<Escape>` minibuffer-cancel (each changes no text and enters no state) |
 
 | State | Keymaps, in precedence order | Cursor | The grammar reads |
 |---|---|---|---|
@@ -660,6 +672,13 @@ a default, so renaming one breaks none.
 | `insert` | `insertCommands` | Bar | Typing is text |
 | `visual` | `visualCommands`, `operators`, `motions` | Block | Operators act on the selection |
 | `visual-line` | `visualLineCommands`, `operators`, `motions` | Block | Operators act on the selection |
+| `minibuffer`, the state of the minibuffer's view | `minibufferCommands` | Bar | Typing is text |
+
+No key enters `minibuffer`: the registry names it as the state of the
+minibuffer's view (`states.minibuffer`), and the scheme puts a view in it
+when it is told the view is the minibuffer's ("The minibuffer", under
+Modes, which says why it is a state of its own and why its two keys are in
+its table).
 
 A key string in a table that `Key.parse` refuses binds nothing, which a
 check catches: each table's keymap has as many bindings as the table has
@@ -687,7 +706,8 @@ and Testing).
 
 Status: built (`lean/Editor/Role.lean`, `lean/Editor/Mode.lean`, the
 registry's modes in `lean/Editor/Config/Registry.lean`, a buffer's modes in
-`lean/Editor/State.lean`; the module docs have the detail). No mode ships.
+`lean/Editor/State.lean`; the module docs have the detail). One mode
+ships: the minibuffer's ("The minibuffer").
 
 A mode is a value in a registry keyed by name. It is not a type class,
 because instances resolve at elaboration time and the active mode is chosen
@@ -817,8 +837,9 @@ wins over a role on the same key.
   bind exactly the same sequence (`Keymap.resolve scheme.defaults keys` is
   bound). `Mode.check` reports it. A tuned key that is a strict prefix of a
   default stays under the open question "Unreachable bindings".
-- **The Vim scheme's table is empty** (`Vim.Default.tuned`): no mode
-  ships. The Vim scheme wraps each tuned binding in `Bound.mode`.
+- **The Vim scheme's table is empty** (`Vim.Default.tuned`): the one mode
+  that ships, the minibuffer's, has its keys in the Vim state of its view.
+  The Vim scheme wraps each tuned binding in `Bound.mode`.
 
 ### A buffer's modes
 
@@ -927,8 +948,9 @@ As built, with nothing new for it:
 
 - **A compiled mode's state is a typed field** where the editor state's
   "Where a new field goes" table puts it (a field of `Buffer` for state of
-  one buffer's mode, of `EditorState` for one per editor). No mode ships,
-  so none is added.
+  one buffer's mode, of `EditorState` for one per editor). The one mode
+  that ships, the minibuffer's, keeps none of its own: the open prompt is
+  a field of `EditorState`.
 - **A config mode uses the store as built**: a `Store α` declared in the
   same `setup`, whose commands (`Store.command`) fill its roles and
   suffixes. Per-buffer state of a config mode is a buffer-local value
@@ -941,9 +963,14 @@ As built, with nothing new for it:
 
 ### The minibuffer
 
-Status: decided 2026-11-14, with the command loop's phase 10, and not yet
-built. How a command waits for a prompt's answer, and what accept and
-cancel do, is in [concurrency.md](concurrency.md), "Prompts".
+Status: decided 2026-11-14 and built, by the command loop's phase 10
+(`lean/Editor/Minibuffer.lean` and `lean/Editor/Minibuffer/Compiled.lean`
+for the mode and its commands; `lean/Editor/InputScheme.lean`,
+`lean/Editor/InputScheme/Contract.lean` and `lean/Editor/Loop.lean` for
+the notice; `lean/Editor/InputScheme/Vim.lean` and
+`lean/Editor/InputScheme/Vim/Default.lean` for the Vim state; the module
+docs have the detail). How a command waits for a prompt's answer, and what
+accept and cancel do, is in [concurrency.md](concurrency.md), "Prompts".
 
 While a prompt is open the minibuffer is a buffer shown in a window of its
 own, and that window has the focus.
@@ -952,15 +979,20 @@ own, and that window has the focus.
   focused view, and while a prompt is open that is the minibuffer's view.
   The active keymaps of that view are its buffer's modes' and then the
   global keymap ("Active keymaps"), as for any view.
-- **"Its own keymap" is a compiled major mode**, `minibuffer`, which fills
-  two roles: `activate` with the command `minibuffer-accept`, and `quit`
-  with `minibuffer-cancel`. So any scheme has an accept key and a cancel
-  key from its role table, with no binding written for the scheme, which
-  is what roles are for. Under the test scheme they are the keys of those
-  two roles.
-- **The buffer is made with the mode**: opening the prompt sets the name.
-  No on-enter action runs, and the mode has none. A host that was not
-  handed the mode has a minibuffer whose mode contributes nothing.
+- **"Its own keymap" is a compiled major mode**, `minibuffer`
+  (`Minibuffer.mode`), which fills two roles: `activate` with the command
+  `minibuffer-accept`, and `quit` with `minibuffer-cancel`. So any scheme
+  has an accept key and a cancel key from its role table, with no binding
+  written for the scheme, which is what roles are for. Under the test
+  scheme they are the keys of those two roles. With no prompt open each
+  command says so in the echo area and does nothing else.
+- **The buffer is made with the mode**: opening the prompt sets the name
+  (`Prompt.mode`, `lean/Editor/State.lean`). No on-enter action runs, and
+  the mode has none. A host that was not handed the mode has a minibuffer
+  whose mode contributes nothing; the executable is handed the commands
+  and the mode (`Minibuffer.commands`, `Minibuffer.modes`), registered for
+  the owner `compiled`, so they hold when config fails to load and a
+  reload does not replace them.
 - **A prompt does not capture the keyboard.** A command may focus another
   window while the prompt is open; keys then go there, and the prompt
   waits. A binding of the global keymap holds in the minibuffer's view as
@@ -979,11 +1011,13 @@ takes text there.**
   opened nothing, and the scheme is told nothing.
 - **What the scheme kept is forgotten by the notice that exists**: closing
   the prompt closes the view, and the loop tells `closeView`.
-- **The scheme contract gains one property**, `minibufferTakesText`: after
-  the scheme is told a view is the minibuffer's, a key that prints and
-  that nothing binds, typed for that view, yields an invocation and leaves
-  nothing pending. The contract says nothing of which invocation: the name
-  of a self-insert is the scheme's own.
+- **The scheme contract has a property for it**, `minibufferTakesText`:
+  after the scheme is told a view is the minibuffer's, a key that prints
+  and that nothing binds, typed for that view, yields an invocation and
+  leaves nothing pending. The contract's subject supplies that key
+  (`Subject.printable`). The contract says nothing of which invocation:
+  the name of a self-insert is the scheme's own. The test scheme keeps it
+  with no notice of its own, since it yields a self-insert in every view.
 - **A notice for the minibuffer alone**, and not a general one with a kind
   of view: there is one kind of view a scheme must treat apart today. A
   terminal view can widen it when it exists.
@@ -1000,10 +1034,11 @@ own.**
   state for the view, as an edit that names a state enters it, so a name
   the registry does not have is the initial state. With none the view
   stays in the initial state. Nothing matches on a state's name.
-- **The default registry gains a fifth state, `minibuffer`**: typing is
+- **The default registry has a fifth state, `minibuffer`**: typing is
   text (so a digit is text too), the cursor is a bar, and its one keymap
-  binds `RET` to `minibuffer-accept` and `<Escape>` to
-  `minibuffer-cancel`. This is Vim's own command-line mode.
+  (`Vim.Default.minibufferCommands`) binds `RET` to `minibuffer-accept`
+  and `<Escape>` to `minibuffer-cancel`. This is Vim's own command-line
+  mode.
 - **Why a state of its own and not `insert`.** In `insert`, `<Escape>`
   enters normal state and `RET` is bound to nothing, so answering would
   take `<Escape>` and then a key of normal state.
@@ -1025,6 +1060,16 @@ own.**
 and its undo step. Until then no view of the executable takes text from a
 key, and the minibuffer is no exception: a committed text is inserted
 there, and a key that prints says `self-insert: no such command`.
+
+Pinned by `ModelTest.promptChecks` (the mode and its commands, on the
+models and the test scheme, with the accept key and the cancel key read
+from its role table), `dispatchMinibufferNoticeChecks` (the notice in the
+loop), `schemeContractChecks` and `vimContractChecks` (the property),
+`vimStateChecks` and `vimDefaultChecks` (the Vim state, on the registry
+written for the checks and on the defaults), `ConfigTest.promptChecks`
+(through the headless host, with the test scheme), and the fixture
+`tests/headless/prompt`, which is where `<Enter>` and `<Escape>` are
+pressed, under the Vim scheme the executable runs.
 
 ## Extending from config
 
@@ -1048,6 +1093,15 @@ there, and a key that prints says `self-insert: no such command`.
   A `setup` that defines a mode name twice, or a mode with a problem
   (`Mode.problems`), is rejected with a message that names the mode and the
   problem. A reload replaces config's modes and never the compiled ones.
+- Built: `setup` registers a command that is given what it was called with,
+  `commandWith "greet" fun call => …` (`lean/Editor/Setup.lean`), beside
+  `command`, which is told nothing of its call, as `jobWith` is beside
+  `job`. The call holds the window the command acts on, the invocation's
+  arguments and its keys (`lean/Editor/Command/Call.lean`), so a command
+  of config's reads a count, and can be the command a prompt names, which
+  receives the answer as its first argument. Both kinds are commands under
+  one set of names: a name registered twice is refused whichever the two
+  are.
 - A key-string macro (`kbd "C-x C-s"`) could parse at elaboration time, so
   a mistyped key is an error in config before it runs. It is not built. See
   the open questions for its cost.
@@ -1093,9 +1147,9 @@ The Vim scheme is checked the same way, by six lists:
 | `vimEditChecks` | What an edit compiles to, the layout of each kind of invocation, and what an edit says of itself |
 | `vimRegistryChecks` | The registry of Vim states: looking a state up, and registering one |
 | `vimGrammarChecks` | Which keymaps a key is looked up in; moves, operators and their targets, the doubled operator, counts, registers, resets, and the pending keys |
-| `vimStateChecks` | Which Vim state a view is in and how one is entered; typed text; an operator over the selection; the last change |
-| `vimDefaultChecks` | The default states and bindings, through what each default key parses to |
-| `vimContractChecks` | The scheme contract holds of the Vim scheme, over the checks' registry and over the default states |
+| `vimStateChecks` | Which Vim state a view is in and how one is entered; typed text; an operator over the selection; the last change; the state the minibuffer's view is put in when the scheme is told of it, and what the notice keeps |
+| `vimDefaultChecks` | The default states and bindings, through what each default key parses to, the minibuffer's state among them |
+| `vimContractChecks` | The scheme contract holds of the Vim scheme, over the checks' registry and over the default states, and is reported for a registry that names no state for the minibuffer |
 
 - **The grammar's checks run on a registry and keymaps written in the
   test** (`vimStates`), and name no default binding. The defaults have
@@ -1129,6 +1183,14 @@ and `reloadChecks` modes by owner and their install, `setupChecks`
 `vimStateChecks` that a mode's key, a hand-tuned one among them, is typed
 text in insert state, that a mode's binding is reached as what it wraps,
 and that `Mode.check` under the Vim scheme reads every state's keymaps.
+
+The mode that ships, the minibuffer's, is checked the same way: by
+`promptChecks`, on the loop's driver over the editor's models, with the
+registry's active keymaps and the accept key and the cancel key read from
+the test scheme's role table; and by `ConfigTest.promptChecks`, through
+the headless host. The keys the Vim scheme has for it are pinned by the
+Vim scheme's own lists, above, and pressed in the executable's fixture
+(`tests/headless/prompt`).
 
 ### Keys in, invocation out
 
@@ -1176,9 +1238,10 @@ is what makes the result hold for the real binding.
 - **The core publishes two contract checks.**
   - For schemes, built (`SchemeContract`,
     `lean/Editor/InputScheme/Contract.lean`). A scheme's author gives it
-    the scheme, keymaps, a view, inputs the author says are complete and a
-    key that goes on with none of them, and it answers the names of the
-    properties that do not hold. There are nine: some input has two keys or
+    the scheme, keymaps, a view, inputs the author says are complete, a key
+    that goes on with none of them and a key that prints and that nothing
+    binds, and it answers the names of the properties that do not hold.
+    There are ten: some input has two keys or
     more, so the others are not vacuous; a strict prefix of a complete
     input emits nothing; after a strict prefix the scheme reports its keys
     as pending; the last key emits, and nothing is then pending; an unbound
@@ -1188,12 +1251,16 @@ is what makes the result hold for the real binding.
     name, yields from the initial state an invocation of that name and
     leaves nothing pending (`namedCommandRuns`); every registered role has
     a key (`everyRoleHasKey`); the leader is not empty, and the roles are
-    on distinct keys apart from it (`leaderAndRolesApart`); and the unbound
+    on distinct keys apart from it (`leaderAndRolesApart`); the unbound
     key bound to `scheme.modeCommand` of a name runs as `namedCommandRuns`
-    asks (`modeCommandRuns`). It is pure and compares no states.
+    asks (`modeCommandRuns`); and once the scheme is told that the view is
+    the minibuffer's, the key that prints, typed for it, yields an
+    invocation and leaves nothing pending (`minibufferTakesText`). It is
+    pure and compares no states.
   - The model tests run it on the test scheme, on schemes written there
     that each break one property and are reported (a scheme whose role
-    table lacks a role among them), and on both Vim schemes.
+    table lacks a role, and one that never yields a self-insert, among
+    them), and on both Vim schemes.
   - For modes, built: `Mode.check mode scheme : List Mode.Problem` reports
     unregistered roles, duplicate suffixes, unreadable suffixes, and
     hand-tuned keys that shadow a scheme binding.
@@ -1218,6 +1285,11 @@ every build); the second is a proposal.
   type. Type classes would make it `Keymap m`, against the constraint that
   config is evaluated at one concrete type. A record of functions passed by
   reader, or a free-monad program, keeps it concrete.
+- **The interrupt key in the minibuffer.** It does not close a prompt: it
+  is stepped like any key, and neither scheme binds it there ("The
+  minibuffer"). Binding it to `minibuffer-cancel` in the minibuffer under
+  each scheme is the alternative, and under the Vim scheme whether `C-c`
+  should cancel as well as `<Escape>`.
 - **The wanted column and the selection's shape** in the Vim scheme. How
   counts, registers and the visual selection appear in the scheme's state
   and in an edit, and where the current Vim state is held, are built ("The

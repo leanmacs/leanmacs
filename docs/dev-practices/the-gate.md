@@ -107,7 +107,24 @@ leaves the file and says so; open then save with no edit writes the file
 and leaves its bytes as they were, for LF, CRLF, both and bytes that are
 not UTF-8; a second save while one is in flight, a buffer with no file and
 a job that is not registered are each said in the echo area; and a save
-that reports late marks the state it wrote. The editor state's side of a
+that reports late marks the state it wrote. Prompts are checked on that
+driver too (`ModelTest.promptChecks`), with the test scheme: a command asks
+for a prompt and runs to its end, keys that print are typed into the
+minibuffer, the accept key runs the command the prompt named with the
+typed string, in the view the prompt was asked from, before the next
+event, and the minibuffer's window is closed and its text released; a
+prompt with an initial value answers with it; the cancel key runs nothing
+and gives the focus back; a job's result is delivered while a prompt is
+open; the scene shows the prompt text and the input after each key; and a
+command that fails around a prompt, or is interrupted as it accepts, is
+rolled back with the prompt as it was. The accept key and the cancel key
+are read from the test scheme's role table, since the minibuffer's mode
+fills two roles. The state's side (opening and closing a prompt, the
+layout invariants with the minibuffer's window, the strip its place
+takes) is checked with the state's operations, the scene's side with the
+loop's, the notice a scheme is told with the loop's dispatch, and the
+operations `prompt`, `acceptPrompt` and `cancelPrompt` with the cases of
+the API. The editor state's side of a
 save in flight, the snapshot the loop releases once a save has ended and
 the saved mark a rollback takes back are checked with the state requests
 and the loop's dispatch. The build checks the theorem that inserting at a
@@ -122,7 +139,7 @@ whatever `LEAN_NUM_THREADS` says: a bare `lake test` is enough.
 
 `mise run ffi-test` runs `lean/.lake/build/bin/ffi-test`, the test executable
 linked against the real library, then `contract-test`, `config-test`, and
-then the editor: once with no arguments, and five times in its headless
+then the editor: once with no arguments, and six times in its headless
 mode on the fixtures under `tests/headless`: with `script`, whose output must
 be exactly `expected`; with `keys-script`, which sends keys with their
 identity through the library's window input and whose output must be exactly
@@ -139,7 +156,15 @@ be exactly `dispatch/expected`; and with `files/script` on the config in
 no file: `save-buffer` on the scratch buffer says it has no file, and a
 command of config's opens a path that is not absolute, which starts the
 compiled load job and is refused by the library before it asks the file
-system, and whose output must be exactly `files/expected`. Two more runs
+system, and whose output must be exactly `files/expected`; and with
+`prompt/script` on the config in `prompt/config`, under the Vim scheme the
+executable runs: a command of config's asks for a prompt, a committed
+text goes into the minibuffer, whose view the scene prints with the prompt
+text as its status line, `<Enter>` accepts and config's command receives
+the answer, `<Escape>` cancels, and the compiled `open-file`, run with no
+path, asks for one and opens the answer, a path the library refuses, so
+the run touches no file; its output must be exactly `prompt/expected`.
+Two more runs
 pin its failure statuses: a command
 line it does not understand must give status 2, and a script that cannot be
 read status 1 with a line on stderr that says why. `contract-test` runs the
@@ -188,8 +213,22 @@ endings, each opened and saved with no edit, have the bytes they had, with
 the save job seen to end `ok` and the echo area to say the file was
 written; a file changed on disk is left as it is, with the changed-on-disk
 refusal and the file's stamp in the echo area; and a path with no file
-says so and leaves the window. These hosts share one table of waits and
-one completion pump.
+says so and leaves the window; and the open command run with no path asks
+for one, and opens the path committed into the minibuffer once the accept
+key is pressed. These hosts share one table of waits and one completion
+pump.
+
+`config-test` runs prompts through headless hosts as well
+(`ConfigTest.promptChecks`), over the real queue, the real text binding
+and the real elaborator, with the test scheme and the minibuffer's
+commands and mode as compiled code registers them: the scene of an open
+prompt, with a committed text in the minibuffer; the accept key and the
+cancel key; a job's result delivered while a prompt is open, on the fake
+clock; a continuation that config registers, looked up when the answer
+arrives, across a reload that replaces it and one that drops it; the
+answer's command run before a key sent right after the accept key; and a
+continuation over a store reading the cell after the accepting command's
+write.
 
 `config-test` also runs jobs through the headless host, on a fake clock it
 moves: a job's handler runs on the editor thread, a reload that installs

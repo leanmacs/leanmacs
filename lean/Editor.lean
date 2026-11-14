@@ -14,7 +14,7 @@ editor's composite port, of which a command is a program and whose
 sub-ports' operations are lifted into it (`Editor/Command.lean`, which
 comes with `Editor/Setup.lean` through the stores), the editor API a
 command is written with (`Editor/Api.lean`: the editor state's buffers and
-windows, undo, modes, messages and jobs, over the state requests of
+windows, undo, modes, messages, jobs and prompts, over the state requests of
 `Editor/State/Request.lean`; it comes with `Editor/Api/Theorems.lean`,
 which holds what is proved of it on the text model, so that the build
 checks those proofs), the undo

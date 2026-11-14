@@ -83,14 +83,32 @@ with no config and `show` lists them before config's
 
 | Command | Does |
 |---|---|
-| `open-file` | Opens the file at the path that is its first argument in the window it is called with: it starts the job `load-file`, and when the file is loaded a buffer of its text, called by its base name, is shown there. A path a buffer already holds is shown at once. A file that is not there, or is refused for another reason, is said in the echo area, `cannot open <path>: <why>`, and the window shows what it showed. |
+| `open-file` | Opens the file at the path that is its first argument in the window it is called with: it starts the job `load-file`, and when the file is loaded a buffer of its text, called by its base name, is shown there. A path a buffer already holds is shown at once. A file that is not there, or is refused for another reason, is said in the echo area, `cannot open <path>: <why>`, and the window shows what it showed. With no path it asks for one, with the prompt `Open file: `, and opens the answer. |
 | `save-buffer` | Saves the buffer of the window it is called with to its file: it starts the job `save-file`, and when the file is written the echo area says `wrote <path>` and the buffer is no longer modified. A file that changed on disk since it was loaded is left as it is, and the echo area says `cannot save <path>: <why>`. With `true` as its first argument it writes whatever is on disk. |
 
 `run <name>` hands a command no argument, so a script cannot give
-`open-file` its path. Config's own command calls the operation the command
-is written with, `Files.open view path`, as the fifth fixture below does;
-`Files.save buffer` is the save. While a load or a save is in flight the
-editor goes on answering: what is typed meanwhile is handled first.
+`open-file` its path that way. Config's own command calls the operation
+the command is written with, `Files.open view path`, as the fifth fixture
+below does; `Files.save buffer` is the save. Or the script runs
+`open-file` with no path, commits the path into the minibuffer and accepts,
+as the sixth fixture does. While a load or a save is in flight the editor
+goes on answering: what is typed meanwhile is handled first.
+
+The editor ships two more commands, compiled in, and one mode
+(`lean/Editor/Minibuffer.lean`). A command asks for a string with
+`prompt label continuation initial`, which opens the minibuffer and
+returns at once; `continuation` names the command that receives the
+answer, as its first argument.
+
+| Command | Does |
+|---|---|
+| `minibuffer-accept` | Accepts the open prompt with the minibuffer's text as the answer: the prompt is closed, the focus goes back to the window it was asked from, and the command the prompt named runs with the answer. With no prompt open it says so in the echo area. |
+| `minibuffer-cancel` | Cancels the open prompt: it is closed, the focus goes back, and the command it named does not run. With no prompt open it says so. |
+
+The mode `minibuffer` is the major mode of the minibuffer's buffer. It
+puts the two commands on the keys the input scheme has for the roles
+`activate` and `quit`; under the Vim scheme, where typing in the minibuffer
+is text, they are on `<Enter>` and `<Escape>`.
 
 A `setup` registers each command name and each job name once. One that
 registers a name twice is rejected, like a chunk that does not elaborate.
@@ -124,7 +142,7 @@ are skipped.
 | `show` | Prints the commands, the texts and the stores. |
 | `key <logical> <physical> <modifiers>` | Sends a press of a key, with no text, as the window would report it: through the library's window input, in order with what was asked before. `<logical>` is one character (`a`) or a named key in angle brackets (`<Escape>`, a W3C UI Events `key` name); `<physical>` is a W3C UI Events `code` (`KeyA`) or `-`; `<modifiers>` is `shift`, `control`, `alt` and `super` joined with `+`, or `-`. The editor prints `key arrived:` with the three. The editor loop steps the key through its input scheme, and runs the command a completed sequence is bound to. |
 | `commit <text>` | Sends the rest of the line, trimmed, as an input method's composition would end with it, the same way as `key`. The editor loop inserts it at the focused window's cursors. A `commit` with no text is refused. |
-| `scene` | Prints the last scene the editor loop published: the frame, then each view and the text its snapshot holds, and after each view its status line: its buffer's name, and a modified field while the buffer is modified. |
+| `scene` | Prints the last scene the editor loop published: the frame, then each view and the text its snapshot holds, and after each view its status line: its buffer's name, and a modified field while the buffer is modified. While a prompt is open the minibuffer's view is printed after the windows', with the prompt text as its status line. |
 
 With the fixture the gate uses (`tests/headless`):
 
@@ -134,21 +152,21 @@ $ .lake/build/bin/editor headless "$(lean --print-prefix)" .lake/build/lib/lean 
 reload 1: installed, 2 chunks, 1 commands
 run greet: ok
 run missing: no such command
-commands: open-file save-buffer greet
+commands: open-file save-buffer minibuffer-accept minibuffer-cancel greet
 text 0: ""
 text 1: "hello, world"
 spawn count: job 1
 job 1 count: ok
-commands: open-file save-buffer greet
+commands: open-file save-buffer minibuffer-accept minibuffer-cancel greet
 text 0: ""
 text 1: "hello, world"
 text 2: "counted 42"
 ```
 
 Text 0 is the scratch buffer's: the editor loop makes its frame, and that
-buffer, for the first command it runs. `open-file` and `save-buffer` are
-the commands the editor ships, compiled in: `show` lists them before
-config's.
+buffer, for the first command it runs. `open-file`, `save-buffer`,
+`minibuffer-accept` and `minibuffer-cancel` are the commands the editor
+ships, compiled in: `show` lists them before config's.
 
 The gate runs a second script on the same config, `tests/headless/keys-script`,
 whose output must be exactly `tests/headless/keys-expected`:
@@ -247,6 +265,70 @@ view 0 0,0 0x0: "", scroll 0, selections 0..0
 status 0: status.name "scratch"
 ```
 
+A sixth, `tests/headless/prompt/script`, asks for a prompt and answers it,
+on the config in `tests/headless/prompt/config`. A command cannot wait for
+an answer, so it names the command that receives it and returns at once.
+The config registers that command with `commandWith`, which gives it what
+it was called with: the answer is its first argument.
+
+```lean
+def greetNamed (call : Call) : EditorM Unit :=
+  match call.arguments with
+  | .str name :: _ => message s!"hello {name}"
+  | _ => message "hello"
+
+def askName : EditorM Unit :=
+  discard <| prompt "Name: " { command := "greet-named" } "Ada"
+
+def setup : SetupM Unit := do
+  commandWith "greet-named" greetNamed
+  command "ask-name" askName
+```
+
+While the prompt is open the minibuffer is a view of its own, view 1, with
+the focus: `commit` inserts there, and `scene` prints the input typed so
+far as that view's text and the prompt text as its status line, in the
+face `minibuffer.prompt`. `<Enter>` accepts and `<Escape>` cancels: under
+the Vim scheme the minibuffer's view is in a state of its own, which binds
+those two keys to the compiled commands `minibuffer-accept` and
+`minibuffer-cancel`. The command that receives the answer prints no line of
+its own: what it said is in the echo area. The last part runs the compiled
+`open-file` with no path: it asks for one, and opens the answer, here a
+path that is not absolute, which the library refuses before it asks the
+file system. Its output must be exactly `tests/headless/prompt/expected`:
+
+```console
+$ .lake/build/bin/editor headless "$(lean --print-prefix)" .lake/build/lib/lean ../tests/headless/prompt/config ../tests/headless/prompt/script
+reload 1: installed, 1 chunks, 2 commands
+run ask-name: ok
+scene 0x0, focused 1, echo "", preedit -, published 2
+view 0 0,0 0x0: "", scroll 0, selections 0..0
+status 0: status.name "scratch"
+view 1 0,0 0x0: "Ada!", scroll 0, selections 4..4
+status 1: minibuffer.prompt "Name: "
+key arrived: <Enter> Enter -
+scene 0x0, focused 0, echo "hello Ada!", preedit -, published 5
+view 0 0,0 0x0: "", scroll 0, selections 0..0
+status 0: status.name "scratch"
+run ask-name: ok
+key arrived: <Escape> Escape -
+scene 0x0, focused 0, echo "", preedit -, published 8
+view 0 0,0 0x0: "", scroll 0, selections 0..0
+status 0: status.name "scratch"
+run open-file: ok
+key arrived: <Enter> Enter -
+job 1 load-file: started
+job 1 load-file: ok
+scene 0x0, focused 0, echo "cannot open notes/relative.txt: the path is not absolute", preedit -, published 15
+view 0 0,0 0x0: "", scroll 0, selections 0..0
+status 0: status.name "scratch"
+```
+
+No key types text into the minibuffer yet: the command a key that prints
+runs, `self-insert`, is not built, so such a key says
+`self-insert: no such command` in the echo area. Text reaches the
+minibuffer through `commit`.
+
 The editor runs its command loop, under the Vim scheme. The loop has no
 frame until it is first needed: for the first event from the window input
 (a `key` or a `commit`), the first `run`, or the first job's command. It
@@ -262,8 +344,8 @@ close request ends the loop.
 
 A key press is stepped through the scheme. Config's bindings are looked up
 first, then the scheme's own keymaps. The commands the Vim scheme's own
-keys name are not built yet, so such a key says `<name>: no such command`
-in the echo area. A command a key runs prints nothing: what became of it is
+keys name are not built yet, but for the minibuffer's two, so such a key
+says `<name>: no such command` in the echo area. A command a key runs prints nothing: what became of it is
 in the next scene's echo area, `<name>: no such command`,
 `<name>: refused: <error>` or `<name>: interrupted`, and a command that was
 refused or interrupted is rolled back: its buffer's text and selections are

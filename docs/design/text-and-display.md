@@ -1033,7 +1033,7 @@ return a typed refusal.
 
 The editor state is one Lean value (`lean/Editor/State.lean`, decided
 2026-11-13 by the command loop's phase 2): buffers, windows, one frame, the
-echo area and the preedit.
+echo area, the preedit, and the prompt that is open, if one is.
 
 - A **window** is a view of a buffer, named by the `ViewId` its view has in
   every scene. Its scroll position is an anchor marker of the buffer's text,
@@ -1042,19 +1042,50 @@ echo area and the preedit.
 - The **split tree** is binary: a leaf is a window or the minibuffer's
   place, and a split divides its rectangle between two children along an
   axis, rows (stacked) or columns (side by side), the first taking half,
-  rounded down. A subtree with no window takes no space, and its sibling
-  takes all of it, so the minibuffer's place takes none until a prompt is
-  open (the command loop's phase 10) and the views tile the frame.
-- **The invariants**: the focused window is in the tree; there is exactly one
-  minibuffer leaf; the tree's window ids are distinct and are the windows';
-  each window's buffer exists. The operations that can break one refuse
+  rounded down. A subtree with no view takes no space, and its sibling
+  takes all of it, so the minibuffer's place takes none while no prompt is
+  open, and the views tile the frame.
+- **The minibuffer is a buffer and a window of the state** (built by the
+  command loop's phase 10; [concurrency.md](concurrency.md), "Prompts").
+  The open prompt is a field of the state (`EditorState.prompt`): its
+  label, the minibuffer's view, the asking view and the continuation. The
+  minibuffer's buffer is in the next slot, over a text the asking command
+  made, with a name no buffer has and the major mode `minibuffer`; its
+  window is in the state's windows, with a new view id. So a committed
+  text is inserted there, the loop keeps and restores its markers and its
+  history, and the scene has its view, with no rule of their own.
+  - **The tree does not change.** The minibuffer leaf says where the
+    minibuffer's place is, and the prompt says whether one is open and
+    which window stands there, so closing a prompt leaves the tree exactly
+    as it was. A view id on the leaf was set aside: the open prompt would
+    be in two places that an invariant must keep in step. So was a prompt
+    kept by the loop, outside the state: a rollback returns the state
+    from before a command, and would need a second one for it.
+  - **The place takes a strip while a prompt is open.** A split one of
+    whose children is the minibuffer's place gives that place 32 physical
+    pixels along its axis (`Split.minibufferHeight`), or the whole extent
+    when that is less, and its sibling the rest; the views still tile the
+    frame. 32 is two rows of a 16-pixel cell, one for the input and one
+    for the status line that carries the prompt text. It is a placeholder
+    with no font behind it, and it ignores the frame's scale: nothing in
+    Lean knows the height of a row, since layout is the display's.
+  - **The window commands do not have it.** Removing it, splitting it and
+    showing another buffer in it are refused (`ofMinibuffer`), and so is
+    showing its buffer in another window: it is closed by answering or
+    cancelling its prompt, and only it shows its buffer. Focusing it is
+    allowed, so the focus can leave the minibuffer and come back. The last
+    window of the tree cannot be removed while a prompt is open: the
+    minibuffer's window does not count.
+- **The invariants** are over the state's views, the tree's windows and
+  then the open prompt's view: the focused window is one of them; there is
+  exactly one minibuffer leaf; the views' ids are distinct and are the
+  windows'; each window's buffer exists. The operations that can break one refuse
   with a `LayoutRefusal` and the state unchanged: removing a window
   (`onlyWindow` for the last window, `noSuchWindow` for one not in the
   tree), focusing one, splitting one, and showing another buffer in one
   (`noSuchBuffer` for a buffer there is none of, `markersOfAnotherText` for
   a marker that is not of the buffer's text). The minibuffer's place has no
-  id, so none can remove it; a later operation that could adds its own
-  refusal. When the focused window is removed, the focus moves to the first
+  id, so none can remove it. When the focused window is removed, the focus moves to the first
   window, in drawing order, of the subtree that took its place, or of the
   tree when that has none.
 - **A command reaches them as requests** (the command loop's phase 8,
@@ -1113,8 +1144,8 @@ Each view (`View`):
 Content is named only by handles, never by copied text, so an unchanged
 view is sent as the same handles. Faces are names; what they look like is
 the display pipeline's. Which cursor a view has is chosen by the command
-loop's later phases, and which status fields by `Loop.status` (below); the
-scene only carries them.
+loop's later phases, and which status fields by `Loop.statusOf` (below);
+the scene only carries them.
 
 Lean publishes the scene and asks layout's two questions through the
 display interface (`lean/Editor/Display.lean`): the rows a view shows from
@@ -1173,6 +1204,27 @@ decided 2026-11-13 by its phase 2):
   text. Whether a buffer is modified is its undo tree's answer, and it is
   right in a scene because every tree is told its text's revision before
   the scene is made. The scene's shape did not change.
+- **While a prompt is open the minibuffer's view is a view of the scene**
+  like any other (built by the command loop's phase 10), where the
+  minibuffer's place is in drawing order: its snapshot is the input typed
+  so far, its selection the cursor in it, and it is the focused view while
+  it has the focus.
+  - **The prompt text is its status line**: one field, the prompt's label,
+    in the face `minibuffer.prompt` (`Loop.statusOf`, `Loop.promptFace`),
+    with no name and no modified field. A view's status line is the
+    loop's to fill, so the scene's shape did not change, and neither did
+    the Rust scene on the display pipeline's branch, which lays a view's
+    status out as one row at the bottom of its rectangle.
+  - **The input is the whole text of the minibuffer's buffer.** So the
+    answer is that text, the initial value is what the text is made with,
+    and a motion to the start of the line is the start of the input. The
+    label as the first characters of the text was set aside: the text
+    store has no read-only range, so a command could move into the label
+    or delete it, and the answer would have to be cut out of the text.
+  - **A field of the scene for the prompt** is the cleaner contract, and
+    was set aside for now: it needs the same field in the Rust scene and
+    its binding. It is open whether to make that change when the display
+    pipeline draws the minibuffer.
 - The pending prefix is the keys the loop's input scheme reports as
   pending, as a key string (`C-x`): empty once a sequence completes and
   after an unbound key ([keymaps-and-modes.md](keymaps-and-modes.md), "The
@@ -1277,6 +1329,16 @@ these hunks" is a fact the editor can state.
 
 ## Open questions
 
+- **A field of the scene for the prompt.** The prompt text is the
+  minibuffer view's status line ("Publishing"), which keeps the scene's
+  shape. A field of its own is the cleaner contract, and needs the same
+  field in the Rust scene and its binding: whether to make that change,
+  and when, is for the display pipeline's work on the minibuffer.
+- **The minibuffer's height.** The strip the minibuffer's place takes is
+  32 physical pixels ("Views as built"), a placeholder with no font behind
+  it, which ignores the frame's scale. A height the host supplies, or a
+  layout query for the height of a row, are the alternatives; the second
+  is a change to the display contract.
 - **A summarised tree for the display layers.** The rope is a library's
   ("Text", as built). Display layers, excerpt buffers and decoration
   interval trees favour a sum tree in the style of Zed's; whether they get
