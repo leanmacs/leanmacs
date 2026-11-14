@@ -1,0 +1,21 @@
+[package]
+name = "editor-layout"
+version = "0.1.0"
+description = "Layout: the display layers, per-line layout and its caches, the layout queries and the frame"
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+# Text storage: layout reads snapshots, rows, patches and what a selection
+# covers. They are pure values, not an outside-world adapter, so there is
+# no port between the two crates; `deny.toml` lists this crate among
+# editor-text's wrappers.
+editor-text = { path = "../editor-text" }
+
+[dev-dependencies]
+# The property tests of the layers' conversions. Pinned exactly, as
+# editor-text pins it; without the default features there is no fork, no
+# timeout and no temporary file, and each property is run from a fixed
+# seed (`tests/layers.rs`).
+proptest = { version = "=1.12.0", default-features = false, features = ["std"] }

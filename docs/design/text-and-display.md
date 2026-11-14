@@ -966,6 +966,99 @@ A **face** is a set of optional attributes (family, size, weight, slant,
 colours, underline, strike-through, line height) with a documented merge
 order. Faces are named and defined in Lean.
 
+### As built
+
+Of the kinds above, span faces are built, from two sources: the selections
+and the decorations a scene carries. The rest are not.
+
+**A face** sets any of nine attributes and leaves the rest unset: a family,
+a size, a weight, a slant, a foreground, a background, an underline (a
+style and a colour), strike-through and a line height. It is the same nine
+in Lean (`lean/Editor/Face.lean`) and in Rust
+(`crates/editor-layout/src/face.rs`).
+
+**Lean defines, Rust merges.** Lean holds faces as data and merges nothing:
+a theme is an ordered list of definitions, each a name and the attributes
+it sets. Layout holds the list last sent and applies one rule to all of it.
+Doing the merge in Lean instead would put layout policy in two halves and
+make every publish cost the spans.
+
+**The precedence.** Attributes merge one by one. The value of an attribute
+of a run is that of the highest layer over the run that sets it:
+
+1. (highest) the selection, drawn in the face `selection`;
+2. the scene's decorations of the view, a later one in the view's list over
+   an earlier one;
+3. (lowest) the face `default`; and where `default` leaves an attribute
+   unset, layout's base value: no family, 16 points, weight 400, upright,
+   black on white, no underline, no strike-through, and a line height of
+   one times the font's own.
+
+The same rule orders definitions: where what is sent defines a name more
+than once, a later definition's set attributes are over an earlier one's.
+So a theme is overridden by appending to it. A status field's face is over
+`mode-line` over `default`, and a cursor's face is over `default`. A name
+nothing defines sets nothing. A decoration source added later (syntax
+highlighting) states its place in this order when it is added.
+
+**Units.** A colour is one word, `0xRRGGBBAA`. A weight is 1 to 1000, with
+400 normal and 700 bold. A line height is a multiple of the font's own, in
+64ths, or a length. A size or a line height of 0 is taken as it is, where
+a weight outside its range is not: the lines of such a font have no
+height, and how many a view shows is layout's rule ("Layout and
+rendering", as built, "A row counts as at least a pixel").
+
+**A length a face states is in logical points.** A length is a font size,
+a line height stated as a length, or the base size where no face sets one.
+It is a whole number of 64ths of a point, so it is exact as a float and
+can be hashed. A point is one physical pixel at scale 1: what a window
+system calls a logical pixel. It is not the typographic point of a 72nd of
+an inch. On macOS the two are the same number; on a Linux desktop a "14
+pt" font in another app is 14 × 96/72 pixels at scale 1.
+
+- **Layout multiplies, once.** Layout is told the scale factor of the
+  target it lays out for (`Layout::set_scale`; 1 until it is told). The
+  faces over a run are merged in points; the font they come to is put at
+  the scale and only then asked of the shaper
+  (`crates/editor-layout/src/decoration.rs`, `Styles::style`, the one
+  place layout asks a shaper for a font). So `size := 14` is 14 physical
+  pixels at scale 1 and 28 at scale 2, and looks the same size on both.
+- **What is multiplied**: a size, a line height stated as a length, and
+  the base size. A product is to the nearest 64th of a pixel, at any
+  positive scale, fractional ones among them: 14 points at 1.25 are 17.5
+  pixels. A line height that is a multiple of the font's own is not a
+  length and follows the size. A face has no padding and no margin; a
+  length added to a face later is in points and is multiplied in the same
+  place.
+- **The shaper port stays physical.** A font a shaper is asked for is in
+  physical pixels, so no shaper adapter knows a scale.
+- **Lean knows no scale for faces.** A theme and config state points. No
+  scale crosses with a face, and Lean multiplies nothing.
+- **Everything else is physical pixels**, as before: a scene's size and
+  rectangles, a frame's geometry, the answers of the layout queries, and a
+  pointer's position.
+- **The names are older than the unit.** Lean's `Pixels`, `Pixels.whole`
+  and `LineHeight.pixels`, and Rust's `Length::pixels` and
+  `LineHeight::Pixels`, keep the names they had when a theme stated
+  physical pixels. Their documentation says which unit each is in.
+
+**Themes and config.** `Theme.builtin` defines `default`, which sets every
+attribute, and `cursor`, `selection`, `echo-area`, `minibuffer-prompt` and
+`mode-line`; its colours are placeholders. Layout reads three names by
+itself: `default`, `selection` and `mode-line`. `echo-area` and
+`minibuffer-prompt` are defined and nothing draws them. Any other name is
+one a scene names and a theme or config defines, so a cursor face for each
+evil state is a definition added by the command loop, with no change to
+layout. Config sets a face in `setup`, `face "name" { … }`; a name is set
+once in a `setup`. The theme a display is sent is the built-in one followed
+by the installed config's definitions, so a face config sets takes
+config's attributes over the theme's, and one it stops setting is the
+theme's again at the next reload that installs
+([lean-runtime.md](lean-runtime.md), "Config and reload").
+
+Not built: a face naming another as its base; choosing between whole
+themes.
+
 ### Text is the only layout engine
 
 The library is a text display engine, not a GUI toolkit (decided
@@ -1029,6 +1122,50 @@ and edits of the layer below, produce its own snapshot and edits, in its
 own coordinate type. A position is converted between buffer and display
 coordinates by walking the layers. Milestone 1 needs tabs and wrapping;
 the others are added as layers without changing the ones below.
+
+### As built
+
+The display pipeline's phase 1 built the contract and two layers, in
+`crates/editor-layout` (`src/layer.rs`, `src/tabs.rs`, `src/wrap.rs`):
+
+- **The contract** (`Layer`): `sync` takes the snapshot of the layer below
+  and the edits that made it, and gives the layer's own snapshot and its
+  edits, in its own point type; a point converts down and up, with a bias
+  for a point the layer below has no counterpart of. Its module docs say
+  where a later layer goes: folds and inline text between the buffer and
+  the tab layer, blocks after the wrap layer; none changes a layer below.
+- **The tab layer.** Tabs are expanded before shaping (decided in phase 1,
+  2026-11-13): a tab becomes spaces up to the next multiple of the tab
+  width (8 columns by default), columns counted in characters, so the
+  shaper never sees a tab. On a monospace font the glyph after a tab is at
+  the stop in pixels; on a proportional font it is at the stop counted in
+  spaces, the known limit of the choice. Inline boxes (a relayout pass per
+  tab) and runs split at stops (layout breaking lines itself) were set
+  aside, and stay possible as the align-to-stop primitive ("Text is the
+  only layout engine"). Its points are a row, a segment and a byte column
+  of the segment's expanded text. A row's content is its bytes without its
+  line feed and without a carriage return before it; the position between
+  the two is the row's end.
+- **One very long row** is cut into segments of at most 4096 bytes, at the
+  last character boundary before each multiple. Each is shaped and broken
+  on its own and starts a new visual line, and tab columns restart at it,
+  so the rows around a position of a row of N bytes cost the segments they
+  touch, not N. The forced visual break every 4096 bytes on such a row is
+  the price; an incremental breaker that resumes mid-line needs shaping
+  state Parley does not expose.
+- **The wrap layer** is the per-text line store: each segment laid out on
+  demand, as an immutable entry keyed by row and segment. Its points are a
+  row, a segment, a visual line of it and an x. A position at a wrap is the
+  start of the later visual line, and only a row's last visual line holds
+  the row's end. A visual line that starts inside a tab's spaces starts
+  after the tab, so the tab is on the line its first space is on. Every
+  visual line holds a position, so each can be scrolled to and moved to: in
+  a view narrower than a tab, a line that would be a tab's spaces alone
+  with no position on it is not kept and those spaces are not drawn (such
+  a line at a row's end holds the row's end and stays).
+
+The round trip of every position through both layers is a property test
+(`tests/layers.rs`).
 
 ## Views
 
@@ -1176,6 +1313,28 @@ the display pipeline's. Which cursor a view has is the input scheme's to
 say, and which status fields is `Loop.statusOf`'s (below); the scene only
 carries them.
 
+**What the faces look like travels with the scene, in the binding.** Lean's
+`Scene` and the display interface are unchanged by faces: a scene names
+them and nothing more. The display's real binding
+(`lean/Editor/Display/Real.lean`) holds the theme and writes its
+definitions into the same words and the same string as the scene, after
+the views, so a scene and its faces reach layout in one call under one
+lock, and no frame is built between the two. They are written only on the
+first publish after the theme was set: the words carry a presence, and
+absent means "as last published", so a publish costs the faces only when
+they changed. The alternatives were a field of the scene or a request of
+the display interface, which change the contract the command loop builds
+on and its model, and a second C call, which lets a frame be built between
+a scene and its faces. The Rust scene (`crates/editor-layout/src/scene.rs`)
+is therefore Lean's scene and one field more, the definitions, with none
+meaning "as last given". The layout of the words is the table in
+`crates/editor-ffi/src/display/wire.rs`.
+
+After a reload that installs, the runtime that owns a display hands the
+binding the new theme (`Config.retheme`, `lean/Editor/Config/Display.lean`).
+No runtime does yet: the headless loop has no display, and the loop over
+the real display is the display pipeline's last phase.
+
 Lean publishes the scene and asks layout's two questions through the
 display interface (`lean/Editor/Display.lean`): the rows a view shows from
 its scroll anchor, and the position some visual lines above or below a
@@ -1286,14 +1445,17 @@ decided 2026-11-13 by its phase 2):
 - Slow work that affects layout (wrapping a huge paste, a reparse) gets
   about a millisecond to finish within the frame; after that the frame is
   drawn from an approximation and corrected.
-- Shaping goes through a `Shaper` port (Parley and fontique as the planned
-  adapter): font fallback, ligatures, complex scripts, bidirectional text,
-  mixed proportional and monospace fonts. Layout takes every metric from
-  this port and assumes nothing about pixels.
+- Shaping goes through a `Shaper` port (Parley and fontique are its real
+  adapter, `editor-shape-parley`): font fallback, ligatures, complex
+  scripts, bidirectional text, mixed proportional and monospace fonts.
+  Layout takes every metric from this port and assumes nothing about
+  pixels.
 - Drawing goes through a `Renderer` port, which takes a device-independent
   frame (see below). The wgpu adapter rasterises glyphs once into an atlas
-  and draws them as quads, plus rectangles. Rasterising, the atlas and
-  glyph identities are inside that adapter, not in the frame.
+  and draws them as quads, plus rectangles. Rasterising and the atlas are
+  inside that adapter, not in the frame. The frame names the font each
+  glyph is drawn in, resolved in layout, with a generation stamp so a
+  stale cache is detectable; it never names an atlas.
 - Nothing is drawn when nothing changed. Frames are drawn on demand, at
   most one per display refresh, by a scheduler that is a pure function of
   its inputs and so is tested with a fake clock.
@@ -1302,6 +1464,717 @@ decided 2026-11-13 by its phase 2):
   data, so it can be recorded and compared in tests.
 - Rows carry a content hash, and the renderer reuses the geometry of rows
   that did not change, so scrolling and cursor movement rebuild nothing.
+
+### As built
+
+The display pipeline's phase 1 built layout in `crates/editor-layout`, and
+put it behind a handle for Lean in `editor-ffi` (`src/display.rs`). Its
+phase 3 built the real shaper in `crates/editor-shape-parley`, and made
+the port and layout able to say what a real shaper says. The facts of each
+part are in the module docs; these are the decisions.
+
+- **The `Shaper` port** shapes one segment, with its font runs, into a kept
+  value that breaks into visual lines at a width; measuring and breaking
+  stay one operation behind it, and a width change breaks the kept value
+  again without shaping. Its published fake, `CellShaper`, gives each
+  character one glyph of its font's advance and line height and breaks
+  greedily at characters, the Lean display model's rule, so the real
+  binding passes the display contract by construction; it is also what the
+  display handle still runs on (the real adapter is linked by nothing
+  yet, below), and it is the "cell shaper" of the table below. Its
+  published contract check
+  (`shaper::contract`) holds the fake and every real adapter to nine
+  properties that leave the breaking policy open. Two of them are what
+  layout relies on of a line and the fake could never break: a line's
+  glyphs are in order from its left edge, whatever the order of their
+  clusters, and nothing in a text forces a break. A segment holds no line
+  feed, and every other character is content: a carriage return alone,
+  U+2028 and U+2029 reach a shaper, since a row is split at line feeds
+  only, and stay on their line.
+- **A glyph says where it is drawn and in which font.** A glyph has a pen
+  position and an advance, which positions are found by, and an offset
+  from the pen position and the baseline, which only a renderer reads.
+  The offset counts to the right and down: a glyph drawn left of its pen
+  position, or raised above where it would be, has one less than nothing.
+  The font it is drawn in is not the font its run asked for: a character
+  the font asked for lacks is drawn in a fallback, and two specs that
+  differ in line height are one font. So there are two kinds of id. A
+  spec's id is what a run asks for and what metrics are asked about; a
+  resolved font's id is what a glyph carries, an index into the shaper's
+  table of resolved fonts (`Shaper::resolved`). An entry is one face of
+  one font file at a size, with what a rasteriser needs: the bytes, a
+  number for the file so two entries are compared without reading bytes,
+  the face's index, the variation coordinates, and whether bold or a
+  slant is synthesised. Every glyph names an entry of the table as it was
+  when its line was shaped; within one generation of the shaper the table
+  only grows and an entry never changes. One id space for both was set
+  aside: it gives one number two meanings. The fake draws a spec's glyphs
+  in the resolved font of the spec's number, with no bytes.
+- **The real shaper is `editor-shape-parley`**, over Parley and fontique,
+  both pinned at exactly 0.13.0. No type of either is public: `deny.toml`
+  lets only the adapter depend on Parley, and only the adapter and
+  Parley's own crates on fontique. It builds one Parley layout for each
+  `shape` call, which is one segment of one row, keeps it, and breaks it
+  again at another width without shaping; it never uses `PlainEditor` or
+  a layout of a whole document, which shape everything again on each
+  edit. So a row costs a layout for each of its segments that is shaped,
+  which a wiring test counts against layout's own counters. Layouts are
+  quantised: a line's height and baseline are whole pixels, and advances
+  are the font's own. A font's metrics are those of a space shaped in it.
+  A glyph's offset is Parley's as it is: Parley's counts to the right and
+  down too, having turned over the font's own, which counts up.
+  **It is linked by nothing yet.** The display handle stays on the fake:
+  Lean's display contract passes over the fake by construction and has no
+  way to name fonts, and a display over real fonts needs a constructor
+  that says which, whose first user is the renderer. Whoever first needs
+  real metrics through the handle wires it (the pipeline's last phase;
+  the renderer's headless tests can lay out over the adapter in Rust).
+- **Where fonts come from is one seam, a font set.** A set of given files
+  holds exactly the fonts handed to it as bytes, with the system's fonts
+  off, a default family and fallback families by name; every test uses
+  it, over fixture fonts checked in under `tests/fonts`, so what a test
+  sees depends on the text and those bytes alone. The system's set is
+  the fonts of the machine, with the system's monospace family as the
+  default and the system's own fallback by script and for emoji; no test
+  may call it, and its check is on demand (`mise run shaper-system`). A
+  character is looked for in the family its run's spec names, then the
+  default family, then the set's fallbacks in order, and where none has
+  it, it is the first family's missing glyph. A port for font sources was
+  set aside: it would be a port inside an adapter for one decision.
+- **A line is as tall as the fonts on it.** Parley makes every line at
+  least as tall as a layout's default style, as CSS does. Left alone,
+  that would hold a row in a small font, or in a font of size 0, to the
+  height of font 0, whichever font the theme's default face is. So a
+  text's default style has no size and no line height, and every byte
+  states its font; an empty text, which has no byte, takes its run's
+  font, so an empty row is as tall as the font it would be typed in. One
+  limit follows from Parley: a line always holds its baseline, so a line
+  height in pixels under about three quarters of the size gives a line a
+  little taller than was asked, and only a size of 0 gives a line of no
+  height.
+- **Direction.** A line's glyphs are in visual order, as the Unicode
+  bidirectional algorithm orders them, and the base direction of every
+  line is left to right: a line that starts in Hebrew still starts at the
+  left edge with its Hebrew run reordered, as a code editor shows it,
+  where taking the direction from the text would make it a right-to-left
+  paragraph. The fast path for a line with no right-to-left character is
+  Parley's own, which skips bidirectional resolution for such a text at
+  that base direction; the adapter adds none, since it reads clusters
+  back the same way either way.
+- **Breaking is the shaper's.** Parley breaks at words by the Unicode
+  rules; a word wider than the view breaks inside itself, so a line fits
+  or holds one cluster, and spaces at a wrap count toward the width and
+  wrap. A break never falls inside a ligature. So real rows differ from
+  the Lean display model's, which breaks at characters, and that model's
+  contract is run over the fake, not over this adapter.
+- **A carriage return alone, U+2028 and U+2029 break no line.** Parley
+  breaks at each even with no width, and the port says they are content.
+  The adapter hands Parley a stand-in of the same length in bytes for
+  each, a space for a return and U+FFFD for a separator, so every offset
+  stays true. The stand-ins only keep the line whole; what such a
+  character looks like is the open question of how escapes are drawn.
+- **Positions, cursors and selections are found by cells**, not by a
+  line's glyphs as they are listed. A real shaper lists a right-to-left
+  run's glyphs in the reverse of the text, draws two characters with one
+  glyph (a ligature), and makes one cluster of several glyphs and several
+  characters (a letter and its mark). For each visual line layout derives
+  its cells: the glyphs of one cluster are one box, the box holds the
+  characters from its cluster's offset to the next cluster's, and each
+  character has an even share of it, as a browser places a caret inside
+  a ligature. The x of a position, the position an x aims for, the goal x
+  of a move, a cursor's box and a selection's areas are read from them:
+  a cursor on one character of a ligature of two is half the glyph wide,
+  and a selection that crosses a change of direction is an area for each
+  stretch of the row it covers. The cell stays text storage's, a
+  character, so a cursor can still stand between a letter and its
+  combining mark, drawn at the even split. On the fake a cell is a glyph
+  and every answer is what it was.
+- **A font is named by its spec.** `FontSpec` is the port's term for a
+  font: a family, a size, a weight, a slant and a line height. A shaper
+  gives each spec an id (`Shaper::font`): equal specs one id, different
+  specs different ids, for the shaper's life, with the default spec font
+  0. A run names its font by that id, so no glyph and no cache comparison
+  carries a spec, and the table from an id to its spec is the adapter's.
+  The fake's rule for a spec: a family has a cell at the base size of 16
+  pixels, a font's advance and own line height are that cell times its
+  size over the base size, and weight and slant change no geometry but
+  are still another id.
+- **What is font and what is paint.** Of a face's attributes the family,
+  the size, the weight, the slant and the line height are the font a run
+  is shaped in; the line height is among them because it changes a row's
+  height. The foreground, the background, the underline and
+  strike-through are paint, and never reach the shaper.
+- **The scale.** A face's lengths are logical points ("Decorations", as
+  built, "A length a face states is in logical points"). Layout holds a
+  scale, 1 until `Layout::set_scale` tells it another, and multiplies in
+  one place: `Styles::style` puts the font a stack of faces resolves to at
+  the scale (`FontSpec::scaled`: the size and a line height stated as a
+  length, each to the nearest 64th of a pixel) as it asks the shaper for
+  the font's id. The `Shaper` port, its fake, its contract and the real
+  adapter are unchanged and in physical pixels. A frame and the answers
+  of the queries are in physical pixels at the scale last set, so a
+  query after a change of scale answers at the new one with no frame
+  between.
+  - **In the cache key, as the font.** A kept row is used again only with
+    the font runs it was shaped with, and a font's id is the shaper's for
+    the physical spec. At another scale every run is in another font, so
+    each kept row is shaped again when a frame or a query next reaches
+    it, and the status row likewise. Nothing has a scale stored on it.
+    Two things are not keyed by a font and are handled by hand: the
+    styles kept by stack of faces are dropped on a change, and the base
+    font is found again. A theme of 28 points at scale 1 and one of 14 at
+    scale 2 share their rows.
+  - **What the counters show.** Over the frame after a change of scale
+    alone, `shaped` grows by the rows the view shows and `reused` by
+    none; over the same frame once more, `reused` by those rows and
+    `shaped` by none. Setting the scale a layout already has shapes
+    nothing. The status row is no segment and is not in the counters: the
+    fake's count of bytes shaped shows it shaped again
+    (`tests/counters.rs`).
+  - **Where no window exists the scale is 1**, which is the identity: the
+    spec handed to the shaper is the spec the faces resolve to. So the
+    headless display, Lean's display contract, `tests/display/
+    frame.expected` and the renderer's reference image are what they
+    were, and no fixture changed.
+  - **No rounding of layout's own.** Any positive scale is taken,
+    fractional ones among them, and a row is as tall as the shaper makes
+    a line of the font. On the fake that is exact and linear: at scale 2
+    every length is twice (`tests/scale.rs`). On the real shaper a line's
+    height and baseline are whole pixels, by Parley's own quantising at
+    the physical size, so a row at scale 2 is twice a row at scale 1 to
+    within a pixel: 14 points of the fixture's Noto Sans are rows 19, 24,
+    28 and 38 pixels tall at scales 1, 1.25, 1.5 and 2, with line widths
+    in exact proportion (seen in a spike, pinned by no test).
+  - **Who tells layout the scale** is whoever owns the layout. So far
+    that is one caller outside tests, the window example's editor thread
+    ("The window, as built"). The display handle Lean publishes to is
+    never told one and lays out at 1 (open questions, "A scene published
+    from Lean at its window's scale").
+- **Decorations.** A source gives the spans of a range of a snapshot and is
+  asked only for the rows laid out. Selections and the scene's decorations
+  are the first two; a range with equal ends of an exclusive, an inclusive
+  or a block selection is a cursor and gives no span, so a cursor move
+  changes no row, while a line-wise range covers its rows whatever its
+  ends, so one with equal ends highlights its row. A span names its face
+  by an id interned from its name, which stays inside layout. Spans are
+  collected lowest layer first, the selections' last, so the faces over a
+  run are a stack, and the run's font and paint are what the stack
+  resolves to by the precedence ("Decorations", as built). Shaping runs
+  split only where the font changes. No source is asked for a segment's
+  fonts while no face but `default` sets a font attribute.
+- **Caches.** An entry keeps its shaped value, the font runs and the
+  shaper's generation it was shaped under, and its breaks at one width:
+  text and font changes shape again, a width change breaks again, and a
+  paint-only change does neither. Faces need no invalidation of their own:
+  a face whose font attributes change resolves to another font id, so the
+  rows drawn in it are shaped again and no other, and a face whose paint
+  changes resolves to the same id, so its rows are reused. A change of
+  `default`'s font shapes every row. Entries are moved through the edit log's
+  patches, pulled through the view's snapshot, and not cleared; when the
+  patch is refused (behind the horizon, or the text is gone) the text's
+  state is rebuilt from the snapshot at hand, and a snapshot older than
+  what is kept is laid out in a scratch state, so the cache never moves
+  backwards. Patches and not the mapper, because entries are keyed by rows,
+  which patches give directly.
+- **Storage is sparse**: a map of the rows laid out, not a summarised tree.
+  A row not laid out counts as one line of the default height until it is;
+  a publish drops entries farther than four view heights from every view of
+  their text, and the state of every text it does not name. A tree waits
+  for a layer that needs sums over a whole text (folds, a scroll bar).
+- **The queries** lay out whatever they reach, in the same call, from the
+  same entries the frame uses, with the selections and decorations of the
+  last frame that showed the text, in the faces as they are now.
+- **A row counts as at least a pixel.** The rows a view shows are those
+  that fit its height whole, and in that count a visual line is at least
+  one pixel tall, whatever height the shaper gave it. So a frame or a rows
+  query lays out at most a row for each pixel of its view, and never the
+  text from the anchor to its end, which is what lines of no height would
+  otherwise come to: they all fit. Lines have no height in a font of size
+  0, and on the fake in one of a line height of 0, set by `default` or by
+  the face of a decoration or of the selection, and wherever a shaper
+  reports none (the real shaper reports none for a size of 0, and a few
+  pixels for a line height of 0 at another size); the
+  shaper's contract holds only the default font's lines to a height. The
+  rule is layout's because the cost is: one walk
+  (`crates/editor-layout/src/query.rs`, "The rows that fit") gives the
+  frame and the rows query their rows, and it is bounded whatever a face
+  or a shaper says. Nothing refuses or changes a size or a line height of
+  0, neither the wire nor Lean's binding: that would be a second owner of
+  the rule and would bound nothing, since a size of a 64th of a pixel
+  makes lines as flat. Only the count changes: a row keeps the height the
+  shaper gave it, so in a frame a row of no height is that tall and the
+  next row starts where it does. A move counts visual lines, so no height
+  changes what it costs.
+- **The frame** is a plain immutable value (`Send + Sync`): per view, the
+  rows from the anchor's visual line, as many as fit whole, each with its
+  glyphs shared with the store, its runs and a content hash; the cursor at
+  the head of every range of every selection; and selection areas. A row's
+  runs cover its glyphs exactly and a selection's area is as wide as the
+  glyphs it covers, so a tab whose spaces cross a soft wrap takes its faces
+  and its selection on both rows, over the spaces each holds. A test
+  compares a frame as text (`Frame::describe`), and one fixture frame
+  (`tests/display/frame.expected`) is compared from Rust and, through the
+  real binding, from Lean.
+- **The frame carries resolved values and no face.** A run carries its
+  paint (a foreground, a background, an underline with its style and
+  colour, strike-through), and neighbouring runs of one paint are one run;
+  an underline with no colour of its own takes the run's foreground. A
+  glyph carries the id of the font it is drawn in. A cursor carries the
+  paint of the face the scene names for it over `default`: its background
+  is the cursor's colour, and its foreground the glyph's under a block
+  cursor. A view carries `default`'s background and the selection's, for
+  its selection areas. A row's hash covers its glyphs with their fonts
+  and offsets, its runs with their paint, its height and its baseline,
+  relative to the row's start; a cursor is no part of a row, so moving it
+  or changing its face changes no hash. A font's id is its shaper's,
+  given in the order it first drew a glyph in each, so two frames are
+  compared, as text or as values, only from layouts handed the same
+  scenes and faces in the same order.
+- **The frame carries its fonts and a generation.** Beside its views a
+  frame holds the shaper's table of resolved fonts and the shaper's
+  generation, both read once the views are laid out, so every glyph of
+  the frame names an entry of the table it travels with. That is how
+  whatever draws frames gets exact font identities with a generation
+  stamp, with no call back into the shaper, which the render thread may
+  not make: it keys what it keeps by font id and glyph id, and drops it
+  all when a frame of another generation arrives. Fonts are compared by
+  what they name, never by their bytes. The frame still holds no atlas
+  id and no rasterised glyph, and `Frame::describe` prints neither the
+  generation nor the table. The `Renderer` port that takes these frames
+  was made later, in a crate of its own ("The renderer, as built").
+- **The mode line.** A view with at least one status field has a status
+  row: its fields' texts one after another with no separator, each in its
+  face over `mode-line` over `default`, shaped as one unbroken line
+  through the `Shaper` port, at the bottom of the view's rectangle. A tab,
+  a carriage return or a line feed in a field is shaped as a space. The
+  row is as tall as its shaped line, and the view's text rows are those
+  that fit whole in the height that remains. A view with no status field
+  is laid out across its whole rectangle. The row is kept per view and
+  shaped again only when its text or its font runs change. The
+  alternatives were to draw it over the last text row, which hides rows,
+  or outside the view's rectangle, for which the scene has no rectangle.
+- **Counters** count segments shaped, broken and reused, each once per call;
+  every cost claim above is pinned by one.
+- **The binding.** A document has a key and a snapshot carries its
+  document's key and text, held weakly, so layout pulls patches and reads
+  markers through the snapshot handle it is given, and Lean's binding needs
+  only the read half of its table of snapshots. A published scene crosses
+  as words, one string and a list of snapshot handles; markers cross by
+  number and are read in the snapshot's document as it is when the scene
+  arrives, each on its own. The definitions of the faces cross in the
+  same words and string, behind a presence ("The scene", as built); words
+  that spell no face are refused, and the frame, the scene and the faces
+  published before stay. Who writes the cache, and when a resize is
+  shown, is open: [concurrency.md](concurrency.md), "Sharing state".
+
+### The renderer, as built
+
+The display pipeline's phase 4 built the renderer in two crates: the port
+and what every back end shares in `crates/editor-render`, and the real
+adapters in `crates/editor-render-wgpu`. The facts of each part are in the
+module docs; these are the decisions. None is confirmed by the owner yet
+(tasks `display-pipeline-renderer-port-owner` and
+`display-pipeline-text-core-pitfalls`).
+
+Phase 4 started no thread and opened no surface, and its plan and this
+section gave both, with the real clock, to phase 6. Phase 5 built all
+three, because a window that draws needs them ("The window, as built",
+below): `editor-ffi` starts the render thread and lends the loop the
+clock that stamps input, and the wgpu adapter presents to a window's
+surface. What is still phase 6's is anything from Lean reaching them:
+frames published from Lean, the real shaper behind the display handle,
+and the journal read from Lean.
+
+- **The `Renderer` port is `editor-render`'s.** It is a crate of its own,
+  which depends on `editor-layout` alone, for the reasons the window port
+  is: the fake and the contract belong to the port's owner, nothing may
+  depend on `editor-ffi`, and `editor-layout` reads no clock and starts no
+  thread while the render loop has both. The port is one method that
+  takes data and returns data: a frame and a target (a size in physical
+  pixels and a scale) in, and out whether it presented and what it cost
+  (rows built and reused, glyph images rasterised, reused, evicted and
+  skipped, the atlas's bytes). It grows by data: a field of the request
+  or of the answer. Reading pixels back is not on the port.
+- **What every back end shares is written once, there.** The mailbox
+  (one slot; a newer frame replaces one not yet taken, and the stamp kept
+  is the older). The scheduler, a pure function of the demands and the
+  time passed in. Which rows are built again (`RowCache`: one payload for
+  each distinct row hash of the frame last drawn, text rows and status
+  rows alike, built only for a hash not held, and begun again under
+  another generation or scale). The frame journal and the counters,
+  filled by the loop from what a draw returns. Time is a port there, in
+  nanoseconds, with a fake a test sets; the crate has no real clock.
+- **The loop draws on demand.** A demand is a frame that is not the one
+  shown, a dirty mark, a new size or scale, or an animation deadline that
+  has come. A frame equal to the one shown, the same value or an equal
+  one, is no demand: nothing is drawn. There is at most one draw for each
+  refresh interval, which is data: the window tells how often its display
+  refreshes, and the interval is the loop's default until it does. With
+  no demand the render thread waits on a condition variable with no
+  deadline. A resize draws the frame shown again on the new target at
+  once, without waiting for Lean. A draw that fails to present leaves
+  its demands, and is tried again a refresh later. A target the loop is
+  told is hidden is not drawn on at all: what is asked is kept, and one
+  draw serves it when the target is shown. A draw whose renderer finds
+  the target hidden, when nobody had said so, leaves its demands too and
+  is tried again when the loop is next told anything, not a refresh
+  later (`Drawn::hidden`).
+- **The fake and the contract.** `RecordingRenderer` records every
+  request and draws nothing. The contract is nine properties of what a
+  renderer says it built: a first frame builds every row; the same frame
+  again, a frame that differs only in its cursor and another size at the
+  same scale build none; a frame that differs in one row, and one
+  scrolled by a row, build that row alone; another generation builds
+  every row; rows are counted once for each distinct hash; a frame of no
+  views is presented. Both real adapters run it.
+- **The drawing is ours: one painter, two devices.** No published
+  library draws subpixel text
+  ([rendering-prior-art.md](rendering-prior-art.md), "The drawing
+  library, as chosen"). The painter turns a frame into a list of quads,
+  rectangles of whole pixels that are filled with a colour or read a
+  rectangle of a glyph atlas, in drawing order: per view its background,
+  each run's background where it is not the view's, the selection areas,
+  the glyphs, underlines and strike-throughs, the status row, the
+  cursors. A row's quads are kept by its hash, relative to its own start.
+  Behind the painter is one of two devices, which only blend the quads:
+  the CPU compositor (`HeadlessRenderer`) and wgpu (`WgpuRenderer`). So
+  the two adapters are the same code down to the quads and the atlas's
+  bytes, and differ in the blend of one quad, which is one function and
+  one shader that state the same arithmetic.
+- **Where a glyph goes.** At its `x` plus its `dx` across, rounded to a
+  quarter of a pixel, and at its row's top plus the baseline plus its
+  `dy` down, each rounded to a whole pixel: a baseline is a whole pixel.
+- **The glyph cache.** A glyph image is kept by resolved font id, glyph
+  id, one of 4 horizontal bins of a quarter pixel, and the kind asked
+  for. There are three kinds, each in atlas pages of its own format:
+  masks (one coverage a pixel), subpixel masks (a coverage for each of
+  red, green and blue) and colour images. An image is pinned by every
+  kept row that draws it, and rows are kept for the frame last drawn, so
+  a glyph on screen is never evicted; only unpinned images are let go,
+  the one unused for longest first. The pages may come to a budget of
+  bytes (64 MiB unless a setting says otherwise); past it, unpinned
+  images go first, and if what is in use alone needs more, the page is
+  added, counted, and given back at a later draw. A frame of another
+  generation empties the cache. What cannot be drawn is counted: a glyph
+  of a font with no bytes (the fake shaper's), a glyph id past 16 bits,
+  an image larger than a page. Rasterising is `swash`, packing the pages
+  is `etagere`.
+- **Text is blended over what is under it, in linear light.** For each
+  of red, green and blue, `out = text × coverage + under × (1 −
+  coverage)`: nothing is composited against an assumed background. The
+  target holds sRGB values and blending is in linear light, so half
+  coverage of white on black is 188, not 128. On a GPU a coverage for
+  each channel is dual-source blending; an adapter without it is given
+  plain masks and one coverage, and says so.
+- **The weight of text matches the platform's: on macOS, Core Text's.**
+  The owner's decision (2026-11-14, rdm task
+  `editor-render-text-lighter-than-core-text`): match the platform's
+  font rendering as closely as possible. On macOS the window's text is
+  drawn to Core Text's weight; Linux and every other target keep
+  linear-correct rendering, the outlines as they are, until a later
+  task decides otherwise.
+
+  How heavy text is drawn is a field of the renderer's settings,
+  `Settings::weight`: a contrast, which raises the coverage of dark text
+  on a light ground (`blend::adjusted`, on the CPU and in the shader
+  alike), and a dilation, which draws each stem that many pixels
+  thicker than its outline (swash's `embolden`, in the rasteriser, so
+  the GPU reads the same atlas). The default, `Weight::LINEAR`, is 0
+  and 0, and draws every byte as before. The macOS setting is
+  `Settings::core_text()`: `Weight::CORE_TEXT`, a contrast of 0.1 and a
+  dilation of 0.8 px, with hinting off, as the fit chose. The program
+  picks it where it wires the renderer: `editor-ffi`'s example `window`
+  asks `cfg!(target_os = "macos")` and nothing in the renderer or the
+  core names a system. Whatever later makes the editor's own renderer
+  applies the same rule.
+
+  Why. Seen by the owner on 2026-11-14: the window in Menlo 14 pt at
+  scale 2 beside TextEdit in Menlo Regular 14 pt at 100%, the same
+  size, but TextEdit "much heavier". The first measurement held the
+  renderer to ratios read off the owner's screenshot (1.49 times the
+  dark pixels, 1.09 times the ink), and no single cause reached them.
+  Those ratios are superseded: the 1.09 most likely counted the
+  window's `#f8f8f8` ground, and TextEdit draws black on white, so part
+  of that gap was the colours. The target is now Core Text's own
+  drawing of the sentence `the window draws this`, from the fixture
+  font at 14 pt on a bitmap of scale 2, black on white, with font
+  smoothing on (`tests/coretext/sentence.png`, captured on demand by
+  `mise run coretext-reference`; its README says how). The renderer
+  draws the same sentence through its CPU path, each glyph at Core
+  Text's pen position, black on white, and both are counted the same
+  way: *dark* is the pixels below 128, *ink* how far below the white
+  ground the pixels are, summed.
+
+  | Drawing | Dark | Ink | Dark / Core Text | Ink / Core Text |
+  |---|---|---|---|---|
+  | Core Text, smoothed: the target | 1891 | 503470 | 1.000 | 1.000 |
+  | Core Text, not smoothed (for comparison) | 1638 | 429519 | 0.866 | 0.853 |
+  | The default, `Weight::LINEAR`, hinted | 1321 | 362857 | 0.699 | 0.721 |
+  | macOS, `Settings::core_text()` | 1910 | 499078 | 1.010 | 0.991 |
+
+  The fit swept the contrast from 0 to 1 and the dilation from 0 to
+  0.8 px in steps of 0.1, with hinting on and off, and took the point
+  whose larger miss of the two counts was least: 0.010. Many points
+  come within a few hundredths, trading contrast for dilation (a
+  contrast of 1 with 0.5 px, hinted, misses by 0.012), so the
+  constant is one good point of a shallow valley, not a unique one. The
+  earlier candidates' directions still hold and are pinned: dilating
+  the outline, raising the coverage, blending on sRGB values and
+  drawing black on white each add ink. Even without smoothing Core Text
+  draws about a fifth more ink than the default; smoothing adds about
+  as much again.
+
+  The caveats. The font is Noto Sans Mono, a stand-in for Menlo, whose
+  licence keeps it out of the repository. It is fitted at one size,
+  28 px. The dilation is a fixed number of pixels, where Pathfinder
+  reads Core Text's stem darkening as growing with the size below about
+  25 px ("Risks", in [rendering-prior-art.md](rendering-prior-art.md);
+  read, not verified): at other sizes the match is not measured (rdm
+  task `editor-render-weight-at-other-sizes`). The target is Core Text
+  drawing offscreen into a bitmap, not TextEdit on screen. Beside
+  TextEdit, by eye, the owner saw on 2026-11-14 that the window in Menlo
+  14 pt is as heavy as TextEdit in Menlo Regular 14 pt at 100%, not
+  lighter (`docs/dev-practices/on-demand-checks.md`, "The weight beside
+  TextEdit, by eye"; the display's scale not stated). Some of the
+  spacing, and maybe the `w`, are not quite the same as TextEdit's: rdm
+  task `editor-render-glyph-spacing-and-shape-vs-core-text`.
+
+  Pinned in `crates/editor-render-wgpu/src/weight_tests.rs`: the macOS
+  setting within a tenth of both counts, and no worse than its
+  neighbours on the grid and the default; the counts are printed by
+  `cargo test --locked -p editor-render-wgpu --lib weight_tests --
+  --nocapture`, and two runs print the same. That the GPU draws what
+  the CPU draws at the macOS weight is checked on demand, by `mise run
+  render-gpu` and `mise run linux-render`.
+- **Antialiasing is a setting, and by default follows the scale:**
+  subpixel masks below 2 physical pixels to a logical one, plain masks
+  from 2 up. The order of a display's colour stripes cannot be asked of
+  the window system, so it is a setting too (red, green, blue unless
+  told otherwise). Hinting is a setting, on by default and off at the
+  macOS weight (`Settings::core_text()`). A renderer says which
+  kind of mask its last draw asked its glyph images in (`masks()` on
+  both adapters: plain, or subpixel with the order of the stripes; none
+  before a first draw). It is what the draw did, kept as it did it, and
+  not the rule applied again by a caller; the kind says itself for a
+  person, so nothing downstream matches on it. The window example prints
+  it for each draw, which is how a change of antialiasing between two
+  displays is seen.
+- **The scale changes what the renderer sizes, and nothing else.** A
+  frame is in physical pixels and so is a target. What the renderer
+  itself sizes is `max(1, round(scale))` pixels thick: an underline, a
+  strike-through, a bar or underline cursor, a hollow cursor's edge.
+  Rows built at one scale are built again at another. A theme's lengths
+  are multiplied by the scale in layout, before shaping ("Layout and
+  rendering", as built, "The scale"), so a frame reaches the renderer
+  already at its target's scale, and the renderer multiplies nothing in
+  it: nothing is scaled twice.
+- **A ligature across a change of paint** is drawn whole in the paint of
+  its first byte: a glyph has one cluster, and the painter paints a
+  glyph by the run that holds it.
+- **How it is tested.** wgpu has no software renderer of its own: a
+  machine with no GPU and no driver has no adapter, and the gate runs on
+  such machines. So the gate draws with the CPU compositor, and compares
+  one frame of real text with one reference image, `tests/render/
+  frame.png`, within 2 of 255 a channel; and it runs the wgpu adapter on
+  wgpu's no-op back end, which validates every call (the shader, the
+  pipeline, every draw, inside an error scope) and draws nothing. What a
+  real GPU draws is compared with the same image on demand
+  ([the-gate.md](../dev-practices/the-gate.md),
+  [on-demand-checks.md](../dev-practices/on-demand-checks.md)).
+
+### The window, as built
+
+The display pipeline's phase 5 built the window the renderer draws in:
+the winit adapter's full translation, what a window tells whatever draws
+in it, the render thread, the surface, and a clipboard adapter. The facts
+of each part are in the module docs of `crates/editor-platform`,
+`crates/editor-platform-winit`, `crates/editor-platform-arboard`,
+`crates/editor-ffi` (`render`) and `crates/editor-render-wgpu`
+(`surface`, `gpu`); these are the decisions. **None is confirmed by the
+owner.** Nothing of it reaches Lean: no input variant, no row of the
+event table, no Lean module and no C function changed, and the process's
+window is still run with nothing drawing in it. The threads are in
+[concurrency.md](concurrency.md), "Sharing state".
+
+- **Redraw is on demand, from end to end.** winit's loop waits for the
+  next event, and the adapter never asks it for a redraw and never sets
+  its control flow. The render thread waits on the render loop's park
+  with no deadline. A draw happens because something asked for one: a
+  frame was published, or the window said it was resized or damaged. A
+  key, the pointer, the focus and a composition ask for nothing by
+  themselves: they are input, and it is what the editor publishes in
+  answer that draws. The interrupt key is not singled out: every input
+  takes one path to the queue.
+- **The window tells what draws in it through a second listener.** The
+  window port's `Platform::run` takes a drawer beside its report, and
+  hands it a `Canvas`: the window opened (with its native window, its
+  size and its display's refresh rate), a new size or scale, a new
+  refresh rate, damage, hidden or shown, closing. It is not a variant of
+  `Input`, because every `Input` becomes an event for Lean and a native
+  window is nothing Lean can use. The contract holds the order: the
+  drawer hears the window opened before anyone is told of the window, so
+  whoever learns of it from the queue finds the render loop there; and it
+  hears the window is closing last, before the window is gone.
+- **The native window is the port's own data.** `NativeWindow` is an
+  AppKit view, an Xlib window or a Wayland surface, as the pointers and
+  numbers the system defines. The window adapter fills it from the
+  handles winit gives, and the renderer turns it back into the handles
+  wgpu takes, each through its own library's re-export of
+  `raw-window-handle`: no type of winit, of wgpu or of that crate is
+  public anywhere, and no crate of the workspace depends on it.
+- **A key's names are winit's, which are the W3C's.** winit documents its
+  named keys and key codes as the W3C UI Events values, so a variant's
+  own name is taken, and the three places winit says it differs are
+  written out: the system key is `Meta` and its codes `MetaLeft` and
+  `MetaRight`, and Space is the character it types. A table of some five
+  hundred variants written by hand would make every key winit adds
+  unidentified until someone listed it.
+- **A key's text is what the port documents, not always what winit
+  gives.** On X11 winit gives a release the text of its press and gives
+  Escape the text U+001B. The port says a release produces no text and
+  that a key known by its name produces none. So a release carries none,
+  and text that holds a control character is no text: Escape, Enter, Tab
+  and Backspace are known by their names. This decides what Lean sees
+  for those keys. A key pressed with Control or the system key held
+  carries none either: winit on macOS gives Control-A the text `a` and
+  Command-S the text `s` (read at the pin, not seen), and on X11
+  Control-Shift-A arrived with `A` (seen), where Control-A arrives with
+  U+0001. Such a key is a command and inserted nothing, and whatever
+  inserts a key's text would otherwise insert `a` on Control-A on macOS
+  and nothing on Linux. Shift and Alt leave the text: Alt composes
+  characters on macOS. The modifiers are the ones winit last reported.
+  The port's fake is not changed: its sample script's first key has
+  Control held and the text `a`, and tests on both sides of the Lean
+  boundary read it.
+- **Modifiers are those winit last reported**, and are not put right. On
+  X11 a modifier's own press arrives before the change that names it, so
+  the press of Control carries no `control`. No command binds a bare
+  modifier.
+- **The pointer.** A press and a release are where the pointer last was.
+  A move with a button held is a drag, carrying the button held longest;
+  a move with none held is remembered and not reported. Being told the
+  pointer is where it already was is no move and so no drag: winit on
+  macOS says where the pointer is before every press and every release,
+  and a click there arrived as a press, a drag and a release. A wheel carries
+  winit's delta as it is, in lines or pixels, positive when the content
+  moves right and down. Touch is not mapped.
+- **Size and scale.** A resize is the new size at the scale last known,
+  and a change of scale a resize at the size last known. A window says
+  its size as it opens, in a resize straight after `Opened`: the port has
+  no other way to say how large a window is, and Lean must know before
+  it lays anything out. A size winit says again is reported again: on
+  macOS a window says its size four times as it opens, the same each
+  time (seen), since winit says it at each step of building the window.
+  A resize says how large the window is, not that it changed; the same
+  size is no demand to the render loop, and a frame equal to the one
+  shown is none either. The scale goes two ways from the window, and
+  they have nothing in common. The render loop is told it with the size,
+  as its target's, and the renderer uses it for the thickness of the
+  lines it sizes and for the kind of mask. Layout is told it by whoever
+  lays out for the window, with `Layout::set_scale`, before it lays out
+  for that size: in this phase that is the window example's editor
+  thread, which reads the scale off the resize it pulled from the queue,
+  and nothing else. Lean is handed the scale in the `resize` event and
+  reads it nowhere. Between the window saying a new scale and the frame
+  laid out for it arriving, a frame laid out at the old scale may be
+  drawn once on the target at the new one: the same transient as a frame
+  of the old size on a new one, and no longer.
+- **Native fullscreen and Spaces need no code of their own.** The window
+  is made with winit's default attributes, which are resizable and
+  titled, and on macOS such a window has the green button, which puts it
+  into the system's fullscreen on a Space of its own. The event loop is
+  built without winit's default menu, so a fullscreen shortcut that is a
+  menu item's is not there: the button is the way in. To the editor it
+  is a burst of sizes: winit reports each change of the content view's
+  frame as a resize, the adapter reports it and tells the drawer, the
+  render loop draws the frame shown on the newest size at most once a
+  refresh (several sizes within a refresh are one draw, on the last),
+  and the surface is configured again before a draw of another size. A
+  window on another Space is occluded: it is told as hidden, nothing is
+  drawn while it is, and it is drawn once when it is shown if anything
+  was asked meanwhile. All of that is read, in this tree and in winit,
+  and each step is pinned on fakes; **nobody has seen a window of ours
+  enter fullscreen, move between displays or change Space.** Two things
+  cannot be promised by a resize alone. Between a change of size and the
+  next picture presented at it, the system stretches the last picture to
+  the layer's new bounds (the default contents gravity of the Metal
+  layer wgpu makes: read). And the loop's first draw on a new size is of
+  the frame laid out for the old one, with the target cleared to black
+  where that frame has no view, until the frame for the new size
+  arrives. Each lasts a draw or two; whether either shows during the
+  system's animation is for a person to see
+  ([on-demand-checks.md](../dev-practices/on-demand-checks.md), "Scale
+  and fullscreen, by hand"). Changing the first is a call on the layer,
+  and the second is who lays out on a resize
+  ([concurrency.md](concurrency.md)); neither is built. A fullscreen
+  command needs a request from Lean to the window, which nothing builds.
+- **The refresh rate is read after the events that can change it.** winit
+  has no event for it. A window comes to be on another display by being
+  moved, resized or rescaled, so after each the translation asks the
+  display, and tells the drawer when the answer is another than the
+  last. The session turns thousandths of a hertz into the loop's
+  interval; a display that does not say leaves the loop's default.
+- **The surface.** Its format is the first sRGB one it offers, wherever
+  that is in the offer, since the blend is in linear light and Metal
+  offers a format that is not sRGB first; with none, the first, drawn on
+  through its sRGB form. Its present mode and frame latency are the
+  choice already on record, `Fifo` at 1, and never wgpu's default, which
+  on llvmpipe's surface was a mode that tears. An outdated or lost
+  surface is configured again and tried once; an occluded one is not
+  presented to, and the draw says its target is hidden, so that the loop
+  waits to be told more and not for a refresh. The picture is copied out of the surface only when a
+  check asks for it. All of this is decided in one place that makes no
+  call of wgpu's (`surface::State`), which reaches the surface through a
+  port of two calls, configure and ask for the next texture: the device
+  implements the port with wgpu's, and the gate's tests with a surface
+  that is a script.
+- **The clipboard is a port of its own, below Lean's.** Text in and out
+  of the system clipboard, in `editor-platform`, with a fake and a
+  contract; `editor-platform-arboard` is the adapter. What the editor
+  asks of a clipboard (which register, when, what a yank writes) is the
+  clipboard interface in Lean, the command loop's, and binding this to it
+  is phase 6's. arboard needs no window, which is what lets the adapter
+  be checked without one.
+- **How it is tested.** The gate opens no window, makes no surface and
+  touches no clipboard. Everything decided is pure and tested there: the
+  translation, on winit's own values built in the tests; which call on
+  the render loop each thing told becomes, on a loop stepped by hand;
+  the session's thread, on the scripted platform and the recording
+  renderer; the surface's choices, and when it is configured, what is
+  done with each of its answers and how its picture is read, on a
+  surface that is a script; how arboard's answers become the port's.
+  What is left is the calls themselves, and they run on demand:
+  under Xvfb in a container, where the real window keeps the port's
+  contract, a fixture frame of real text is drawn in it and read back
+  from its surface within 3 of 255 of the CPU's picture (the run fails
+  unless every frame's picture was compared), nothing is
+  drawn over an idle second, input given by xdotool arrives on the queue
+  as documented, and the clipboard keeps its contract in one process and
+  across two ([on-demand-checks.md](../dev-practices/on-demand-checks.md),
+  "The window on Linux, on demand"). That task, and not the gate, is
+  what confirms a window draws and a clipboard round-trips. There the
+  example also fails unless each frame's glyphs are drawn at 14 points
+  times the scale the window said, and unless the window, each time it
+  is left alone for a second, shows a frame laid out for the size and
+  scale it last said. At Xvfb's scale of 1 the first of those cannot
+  tell a layout that was told the scale from one that was not: that the
+  window's scale reaches layout is shown only at another scale. So the
+  task runs the window a second time with winit told a scale of 2, and
+  requires a frame laid out at scale 2 whose 14 points are 28 pixels;
+  with the example made not to tell its layout, that run prints 14 and
+  fails, there as on one desktop at scale 2. It is winit that is told:
+  no display in the container is at scale 2. The first run ends with a
+  change of scale under the open window, from 1 to 2, made by changing
+  the display's settings: winit's own event for it, which no test can
+  build, is taken apart by the adapter there, and the task requires the
+  resize at the size last known and the new scale that the port
+  documents. That is one display changing its scale on X11, not a window
+  moved between two displays on macOS.
+  What the gate holds of the scale is layout's arithmetic and its cost,
+  on the fake shaper, and what the example makes of what it saw, in its
+  unit tests. What neither holds is for a person: an apparent size
+  beside another app, a second display at another scale, fullscreen and
+  Spaces. Those steps are written down and have not been run.
 
 ### The frame is device-independent
 
@@ -1314,7 +2187,14 @@ adapters behind the `Shaper` and `Renderer` ports:
 |---|---|---|
 | GUI | Parley, real font metrics | wgpu |
 | Cell grid | Cell shaper: advance is the Unicode width, line height is 1 | Writes the frame into a grid of styled cells |
-| Headless | Parley, real font metrics | Records the frame; draws nothing |
+| Headless | Parley, real font metrics | The GUI's painter, with its quads laid over a picture in memory on the CPU: no GPU and no window |
+
+As built, the headless renderer draws: it is `HeadlessRenderer`, the
+same painter as the wgpu adapter's with a CPU compositor behind it ("The
+renderer, as built"). The renderer that records the frame and draws
+nothing is the `Renderer` port's published fake, `RecordingRenderer`,
+which the tests of everything above the port run on. No cell grid
+renderer is built.
 
 The cell grid adapter is built early, as a test renderer: a test asserts
 on a frame as a grid of text. That keeps the ports honest from the start,
@@ -1371,6 +2251,45 @@ cache hit rate, counts of rows laid out again, and which ranges of a buffer have
 and for how long. The last one supports review: "you have not looked at
 these hunks" is a fact the editor can state.
 
+As built (the display pipeline's phase 4, `crates/editor-render`): the
+frame journal and the renderer's counters.
+
+- **The journal** has one entry for each frame presented, and none for a
+  draw that did not present or for any time in which nothing was drawn:
+  an idle editor writes nothing. An entry holds three times read from one
+  clock, in nanoseconds: of the input the frame answers, of the start of
+  its draw, and of its presentation; and the rows the draw built and
+  reused. The input's time is the oldest stamp among the demands the draw
+  served: a frame's stamp is its publisher's, a dirty mark and a resize
+  are stamped as they are made, an animation by its deadline; and when a
+  newer frame replaces one not yet drawn the older stamp is kept, so a
+  latency is never flattered. A mark, a size and a deadline ask for the
+  frame shown to be drawn again, so what was asked before a first frame
+  is shown is no demand of the first draw: its input's time is its
+  frame's stamp alone, and a latency is not inflated either. It is a ring
+  of the last 4096 entries, and counts those it let go.
+- **The counters** count work, never time: draws and failed draws,
+  frames submitted and replaced, rows built and reused, glyph images
+  rasterised, reused, evicted and skipped, and the atlas's bytes. A draw
+  that did not present is counted as failed and nothing more. The wgpu
+  adapter paints before wgpu can refuse a draw, so what it painted for a
+  refused draw is answered by its next draw that presents, as if the two
+  were one draw: the work is counted once, in that frame's entry, and a
+  row the refused draw built is there a row built, not a row reused.
+- **The clock.** For a latency to mean anything the journal must read the
+  clock that stamped the input, which is `editor-ffi`'s. That crate
+  implements the render loop's clock port for its input clock, and a
+  window's session runs the loop on it: an entry's time from input to
+  presentation is a subtraction on one clock. A frame published in answer
+  to an event is submitted with that event's stamp.
+- **What is not built.** Neither the journal nor the counters reach Lean
+  yet. Nothing has been measured with them: the one figure there is, some
+  220 ms from a window's size arriving to its first frame presented, is
+  of a debug build on a software driver, and includes making the
+  renderer. Layout's counters are layout's
+  ("Layout and rendering", as built); which ranges have been visible is
+  not built.
+
 ## Open questions
 
 - **A field of the scene for the prompt.** The prompt text is the
@@ -1386,10 +2305,18 @@ these hunks" is a fact the editor can state.
 - **A summarised tree for the display layers.** The rope is a library's
   ("Text", as built). Display layers, excerpt buffers and decoration
   interval trees favour a sum tree in the style of Zed's; whether they get
-  one of their own is for the display pipeline to decide.
+  one of their own is for the display pipeline to decide. Phase 1 chose sparse storage of the rows laid out ("Layout
+  and rendering", as built) and left the tree to the first layer that
+  needs sums over a whole text.
 - **How escape characters are displayed.** A raw byte of a file is a
   private-use character in the text. Until the display draws it as its
-  byte, it shows as whatever the font has there.
+  byte, it shows as whatever the font has there: the real shaper shapes
+  it as the character it is, which is the font's missing glyph. A
+  carriage return alone, U+2028 and U+2029 are in the same case: the
+  real shaper draws a space for the first and the replacement character
+  for the other two, which are stand-ins that keep the line whole
+  ("Layout and rendering", as built), not a decision about what they
+  look like.
 - **A second row rule.** A language server counts a carriage return alone
   as the end of a line; rows here do not. The rope library can count that
   rule beside this one without the stored text changing. The language
@@ -1458,7 +2385,9 @@ these hunks" is a fact the editor can state.
   is out of proportion to what it would buy now. The rule is in one private
   module, and the motions must use the same cell, so it is decided once,
   with the command loop's motions and the display pipeline's shaping, which
-  knows clusters, in view.
+  knows clusters, in view. The real shaper did not decide it: layout's
+  cells are characters, so a cursor can stand between a letter and its
+  combining mark, where it is drawn at an even split of the cluster's box.
 - **Character classes for words outside ASCII.** For the motions a word
   character is an ASCII letter, digit or underscore, or any character from
   U+0080 up; Vim has a table of classes for other scripts, punctuation and
@@ -1491,8 +2420,9 @@ these hunks" is a fact the editor can state.
   with a second request, and the one writer path stays one argument
   simpler. Undo did not need it: applying an inverse hands the selection
   back, and the caller places it.
-- **Tabs**: Parley has no tab stops. Expand before shaping, use inline
-  boxes, or split runs.
+- **Tabs** (answered): expanded before shaping, in the tab layer ("Display
+  layers", as built). Tab stops on a proportional font are counted in
+  spaces, not in pixels, until an align-to-stop primitive exists.
 - **The other choices the survey left open** are listed in
   [rendering-prior-art.md](rendering-prior-art.md).
 - **Embedded terminals**: a fixed row count, or growing with output up to
@@ -1503,8 +2433,197 @@ these hunks" is a fact the editor can state.
 - **Capabilities**: the exact set, and whether a face or block can name a
   fallback for a front end that lacks one.
 - **Viewed-range tracking** granularity and whether it is on by default.
-- **Large files and long lines**: what is the plan when a single line is
-  megabytes?
+- **Large files and long lines** (long lines answered): a row is laid out
+  in segments of at most 4096 bytes ("Display layers", as built). What a
+  file of many megabytes costs beyond the rows shown (the estimate walks
+  every row) is not measured.
+- **Two views of one text at two widths.** Layout keeps one width per
+  text, so two views of one text at different widths break each other's
+  rows again on every frame. Keeping breaks per width is an addition when
+  splits of one buffer arrive.
+- **Where the echo area, the pending prefix and the preedit are drawn.**
+  The scene carries them and layout lays out none of them; no phase of
+  the display pipeline owns drawing them yet. The faces `echo-area` and
+  `minibuffer-prompt` are defined for them and nothing draws in either.
+- **The height of a view's text area, for the rows query.** A view's
+  status row takes its height from the bottom of the view, and the frame
+  shows the text rows that fit above it. The rows query takes an explicit
+  height, and Lean has no way to learn the status row's height, so a
+  caller of `Display.rowsShown` cannot yet ask for exactly the text area:
+  with a status row, the frame shows fewer rows than the query answers for
+  the view's whole height. Nothing was added to the display contract for
+  it. The command loop's view commands are the first caller that needs it;
+  a query for a view's text area, or the status row's height in an
+  answer, would settle it. It has to be a query's answer: since a
+  theme's lengths are points, Lean could not work the height out from
+  the theme without multiplying by the window's scale, and Lean
+  multiplies nothing and knows no scale for faces.
+- **Sizes and the window's scale factor** (answered): a theme states its
+  lengths in logical points, and layout multiplies them by the scale
+  factor of the target it lays out for, before shaping ("Decorations", as
+  built, "A length a face states is in logical points"; "Layout and
+  rendering", as built, "The scale"). The real shaper still takes sizes
+  as physical pixels, and hints nothing.
+- **A scene published from Lean at its window's scale.** Layout can lay
+  out at a scale, and the display handle Lean publishes to is never told
+  one: it has no window behind it, and lays out at 1. So until a window
+  draws what Lean publishes (the display pipeline's phase 6), the
+  editor's own text is not laid out at its window's scale, and on a
+  display at scale 2 it would be half the size it should be. Two ways
+  are open, and `Layout::set_scale` serves both. Inside the library:
+  `editor-ffi` keeps the scale the window last said where the display
+  can read it, written as the resize is pushed on the queue, and the
+  display sets it under layout's lock before each publish and each
+  query. Lean's scene, the wire, the display interface and its model do
+  not change, and Lean never handles a scale; a scene whose rectangles
+  Lean computed for one size may then be laid out at the scale of a
+  later one, for the one publish before Lean reads the newer resize.
+  Through Lean: the scene gains a scale beside its size, or the display
+  interface a call, and Lean passes on the number it got with the
+  resize; the rectangles and the scale then always belong together, and
+  Lean's scene, which is the command loop's contract, and the wire
+  change. The plan of the display pipeline's phase 5 recommends the
+  first. It awaits the owner, and phase 6's description does not name
+  it yet.
+- **A kept row's height in the estimate, after a change of font or of
+  scale.** `Layout::height_estimate` counts a kept row at the height it
+  was last laid out at, without asking whether it would be laid out the
+  same now. After a change of the default face's font, and after a
+  change of scale, every kept row is such a row until a frame or a query
+  reaches it again, so the estimate is of the old heights for the rows
+  kept and of the new one for the rest (seen in a spike: 84 where 112 is
+  right). Nothing outside layout's own tests calls the estimate yet.
+  Dropping everything kept when the scale changes would also settle it
+  for a change of scale, at the cost of shaping rows a view may not show
+  again; it is the first reason to prefer that to keeping the scale in
+  the key as the font.
+- **The names of a face's lengths.** `Pixels`, `Pixels.whole` and
+  `LineHeight.pixels` in Lean, and `Length::pixels` and
+  `LineHeight::Pixels` in Rust, name a unit a face's lengths are no
+  longer in. Their documentation says so in each place; a reader of code
+  alone can be misled. Renaming them touches every theme, config's
+  faces and the wire's documentation for no change of behaviour, and
+  awaits the owner.
+- **Right-to-left geometry.** Layout's cells have no direction, since
+  the port's glyph carries none. So three things are not right for
+  right-to-left text: the cells of a right-to-left cluster of several
+  characters are placed left to right; a position on a right-to-left
+  cell, and a bar cursor there, is at the cell's left edge, though the
+  character starts at its right; and the position at the end of a line
+  that ends in right-to-left text is at the line's right edge. A
+  direction on the glyph, or on the cluster, would settle all three.
+- **A ligature in a right-to-left run.** Its glyph is placed at the left
+  edge of the leftmost of its clusters. No fixture font has such a
+  ligature, so this is shown on clusters written out by hand and on no
+  real font.
+- **What a segment boundary cuts.** A row longer than 4096 bytes is
+  shaped in segments, so a ligature, a cluster or a right-to-left run
+  that crosses a boundary is shaped as two.
+- **A ligature across a change of paint.** It is one glyph, and a row's
+  runs name paints by byte, so which paint it is drawn in is the
+  renderer's choice. The renderer draws it whole in the paint of its
+  first byte ("The renderer, as built"); splitting the glyph's image at
+  the change is not done.
+- **The renderer's choices await the owner.** Where the `Renderer` port
+  lives, and that the drawing is ours and not Vello's
+  ([rendering-prior-art.md](rendering-prior-art.md)), are decisions the
+  plan of the display pipeline's phase 4 took and the owner has not
+  confirmed.
+- **No present mode has been measured.** `Fifo` at a frame latency of 1
+  was chosen by reading wgpu's source. A surface exists now, and one has
+  reported what it offers: llvmpipe's, on an X11 window under Xvfb, where
+  the choice was configured and frames were presented. What Metal's
+  offers is still what was read. The measurements are phase 6's
+  ([rendering-prior-art.md](rendering-prior-art.md), "Present mode and
+  pacing").
+- **Where the window has drawn, and where it has not.** The surface, the
+  render thread and the window's translation run on Linux under Xvfb, in
+  a container, whenever `mise run linux-window` is run. On macOS the
+  window that draws has been run on one desktop, on Metal, on one
+  display at scale 2: its picture matched the headless renderer's within
+  1 of 255, and what failed there was the check's and has been changed
+  ([on-demand-checks.md](../dev-practices/on-demand-checks.md), "What
+  the first desktop run showed"). Not seen anywhere: a display at scale
+  1 beside one at scale 2 and a window moved between them, the system's
+  fullscreen, another Space, a resize by hand, Wayland, x86_64
+  ([concurrency.md](concurrency.md), "Still to verify").
+- **The window's choices await the owner**: that the render thread draws
+  and the main thread does not; that the window tells what draws in it
+  through a second listener of the port, with its native window as the
+  port's own data; that a key's text is none for a release and for a
+  control character, which decides what Lean sees for Escape and Enter;
+  that a key's text is none when Control or the system key is held, and
+  kept under Shift and Alt, which decides what Lean sees for Control-A
+  and Command-S and is the adapter's reading of the port's "what it
+  produced to insert", made after a review and confirmed by nobody (if
+  it stands, the text of the fake's sample key with Control held is the
+  next thing to change; if it does not, the port says that text is not
+  dropped under those modifiers and whoever inserts it checks them); and
+  where the clipboard's port lives. What that rule does on macOS has
+  been read and not seen: step 7 of the owner's check by hand presses
+  Control-A and Command-S
+  ([on-demand-checks.md](../dev-practices/on-demand-checks.md), "Scale
+  and fullscreen, by hand").
+- **The GPU's picture is checked on demand only.** The gate checks the
+  wgpu adapter's calls, on a back end that draws nothing, and the CPU
+  compositor's picture. That a real GPU draws the same is seen when
+  someone runs `mise run render-gpu` or `mise run linux-render`, and
+  after a change to the shader nothing makes them. The shader and the
+  CPU's blend state one arithmetic twice, kept alike by hand.
+- **No colour glyph from a real font.** No fixture font has one. Colour
+  is tested in the cache, the painter and the compositor on images the
+  tests make, and never through the rasteriser. No GPU has drawn a
+  colour image either: the on-demand check draws the fixture frame, in
+  subpixel masks and in plain ones, and that path of the shader is only
+  validated. COLR version 1 glyphs are not drawn in colour by `swash` at
+  the pin, and a colour bitmap's alpha convention was not checked.
+- **What only a person at a display can tune.** Hinting (on by
+  default, off at the macOS weight), the weight of text (a per-platform
+  setting: linear by default, and on macOS fitted to Core Text's drawing
+  of one sentence at one size, "The renderer, as built"; beside
+  TextEdit in Menlo the owner saw it as heavy, by eye), the
+  amount of synthetic bold, where an underline and a
+  strike-through sit (the frame carries no metric for either), and the
+  default atlas budget and page size. The order of a display's colour
+  stripes is a setting nobody sets yet.
+- **What the frame does not carry is not drawn.** The echo area, the
+  pending key prefix and the input method's preedit are in no frame.
+  Boxes, images and gutter marks are not in the frame either. A curly
+  underline is a stepped line.
+- **The whole frame is drawn on every draw.** Quads are kept per row,
+  but every quad of the frame is sent and blended again, and no damage
+  is reported to the compositor. An atlas page is sent to the GPU again
+  whole when a glyph is added to it.
+- **x86_64 is unverified** for the renderer throughout: the reference
+  image was made, and every check run, on aarch64. The comparison's
+  tolerance of 2 is for that.
+- **Zero-width characters.** U+200B and U+200D ride on the line of the
+  cluster beside them in Parley. The shaper contract's texts hold none,
+  and its rule that a line fits its width says nothing of them.
+- **A line height shorter than its font.** The real shaper gives a line
+  of the height asked in pixels only when the line still holds its
+  baseline: under about three quarters of the size it is a little taller,
+  and a line height of 0 is a few pixels, not none ("Layout and
+  rendering", as built). Nothing needs such heights yet.
+- **The system's default family.** The system font set's default is the
+  first family fontique gives for the generic `monospace`, which on
+  macOS was Courier when it was checked. Which family the editor starts
+  in, and whether config names it, is not decided.
+- **The system's fonts on Linux, and when they change.** No gate runs
+  the system font path: `mise run shaper-system` is on demand, and it
+  has been run on macOS only. The Linux build of the pin is checked by
+  `mise run linux-ci`, which builds it with cargo alone and runs the
+  fixture tests. Nothing watches the system's fonts for changes: a
+  shaper can be handed other fonts, under another generation, and
+  nothing calls that.
+- **Face inheritance.** A face cannot name another as its base. A theme
+  that wants `comment` to follow `default` leaves the attributes unset,
+  which covers the one level the precedence gives; anything deeper is not
+  built.
+- **Where a decoration source that is not the scene's sits in the
+  precedence.** Syntax highlighting is a third source. The order has a
+  place below the scene's decorations, which a test hook uses; the source
+  states its place when it is added.
 - **Accessibility of text not laid out**: only visible lines have layout,
   but a screen reader may want to read past the viewport. Expose the
   viewport and scroll on request, or supply unlaid-out text as well?

@@ -30,7 +30,9 @@ through (`Editor/Display.lean`), and what config registers
 with (`setup` and stores, `Editor/Setup.lean`). The job port
 (`Editor/Job.lean`) comes with `Editor/Setup.lean`, which registers jobs,
 and with the job port the file requests a job makes (`Editor/File.lean`):
-config loads and saves files with `File.load` and `File.save`. The file
+config loads and saves files with `File.load` and `File.save`. Faces come
+with `Editor/Setup.lean` too (`Editor/Face.lean`): config sets one with
+`face`. The file
 commands are here too (`Editor/Files.lean`): a command of config's opens a
 file into a buffer with `Files.open`, which starts the job that loads it,
 and saves a buffer to its file with `Files.save`, which starts the job that

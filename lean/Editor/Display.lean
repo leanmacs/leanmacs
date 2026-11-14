@@ -24,7 +24,10 @@ binding:
 - the model, `Editor/Display/Model.lean`, records the scenes published and
   answers the queries by laying text out in fixed-size cells. It is for
   tests, not a layout kept at run time;
-- the real binding is the display pipeline's (its phase 1), over its layout;
+- the real binding, `Editor/Display/Real.lean`, is the display pipeline's
+  (its phase 1): the Rust library's layout (`crates/editor-layout`), reached
+  through `Ffi.Display`, which reads the text binding's table of
+  snapshots;
 - where there is no window, as in the headless host, the recorder
   (`Editor/Display/Recorder.lean`) keeps the last scene published and
   answers the queries with the model's rule over the library's snapshots.

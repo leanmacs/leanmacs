@@ -18,12 +18,16 @@ the model tests run it with outcomes built by hand
   what was just installed, and two reloads cannot install out of order.
 - **Installing is the only place config changes anything.** An accepted
   outcome replaces the chunks, replaces the config's entries in the registry,
-  commands, jobs, key bindings, modes and ex bindings (`Registry.replace`,
-  `Registry.replaceJobs`, `Registry.replaceBindings`,
-  `Registry.replaceModes`, `Registry.replaceEx`, never an append) and
-  meets the config's stores with the cells there are
+  commands, jobs, key bindings, modes, ex bindings and faces
+  (`Registry.replace`, `Registry.replaceJobs`, `Registry.replaceBindings`,
+  `Registry.replaceModes`, `Registry.replaceEx`, `Registry.replaceFaces`,
+  never an append) and meets the config's stores with the cells there are
   (`Cells.install`). A rejected outcome changes none of them: the config that
   was loaded stays.
+- **The theme follows the registry.** `State.theme` is the built-in theme
+  followed by the installed config's definitions of faces, so it changes
+  when, and only when, a reload installs. The runtime that owns a display
+  hands it the theme then (`Config.retheme`, `Editor/Config/Display.lean`).
 - **A reload cancels the old config's jobs when, and only when, it
   installs.** An accepted outcome's effects begin with `cancelJobs config`,
   before its report and before a follow-up job starts; a rejected outcome has
@@ -116,6 +120,14 @@ def start (state : State σ) : State σ × Array (Effect σ) :=
 def commands (state : State σ) : Nat :=
   (state.registry.entries.filter (·.owner == .config)).size
 
+/-- What the faces look like now: the built-in theme, then the definitions
+the installed config made, in the order its `setup` made them. A later
+definition of a name is over an earlier one, so a face the config sets
+takes the config's attributes over the theme's, and a face it does not set
+is the theme's. -/
+def theme (state : State σ) : Theme :=
+  Theme.builtin ++ state.registry.definitions
+
 /-- The state once `outcome` is handled, and the report of it: an outcome
 that built a config installs it, and any other leaves the config as it was. -/
 def install (state : State σ) (outcome : Outcome σ) : State σ × Report :=
@@ -133,11 +145,12 @@ def install (state : State σ) (outcome : Outcome σ) : State σ × Report :=
       { state with
         chunks := built.chunks,
         registry :=
-          ((((state.registry.replace .config built.registrations.commands).replaceJobs .config
-                        built.registrations.jobs).replaceBindings
-                    .config built.registrations.bindings).replaceModes
-                .config built.registrations.modes).replaceEx
-            .config built.registrations.ex,
+          (((((state.registry.replace .config built.registrations.commands).replaceJobs .config
+                            built.registrations.jobs).replaceBindings
+                        .config built.registrations.bindings).replaceModes
+                    .config built.registrations.modes).replaceEx
+                .config built.registrations.ex).replaceFaces
+            .config built.registrations.faces,
         cells }
     (state,
       { number := state.finished, installed := true, diagnostics := outcome.diagnostics ++ lost,

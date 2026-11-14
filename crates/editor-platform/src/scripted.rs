@@ -7,8 +7,8 @@
 use std::sync::{Condvar, Mutex, MutexGuard, PoisonError};
 
 use crate::{
-    Button, CannotOpen, Composition, Input, Key, LogicalKey, Modifiers, PhysicalKey, Platform,
-    Pointer, PointerAction, Report, Resize, WindowOptions,
+    Button, CannotOpen, Canvas, Composition, Drawer, Input, Key, LogicalKey, Modifiers,
+    PhysicalKey, Platform, Pointer, PointerAction, Report, Resize, WindowOptions,
 };
 
 /// A platform whose window reports [`Input::Opened`], then a script of
@@ -45,6 +45,14 @@ struct State {
 impl ScriptedPlatform {
     /// The name this platform gives itself in [`Input::Opened`].
     pub const NAME: &'static str = "scripted";
+
+    /// The size and scale it tells the drawer its window opened at: it has
+    /// no window, so the size is this one, whatever the script.
+    pub const SIZE: Resize = Resize {
+        width: 640,
+        height: 480,
+        scale: 1.0,
+    };
 
     /// A platform whose window reports `script` after [`Input::Opened`].
     pub fn new(script: Vec<Input>) -> Self {
@@ -138,7 +146,12 @@ impl ScriptedPlatform {
 }
 
 impl Platform for ScriptedPlatform {
-    fn run(&self, options: WindowOptions, report: Report) -> Result<(), CannotOpen> {
+    fn run(
+        &self,
+        options: WindowOptions,
+        report: Report,
+        drawer: Drawer,
+    ) -> Result<(), CannotOpen> {
         self.state().runs.push(options);
         let script = self.script.as_ref().map_err(|reason| CannotOpen {
             reason: reason.clone(),
@@ -149,23 +162,37 @@ impl Platform for ScriptedPlatform {
             state.close_asked = false;
         }
 
+        drawer(Canvas::Opened {
+            window: None,
+            size: Self::SIZE,
+            refresh_millihertz: None,
+        });
         report(Input::Opened {
             platform: Self::NAME.into(),
         });
         for input in script {
             if options.composition || !matches!(input, Input::Composition(_)) {
+                if let Input::Resized(size) = input {
+                    drawer(Canvas::Resized(*size));
+                }
                 report(input.clone());
             }
         }
 
-        let mut state = self.state();
-        while !state.close_asked {
-            state = self
-                .changed
-                .wait(state)
-                .unwrap_or_else(PoisonError::into_inner);
+        {
+            let mut state = self.state();
+            while !state.close_asked {
+                state = self
+                    .changed
+                    .wait(state)
+                    .unwrap_or_else(PoisonError::into_inner);
+            }
         }
-        state.running = false;
+        // The run is still in progress while the drawer lets go of what it
+        // made: a drawer may take its time over that, and the lock is not
+        // held across it.
+        drawer(Canvas::Closing);
+        self.state().running = false;
         Ok(())
     }
 
@@ -200,6 +227,46 @@ mod tests {
         inputs: Receiver<Input>,
         /// The run's result, once it has returned.
         done: Receiver<Result<(), CannotOpen>>,
+        /// Everything the run has said to either listener, in the order it
+        /// said it, and that it returned.
+        said: Receiver<Said>,
+    }
+
+    /// One thing a run did, as a value another thread can be sent: a
+    /// [`Canvas`] cannot be.
+    #[derive(Debug, Clone, PartialEq)]
+    enum Said {
+        /// It reported this.
+        Reported(Input),
+        /// It told the drawer the window opened, with a native window or
+        /// not, at this size and with this refresh rate.
+        Opened(bool, Resize, Option<u32>),
+        /// It told the drawer this new size.
+        Resized(Resize),
+        /// It told the drawer something else, named.
+        Other(&'static str),
+        /// It told the drawer the window is closing.
+        Closing,
+        /// Its run returned.
+        Returned,
+    }
+
+    impl Said {
+        /// What telling the drawer `canvas` is.
+        fn told(canvas: &Canvas) -> Self {
+            match canvas {
+                Canvas::Opened {
+                    window,
+                    size,
+                    refresh_millihertz,
+                } => Self::Opened(window.is_some(), *size, *refresh_millihertz),
+                Canvas::Resized(size) => Self::Resized(*size),
+                Canvas::Refresh(_) => Self::Other("refresh"),
+                Canvas::Damaged => Self::Other("damaged"),
+                Canvas::Hidden(_) => Self::Other("hidden"),
+                Canvas::Closing => Self::Closing,
+            }
+        }
     }
 
     impl Running {
@@ -236,14 +303,127 @@ mod tests {
     fn start(platform: &Arc<ScriptedPlatform>, options: WindowOptions) -> Running {
         let (report, inputs) = mpsc::channel();
         let (finished, done) = mpsc::channel();
+        let (say, said) = mpsc::channel();
         let platform = Arc::clone(platform);
         thread::spawn(move || {
-            let report: Report = Arc::new(move |input| {
-                let _ = report.send(input);
-            });
-            let _ = finished.send(platform.run(options, report));
+            let report: Report = {
+                let say = say.clone();
+                Arc::new(move |input: Input| {
+                    let _ = say.send(Said::Reported(input.clone()));
+                    let _ = report.send(input);
+                })
+            };
+            let drawer: Drawer = {
+                let say = say.clone();
+                Arc::new(move |canvas| {
+                    let _ = say.send(Said::told(&canvas));
+                })
+            };
+            let result = platform.run(options, report, drawer);
+            let _ = say.send(Said::Returned);
+            let _ = finished.send(result);
         });
-        Running { inputs, done }
+        Running { inputs, done, said }
+    }
+
+    impl Running {
+        /// Everything the run said to either listener, in order, up to and
+        /// with its return; panics if it has not returned by the deadline.
+        fn all_said(&self) -> Vec<Said> {
+            let mut all = Vec::new();
+            loop {
+                let next = self
+                    .said
+                    .recv_timeout(DEADLINE)
+                    .expect("the run says its next thing, or returns");
+                let returned = next == Said::Returned;
+                all.push(next);
+                if returned {
+                    return all;
+                }
+            }
+        }
+    }
+
+    /// The drawer was told the window opened as the scripted platform tells
+    /// it: no native window, its fixed size, no refresh rate.
+    fn told_opened() -> Said {
+        Said::Opened(false, ScriptedPlatform::SIZE, None)
+    }
+
+    #[test]
+    fn it_tells_the_drawer_the_window_opened_before_it_reports_it_and_that_it_is_closing_last() {
+        let script = vec![Input::Focus(true), press("a")];
+        let platform = Arc::new(ScriptedPlatform::new(script));
+
+        let run = start(&platform, COMPOSING);
+        assert_eq!(run.next(3).len(), 3);
+        platform.close();
+
+        assert_eq!(
+            run.all_said(),
+            [
+                told_opened(),
+                Said::Reported(opened()),
+                Said::Reported(Input::Focus(true)),
+                Said::Reported(press("a")),
+                Said::Closing,
+                Said::Returned,
+            ]
+        );
+        assert_eq!(
+            ScriptedPlatform::SIZE,
+            Resize {
+                width: 640,
+                height: 480,
+                scale: 1.0
+            }
+        );
+    }
+
+    #[test]
+    fn it_tells_the_drawer_each_scripted_resize_before_it_reports_it() {
+        let small = Resize {
+            width: 300,
+            height: 120,
+            scale: 1.0,
+        };
+        let large = Resize {
+            width: 800,
+            height: 600,
+            scale: 2.0,
+        };
+        let script = vec![Input::Resized(small), press("a"), Input::Resized(large)];
+        let platform = Arc::new(ScriptedPlatform::new(script));
+
+        let run = start(&platform, COMPOSING);
+        assert_eq!(run.next(4).len(), 4);
+        platform.close();
+
+        assert_eq!(
+            run.all_said(),
+            [
+                told_opened(),
+                Said::Reported(opened()),
+                Said::Resized(small),
+                Said::Reported(Input::Resized(small)),
+                Said::Reported(press("a")),
+                Said::Resized(large),
+                Said::Reported(Input::Resized(large)),
+                Said::Closing,
+                Said::Returned,
+            ]
+        );
+    }
+
+    #[test]
+    fn a_platform_that_cannot_open_tells_the_drawer_nothing() {
+        let platform = Arc::new(ScriptedPlatform::failing("no display"));
+
+        let run = start(&platform, COMPOSING);
+
+        assert_eq!(run.all_said(), [Said::Returned]);
+        assert!(run.result().is_err());
     }
 
     /// A key press that produced `text`.

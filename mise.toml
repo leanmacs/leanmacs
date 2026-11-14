@@ -227,6 +227,12 @@ run = [
   # selection, the state and the echo of every scene), and the copy must
   # hold the bytes of `session/verse-expected`.
   "dir=$(mktemp -d) && trap 'rm -rf \"$dir\"' EXIT && cp ../tests/headless/session/verse.txt \"$dir/verse.txt\" && sed \"s|@FILE@|$dir/verse.txt|\" ../tests/headless/session/script > \"$dir/script\" && out=$(.lake/build/bin/editor headless \"$(lean --print-prefix)\" .lake/build/lib/lean ../tests/headless/config \"$dir/script\") && printf '%s\\n' \"$out\" | sed \"s|$dir|@DIR@|g\" | diff ../tests/headless/session/expected - && cmp \"$dir/verse.txt\" ../tests/headless/session/verse-expected",
+  # The display fixture: the scene `editor-layout`'s own test lays out
+  # (crates/editor-layout/tests/frame_fixture.rs), published from Lean
+  # through the display's real binding, must give the frame checked in at
+  # tests/display/frame.expected; the scene must come back as sent; and a
+  # move asked through the binding must land on the frame's next row.
+  ".lake/build/bin/ffi-test display ../tests/display/frame.expected",
   # The editor's failure statuses. A command line it does not understand is
   # status 2, with the usage on stderr.
   "status=0; .lake/build/bin/editor bogus || status=$?; test \"$status\" -eq 2",
@@ -346,18 +352,152 @@ depends = ["lean"]
 dir = "lean"
 run = ".lake/build/bin/editor window-check"
 
-# Opt-in: run it by hand, and do not add it to `ci` or to hk.pkl. It opens a
-# window on this desktop, for about a second, so it needs a display.
+# Opt-in: run it by hand, at the keyboard, and do not add it to `ci` or to
+# hk.pkl. It opens two windows on this desktop, one after the other, so it
+# needs a display and, for the second, a person.
 #
-# It runs the winit adapter's example (`crates/editor-platform-winit/
+# First it runs the winit adapter's example (`crates/editor-platform-winit/
 # examples/contract.rs`): the real window held to the window port's contract
 # (`editor_platform::contract`). The window opens, is asked to close from
 # another thread, and the run must return. It prints one line, and its exit
-# status is the result. The gate builds the example and never runs it;
-# `linux-window` runs the same example under Xvfb, with no desktop.
+# status is the result.
+#
+# Then it runs `editor-ffi`'s example (`crates/editor-ffi/examples/
+# window.rs`): the window that draws. The wgpu renderer draws a fixture
+# frame in the real window, on this machine's GPU; the example checks that
+# each frame is laid out at the scale the window said, that a frame was
+# presented, that its picture is the frame's, that nothing is drawn that
+# nothing asked for, that input arrives on the queue, and that the window,
+# whenever it is left alone for a second, shows what was laid out for the
+# size and scale it last said. Once
+# it prints `window: ready for input`, type, click, drag, scroll and resize
+# in the window: each input is printed. It stays 20 seconds or until it is
+# closed (`-- --seconds <n>` does not reach it: run the example by hand for
+# another time). Its exit status is the result.
+#
+# It is run here without `--require-picture`. A picture that could not be
+# read back fails it, but a surface that says it does not let its texture
+# be copied from does not: the example says so for each frame, and the
+# picture was then not checked on this machine.
+#
+# The gate builds both examples and runs neither, though it does run the
+# second's unit tests, which open no window; `linux-window` runs both
+# under Xvfb, with no desktop, gives the second its input with xdotool,
+# and requires its picture.
 [tasks.window-contract]
-description = "Opt-in, never part of ci: hold the winit window to the window port's contract. Opens a window on this desktop for about a second"
-run = "cargo run --locked --package editor-platform-winit --example contract"
+description = "Opt-in, never part of ci: hold the winit window to the window port's contract, then draw a fixture frame in a window and check the picture, that nothing is drawn while idle, and that input arrives. Opens two windows on this desktop; the second waits for a person"
+run = [
+  "cargo run --locked --package editor-platform-winit --example contract",
+  "cargo run --locked --package editor-ffi --example window",
+]
+
+# Opt-in: run it by hand, at the window, and do not add it to `ci` or to
+# hk.pkl. It opens a window on this desktop and leaves it open until a
+# person closes it.
+#
+# It runs the window that draws (`crates/editor-ffi/examples/window.rs`)
+# with `--until-closed --no-picture`: the window stays until it is closed,
+# and no picture is read back or compared, so a draw costs what the
+# editor's own would and a resize is not slowed by the check. It is for
+# what no program can do or see: holding the window's text beside the same
+# size in another app, dragging it between a display at scale 2 and one at
+# scale 1, putting it into the system's fullscreen and taking it out, and
+# going to another Space and back. The steps, and what to expect at each,
+# are in `docs/dev-practices/on-demand-checks.md`, "Scale and fullscreen,
+# by hand".
+#
+# What the program checks while a person does that: that each frame is
+# laid out at the scale the window said (`14 points are <p> pixels`), which
+# masks each draw used, that nothing is drawn that nothing asked for, and
+# that whenever the window is left alone for a second it shows what was
+# laid out for the size and scale it last said. Press a key or click in
+# the window before closing it, or the run fails for want of input. Its
+# exit status is the result.
+#
+# To lay the fixture out in a family another app has, run the example by
+# hand with `--family <name>` as well: this task gives no family, so its
+# text is in the fixture's Noto Sans.
+[tasks.window-by-hand]
+description = "Opt-in, never part of ci: open the window that draws and leave it open for a person to compare its text's size, drag it between displays, and put it into fullscreen and on another Space. Reads no picture back. Needs a display and a person, who closes it"
+run = "cargo run --locked --package editor-ffi --example window -- --until-closed --no-picture"
+
+# Opt-in: run it by hand, and do not add it to `ci` or to hk.pkl. What it
+# finds depends on the fonts this machine has, so it is no part of a gate
+# that must give the same answer everywhere.
+#
+# It runs the Parley adapter's example (`crates/editor-shape-parley/
+# examples/system.rs`): the real shaper over the system's fonts
+# (`FontSet::system`), held to the shaper port's contract
+# (`editor_layout::shaper::contract`). It prints the family the default
+# font is shaped in and how many families the machine has, then the
+# properties that fail, by name, or that all hold; its exit status is the
+# result. The gate builds the example and never runs it: every test of the
+# adapter runs on the fixture fonts under `tests/fonts`, and the crate's
+# `clippy.toml` forbids the system's fonts to them.
+#
+# Run it when the pin of Parley or fontique moves, and when
+# `FontSet::system` changes.
+[tasks.shaper-system]
+description = "Opt-in, never part of ci: hold the Parley shaper over this machine's fonts to the shaper port's contract. Its result depends on the fonts installed"
+run = "cargo run --locked --package editor-shape-parley --example system"
+
+# Opt-in: run it by hand, and do not add it to `ci` or to hk.pkl. It writes
+# a file of the repository, which no gate may do.
+#
+# It runs the renderer's example (`crates/editor-render-wgpu/examples/
+# reference.rs`): the fixture frame of real text, drawn by the headless
+# adapter at scale 1 with subpixel antialiasing, written to
+# `tests/render/frame.png`. That file is the reference image the gate's
+# test compares the same frame with (`crates/editor-render-wgpu/tests/
+# reference.rs`). The gate builds the example and never runs it.
+#
+# Run it when the picture is meant to change: the fixture frame, the
+# painter, the blend, or the pin of Parley or of swash. Then look at the
+# file before committing it: a reference nobody looked at pins whatever
+# was drawn. `tests/render/README.md` says what it should show.
+[tasks.render-reference]
+description = "Opt-in, never part of ci: draw the renderer's fixture frame with the headless adapter and write it to tests/render/frame.png, the reference image. Look at the file before committing it"
+run = "cargo run --locked --package editor-render-wgpu --example reference -- tests/render/frame.png"
+
+# Opt-in: run it by hand, on macOS, and do not add it to `ci` or to hk.pkl.
+# It needs the system's `swift`, and it writes a file of the repository,
+# which no gate may do.
+#
+# It runs `tools/coretext/capture.swift`: Core Text draws the sentence "the
+# window draws this" from the fixture font at 14 pt on a bitmap of scale 2,
+# black on white, with font smoothing on, and the drawing is written to
+# `tests/coretext/sentence.png`. That file is the macOS weight's target: the
+# renderer's test draws the same sentence through its CPU path and holds its
+# weight to the file's (`crates/editor-render-wgpu/src/weight_tests.rs`).
+#
+# Run it on a new major version of macOS, or when the fixture font changes.
+# Then look at the file, enlarged, before committing it, and record the
+# capture in `tests/coretext/README.md`.
+[tasks.coretext-reference]
+description = "Opt-in, never part of ci; macOS only: draw the weight sentence with Core Text from the fixture font and write it to tests/coretext/sentence.png, the macOS weight's target. Look at the file before committing it"
+run = "swift tools/coretext/capture.swift tests/fonts/NotoSansMono-Regular.subset.ttf tests/coretext/sentence.png"
+
+# Opt-in: run it by hand, and do not add it to `ci` or to hk.pkl. What it
+# finds depends on this machine's GPU and its driver, so it is no part of
+# a gate that must give the same answer everywhere, and a machine with no
+# GPU has nothing to run it on. It opens no window.
+#
+# It runs the renderer's example (`crates/editor-render-wgpu/examples/
+# gpu.rs`): the wgpu adapter on this machine's adapter, held to the
+# renderer port's contract; then the fixture frame drawn on the GPU, read
+# back, and compared with the reference image (within 3 of 255 a channel);
+# then how long a first frame, an edited frame and a cursor-only frame
+# took, which nothing is asserted of. Its exit status is whether the
+# contract and the comparison held.
+#
+# The gate runs the wgpu adapter on wgpu's no-op back end only, which
+# checks its calls and draws nothing. This is where its picture is
+# checked. Run it after a change to the shader, the device, the painter or
+# `blend`, and when the pin of wgpu moves; `linux-render` runs the same in
+# the container, on Mesa's software Vulkan.
+[tasks.render-gpu]
+description = "Opt-in, never part of ci: hold the wgpu renderer on this machine's GPU to the renderer port's contract, and compare the frame it draws with the reference image. Opens no window; needs a GPU"
+run = "cargo run --locked --package editor-render-wgpu --example gpu"
 
 # Opt-in: run it by hand, and do not add it to `ci` or to hk.pkl. It needs
 # Docker and, the first time, the network.
@@ -383,15 +523,62 @@ run = "tools/linux/run.sh ci"
 # Docker, like `linux-ci`, whose image, cache and volume it shares.
 #
 # This is where the winit adapter is held to the window port's contract
-# without a desktop: run it after a change to `crates/editor-platform-winit`
-# or to the contract in `crates/editor-platform`. In the container, under
-# Xvfb, it runs the adapter's example, then `editor window-check` with
-# xdotool giving the window the focus and typing into it, then the same with
-# `--no-ime`. It fails if any of the three fails. The keys are synthetic:
-# this is not the check a person makes at the keyboard (`window-check`).
+# without a desktop, the window draws, and the arboard adapter is held to
+# the clipboard port's: run it after a change to
+# `crates/editor-platform-winit`, to `crates/editor-platform-arboard`, to a
+# contract in `crates/editor-platform`, to the surface code of
+# `crates/editor-render-wgpu`, or to `crates/editor-ffi`'s `render`. In the
+# container, under Xvfb, it runs the window adapter's example; then
+# `editor window-check` with xdotool giving the window the focus and typing
+# into it, then the same with `--no-ime`; then the window that draws
+# (`editor-ffi`'s example `window`) on Mesa's software Vulkan driver, with
+# `--require-picture`, so that a frame whose picture was not read back and
+# compared fails it, and with xdotool giving it a key, a named key, a key
+# with modifiers, a press, a drag, a release, a turn of the wheel and a
+# resize, once at the display's scale of 1, ending with a change of the
+# display's scale to 2 under the open window, and once with winit told a
+# scale of 2, which is what shows the window's scale reaching layout; then
+# the clipboard
+# adapter's example on that display's clipboard, and a text written to it
+# by one process and read by another. It fails if any of the six fails.
+# The input is synthetic: this is not the check a person makes at the
+# keyboard (`window-check`). The clipboard is the container's own.
+#
+# It is the confirmation of what the gate cannot hold: a change that
+# touches a window, a surface or the clipboard is not done until this exits
+# 0, every part (docs/dev-practices/on-demand-checks.md).
 [tasks.linux-window]
-description = "Opt-in, never part of ci: in the Linux container, under Xvfb, hold the winit window to the window port's contract and run the keyboard check on keys typed by xdotool (tools/linux/run.sh). Needs Docker"
+description = "Opt-in, never part of ci: in the Linux container, under Xvfb, hold the winit window to the window port's contract, run the keyboard check on keys typed by xdotool, draw a fixture frame in the window and give it input, and hold that display's clipboard to the clipboard port's contract (tools/linux/run.sh). Needs Docker"
 run = "tools/linux/run.sh window"
+
+# Opt-in: run it by hand, and do not add it to `ci` or to hk.pkl. It reads
+# and WRITES THE CLIPBOARD OF THIS DESKTOP.
+#
+# It runs the arboard adapter's example (`crates/editor-platform-arboard/
+# examples/clipboard.rs`) with `contract`: the system clipboard held to the
+# clipboard port's contract (`editor_platform::clipboard::contract`). It
+# keeps the text it finds on the clipboard, writes texts of its own, and
+# puts the text it found back. Only text is put back: an image or a file
+# that was on the clipboard is lost, and a clipboard that held no text is
+# left holding the contract's last text. Copy something disposable first.
+# It prints each property with whether it holds; its exit status is the
+# result. The gate builds the example and never runs it; `linux-window`
+# runs the same in the container, on a clipboard that is nobody's.
+[tasks.clipboard-contract]
+description = "Opt-in, never part of ci: hold the system clipboard to the clipboard port's contract. WRITES THIS DESKTOP'S CLIPBOARD, and puts back only the text it found there"
+run = "cargo run --locked --package editor-platform-arboard --example clipboard -- contract"
+
+# Opt-in: run it by hand, and do not add it to `ci` or to hk.pkl. It needs
+# Docker, like `linux-ci`, whose image, cache and volume it shares.
+#
+# This is where the wgpu renderer draws on Linux without a GPU: in the
+# container it runs the renderer's example (`render-gpu`'s) on Mesa's
+# software Vulkan driver, llvmpipe, which the image installs for this task
+# alone. The gate in that image asks for no adapter and is not changed by
+# the driver being there.
+[tasks.linux-render]
+description = "Opt-in, never part of ci: in the Linux container, on Mesa's software Vulkan, hold the wgpu renderer to the renderer port's contract and compare the frame it draws with the reference image (tools/linux/run.sh). Needs Docker"
+run = "tools/linux/run.sh render"
 
 [tasks.ci]
 description = "The whole gate; `hk check` runs this, and it gates review and landing (rdm's dispatch.verify)"

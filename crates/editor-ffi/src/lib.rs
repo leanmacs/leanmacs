@@ -45,7 +45,9 @@
 //! from a string or from a snapshot
 //! ([`document::editor_ffi_document_from_snapshot`]). The module that owns
 //! the handle lists the functions that hand one out, and has one place that
-//! counts a handle live.
+//! counts a handle live. [`display`] is a handle over a `Mutex` because its
+//! layout is a cache its queries fill: the layout of `editor-layout` over
+//! that crate's fake shaper, asked about a snapshot handle.
 //! Tests: `a_counter_is_live_from_new_until_free` and
 //! `a_document_is_edited_and_read_through_c_and_is_live_from_new_until_free`
 //! in `tests/c_api.rs`;
@@ -53,7 +55,10 @@
 //! in `tests/snapshot.rs`, an integration test of its own because it makes
 //! documents and `tests/c_api.rs` counts its process's;
 //! `a_document_made_from_a_snapshot_through_c_is_a_live_document_of_its_own`
-//! in `tests/document_from_snapshot.rs`, its own for the same reason; the
+//! in `tests/document_from_snapshot.rs`, its own for the same reason;
+//! `a_display_is_live_from_new_until_free_and_answers_the_queries_as_layout_does`
+//! in `tests/display.rs`, its own because it counts its process's displays;
+//! the
 //! four counter
 //! checks of `ffi-test` (`handleChecks`), its check that a document is
 //! freed (`documentChecks`) and its checks that a snapshot is freed and
@@ -69,6 +74,7 @@
 //! | Option | A presence flag and a value | The function returns whether there is a value and fills the record only if so |
 //! | Byte range | Two scalars | A record of two `u64`: a start and an end, half-open, in bytes ([`text::ByteRange`]) |
 //! | List | *Words*: a buffer of 64-bit numbers, eight bytes each, least significant first, as a pointer and a byte length borrowed for the call. A checked reader takes it apart and refuses a length that is not whole words, a count that runs past the buffer and words left over (the private module `words`) | Words in an owned buffer, pointer and length, in the result record ([`log::RawWords`]); the glue copies it and hands it back with one call to [`text::editor_ffi_text_free`], which frees any buffer the library lent |
+//! | List of handles | A C array of handle pointers and its count, borrowed for the call, which the glue builds from a Lean `Array` of handles; words name a handle by its index in it ([`display::editor_ffi_display_publish`]) | None yet |
 //!
 //! Prefer a few scalar arguments or one record to many calls. No
 //! `extern "C"` function panics: failure is a return value. A function that
@@ -103,7 +109,16 @@
 //! marker out, from [`marker::editor_ffi_document_marker`]; and a selection
 //! in and what it covers out, both as words, in
 //! [`snapshot::editor_ffi_snapshot_extents`]. A refusal with more than one
-//! reason is a status, as a number ([`marker::MarkStatus`]). A document's
+//! reason is a status, as a number ([`marker::MarkStatus`]). A
+//! published scene is the example of a list of handles: words, one string
+//! of every text it holds, and the snapshot handles its views show, which
+//! the words name by index ([`display::editor_ffi_display_publish`], laid
+//! out in [`display::WireScene`]); it comes back as the same words and
+//! string ([`display::editor_ffi_display_scene`]). The definitions of the
+//! faces the scene names are in the same words and the same string, after
+//! the views, behind a presence: absent is "as last published", so a
+//! scene and its faces cross in one call and a publish costs the faces
+//! only when they changed. A document's
 //! kept inverses are the example of scalars in and words out with an
 //! option inside them: a run of revisions and an origin in, as three
 //! numbers, and the revision the inverse produced with the selection it
@@ -115,7 +130,7 @@
 //! can, which no text accepts, so it too is refused and never cut down.
 //! Tests: the unit tests in `text.rs`, `document.rs`, `snapshot.rs`,
 //! `motion.rs`, `words.rs`, `transaction.rs`, `log.rs`, `marker.rs` and
-//! `inverse.rs`;
+//! `inverse.rs`, and, for a scene's words, in `display/wire.rs`;
 //! the tag tests in `events.rs`;
 //! `find_fills_the_range_it_found_and_reports_whether_it_found_one` and the
 //! document test in `tests/c_api.rs`; the snapshot test in
@@ -126,11 +141,20 @@
 //! `tests/markers.rs` and
 //! `the_inverse_of_a_run_is_applied_and_inverses_are_dropped_through_c` in
 //! `tests/inverse.rs`, integration tests of their own for the reason
-//! `tests/snapshot.rs` is one; the `find` and event checks of `ffi-test`
+//! `tests/snapshot.rs` is one; for a list of handles,
+//! `a_scene_published_through_c_is_laid_out_as_layout_lays_it_out`,
+//! `words_that_spell_no_scene_are_refused_and_the_last_frame_is_kept`,
+//! `a_display_nothing_was_published_to_has_no_scene` and, for the faces,
+//! `faces_published_through_c_reach_layout_and_absent_faces_keep_the_last`,
+//! `words_that_spell_no_face_are_refused_and_the_last_frame_and_faces_are_kept`
+//! and `a_scene_published_with_faces_comes_back_with_them` in
+//! `tests/display.rs`;
+//! the `find` and event checks of `ffi-test`
 //! (`dataChecks`), its document checks (`documentChecks`), its snapshot
 //! checks (`snapshotChecks`), its transaction checks (`transactionChecks`),
-//! its marker checks (`markerChecks`) and its inverse checks
-//! (`inverseChecks`).
+//! its marker checks (`markerChecks`), its inverse checks
+//! (`inverseChecks`) and, for a list of handles, its scene checks
+//! (`sceneChecks`).
 //!
 //! ## The event queues
 //!
@@ -353,6 +377,7 @@
 //! constant defined as `add 2 3`.
 
 pub mod counter;
+pub mod display;
 pub mod document;
 pub mod events;
 pub mod files;
@@ -362,6 +387,7 @@ pub mod log;
 pub mod main_thread;
 pub mod marker;
 pub mod motion;
+pub mod render;
 pub mod snapshot;
 pub mod text;
 pub mod timers;

@@ -1,0 +1,544 @@
+//! The `Shaper` port: a run of styled text in, positioned glyphs and the
+//! visual lines they break into out.
+//!
+//! Measuring and breaking are one operation behind this port, never split:
+//! layout never sums advances to decide where a line wraps. A shaper shapes
+//! a line once ([`Shaper::shape`]) and the value it gives back is kept; a
+//! change of width breaks the kept value again ([`ShapedLine::break_lines`])
+//! without shaping it again.
+//!
+//! What a shaper is handed is one segment of one buffer row, after the
+//! display layers below it: no tab (the tab layer has expanded it into
+//! spaces, `docs/design/text-and-display.md`) and no line feed. Every
+//! other character is content and forces no break, a carriage return and
+//! the Unicode line and paragraph separators among them: a row is split at
+//! line feeds only. Byte offsets in and out are offsets of
+//! [`ShapeInput::text`].
+//!
+//! # Where an addition goes
+//!
+//! - **A font attribute** (a family, a size, a weight, a slant, a line
+//!   height; later a stretch or a variation axis): a field of [`FontSpec`],
+//!   the port's term for a font. Layout resolves the faces over a run to
+//!   a spec ([`face`](crate::face)), puts it at its scale
+//!   ([`FontSpec::scaled`]), asks the shaper for that spec's
+//!   [`FontId`] ([`Shaper::font`]) and names the run's font by it; the
+//!   table from an id to its spec is the adapter's. Only what changes a
+//!   glyph or a line's height is a font attribute: colours, underlines and
+//!   strike-through are paint, and never reach a shaper. An attribute that
+//!   is a length is multiplied in [`FontSpec::scaled`], so that the port
+//!   stays in physical pixels.
+//! - **A shaping feature** (an OpenType feature, a language): data on
+//!   [`ShapeInput`] or on [`FontRun`], read by the adapter.
+//! - **A metric layout needs** of a font: a field of [`Metrics`].
+//! - **What a renderer needs of the font a glyph is drawn in** (its bytes,
+//!   its face, a variation, a synthesis): a field of [`ResolvedFont`].
+//!   The font a glyph is drawn in is not the font its run asked for: a
+//!   glyph names a [`ResolvedFontId`], an entry of [`Shaper::resolved`].
+//! - **Where a glyph's outline is drawn**, when that is not its pen
+//!   position: [`Glyph::dx`] and [`Glyph::dy`].
+//!
+//! # The published fake and the contract
+//!
+//! [`fake::CellShaper`] gives every glyph of a font the same advance, so
+//! layout's tests are exact. [`contract`] is the list of rules the fake and
+//! every real adapter are held to; the real adapter is
+//! `editor-shape-parley`, over Parley.
+//!
+//! # Where layout is run over a real adapter
+//!
+//! Layout's rules are pinned in this crate, on the fake, and an adapter's
+//! in the adapter's crate, on the contract and its own tests. A test that
+//! runs layout over a real adapter covers wiring only, and lives in the
+//! adapter's crate (`crates/editor-shape-parley/tests/layout.rs`). It may
+//! compare the adapter's own counters with [`Layout::counters`] and with
+//! [`SEGMENT_BYTES`] by name: that the adapter did as much work as layout
+//! says it asked for, and that nothing it was handed is longer than a
+//! segment. It states no row, no width and no number of layout's. It
+//! builds its scenes with [`Scene::of_text`] and [`Scene::selecting`], so
+//! it does not depend on text storage.
+//!
+//! [`Layout::counters`]: crate::Layout::counters
+//! [`SEGMENT_BYTES`]: crate::tabs::SEGMENT_BYTES
+//! [`Scene::of_text`]: crate::scene::Scene::of_text
+//! [`Scene::selecting`]: crate::scene::Scene::selecting
+
+use std::fmt;
+use std::ops::Range;
+use std::sync::Arc;
+
+pub mod contract;
+pub mod fake;
+#[cfg(test)]
+pub(crate) mod scripted;
+
+/// Which font a run asks for: a number the shaper's adapter gives a
+/// [`FontSpec`] ([`Shaper::font`]). Font 0 is the default font,
+/// [`FontSpec::default`]. It is what a run is shaped in and what
+/// [`Shaper::metrics`] is asked about; the font a glyph is drawn in is a
+/// [`ResolvedFontId`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
+pub struct FontId(pub u32);
+
+/// Which font a glyph is drawn in: an index into the table the shaper
+/// describes its fonts in ([`Shaper::resolved`]). It is not the font the
+/// glyph's run asked for ([`FontId`]): a character the font asked for has
+/// no glyph for is drawn in a fallback font, and two specs that differ
+/// only in line height are drawn in one font.
+///
+/// An id means one font for one generation of its shaper
+/// ([`Shaper::generation`]), and may mean another under the next.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
+pub struct ResolvedFontId(pub u32);
+
+/// A font a glyph is drawn in, with what a rasteriser needs to draw it:
+/// one face of one font file, at a size.
+///
+/// Two resolved fonts are equal when they name the same face of the same
+/// file ([`ResolvedFont::file`]) with the same size, coordinates and
+/// synthesis. The bytes are never compared, and `Debug` prints their
+/// length in place of them.
+#[derive(Clone)]
+pub struct ResolvedFont {
+    /// The bytes of the font file; none for a shaper that draws from no
+    /// file, as the fake.
+    pub data: Arc<dyn AsRef<[u8]> + Send + Sync>,
+    /// The shaper's number for the file: within one shaper, two resolved
+    /// fonts of one number have the same bytes, so they are compared
+    /// without reading them.
+    pub file: u64,
+    /// Which face of the file, for a file that holds several.
+    pub index: u32,
+    /// The size glyphs are drawn at, in pixels.
+    pub size: f32,
+    /// The face's normalised variation coordinates, one for each axis, as
+    /// the font format's 2.14 fixed-point numbers; none for a face that
+    /// does not vary.
+    pub coords: Vec<i16>,
+    /// Whether the outlines are to be made bolder, for a weight the family
+    /// has no face of.
+    pub embolden: bool,
+    /// How far the outlines are to be slanted, in degrees, for a slant the
+    /// family has no face of.
+    pub skew: Option<f32>,
+}
+
+/// Equal by what is named and never by the bytes, which
+/// [`ResolvedFont::file`] stands for.
+impl PartialEq for ResolvedFont {
+    fn eq(&self, other: &Self) -> bool {
+        self.file == other.file
+            && self.index == other.index
+            && self.size == other.size
+            && self.coords == other.coords
+            && self.embolden == other.embolden
+            && self.skew == other.skew
+    }
+}
+
+/// Every field as it is, but for the bytes: `data` is printed as their
+/// length, `5 bytes`.
+impl fmt::Debug for ResolvedFont {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let bytes = (*self.data).as_ref().len();
+        formatter
+            .debug_struct("ResolvedFont")
+            .field("data", &format_args!("{bytes} bytes"))
+            .field("file", &self.file)
+            .field("index", &self.index)
+            .field("size", &self.size)
+            .field("coords", &self.coords)
+            .field("embolden", &self.embolden)
+            .field("skew", &self.skew)
+            .finish()
+    }
+}
+
+/// A length in 64ths: a whole number, so it is exact as an `f32` and can
+/// be hashed and compared.
+///
+/// **Which unit it is in depends on where it is.** In a face
+/// ([`face`](crate::face), "Units") it is in logical points, of which one
+/// is a physical pixel at scale 1. In a [`FontSpec`] handed to a
+/// [`Shaper`] it is in physical pixels: layout has multiplied it by its
+/// scale by then ([`Length::scaled`], in
+/// [`Styles::style`](crate::decoration::Styles::style)), so a shaper and
+/// every adapter of this port see physical pixels and no scale. The names
+/// below say "pixels" for both, as they did when a theme stated physical
+/// pixels.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct Length(pub u32);
+
+impl Length {
+    /// `pixels` whole pixels, or whole points where the length is one a
+    /// face states.
+    pub const fn pixels(pixels: u32) -> Self {
+        Self(pixels.saturating_mul(64))
+    }
+
+    /// The length in pixels, or in points where it is one a face states.
+    pub fn as_pixels(self) -> f32 {
+        self.0 as f32 / 64.0
+    }
+
+    /// This length times `scale`, to the nearest 64th, and no longer than
+    /// a length holds: what a length stated at scale 1 is at `scale`. At 1
+    /// it is itself. The caller gives a finite scale above 0.
+    #[must_use]
+    pub fn scaled(self, scale: f32) -> Self {
+        let scaled = (f64::from(self.0) * f64::from(scale)).round();
+        // A float cast to a whole number stops at the number's ends.
+        Self(scaled as u32)
+    }
+}
+
+/// The size of a font whose face sets none: 16 points. Layout puts it at
+/// its scale like a size a face states, so at scale 1 it is 16 physical
+/// pixels. It is also the size of [`FontSpec::default`], font 0, which is
+/// in physical pixels as every spec a shaper sees is.
+pub const BASE_SIZE: Length = Length::pixels(16);
+
+/// A font's weight, from 1 to 1000: 400 is normal and 700 bold.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct Weight(pub u16);
+
+impl Weight {
+    /// The normal weight.
+    pub const NORMAL: Self = Self(400);
+    /// The bold weight.
+    pub const BOLD: Self = Self(700);
+}
+
+/// A font's slant.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub enum Slant {
+    /// Upright.
+    #[default]
+    Upright,
+    /// The family's italic design.
+    Italic,
+    /// The upright design, slanted.
+    Oblique,
+}
+
+/// How tall the lines of a font are.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum LineHeight {
+    /// A multiple of the font's own line height at its size, in 64ths: 64
+    /// is the font's own.
+    Multiple(u32),
+    /// A height as a length, whatever the font's own: points in a face,
+    /// and physical pixels in the spec a shaper is handed ([`Length`]).
+    Pixels(Length),
+}
+
+impl LineHeight {
+    /// The font's own line height.
+    pub const OWN: Self = Self::Multiple(64);
+}
+
+/// A font, in the port's terms: what a run of text is shaped in. Two runs
+/// are in one font exactly when their specs are equal. The line height is
+/// part of it, since it changes how tall a line of the font is.
+///
+/// A spec a shaper is handed is in physical pixels: its size is the size
+/// its glyphs are drawn at. What the faces over a run merge into
+/// ([`face`](crate::face)) is a spec in points, and layout puts it at its
+/// scale before any shaper sees it ([`FontSpec::scaled`]). So the scale a
+/// frame is laid out at is part of every font's identity, and of nothing
+/// else in this port.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct FontSpec {
+    /// The family's name; `None` is the adapter's default family.
+    pub family: Option<String>,
+    /// The size.
+    pub size: Length,
+    /// The weight.
+    pub weight: Weight,
+    /// The slant.
+    pub slant: Slant,
+    /// The line height.
+    pub line_height: LineHeight,
+}
+
+impl FontSpec {
+    /// This font at `scale`: its size and a line height stated as a length
+    /// are each at the scale ([`Length::scaled`]). A line height that is a
+    /// multiple of the font's own stays that multiple, since it follows
+    /// the size; the family, the weight and the slant are what they were.
+    /// At 1 a spec is itself.
+    #[must_use]
+    pub fn scaled(&self, scale: f32) -> Self {
+        Self {
+            size: self.size.scaled(scale),
+            line_height: match self.line_height {
+                LineHeight::Multiple(multiple) => LineHeight::Multiple(multiple),
+                LineHeight::Pixels(pixels) => LineHeight::Pixels(pixels.scaled(scale)),
+            },
+            ..self.clone()
+        }
+    }
+}
+
+/// The default font, font 0: the default family at [`BASE_SIZE`], of
+/// normal weight, upright, with lines of its own height.
+impl Default for FontSpec {
+    fn default() -> Self {
+        Self {
+            family: None,
+            size: BASE_SIZE,
+            weight: Weight::NORMAL,
+            slant: Slant::Upright,
+            line_height: LineHeight::OWN,
+        }
+    }
+}
+
+/// A run of the input's bytes shaped in one font.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct FontRun {
+    /// The bytes of [`ShapeInput::text`] the run covers.
+    pub bytes: Range<usize>,
+    /// The font they are shaped in.
+    pub font: FontId,
+}
+
+/// What a shaper is asked to shape: one segment of a buffer row.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Default)]
+pub struct ShapeInput {
+    /// The text: no tab and no line feed. Any other character is content,
+    /// and none forces a break: a carriage return, U+2028 and U+2029 stay
+    /// on their visual line like any other character, and byte offsets in
+    /// and out count them as they are.
+    pub text: String,
+    /// Its font runs, in order. A byte no run covers is in the default
+    /// font, and so is an empty text with no run; an empty text with a run
+    /// takes that run's font for its height.
+    pub runs: Vec<FontRun>,
+}
+
+/// One positioned glyph.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Glyph {
+    /// The glyph's id in its font.
+    pub id: u32,
+    /// The font it is drawn in: an entry of [`Shaper::resolved`].
+    pub font: ResolvedFontId,
+    /// The byte offset in [`ShapeInput::text`] of the cluster it draws.
+    pub cluster: usize,
+    /// Where its pen position is, in pixels from its visual line's left
+    /// edge: where it starts for a cursor, a selection and a click.
+    pub x: f32,
+    /// How far right of its pen position its outline is drawn, in pixels.
+    /// Only a renderer reads it: no position is found by it.
+    pub dx: f32,
+    /// How far below the baseline its outline is drawn, in pixels. Only a
+    /// renderer reads it.
+    pub dy: f32,
+    /// How far across it is: how far it moves the pen.
+    pub advance: f32,
+}
+
+/// One visual line: the glyphs of a run of the input placed on one row.
+#[derive(Debug, Clone, PartialEq)]
+pub struct VisualLine {
+    /// The bytes of [`ShapeInput::text`] it holds.
+    pub bytes: Range<usize>,
+    /// Its glyphs, in order from its left edge, whatever the order of
+    /// their clusters: none starts before the one before it. In
+    /// right-to-left text a later glyph draws an earlier cluster, and a
+    /// cluster may be drawn by several glyphs or one glyph draw several
+    /// characters.
+    pub glyphs: Vec<Glyph>,
+    /// How far across its glyphs reach.
+    pub width: f32,
+    /// How far down it is.
+    pub height: f32,
+    /// The baseline, from its top.
+    pub baseline: f32,
+}
+
+/// What layout needs of a font before any text is shaped in it: to
+/// estimate a row it has not laid out, and to size a cursor where there is
+/// no glyph.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Metrics {
+    /// The advance of a space.
+    pub advance: f32,
+    /// The height of a line.
+    pub line_height: f32,
+}
+
+/// A shaped line, kept so that a change of width breaks it again without
+/// shaping it again.
+pub trait ShapedLine {
+    /// The visual lines it breaks into at `width` pixels, or into one when
+    /// `width` is `None`. Every visual line holds at least one cluster, so
+    /// a cluster wider than `width` is a line of its own.
+    fn break_lines(&self, width: Option<f32>) -> Vec<VisualLine>;
+}
+
+/// The port: shapes a segment of text.
+pub trait Shaper {
+    /// What it keeps of a shaped line.
+    type Shaped: ShapedLine + Send + Sync;
+
+    /// Shapes `input`.
+    fn shape(&self, input: &ShapeInput) -> Self::Shaped;
+
+    /// A number that changes whenever what [`Shaper::shape`] would give
+    /// changes for the same input: fonts loaded, a size changed. Layout
+    /// shapes again every line it shaped under another generation. A
+    /// [`ResolvedFontId`] is valid for one generation: under another the
+    /// same number may be another font.
+    fn generation(&self) -> u64;
+
+    /// The fonts glyphs are drawn in, by [`ResolvedFontId`]: every glyph
+    /// of a shaped line names an entry of the table as it is when
+    /// [`Shaper::shape`] returns, whenever the line is broken. Within one
+    /// generation the table only grows and an entry never changes, so a
+    /// table read later describes every glyph shaped before it.
+    fn resolved(&self) -> Arc<[ResolvedFont]>;
+
+    /// The id of the font `spec`: equal specs have one id and different
+    /// specs different ids, for the shaper's life, and
+    /// [`FontSpec::default`] is font 0.
+    fn font(&self, spec: &FontSpec) -> FontId;
+
+    /// The metrics of `font`, an id [`Shaper::font`] gave or font 0.
+    fn metrics(&self, font: FontId) -> Metrics;
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use super::{FontSpec, Length, LineHeight, ResolvedFont, Slant, Weight};
+
+    #[test]
+    fn a_length_at_a_scale_is_to_the_nearest_64th_and_no_longer_than_a_length_holds() {
+        let fourteen = Length::pixels(14);
+        assert_eq!(fourteen.scaled(2.0), Length::pixels(28));
+        // 17.5 pixels.
+        assert_eq!(fourteen.scaled(1.25), Length(1120));
+        // 896 64ths times 1.3333 are 1194.6: the nearest 64th, not the one
+        // below.
+        assert_eq!(fourteen.scaled(1.3333), Length(1195));
+        // At 1 a length is itself, whatever it is.
+        for length in [
+            Length(0),
+            Length(1),
+            fourteen,
+            Length(1195),
+            Length(u32::MAX),
+        ] {
+            assert_eq!(length.scaled(1.0), length);
+        }
+        assert_eq!(Length(0).scaled(2.0), Length(0));
+        // A length holds no more than this, at any scale.
+        assert_eq!(Length(u32::MAX).scaled(2.0), Length(u32::MAX));
+    }
+
+    #[test]
+    fn a_font_at_a_scale_has_its_size_and_a_line_height_in_points_at_it_and_nothing_else_changed() {
+        let stated = FontSpec {
+            family: Some("serif".to_owned()),
+            size: Length::pixels(14),
+            weight: Weight(300),
+            slant: Slant::Italic,
+            line_height: LineHeight::Pixels(Length::pixels(20)),
+        };
+        assert_eq!(
+            stated.scaled(2.0),
+            FontSpec {
+                size: Length::pixels(28),
+                line_height: LineHeight::Pixels(Length::pixels(40)),
+                ..stated.clone()
+            }
+        );
+        // A multiple of the font's own follows the size: it stays the
+        // multiple it was.
+        let multiple = FontSpec {
+            line_height: LineHeight::Multiple(96),
+            ..stated.clone()
+        };
+        assert_eq!(
+            multiple.scaled(1.5),
+            FontSpec {
+                size: Length::pixels(21),
+                ..multiple.clone()
+            }
+        );
+        // At 1 a spec is itself.
+        for spec in [stated, multiple, FontSpec::default()] {
+            assert_eq!(spec.scaled(1.0), spec);
+        }
+    }
+
+    /// A resolved font of the file numbered `file`, whose bytes are
+    /// `bytes`, at 16 pixels.
+    fn font(file: u64, bytes: &[u8]) -> ResolvedFont {
+        ResolvedFont {
+            data: Arc::new(bytes.to_vec()),
+            file,
+            index: 0,
+            size: 16.0,
+            coords: vec![],
+            embolden: false,
+            skew: None,
+        }
+    }
+
+    #[test]
+    fn resolved_fonts_are_equal_by_what_they_name_and_never_by_their_bytes() {
+        let plain = font(1, b"abc");
+        assert_eq!(plain, font(1, b"abc"));
+        // The bytes are not read: the file's number stands for them.
+        assert_eq!(plain, font(1, b"other bytes"));
+        assert_ne!(plain, font(2, b"abc"));
+        // Each other field alone tells two apart.
+        let others = [
+            ResolvedFont {
+                index: 1,
+                ..plain.clone()
+            },
+            ResolvedFont {
+                size: 24.0,
+                ..plain.clone()
+            },
+            ResolvedFont {
+                coords: vec![0],
+                ..plain.clone()
+            },
+            ResolvedFont {
+                embolden: true,
+                ..plain.clone()
+            },
+            ResolvedFont {
+                skew: Some(14.0),
+                ..plain.clone()
+            },
+        ];
+        for other in others {
+            assert_ne!(plain, other);
+            assert_eq!(other, other.clone());
+        }
+    }
+
+    #[test]
+    fn a_resolved_font_is_printed_with_the_length_of_its_bytes() {
+        let printed = format!(
+            "{:?}",
+            ResolvedFont {
+                coords: vec![3],
+                skew: Some(14.0),
+                ..font(7, b"abcde")
+            }
+        );
+        assert_eq!(
+            printed,
+            "ResolvedFont { data: 5 bytes, file: 7, index: 0, size: 16.0, coords: [3], \
+             embolden: false, skew: Some(14.0) }"
+        );
+    }
+}

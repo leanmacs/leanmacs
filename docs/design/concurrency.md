@@ -16,12 +16,12 @@ process, its runtime is the only one that schedules editor code.
 
 | Thread | Language | Owns | Never does |
 |---|---|---|---|
-| **Main** | Rust | The window, the OS event loop, IME | Wait on anything; run Lean code |
+| **Main** | Rust | The window, the OS event loop, IME. It makes the renderer and its surface when the window opens, and drops them when it closes; in between it only leaves word with the render thread | Draw or present; wait on anything, but for the render thread to end as the window closes; run Lean code |
 | **Editor** | Lean, a dedicated task | All mutable editor state. The single writer. Pulls events and runs commands and handlers one at a time | Block on I/O or long computation |
 | **Lean pool** | Lean | Background jobs that compute or await | Mutate editor state; block |
 | **Dedicated job threads** | Lean | Work that blocks in a system call: the reload job today | Mutate editor state |
 | **Completion pump** | Lean, a dedicated task | Pulling the completion queue and ending the wait each completion names | Run a job; mutate editor state |
-| **Render** | Rust | Turning the published scene into frames and drawing them. Shares the layout cache with the editor thread's layout queries | Run Lean code |
+| **Render** | Rust | Turning the published scene into frames and drawing them. Shares the layout cache with the editor thread's layout queries (the design; what is built, and the decision it awaits, are under "Sharing state"). As built it owns the renderer alone (the device, the surface, the glyph atlas, the quads kept per row), takes frames from a mailbox, and never lays out. `editor-ffi` starts it when a window opens and ends it when the window closes; idle, it is blocked with no deadline | Run Lean code; call layout or a shaper; hold a lock while it draws; touch the window's loop |
 | **Services** | Rust | Timers, loading and saving files, child-process pipes, pseudo-terminals, file watches | Hold editor state; call Lean |
 | **Workers** | Rust | Tree-sitter parsing, diff, fuzzy matching | Hold editor state |
 
@@ -98,6 +98,123 @@ reads the last published scene. Layout queries from a command are
 synchronous calls answered in the same call (see
 [text-and-display.md](text-and-display.md)); the layout cache is the one
 structure both threads touch, so its locking is kept per line.
+
+**Who writes the layout cache is awaiting the owner's decision.** The
+paragraph above, and the Render row of the table, are the design. The
+display pipeline's phase 1 built something else, and the owner has not
+chosen between them (plan review of that phase, 2026-11-13):
+
+- **As built: the editor thread is the cache's one writer.** Every write to
+  layout's state happens in a call Lean makes from a command: a publish,
+  which also builds the frame, and the two queries (`crates/editor-ffi`,
+  `display.rs`). The frame is an `Arc` of plain data whose rows share the
+  cache's entries, which are immutable, so the render thread (phase 4) is
+  to read frames and never write. The display handle keeps its layout
+  behind one lock only because a handle is `Send + Sync`; with one writer it
+  is never contended. The cost: a resize shows nothing new until Lean
+  publishes again, which sits badly with "nothing blocks the window".
+- **The design above: two writers, locked per line.** The render thread
+  turns the last scene into frames itself, laying out on resize, and the
+  editor thread's queries use the same entries.
+- **A middle way, compatible with what is built:** the render thread
+  breaks the latest frame's kept shaped lines again at the new width,
+  writing nothing to the cache, until Lean publishes. An entry keeps its
+  shaped line as an `Arc` of a value that is `Send + Sync` and breaks with
+  `&self` (`ShapedLine::break_lines`), so the frame would carry it as one
+  more field. This is not built.
+
+Phase 4, which builds the render thread, was to have the answer first.
+It did not: the owner has not chosen, and the decision above stays open.
+Phase 4 (2026-11-14) built on what phase 1 built, the first of the three,
+and built it so that the other two need no change to the renderer's port
+or to its loop (`crates/editor-render`):
+
+| Thing | Written by | Read by |
+|---|---|---|
+| The renderer: the device, the glyph atlas and cache, the quads kept per row | The render thread alone, with no lock | Nothing else |
+| The mailbox: one slot for a frame and the stamp of its input, behind a lock | Whoever publishes frames: the editor thread, as built | The render thread, which takes what is there |
+| The demands: the dirty mark, the animation deadline, the refresh interval and whether the target is hidden (atomics), and the target's size and scale (a small lock) | Any thread, through the loop's handle. As built the main thread leaves word of the size, of damage, of the refresh interval and of hiding, as the window says them, and whoever publishes frames leaves the rest | The render thread |
+| The frame journal and the counters | The render thread alone | Any thread, as a copy |
+
+- The render thread never calls layout, a shaper or Lean, and holds no
+  lock while it draws: the mailbox's and the target's locks are held only
+  to take a value out.
+- A frame is an `Arc` of plain data, so handing one over copies nothing
+  and the render thread reads it with no lock.
+- A resize is a demand. The frame last shown is drawn again on the new
+  target at once, so painting never waits on Lean; the new layout appears
+  when Lean publishes a frame for the new size. Until then the old frame
+  is shown at its old layout, which is the cost named above and is not
+  removed.
+- A scale goes to two threads, and neither hands it to the other. The
+  main thread leaves it with the render loop as part of the target, with
+  the size; the renderer sizes its own lines and chooses its masks by
+  it. Layout is told it (`Layout::set_scale`) by the thread that lays
+  out, which is whoever publishes frames: it reads the scale off the
+  resize it pulled from the editor queue and sets it before it lays out
+  for that resize's size, under whatever guards the layout. As built
+  only the window example's editor thread does (the display pipeline's
+  phase 5); the display handle Lean publishes to is never told a scale
+  ([text-and-display.md](text-and-display.md), open questions, "A scene
+  published from Lean at its window's scale"). The render thread still
+  never lays out: a frame laid out at the old scale is drawn once on the
+  target at the new one, and the frame laid out for it follows, as with
+  a size.
+- Under the second answer the render thread would lay out and post to
+  the same mailbox itself; under the third it would break the frame's
+  kept lines again before it draws. Neither changes the port, the
+  mailbox, the scheduler or the journal.
+
+**The thread is started by `editor-ffi`** (the display pipeline's phase 5,
+2026-11-14; `crates/editor-ffi/src/render.rs`), for the life of one
+window, by a session the window is run with:
+
+- **The window tells; the session leaves word.** The window port has a
+  second listener, the drawer, which the window's thread calls with what
+  whatever draws in the window needs to know. The session turns each into
+  a call on the loop's handle. A call on the handle sets an atomic or
+  takes a small lock, and wakes the render thread: the main thread never
+  waits for a draw.
+- **The main thread makes the renderer and drops it.** A surface on macOS
+  is made on the main thread and nowhere else, and whatever was made on
+  the window must be gone before the window is. So the renderer is made
+  as the window opens, on the window's thread, and sent to the render
+  thread inside the loop; and as the window closes, the session stops the
+  loop, joins the render thread and drops the renderer on the window's
+  thread. That join is the one wait the main thread makes: for at most
+  the draw in progress, once, as the window closes.
+- **The render thread presents.** Presenting waits for the display's
+  refresh. On the main thread that wait would hold up the window's loop:
+  input would be stamped late, and the journal's latency flattered.
+- **The two loops do not meet.** The render thread waits on the render
+  loop's own park, a lock and a condition variable; the window's loop
+  waits on the system. Nothing the render thread does has to wake the
+  window's loop, and the window's loop is never made to turn: the adapter
+  asks for no redraw, and what draws is woken by what the drawer is told.
+- **A hidden window is not drawn on.** A window that is occluded refuses a
+  draw, and a refused draw is tried again every refresh, which would be a
+  timer for as long as the window stayed hidden. The loop is told the
+  window is hidden, keeps what is asked, and draws once when it is shown.
+  A window is not always said to be hidden: on macOS one that opens is
+  not on the screen for its first tenth of a second, and says only that
+  it is shown, once it is (seen: nine draws refused meanwhile, one each
+  refresh). So a renderer that finds its target hidden says so in what
+  it answers, and the loop tries that draw again when it is next told
+  anything, which being shown is, and not a refresh later.
+- **The journal reads the clock that stamps input**: `editor-ffi`'s input
+  clock is the loop's clock too, so a frame's latency is a subtraction on
+  one clock.
+
+That the render thread draws, and not the main thread from the window's
+own redraw event, **awaits the owner**. The other way needs no second
+thread and no join, and blocks the window on every present.
+
+Not built: anything from Lean reaching the session. The process's window
+is run with nothing drawing in it, and frames published from Lean reach
+no renderer until the display pipeline's phase 6. The session has run
+with a real renderer in a real window only in an example, on demand
+(`crates/editor-ffi/examples/window.rs`), where a second thread stands in
+for the editor.
 
 ## Foreground: commands
 
@@ -1351,6 +1468,79 @@ handler never runs.
 - Linux on x86_64, and real keys on a Linux desktop under X11 and Wayland.
   The gate passes on aarch64 in a container. Windows has not been attempted
   ([lean-runtime.md](lean-runtime.md), "Build").
+- The window that draws, on a desktop with a person at it. What has run
+  in the container (2026-11-14, aarch64, under Xvfb, on Mesa's software
+  Vulkan driver; `mise run linux-window`, part 4): a surface made on the
+  main thread from the window's X11 handles, configured, drawn on and
+  presented on the render thread, and dropped before the window; a
+  fixture frame of real text, read back from the surface, within 1 of
+  255 of the CPU's picture; each frame's 14 points drawn at 14 pixels at
+  a scale of 1, where that does not show the scale reaching layout, and
+  at 28 pixels in a second run where winit is told a scale of 2, where
+  it does; no frame drawn over an idle second; and a key, a
+  named key, a key with modifiers, a press, a drag, a release, a wheel
+  turn and a resize each arriving on the queue as the port documents it;
+  and a change of scale under an open window, from 1 to 2, made by
+  changing the display's settings, arriving as a resize at the size last
+  known and the new scale, with the frame laid out for it at 28 pixels.
+  What has run on macOS (2026-11-14, one desktop, aarch64, Metal, one
+  display at scale 2 that refreshes at 120 hertz;
+  [on-demand-checks.md](../dev-practices/on-demand-checks.md), "What the
+  first desktop run showed"): a surface on Metal made on the main thread
+  and drawn on from the render thread; the picture, within 1 of 255 of
+  the CPU's; the refresh rate winit reports, as the window tells it to
+  its drawer; a window that opens occluded, is refused its first draws, is told it is shown,
+  and then draws once; a window on a display that is asleep, which is
+  refused two draws, is told nothing and draws nothing for the half
+  minute it stays; and a frame laid out at scale 2, with 14 points drawn
+  at 28 pixels. What has not:
+
+  - **macOS, with a person at it.** A run started from a terminal in
+    front; input checked line by line; a live resize, where the content
+    may lag the window's edge; a window covered and uncovered; the order
+    of a modifier's own press and the change that names it; Command and
+    Option; what text Escape, Enter and a letter under Control carry; a
+    trackpad's wheel in pixels. The steps are in
+    [on-demand-checks.md](../dev-practices/on-demand-checks.md), "The
+    window's contract, on a desktop".
+  - **Two displays, fullscreen and Spaces, on macOS.** A change of scale
+    as a window is dragged from a display at scale 2 to one at scale 1,
+    and the antialiasing changing with it; the system's fullscreen, in
+    and out, which to the editor is a burst of sizes; another Space and
+    back, which is hidden and shown; and whether the text is the size of
+    the same 14 points in another app. All of it is read in this tree
+    and in winit's source and pinned on fakes, and none of it has been
+    seen: the steps are written for the owner and not yet run
+    ([on-demand-checks.md](../dev-practices/on-demand-checks.md), "Scale
+    and fullscreen, by hand"). Two things there may show and are not
+    ours to prevent with what is built: the system stretching the last
+    picture between two sizes, and a frame of the old size on the new
+    one for a draw.
+  - **Wayland**: the window, its surface, and the clipboard, which
+    without the data-control protocol goes through XWayland or not at
+    all. Nothing here ran a Wayland compositor.
+  - **A real display.** Xvfb's says no refresh rate, so the window paced
+    by the render loop's own interval: that the rate a display reports
+    reaches the loop is pinned by tests on fakes, and has not been seen.
+    Nor has a second display, or a rate that changes.
+  - **A change of scale as winit sends it.** The event cannot be built in
+    a test and was not provoked in the container: its translation is
+    tested from its part, the scale.
+  - **wgpu's OpenGL back end on a window.** The container has no EGL, so
+    only Vulkan ran.
+  - **That an idle window costs the main thread nothing.** winit's loop
+    waits and the adapter asks for no redraw; the cost itself is not
+    measured.
+  - **How long making the renderer holds the window's thread**, as the
+    window opens: finding an adapter and compiling one shader. It happens
+    once. The first frame was presented some 220 ms after the window's
+    size arrived, in a debug build on a software driver, which bounds it
+    there and says nothing of a GPU.
+- The system clipboard, anywhere but in the container (`mise run
+  linux-window`, parts 5 and 6). Not run on macOS, where what the empty
+  text reads back as is not known either. What a clipboard keeps once the
+  editor has exited is not addressed: on X11 with no clipboard manager,
+  nothing.
 - The rare millisecond-scale sample of the editor loop's latency while jobs
   compute. `mise run job-bench` measures the loop as built, in the headless
   host: the time from posting a request to the editor thread having run it,

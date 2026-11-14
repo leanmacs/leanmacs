@@ -1,0 +1,24 @@
+[package]
+name = "editor-shape-parley"
+version = "0.1.0"
+description = "The Shaper port's real adapter: shaping, font fallback and line breaking over Parley and fontique"
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+# The port this crate implements, with its fake and its contract check.
+# `deny.toml` lists this crate among editor-layout's wrappers.
+editor-layout = { path = "../editor-layout" }
+# The library behind the port (AGENTS.md, "Prefer an existing library,
+# behind a port"). Pinned exactly: Parley changes its API between releases.
+# No type of it is public here, and `deny.toml` lets no other crate depend
+# on it. The crate docs' "When the pin moves" say what to check on a bump.
+parley = "=0.13.0"
+# Parley's font library, which it re-exports as `parley::fontique`; every
+# use of it here goes through that path. It is a direct dependency for one
+# feature: without `fontconfig-dlopen` a Linux build links the system's
+# fontconfig at build time and so needs its headers and `pkg-config`, which
+# is more than cargo. With it the library is opened at run time, and only
+# when the system's fonts are asked for.
+fontique = { version = "=0.13.0", features = ["fontconfig-dlopen"] }

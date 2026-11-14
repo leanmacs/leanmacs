@@ -1,0 +1,14 @@
+[package]
+name = "editor-render"
+version = "0.1.0"
+description = "The Renderer port: what draws a frame, with its fake and its contract, and the render loop every back end shares"
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+# The frame a renderer draws, as plain data. `deny.toml` lists this crate
+# among editor-layout's wrappers. There is no other dependency and no
+# dev-dependency: the port names no drawing library, and its tests run on
+# the fakes published here and on layout's fake shaper.
+editor-layout = { path = "../editor-layout" }

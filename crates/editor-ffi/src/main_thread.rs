@@ -17,10 +17,14 @@
 //! the service answers nothing else: a request made then waits until the
 //! window has closed.
 //!
-//! The check and the service are plain Rust that knows nothing about Lean.
-//! Whether they stay in `editor-ffi` or move to a window crate is for the
-//! display pipeline to decide, with the window loop it builds; the
-//! `extern "C"` wrappers stay here either way.
+//! The check and the service are plain Rust that knows nothing about Lean,
+//! and they stay in `editor-ffi`. The display pipeline, which built the
+//! window's loop, was to decide whether they moved to a window crate, and
+//! decided they do not (its phase 5): their one caller is the Lean
+//! boundary, and no window crate needs them. The window adapter is handed
+//! the check as a function ([`is_main_thread`]), and the session that
+//! draws in the window ([`crate::render`]) needs neither: it is told on
+//! whatever thread runs the window.
 
 use std::collections::VecDeque;
 use std::sync::mpsc::{self, SyncSender};

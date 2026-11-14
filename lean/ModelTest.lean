@@ -10,6 +10,7 @@ import Editor.Display.Model
 import Editor.Evil.Compiled
 import Editor.Ex.Compiled
 import Editor.Ex.Line
+import Editor.Face
 import Editor.File.Cases
 import Editor.File.Model
 import Editor.Files.Compiled
@@ -54,7 +55,8 @@ The display interface's contract (`Editor/Display/Contract.lean`) is run
 against its model here, in cells of two sizes (`displayFailures`). The real
 binding's run of it is the display pipeline's. `sceneChecks` and
 `displayChecks` are what only the model shows: the scenes published to it,
-and its exact layout rule.
+and its exact layout rule. `faceChecks` are the checks of faces as data and
+of the built-in theme (`Editor/Face.lean`).
 
 A command is tested the same way: as a property, a command that returns
 whether it held, run against the model (`commandProperties`). The `editor`
@@ -245,9 +247,9 @@ service.
 The config session's decisions are tested here too, with no elaborator:
 
 - `setupChecks`: what a `setup` registers, commands, stores, jobs, key
-  bindings, modes and ex bindings, and when it is refused;
+  bindings, modes, ex bindings and faces, and when it is refused;
 - `registryChecks`: the registry, its commands, its jobs, its key
-  bindings, its modes and its ex bindings, replaced by owner;
+  bindings, its modes, its ex bindings and its faces, replaced by owner;
 - `storeChecks`: the rule that meets a new config's stores with the cells
   there are, one check for each case;
 - `sessionChecks`: one reload (`Config.build`), on a fake elaborator that
@@ -258,8 +260,10 @@ The config session's decisions are tested here too, with no elaborator:
   double-register, a store value survives a reload), and `config-test` runs
   them again with the real elaborator, queue and text binding. The reducer
   also says when the old config's jobs are cancelled: when a reload
-  installs, and only then. An install replaces config's key bindings,
-  modes and ex bindings and keeps the compiled ones.
+  installs, and only then; and what the theme is: the built-in one then the
+  installed config's faces, replaced as a set by an install and kept by a
+  rejected reload. An install replaces config's key bindings, modes and ex
+  bindings and keeps the compiled ones.
 
 How a key becomes an invocation is pure Lean with no port, so its checks
 need no model and no fake of a collaborator:
@@ -1618,6 +1622,14 @@ def counter : Store Nat :=
       | .nat n => some n
       | _ => none }
 
+/-- A face that sets a foreground of the red `red` and nothing else. -/
+def coloured (red : UInt8) : Face :=
+  { foreground := some (Color.rgb red 0 0) }
+
+/-- The definition of the face `name` as `attributes`. -/
+def defined (name : String) (attributes : Face) : FaceDefinition :=
+  { name := ⟨name⟩, face := attributes }
+
 /-- The message a `setup` was refused with, if it was. -/
 def refusal (setup : SetupM Unit) : Option String :=
   match Config.Registrations.ofSetup setup with
@@ -1891,7 +1903,34 @@ def setupChecks : List Check :=
             refused { name := "twice", locals := [("x", "a"), ("x", "b")] }
               (.duplicateSuffix (keys "x")) &&
             refused { name := "unreadable", locals := [("S-a", "a")] } (.unreadableSuffix "S-a") &&
-            refusal (defineMode { name := "fine", locals := [("x", "a")] }) == none) }]
+            refusal (defineMode { name := "fine", locals := [("x", "a")] }) == none) },
+    { name :=
+        "a setup's faces are collected in the order it set them, each with what it sets, beside its commands"
+      run :=
+        let setup : SetupM Unit := do
+          command "first" (makes "1")
+          face "keyword" (coloured 200)
+          face "default" { size := some 14, weight := some 500 }
+          command "second" (makes "2")
+        match Config.Registrations.ofSetup setup with
+        | .error _ => pure false
+        | .ok collected =>
+          pure
+            (collected.faces ==
+                #[defined "keyword" (coloured 200),
+                  defined "default" { size := some 14, weight := some 500 }] &&
+              collected.commands.map (·.name) == #["first", "second"]) },
+    { name :=
+        "a setup that sets a face twice is refused with a message that names the face, and a face may have the name of a command"
+      run :=
+        let twice : SetupM Unit := do
+          face "keyword" (coloured 1)
+          face "comment" (coloured 2)
+          face "keyword" (coloured 3)
+        let shared : SetupM Unit := do
+          command "keyword" (makes "1")
+          face "keyword" (coloured 1)
+        pure (refusal twice == some "the face `keyword` is set twice" && refusal shared == none) }]
 
 /-- A registration of the plain command `name`, which makes the text `text`. -/
 def registration (name text : String) : Config.Registration :=
@@ -2106,7 +2145,22 @@ def registryChecks : List Check :=
             replaced.jobs.map (·.registration.name) == #["count"] &&
             boundTo replaced "C-c b" == some (invoke "one") &&
             replaced.modes.map (·.mode.name) == #["listing"] &&
-            (replaced.ex? "w").isSome) }]
+            (replaced.ex? "w").isSome) },
+    { name :=
+        "an owner's faces are replaced as a set, in their order, and another owner's are left: the definitions are every owner's, oldest first, and the commands are untouched"
+      run :=
+        let theirs := defined "keyword" (coloured 1)
+        let registry : Config.Registry :=
+          ((({} : Config.Registry).replace .config #[registration "greet" "1"]).replaceFaces other
+                #[theirs]).replaceFaces
+            .config #[defined "keyword" (coloured 2), defined "comment" (coloured 3)]
+        let replaced := registry.replaceFaces .config #[defined "string" (coloured 4)]
+        pure
+          (registry.definitions ==
+              #[theirs, defined "keyword" (coloured 2), defined "comment" (coloured 3)] &&
+            replaced.definitions == #[theirs, defined "string" (coloured 4)] &&
+            (replaced.replaceFaces .config #[]).definitions == #[theirs] &&
+            replaced.names == #["greet"]) }]
 
 /-- A declaration of the store `name` at `version`, which starts at the
 number 0 and accepts any number. It migrates a number written at version 1 by
@@ -2588,6 +2642,43 @@ def reloadChecks : List Check :=
         pure
           ((reduce [.requested, .finished (rejected "a"), .requested]).2 ==
             #[.start none #[], .report 1 false #["a"] 0 0, .start (some #[]) #[]]) },
+    { name :=
+        "the theme is the built-in one then the installed config's definitions, in the order its setup made them, and the built-in one alone before any config"
+      run :=
+        let setup : SetupM Unit := do
+          face "keyword" (coloured 1)
+          greets "1"
+          face "default" (coloured 2)
+        let (state, effects) := reduce [.requested, .finished (accepted ["a"] setup)]
+        pure
+          ((reduce []).1.theme == Theme.builtin &&
+            state.theme ==
+              Theme.builtin ++ #[defined "keyword" (coloured 1), defined "default" (coloured 2)] &&
+            -- The report's line is what it was: faces are no commands.
+            effects == #[.start none #[], .cancelJobs "config", .report 1 true #[] 1 1]) },
+    { name :=
+        "an install replaces config's faces as a set: a face the new config does not set is the theme's again, one it sets again is there once, and a config that sets none leaves the built-in theme"
+      run :=
+        let first : SetupM Unit := do
+          face "keyword" (coloured 1)
+          face "comment" (coloured 2)
+        let (loaded, _) := reduce [.requested, .finished (accepted ["a"] first)]
+        let (again, _) :=
+          reduceFrom loaded [.requested, .finished (accepted ["a"] (face "keyword" (coloured 3)))]
+        let (bare, _) := reduceFrom again [.requested, .finished (accepted ["a"] (greets "1"))]
+        pure
+          (again.theme == Theme.builtin ++ #[defined "keyword" (coloured 3)] &&
+            bare.theme == Theme.builtin) },
+    { name := "a rejected reload keeps config's faces, and the theme with them"
+      run :=
+        let (loaded, _) :=
+          reduce [.requested, .finished (accepted ["a"] (face "keyword" (coloured 1)))]
+        let (state, _) :=
+          reduceFrom loaded
+            [.requested, .finished (rejected "a"), .requested, .finished (rejected "setup")]
+        pure
+          (state.theme == Theme.builtin ++ #[defined "keyword" (coloured 1)] &&
+            state.theme == loaded.theme) },
     { name :=
         "an outcome with no base leaves the base as it was: with none known the next job imports again, and a known one is not forgotten"
       run :=
@@ -3485,6 +3576,53 @@ def sceneChecks : List Check :=
         pure
           (twoViews == twoViews && twoViews != { twoViews with pending := "" } &&
             twoViews != { twoViews with views := twoViews.views.pop }) }]
+
+/-- The checks of faces and of the built-in theme, which are plain data
+(`Editor/Face.lean`). What a face looks like in a frame is layout's rule,
+pinned in `crates/editor-layout`; these pin what Lean itself defines. -/
+def faceChecks : List Check :=
+  [{
+      name :=
+        "the built-in theme defines default, cursor, selection, echo-area, minibuffer-prompt and mode-line, each once",
+      run :=
+        pure
+          (Theme.builtin.map (·.name.name) ==
+            #["default", "cursor", "selection", "echo-area", "minibuffer-prompt", "mode-line"]) },
+    { name := "the built-in default face sets every attribute, and no other built-in face does"
+      run :=
+        let complete (face : Face) : Bool :=
+          face.family.isSome && face.size.isSome && face.weight.isSome && face.slant.isSome &&
+            face.foreground.isSome &&
+            face.background.isSome &&
+            face.underline.isSome &&
+            face.strikeThrough.isSome &&
+            face.lineHeight.isSome
+        pure ((Theme.builtin.filter (complete ·.face)).map (·.name.name) == #["default"]) },
+    { name := "a colour is its four bytes, red first, and one made of three is opaque"
+      run :=
+        pure
+          (Color.rgba 0x12 0x34 0x56 0x78 == { word := 0x12345678 } &&
+            Color.rgb 0x12 0x34 0x56 == { word := 0x123456ff }) },
+    { name :=
+        "a length's literal is whole pixels, in 64ths, and one longer than a length holds is the longest"
+      run :=
+        pure
+          ((14 : Pixels) == { sixtyFourths := 896 } && (0 : Pixels) == { sixtyFourths := 0 } &&
+            Pixels.whole (2 ^ 40) == { sixtyFourths := 0xffffffff }) },
+    { name :=
+        "a face sets nothing it was not told to, and two faces are equal exactly when their attributes are"
+      run :=
+        let plain : Face := {}
+        let red : Face := { foreground := some (Color.rgb 200 0 0) }
+        pure
+          (plain.family.isNone && plain.size.isNone && plain.weight.isNone && plain.slant.isNone &&
+            plain.foreground.isNone &&
+            plain.background.isNone &&
+            plain.underline.isNone &&
+            plain.strikeThrough.isNone &&
+            plain.lineHeight.isNone &&
+            red != plain &&
+            red == { foreground := some (Color.rgb 200 0 0) }) }]
 
 /-- A display model whose cells are one pixel each way, holding `texts` as
 the snapshots 0, 1, 2 and so on, with nothing published. -/
@@ -16183,6 +16321,7 @@ def checks : List Check :=
     textModelStepChecks ++
     fileModelChecks ++
     sceneChecks ++
+    faceChecks ++
     displayChecks ++
     commandPortChecks ++
     watchChecks ++

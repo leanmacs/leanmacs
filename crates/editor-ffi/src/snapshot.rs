@@ -25,6 +25,21 @@
 //! or [`editor_ffi_files_save`](crate::files::editor_ffi_files_save),
 //! leaves it the caller's.
 //!
+//! **A snapshot knows where it came from.** One taken of a document carries
+//! the document's key and its [`Source`]: the document's text, held weakly
+//! ([`Snapshot::of`]). So the display reaches the document's markers and
+//! edit log through the snapshot handle it is given, and Lean's display
+//! binding needs nothing but its table of snapshots: a published scene's
+//! markers are read with [`Snapshot::marker`], and layout pulls patches
+//! with [`Source::changes_since`], on a clone of the snapshot's source
+//! that the display hands it as its changes port (`impl Changes for
+//! Source`, in [`crate::display`]). That is the one path to the log from a
+//! snapshot. A source does not keep the document alive: once the document
+//! is freed it answers as a snapshot with none does. One no document holds,
+//! a file's text as it was loaded, has a key of its own and no source
+//! ([`Snapshot::loaded`]). Keys are given out once in the process, to
+//! documents and to such snapshots alike.
+//!
 //! What a row, a point, a position, a cell and a word are is the text's
 //! rule, pinned by `editor-text`'s own tests. This module converts numbers
 //! and forwards.
@@ -52,16 +67,52 @@
 //! module docs of [`crate::marker`] give both layouts.
 
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Mutex, PoisonError, Weak};
 
-use editor_text::{Motion, Point, PointCells, PointUtf16};
+use editor_text::{Marker, MarkerId, Motion, Patch, Point, PointCells, PointUtf16, Revision, Text};
 
-use crate::document::{Document, RawText};
+use crate::document::{Document, RawText, next_key};
 use crate::log::RawWords;
 use crate::marker::{self, MarkStatus};
 use crate::{motion, text};
 
-/// A document's text as it was when the snapshot was taken.
-pub struct Snapshot(editor_text::Snapshot);
+/// A document's text as it was when the snapshot was taken, or a file's
+/// text as it was loaded, and where it came from.
+pub struct Snapshot {
+    /// The text.
+    text: editor_text::Snapshot,
+    /// The key of the text it is of: its document's, or, for one no
+    /// document holds, a key of its own ([`next_key`]).
+    key: u64,
+    /// Where it came from.
+    source: Source,
+}
+
+/// Where a snapshot's text came from: the text of the document it was taken
+/// of, held weakly so it does not keep the document alive, or nothing for a
+/// snapshot no document holds. It is cloned out of its snapshot by whatever
+/// must reach the document after the call that was handed the snapshot: the
+/// display's layout keeps one to pull patches through.
+#[derive(Clone, Default)]
+pub struct Source(Option<Weak<Mutex<Text>>>);
+
+impl Source {
+    /// What changed in the document's text since `revision`, up to the
+    /// document's revision now; `None` when there is no document, the
+    /// document is gone, or its log refuses
+    /// ([`editor_text::Text::changes_since`]).
+    pub fn changes_since(&self, revision: Revision) -> Option<Patch> {
+        self.read(|text| text.changes_since(revision).ok())
+    }
+
+    /// `read` of the document's text, locked, if there is a document and it
+    /// is still alive. A poisoned lock is used as it is, as a document does.
+    fn read<T>(&self, read: impl FnOnce(&Text) -> Option<T>) -> Option<T> {
+        let text = self.0.as_ref()?.upgrade()?;
+        let text = text.lock().unwrap_or_else(PoisonError::into_inner);
+        read(&text)
+    }
+}
 
 /// The unit a point's column is counted in.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -92,18 +143,60 @@ impl ColumnUnit {
 }
 
 impl Snapshot {
+    /// A snapshot of `document`'s text as it is now, with the document as
+    /// its source.
+    pub fn of(document: &Document) -> Self {
+        Self {
+            text: document.snapshot(),
+            key: document.key(),
+            source: Source(Some(document.shared())),
+        }
+    }
+
+    /// A snapshot no document holds, such as a file's text as it was
+    /// loaded: a key of its own, and no source.
+    pub fn loaded(text: editor_text::Snapshot) -> Self {
+        Self {
+            text,
+            key: next_key(),
+            source: Source::default(),
+        }
+    }
+
+    /// The key of its text: its document's, or its own when no document
+    /// holds it.
+    pub fn key(&self) -> u64 {
+        self.key
+    }
+
+    /// The marker numbered `id` in its document's text as it is now; `None`
+    /// when it has no document, the document is gone, or it holds no such
+    /// marker.
+    pub fn marker(&self, id: u64) -> Option<Marker> {
+        self.source
+            .read(|text| text.marker(MarkerId::new(id)).cloned())
+    }
+
+    /// Where it came from, through which its document's edit log is
+    /// reached ([`Source::changes_since`]).
+    pub fn source(&self) -> &Source {
+        &self.source
+    }
+}
+
+impl Snapshot {
     /// Hands `snapshot` out as a handle the caller owns, and counts it
     /// live: the caller must hand it to [`editor_ffi_snapshot_free`]
     /// exactly once. This is the one place a snapshot handle is made, so it
     /// is the one place one is counted.
-    pub(crate) fn hand_out(snapshot: editor_text::Snapshot) -> *mut Self {
+    pub(crate) fn hand_out(snapshot: Self) -> *mut Self {
         LIVE.fetch_add(1, Ordering::Relaxed);
-        Box::into_raw(Box::new(Self(snapshot)))
+        Box::into_raw(Box::new(snapshot))
     }
 
     /// The snapshot behind the handle.
     pub(crate) fn text(&self) -> &editor_text::Snapshot {
-        &self.0
+        &self.text
     }
 
     /// The row and column of the byte offset `offset`, with the column in
@@ -111,15 +204,15 @@ impl Snapshot {
     pub fn point_of(&self, unit: ColumnUnit, offset: usize) -> Option<RawPoint> {
         let (row, column) = match unit {
             ColumnUnit::Bytes => {
-                let point = self.0.offset_to_point(offset)?;
+                let point = self.text.offset_to_point(offset)?;
                 (point.row, point.column)
             }
             ColumnUnit::Utf16 => {
-                let point = self.0.offset_to_point_utf16(offset)?;
+                let point = self.text.offset_to_point_utf16(offset)?;
                 (point.row, point.column)
             }
             ColumnUnit::Cells => {
-                let point = self.0.offset_to_point_cells(offset)?;
+                let point = self.text.offset_to_point_cells(offset)?;
                 (point.row, point.column)
             }
         };
@@ -135,9 +228,13 @@ impl Snapshot {
     pub fn offset_of(&self, unit: ColumnUnit, row: u64, column: u64) -> Option<u64> {
         let (row, column) = (usize::try_from(row).ok()?, usize::try_from(column).ok()?);
         let offset = match unit {
-            ColumnUnit::Bytes => self.0.point_to_offset(Point::new(row, column))?,
-            ColumnUnit::Utf16 => self.0.point_utf16_to_offset(PointUtf16::new(row, column))?,
-            ColumnUnit::Cells => self.0.point_cells_to_offset(PointCells::new(row, column))?,
+            ColumnUnit::Bytes => self.text.point_to_offset(Point::new(row, column))?,
+            ColumnUnit::Utf16 => self
+                .text
+                .point_utf16_to_offset(PointUtf16::new(row, column))?,
+            ColumnUnit::Cells => self
+                .text
+                .point_cells_to_offset(PointCells::new(row, column))?,
         };
         Some(offset as u64)
     }
@@ -146,21 +243,21 @@ impl Snapshot {
     /// ([`editor_text::Snapshot::motion`]). `None` when the offset is not a
     /// position of the text.
     pub fn motion(&self, motion: Motion, offset: usize) -> Option<u64> {
-        Some(self.0.motion(motion, offset)? as u64)
+        Some(self.text.motion(motion, offset)? as u64)
     }
 
     /// A copy of the content of the row `row`: the row without its line
     /// break ([`editor_text::Snapshot::row_to_string`]). `None` when the
     /// text has no such row, and when no `usize` holds the row.
     pub fn row(&self, row: u64) -> Option<String> {
-        self.0.row_to_string(usize::try_from(row).ok()?)
+        self.text.row_to_string(usize::try_from(row).ok()?)
     }
 
     /// A copy of the text from the byte offset `start` up to, not
     /// including, `end` ([`editor_text::Snapshot::slice_to_string`]).
     /// `None` unless both are positions of the text and `start <= end`.
     pub fn slice(&self, start: usize, end: usize) -> Option<String> {
-        self.0.slice_to_string(start..end)
+        self.text.slice_to_string(start..end)
     }
 
     /// What the selection `words` spell
@@ -172,7 +269,10 @@ impl Snapshot {
     /// text has no extents for the one they spell.
     pub fn extents_words(&self, words: &[u8]) -> Result<Vec<u8>, MarkStatus> {
         let selection = marker::decode_selection(words).map_err(MarkStatus::undecoded)?;
-        let extents = self.0.extents(&selection).ok_or(MarkStatus::BadSelection)?;
+        let extents = self
+            .text
+            .extents(&selection)
+            .ok_or(MarkStatus::BadSelection)?;
         Ok(marker::extent_words(&extents))
     }
 }
@@ -194,7 +294,7 @@ static LIVE: AtomicU64 = AtomicU64::new(0);
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn editor_ffi_document_snapshot(document: *const Document) -> *mut Snapshot {
     // SAFETY: the caller guarantees `document` points to a live document.
-    Snapshot::hand_out(unsafe { &*document }.snapshot())
+    Snapshot::hand_out(Snapshot::of(unsafe { &*document }))
 }
 
 /// What a snapshot is, as it crosses the boundary: one record, filled in
@@ -224,7 +324,7 @@ pub unsafe extern "C" fn editor_ffi_snapshot_info(
     out: *mut RawSnapshotInfo,
 ) {
     // SAFETY: the caller guarantees `snapshot` points to a live snapshot.
-    let snapshot = &unsafe { &*snapshot }.0;
+    let snapshot = &unsafe { &*snapshot }.text;
     let info = RawSnapshotInfo {
         revision: snapshot.revision().get(),
         byte_len: snapshot.len() as u64,
@@ -243,7 +343,7 @@ pub unsafe extern "C" fn editor_ffi_snapshot_info(
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn editor_ffi_snapshot_read(snapshot: *const Snapshot, out: *mut RawText) {
     // SAFETY: the caller guarantees `snapshot` points to a live snapshot.
-    let (text, text_len) = text::lend(unsafe { &*snapshot }.0.to_string());
+    let (text, text_len) = text::lend(unsafe { &*snapshot }.text.to_string());
     // SAFETY: the caller guarantees `out` is writable.
     unsafe { out.write(RawText { text, text_len }) };
 }
@@ -464,7 +564,55 @@ mod tests {
 
     /// A snapshot of a document holding `text`.
     fn snapshot(text: &str) -> Snapshot {
-        Snapshot(Document::new(text).snapshot())
+        Snapshot::of(&Document::new(text))
+    }
+
+    #[test]
+    fn a_documents_snapshot_reaches_its_documents_log_markers_and_key() {
+        let document = Document::new("ab");
+        let snapshot = Snapshot::of(&document);
+        assert_eq!(snapshot.key(), document.key());
+        let id = document
+            .lock()
+            .mark(Marker::Anchor(editor_text::Anchor {
+                offset: 2,
+                bias: editor_text::Bias::Before,
+            }))
+            .unwrap();
+        assert!(document.replace(0, 0, "x"));
+        // A clone of its source answers as it does, after the snapshot too.
+        let source = snapshot.source().clone();
+        let patch = source.changes_since(snapshot.text().revision()).unwrap();
+        assert_eq!(patch.edits.len(), 1);
+        // The marker as the document holds it now, moved by the edit.
+        assert_eq!(
+            snapshot.marker(id.get()),
+            Some(Marker::Anchor(editor_text::Anchor {
+                offset: 3,
+                bias: editor_text::Bias::Before,
+            }))
+        );
+        assert_eq!(snapshot.marker(id.get() + 1), None);
+        // The snapshot does not keep its document alive.
+        drop(document);
+        assert_eq!(source.changes_since(Revision::new(0)), None);
+        assert_eq!(snapshot.marker(id.get()), None);
+    }
+
+    #[test]
+    fn a_snapshot_no_document_holds_has_a_key_of_its_own_and_no_source() {
+        let document = Document::new("ab");
+        let first = Snapshot::loaded(document.snapshot());
+        let second = Snapshot::loaded(document.snapshot());
+        assert_ne!(first.key(), document.key());
+        assert_ne!(first.key(), second.key());
+        assert_eq!(first.source().changes_since(Revision::new(0)), None);
+        assert_eq!(first.marker(0), None);
+    }
+
+    #[test]
+    fn two_documents_have_two_keys() {
+        assert_ne!(Document::new("a").key(), Document::new("a").key());
     }
 
     #[test]

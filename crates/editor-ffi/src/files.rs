@@ -766,7 +766,7 @@ pub unsafe extern "C" fn editor_ffi_files_take(id: u64, out: *mut RawFileResult)
     };
     let encoded = result.encoded();
     let snapshot = match result {
-        FileResult::Loaded { snapshot, .. } => Snapshot::hand_out(snapshot),
+        FileResult::Loaded { snapshot, .. } => Snapshot::hand_out(Snapshot::loaded(snapshot)),
         FileResult::Saved(_) | FileResult::NotLoaded(_) | FileResult::NotSaved(_) => {
             ptr::null_mut()
         }

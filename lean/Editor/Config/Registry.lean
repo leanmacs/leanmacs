@@ -29,13 +29,19 @@ same way (`replaceJobs`). A job is not a command and is not counted as one.
 Registering a job starts nothing: the runtime that owns the job table starts
 it (`Editor/Job/Jobs.lean`).
 
+The faces a config sets are held the same way: definitions
+(`Editor/Face.lean`), each with its owner, apart from the commands and the
+jobs, and replaced as a set (`replaceFaces`). `Registry.definitions` is
+every owner's, oldest entry first, which is the order they are appended to
+a theme in: a later definition of a name is over an earlier one.
+
 `Registrations` is what one run of a `setup` asks for, collected by a pure
 handler of the setup port and then checked. `Registrations.ofSetup` is the
 whole of it: the registrations, or the message the `setup` is refused with.
 A `setup` is refused when it declares a store name twice, registers a
-command name twice or a job name twice, binds a key sequence twice or binds
-no keys, binds an ex name twice, or registers a command over a store it
-does not declare
+command name twice or a job name twice, sets a face twice, binds a key
+sequence twice or binds no keys, binds an ex name twice, or registers a
+command over a store it does not declare
 (`Registrations.problem?`). So one owner's entries have different names, and
 the number of commands a config registers is the number of names it can be
 run by. Two owners may still register one name: a lookup then finds the
@@ -195,8 +201,15 @@ structure ExEntry where
   binding : Ex.Binding
   deriving DecidableEq, Repr
 
-/-- The editor's table of commands, of jobs, of key bindings, of modes and of
-ex bindings, oldest entry first. -/
+/-- A face entry of the registry: a definition of a face and who made it. -/
+structure FaceEntry where
+  /-- Who set it. -/
+  owner : Owner
+  /-- The definition. -/
+  definition : FaceDefinition
+
+/-- The editor's table of commands, of jobs, of key bindings, of modes, of
+ex bindings and of faces, oldest entry first. -/
 structure Registry where
   /-- The command entries. -/
   entries : Array Entry := #[]
@@ -208,6 +221,8 @@ structure Registry where
   modes : Array ModeEntry := #[]
   /-- The ex bindings. -/
   ex : Array ExEntry := #[]
+  /-- The face entries: the definitions each owner made, apart too. -/
+  faces : Array FaceEntry := #[]
 
 namespace Registry
 
@@ -237,6 +252,20 @@ def replaceJobs (registry : Registry) (owner : Owner) (registrations : Array Job
     jobs :=
       registry.jobs.filter (·.owner != owner) ++
         registrations.map fun registration => { owner, registration } }
+
+/-- `registry` with every face entry of `owner` removed and `definitions`
+added as its face entries, in their order. -/
+def replaceFaces (registry : Registry) (owner : Owner) (definitions : Array FaceDefinition) :
+    Registry :=
+  { registry with
+    faces :=
+      registry.faces.filter (·.owner != owner) ++
+        definitions.map fun definition => { owner, definition } }
+
+/-- Every owner's definitions of faces, oldest entry first: what is appended
+to a theme, where a later definition of a name is over an earlier one. -/
+def definitions (registry : Registry) : Array FaceDefinition :=
+  registry.faces.map (·.definition)
 
 /-- The job entry `name` starts: the latest one of that name. -/
 def findJob? (registry : Registry) (name : String) : Option JobEntry :=
@@ -354,6 +383,8 @@ structure Registrations where
   modes : Array Mode := #[]
   /-- The ex bindings, in the order they were made. -/
   ex : Array Ex.Binding := #[]
+  /-- The faces, in the order they were set. -/
+  faces : Array FaceDefinition := #[]
 
 namespace Registrations
 
@@ -376,6 +407,8 @@ def collect : (request : SetupRequest) → Registrations → request.Reply × Re
         bindings := collected.bindings.push { keys := keys.map Key.chord, command } })
   | .mode mode, collected => ((), { collected with modes := collected.modes.push mode })
   | .ex binding, collected => ((), { collected with ex := collected.ex.push binding })
+  | .face name attributes, collected =>
+    ((), { collected with faces := collected.faces.push { name, face := attributes } })
 
 /-- The first of `items` that an earlier one already is, if any. -/
 def repeated? {α : Type} [BEq α] (items : Array α) : Option α := do
@@ -386,10 +419,11 @@ def repeated? {α : Type} [BEq α] (items : Array α) : Option α := do
   none
 
 /-- What is wrong with what was collected, if anything: a store declared
-twice, a command name or a job name registered twice, a key sequence bound
-twice, a binding of no keys, an ex name bound twice, a command over a store
-that is not declared, a mode name defined twice, or a mode with a problem
-under any scheme (`Mode.problems`), of which the first is named.
+twice, a command name or a job name registered twice, a face set twice, a
+key sequence bound twice, a binding of no keys, an ex name bound twice, a
+command over a store that is not declared, a mode name defined twice, or a
+mode with a problem under any scheme (`Mode.problems`), of which the first
+is named.
 
 One config's names are each registered once. A second command under a name
 would make the first unreachable, which is a mistake in the config and never
@@ -398,7 +432,10 @@ second job, a second binding of one key sequence, to the same command or to
 another, a second binding of one ex name, and a second mode of a name. A
 job and a command may share a name: one is run and the other is spawned. A
 binding's command is not looked up: it may be compiled, or not registered
-at all; nor is a mode's, nor an ex binding's. -/
+at all; nor is a mode's, nor an ex binding's. A second `face` of a name in
+one `setup` is refused the same way: the second would be over the first
+attribute by attribute, which a config that sets a face in two places did
+not mean. -/
 def problem? (collected : Registrations) : Option String := do
   let stores := collected.stores.map (·.name)
   if let some name := repeated? stores then
@@ -407,6 +444,8 @@ def problem? (collected : Registrations) : Option String := do
     return s!"the command `{name}` is registered twice"
   if let some name := repeated? (collected.jobs.map (·.name)) then
     return s!"the job `{name}` is registered twice"
+  if let some name := repeated? (collected.faces.map (·.name.name)) then
+    return s!"the face `{name}` is set twice"
   for binding in collected.bindings do
     if binding.keys.isEmpty then
       return boundToNoKeys binding.command

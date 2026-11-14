@@ -11,9 +11,22 @@
 //! - **Nothing is reported once the run has returned.**
 //! - **A close with no run in progress is harmless**: before a run it does
 //!   not end the run that follows, and after one it reports nothing.
+//! - **The drawer is told the window opened before anyone hears of it.**
+//!   The first thing a run tells its [`Drawer`] is [`Canvas::Opened`], and it
+//!   tells it before it reports its first input: whoever learns of the
+//!   window from the report finds what draws in it already made.
+//! - **The drawer is told the window is closing, once, last.** A run tells
+//!   [`Canvas::Closing`] before it returns and tells nothing after it, so
+//!   that whatever was made on the window is let go while the window is
+//!   still there.
+//! - **A platform that cannot open a window tells the drawer nothing.**
 //!
 //! A platform that cannot open a window does not pass: the contract is of a
 //! window that opens.
+//!
+//! The check keeps which thing a platform told its drawer and never the
+//! native window in it: the verdict is taken on another thread, and a
+//! native window is the telling thread's.
 //!
 //! Whether a run ends by itself can only be seen by leaving it alone for a
 //! while. The check asks a platform to close before its run, and then leaves
@@ -37,7 +50,7 @@ use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use crate::{CannotOpen, Input, Platform, Report, WindowOptions};
+use crate::{CannotOpen, Canvas, Drawer, Input, Platform, Report, WindowOptions};
 
 /// A rule of the contract that a platform broke. It is `PartialEq` only, as
 /// [`Input`] is.
@@ -58,6 +71,21 @@ pub enum Violation {
     DidNotReturn(Duration),
     /// This was reported after the run had returned.
     ReportedAfterReturn(Input),
+    /// The first thing the drawer was told was this, by its variant's name,
+    /// and not [`Canvas::Opened`].
+    FirstToldNotOpened(&'static str),
+    /// The first input was reported before the drawer had been told
+    /// [`Canvas::Opened`].
+    ReportedBeforeTold,
+    /// The run returned without the drawer having been told
+    /// [`Canvas::Closing`].
+    ClosingNotTold,
+    /// The drawer was told this, by its variant's name, after it had been
+    /// told [`Canvas::Closing`], or after the run had returned.
+    ToldAfterClosing(&'static str),
+    /// No window could be opened, and the drawer had been told this, by its
+    /// variant's name, all the same.
+    ToldThoughItCouldNotOpen(&'static str),
 }
 
 impl fmt::Display for Violation {
@@ -78,7 +106,37 @@ impl fmt::Display for Violation {
             Self::ReportedAfterReturn(input) => {
                 write!(f, "{input:?} was reported after the run had returned")
             }
+            Self::FirstToldNotOpened(told) => {
+                write!(f, "the drawer was first told `{told}`, not `Opened`")
+            }
+            Self::ReportedBeforeTold => {
+                f.write_str("an input was reported before the drawer was told `Opened`")
+            }
+            Self::ClosingNotTold => {
+                f.write_str("the run returned without telling the drawer `Closing`")
+            }
+            Self::ToldAfterClosing(told) => {
+                write!(f, "the drawer was told `{told}` after `Closing`")
+            }
+            Self::ToldThoughItCouldNotOpen(told) => {
+                write!(
+                    f,
+                    "no window could be opened, and the drawer was told `{told}`"
+                )
+            }
         }
+    }
+}
+
+/// The name of what `canvas` tells, for a [`Violation`] to say.
+fn name(canvas: &Canvas) -> &'static str {
+    match canvas {
+        Canvas::Opened { .. } => "Opened",
+        Canvas::Resized(_) => "Resized",
+        Canvas::Refresh(_) => "Refresh",
+        Canvas::Damaged => "Damaged",
+        Canvas::Hidden(_) => "Hidden",
+        Canvas::Closing => "Closing",
     }
 }
 
@@ -128,6 +186,17 @@ struct Progress {
     returned: Option<(Instant, Result<(), CannotOpen>)>,
     /// The first input reported after the run had returned.
     late: Option<Input>,
+    /// The first thing the drawer was told, by its variant's name.
+    first_told: Option<&'static str>,
+    /// Whether the first input was reported before the drawer had been told
+    /// anything.
+    reported_untold: bool,
+    /// Whether the drawer was told [`Canvas::Closing`] before the run
+    /// returned.
+    closing_told: bool,
+    /// The first thing the drawer was told after [`Canvas::Closing`] or
+    /// after the run had returned, by its variant's name.
+    told_late: Option<&'static str>,
     /// Whether everything the check does to the platform is done.
     finished: bool,
 }
@@ -152,9 +221,26 @@ impl Shared {
         self.update(|progress| {
             if progress.returned.is_some() {
                 progress.late.get_or_insert(input);
-            } else {
-                progress.first.get_or_insert(input);
+            } else if progress.first.is_none() {
+                progress.first = Some(input);
+                progress.reported_untold = progress.first_told.is_none();
             }
+        });
+    }
+
+    /// Takes one thing the platform told the drawer: which thing it was,
+    /// and never the native window in it, which is not this thread's to
+    /// keep.
+    fn tell(&self, canvas: &Canvas) {
+        let told = name(canvas);
+        let closing = matches!(canvas, Canvas::Closing);
+        self.update(|progress| {
+            if progress.returned.is_some() || progress.closing_told {
+                progress.told_late.get_or_insert(told);
+                return;
+            }
+            progress.first_told.get_or_insert(told);
+            progress.closing_told = closing;
         });
     }
 
@@ -221,13 +307,17 @@ impl Check {
             let progress = Arc::clone(&self.progress);
             Arc::new(move |input| progress.record(input))
         };
+        let drawer: Drawer = {
+            let progress = Arc::clone(&self.progress);
+            Arc::new(move |canvas| progress.tell(&canvas))
+        };
         thread::scope(|scope| {
             scope.spawn(|| {
                 if self.ask_to_close() {
                     platform.close();
                 }
             });
-            let result = platform.run(self.options, report);
+            let result = platform.run(self.options, report, drawer);
             self.progress
                 .update(|progress| progress.returned = Some((Instant::now(), result)));
         });
@@ -301,7 +391,10 @@ impl Check {
             return Err(Violation::DidNotReturn(self.bound));
         };
         if let Err(cannot_open) = result {
-            return Err(Violation::CouldNotOpen(cannot_open.reason.clone()));
+            return Err(match progress.first_told {
+                Some(told) => Violation::ToldThoughItCouldNotOpen(told),
+                None => Violation::CouldNotOpen(cannot_open.reason.clone()),
+            });
         }
         match &progress.first {
             None => return Err(Violation::NothingReported),
@@ -311,6 +404,14 @@ impl Check {
             Some(Input::Opened { .. }) => {}
             Some(other) => return Err(Violation::FirstInputNotOpened(other.clone())),
         }
+        match progress.first_told {
+            Some("Opened") => {}
+            Some(other) => return Err(Violation::FirstToldNotOpened(other)),
+            None => return Err(Violation::ReportedBeforeTold),
+        }
+        if progress.reported_untold {
+            return Err(Violation::ReportedBeforeTold);
+        }
         let Some(asked) = progress.close_asked else {
             return Err(Violation::ReturnedBeforeClose);
         };
@@ -319,6 +420,12 @@ impl Check {
         }
         if let Some(late) = &progress.late {
             return Err(Violation::ReportedAfterReturn(late.clone()));
+        }
+        if !progress.closing_told {
+            return Err(Violation::ClosingNotTold);
+        }
+        if let Some(told) = progress.told_late {
+            return Err(Violation::ToldAfterClosing(told));
         }
         Ok(())
     }
@@ -386,6 +493,209 @@ mod tests {
     fn opened(name: &str) -> Input {
         Input::Opened {
             platform: name.into(),
+        }
+    }
+
+    /// What a platform that keeps the contract tells the drawer first: the
+    /// window is open, with no native window.
+    fn told_opened() -> Canvas {
+        Canvas::Opened {
+            window: None,
+            size: ScriptedPlatform::SIZE,
+            refresh_millihertz: None,
+        }
+    }
+
+    /// What a platform does wrong in telling the drawer. In everything else
+    /// it keeps the contract.
+    #[derive(Clone, Copy)]
+    enum Telling {
+        /// It tells the drawer nothing at all.
+        Nothing,
+        /// It tells `Opened` only after it has reported `Opened`.
+        OpenedAfterReporting,
+        /// It tells that the window is damaged before it tells `Opened`.
+        DamagedFirst,
+        /// It never tells `Closing`.
+        NoClosing,
+        /// It tells that the window is damaged after `Closing`.
+        DamagedAfterClosing,
+        /// It tells `Closing` twice.
+        ClosingTwice,
+        /// It tells `Closing` only when it is asked to close after its run
+        /// has returned.
+        ClosingAfterReturn,
+    }
+
+    /// A platform that reports `Opened`, waits for a close asked during its
+    /// run, and tells the drawer wrongly in one way.
+    struct Tells {
+        /// What it does wrong.
+        how: Telling,
+        /// The close the run waits for.
+        closing: Closing,
+        /// What the last run was given to tell with, once it has returned.
+        kept: Mutex<Option<Drawer>>,
+    }
+
+    impl Tells {
+        fn new(how: Telling) -> Arc<Self> {
+            Arc::new(Self {
+                how,
+                closing: Closing::default(),
+                kept: Mutex::new(None),
+            })
+        }
+    }
+
+    impl Platform for Tells {
+        fn run(
+            &self,
+            _options: WindowOptions,
+            report: Report,
+            drawer: Drawer,
+        ) -> Result<(), CannotOpen> {
+            self.closing.begin();
+            match self.how {
+                Telling::Nothing => report(opened("tells")),
+                Telling::OpenedAfterReporting => {
+                    report(opened("tells"));
+                    drawer(told_opened());
+                }
+                Telling::DamagedFirst => {
+                    drawer(Canvas::Damaged);
+                    drawer(told_opened());
+                    report(opened("tells"));
+                }
+                _ => {
+                    drawer(told_opened());
+                    report(opened("tells"));
+                }
+            }
+            self.closing.wait();
+            match self.how {
+                Telling::Nothing | Telling::NoClosing => {}
+                Telling::DamagedAfterClosing => {
+                    drawer(Canvas::Closing);
+                    drawer(Canvas::Damaged);
+                }
+                Telling::ClosingTwice => {
+                    drawer(Canvas::Closing);
+                    drawer(Canvas::Closing);
+                }
+                Telling::ClosingAfterReturn => {
+                    *self.kept.lock().unwrap_or_else(PoisonError::into_inner) = Some(drawer);
+                }
+                _ => drawer(Canvas::Closing),
+            }
+            Ok(())
+        }
+
+        fn close(&self) {
+            self.closing.ask();
+            let kept = self.kept.lock().unwrap_or_else(PoisonError::into_inner);
+            if let Some(drawer) = kept.as_ref() {
+                drawer(Canvas::Closing);
+            }
+        }
+    }
+
+    /// A platform that tells the drawer its window is open and then cannot
+    /// open one.
+    struct FailsHavingTold;
+
+    impl Platform for FailsHavingTold {
+        fn run(
+            &self,
+            _options: WindowOptions,
+            _report: Report,
+            drawer: Drawer,
+        ) -> Result<(), CannotOpen> {
+            drawer(told_opened());
+            Err(CannotOpen {
+                reason: "no display".into(),
+            })
+        }
+
+        fn close(&self) {}
+    }
+
+    #[test]
+    fn a_platform_that_reports_before_it_tells_the_drawer_it_opened_is_refused() {
+        for how in [Telling::Nothing, Telling::OpenedAfterReporting] {
+            assert_eq!(
+                check(Tells::new(how), WindowOptions::default(), GENEROUS),
+                Err(Violation::ReportedBeforeTold)
+            );
+        }
+    }
+
+    #[test]
+    fn a_platform_that_tells_the_drawer_something_before_it_opened_is_refused() {
+        assert_eq!(
+            check(
+                Tells::new(Telling::DamagedFirst),
+                WindowOptions::default(),
+                GENEROUS
+            ),
+            Err(Violation::FirstToldNotOpened("Damaged"))
+        );
+    }
+
+    #[test]
+    fn a_platform_that_returns_without_telling_the_drawer_it_is_closing_is_refused() {
+        for how in [Telling::NoClosing, Telling::ClosingAfterReturn] {
+            assert_eq!(
+                check(Tells::new(how), WindowOptions::default(), GENEROUS),
+                Err(Violation::ClosingNotTold)
+            );
+        }
+    }
+
+    #[test]
+    fn a_platform_that_tells_the_drawer_anything_after_closing_is_refused() {
+        assert_eq!(
+            check(
+                Tells::new(Telling::DamagedAfterClosing),
+                WindowOptions::default(),
+                GENEROUS
+            ),
+            Err(Violation::ToldAfterClosing("Damaged"))
+        );
+        assert_eq!(
+            check(
+                Tells::new(Telling::ClosingTwice),
+                WindowOptions::default(),
+                GENEROUS
+            ),
+            Err(Violation::ToldAfterClosing("Closing"))
+        );
+    }
+
+    #[test]
+    fn a_platform_that_cannot_open_and_told_the_drawer_all_the_same_is_refused() {
+        assert_eq!(
+            check(
+                Arc::new(FailsHavingTold),
+                WindowOptions::default(),
+                GENEROUS
+            ),
+            Err(Violation::ToldThoughItCouldNotOpen("Opened"))
+        );
+    }
+
+    #[test]
+    fn each_thing_a_window_tells_has_its_name() {
+        let size = ScriptedPlatform::SIZE;
+        for (canvas, named) in [
+            (told_opened(), "Opened"),
+            (Canvas::Resized(size), "Resized"),
+            (Canvas::Refresh(Some(60_000)), "Refresh"),
+            (Canvas::Damaged, "Damaged"),
+            (Canvas::Hidden(true), "Hidden"),
+            (Canvas::Closing, "Closing"),
+        ] {
+            assert_eq!(name(&canvas), named);
         }
     }
 
@@ -462,12 +772,19 @@ mod tests {
     }
 
     impl Platform for Reports {
-        fn run(&self, _options: WindowOptions, report: Report) -> Result<(), CannotOpen> {
+        fn run(
+            &self,
+            _options: WindowOptions,
+            report: Report,
+            drawer: Drawer,
+        ) -> Result<(), CannotOpen> {
             self.closing.begin();
+            drawer(told_opened());
             for input in &self.inputs {
                 report(input.clone());
             }
             self.closing.wait();
+            drawer(Canvas::Closing);
             Ok(())
         }
 
@@ -486,9 +803,16 @@ mod tests {
     }
 
     impl Platform for Deaf {
-        fn run(&self, _options: WindowOptions, report: Report) -> Result<(), CannotOpen> {
+        fn run(
+            &self,
+            _options: WindowOptions,
+            report: Report,
+            drawer: Drawer,
+        ) -> Result<(), CannotOpen> {
+            drawer(told_opened());
             report(opened("deaf"));
             self.released.wait();
+            drawer(Canvas::Closing);
             Ok(())
         }
 
@@ -506,10 +830,17 @@ mod tests {
     }
 
     impl Platform for Lingering {
-        fn run(&self, _options: WindowOptions, report: Report) -> Result<(), CannotOpen> {
+        fn run(
+            &self,
+            _options: WindowOptions,
+            report: Report,
+            drawer: Drawer,
+        ) -> Result<(), CannotOpen> {
             self.closing.begin();
+            drawer(told_opened());
             report(opened("lingering"));
             self.closing.wait();
+            drawer(Canvas::Closing);
             *self.kept.lock().unwrap_or_else(PoisonError::into_inner) = Some(report);
             Ok(())
         }
@@ -534,10 +865,17 @@ mod tests {
     }
 
     impl Platform for Remembers {
-        fn run(&self, _options: WindowOptions, report: Report) -> Result<(), CannotOpen> {
+        fn run(
+            &self,
+            _options: WindowOptions,
+            report: Report,
+            drawer: Drawer,
+        ) -> Result<(), CannotOpen> {
+            drawer(told_opened());
             report(opened("remembers"));
             self.closed.wait();
             thread::sleep(Duration::from_millis(10));
+            drawer(Canvas::Closing);
             Ok(())
         }
 

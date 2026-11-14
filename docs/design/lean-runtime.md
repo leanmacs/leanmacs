@@ -213,12 +213,14 @@ elaborator.
 | Stores: a value of config's type as a plain tree with a version | `lean/Editor/Store.lean` |
 | Diagnostics: failure as data | `lean/Editor/Config/Diagnostic.lean` |
 | Owners: who registered or started something | `lean/Editor/Config/Owner.lean` |
-| The registry of commands, of jobs, of key bindings, of modes and of ex bindings, replaced by owner, the keymap of the bindings, and the handler that collects a `setup` | `lean/Editor/Config/Registry.lean` |
+| Faces: what a face looks like, as data, and the built-in theme | `lean/Editor/Face.lean` |
+| The registry of commands, of jobs, of key bindings, of modes, of ex bindings and of faces, replaced by owner, the keymap of the bindings, and the handler that collects a `setup` | `lean/Editor/Config/Registry.lean` |
 | An ex line and an ex binding, as data | `lean/Editor/Ex/Line.lean` |
 | What a command is run with when a key runs it: the focused window and its buffer, the arguments and the keys | `lean/Editor/Command/Call.lean` |
 | The cells of the stores, and the rule that installs a config's stores | `lean/Editor/Config/Stores.lean` |
 | One reload: the chunks, the plan, the build, over the two ports | `lean/Editor/Config/Session.lean` |
 | The reducer that serialises reloads and installs their outcomes | `lean/Editor/Config/Reload.lean` |
+| Handing a display the theme a reload installed | `lean/Editor/Config/Display.lean` |
 | The elaborator port answered by Lean's elaborator | `lean/Editor/Config/Elaborate.lean` |
 | The source port answered by a directory of `.lean` files | `lean/Editor/Config/Directory.lean` |
 | The headless loop: the editor thread, the reload job, the output, and the command loop run against the library with a display recorder | `lean/Editor/Headless.lean` |
@@ -232,7 +234,7 @@ elaborator.
   against the real collaborators (`mise run ffi-test`).
 - **`setup` is a program over a setup port**: `SetupM Unit`, whose requests
   carry what is registered (a command, a store, a command over a store, a
-  job). A request can carry an `EditorM` because the setup port is not the
+  job, a face). A request can carry an `EditorM` because the setup port is not the
   port `EditorM` runs over. After the last chunk the editor runs `setup` against
   a handler that collects its requests into a value, on the job thread.
   Nothing is registered until the editor thread installs that value, so a
@@ -321,6 +323,22 @@ elaborator.
   reports one command. `setup` starts nothing, and installing a config
   cancels the jobs of the one it replaces
   ([concurrency.md](concurrency.md), "Reload").
+- **`setup` sets faces, as definitions**: `face "keyword" { foreground :=
+  some (Color.rgb 200 0 0) }` sets the attributes it names of a face and
+  leaves the rest. It is a registration, not a store: a store's value is
+  config's own state, and a face is something the editor is told. The
+  registry holds the definitions by owner, apart from the commands and the
+  jobs, and an install replaces config's as a set. A name is set once in a
+  `setup`; a face may have the name of a command. The theme is the
+  built-in one followed by the installed config's definitions
+  (`State.theme`), and a later definition of a name is over an earlier one
+  by layout's rule, so a face config sets takes config's attributes over
+  the theme's and one it stops setting is the theme's again. Lean merges
+  nothing ([text-and-display.md](text-and-display.md), "Decorations", as
+  built). A face is not a command and the reload report does not count it.
+  The runtime that owns a display hands it the theme after a reload that
+  installs (`Config.retheme`); the headless loop has no display, so
+  nothing calls it from a loop yet.
 - **The session runs no `IO` action from config.** A chunk is elaborated,
   `setup` is a program, a command is a program: every call from compiled
   Lean into config is a plain call of pure code.
@@ -938,8 +956,8 @@ editor's port:
   cell the new config cannot decode, or does not migrate, is reset to the
   initial value, and the reload's report says so. A cell the new config no
   longer declares is removed. Declaring a store name twice, registering a
-  command name or a job name twice, or registering a command over an
-  undeclared store rejects the reload.
+  command name or a job name twice, setting a face twice, or registering a
+  command over an undeclared store rejects the reload.
 - **Why not a request of the editor's port.** The editor's port is now a
   composite of sub-ports ("The editor's port is a composite", above), and a
   `get` and a `set` would be a store sub-port of it. Stores still do not use

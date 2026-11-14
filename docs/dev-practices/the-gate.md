@@ -12,11 +12,111 @@ the real bindings and the checks of the config session against the real
 elaborator (`mise run ffi-test`); and the C format check. `hk check` runs the
 same task.
 
-The gate opens no window and needs neither a display nor Docker. Every
-window it runs is the window port's fake, the scripted platform
-(`crates/editor-platform`), which reports a fixed script and opens nothing.
-What needs a display, a person or a container is a task of its own
+The gate opens no window, makes no surface on one, reads and writes no
+clipboard, and needs neither a display nor Docker. Every window it runs is
+the window port's fake, the scripted platform (`crates/editor-platform`),
+which reports a fixed script and opens nothing; every clipboard is the
+clipboard port's fake, which keeps text in memory. What needs a display, a
+person or a container is a task of its own
 ([`on-demand-checks.md`](on-demand-checks.md)).
+
+**So a green gate does not say a window draws or a clipboard works.** Two
+things the editor must do are confirmed only outside it, by
+`mise run linux-window`, in a container under Xvfb: that the window draws
+a scene and input given to it arrives on the queue, and that text written
+through the clipboard adapter is the text read back. A change that
+touches the window, the surface or the clipboard is done when both this
+gate and that task exit 0.
+
+What the gate does check of the window, with none open:
+
+- **The translation**, in `crates/editor-platform-winit`, on winit's own
+  values built in the tests: a key's logical key, physical key, modifiers
+  and text; the pointer's press, drag, release and wheel; a resize and a
+  change of scale; the native handles; and what the drawer is told for
+  each, damage and hiding among it, and after which events the display is
+  asked for its refresh rate. Two of winit's events cannot be built
+  outside winit, a key and a change of scale, so those are translated
+  from their parts.
+- **The port's contract**, in `crates/editor-platform`, on the fake and on
+  platforms written to break each rule, those about the drawer among
+  them; and the clipboard port's, on its fake and on clipboards written to
+  break each property.
+- **What the window tells reaching the render loop**, in
+  `crates/editor-ffi`: which call on the loop each thing told becomes, on
+  a loop stepped by hand over the render crate's fakes; and the session
+  that starts the render thread, on a real thread over the scripted
+  platform and the recording renderer, where a frame is drawn once for
+  itself and once for a resize, nothing more is drawn, and the renderer is
+  dropped on the thread that ran the window. Nothing sleeps: a renderer
+  says on a channel that it drew, and each word is read with a bound.
+- **What is decided about a surface**, in `crates/editor-render-wgpu`
+  (`surface`), all of it, on a surface that is a script: what it is
+  configured with from what it offers (the format, the view it is drawn
+  on through, the present mode, the frame latency) and the format the
+  pipeline is made for; that it is configured before the first draw,
+  before a draw of another size, after a texture that no longer fitted
+  and when its picture begins to be kept, and at no other time; what is
+  done with each answer it can give when asked for a texture; and whether
+  its picture is read back, and in what order of bytes. On wgpu's no-op
+  back end: that a window no adapter can present to gives no renderer,
+  and that a surface that offers its adapter nothing is refused.
+- **What the window that draws makes of what it saw**, in
+  `crates/editor-ffi` (`examples/window.rs`, whose unit tests `cargo
+  test` runs, and which open no window): how its command line is read,
+  and which of its options contradict each other; which findings of a
+  frame's picture fail the run (a picture past the tolerance, of the
+  wrong size, or that could not be read back fails; a surface that does
+  not let its texture be copied from fails only a run given
+  `--require-picture`; a run given `--no-picture` reads none and says
+  so); which sizes a frame's glyphs are drawn at, and that any size but
+  14 points times the window's scale fails; what the timeline says of
+  the masks a draw used; and which ledgers show a window left alone for
+  a second with a frame that was not laid out for the size and scale it
+  last said.
+- **Layout at a scale**, in `crates/editor-layout`, on the fake shaper:
+  that a length a face states is a point, multiplied by the scale layout
+  was last told before the shaper is asked for the font; that the same
+  theme at scale 2 gives rows twice as tall and lines twice as wide, in
+  rectangles that are still physical pixels; that the queries answer at
+  the scale; and, by the counters, that a change of scale alone shapes
+  every row a view shows again and that the scale a layout already has
+  shapes none (`tests/scale.rs`, `tests/counters.rs`). In
+  `crates/editor-render`: that several sizes told within one refresh, as
+  a window going into fullscreen tells them, are one draw on the last.
+  In `crates/editor-render-wgpu`: that a renderer says which masks its
+  last draw used.
+- **How the clipboard library's answers become the port's**, in
+  `crates/editor-platform-arboard`, on values built in the tests.
+
+What it cannot check, and so does not claim: winit's own loop, and the few
+lines of the adapter that only a real window runs (the two that take a key
+event and a change of scale apart, which `mise run linux-window` runs on
+winit's own events, keys typed by xdotool and a change of the display's
+settings while the window is open; the readings of the window's size, its
+handles and its display's refresh rate; and telling the drawer the window
+is closing); wgpu's own calls that configure a surface, take its texture,
+copy it out and present it, since the no-op back end hands out no surface
+texture, and the few lines that forward to them
+(`crates/editor-render-wgpu`, `gpu`, `OnSurface`); and anything a real
+clipboard does. Of the scale and of fullscreen it cannot see anything a
+window or a display does. That a window's scale reaches layout is seen
+outside it, by `mise run linux-window`: the example's line `14 points
+are <p> pixels` shows it only at a scale other than 1, so that task runs
+the window a second time with winit told a scale of 2 and requires `at
+scale 2: 14 points are 28 pixels`, which a layout never told the scale
+does not give ([`on-demand-checks.md`](on-demand-checks.md), "The window
+on Linux, on demand", part 4). That task also changes the scale under
+an open window, once, from 1 to 2. The rest is a person's to see: an
+apparent size beside another app; a display that is itself at scale 2;
+a second display and a window moved to it; the system's fullscreen;
+another Space; or what a window shows between two sizes
+([`on-demand-checks.md`](on-demand-checks.md), "Scale and fullscreen, by
+hand"), and no person has yet. `mise run lint` forbids to
+tests the calls that open a clipboard, that make a renderer on a window
+and, in `editor-ffi` as in the shaper's adapter, that read the machine's
+fonts (`crates/editor-platform-arboard/clippy.toml`,
+`crates/editor-render-wgpu/clippy.toml`, `crates/editor-ffi/clippy.toml`).
 
 The Rust half needs no Lean toolchain: `mise run test` (`cargo test
 --workspace`) builds and tests every crate with Cargo alone. Text storage
@@ -48,6 +148,75 @@ temporary directory they make and remove. One test runs the logic over the
 real adapter, the file service's wiring test
 (`crates/editor-ffi/tests/files.rs`), also in a temporary directory of its
 own.
+
+Shaping with real fonts is tested there too, and uses no font of the
+machine. Layout (`crates/editor-layout`) measures text only through the
+`Shaper` port it defines, and its tests run on the port's published fake.
+The port's real adapter, over Parley (`crates/editor-shape-parley`), is
+held to the port's contract and to its own rules on five fixture fonts
+checked in under `tests/fonts`, at the root of the repository, whose
+README says where each comes from, under which licence, and what the
+tests rest on in each. They are compiled into the tests, so no test reads
+a file when it runs, and a font set made of them has the system's fonts
+off: a letter no fixture font has comes out as the primary fixture's
+missing glyph, on any machine. `mise run lint` holds the adapter's tests
+to that (`crates/editor-shape-parley/clippy.toml`: no file, no
+environment variable, and no call that asks for the system's fonts). One
+file runs layout over the real adapter, for the wiring alone
+(`crates/editor-shape-parley/tests/layout.rs`). The fixture fonts are
+made by `tools/fonts/subset.sh`, by hand and never by the gate. The
+system's fonts have a check of their own, outside the gate
+([`on-demand-checks.md`](on-demand-checks.md)).
+
+Rendering is tested there too, on a machine with no GPU, and the gate
+needs none. What it checks:
+
+- **The render loop**, in `crates/editor-render`, on the fakes the crate
+  publishes: a recording renderer, a clock a test sets and a wait that
+  never blocks. Newest wins in the mailbox; the scheduler's decisions,
+  idle among them; what is and is not a demand, so that a frame submitted
+  again draws nothing; a journal entry for each frame presented, with its
+  three times, and none while idle; which rows are built again; and the
+  port's contract, each property seen to fail on a renderer written to
+  break it. One test runs the loop on a thread of its own, parked on a
+  real condition variable; it and the tests of that wait read channels
+  with a bound, and nothing sleeps.
+- **The painter and the glyph cache**, in `crates/editor-render-wgpu`, on
+  a hand-written rasteriser that reads no font: where each quad goes,
+  the drawing order, what is rasterised once, what is never evicted and
+  what the bound does.
+- **The rasteriser**, on the fixture fonts under `tests/fonts`, compiled
+  in, with glyph ids read from each font's own character map. Its tests
+  state relations only (more ink, wider, differs, the same twice).
+- **One picture.** The headless adapter draws one frame of real text on
+  the CPU, and no channel of any pixel may be further than 2 of 255 from
+  the reference image checked in at `tests/render/frame.png`
+  (`crates/editor-render-wgpu/tests/reference.rs`). The image is compiled
+  into the test, so nothing is read or written when it runs; its README
+  says what it shows and when to make it again. That test and one other
+  (`tests/reuse.rs`) are the only two that run the real shaper outside
+  its own crate, for the wiring alone.
+- **The wgpu adapter's calls.** It runs on wgpu's no-op back end, which
+  validates every call as a real one would and draws nothing: the shader
+  compiles in both its forms, the pipeline's vertex layout is the
+  shader's, and a frame with every kind of quad and every kind of atlas
+  page is drawn inside an error scope with no error
+  (`crates/editor-render-wgpu/src/gpu/tests.rs`).
+
+What it cannot check, and so does not claim: what a GPU draws. wgpu has
+no software renderer of its own, so a machine with no GPU and no driver
+has no adapter, and no test asks for one: `mise run lint` forbids the
+call that does (`crates/editor-render-wgpu/clippy.toml`). The validation
+is not everything either: a vertex attribute of the wrong type is
+refused, and one with too few components is not. The picture a real GPU
+draws is compared with the reference image by tasks of their own, outside
+the gate ([`on-demand-checks.md`](on-demand-checks.md)), and so is what
+is drawn in a window: a frame presented to a window's surface is read
+back and compared with the CPU's picture by `mise run linux-window`, in
+the container, which fails unless every frame's was, and by
+`mise run window-contract` on a desktop, which lets one thing pass
+uncompared and says so: a surface that does not let its texture be
+copied from.
 
 The Lean half's logic needs no Rust library. The editor reaches the library
 through interfaces it defines, each with a pure Lean model, and

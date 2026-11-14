@@ -139,3 +139,16 @@ Format every commit message as a [Conventional Commit](https://www.conventionalc
 `<type>(<optional scope>): <imperative summary>`, with types `feat`, `fix`,
 `refactor`, `test`, `docs`, `chore`, `build`, `ci`, `perf`, `style`. The scope
 is usually the crate name, or `lean` for the Lean package.
+
+## Landing work on `main`
+
+Linear history on `main` is not required. This is a standing rule and
+overrides the `rdm:land` skill's rebase-and-fast-forward default.
+
+- `rdm:land` may land a reviewed branch with a merge commit when a rebase
+  would be more work, for example a long-lived roadmap branch that has
+  already merged `main` into itself.
+- A roadmap branch may merge `main` into itself to pick up landed work.
+- Everything else about landing still holds: only reviewed work lands, the
+  worktree is clean, and the checks in `docs/dev-practices/` pass on the
+  merged result before `main` moves. Never force-push `main`.

@@ -20,6 +20,15 @@ editor-platform-winit = { path = "../editor-platform-winit" }
 # Text storage: the text behind a document handle, and its snapshots; and
 # the file port, with loading and saving over it.
 editor-text = { path = "../editor-text" }
+# Layout: the display handle lays scenes out and answers the layout
+# queries with it, over its published fake shaper until a real adapter
+# exists (the display pipeline's phase 3).
+editor-layout = { path = "../editor-layout" }
+# The render loop: this is the crate that starts the render thread, turns
+# what a window tells whatever draws in it into words left with the loop,
+# and lends the loop the clock that stamps input (`src/render.rs`). It
+# brings the `Renderer` port and its fakes, and no drawing library.
+editor-render = { path = "../editor-render" }
 # The real file system, for the process's file service. This is the crate
 # that wires the library together, so it is the one that links the adapter;
 # `clippy.toml` here keeps the adapter out of everything but that one static
@@ -32,6 +41,24 @@ editor-fs-std = { path = "../editor-fs-std" }
 # whose manifest says why this library and no other; `deny.toml` lists the
 # two crates that may depend on it.
 tempfile = { version = "=3.27.0", default-features = false }
+# The real renderer and the real shaper, for one thing: the example
+# `window`, which draws a fixture frame in a real window on demand
+# (`examples/window.rs`). They are dev-dependencies, so the static library
+# Lean links holds neither wgpu nor Parley: frames published from Lean
+# reaching a window is the display pipeline's phase 6. No test here names
+# either; `clippy.toml` forbids the renderer's window constructor to them.
+# `deny.toml` lists this crate among the wrappers of each.
+editor-render-wgpu = { path = "../editor-render-wgpu" }
+editor-shape-parley = { path = "../editor-shape-parley" }
+
+# The window that draws is an example, run on demand. What it makes of
+# what it saw is tested in the gate all the same: `cargo test` runs the
+# example's own unit tests, which read a command line and judge what was
+# found of a picture. They open no window and make no renderer: their
+# binary links what the example links, and they name none of it.
+[[example]]
+name = "window"
+test = true
 
 # No harness: its `main` must be the process's main thread.
 [[test]]

@@ -1,4 +1,4 @@
-# editor
+# leanmacs
 
 An Emacs-style editor written in Lean 4. Lean owns the process and is the
 editor: its state, the command loop, commands, modes, keymaps and config. A

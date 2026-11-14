@@ -30,12 +30,43 @@
 # and with one that calls `std::fs::write`, with "use of a disallowed method
 # `std::fs::write`".
 #
+# A third place is marked, for another thing no test may do: make a
+# renderer on a window. `editor_render_wgpu::WgpuRenderer::on_window` is on
+# the list, since it needs a window and a real adapter and the gate has
+# neither, and its one caller is the example `examples/window.rs`, under
+# its own `expect`: the window that draws, run on demand (`mise run
+# linux-window`, `mise run window-contract`). The crate's tests of the
+# render session run on `editor-render`'s recording renderer. Seen to bite
+# once by hand, on 2026-11-14: with the `expect` taken off, `mise run lint`
+# fails with "use of a disallowed method
+# `editor_render_wgpu::WgpuRenderer::on_window`"; and with the entry not yet
+# on the list, it failed on the `expect` itself ("this lint expectation is
+# unfulfilled").
+#
+# A fourth place is marked, in the same example, for the fonts of the
+# machine: `editor_shape_parley::FontSet::system` is on the list, as it is
+# on that crate's own, since what it holds differs from machine to machine.
+# Its one caller here is `fonts` in `examples/window.rs`, under its own
+# `expect`, reached only when a person gives `--family <name>` to lay the
+# fixture out in a family another app has (`docs/dev-practices/
+# on-demand-checks.md`, "Scale and fullscreen, by hand"). Every other run
+# of the example, `linux-window`'s and `window-contract`'s among them, and
+# every test, is on the fixture fonts. Seen to bite once by hand, on
+# 2026-11-14: with the `expect` taken off, `mise run lint`'s clippy fails
+# with "use of a disallowed method `editor_shape_parley::FontSet::system`";
+# and with the entry not yet on the list, it failed on the `expect` itself
+# ("this lint expectation is unfulfilled").
+#
 # What this does not hold is what `crates/editor-text/clippy.toml` says of
 # its own list: it is a list of names.
 
 disallowed-methods = [
   # The file port's real adapter.
   { path = "editor_fs_std::StdFs::system", reason = "the real file system is made in one place, the process's file service; everything else here takes an `Fs`, and a test hands it `FakeFs`" },
+  # A renderer on a window: it needs a window, and a real adapter.
+  { path = "editor_render_wgpu::WgpuRenderer::on_window", reason = "no test makes a renderer on a window: the gate opens none, and the example `window` is the one place it is done" },
+  # The fonts of the machine: they differ from machine to machine.
+  { path = "editor_shape_parley::FontSet::system", reason = "no test reads the machine's fonts: the example `window` does, in one place, when a person asks for a family of them (`--family`); every other run and every test is on the fixture fonts" },
   # Every free function of `std::fs`.
   { path = "std::fs::canonicalize", reason = "files are reached through the `Fs` port" },
   { path = "std::fs::copy", reason = "files are reached through the `Fs` port" },

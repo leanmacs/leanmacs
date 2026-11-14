@@ -4,6 +4,7 @@ import Editor.Clipboard.InProcess
 import Editor.Command.Model
 import Editor.Command.Real
 import Editor.Display.Contract
+import Editor.Display.Real
 import Editor.Display.Recorder
 import Editor.Event.Queue
 import Editor.File.Cases
@@ -75,12 +76,17 @@ service with nothing of it, and that a job saves a snapshot a command took
 through the published table and is refused one the command has released.
 
 The display interface's contract (`Editor/Display/Contract.lean`) is run
-against the recorder a host with no window answers it with
-(`Editor/Display/Recorder.lean`), over snapshots the library made, at the
-two cell sizes `model-test` runs it at against the model
-(`displayFailures`). `recorderChecks` pins what only the recorder shows:
-that it keeps and counts what is published, and that it reads the table of
-snapshots as it is when asked.
+against its real binding (`Editor/Display/Real.lean`) over the library's
+fake shaper, at the cell sizes `model-test` runs it against the model at
+(`displayFailures`): each property's texts are made documents and
+snapshots in the library, entered in a table of the text binding, and the
+property runs against a new display over that table.
+
+The same contract is run against the recorder a host with no window answers
+it with (`Editor/Display/Recorder.lean`), over snapshots the library made,
+at the same two cell sizes (`recorderFailures`). `recorderChecks` pins what
+only the recorder shows: that it keeps and counts what is published, and
+that it reads the table of snapshots as it is when asked.
 
 The clipboard interface's contract (`Editor/Clipboard/Contract.lean`) is run
 against the clipboard a host with no window keeps
@@ -776,10 +782,35 @@ def caseFailures (completions : Job.Completions) : IO (List String) := do
         return (← Ffi.Document.live, ← Ffi.Snapshot.live, ← Ffi.filesPending) == before
   return failed ++ if freed then [] else [caseLeakName]
 
-/-- The cell sizes the display interface's contract is run at against the
-recorder: the two `model-test` runs it at against the model. -/
+/-- The cell sizes the display contract is run at, against the real binding
+and against the recorder: one pixel by one, and eight by sixteen, as
+`model-test` runs it against the model. -/
 def displayCells : List Display.Cells :=
   [{ advance := 1, lineHeight := 1 }, { advance := 8, lineHeight := 16 }]
+
+/-- Runs `property` against the real display binding over a display of
+`cells`: each of its texts is a document and a snapshot of the library,
+entered in a new table of snapshots, which the display reads. The binding
+has a theme of no definition to send, so every face is layout's base and a
+cell is the size the contract was given. -/
+def runOnRealDisplay (cells : Display.Cells) (property : DisplayContract.Property) :
+    IO (Except DisplayError Bool) := do
+  let table ← Snapshots.new
+  let ids ←
+    property.texts.mapM fun text => do
+        let document ← Ffi.Document.new text
+        table.add (← document.snapshot)
+  let display ← Ffi.Display.newCells cells.advance.toUInt64 cells.lineHeight.toUInt64
+  (property.holds ids).runReal (← RealDisplay.over display table.reader #[])
+
+/-- The names of the display contract's properties that do not hold of the
+real binding, at each of `displayCells`. -/
+def displayFailures : IO (List String) :=
+  displayCells.flatMapM fun cells => do
+    let failed ←
+      DisplayContract.failures (runOnRealDisplay cells) (DisplayContract.properties cells)
+    return failed.map
+        (s!"the real display binding in cells of {cells.advance} by {cells.lineHeight}: {·}")
 
 /-- A recorder in `cells` over a table of its own, which holds a snapshot of
 a document of each of `texts`: the recorder, the table, and the ids of the
@@ -801,7 +832,7 @@ def runOnRecorder (cells : Display.Cells) (property : DisplayContract.Property) 
 
 /-- The names of the display interface's contract properties that do not
 hold of the recorder over real snapshots, at each of `displayCells`. -/
-def displayFailures : IO (List String) :=
+def recorderFailures : IO (List String) :=
   displayCells.flatMapM fun cells => do
     let failed ← DisplayContract.failures (runOnRecorder cells) (DisplayContract.properties cells)
     return failed.map
@@ -1085,6 +1116,7 @@ def main : IO UInt32 := do
   let fileCheckFailed ← ContractTest.checkFailures fileChecks
   let caseFailed ← ContractTest.caseFailures completions
   let displayFailed ← ContractTest.displayFailures
+  let recorderContractFailed ← ContractTest.recorderFailures
   let recorderChecks := ContractTest.recorderChecks
   let recorderFailed ← ContractTest.checkFailures recorderChecks
   let clipboardFailed ← ContractTest.clipboardFailures
@@ -1101,6 +1133,7 @@ def main : IO UInt32 := do
       fileCheckFailed ++
       caseFailed ++
       displayFailed ++
+      recorderContractFailed ++
       recorderFailed ++
       clipboardFailed ++
       clipboardCheckFailed ++
@@ -1113,6 +1146,6 @@ def main : IO UInt32 := do
   unless failed.isEmpty do
     IO.Process.exit 1
   IO.println
-      s!"contract-test: {properties.length + adoptProperties.length} properties hold of the real text binding, {cases.length} cases of the undo tree hold over it, and its documents and snapshots are freed when released and with its table; {Editor.JobContract.properties.length} properties hold of the job runner over the timer service, and {Editor.JobContract.fileProperties.length} file properties over the file service, on real files; {checks.length} checks of the timer service passed, {fileChecks.length} of the file service, {Editor.FileCases.cases.length} cases across the text port and the job port hold of the binding and the file service; {(Editor.DisplayContract.properties { advance := 1, lineHeight := 1 }).length} properties of the display interface hold of the recorder over real snapshots in cells of {ContractTest.displayCells.length} sizes, and {recorderChecks.length} checks of the recorder passed; {Editor.ClipboardContract.properties.length} properties of the clipboard interface hold of the in-process clipboard, and {clipboardChecks.length} checks of it passed; {Editor.WatchContract.properties.length} properties of the watch port hold of its real binding, and {watchChecks.length} checks of it passed; {Editor.ApiCases.cases.length} cases of the editor API hold of the real text binding; and quit ended the pump"
+      s!"contract-test: {properties.length + adoptProperties.length} properties hold of the real text binding, {cases.length} cases of the undo tree hold over it, and its documents and snapshots are freed when released and with its table; {Editor.JobContract.properties.length} properties hold of the job runner over the timer service, and {Editor.JobContract.fileProperties.length} file properties over the file service, on real files; {checks.length} checks of the timer service passed, {fileChecks.length} of the file service, {Editor.FileCases.cases.length} cases across the text port and the job port hold of the binding and the file service; {(Editor.DisplayContract.properties { advance := 1, lineHeight := 1 }).length} properties of the display interface hold of its real binding in cells of {ContractTest.displayCells.length} sizes, and of the recorder over real snapshots in cells of the same sizes, and {recorderChecks.length} checks of the recorder passed; {Editor.ClipboardContract.properties.length} properties of the clipboard interface hold of the in-process clipboard, and {clipboardChecks.length} checks of it passed; {Editor.WatchContract.properties.length} properties of the watch port hold of its real binding, and {watchChecks.length} checks of it passed; {Editor.ApiCases.cases.length} cases of the editor API hold of the real text binding; and quit ended the pump"
   (← IO.getStdout).flush
   IO.Process.exit 0

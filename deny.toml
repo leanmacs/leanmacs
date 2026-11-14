@@ -13,7 +13,9 @@
 # entry, it fails on the edge that wrapper allowed. For `editor-text`: with
 # it added to `editor-platform-winit`'s dependencies, it fails. For the
 # wrapper `editor-fs-std` of `editor-text`'s entry (2026-11-13): with it
-# taken out, it fails on the adapter's edge. For `tempfile`: with it added
+# taken out, it fails on the adapter's edge. For the wrapper `editor-layout`
+# of that entry (2026-11-13): with it taken out, it fails on layout's edge
+# ("crate 'editor-text = 0.1.0' is explicitly banned"). For `tempfile`: with it added
 # to `editor-text`'s dev-dependencies, it fails as banned; a wrapper that is
 # a dev-dependency edge is matched like any other.
 #
@@ -28,6 +30,97 @@
 # be handed the real file system by a dependency. For the wrapper
 # `editor-ffi` of `tempfile`'s entry: with it taken out, it fails on the
 # wiring test's edge.
+#
+# For `editor-layout` (2026-11-13), whose entry came in the commit in which
+# `editor-ffi` came to depend on it: with it added to
+# `editor-platform-winit`'s dependencies, it fails.
+#
+# For Parley and its font library (2026-11-13), whose entries came in the
+# commit that added their adapter, `editor-shape-parley`: with `parley`
+# added to `editor-layout`'s dependencies, it fails ("crate 'parley =
+# 0.13.0' is explicitly banned"); with `fontique` added there, it fails
+# the same way on `fontique`. `fontique`'s wrappers name two of Parley's
+# own crates, which depend on it themselves. For the wrapper
+# `editor-shape-parley` of `editor-layout`'s entry: with it taken out, it
+# fails on the adapter's edge. That is how "no Parley or fontique type
+# outside the adapter" is held: no other crate can depend on either, and
+# the adapter's public items name neither.
+#
+# `editor-shape-parley` itself had no entry while nothing depended on it:
+# an entry whose wrapper matches no edge fails under `-D unused-wrapper`.
+# Its entry came in the commit in which its first user came to depend on
+# it (2026-11-14), as `editor-fs-std`'s did: `editor-render-wgpu`, by a
+# dev-dependency, for the fixture frame of real text its two wiring tests
+# and its examples lay out. With the entry's wrapper naming another crate,
+# it fails ("crate 'editor-shape-parley = 0.1.0' is explicitly banned").
+#
+# For the renderer (2026-11-13, the display pipeline's phase 4). The
+# `Renderer` port's crate, `editor-render`, takes layout's frames, so it is
+# a wrapper of `editor-layout`'s entry from the commit that added it: with
+# the wrapper not yet there, it fails on the new crate's edge ("crate
+# 'editor-layout = 0.1.0' is explicitly banned"). The crate of the port's
+# real adapters, `editor-render-wgpu`, is the port's first user, so
+# `editor-render`'s entry came in the commit that added it (2026-11-14):
+# with the entry's wrapper naming another crate, it fails on the adapters'
+# edge ("crate 'editor-render = 0.1.0' is explicitly banned"); and before
+# the adapters' crate was a wrapper of `editor-layout`'s entry, it failed
+# on that edge too. `editor-render-wgpu` itself has no entry: nothing
+# depends on it yet.
+#
+# For the wrapper `editor-ffi` of `editor-render`'s entry (2026-11-14, the
+# display pipeline's phase 5), added in the commit in which `editor-ffi`
+# came to start the render thread: with the wrapper not yet there, it fails
+# on that edge ("crate 'editor-render = 0.1.0' is explicitly banned").
+#
+# For the window that draws (2026-11-14, the same phase): `editor-ffi`'s
+# example `window` runs the real renderer over the real shaper in a real
+# window, so `editor-ffi` came to depend on both, by dev-dependencies, in
+# one commit. `editor-render-wgpu` got its first entry then, as
+# `editor-fs-std` did when it got its first user: with the entry's wrapper
+# naming another crate, it fails ("crate 'editor-render-wgpu = 0.1.0' is
+# explicitly banned"). And `editor-ffi` joined the wrappers of
+# `editor-shape-parley`'s entry: with the wrapper not yet there, it fails
+# on that edge ("crate 'editor-shape-parley = 0.1.0' is explicitly
+# banned"). Neither is linked into the library Lean links: that is the
+# display pipeline's phase 6.
+#
+# For the libraries behind the `Renderer` port, each with
+# `editor-render-wgpu` its one wrapper, each added in the commit that
+# added its edge. `etagere` (2026-11-14): with the entry's wrapper naming
+# another crate, it fails ("crate 'etagere = 0.3.0' is explicitly
+# banned"). `swash` (2026-11-14): the same way ("crate 'swash = 0.2.10'
+# is explicitly banned"). `png` (2026-11-14), a dev-dependency: the same
+# way ("crate 'png = 0.18.1' is explicitly banned"). `wgpu` and
+# `pollster` (2026-11-14): the same way ("crate 'wgpu = 30.0.2' is
+# explicitly banned", "crate 'pollster = 1.0.1' is explicitly banned").
+# wgpu's own crates (`wgpu-core`, `wgpu-hal`, `wgpu-types`, `naga`) have
+# no entry: they are reached only through `wgpu`, and an entry for each
+# would name wgpu's internals here.
+#
+# For the clipboard (2026-11-14, the display pipeline's phase 5), whose
+# entries came in the commit that added its adapter,
+# `editor-platform-arboard`. The clipboard port is in `editor-platform`,
+# so the adapter is a wrapper of that crate's entry: with the wrapper not
+# yet there, it fails on the adapter's edge ("crate 'editor-platform =
+# 0.1.0' is explicitly banned"). `arboard`: with the entry's wrapper
+# naming another crate, it fails ("crate 'arboard = 3.7.0' is explicitly
+# banned"). `editor-platform-arboard` itself has no entry: nothing depends
+# on it yet, and binding it is the display pipeline's phase 6.
+#
+# For `raw-window-handle` (2026-11-14), whose entry came in the commit in
+# which an adapter first named its types: `editor-platform-winit` turns
+# the handles winit gives into the port's `NativeWindow`, through winit's
+# re-export. The entry's wrappers are the third-party crates that depend
+# on it in the resolved graph (winit and its `ndk`, and wgpu's four), so
+# that no crate of the workspace can: with it added to
+# `editor-platform-winit`'s dependencies, it fails ("crate
+# 'raw-window-handle = 0.6.2' is explicitly banned").
+#
+# For the wrapper `editor-render-wgpu` of `editor-platform`'s entry
+# (2026-11-14), added in the commit in which the renderer came to make a
+# surface on a window, which it is handed as the port's `NativeWindow`:
+# with the wrapper not yet there, it fails on that edge ("crate
+# 'editor-platform = 0.1.0' is explicitly banned").
 #
 # One rule has no entry: "no crate depends on `editor-ffi`", the one crate
 # that knows about Lean. No entry for it passes the gate. With
@@ -44,10 +137,23 @@ no-default-features = false
 multiple-versions = "allow"
 deny = [
   { crate = "winit", wrappers = ["editor-platform-winit"], reason = "winit stays behind the window port: only its adapter crate may name its types" },
+  { crate = "raw-window-handle", wrappers = ["winit", "wgpu", "wgpu-core", "wgpu-hal", "wgpu-types", "ndk"], reason = "a window's handles cross between the window adapter and the renderer as the port's own data (`editor_platform::NativeWindow`): each adapter reaches this crate through the library it wraps (`winit::raw_window_handle`, `wgpu::rwh`), and no crate of the workspace depends on it; the wrappers are the third-party crates that do" },
   { crate = "editor-platform-winit", wrappers = ["editor-ffi"], reason = "the window adapter is linked only by the crate that wires the library together; everything else reaches a window through the port" },
-  { crate = "editor-platform", wrappers = ["editor-ffi", "editor-platform-winit"], reason = "the window port has two users today, its adapter and the crate that runs it onto the event queue; a third is a decision, so it is made here" },
+  { crate = "editor-platform", wrappers = ["editor-ffi", "editor-platform-winit", "editor-platform-arboard", "editor-render-wgpu"], reason = "the window port has two users, its adapter and the crate that runs it onto the event queue; the clipboard port beside it has one, its adapter; and the crate of the renderer's real adapters takes one type of it, `NativeWindow`, to make a surface on a window; another is a decision, so it is made here" },
+  { crate = "arboard", wrappers = ["editor-platform-arboard"], reason = "arboard stays behind the clipboard port: only its adapter crate may name its types" },
   { crate = "ropey", wrappers = ["editor-text"], reason = "the rope stays behind editor-text's own types: only that crate may name the library's" },
-  { crate = "editor-text", wrappers = ["editor-ffi", "editor-fs-std"], reason = "text storage has one user, the crate that puts a text behind a handle for Lean, and the file port it defines has one adapter, which implements it; another is a decision, so it is made here" },
+  { crate = "editor-text", wrappers = ["editor-ffi", "editor-fs-std", "editor-layout"], reason = "text storage has two users, the crate that puts a text behind a handle for Lean and layout, which reads its snapshots, patches and selections as plain values; and the file port it defines has one adapter, which implements it; another is a decision, so it is made here" },
+  { crate = "editor-layout", wrappers = ["editor-ffi", "editor-shape-parley", "editor-render", "editor-render-wgpu"], reason = "layout is reached by the crate that puts it behind a handle for Lean and wires it to text; the Shaper port it defines has one real adapter, which implements it; and the Renderer port's crate and the crate of its real adapters take its frames as plain data; another user is a decision, so it is made here" },
+  { crate = "editor-render", wrappers = ["editor-render-wgpu", "editor-ffi"], reason = "the Renderer port and the render loop have two users: the crate of the port's real adapters, which implements it and runs its contract, and the crate that wires the library together, which starts the render thread and turns what a window tells into words left with the loop; a third is a decision, so it is made here" },
+  { crate = "etagere", wrappers = ["editor-render-wgpu"], reason = "the atlas packer stays behind the Renderer port: only the crate of the port's real adapters may name its types" },
+  { crate = "swash", wrappers = ["editor-render-wgpu"], reason = "the glyph rasteriser stays behind the Renderer port: only the crate of the port's real adapters may name its types" },
+  { crate = "png", wrappers = ["editor-render-wgpu"], reason = "an image file is read and written only by the renderer's reference-image test and the example that makes the image" },
+  { crate = "editor-shape-parley", wrappers = ["editor-render-wgpu", "editor-ffi"], reason = "the real shaper has two users, each by a dev-dependency: the renderer's two wiring tests and its examples lay real text out with it, and so does the example of the crate that wires the library together, which draws a fixture frame in a real window; a user that links it into the library is a decision, so it is made here" },
+  { crate = "editor-render-wgpu", wrappers = ["editor-ffi"], reason = "the renderer's real adapters have one user, by a dev-dependency: the example of the crate that wires the library together, which draws in a real window; linking them into the library Lean links is a decision, so it is made here" },
+  { crate = "wgpu", wrappers = ["editor-render-wgpu"], reason = "wgpu stays behind the Renderer port: only the crate of the port's real adapters may name its types" },
+  { crate = "pollster", wrappers = ["editor-render-wgpu"], reason = "blocking on wgpu's futures is the renderer's own business: only the crate of the Renderer port's real adapters does it" },
+  { crate = "parley", wrappers = ["editor-shape-parley"], reason = "Parley stays behind the Shaper port: only its adapter crate may name its types" },
+  { crate = "fontique", wrappers = ["editor-shape-parley", "parley", "parley_engine"], reason = "fontique is Parley's font library and stays behind the Shaper port with it: beside Parley's own crates, only the adapter may name its types" },
   { crate = "editor-fs-std", wrappers = ["editor-ffi"], reason = "the file adapter is linked only by the crate that wires the library together; everything else reaches a file through the port, and editor-text's tests through its fake" },
   { crate = "tempfile", wrappers = ["editor-fs-std", "editor-ffi"], reason = "a temporary directory is for a test that touches real files: the file adapter's contract test and editor-ffi's wiring test; editor-text's tests run on the fake and make no file" },
 ]

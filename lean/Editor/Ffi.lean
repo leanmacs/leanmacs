@@ -33,13 +33,18 @@ Examples: `Counter`; `Document`, the text the text port's real binding holds,
 made from a string or from a snapshot (`Document.ofSnapshot`); and
 `Snapshot`, a text as it was at one moment, which is made by a binding on a
 document and outlives it, or handed over by the file service as the text of
-a file it loaded (`filesTake`). Tests: the four counter checks of `ffi-test`
+a file it loaded (`filesTake`); and `Display`, layout over the library's
+fake shaper, asked about snapshots (`Display.rows`, `Display.move`), whose
+one caller is the display interface's real binding
+(`Editor/Display/Real.lean`). Tests: the four counter checks of `ffi-test`
 (`FfiTest.handleChecks`), its check that a document is freed
 (`FfiTest.documentChecks`), its checks that a snapshot is freed and outlives
 its document (`FfiTest.snapshotChecks`) and its checks that a loaded
 snapshot is counted live and that a document made from a snapshot is freed
-(`FfiTest.fileChecks`); `tests/c_api.rs`, `tests/snapshot.rs`,
-`tests/document_from_snapshot.rs` and `tests/files.rs` in `editor-ffi`.
+(`FfiTest.fileChecks`), and its checks that a display is freed and that its
+answers cross (`FfiTest.displayChecks`); `tests/c_api.rs`,
+`tests/snapshot.rs`, `tests/document_from_snapshot.rs`, `tests/files.rs` and
+`tests/display.rs` in `editor-ffi`.
 
 ### Plain data
 
@@ -51,6 +56,7 @@ snapshot is counted live and that a document made from a snapshot is freed
 | Option | The wrapper passes a presence flag and a value | The glue builds `none` or `some` |
 | Byte range | Two scalars | `ByteRange`: two `UInt64`, half-open, in bytes |
 | List | *Words*: a `@& ByteArray` of 64-bit numbers, eight bytes each, least significant first, written by a private encoder here; the glue passes its bytes and byte length, and Rust checks every count against the buffer | The glue copies the library's buffer of words into a `ByteArray` and hands the buffer back; a private decoder here builds the typed value, and words it cannot read are an `IO` error |
+| List of handles | `@& Array Snapshot`, an array of handles borrowed for the call, beside the words, which name a handle by its index in it; the glue passes it as a C array of the handles' pointers and its count, which it builds for the call (`Display.publish`) | None yet |
 
 Prefer a few scalar arguments or one structure to many calls: one `nextEvent`
 returns one whole event. A raw structure whose shape the glue knows stays
@@ -77,7 +83,14 @@ in, as words (`Document.mark`, `Document.place`), and out, as words
 (`Document.marker`); and a `Selection` in and what it covers out, both as
 words (`Snapshot.extents`). A refusal with more than one reason is a status
 the library reports as a number, read here into an inductive
-(`MarkRefusal`). A document's kept inverses are scalars in and words out
+(`MarkRefusal`). A published scene is the example of a list of handles:
+words, one string of every text it holds, and the `Snapshot`s its views
+show, which the words name by index (`Display.publish`); it comes back as
+the same words and string, and as `none` before any is published
+(`Display.scene`). The definitions of the faces the scene names are in the
+same words and the same string, after the views, behind a presence: absent
+is "as last published", so a scene and its faces cross in one call
+(`RealDisplay.encode`). A document's kept inverses are scalars in and words out
 with an option inside them: a run of revisions and an origin in, as three
 numbers, and an `Inverted` out, the revision the inverse produced with the
 selection it hands back if there is one (`Document.applyInverse`, with its
@@ -89,15 +102,18 @@ the `find` and event checks of `ffi-test` (`FfiTest.dataChecks`), its
 document checks (`FfiTest.documentChecks`), its snapshot checks
 (`FfiTest.snapshotChecks`), its transaction checks
 (`FfiTest.transactionChecks`), its marker checks
-(`FfiTest.markerChecks`) and its inverse checks (`FfiTest.inverseChecks`);
-the unit tests of `text.rs`, `document.rs`, `snapshot.rs`, `words.rs`,
-`transaction.rs`, `log.rs`, `marker.rs` and `inverse.rs`, the tag tests of
-`events.rs`, and `tests/log.rs`, `tests/markers.rs` and `tests/inverse.rs`
-in `editor-ffi`.
+(`FfiTest.markerChecks`), its inverse checks (`FfiTest.inverseChecks`) and,
+for a list of handles, its scene checks (`FfiTest.sceneChecks`); the unit
+tests of `text.rs`, `document.rs`, `snapshot.rs`, `words.rs`,
+`transaction.rs`, `log.rs`, `marker.rs`, `inverse.rs` and, for a scene's
+words, `display/wire.rs`, the tag tests of `events.rs`, and `tests/log.rs`,
+`tests/markers.rs`, `tests/inverse.rs` and, for a scene published with its
+handles and written back, `tests/display.rs` in `editor-ffi`.
 
 The editor does not call these bindings. It reaches the library through a
 port it defines (`Editor/Text.lean`), whose real binding
-(`Editor/Text/Real.lean`) is the one caller of `Document` and of `Snapshot`,
+(`Editor/Text/Real.lean`) is the one caller of `Document` and of `Snapshot`
+(beside the display's real binding, which reads snapshots),
 and whose contract (`Editor/Text/Contract.lean`) runs against that binding in
 `contract-test`.
 
@@ -1729,5 +1745,161 @@ opaque interruptRaised : IO Bool
 queue: one fewer holds the flag up. With none counted, nothing. -/
 @[extern "editor_glue_interrupt_lower"]
 opaque interruptLower : IO Unit
+
+/-! ## The display -/
+
+/-- The type behind `Display`. It is opaque, so the only way to get a
+display is `Display.newCells`. -/
+opaque DisplayPointed : NonemptyType
+
+/-- Layout held by the Rust library (`crates/editor-ffi/src/display.rs`,
+over `crates/editor-layout`): a handle that lays out the text of snapshots
+and answers the display interface's two layout queries about them. The
+display interface's real binding runs against it
+(`Editor/Display/Real.lean`). -/
+def Display : Type :=
+  DisplayPointed.type
+
+instance : Nonempty Display :=
+  DisplayPointed.property
+
+/-- A new display over the library's fake shaper, whose every glyph is
+`advance` pixels across and every line `lineHeight` down. -/
+@[extern "editor_glue_display_new_cells"]
+opaque Display.newCells (advance lineHeight : UInt64) : IO Display
+
+/-- How many displays the Rust library holds that have not been freed.
+
+This exists for `FfiTest`, which uses it to see a display's finaliser
+run. -/
+@[extern "editor_glue_display_live"]
+opaque Display.live : IO UInt64
+
+/-- One visual row, as the library answers it: the bytes from `start` up to
+`stop`, without its line break. -/
+structure DisplayRow where
+  /-- The byte offset of its first character. -/
+  start : UInt64
+  /-- Where its characters stop. -/
+  stop : UInt64
+  deriving DecidableEq, Repr
+
+/-- Where a move went, as the library answers it. -/
+structure DisplayMoved where
+  /-- The byte offset it reached. -/
+  position : UInt64
+  /-- The x it aimed for, in whole pixels, to pass to the next move. -/
+  goal : UInt64
+  deriving DecidableEq, Repr
+
+/-- The rows a record of words holds: their count, then a start and a stop
+for each. `none` when its status is not 0. Words that do not spell rows are
+an error. -/
+private def rowsOf? (raw : RawWords) : IO (Option (Array DisplayRow)) := do
+  if raw.status != 0 then
+    return none
+  let some words := wordsOf? raw.words
+    | throw (IO.userError "the library's rows are not whole words")
+  let count := (words[0]?.getD 0).toNat
+  unless words.size == 1 + 2 * count do
+    throw (IO.userError "the library's rows do not spell their count")
+  return some <|
+      (Array.range count).map fun row =>
+        { start := words[1 + 2 * row]!, stop := words[2 + 2 * row]! }
+
+/-- `Display.rows` as it crosses: the answer as words, and its status. -/
+@[extern "editor_glue_display_rows"]
+private opaque Display.rowsRaw (display : @& Display) (snapshot : @& Snapshot)
+    (width height : UInt64) (anchor : USize) : IO RawWords
+
+/-- The rows a view `width` pixels wide and `height` tall shows of
+`snapshot`, from the visual row that holds `anchor`: as many as fit whole,
+fewer at the end of the text. `none` when `anchor` is not a position of the
+text. -/
+def Display.rows (display : Display) (snapshot : Snapshot) (width height : UInt64)
+    (anchor : USize) : IO (Option (Array DisplayRow)) := do
+  rowsOf? (← display.rowsRaw snapshot width height anchor)
+
+/-- `Display.move` as it crosses: the lines as a 64-bit two's complement
+number, the goal as a presence flag and a value, and the answer as words. -/
+@[extern "editor_glue_display_move"]
+private opaque Display.moveRaw (display : @& Display) (snapshot : @& Snapshot) (width : UInt64)
+    (position : USize) (lines : UInt64) (goalPresent : Bool) (goal : UInt64) : IO RawWords
+
+/-- The position of `snapshot` `lines` visual rows below `position` (above
+when negative) in a view `width` pixels wide, aiming for `goal`, or for the
+position's own x when there is none; and the goal to pass on. A count of
+lines past what 64 bits hold is cut to the largest, which is past every
+text's first and last row anyway. `none` when `position` is not a position
+of the text. -/
+def Display.move (display : Display) (snapshot : Snapshot) (width : UInt64) (position : USize)
+    (lines : Int) (goal : Option UInt64) : IO (Option DisplayMoved) := do
+  let bound : Int := 2 ^ 63
+  let clamped := max (-bound) (min lines (bound - 1))
+  let word := if clamped < 0 then (2 ^ 64 + clamped).toNat.toUInt64 else clamped.toNat.toUInt64
+  let raw ← display.moveRaw snapshot width position word goal.isSome (goal.getD 0)
+  if raw.status != 0 then
+    return none
+  match wordsOf? raw.words with
+  | some #[position, goal] =>
+    return some { position, goal }
+  | _ =>
+    throw (IO.userError "the library's words do not spell a move")
+
+/-- `Display.publish` as it crosses: the words as bytes, the string, and the
+snapshot handles, which the glue passes as a C array. -/
+@[extern "editor_glue_display_publish"]
+private opaque Display.publishRaw (display : @& Display) (words : @& ByteArray)
+    (strings : @& String) (snapshots : @& Array Snapshot) : IO Bool
+
+/-- Publishes the scene `words` and `strings` spell, whose views show the
+`snapshots`, named in the words by their index (the layout is
+`crates/editor-ffi/src/display/wire.rs`'s): the library resolves the
+markers it names in the snapshots' documents, lays it out, and keeps its
+frame. `false`, keeping what was published before, when the words do not
+spell a scene. -/
+def Display.publish (display : Display) (words : Array UInt64) (strings : String)
+    (snapshots : Array Snapshot) : IO Bool :=
+  display.publishRaw (words.foldl pushWord ByteArray.empty) strings snapshots
+
+/-- The latest frame the display laid out, as the library's text of it
+(`Frame::describe` in `crates/editor-layout`): empty before any scene is
+published. -/
+@[extern "editor_glue_display_frame_text"]
+opaque Display.frameText (display : @& Display) : IO String
+
+/-- `Display.frameRows` as it crosses. -/
+@[extern "editor_glue_display_frame_rows"]
+private opaque Display.frameRowsRaw (display : @& Display) (view : UInt64) : IO RawWords
+
+/-- The rows the view numbered `view` shows in the latest frame; `none` when
+the frame has no such view. -/
+def Display.frameRows (display : Display) (view : UInt64) : IO (Option (Array DisplayRow)) := do
+  rowsOf? (← display.frameRowsRaw view)
+
+/-- The last scene published, as the glue builds it: its words, its string,
+and 0, or nothing and 1 before any. Object fields first, so the order here is
+the layout the glue writes. -/
+private structure RawScene where
+  /-- The words. -/
+  words : ByteArray
+  /-- The string. -/
+  strings : String
+  /-- 0 when a scene was published. -/
+  status : UInt64
+
+/-- `Display.scene` as it crosses. -/
+@[extern "editor_glue_display_scene"]
+private opaque Display.sceneRaw (display : @& Display) : IO RawScene
+
+/-- The last scene published, as the library writes it back: the words and
+the string it was sent. `none` before any. -/
+def Display.scene (display : Display) : IO (Option (Array UInt64 × String)) := do
+  let raw ← display.sceneRaw
+  if raw.status != 0 then
+    return none
+  let some words := wordsOf? raw.words
+    | throw (IO.userError "the library's scene is not whole words")
+  return some (words, raw.strings)
 
 end Editor.Ffi

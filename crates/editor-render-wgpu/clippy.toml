@@ -1,0 +1,128 @@
+# What no line of `editor-render-wgpu` may name, its tests included: a real
+# file, a directory of the machine, a process or a clock. The renderer is
+# handed frames as values and fonts as the bytes a frame carries, and its
+# tests are handed the fixture fonts under `tests/fonts`, compiled in with
+# `include_bytes!`: nothing is read when a test runs. A cost is counted
+# (`Drawn`), never timed, and time reaches the render loop through
+# `editor-render`'s `Clock` port.
+#
+# Clippy reads the first `clippy.toml` it finds from a package's manifest
+# directory upwards, and the workspace root has none, so this file governs
+# every target of this crate and no other. `disallowed_methods` and
+# `disallowed_types` are on by default at `warn`, and `mise run lint` denies
+# warnings, so a line that names one of these fails the gate.
+#
+# The list is `crates/editor-layout/clippy.toml`'s; `crates/editor-text/
+# clippy.toml`'s header says what a list of names does not hold.
+#
+# Seen to bite once by hand, on 2026-11-14: with a test added to
+# `src/quads.rs` that calls `std::fs::read("/nonexistent")`, `mise run lint`
+# fails with "use of a disallowed method `std::fs::read`". With the test
+# taken out it passes.
+#
+# This machine's GPU comes through one function,
+# `WgpuRenderer::on_this_machine`, which is on the list: no test may call
+# it. The tests of the wgpu adapter run it on wgpu's no-op back end,
+# through a constructor private to the crate (`src/gpu/tests.rs`). Seen
+# to bite once by hand, on 2026-11-14: with a test added to
+# `tests/contract.rs` that calls `WgpuRenderer::on_this_machine`,
+# `mise run lint` fails with "use of a disallowed method
+# `editor_render_wgpu::WgpuRenderer::on_this_machine`".
+#
+# A window's surface comes through one function too,
+# `WgpuRenderer::on_window`, which is on the list for the same reason and
+# one more: it needs a window, and the gate opens none. No target of this
+# crate calls it. Its one caller is `editor-ffi`'s example `window`, whose
+# own `clippy.toml` lists it. Seen to bite once by hand, on 2026-11-14:
+# with a test added to `tests/contract.rs` that calls
+# `WgpuRenderer::on_window`, `mise run lint` fails with "use of a
+# disallowed method `editor_render_wgpu::WgpuRenderer::on_window`". Clippy
+# compiles the test and does not run it.
+#
+# The exceptions. This file governs the crate's examples too, and each
+# example exists to do one thing no test may. Each call of a listed name
+# in an example is under its own `#[expect(clippy::disallowed_methods,
+# reason = "…")]`, as `crates/editor-shape-parley/examples/system.rs`
+# does. An `expect` that nothing fulfils is itself a warning, which
+# `mise run lint` denies: so the gate fails on a listed call without its
+# `expect`, and on an `expect` left over a call that is gone. Neither
+# example names any other listed method or any listed type.
+#
+# - `examples/reference.rs`, `std::fs::write`, at one call site: it
+#   writes the reference image to the path given on the command line
+#   (`mise run render-reference`). The image is encoded into bytes in
+#   memory first, so no listed type is named, and the path is handed over
+#   as given. Seen to bite once by hand, on 2026-11-14: with the `expect`
+#   taken off, `mise run lint` fails with "use of a disallowed method
+#   `std::fs::write`".
+# - `examples/gpu.rs`, `editor_render_wgpu::WgpuRenderer::on_this_machine`,
+#   at one call site: it is the one place this machine's adapter is asked
+#   for, the adapter's check run on demand (`mise run render-gpu`,
+#   `mise run linux-render`).
+# - `examples/gpu.rs`, `std::time::Instant::now`, at one call site, inside
+#   a helper that runs a closure and says how long it took: the one place
+#   a draw on a real adapter is timed. The times are printed for a person
+#   and never asserted; `editor-render` publishes no real clock. The
+#   reference image it compares with and the fonts are compiled in, so it
+#   reads and writes no file.
+#
+#   Both seen to bite once by hand, on 2026-11-14: with each `expect`
+#   taken off, `mise run lint` fails with "use of a disallowed method
+#   `editor_render_wgpu::WgpuRenderer::on_this_machine`" and "use of a
+#   disallowed method `std::time::Instant::now`".
+
+disallowed-methods = [
+  # Every free function of `std::fs`.
+  { path = "std::fs::canonicalize", reason = "the renderer touches no file: a frame reaches it as a value and a font as bytes" },
+  { path = "std::fs::copy", reason = "the renderer touches no file: a frame reaches it as a value and a font as bytes" },
+  { path = "std::fs::create_dir", reason = "the renderer touches no file: a frame reaches it as a value and a font as bytes" },
+  { path = "std::fs::create_dir_all", reason = "the renderer touches no file: a frame reaches it as a value and a font as bytes" },
+  { path = "std::fs::exists", reason = "the renderer touches no file: a frame reaches it as a value and a font as bytes" },
+  { path = "std::fs::hard_link", reason = "the renderer touches no file: a frame reaches it as a value and a font as bytes" },
+  { path = "std::fs::metadata", reason = "the renderer touches no file: a frame reaches it as a value and a font as bytes" },
+  { path = "std::fs::read", reason = "the renderer touches no file: a frame reaches it as a value and a font as bytes" },
+  { path = "std::fs::read_dir", reason = "the renderer touches no file: a frame reaches it as a value and a font as bytes" },
+  { path = "std::fs::read_link", reason = "the renderer touches no file: a frame reaches it as a value and a font as bytes" },
+  { path = "std::fs::read_to_string", reason = "the renderer touches no file: a frame reaches it as a value and a font as bytes" },
+  { path = "std::fs::remove_dir", reason = "the renderer touches no file: a frame reaches it as a value and a font as bytes" },
+  { path = "std::fs::remove_dir_all", reason = "the renderer touches no file: a frame reaches it as a value and a font as bytes" },
+  { path = "std::fs::remove_file", reason = "the renderer touches no file: a frame reaches it as a value and a font as bytes" },
+  { path = "std::fs::rename", reason = "the renderer touches no file: a frame reaches it as a value and a font as bytes" },
+  { path = "std::fs::set_permissions", reason = "the renderer touches no file: a frame reaches it as a value and a font as bytes" },
+  { path = "std::fs::symlink_metadata", reason = "the renderer touches no file: a frame reaches it as a value and a font as bytes" },
+  { path = "std::fs::write", reason = "the renderer touches no file: a frame reaches it as a value and a font as bytes" },
+  # The methods of `Path` that ask the disk.
+  { path = "std::path::Path::canonicalize", reason = "the renderer touches no file: a frame reaches it as a value and a font as bytes" },
+  { path = "std::path::Path::exists", reason = "the renderer touches no file: a frame reaches it as a value and a font as bytes" },
+  { path = "std::path::Path::is_dir", reason = "the renderer touches no file: a frame reaches it as a value and a font as bytes" },
+  { path = "std::path::Path::is_file", reason = "the renderer touches no file: a frame reaches it as a value and a font as bytes" },
+  { path = "std::path::Path::is_symlink", reason = "the renderer touches no file: a frame reaches it as a value and a font as bytes" },
+  { path = "std::path::Path::metadata", reason = "the renderer touches no file: a frame reaches it as a value and a font as bytes" },
+  { path = "std::path::Path::read_dir", reason = "the renderer touches no file: a frame reaches it as a value and a font as bytes" },
+  { path = "std::path::Path::read_link", reason = "the renderer touches no file: a frame reaches it as a value and a font as bytes" },
+  { path = "std::path::Path::symlink_metadata", reason = "the renderer touches no file: a frame reaches it as a value and a font as bytes" },
+  { path = "std::path::Path::try_exists", reason = "the renderer touches no file: a frame reaches it as a value and a font as bytes" },
+  # The directories of the machine.
+  { path = "std::env::current_dir", reason = "the renderer has no directory of the machine, and a test leaves the process as it found it" },
+  { path = "std::env::set_current_dir", reason = "the renderer has no directory of the machine, and a test leaves the process as it found it" },
+  { path = "std::env::temp_dir", reason = "the renderer has no directory of the machine, and a test leaves the process as it found it" },
+  # Processes.
+  { path = "std::process::Command::new", reason = "the renderer starts no process" },
+  # The clocks.
+  { path = "std::time::SystemTime::now", reason = "the renderer reads no clock: a cost is counted (`Drawn`), never timed" },
+  { path = "std::time::Instant::now", reason = "the renderer reads no clock: a cost is counted (`Drawn`), never timed" },
+  # The file port's real adapter, which this crate does not depend on.
+  { path = "editor_fs_std::StdFs::system", reason = "the renderer touches no file system, real or fake" },
+  # This machine's GPU: what it finds depends on the machine.
+  { path = "editor_render_wgpu::WgpuRenderer::on_this_machine", reason = "no test asks for this machine's adapter: the gate runs the wgpu adapter on wgpu's no-op back end, and the example `gpu` is the one place a real adapter is asked for" },
+  # A window's surface: it needs a window, and a real adapter.
+  { path = "editor_render_wgpu::WgpuRenderer::on_window", reason = "no test makes a surface on a window: the gate opens no window, and `editor-ffi`'s example `window` is the one place a renderer is made on one" },
+]
+
+disallowed-types = [
+  { path = "std::fs::File", reason = "the renderer touches no file: a frame reaches it as a value and a font as bytes" },
+  { path = "std::fs::OpenOptions", reason = "the renderer touches no file: a frame reaches it as a value and a font as bytes" },
+  { path = "std::fs::DirBuilder", reason = "the renderer touches no file: a frame reaches it as a value and a font as bytes" },
+  { path = "std::fs::ReadDir", reason = "the renderer touches no file: a frame reaches it as a value and a font as bytes" },
+  { path = "std::fs::DirEntry", reason = "the renderer touches no file: a frame reaches it as a value and a font as bytes" },
+]

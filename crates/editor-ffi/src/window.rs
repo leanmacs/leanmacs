@@ -67,8 +67,9 @@ use std::sync::{Arc, LazyLock, OnceLock};
 use std::time::Instant;
 
 use editor_platform::{
-    Button, CannotOpen, Composition, Input, Key, LogicalKey, Modifiers, PhysicalKey, Platform,
-    Pointer, PointerAction, Report, Resize, ScriptedPlatform, WheelDelta, WindowOptions,
+    Button, CannotOpen, Composition, Drawer, Input, Key, LogicalKey, Modifiers, PhysicalKey,
+    Platform, Pointer, PointerAction, Report, Resize, ScriptedPlatform, WheelDelta, WindowOptions,
+    no_drawer,
 };
 use editor_platform_winit::WinitPlatform;
 
@@ -562,7 +563,9 @@ pub fn post_input(
 /// Runs `platform`'s window on the calling thread, opened as `options` say,
 /// until the platform is asked to close, and has each thing the window
 /// reports arrive on `queue` ([`arrive`]), stamped with `clock`'s reading
-/// when it was reported, with `interrupt` told of it first.
+/// when it was reported, with `interrupt` told of it first. What the window
+/// tells whatever draws in it goes to `drawer`, as it is told: nothing of
+/// it is queued.
 ///
 /// Returns the platform's failure, having queued nothing, when no window
 /// could be opened.
@@ -572,6 +575,7 @@ pub fn run<P, C, Q, I>(
     clock: C,
     queue: Q,
     interrupt: I,
+    drawer: Drawer,
 ) -> Result<(), CannotOpen>
 where
     P: Platform + ?Sized,
@@ -586,7 +590,7 @@ where
         let stamp = clock.now_ns();
         arrive(&queue, &interrupt, input, stamp);
     });
-    platform.run(options, report)
+    platform.run(options, report, drawer)
 }
 
 /// Which platform runs the process's window.
@@ -661,12 +665,15 @@ pub(crate) fn run_on_this_thread(
     platform: PlatformId,
     options: WindowOptions,
 ) -> Result<(), CannotOpen> {
+    // Nothing draws in the process's window yet: what Lean publishes has no
+    // way to a renderer until the display pipeline's phase 6.
     run(
         platform.platform(),
         options,
         &CLOCK,
         QueueId::Editor.queue(),
         &INTERRUPT,
+        no_drawer(),
     )
 }
 
@@ -793,7 +800,8 @@ mod tests {
     use super::*;
     use crate::interrupt::InterruptKey;
     use editor_platform::{
-        Button, Key, LogicalKey, Modifiers, PhysicalKey, Pointer, PointerAction, Resize, WheelDelta,
+        Button, Canvas, Key, LogicalKey, Modifiers, PhysicalKey, Pointer, PointerAction, Resize,
+        WheelDelta,
     };
     use std::sync::mpsc::{self, Receiver};
     use std::thread;
@@ -876,6 +884,7 @@ mod tests {
                 CountingClock::new(),
                 queue,
                 interrupt,
+                no_drawer(),
             ));
         });
         done
@@ -1618,6 +1627,57 @@ mod tests {
     }
 
     #[test]
+    fn what_the_window_tells_reaches_the_drawer_it_was_run_with_and_not_the_queue() {
+        let platform = Arc::new(ScriptedPlatform::new(vec![Input::Resized(Resize {
+            width: 300,
+            height: 120,
+            scale: 2.0,
+        })]));
+        let queue = Arc::new(Queue::new());
+        // Which kind of thing the drawer was told, in order: the thing
+        // itself is not another thread's to keep.
+        let (tell, told) = mpsc::channel();
+        let drawer: Drawer = Arc::new(move |canvas| {
+            let _ = tell.send(match canvas {
+                Canvas::Opened { .. } => "opened",
+                Canvas::Resized(_) => "resized",
+                Canvas::Closing => "closing",
+                _ => "something else",
+            });
+        });
+
+        let done = {
+            let (finished, done) = mpsc::channel();
+            let (platform, queue) = (Arc::clone(&platform), Arc::clone(&queue));
+            thread::spawn(move || {
+                let options = WindowOptions::default();
+                let interrupt = Arc::new(Interrupt::new());
+                let result = run(
+                    &*platform,
+                    options,
+                    CountingClock::new(),
+                    queue,
+                    interrupt,
+                    drawer,
+                );
+                let _ = finished.send(result);
+            });
+            done
+        };
+        // The window's two events are queued, and nothing for what the
+        // drawer was told.
+        let kinds: Vec<EventKind> = pull(&queue, 2).iter().map(|event| event.kind).collect();
+        assert_eq!(kinds, [EventKind::WindowOpened, EventKind::Resize]);
+        platform.close();
+        assert_eq!(done.recv_timeout(DEADLINE), Ok(Ok(())));
+
+        let told: Vec<&str> = told.try_iter().collect();
+        assert_eq!(told, ["opened", "resized", "closing"]);
+        queue.quit();
+        assert_eq!(queue.next(), Event::quit());
+    }
+
+    #[test]
     fn a_platform_that_cannot_open_gives_its_reason_and_queues_nothing() {
         let platform = Arc::new(ScriptedPlatform::failing("no display"));
         let queue = Arc::new(Queue::new());
@@ -1684,6 +1744,7 @@ mod tests {
                 CountingClock::new(),
                 queue,
                 Arc::new(Interrupt::new()),
+                no_drawer(),
             );
 
             assert_eq!(

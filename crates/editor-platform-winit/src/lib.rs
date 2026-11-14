@@ -2,12 +2,34 @@
 //! [`Platform`] over winit.
 //!
 //! The port, its fake and its contract are `editor-platform`'s. This crate
-//! is thin: it opens one window, translates what winit reports about it into
-//! the port's [`Input`], and ends its loop when it is asked to close. No
-//! winit type is public, and no other crate depends on winit (`deny.toml`).
+//! is thin: it opens one window, translates what winit says of it into the
+//! port's [`Input`] and [`Canvas`], and ends its loop when it is asked to
+//! close. No winit type is public, and no other crate depends on winit
+//! (`deny.toml`).
+//!
+//! The translation is the module `translate`'s, with a key's names in
+//! `names` and the window's native handles in `native`: every key with its
+//! logical key, physical key and modifiers; the pointer's press, drag,
+//! release and wheel; a resize with the size and the scale; the focus; a
+//! composition; a request to close; and, for whatever draws in the window,
+//! its native window, its size, its display's refresh rate, damage, and
+//! whether it is hidden. Their docs say what is decided where winit and the
+//! port differ.
 //!
 //! What it does beyond translating:
 //!
+//! - **It tells the drawer about the window around its loop.** The window
+//!   opened, before it reports that to anyone; and the window is closing,
+//!   once its loop has ended and before the window is dropped, so that
+//!   whatever was made on the window is let go while it is still there.
+//! - **It says how large the window is when it opens**: a
+//!   [`Input::Resized`] with the window's size and scale straight after
+//!   [`Input::Opened`], since nothing else in the port says so.
+//! - **It leaves winit's loop waiting.** The loop's control flow is never
+//!   set, so it is winit's default, a wait for the next event, and the
+//!   adapter never asks winit for a redraw: a window nobody touches turns
+//!   its loop not at all. What draws is woken by what the drawer is told,
+//!   on a thread of its own, and never by this loop.
 //! - **It refuses to run off the process's main thread**, with a reason,
 //!   before it touches winit: winit panics there. Whether the calling thread
 //!   is the main one is asked of a function the caller supplies, since the
@@ -25,24 +47,57 @@
 //! # Tests
 //!
 //! The gate (`mise run ci`) opens no window, so what it covers here is the
-//! translation from winit's values to [`Input`] and the refusal off the main
-//! thread. The event loop itself needs a display. It is held to the port's
-//! contract by `examples/contract.rs`, which two opt-in tasks run:
-//! `mise run linux-window`, under Xvfb in a container, and
-//! `mise run window-contract`, on the desktop it is started from. Run the
-//! first after a change to this crate.
+//! translation from winit's values to [`Input`] and [`Canvas`] and the
+//! refusal off the main thread. The event loop itself needs a display, and
+//! so do the lines here that only a real window runs. They are few, and
+//! each is a reading of the window or a call with no decision in it:
+//!
+//! - the handler's two arms that take apart the events no test can build,
+//!   a key and a change of scale;
+//! - the readings of the window as it opens: its size and scale, its raw
+//!   handles (`native_window`), and its display's refresh rate
+//!   (`refresh_rate`, which reads `current_monitor` and its
+//!   `refresh_rate_millihertz`);
+//! - that same reading of the refresh rate when the translation asks for
+//!   it, after a move, a resize or a change of scale. Which events ask,
+//!   and what is told of the answer, are the translation's, and tested;
+//! - handing what an event comes to on: each `Canvas` to the drawer, then
+//!   the `Input` to the report;
+//! - telling the drawer the window is closing once the loop has ended.
+//!
+//! They are held to the port's contract by `examples/contract.rs`, which
+//! two opt-in tasks run: `mise run linux-window`, under Xvfb in a
+//! container, and `mise run window-contract`, on the desktop it is started
+//! from. Run the first after a change to this crate. Under Xvfb the
+//! display says no refresh rate, so the reading is run there and what a
+//! real display answers is not seen.
+//!
+//! The handler's two arms are run on winit's own events by `mise run
+//! linux-window` too, in the window that draws (`editor-ffi`'s example
+//! `window`): the key's by keys xdotool types, and the change of scale's
+//! by a change of the display's settings while the window is open, which
+//! the task requires to come off the queue as a resize at the size last
+//! known and the new scale (`docs/dev-practices/on-demand-checks.md`, "The
+//! window on Linux, on demand"). That is winit's X11 back end. What its
+//! macOS back end sends when a window is moved between two displays has
+//! not been seen.
+
+mod names;
+mod native;
+mod translate;
 
 use std::sync::{Mutex, MutexGuard, PoisonError};
 
 use editor_platform::{
-    CannotOpen, Composition, Input, Key, LogicalKey, Modifiers, Platform, Pointer, PointerAction,
-    Report, WindowOptions,
+    CannotOpen, Canvas, Drawer, Input, NativeWindow, Platform, Report, WindowOptions,
 };
 use winit::application::ApplicationHandler;
-use winit::event::{ElementState, Ime, WindowEvent};
+use winit::event::WindowEvent;
 use winit::event_loop::{ActiveEventLoop, EventLoop, EventLoopProxy};
-use winit::keyboard;
+use winit::raw_window_handle::{HasDisplayHandle, HasWindowHandle};
 use winit::window::{Window, WindowId};
+
+use crate::translate::{KeyParts, Seen, Told};
 
 /// The window port over winit. It opens one window, on the process's main
 /// thread, once in a process.
@@ -79,7 +134,12 @@ impl WinitPlatform {
 }
 
 impl Platform for WinitPlatform {
-    fn run(&self, options: WindowOptions, report: Report) -> Result<(), CannotOpen> {
+    fn run(
+        &self,
+        options: WindowOptions,
+        report: Report,
+        drawer: Drawer,
+    ) -> Result<(), CannotOpen> {
         let cannot_open = |reason: String| CannotOpen { reason };
         if !(self.on_main_thread)() {
             return Err(cannot_open(
@@ -92,11 +152,19 @@ impl Platform for WinitPlatform {
         let mut app = App {
             options,
             report,
+            drawer,
+            seen: Seen::default(),
             window: None,
             failure: None,
         };
         let ended = event_loop.run_app(&mut app);
         *self.running() = None;
+        if app.window.is_some() {
+            // The loop has ended and the window is still there: it is
+            // dropped when this function returns. Whatever was made on it
+            // is let go first.
+            (app.drawer)(Canvas::Closing);
+        }
 
         match (app.failure, ended) {
             (Some(reason), _) => Err(cannot_open(reason)),
@@ -114,62 +182,6 @@ impl Platform for WinitPlatform {
     }
 }
 
-/// The key event winit reports with these parts, as the port's input. It
-/// takes the parts and not winit's whole key event, which cannot be built
-/// outside winit.
-///
-/// The mapping is minimal: a dead key is a dead logical key, with its
-/// character, and every other key is unidentified, with no physical key
-/// and no modifiers. Giving a key its full identity, and a pointer its
-/// position, button and modifiers, and reporting a resize, are the display
-/// pipeline's (its phase 5).
-fn key(
-    state: ElementState,
-    repeat: bool,
-    logical_key: &keyboard::Key,
-    text: Option<&str>,
-) -> Input {
-    let logical = match logical_key {
-        keyboard::Key::Dead(character) => LogicalKey::Dead(*character),
-        _ => LogicalKey::Unidentified,
-    };
-    Input::Key(Key {
-        pressed: state == ElementState::Pressed,
-        repeat,
-        logical,
-        text: text.unwrap_or_default().to_owned(),
-        ..Key::unidentified()
-    })
-}
-
-/// What the port reports for `event`, if it reports anything for it. A key
-/// event goes through [`key`]. A pressed button is a press at the origin
-/// with no button and no modifiers, and a resize is not reported: the
-/// minimal mapping [`key`] describes.
-fn translate(event: &WindowEvent) -> Option<Input> {
-    match event {
-        WindowEvent::Focused(gained) => Some(Input::Focus(*gained)),
-        WindowEvent::Ime(step) => Some(Input::Composition(match step {
-            Ime::Enabled => Composition::Enabled,
-            Ime::Preedit(text, _) => Composition::Preedit(text.clone()),
-            Ime::Commit(text) => Composition::Commit(text.clone()),
-            Ime::Disabled => Composition::Disabled,
-        })),
-        WindowEvent::MouseInput {
-            state: ElementState::Pressed,
-            ..
-        } => Some(Input::Pointer(Pointer {
-            action: PointerAction::Press,
-            x: 0.0,
-            y: 0.0,
-            button: None,
-            modifiers: Modifiers::default(),
-        })),
-        WindowEvent::CloseRequested => Some(Input::CloseRequested),
-        _ => None,
-    }
-}
-
 /// The window and its loop's handler: what [`WinitPlatform::run`] hands to
 /// winit.
 struct App {
@@ -177,6 +189,10 @@ struct App {
     options: WindowOptions,
     /// Where what the window reports goes.
     report: Report,
+    /// Where what the window tells whatever draws in it goes.
+    drawer: Drawer,
+    /// What winit has said of the window so far.
+    seen: Seen,
     /// The window, once the loop has made it.
     window: Option<Window>,
     /// Why the window could not be made, if it could not.
@@ -193,10 +209,19 @@ impl ApplicationHandler for App {
             Ok(window) => {
                 window.set_ime_allowed(self.options.composition);
                 window.focus_window();
+                let (opened, size) = self.seen.opened(
+                    window.inner_size(),
+                    window.scale_factor(),
+                    native_window(&window),
+                    refresh_rate(&window),
+                );
                 self.window = Some(window);
+                // The drawer hears of the window before anyone else does.
+                (self.drawer)(opened);
                 (self.report)(Input::Opened {
                     platform: WinitPlatform::NAME.into(),
                 });
+                (self.report)(size);
             }
             Err(error) => {
                 self.failure = Some(error.to_string());
@@ -210,19 +235,53 @@ impl ApplicationHandler for App {
     }
 
     fn window_event(&mut self, _: &ActiveEventLoop, _: WindowId, event: WindowEvent) {
-        let input = match &event {
-            WindowEvent::KeyboardInput { event, .. } => Some(key(
-                event.state,
-                event.repeat,
-                &event.logical_key,
-                event.text.as_deref(),
-            )),
-            other => translate(other),
+        // How often the window's display refreshes, read when the
+        // translation asks: it decides after which events to.
+        let window = self.window.as_ref();
+        let display = || window.and_then(refresh_rate);
+        // Two of winit's events cannot be built in a test, a key and a change
+        // of scale, so each is taken apart here and translated from its
+        // parts. These two arms are all this handler decides.
+        let told = match &event {
+            WindowEvent::KeyboardInput { event, .. } => Told {
+                input: Some(self.seen.key(&KeyParts {
+                    state: event.state,
+                    repeat: event.repeat,
+                    logical: &event.logical_key,
+                    physical: event.physical_key,
+                    text: event.text.as_deref(),
+                })),
+                canvas: Vec::new(),
+            },
+            WindowEvent::ScaleFactorChanged { scale_factor, .. } => {
+                self.seen.scale(*scale_factor, &display)
+            }
+            other => self.seen.window_event(other, &display),
         };
-        if let Some(input) = input {
+        // The drawer first, as when the window opened: a size is known to
+        // what draws before anyone is told to lay out for it.
+        for canvas in told.canvas {
+            (self.drawer)(canvas);
+        }
+        if let Some(input) = told.input {
             (self.report)(input);
         }
     }
+}
+
+/// The window as the system knows it, in the port's terms: `None` when
+/// winit does not give its handles, or gives handles the port has no
+/// variant for.
+fn native_window(window: &Window) -> Option<NativeWindow> {
+    let handle = window.window_handle().ok()?.as_raw();
+    let display = window.display_handle().ok()?.as_raw();
+    native::native(handle, display)
+}
+
+/// How often the display the window is on refreshes, in thousandths of a
+/// hertz, when winit says.
+fn refresh_rate(window: &Window) -> Option<u32> {
+    window.current_monitor()?.refresh_rate_millihertz()
 }
 
 /// Builds the event loop, without winit's default menu where it has one.
@@ -241,163 +300,9 @@ mod tests {
     use super::*;
     use std::sync::Arc;
     use std::sync::atomic::{AtomicUsize, Ordering};
-    use winit::dpi::PhysicalSize;
-    use winit::event::{DeviceId, MouseButton};
-    use winit::keyboard::{Key as WinitKey, NamedKey};
-
-    /// A key event of the port, with no identity but whether it is dead.
-    fn input_key(pressed: bool, repeat: bool, logical: LogicalKey, text: &str) -> Input {
-        Input::Key(Key {
-            pressed,
-            repeat,
-            logical,
-            text: text.into(),
-            ..Key::unidentified()
-        })
-    }
-
-    /// The logical key for the character `text`.
-    fn character(text: &str) -> WinitKey {
-        WinitKey::Character(text.into())
-    }
 
     #[test]
-    fn a_pressed_key_carries_the_text_it_produced() {
-        assert_eq!(
-            key(ElementState::Pressed, false, &character("a"), Some("a")),
-            input_key(true, false, LogicalKey::Unidentified, "a")
-        );
-        assert_eq!(
-            key(ElementState::Pressed, false, &character("é"), Some("é")),
-            input_key(true, false, LogicalKey::Unidentified, "é")
-        );
-    }
-
-    #[test]
-    fn a_key_that_produced_no_text_has_empty_text() {
-        assert_eq!(
-            key(
-                ElementState::Pressed,
-                false,
-                &WinitKey::Named(NamedKey::Shift),
-                None
-            ),
-            input_key(true, false, LogicalKey::Unidentified, "")
-        );
-    }
-
-    #[test]
-    fn a_released_key_is_not_pressed() {
-        assert_eq!(
-            key(ElementState::Released, false, &character("a"), None),
-            input_key(false, false, LogicalKey::Unidentified, "")
-        );
-    }
-
-    #[test]
-    fn a_repeated_press_is_marked_a_repeat() {
-        assert_eq!(
-            key(ElementState::Pressed, true, &character("a"), Some("a")),
-            input_key(true, true, LogicalKey::Unidentified, "a")
-        );
-    }
-
-    #[test]
-    fn a_dead_key_is_a_dead_logical_key_with_its_character_and_has_no_text() {
-        assert_eq!(
-            key(
-                ElementState::Pressed,
-                false,
-                &WinitKey::Dead(Some('´')),
-                None
-            ),
-            input_key(true, false, LogicalKey::Dead(Some('´')), "")
-        );
-        assert_eq!(
-            key(ElementState::Released, false, &WinitKey::Dead(None), None),
-            input_key(false, false, LogicalKey::Dead(None), "")
-        );
-    }
-
-    #[test]
-    fn each_step_of_a_composition_is_reported() {
-        let step = |ime| translate(&WindowEvent::Ime(ime));
-
-        assert_eq!(
-            step(Ime::Enabled),
-            Some(Input::Composition(Composition::Enabled))
-        );
-        assert_eq!(
-            step(Ime::Preedit("´".into(), Some((0, 2)))),
-            Some(Input::Composition(Composition::Preedit("´".into())))
-        );
-        assert_eq!(
-            step(Ime::Preedit(String::new(), None)),
-            Some(Input::Composition(Composition::Preedit(String::new())))
-        );
-        assert_eq!(
-            step(Ime::Commit("é".into())),
-            Some(Input::Composition(Composition::Commit("é".into())))
-        );
-        assert_eq!(
-            step(Ime::Disabled),
-            Some(Input::Composition(Composition::Disabled))
-        );
-    }
-
-    #[test]
-    fn focus_gained_and_lost_are_reported() {
-        assert_eq!(
-            translate(&WindowEvent::Focused(true)),
-            Some(Input::Focus(true))
-        );
-        assert_eq!(
-            translate(&WindowEvent::Focused(false)),
-            Some(Input::Focus(false))
-        );
-    }
-
-    #[test]
-    fn a_pressed_pointer_button_is_reported_as_a_press_at_the_origin_with_no_button_and_its_release_is_not()
-     {
-        let button = |state| WindowEvent::MouseInput {
-            device_id: DeviceId::dummy(),
-            state,
-            button: MouseButton::Left,
-        };
-
-        assert_eq!(
-            translate(&button(ElementState::Pressed)),
-            Some(Input::Pointer(Pointer {
-                action: PointerAction::Press,
-                x: 0.0,
-                y: 0.0,
-                button: None,
-                modifiers: Modifiers::default(),
-            }))
-        );
-        assert_eq!(translate(&button(ElementState::Released)), None);
-    }
-
-    #[test]
-    fn a_request_to_close_is_reported() {
-        assert_eq!(
-            translate(&WindowEvent::CloseRequested),
-            Some(Input::CloseRequested)
-        );
-    }
-
-    #[test]
-    fn an_event_the_port_has_no_input_for_is_not_reported() {
-        assert_eq!(
-            translate(&WindowEvent::Resized(PhysicalSize::new(800, 600))),
-            None
-        );
-        assert_eq!(translate(&WindowEvent::Destroyed), None);
-    }
-
-    #[test]
-    fn off_the_main_thread_a_run_is_refused_with_a_reason_and_reports_nothing() {
+    fn off_the_main_thread_a_run_is_refused_with_a_reason_and_reports_and_tells_nothing() {
         // The platform is told this thread is not the main one, which is
         // true of a test's thread, so nothing is opened whatever it does.
         let platform = WinitPlatform::new(|| false);
@@ -408,8 +313,15 @@ mod tests {
                 reported.fetch_add(1, Ordering::SeqCst);
             })
         };
+        let told = Arc::new(AtomicUsize::new(0));
+        let drawer: Drawer = {
+            let told = Arc::clone(&told);
+            Arc::new(move |_| {
+                told.fetch_add(1, Ordering::SeqCst);
+            })
+        };
 
-        let result = platform.run(WindowOptions::default(), report);
+        let result = platform.run(WindowOptions::default(), report, drawer);
 
         let reason = result.expect_err("the run is refused").reason;
         assert!(
@@ -417,6 +329,7 @@ mod tests {
             "the reason says why: {reason}"
         );
         assert_eq!(reported.load(Ordering::SeqCst), 0);
+        assert_eq!(told.load(Ordering::SeqCst), 0);
     }
 
     #[test]

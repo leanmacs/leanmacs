@@ -1,0 +1,36 @@
+[package]
+name = "editor-platform-arboard"
+version = "0.1.0"
+description = "The clipboard port's real adapter, over arboard"
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+# The clipboard port, its fake and its contract. This crate implements the
+# port; its example runs the contract on a real clipboard, on demand.
+editor-platform = { path = "../editor-platform" }
+# The system clipboard, on every platform. Kept behind the port: no arboard
+# type is public here, and `deny.toml` lets no other crate depend on it.
+# Pinned exactly; 3.7.0 was the newest release on 2026-11-14.
+#
+# Why this library: it is the maintained one that needs no window handle,
+# which is what lets this adapter stand, and be checked, without a window.
+# On Linux it speaks X11 through a connection and a hidden window of its
+# own; on macOS it is `NSPasteboard`.
+#
+# Its default feature `image-data` is off: the port is text, and the
+# feature brings the `image` crate. Its feature `wayland-data-control` is
+# off too. With it, a Wayland session's clipboard is reached through the
+# data-control protocol; without it, through XWayland, and a session with
+# no XWayland has no clipboard, which `SystemClipboard::open` reports. It is
+# left out because nothing here can run a Wayland compositor to see it
+# work, and it is some twenty crates.
+#
+# Looked at on 2026-11-14 and set aside, by their manifests and their
+# constructors, none of them run: `copypasta` 0.10.2 (X11, and Wayland
+# through `smithay-clipboard`, which needs the window's display pointer,
+# so the clipboard would hang off the window adapter); `smithay-clipboard`
+# 0.7.3 alone, for Wayland; `window_clipboard` 0.5.1, which also wants a
+# display handle.
+arboard = { version = "=3.7.0", default-features = false }

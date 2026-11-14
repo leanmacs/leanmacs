@@ -20,12 +20,31 @@ FROM debian@sha256:a72b4433de1cf7d6bae0c4cee74d0547f58601a643b3375f070c51600d63b
 #
 # The second line is for `linux-window` alone: a display that needs no
 # screen (Xvfb), a way to type into it (xdotool), and the libraries the
-# window library loads at run time under X11.
+# window library loads at run time under X11. The clipboard adapter needs
+# no library of the system: it speaks X11 through a connection of its own.
+#
+# The third line is for `linux-render` and for the window that draws in
+# `linux-window`: Mesa's Vulkan drivers, of which llvmpipe draws on the
+# CPU, and the Vulkan loader wgpu opens at run time. They are enough for a
+# surface on an X11 window as they are. The gate asks for no adapter
+# (`crates/editor-render-wgpu/clippy.toml` forbids it to tests), so it
+# runs the same with them there.
 RUN apt-get update \
     && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
         ca-certificates curl git build-essential zstd pkg-config pipx python3-venv \
         xvfb xdotool libx11-6 libx11-xcb1 libxcursor1 libxi6 libxrandr2 \
         libxkbcommon0 libxkbcommon-x11-0 libxcb1 \
+        mesa-vulkan-drivers libvulkan1 \
+    && rm -rf /var/lib/apt/lists/*
+
+# For `linux-window`'s change of scale: a daemon that owns the display's
+# XSETTINGS selection and serves settings from a file it reads again when
+# it is signalled. Xvfb has no such daemon of its own, and a change of its
+# `Xft/DPI` is how the window library's X11 back end hears of a new scale
+# while a window is open (tools/linux/run.sh, `inside_drawing_window`).
+RUN apt-get update \
+    && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+        xsettingsd \
     && rm -rf /var/lib/apt/lists/*
 
 # mise and elan, each at an exact version, each download checked against the

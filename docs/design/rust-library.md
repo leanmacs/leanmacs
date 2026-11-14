@@ -235,15 +235,19 @@ that has been checked; see open questions.
 | **Clipboard** | Read and write. |
 | **Notifications** | Post a desktop notification; request attention on the window; keep the machine awake while agents work. |
 
-What is built of the window is a first slice, enough to check that the
-keyboard reaches Lean:
+What is built of the window is the window itself: everything it reports
+reaches the editor queue as the port documents it, and it tells whatever
+draws in it what that needs to know. What draws in it reaches no window
+from Lean yet ([text-and-display.md](text-and-display.md), "The window, as
+built"):
 
 - **The port** is `editor-platform`'s `Platform`: `run` opens a window as
   its options say and runs it on the calling thread until it is closed,
-  handing each thing the window reports to its caller; `close` asks a
+  handing each thing the window reports to one listener, the report, and
+  each thing it says of its drawing to another, the drawer; `close` asks a
   running window to close, from any thread. It grows by data: a new thing a
-  window reports is a variant of `Input`, and a new way to open it a field
-  of `WindowOptions`.
+  window reports is a variant of `Input`, a new thing it tells the drawer a
+  variant of `Canvas`, and a new way to open it a field of `WindowOptions`.
 - **What a window reports today** (`Input`): that it opened, with the
   platform's name; the focus gained or lost; a key pressed or released,
   whether it is a repeat, its logical key (a character, a named key, a dead
@@ -254,10 +258,47 @@ keyboard reaches Lean:
   modifiers; the frame resized, with its size and scale; and a request to
   close. Named keys and physical keys are W3C UI Events names, as strings.
   The command loop fixed this shape (its phase 1) so that both roadmaps
-  build on one; the winit adapter maps only a dead key and a bare press so
-  far, and producing the rest from winit is the display pipeline's (its
-  phase 5). There is no redraw yet. The one option is whether composition
-  is allowed.
+  build on one, and the winit adapter produces all of it (the display
+  pipeline's phase 5). The one option is whether composition is allowed.
+- **As the winit adapter maps it.** A key's names are winit's own, which
+  winit documents as the W3C values, with three exceptions written out:
+  the system key is the named key `Meta` and its codes `MetaLeft` and
+  `MetaRight`, and Space is the character it types. A release carries no
+  text, and neither does a key whose text winit gives as a control
+  character (Escape, Enter, Tab, Backspace): they are known by their
+  names. The modifiers are those winit last reported, so on X11 the press
+  of Control carries no `control`. A press and a release are where the
+  pointer last was; a move with a button held is a drag, carrying the
+  button held longest, a move with none is not reported, and being told
+  the pointer is where it already was is no move at all; a wheel
+  carries winit's delta, in lines or pixels, positive when the content
+  moves right and down. A resize is the new size at the scale last known,
+  a change of scale a resize at the size last known, and a window reports
+  its size straight after it reports that it opened. Touch is not mapped.
+- **Fullscreen is the system's, and asks nothing of Lean.** The window
+  is made with winit's default attributes, so on macOS it has the green
+  button, which puts it into the system's fullscreen on a Space of its
+  own. Nothing was written for it: going in and coming out are a burst
+  of resizes, and another Space is the window hidden and shown, each of
+  which the window already reports and tells its drawer
+  ([text-and-display.md](text-and-display.md), "The window, as built").
+  The event loop is built without winit's default menu, so there is no
+  menu item for it and no shortcut of one. A fullscreen command, which a
+  key could be bound to, needs a request from Lean to the window; no
+  request of any kind goes that way yet (`Platform` has `run` and
+  `close`), and no phase builds one. Nobody has seen a window of ours in
+  fullscreen ([concurrency.md](concurrency.md), "Still to verify").
+- **What a window tells whatever draws in it** (`Canvas`): that it
+  opened, with its native window (`NativeWindow`: an AppKit view, an Xlib
+  window or a Wayland surface, as plain data that names no library), its
+  size and its display's refresh rate; a new size or scale; a new refresh
+  rate; that the system asks for the content again; that it is hidden or
+  shown; and that it is closing. The adapter tells damage only when the
+  system asks for a redraw: it asks for none itself, and its loop waits.
+  It reads the display's refresh rate when the window opens and after a
+  move, a resize and a change of scale, and tells it when it is another.
+  `editor-ffi` turns each into a word left with the render loop
+  ([concurrency.md](concurrency.md), "Sharing state").
 - **How it crosses to Lean.** `editor-ffi`'s `window::event` makes each
   input an event of the editor queue, with a key's identity, a pointer's
   detail and a resize as words beside it (the table in `window.rs`), and
@@ -275,27 +316,38 @@ keyboard reaches Lean:
   method, has been tried on either ([concurrency.md](concurrency.md),
   "Still to verify").
 - **The fake** is `ScriptedPlatform`: it reports that it opened, then a
-  script, and waits for a close. It records the options it was run with, and
-  leaves the composition steps out when composition is not allowed.
-  Everything above the port is tested on it, on both sides of the Lean
-  boundary.
+  script, and waits for a close. It tells the drawer that it opened, with
+  no native window and a fixed size, before it reports so; each scripted
+  resize before it reports it; and that it is closing before its run
+  returns. It records the options it was run with, and leaves the
+  composition steps out when composition is not allowed. Everything above
+  the port is tested on it, on both sides of the Lean boundary.
 - **The contract** (`editor_platform::contract`): `Opened` is the first
   input and names the platform; a close from another thread ends the run
   within a bound; nothing is reported once the run has returned; a close
-  with no window running is harmless. The check asks for a close before the
-  run and then leaves the open window alone for a settling time, so a run
-  that an earlier close ends returns with no close asked of it and is
-  refused. It is shown to refuse platforms that break each rule.
+  with no window running is harmless; the drawer is told the window opened
+  before anything is reported, so that whoever learns of the window finds
+  what draws in it made; it is told the window is closing once, last,
+  before the run returns; and a platform that cannot open tells it
+  nothing. The check asks for a close before the run and then leaves the
+  open window alone for a settling time, so a run that an earlier close
+  ends returns with no close asked of it and is refused. It is shown to
+  refuse platforms that break each rule.
 - **The adapter** is `editor-platform-winit`, over winit, pinned exactly.
-  The gate opens no window, so it covers the adapter's translation and its
-  refusal to run off the main thread. The adapter is held to the contract by
-  an example binary that `mise run linux-window` runs under Xvfb in a
-  container and `mise run window-contract` on a desktop.
+  The gate opens no window, so it covers the adapter's translation, on
+  winit's own values, and its refusal to run off the main thread. winit's
+  key event and its event for a change of scale cannot be built outside
+  winit, so those two are translated from their parts, and the lines that
+  take them apart run only in a real window. The adapter is held to the
+  contract by an example binary that `mise run linux-window` runs under
+  Xvfb in a container and `mise run window-contract` on a desktop.
 - **Onto the queue**: `editor-ffi` runs a platform and pushes each input as
   an event from the window source, stamped with the reading of an input
   clock when the window reported it (`crates/editor-ffi/src/window.rs` has
   the table). The window is run by the main-thread service
-  ([lean-runtime.md](lean-runtime.md), "Start-up and shutdown").
+  ([lean-runtime.md](lean-runtime.md), "Start-up and shutdown"). The
+  interrupt key has no path of its own: every input takes this one path,
+  and it is on this path that the interrupt flag, next, is raised.
 - **The interrupt flag** (`crates/editor-ffi/src/interrupt.rs`): the
   primitive under the command loop's interrupt, whose policy is Lean's
   ([concurrency.md](concurrency.md), "Foreground: commands"). Lean sets the
@@ -315,6 +367,37 @@ keyboard reaches Lean:
   process-wide static, so its C functions are tested in a process of their
   own (`crates/editor-ffi/tests/interrupt.rs`) and the logic on instances
   of its own.
+
+What is built of the clipboard is the Rust library's half, below any
+interface in Lean:
+
+- **The port** is `editor_platform::clipboard::Clipboard`: `read` gives the
+  text on the system clipboard, or none, and `write` puts text there. It
+  says what a system clipboard can do and nothing of what the editor asks
+  of one: which register a yank writes and when is the clipboard interface
+  in Lean and its model, which are the command loop's. If that interface
+  asks for more (the primary selection, something that is not text), the
+  port grows by an argument.
+- **The fake** is `MemoryClipboard`, text kept in memory, so that nothing
+  above the port touches a real clipboard in a test.
+- **The contract** (`clipboard::contract`): text written is the text read
+  back; non-ASCII text, a line feed and a tab come back unchanged; a later
+  write replaces an earlier one; a clipboard not yet written to reads as no
+  text or as text, and does not fail. It is shown to refuse clipboards
+  that break each.
+- **The adapter** is `editor-platform-arboard`, over arboard, pinned
+  exactly, with its default features off. arboard needs no window handle,
+  so the adapter stands without a window. It keeps one clipboard for its
+  life: on X11 the text is served by the process that wrote it. A
+  clipboard that holds no text reads as none, and any other error of
+  arboard's is a failure in arboard's words.
+- **Where it is checked.** The gate touches no clipboard: a real one is
+  the desktop's. The adapter is held to the contract by an example binary
+  that `mise run linux-window` runs under Xvfb in a container, in one
+  process and with one process reading what another wrote, and that
+  `mise run clipboard-contract` runs on a desktop, which nobody has yet.
+- **Not built**: binding the adapter to the clipboard interface, and any
+  C function or Lean for it (the display pipeline's phase 6).
 
 ## Text utilities
 
@@ -412,3 +495,19 @@ better generic primitive, not a feature-specific service.
   the file service**, whose one thread works requests in order (a thread a
   directory, or a small pool keyed by path, would keep the order that
   matters).
+- **The clipboard on Wayland.** The adapter is built without arboard's
+  `wayland-data-control` feature: nothing here can run a Wayland
+  compositor to see it work, and it is some twenty crates. Without it a
+  Wayland session's clipboard is reached through XWayland, and a session
+  with no XWayland has none, which the adapter reports as a clipboard
+  that cannot be opened. The alternatives looked at (`copypasta`,
+  `smithay-clipboard`, `window_clipboard`) each need the window's display
+  handle, which would hang the clipboard off the window adapter.
+- **The primary selection, and anything on a clipboard but text.** Not
+  built. They are for the command loop's clipboard interface to ask for,
+  and the port then grows by an argument.
+- **What a clipboard keeps once the editor has exited.** On X11 with no
+  clipboard manager, nothing: the text is served by the process that
+  wrote it (seen under Xvfb). Not addressed.
+- **What the empty text reads back as** on macOS: the empty text, or no
+  text. Not known, and the contract does not ask.
