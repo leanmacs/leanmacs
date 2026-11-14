@@ -11834,6 +11834,28 @@ def bigWordRows : List (String × String × String) :=
     ("9 E", "|a.b c.d e.f gh\n", "a.b c.d e.f g|h\n"), ("E", "fo|o\n\nbar", "foo\n\nba|r"),
     ("E", "|", "|"), ("E", "|\n", "|\n")]
 
+/-- The rows of the oracle table for `0`, `^` and `$`: leading blanks, a
+line of blanks only, an empty line, a count before `^`, which is ignored,
+a `0` after a digit, which is part of a count, and for `$` a count, a count
+past the last line, a count above 1 on the last line, which does not move,
+an empty line as the start and as the target, a text that ends in a line
+feed, and a carriage return and line feed as the line break. -/
+def lineRows : List (String × String × String) :=
+  [("0", "  a|bc", "|  abc"), ("0", "|abc", "|abc"), ("0", "abc\n  d|ef", "abc\n|  def"),
+    ("0", "a\n|\nb", "a\n|\nb"), ("0", "ab\r\nc|d", "ab\r\n|cd"), ("0", "|", "|"),
+    ("0", "|\n", "|\n"), ("1 0 l", "|abcdefghijklmno", "abcdefghij|klmno"),
+    ("^", "  ab|c", "  |abc"), ("^", "|  abc", "  |abc"), ("3 ^", "  ab|c", "  |abc"),
+    ("^", "|abc", "|abc"), ("^", "abc\n  de|f", "abc\n  |def"), ("^", "| \t ", " \t| "),
+    ("^", "| \t \nx", " \t| \nx"), ("^", "a\n|\nb", "a\n|\nb"), ("^", "|", "|"),
+    ("^", "|\n", "|\n"), ("$", "|abc\ndef", "ab|c\ndef"), ("$", "a|bc", "ab|c"),
+    ("$", "ab|c", "ab|c"), ("1 $", "|abc\ndef\nghi", "ab|c\ndef\nghi"),
+    ("2 $", "|abc\ndef\nghi", "abc\nde|f\nghi"), ("3 $", "|abc\ndef\nghi", "abc\ndef\ngh|i"),
+    ("2 $", "|abc\ndef", "abc\nde|f"), ("5 $", "|abc\ndef\n", "abc\nde|f\n"),
+    ("2 $", "abc\n|def", "abc\n|def"), ("2 $", "abc\nde|f\n", "abc\nde|f\n"),
+    ("$", "|\nabc", "|\nabc"), ("2 $", "|abc\n\nghi", "abc\n|\nghi"),
+    ("$", "a|b\r\ncd", "a|b\r\ncd"), ("2 $", "|ab\r\ncd", "ab\r\nc|d"), ("$", "|", "|"),
+    ("$", "|\n", "|\n")]
+
 /-- The checks of evil's motions (`Editor/Evil.lean`, `Editor/Evil/Motions.lean`)
 on the loop's driver over the editor's models, under the Vim scheme that
 ships with the commands compiled code registers for evil: a motion's key
@@ -11849,6 +11871,9 @@ def evilMotionChecks : List Check :=
     { name :=
         "W, B and E go as w, b and e do, by runs of characters that are not blank: with no count, with a count of 1, with a count inside the text, and with one past it, which goes as far as there is such a run"
       run := evilRows bigWordRows },
+    { name :=
+        "0 goes to the line's start and ^ to its first character that is not a blank, each whatever count was typed, and on a line of blanks only ^ rests on the last blank; $ goes to the last character of the line, or with a count of the line that many lines less one below, of the last line when the text has fewer, and does not move from the last line with a count above 1; none leaves an empty line"
+      run := evilRows lineRows },
     { name :=
         "a move by a name the vocabulary has no motion of says so in the echo area, the name and then no such motion, and leaves the cursor where it was"
       run :=
