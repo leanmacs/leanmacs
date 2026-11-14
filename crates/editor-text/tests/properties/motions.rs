@@ -7,7 +7,7 @@
 //! nothing and walks from the position. What a word character is is stated
 //! here again, in the reference's own words.
 
-use editor_text::{Motion, Selection, SelectionRange, Shape, Snapshot, WordKind};
+use editor_text::{Motion, PointCells, Selection, SelectionRange, Shape, Snapshot, WordKind};
 use proptest::collection::vec;
 use proptest::prelude::*;
 use proptest::sample::select;
@@ -431,6 +431,55 @@ fn every_row_is_read_without_its_line_break_and_the_rows_joined_by_their_breaks_
         }
         prop_assert_eq!(&joined, &string);
         prop_assert_eq!(snapshot.row_to_string(reference.rows.len()), None);
+        Ok(())
+    });
+}
+
+#[test]
+fn a_column_in_cells_is_that_many_steps_of_the_next_cell_from_its_rows_start() {
+    // This states no cell rule of its own: the step is the crate's, so it
+    // holds whatever a cell is, and fails when either conversion of a
+    // column in cells counts something else than the motions step by.
+    //
+    // Each conversion walks the row, so asking every column of a row costs
+    // the square of its length, and a generated text may be one row: the
+    // long texts are kilobytes here.
+    let short = || vec(select(FRAGMENTS), 0..=24).prop_map(|pieces| pieces.concat());
+    let text = prop_oneof![
+        7 => short(),
+        1 => (short(), 20..60_usize).prop_map(|(text, times)| text.repeat(times)),
+    ];
+
+    check(128, (text, steps(8)), |(initial, steps)| {
+        let (snapshot, _) = edited(initial, &steps);
+
+        for row in 0..snapshot.row_count() {
+            let Some(bytes) = snapshot.row_range(row) else {
+                return Err(TestCaseError::fail(format!("row {row} has no range")));
+            };
+            let (mut at, mut column) = (bytes.start, 0);
+            loop {
+                let point = PointCells::new(row, column);
+                prop_assert_eq!(snapshot.point_cells_to_offset(point), Some(at));
+                prop_assert_eq!(snapshot.offset_to_point_cells(at), Some(point));
+                if at >= bytes.end {
+                    break;
+                }
+                let Some(next) = snapshot.motion(Motion::NextCell, at) else {
+                    return Err(TestCaseError::fail(format!("{at} is no position")));
+                };
+                // A cell that ends past the row's bytes is the row's line
+                // break, and the column after it is the row's last: where
+                // the bytes end.
+                at = next.min(bytes.end);
+                column += 1;
+            }
+            // The column past the row's last names nothing.
+            prop_assert_eq!(
+                snapshot.point_cells_to_offset(PointCells::new(row, column + 1)),
+                None
+            );
+        }
         Ok(())
     });
 }
