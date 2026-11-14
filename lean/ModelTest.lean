@@ -3849,9 +3849,11 @@ def looped (start : TextM EditorState) (events : List Event) :
   | (.ok result, model) => some (result, model.display.scenes, model)
   | (.error _, _) => none
 
-/-- A key press with no text: what the loop drops in this phase. -/
-def pressA : Event :=
-  .key { logical := .character "a", physical := .code "KeyA" } true "a"
+/-- A press of a key that no keymap binds and that prints nothing, with its
+physical code as a window reports it: the loop steps it through its scheme,
+which yields nothing for it. -/
+def pressF5 : Event :=
+  .key { logical := .named ⟨"F5"⟩, physical := .code "F5" } true ""
 
 /-- The text of the snapshot a view shows, as the text model holds it. -/
 def shownText (model : EditorModel) (view : View) : Option String :=
@@ -3915,11 +3917,11 @@ def loopChecks : List Check :=
           | some (_, scenes, _) => scenes.map (·.focused) == #[none, some ⟨0⟩]
           | none => false },
     { name :=
-        "a key, a pointer and the window opening leave the state as it was, and each publishes one scene"
+        "a press of a key that is bound to nothing and prints nothing, a pointer and the window opening leave the state as it was, and each publishes one scene"
       run :=
         pure <|
           let events : List Event :=
-            [pressA, .pointer { action := .press, x := 3.0, y := 4.0, button := some .primary },
+            [pressF5, .pointer { action := .press, x := 3.0, y := 4.0, button := some .primary },
               .windowOpened "headless"]
           let start : EditorM (EditorState × TestLoop × Array Loop.Next) := do
             let state ← EditorState.initial ⟨640, 480⟩
@@ -3943,7 +3945,7 @@ def loopChecks : List Check :=
         "a view whose text has not changed keeps its snapshot from one scene to the next, and two views of one buffer share it"
       run :=
         pure <|
-          match looped threeWindows [pressA, pressA] with
+          match looped threeWindows [pressF5, pressF5] with
           | some (_, #[first, second], model) =>
             first.views.map (·.snapshot) == second.views.map (·.snapshot) &&
               (first.views.map (·.snapshot)).toList.eraseDups.length == 1 &&
@@ -3953,7 +3955,7 @@ def loopChecks : List Check :=
         "a view shows its window's scroll anchor and selection marker, a bar cursor in the face cursor, and no decorations or status"
       run :=
         pure <|
-          match looped threeWindows [pressA] with
+          match looped threeWindows [pressF5] with
           | some ((loop, _), #[scene], _) =>
             scene.views.map (·.scroll) == loop.state.windows.map (·.scroll) &&
               scene.views.map (·.selections) == loop.state.windows.map (#[·.selection]) &&
@@ -3993,7 +3995,7 @@ def loopChecks : List Check :=
             let some other := state.buffers[1]? | throw .noSuchMarker
             gone.text.release
             other.text.insert 5 "!"
-            let (loop, _) ← stepped { state } pressA
+            let (loop, _) ← stepped { state } pressF5
             -- The loop recorded the insertion in the other buffer's history:
             -- one undo of it takes the insertion back.
             let some kept := loop.state.buffers[1]? | throw .noSuchMarker
@@ -4023,7 +4025,7 @@ def loopChecks : List Check :=
             text.release
             let state :=
               { state with buffers := state.buffers.push { name := "hidden", text, history } }
-            return (← stepped { state } pressA).1
+            return (← stepped { state } pressF5).1
           -- A buffer whose history is over another text than its own: the
           -- history is recorded, and only the view is refused.
           let astray : EditorM TestLoop := do
@@ -4032,7 +4034,7 @@ def loopChecks : List Check :=
             let history ← UndoTree.over (← createText "elsewhere")
             buffer.text.release
             let state := { state with buffers := #[{ buffer with history }] }
-            return (← stepped { state } pressA).1
+            return (← stepped { state } pressF5).1
           (match hidden.runModel editorModel with
             | (.ok loop, model) =>
               loop.state.echo == "refused: no such text" &&
@@ -4061,7 +4063,7 @@ def loopChecks : List Check :=
             let some second := loop.shown[0]? | throw .noSuchMarker
             let shown ← second.snapshot.read
             let echoed := loop.state.echo == "refused: no such snapshot"
-            loop := (← stepped loop pressA).1
+            loop := (← stepped loop pressF5).1
             return (loop, shown, echoed && first.snapshot != second.snapshot)
           match program.runModel editorModel with
           | (.ok (loop, shown, echoed), model) =>
@@ -4573,6 +4575,117 @@ def schemeChecks : List Check :=
         pure
           (first ++ second == (fed ⟨0⟩ "C-x C-s a").2 && decide (state = (fed ⟨0⟩ "C-x C-s a").1) &&
             fed ⟨0⟩ "" == ({}, [])) }]
+
+/-- A press of `key` with no text, as a window reports one. -/
+def press (key : Key) : Event :=
+  .key key true ""
+
+/-- A press of each key the key string `text` names, in order. -/
+def presses (text : String) : List Event :=
+  (keys text).map press
+
+/-- What a step of the dispatch checks is handed: one keymap, the same for
+every view, that binds each key string of `bindings` to the invocation
+beside it. -/
+def dispatchKeys (bindings : List (String × Invocation)) : Loop.Keys TestScheme.scheme :=
+  {
+    maps := fun _ =>
+      [Keymap.ofList (bindings.map fun (text, invocation) => (keys text, invocation))] }
+
+/-- Feeds `loop` the `events` in order, each step handed `keys`: the loop
+after them and what each step handed back. -/
+def stepsWith (keys : Loop.Keys TestScheme.scheme) (loop : TestLoop) (events : List Event) :
+    EditorM (TestLoop × Array (Loop.Stepped TestScheme.scheme)) := do
+  let mut loop := loop
+  let mut steps := #[]
+  for event in events do
+    let after ← loop.step keys event
+    loop := after.loop
+    steps := steps.push after
+  return (loop, steps)
+
+/-- What a run of the loop over the state `start` makes came to on the
+models `model`, each step handed `keys`: the loop and what each step handed
+back, the scenes the display recorded, and the models. `none` when it was
+refused. -/
+def dispatched (keys : Loop.Keys TestScheme.scheme) (events : List Event)
+    (start : TextM EditorState := EditorState.initial ⟨640, 480⟩)
+    (model : EditorModel := editorModel) :
+    Option ((TestLoop × Array (Loop.Stepped TestScheme.scheme)) × Array Scene × EditorModel) :=
+  let program : EditorM (TestLoop × Array (Loop.Stepped TestScheme.scheme)) := do
+    stepsWith keys { state := ← start } events
+  match program.runModel model with
+  | (.ok result, model) => some (result, model.display.scenes, model)
+  | (.error _, _) => none
+
+/-- The pending keys each scene of a run showed; none of them when the run
+was refused. -/
+def pendingShown (keys : Loop.Keys TestScheme.scheme) (events : List Event)
+    (start : TextM EditorState := EditorState.initial ⟨640, 480⟩) : Array String :=
+  match dispatched keys events start with
+  | some (_, scenes, _) => scenes.map (·.pending)
+  | none => #[]
+
+/-- The checks of key dispatch in the loop (`Editor/Loop.lean`), on the
+editor's models and the test scheme, with keymaps written here: which keys
+are stepped through the scheme, and the pending keys the scene shows. -/
+def dispatchChecks : List Check :=
+  let saves := dispatchKeys [("C-x C-s", invoke "save"), ("C-x r t", invoke "rectangle")]
+  [{  name :=
+        "after the first key of a bound sequence the scene shows it as pending, after each further key of a longer one the keys so far, and after the key that completes the sequence none"
+      run :=
+        pure
+          (pendingShown saves (presses "C-x C-s") == #["C-x", ""] &&
+            pendingShown saves (presses "C-x r t") == #["C-x", "C-x r", ""]) },
+    { name :=
+        "after a prefix and then a key that goes on with no binding, the scene shows no pending keys, and the sequence typed next is pending from its first key again"
+      run :=
+        pure
+          (pendingShown saves (presses "C-x" ++ [pressF5] ++ presses "C-x") ==
+            #["C-x", "", "C-x"]) },
+    { name :=
+        "a key release, and a press and a release of a modifier key by itself, between two keys of a sequence are not stepped: the prefix is still pending after each"
+      run :=
+        let shift : Key :=
+          { logical := .named ⟨"Shift"⟩, physical := .code "ShiftLeft",
+            modifiers := { shift := true } }
+        let between : List Event :=
+          [.key (controlKey "x") false "", press shift,
+            .key { shift with modifiers := {} } false ""]
+        pure
+          (pendingShown saves (presses "C-x" ++ between ++ presses "r") ==
+            #["C-x", "C-x", "C-x", "C-x", "C-x r"]) },
+    { name :=
+        "a press the platform repeated is stepped like any press, and a key from a window is taken by its chord"
+      run :=
+        let held : Key :=
+          { controlKey "x" with
+            physical := .code "KeyX", repeated := true }
+        pure (pendingShown saves [press held] == #["C-x"]) },
+    { name :=
+        "a key is for the focused view: it is looked up in that view's keymaps, and in no other's"
+      run :=
+        let onlyFirst : Loop.Keys TestScheme.scheme :=
+          { maps := fun view => if view == ⟨1⟩ then saves.maps view else [] }
+        let focusedOn (view : ViewId) : TextM EditorState := do
+          return ((← threeWindows).focusWindow view).2
+        pure
+          (pendingShown onlyFirst (presses "C-x") (focusedOn ⟨1⟩) == #["C-x"] &&
+            pendingShown onlyFirst (presses "C-x") (focusedOn ⟨0⟩) == #[""]) },
+    { name :=
+        "a modifier key by itself is each named key of the W3C modifier names, with or without modifiers held, and no other key: not a character with shift held, and not another named key"
+      run :=
+        pure
+          (["Shift", "Control", "Alt", "AltGraph", "Meta", "Super", "Hyper", "CapsLock", "NumLock",
+                  "ScrollLock", "Fn", "FnLock", "Symbol", "SymbolLock"].all
+              (fun name =>
+                (namedKey ⟨name⟩).isModifier &&
+                  (namedKey ⟨name⟩ { shift := true, control := true }).isModifier) &&
+            !(charKey "A" { shift := true }).isModifier &&
+            !(namedKey .escape).isModifier &&
+            !(namedKey ⟨"F5"⟩).isModifier &&
+            !({ logical := .dead none } : Key).isModifier &&
+            !({ logical := .unidentified } : Key).isModifier) }]
 
 /-- A scheme written for the test that breaks the contract: it yields the
 first binding that the keys so far begin, so it emits on a strict prefix. -/
@@ -5805,6 +5918,7 @@ def checks : List Check :=
     invocationChecks ++
     schemeChecks ++
     schemeContractChecks ++
+    dispatchChecks ++
     vimEditChecks ++
     vimRegistryChecks ++
     vimGrammarChecks ++

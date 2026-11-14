@@ -30,7 +30,9 @@ yet completed (`pending`), for the scene's pending text.
 
 Which keys print text is the same for every scheme (`Key.printed?`): a
 scheme that yields a self-insert for an unbound key asks it what the key
-prints.
+prints. Which keys are modifiers by themselves is too (`Key.isModifier`):
+whoever steps a scheme does not step one, so a scheme never sees the press
+of Shift that comes before a shifted key.
 
 A scheme also says what a key bound to a command name is (`command`): the
 binding, of its own type, that runs the command of that name. So whoever
@@ -96,6 +98,22 @@ def Key.printed? (key : Key) : Option String :=
   | .character text =>
     if key.modifiers.control || key.modifiers.alt || key.modifiers.superKey then none else some text
   | _ => none
+
+/-- The W3C UI Events `key` values of the keys that are modifiers by
+themselves. -/
+def Key.modifierNames : List String :=
+  ["Shift", "Control", "Alt", "AltGraph", "Meta", "Super", "Hyper", "CapsLock", "NumLock",
+    "ScrollLock", "Fn", "FnLock", "Symbol", "SymbolLock"]
+
+/-- Whether `key` is a modifier key by itself: a named key whose name is one
+of `Key.modifierNames`, whatever modifiers are held with it. A window
+reports the press of Shift before the `G` it shifts, and that press is no
+key of a sequence: whoever steps a scheme does not step it, for any
+scheme. -/
+def Key.isModifier (key : Key) : Bool :=
+  match key.logical with
+  | .named named => Key.modifierNames.contains named.name
+  | _ => false
 
 /-- Steps `scheme` from `state` through `keys`, each a key for `view`: the
 state it is left in, and what each key yielded, one entry a key, in order. -/

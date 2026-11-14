@@ -1,6 +1,7 @@
 import Editor.Command
 import Editor.Event
 import Editor.InputScheme
+import Editor.Key.Notation
 import Editor.State
 
 /-!
@@ -22,6 +23,18 @@ when it starts and keeps for its life: `Loop scheme`
 the scheme's state. A step is also handed `Loop.Keys`: the active keymaps
 of each view, which the caller makes for each step.
 
+- **Which keys are stepped** (`Loop.stepped?`). A key press, a repeat among
+  them, whose key is not a modifier by itself (`Key.isModifier`). A release
+  is not stepped, and neither is the press of Shift a window reports before
+  a shifted key: stepped, it would be an unbound key and would reset the
+  sequence begun.
+- **The key is for the focused view** (`Loop.key`): the frame's. The
+  event's text is not read: a scheme asks `Key.printed?`.
+- **The scene shows the pending keys** (`Loop.pending`): what the scheme
+  reports as pending, as a key string. It is empty once a sequence
+  completes and after a key that goes on with no binding, since the scheme
+  then reports none.
+
 ## What each event does
 
 | Event | What it does to the state |
@@ -32,7 +45,8 @@ of each view, which the caller makes for each step.
 | `resize` | Sets the frame's size; the views are laid out in it when the scene is made. Its scale is not kept: the scene has no field for it |
 | `focus gained` | Sets whether the frame has the keyboard focus |
 | `closeRequested`, `quit` | Nothing: the step says stop, and publishes nothing |
-| a key, a pointer, `windowOpened`, `compositionEnabled`, a message, a completion | Nothing. A key is decoded and dropped until key lookup (the command loop's phase 6) |
+| a key press | Nothing to the editor state. It is stepped through the scheme, whose state the loop keeps ("The scheme") |
+| a key release, the press of a modifier by itself, a pointer, `windowOpened`, `compositionEnabled`, a message, a completion | Nothing |
 
 A handler is given what it acts on (a `Target`: the window and its buffer),
 never "the current buffer". When one is refused, the state stays as it was
@@ -57,7 +71,7 @@ changed the state or not (`Loop.publish`):
    markers, its cursor a bar in the face `cursor`, with no decorations and
    an empty status line: later phases choose those. The focused view is
    named only while the frame has the keyboard focus. The pending prefix is
-   empty: key lookup is phase 6.
+   the scheme's pending keys (`Loop.pending`).
 3. **Publish** it through the display port.
 4. **Release** each snapshot the previous scene named that this one does
    not. So a scene's handles are alive while it is the last one published,
@@ -250,11 +264,18 @@ def views (loop : Loop scheme) : TextM (Array View × Array Shown × Option Text
   return (views, shown, refusal)
 
 /-- The scene of `state` over `views`: what the state says of the frame, the
-echo area and the preedit, around the views made of its windows. -/
-def scene (state : EditorState) (views : Array View) : Scene :=
+echo area and the preedit, around the views made of its windows, with
+`pending` as the keys typed of a sequence not yet completed. -/
+def scene (state : EditorState) (views : Array View) (pending : String) : Scene :=
   let frame := state.frame
   { size := frame.size, views, focused := if frame.hasFocus then some frame.focused else none
-    echo := state.echo, pending := "", preedit := state.preedit }
+    echo := state.echo, pending, preedit := state.preedit }
+
+/-- The keys the scheme reports as pending in the loop's state, as a key
+string (`Key.notations`): what the scene shows of a sequence begun and not
+completed, and empty when none is. -/
+def pending (loop : Loop scheme) : String :=
+  Key.notations (scheme.pending loop.input)
 
 /-- Records the histories, publishes a scene of the state, and releases each
 snapshot the last scene named that this one does not. It is not refused
@@ -265,7 +286,7 @@ def publish (loop : Loop scheme) : EditorM (Loop scheme) := do
   let (state, unrecorded) ← loop.state.recordHistories
   let (views, shown, unshown) ← ({ loop with state } : Loop scheme).views
   let state := state.refusedBy (unrecorded <|> unshown)
-  Display.publish (scene state views)
+  Display.publish (scene state views loop.pending)
   let mut unreleased := none
   for was in loop.shown do
     unless shown.any (·.snapshot == was.snapshot) do
@@ -322,13 +343,30 @@ def handle (state : EditorState) : Event → EditorM EditorState
     return { state with preedit := none }
   | _ => return state
 
+/-- Whether the loop steps `event` through its scheme: a key press, a
+repeat among them, whose key is not a modifier by itself
+(`Key.isModifier`). The key it steps, if so. -/
+def stepped? : Event → Option Key
+  | .key key true _ => if key.isModifier then none else some key
+  | _ => none
+
+/-- One key through the scheme, for the focused view: the loop with the
+scheme's state after the key, and the invocation the key completed, if it
+completed one. -/
+def key (keys : Keys scheme) (loop : Loop scheme) (key : Key) : Loop scheme × Option Invocation :=
+  let (input, yielded) := scheme.step keys.maps loop.state.frame.focused loop.input key
+  ({ loop with input }, yielded)
+
 /-- Handles `event` and publishes a scene of the state after it, and says
 whether to go on. A close request and a quit stop the loop and publish
-nothing. A handler that is refused leaves the state as it was, with the
-refusal in the echo area. The step itself is not refused: the publish puts
-a refusal of its own in the echo area too ("When publishing is refused", in
-the module docs). -/
-def step (_ : Keys scheme) (loop : Loop scheme) (event : Event) : EditorM (Stepped scheme) := do
+nothing. A key press is stepped through the scheme (`stepped?`, `key`). A
+handler that is refused leaves the state as it was, with the refusal in the
+echo area. The step itself is not refused: the publish puts a refusal of its
+own in the echo area too ("When publishing is refused", in the module
+docs). -/
+def step (keys : Keys scheme) (loop : Loop scheme) (event : Event) : EditorM (Stepped scheme) := do
+  if let some pressed := stepped? event then
+    return { loop := ← (loop.key keys pressed).1.publish, next := .continue }
   match event with
   | .closeRequested | .quit =>
     return { loop, next := .stop }
