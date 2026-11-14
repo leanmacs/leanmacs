@@ -145,6 +145,28 @@ constructor.
   called `name`: the name itself, or the name followed by `<2>`, `<3>` and
   so on, the first that is free. Two files with one base name are two
   buffers this way.
+- **The state keeps a save in flight** (`Buffer.File.saving`, a
+  `Buffer.Saving`): a save whose job has been started and whose result
+  has not yet been delivered. It holds the snapshot the save writes and
+  the state the text was in when the snapshot was taken.
+  - `beginSave` records one. It refuses `noSuchBuffer`, `noFile` for a
+    buffer that shows no file, and `beingSaved` while a save is in flight.
+    Two saves of one buffer in flight would both expect the stamp from
+    before the first, and the second would be refused as changed on disk
+    though nothing but the editor wrote the file; here the second is
+    refused when it is asked, with a refusal that says why.
+  - `endSave` ends the one that writes a given snapshot: it is no longer
+    in flight. Given the stamp of the file the save wrote, the buffer's
+    file has that stamp and the kept state is the one marked as saved
+    (`UndoTree.markSaved`): a buffer whose text has moved on since stays
+    modified, since a save that reports late marks the state it wrote.
+    Given no stamp, for a save that was refused, neither changes. It
+    refuses `noSuchBuffer`, and `notBeingSaved` unless a save of the
+    buffer that writes that snapshot is in flight.
+  - Ending a save is one request that asks the text store nothing, so the
+    command that makes it cannot be interrupted between the stamp and the
+    mark. The snapshot is released by the loop, once that command has run
+    to its end (`Editor/Loop.lean`, "What a finished command gave up").
 
 ## A buffer's modes
 
@@ -363,6 +385,13 @@ inductive BufferRefusal where
   | notItsHistory
   /-- Another buffer, `other`, holds the file at this path. -/
   | fileOpen (other : BufferId)
+  /-- The buffer shows no file. -/
+  | noFile
+  /-- A save of the buffer is in flight. -/
+  | beingSaved
+  /-- No save of the buffer is in flight, or the one that is writes another
+  snapshot. -/
+  | notBeingSaved
   deriving DecidableEq, Repr
 
 /-- Why a job was not started. -/
@@ -624,6 +653,61 @@ where
           { buffer with
             file := some { path, stamp }, lineEnding := ending }))
       state
+
+/-- Records a save of the buffer `id` as in flight: it writes `snapshot`,
+which was taken with the buffer's text in the state `saved`. Refused, with
+the state unchanged, with `noSuchBuffer` for a buffer there is none of,
+with `noFile` for a buffer that shows no file, and with `beingSaved` while
+a save of it is in flight. -/
+def beginSave (id : BufferId) (snapshot : SnapshotId) (saved : UndoTree.State)
+    (state : EditorState) : Except BufferRefusal Unit × EditorState :=
+  match state.buffer? id with
+  | none => (.error (.noSuchBuffer id), state)
+  | some buffer =>
+    match buffer.file with
+    | none => (.error .noFile, state)
+    | some file =>
+      if file.saving.isSome then (.error .beingSaved, state)
+      else
+        changeBuffer id
+          (fun buffer =>
+            ((),
+              { buffer with
+                file := some { file with saving := some { snapshot, state := saved } } }))
+          state
+
+/-- Ends the save of the buffer `id` that writes `snapshot`: the save is no
+longer in flight. With the stamp of the file it wrote, the buffer's file
+has that stamp, and the state the save kept is the one marked as saved in
+the buffer's history (`UndoTree.markSaved`), wherever the text is by now.
+With `none`, for a save that was refused, neither changes. Refused, with
+the state unchanged, with `noSuchBuffer` for a buffer there is none of, and
+with `notBeingSaved` unless a save of the buffer that writes `snapshot` is
+in flight. -/
+def endSave (id : BufferId) (snapshot : SnapshotId) (stamp : Option File.Stamp)
+    (state : EditorState) : Except BufferRefusal Unit × EditorState :=
+  match state.buffer? id with
+  | none => (.error (.noSuchBuffer id), state)
+  | some buffer =>
+    match buffer.file with
+    | none => (.error .notBeingSaved, state)
+    | some file =>
+      match file.saving with
+      | none => (.error .notBeingSaved, state)
+      | some saving =>
+        if saving.snapshot != snapshot then (.error .notBeingSaved, state)
+        else
+          let ended : Buffer :=
+            match stamp with
+            | some stamp =>
+              { buffer with
+                file :=
+                  some
+                    { file with
+                      stamp, saving := none }
+                history := buffer.history.markSaved saving.state }
+            | none => { buffer with file := some { file with saving := none } }
+          changeBuffer id (fun _ => ((), ended)) state
 
 /-- The value the buffer `id` keeps under `name`, if it keeps one. -/
 def value? (state : EditorState) (id : BufferId) (name : String) : Option Value := do

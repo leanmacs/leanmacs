@@ -4165,7 +4165,8 @@ def stateRequests : List StateRequest :=
     .focus ⟨9⟩, .show ⟨0⟩ ⟨2⟩ (marker 2 0) (marker 2 1), .show ⟨0⟩ ⟨9⟩ (marker 2 0) (marker 2 1),
     .show ⟨0⟩ ⟨2⟩ (marker 0 0) (marker 2 1), .show ⟨9⟩ ⟨2⟩ (marker 2 0) (marker 2 1), .message "hi",
     .startJob "count" [.nat 1], .attachFile ⟨2⟩ notePath noteStamp .crlf,
-    .attachFile ⟨9⟩ notePath noteStamp .lf]
+    .attachFile ⟨9⟩ notePath noteStamp .lf, .beginSave ⟨0⟩ ⟨4⟩ ⟨0⟩, .beginSave ⟨9⟩ ⟨4⟩ ⟨0⟩,
+    .endSave ⟨0⟩ ⟨4⟩ (some noteStamp), .endSave ⟨9⟩ ⟨4⟩ none]
 
 /-- The checks of the state requests' pure handler (`EditorState.handle`,
 `Editor/State/Request.lean`), on states made on the text model. The handler
@@ -4462,6 +4463,82 @@ def stateRequestChecks : List Check :=
               ((replaced.buffer? ⟨1⟩).map fun buffer => (buffer.file, buffer.lineEnding)) ==
                 some (some { path := notePath, stamp := later }, .lf) &&
               replaced.findFile notePath == some ⟨1⟩ },
+    { name :=
+        "beginning a save of a buffer with a file records the snapshot and the state as the save in flight and leaves the rest; it is refused with noFile for a buffer with no file, with beingSaved while a save is in flight and with noSuchBuffer, each with the state as it was"
+      run :=
+        pure <|
+          match onTextModel twoBuffers with
+          | none => false
+          | some state =>
+            let (_, held) := state.handle (.attachFile ⟨1⟩ notePath noteStamp .crlf)
+            let (begun, saving) := held.handle (.beginSave ⟨1⟩ ⟨5⟩ ⟨3⟩)
+            let (bare, same) := held.handle (.beginSave ⟨0⟩ ⟨5⟩ ⟨3⟩)
+            let (twice, still) := saving.handle (.beginSave ⟨1⟩ ⟨6⟩ ⟨4⟩)
+            let (absent, yet) := held.handle (.beginSave ⟨9⟩ ⟨5⟩ ⟨3⟩)
+            replied begun == .inr () &&
+              (saving.buffer? ⟨1⟩) ==
+                (held.buffer? ⟨1⟩).map
+                  ({ · with
+                    file :=
+                      some
+                        { path := notePath, stamp := noteStamp
+                          saving := some { snapshot := ⟨5⟩, state := ⟨3⟩ } } }) &&
+              { saving with buffers := held.buffers } == held &&
+              replied bare == .inl .noFile &&
+              same == held &&
+              replied twice == .inl .beingSaved &&
+              still == saving &&
+              replied absent == .inl (.noSuchBuffer ⟨9⟩) &&
+              yet == held },
+    { name :=
+        "ending a save with a stamp clears the save in flight, records the stamp, and marks the state the save kept as saved: a buffer still in that state is no longer modified, and one whose text has moved on since still is; ending it with no stamp clears the save in flight and changes neither the stamp nor the saved state"
+      run :=
+        pure <|
+          match onTextModel twoBuffers with
+          | none => false
+          | some state =>
+            let later : File.Stamp :=
+              { noteStamp with
+                seconds := 9, size := 12 }
+            let edited := (UndoTree.new ⟨1⟩ 0).record 3
+            let (_, held) := state.handle (.attachFile ⟨1⟩ notePath noteStamp .crlf)
+            let (_, held) := held.handle (.setHistory ⟨1⟩ edited)
+            let (_, saving) := held.handle (.beginSave ⟨1⟩ ⟨5⟩ edited.state)
+            let (ended, saved) := saving.handle (.endSave ⟨1⟩ ⟨5⟩ (some later))
+            let (_, moved) := saving.handle (.setHistory ⟨1⟩ (edited.record 4))
+            let (_, late) := moved.handle (.endSave ⟨1⟩ ⟨5⟩ (some later))
+            let (refused, unsaved) := saving.handle (.endSave ⟨1⟩ ⟨5⟩ none)
+            let seen (state : EditorState) :=
+              (state.buffer? ⟨1⟩).map fun buffer =>
+                (buffer.file, buffer.isModified, buffer.history.saved)
+            seen held == some (some { path := notePath, stamp := noteStamp }, true, some ⟨0⟩) &&
+              replied ended == .inr () &&
+              seen saved == some (some { path := notePath, stamp := later }, false, some ⟨3⟩) &&
+              (saved.buffer? ⟨1⟩).map (·.history) == some (edited.markSaved edited.state) &&
+              { saved with buffers := held.buffers } == held &&
+              seen late == some (some { path := notePath, stamp := later }, true, some ⟨3⟩) &&
+              replied refused == .inr () &&
+              unsaved == held },
+    { name :=
+        "ending a save is refused with notBeingSaved for a snapshot that is not the one of the save in flight, for a buffer with no save in flight and for one with no file, and with noSuchBuffer, each with the state as it was"
+      run :=
+        pure <|
+          match onTextModel twoBuffers with
+          | none => false
+          | some state =>
+            let (_, held) := state.handle (.attachFile ⟨1⟩ notePath noteStamp .crlf)
+            let (_, saving) := held.handle (.beginSave ⟨1⟩ ⟨5⟩ ⟨3⟩)
+            let (other, same) := saving.handle (.endSave ⟨1⟩ ⟨6⟩ (some noteStamp))
+            let (idle, still) := held.handle (.endSave ⟨1⟩ ⟨5⟩ (some noteStamp))
+            let (bare, yet) := saving.handle (.endSave ⟨0⟩ ⟨5⟩ none)
+            let (absent, last) := saving.handle (.endSave ⟨9⟩ ⟨5⟩ none)
+            replied other == .inl .notBeingSaved && same == saving &&
+              replied idle == .inl .notBeingSaved &&
+              still == held &&
+              replied bare == .inl .notBeingSaved &&
+              yet == saving &&
+              replied absent == .inl (.noSuchBuffer ⟨9⟩) &&
+              last == saving },
     { name :=
         "every kind of request, accepted and refused, leaves a well-formed state well formed, and the state with nothing in it answers each without a buffer or a window"
       run := do

@@ -5,8 +5,8 @@ import Editor.State
 # The state requests
 
 What a command asks of the editor state (`Editor/State.lean`): its buffers
-and the files they hold, its windows, the echo area and the jobs to start. A `StateRequest` is a
-request of the editor's port (`EditorRequest.state`,
+and the files they hold, its windows, the echo area and the jobs to start.
+A `StateRequest` is a request of the editor's port (`EditorRequest.state`,
 `Editor/Command.lean`), and `EditorState.handle` is its handler: one pure
 function from a request and a state to the reply and the state after it. It
 reaches nothing outside the state, so it has no model and no binding: the
@@ -36,6 +36,13 @@ the models and against the library alike (`Editor/Command/Dispatch.lean`).
 - **A marker is made by the caller.** `split` and `show` are handed the
   markers of the window they make or change, which the command marked on
   the buffer's text first: the handler asks the text store nothing.
+- **A file is attached by one request, and a save is two.** `attachFile`
+  has a buffer hold a file a load answered. `beginSave` records a save in
+  flight, with the snapshot it writes, which the command took first, and
+  `endSave` ends it with what the save answered: the stamp and the saved
+  mark are set by that one request (`Editor/State.lean`, "A buffer's
+  file"). The handler releases no snapshot: the loop does, once the
+  command that ended the save has run to its end.
 
 ## Where an addition goes
 
@@ -88,6 +95,12 @@ inductive StateRequest where
   |
   attachFile (id : BufferId) (path : System.FilePath) (stamp : File.Stamp)
     (ending : File.LineEnding)
+  /-- Record a save of the buffer `id` as in flight: it writes `snapshot`,
+  taken with the buffer's text in the state `saved`. -/
+  | beginSave (id : BufferId) (snapshot : SnapshotId) (saved : UndoTree.State)
+  /-- End the save of the buffer `id` that writes `snapshot`: with the stamp
+  of the file it wrote, or with `none` for a save that was refused. -/
+  | endSave (id : BufferId) (snapshot : SnapshotId) (stamp : Option File.Stamp)
 
 /-- The type of the reply to each request. -/
 abbrev StateRequest.Reply : StateRequest → Type
@@ -106,6 +119,8 @@ abbrev StateRequest.Reply : StateRequest → Type
   | .message _ => Unit
   | .startJob .. => Except JobRefusal Unit
   | .attachFile .. => Except BufferRefusal Unit
+  | .beginSave .. => Except BufferRefusal Unit
+  | .endSave .. => Except BufferRefusal Unit
 
 namespace EditorState
 
@@ -142,6 +157,8 @@ def handle : (request : StateRequest) → EditorState → request.Reply × Edito
   | .startJob name arguments, state =>
     (.ok (), { state with starts := state.starts.push { name, arguments } })
   | .attachFile id path stamp ending, state => state.attachFile id path stamp ending
+  | .beginSave id snapshot saved, state => state.beginSave id snapshot saved
+  | .endSave id snapshot stamp, state => state.endSave id snapshot stamp
 
 end EditorState
 
