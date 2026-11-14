@@ -867,6 +867,28 @@ Nothing calls forget yet outside tests.
 A **buffer** is text plus a name, an optional file, buffer-local values and
 modes. The text is a Rust object; the rest is Lean state.
 
+As built (`lean/Editor/State.lean`, "A buffer's file"; the command loop's
+phase 9):
+
+- **What a buffer keeps of a file**: its path, and the stamp the last load
+  or save of it answered, which is what the next save expects to find on
+  disk. A buffer comes to hold a file by a load, so the stamp is always
+  there.
+- **Its line ending** is the buffer's own, a line feed unless a file said
+  otherwise, because a buffer with no file needs one too.
+- **The saved state stays in the undo tree**, and "is it modified" is the
+  tree's answer. The buffer keeps no second copy.
+- **A path is matched to a buffer by equality of the path string.** Two
+  spellings of one file (a symbolic link, `..`, a doubled slash) are two
+  buffers. That is safe: once one is saved, a save of the other is refused
+  as changed on disk, so neither overwrites the other unnoticed. One buffer
+  for each file on disk would need a canonical path, which is the file
+  system's to answer and which the file port does not; removing `..` in
+  Lean is wrong across a symbolic link. A path is attached to one buffer
+  only, so the match has one answer.
+- **A buffer's name need not be its file's base name.** A second file with
+  a base name a buffer has is called `name<2>`, then `name<3>`.
+
 An **excerpt buffer** is a buffer assembled from ranges of other buffers,
 each shown under a header, and editable in place: an edit in an excerpt is
 an edit to the underlying buffer. One primitive serves search results,

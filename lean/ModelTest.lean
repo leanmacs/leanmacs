@@ -3959,6 +3959,31 @@ def stateChecks : List Check :=
               state.echo == "" &&
               state.preedit == none },
     { name :=
+        "the initial state's buffer has no file, and its line ending is a line feed; no path finds a buffer"
+      run :=
+        pure <|
+          match onTextModel (EditorState.initial ⟨640, 480⟩) with
+          | none => false
+          | some state =>
+            ((state.buffer? ⟨0⟩).map fun buffer => (buffer.file, buffer.lineEnding)) ==
+                some (none, .lf) &&
+              state.findFile "/files/note.txt" == none },
+    { name :=
+        "a free name is the name itself when no buffer has it, and otherwise the name followed by <2>, <3> and so on, the first no buffer has"
+      run :=
+        pure <|
+          match onTextModel twoBuffers with
+          | none => false
+          | some state =>
+            let named (names : List String) : EditorState :=
+              names.foldl (fun state name => (state.addBuffer name ⟨1⟩ (UndoTree.new ⟨1⟩ 0)).2)
+                state
+            state.freeName "new" == "new" && state.freeName "other" == "other<2>" &&
+              (named ["other<2>"]).freeName "other" == "other<3>" &&
+              (named ["other<3>"]).freeName "other" == "other<2>" &&
+              (named ["other<2>", "other<3>"]).freeName "other" == "other<4>" &&
+              (named ["other<2>"]).freeName "other<2>" == "other<2><2>" },
+    { name :=
         "a state that breaks one layout invariant is not well formed: a focus outside the tree, no minibuffer leaf or two, a window named twice, a tree window with no window, a window outside the tree, a window with no buffer"
       run := do
         let some state := onTextModel threeWindows | return false
@@ -4107,6 +4132,15 @@ def hiddenBuffer : TextM (EditorState × TextId) := do
   return ({ state with buffers := state.buffers.push (some { name := "hidden", text, history }) },
       text)
 
+/-- The path of a file of the state checks. Nothing opens it. -/
+def notePath : System.FilePath :=
+  "/files/note.txt"
+
+/-- A stamp of the state checks: any one, for a file the checks say a
+buffer holds. -/
+def noteStamp : File.Stamp :=
+  { seconds := 3, nanoseconds := 0, size := 9 }
+
 /-- The requests a well-formed state is seen to stay well formed under, on
 `hiddenBuffer`, whose buffers' texts are 0, 1 and 2: each kind of request,
 accepted and refused. -/
@@ -4121,7 +4155,8 @@ def stateRequests : List StateRequest :=
     .split ⟨9⟩ .rows (marker 0 8) (marker 0 9), .removeWindow ⟨1⟩, .removeWindow ⟨9⟩, .focus ⟨1⟩,
     .focus ⟨9⟩, .show ⟨0⟩ ⟨2⟩ (marker 2 0) (marker 2 1), .show ⟨0⟩ ⟨9⟩ (marker 2 0) (marker 2 1),
     .show ⟨0⟩ ⟨2⟩ (marker 0 0) (marker 2 1), .show ⟨9⟩ ⟨2⟩ (marker 2 0) (marker 2 1), .message "hi",
-    .startJob "count" [.nat 1]]
+    .startJob "count" [.nat 1], .attachFile ⟨2⟩ notePath noteStamp .crlf,
+    .attachFile ⟨9⟩ notePath noteStamp .lf]
 
 /-- The checks of the state requests' pure handler (`EditorState.handle`,
 `Editor/State/Request.lean`), on states made on the text model. The handler
@@ -4374,6 +4409,50 @@ def stateRequestChecks : List Check :=
                 #[{ name := "count", arguments := [.nat 3] },
                   { name := "load", arguments := [.str "a", .bool true] }] &&
               { two with starts := #[] } == state },
+    { name :=
+        "attaching a file to a buffer sets its path, its stamp and its line ending, with no save in flight, and leaves the rest of the buffer and the other buffers; the buffer is then found by that path and by no other"
+      run :=
+        pure <|
+          match onTextModel twoBuffers with
+          | none => false
+          | some state =>
+            let (attached, after) := state.handle (.attachFile ⟨1⟩ notePath noteStamp .crlf)
+            replied attached == .inr () &&
+              (after.buffer? ⟨1⟩) ==
+                (state.buffer? ⟨1⟩).map
+                  ({ · with
+                    file := some { path := notePath, stamp := noteStamp }, lineEnding := .crlf }) &&
+              ((after.buffer? ⟨1⟩).bind (·.file)).map (·.saving) == some none &&
+              after.buffer? ⟨0⟩ == state.buffer? ⟨0⟩ &&
+              after.findFile notePath == some ⟨1⟩ &&
+              after.findFile "/files/other.txt" == none &&
+              after.findFile "/files/../files/note.txt" == none &&
+              state.findFile notePath == none &&
+              { after with buffers := state.buffers } == state },
+    { name :=
+        "attaching a file is refused with noSuchBuffer for a buffer there is none of, and with fileOpen and the buffer that holds the path when another buffer does, each with the state as it was; attaching the path a buffer holds to that buffer again replaces its stamp and its line ending"
+      run :=
+        pure <|
+          match onTextModel twoBuffers with
+          | none => false
+          | some state =>
+            let later : File.Stamp :=
+              { noteStamp with
+                seconds := 9, size := 12 }
+            let (_, held) := state.handle (.attachFile ⟨1⟩ notePath noteStamp .crlf)
+            let (absent, same) := state.handle (.attachFile ⟨9⟩ notePath noteStamp .lf)
+            let (taken, still) := held.handle (.attachFile ⟨0⟩ notePath later .lf)
+            let (unseen, yet) := held.handle (.attachFile ⟨9⟩ notePath later .lf)
+            let (again, replaced) := held.handle (.attachFile ⟨1⟩ notePath later .lf)
+            replied absent == .inl (.noSuchBuffer ⟨9⟩) && same == state &&
+              replied taken == .inl (.fileOpen ⟨1⟩) &&
+              still == held &&
+              replied unseen == .inl (.noSuchBuffer ⟨9⟩) &&
+              yet == held &&
+              replied again == .inr () &&
+              ((replaced.buffer? ⟨1⟩).map fun buffer => (buffer.file, buffer.lineEnding)) ==
+                some (some { path := notePath, stamp := later }, .lf) &&
+              replaced.findFile notePath == some ⟨1⟩ },
     { name :=
         "every kind of request, accepted and refused, leaves a well-formed state well formed, and the state with nothing in it answers each without a buffer or a window"
       run := do

@@ -41,6 +41,11 @@ nothing in it.
   port's reads on it (`TextId.read`, `rowContent`, `slice`, `byteLength`
   and the rest of `Editor/Text.lean`): there is no read request of the
   state beside them.
+- `BufferId.attachFile id path stamp ending` has a buffer hold a file: its
+  path, the stamp a load of it answered, and the buffer's line ending
+  (`Editor/State.lean`, "A buffer's file"). A path another buffer holds is
+  refused (`fileOpen`). Which buffer holds a path is a question of the
+  state (`EditorState.findFile`).
 
 ## Edits at positions
 
@@ -263,6 +268,14 @@ def text (id : BufferId) : EditorM (Except BufferRefusal TextId) := do
 is none of, and with `shown` while a window shows it. -/
 def remove (id : BufferId) : EditorM (Except BufferRefusal Unit) :=
   EditorState.ask (.removeBuffer id)
+
+/-- Has the buffer `id` hold the file at `path`, whose stamp is `stamp`,
+with `ending` as the buffer's line ending. Refused with `noSuchBuffer` for a
+buffer there is none of, and with `fileOpen` for a path another buffer
+holds. -/
+def attachFile (id : BufferId) (path : System.FilePath) (stamp : File.Stamp)
+    (ending : File.LineEnding) : EditorM (Except BufferRefusal Unit) :=
+  EditorState.ask (.attachFile id path stamp ending)
 
 /-- Replaces the bytes of the buffer `id`'s text from `start` up to, not
 including, `stop` with `s` (`TextId.replaceRange`). Refused with

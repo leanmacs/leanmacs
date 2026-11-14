@@ -1,3 +1,4 @@
+import Editor.File
 import Editor.Invocation
 import Editor.Scene
 import Editor.UndoTree
@@ -18,7 +19,9 @@ a scene of it after each.
   or none, and its minor modes, the one added last first. A name here is
   only a name: what a mode is, and what its keys and its `onEnter` are, is
   the registry's (`Editor/Mode.lean`, `Editor/Config/Registry.lean`), and a
-  name no registered mode has contributes nothing.
+  name no registered mode has contributes nothing. It also keeps the file
+  it shows, if it shows one, and its line ending ("A buffer's file",
+  below).
 - **Buffers are kept in slots** (`EditorState.buffers`). A `BufferId` is an
   index there, and a buffer that is removed leaves its slot empty, as the
   text store keeps the place of a released text. So an id is never used
@@ -110,6 +113,39 @@ constructor.
 - `setValue` sets a buffer-local value under a name, in place of the one
   the name had; `value?` reads one.
 
+## A buffer's file
+
+- **A buffer keeps its file** (`Buffer.file`, a `Buffer.File`): the file's
+  path, and the stamp the last load or save of it answered, which is what
+  the next save expects to find on disk (`Editor/File.lean`). `none` for a
+  buffer that shows no file. The stamp is not optional: a buffer comes to
+  hold a file by a load, which answers one.
+- **A buffer keeps its line ending** (`Buffer.lineEnding`), a line feed
+  unless a file said otherwise. It is the buffer's and not the file's: a
+  buffer with no file needs an answer too when a command breaks a line. It
+  decides only the line break a command inserts. Nothing is translated on
+  the way in or out: the text holds every byte of the file.
+- **The saved state is the undo tree's** (`UndoTree.saved`, in
+  `Buffer.history`), and so is whether the buffer is modified. A second
+  copy here would be a second answer.
+- **A path is matched as a string** (`findFile`): the buffer whose file's
+  path is equal to it. Two spellings of one file (a symbolic link, `..`, a
+  doubled slash) are two buffers. That is safe: once one is saved, a save
+  of the other is refused as changed on disk, so neither overwrites the
+  other unnoticed. A canonical path would be the file system's to answer,
+  which the file port does not.
+- `attachFile` has a buffer hold a file: its path, its stamp and the
+  buffer's line ending, with no save in flight. It refuses `noSuchBuffer`,
+  and `fileOpen`, with the buffer that holds it, for a path another buffer
+  holds, so that `findFile` has one answer, as `nameTaken` gives
+  `findBuffer` one. Attaching the path a buffer holds to that buffer again
+  replaces its stamp. It leaves the history: a buffer made over loaded
+  text has a new tree, which is saved at its root.
+- `freeName` is a name no buffer has, for a new buffer that would be
+  called `name`: the name itself, or the name followed by `<2>`, `<3>` and
+  so on, the first that is free. Two files with one base name are two
+  buffers this way.
+
 ## A buffer's modes
 
 Three operations set a buffer's modes, of the same shape. Each is refused,
@@ -148,7 +184,8 @@ registered is the loop's to ask, which also runs the mode's `onEnter`
 
 | What it belongs to | Where |
 |---|---|
-| One buffer (a file's path, a modified flag) | A field of `Buffer` |
+| One buffer (its line ending, its modes) | A field of `Buffer` |
+| The file a buffer shows (what the next save expects on disk) | A field of `Buffer.File` |
 | One view (a goal column, a scroll offset) | A field of `Window` |
 | The whole editor (registers, the pending key prefix) | A field of `EditorState` |
 | What the user sees of it | A field of the scene (`Editor/Scene.lean`), filled in `Loop.scene`, or in `Loop.views` for a field of a view (`Editor/Loop.lean`) |
@@ -167,6 +204,28 @@ structure BufferId where
   index : Nat
   deriving DecidableEq, Repr
 
+/-- A save of a buffer that is in flight: its job has been started, and its
+result has not yet been delivered. -/
+structure Buffer.Saving where
+  /-- The snapshot of the buffer's text the save writes. -/
+  snapshot : SnapshotId
+  /-- The state the text was in when the snapshot was taken: the one to
+  mark as saved when the save reports. -/
+  state : UndoTree.State
+  deriving DecidableEq, Repr
+
+/-- The file a buffer shows: where it is, and what the next save of it
+expects to find there. -/
+structure Buffer.File where
+  /-- The file's path, as it was opened: a path is matched to a buffer by
+  equality with this. -/
+  path : System.FilePath
+  /-- The stamp the last load or save of the file answered. -/
+  stamp : File.Stamp
+  /-- The save of the buffer that is in flight, if one is. -/
+  saving : Option Buffer.Saving := none
+  deriving DecidableEq, Repr
+
 /-- A buffer: a text and what the editor keeps about it. -/
 structure Buffer where
   /-- Its name, as the user sees it. -/
@@ -181,6 +240,12 @@ structure Buffer where
   major : Option String := none
   /-- The names of its minor modes, the one added last first. -/
   minors : Array String := #[]
+  /-- The file it shows; `none` for a buffer that shows none. -/
+  file : Option Buffer.File := none
+  /-- The line break a command inserts in it: its file's dominant line
+  ending, and a line feed for a buffer with no file or a file with no line
+  break. Nothing else is decided by it. -/
+  lineEnding : File.LineEnding := .lf
   deriving BEq, Repr
 
 /-- A window: a view of a buffer. -/
@@ -290,6 +355,8 @@ inductive BufferRefusal where
   | shown (view : ViewId)
   /-- The undo tree is the history of another text than the buffer's. -/
   | notItsHistory
+  /-- Another buffer, `other`, holds the file at this path. -/
+  | fileOpen (other : BufferId)
   deriving DecidableEq, Repr
 
 /-- Why a job was not started. -/
@@ -509,6 +576,44 @@ protected def none : EditorState :=
 buffers a request added (`addBuffer`), so there is at most one. -/
 def findBuffer (state : EditorState) (name : String) : Option BufferId :=
   (state.buffers.findIdx? fun slot => slot.any (·.name == name)).map (⟨·⟩)
+
+/-- The buffer that holds the file at `path`, if one does: the one whose
+file's path is equal to it, as a string. A request attaches a path to one
+buffer only (`attachFile`), so there is at most one. -/
+def findFile (state : EditorState) (path : System.FilePath) : Option BufferId :=
+  (state.buffers.findIdx? fun slot => slot.any (·.file.any (·.path == path))).map (⟨·⟩)
+
+/-- A name no buffer has, for a new buffer that would be called `name`: the
+name itself, or the name followed by `<2>`, `<3>` and so on, the first no
+buffer has. With `n` buffers one of the first `n + 1` candidates is free. -/
+def freeName (state : EditorState) (name : String) : String :=
+  let free (candidate : String) : Bool := (state.findBuffer candidate).isNone
+  if free name then name
+  else
+    (((List.range (state.buffers.size + 1)).map fun index => s!"{name}<{index + 2}>").find?
+          free).getD
+      name
+
+/-- Has the buffer `id` hold the file at `path`, whose stamp is `stamp`,
+and gives it the line ending `ending`. Its history is left as it is.
+Refused, with the state unchanged, with `noSuchBuffer` for a buffer there
+is none of, and with `fileOpen`, and the buffer that holds it, for a path
+another buffer holds. -/
+def attachFile (id : BufferId) (path : System.FilePath) (stamp : File.Stamp)
+    (ending : File.LineEnding) (state : EditorState) : Except BufferRefusal Unit × EditorState :=
+  match state.buffer? id, state.findFile path with
+  | none, _ => (.error (.noSuchBuffer id), state)
+  | some _, some holder => if holder == id then attached else (.error (.fileOpen holder), state)
+  | some _, none => attached
+where
+  /-- The state with the file attached. -/
+  attached : Except BufferRefusal Unit × EditorState :=
+    changeBuffer id
+      (fun buffer =>
+        ((),
+          { buffer with
+            file := some { path, stamp }, lineEnding := ending }))
+      state
 
 /-- The value the buffer `id` keeps under `name`, if it keeps one. -/
 def value? (state : EditorState) (id : BufferId) (name : String) : Option Value := do

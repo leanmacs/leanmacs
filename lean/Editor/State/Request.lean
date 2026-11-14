@@ -4,8 +4,8 @@ import Editor.State
 /-!
 # The state requests
 
-What a command asks of the editor state (`Editor/State.lean`): its buffers,
-its windows, the echo area and the jobs to start. A `StateRequest` is a
+What a command asks of the editor state (`Editor/State.lean`): its buffers
+and the files they hold, its windows, the echo area and the jobs to start. A `StateRequest` is a
 request of the editor's port (`EditorRequest.state`,
 `Editor/Command.lean`), and `EditorState.handle` is its handler: one pure
 function from a request and a state to the reply and the state after it. It
@@ -83,6 +83,11 @@ inductive StateRequest where
   | message (text : String)
   /-- Start the job registered under `name`, with `arguments`. -/
   | startJob (name : String) (arguments : List Argument)
+  /-- Have the buffer `id` hold the file at `path`, whose stamp is `stamp`,
+  with `ending` as the buffer's line ending. -/
+  |
+  attachFile (id : BufferId) (path : System.FilePath) (stamp : File.Stamp)
+    (ending : File.LineEnding)
 
 /-- The type of the reply to each request. -/
 abbrev StateRequest.Reply : StateRequest → Type
@@ -100,6 +105,7 @@ abbrev StateRequest.Reply : StateRequest → Type
   | .show .. => Except LayoutRefusal Unit
   | .message _ => Unit
   | .startJob .. => Except JobRefusal Unit
+  | .attachFile .. => Except BufferRefusal Unit
 
 namespace EditorState
 
@@ -135,6 +141,7 @@ def handle : (request : StateRequest) → EditorState → request.Reply × Edito
   | .message text, state => ((), { state with echo := text })
   | .startJob name arguments, state =>
     (.ok (), { state with starts := state.starts.push { name, arguments } })
+  | .attachFile id path stamp ending, state => state.attachFile id path stamp ending
 
 end EditorState
 
