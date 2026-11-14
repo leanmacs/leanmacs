@@ -133,7 +133,10 @@ registered command:
   `dispatchGiveUpChecks`, which is what the loop gives up after a command;
 - `dispatchCommandBreaksOffChecks`: a command that breaks off (`breakOff`,
   `Editor/Api.lean`) keeps what it did, its reason is in the echo area with
-  no `refused:`, and the scheme is back at rest.
+  no `refused:`, and the scheme is back at rest;
+- `dispatchRunCommandChecks`: a command that has another run inside it
+  (`runCommand`, `Editor/Api.lean`) runs the one a key's invocation of the
+  name runs, as part of itself.
 
 What the loop does with a scheme's report of a view is checked with a
 scheme written here, `switching`: the test scheme, with a report of each
@@ -7701,7 +7704,69 @@ def dispatchStateChecks : List Check :=
         pure
           (told.ex "w" == some { name := "w", command := "config", takes := .text } &&
             told.ex "q" == some { name := "q", command := "kept" } &&
-            told.ex "missing" == none) }]
+            told.ex "missing" == none) },
+    { name :=
+        "a command that asks for the command of a name to be run inside it: the command the loop was told of under that name runs there, with the call it is handed, before the asking command goes on, and what it said is in the state the asking command then reads; a name the loop was told no command of is answered false, and nothing runs"
+      run :=
+        pure <|
+          let inner (call : Call) : EditorM Unit := do
+            discard <| createText "inner"
+            message s!"handed {call.arguments.length} arguments"
+          let registered : Loop.Registered :=
+            { command := fun name => if name == "inner" then some inner else none }
+          let command : EditorM (Bool × String × Bool) := do
+            let some target := (← editorState).focusedTarget? | throw .noSuchText
+            let ran ← runCommand "inner" { target, arguments := [.nat 1, .nat 2] }
+            let said := (← editorState).echo
+            let missing ← runCommand "other" { target }
+            discard <| createText "outer"
+            return (ran, said, missing)
+          let program : EditorM (Guarded (Bool × String × Bool) × EditorState) := do
+            command.dispatched registered (← EditorState.initial ⟨640, 480⟩)
+          match program.runModel editorModel with
+          | (.ok (outcome, _), model) =>
+            outcome == .finished (true, "handed 2 arguments", false) &&
+              model.texts.contents == #["", "inner", "outer"]
+          | (.error _, _) => false },
+    { name :=
+        "a command run inside another is part of it: one that gives up ends the asking command as having given up, one that is refused refuses it, and one that the interrupt stops at a request ends it as interrupted, each with nothing of the asking command run after it"
+      run :=
+        pure <|
+          let registered : Loop.Registered :=
+            {
+              command := fun name =>
+                match name with
+                | "quits" => some fun _ => giveUp "no"
+                | "fails" => some fun _ => throw .badRange
+                | "works" =>
+                  some fun _ => do
+                    discard <| createText "one"
+                    discard <| createText "two"
+                | _ => none }
+          let asking (name : String) : EditorM Unit := do
+            let some target := (← editorState).focusedTarget? | throw .noSuchText
+            discard <| runCommand name { target }
+            discard <| createText "late"
+          let ended (name : String) (watch : WatchModel := {}) :
+            Option (Guarded Unit × Array String) :=
+            let program : EditorM (Guarded Unit × EditorState) := do
+              (asking name).dispatched registered (← EditorState.initial ⟨640, 480⟩)
+            match program.runModel { editorModel with watch } with
+            | (.ok (outcome, _), model) => some (outcome, model.texts.contents)
+            | (.error _, _) => none
+          ended "quits" == some (.gaveUp "no", #[""]) &&
+            ended "fails" == some (.refused .badRange, #[""]) &&
+            ended "works" == some (.finished (), #["", "one", "two", "late"]) &&
+            ended "works" { arrivesAfter := some 1 } == some (.interrupted, #["", "one"]) },
+    { name :=
+        "a command that asks for another to be run inside it where no loop dispatches it is answered false: the handler of the runners knows no registry"
+      run :=
+        pure <|
+          let command : EditorM Bool := do
+            let state ← EditorState.initial ⟨640, 480⟩
+            let some target := state.focusedTarget? | throw .noSuchText
+            runCommand "inner" { target }
+          (command.runModel editorModel).1.toOption == some false }]
 
 /-- The refusal `program` ends with, if it is refused. -/
 def refusalOf {α : Type} (program : TextM α) : TextM (Option TextError) := do
@@ -8706,12 +8771,81 @@ def dispatchCommandBreaksOffChecks : List Check :=
               ended == some (Loop.Ending.brokeOff reason)
           | _, _ => false }]
 
+/-- The checks of a command that has another run inside it (`runCommand`,
+`Editor/Api.lean`; `Editor/Loop.lean`, "A command run inside another"), on
+the editor's models, with commands written here: the command it names is
+the one a key's invocation of that name runs, looked up in what the step
+was handed. -/
+def dispatchRunCommandChecks : List Check :=
+  -- Runs the command its first argument names inside itself, with its own
+  -- call but for the arguments, and says whether there was one.
+  let outer : Dispatched := fun call => do
+    let .str name :: arguments := call.arguments | giveUp "no command named"
+    let ran ← runCommand name { call with arguments }
+    message s!"{name} ran: {ran}"
+    return none
+  let write : Config.Write := { owner := .config, store := "cell", value := .nat 1 }
+  let commands : List (String × Dispatched) :=
+    [("outer", outer), ("stamp", stamp), ("writer", fun _ => return some write),
+      ("quitter", fun call => do
+        Loop.insert call.target "typed"
+        giveUp "nothing to do here")]
+  let handed : Loop.Keys TestScheme.scheme :=
+    dispatchKeys
+      [("C-s", { command := "outer", arguments := [.str "stamp", .nat 7] }),
+        ("C-m", { command := "outer", arguments := [.str "missing"] }),
+        ("C-w", { command := "outer", arguments := [.str "writer"] }),
+        ("C-q", { command := "outer", arguments := [.str "quitter"] }), ("C-t", invoke "stamp")]
+      commands
+  -- What the key `key` leaves from a text with a cursor: the text, the echo
+  -- area, the history's nodes, and how the step says the command ended.
+  let left (key : String) : Option (String × String × Nat × Option Loop.Ending) :=
+    let program : EditorM (String × String × Nat × Option Loop.Ending) := do
+      let loop : TestLoop := { state := ← holding "ab" #[⟨2, 2⟩] }
+      let (loop, _) ← stepsWith handed loop [pressF5]
+      let (loop, steps) ← stepsWith handed loop (presses key)
+      let some target := loop.state.focusedTarget? | throw .noSuchText
+      return (← target.buffer.text.read, loop.state.echo, target.buffer.history.nodes.size,
+          (steps.back?).bind (·.ended))
+    (program.runModel editorModel).1.toOption
+  [{  name :=
+        "a command that has the command of a name run inside it runs the one a key's invocation of that name runs, with the call it hands it, as part of itself: what the two did is one step of the history, and the asking command goes on after it"
+      run :=
+        pure <|
+          match left "C-s", left "C-t" with
+          | some (text, echo, nodes, ended), some (alone, _, steps, _) =>
+            text == "ab7 C-s" && alone == "abC-t" && echo == "stamp ran: true" && nodes == steps &&
+              ended == some .finished
+          | _, _ => false },
+    { name :=
+        "a name no command is registered under is answered false, and nothing runs: the asking command goes on"
+      run :=
+        pure <|
+          (left "C-m").map (fun (text, echo, _, ended) => (text, echo, ended)) ==
+            some ("ab", "missing ran: false", some .finished) },
+    { name :=
+        "a command run inside another that gives up gives the asking command up: both are rolled back, and the reason is said under the asking command's name"
+      run :=
+        pure <|
+          (left "C-q").map (fun (text, echo, _, ended) => (text, echo, ended)) ==
+            some ("ab", "outer: nothing to do here", some (.gaveUp "nothing to do here")) },
+    { name :=
+        "a command run inside another that asks for a store to be written gives the asking command up, with the sentence the loop makes of its name: only a command the loop runs has its write written back"
+      run :=
+        pure <|
+          !(Loop.writesInside "writer").isEmpty &&
+            (left "C-w").map (fun (text, echo, _, ended) => (text, echo, ended)) ==
+              some
+                ("ab", s!"outer: {Loop.writesInside "writer"}",
+                  some (.gaveUp (Loop.writesInside "writer"))) }]
+
 /-- The checks of key dispatch in the loop (`Editor/Loop.lean`), on the
 editor's models: keys through the scheme and the commands they run,
 rollback, the interrupt, the slow-command log, a command's state requests,
 what the loop gives up after a command, a command that gives up, a command
-that breaks off, the scheme's notice of a closed view, undo from a command,
-and what a command is told of its view. -/
+that breaks off, a command that has another run inside it, the scheme's
+notice of a closed view, undo from a command, and what a command is told of
+its view. -/
 def dispatchChecks : List Check :=
   dispatchKeyChecks ++ dispatchRollbackChecks ++ dispatchInterruptChecks ++ dispatchSlowChecks ++
     dispatchStateChecks ++
@@ -8721,7 +8855,8 @@ def dispatchChecks : List Check :=
     dispatchUndoChecks ++
     dispatchReportChecks ++
     dispatchCommandGivesUpChecks ++
-    dispatchCommandBreaksOffChecks
+    dispatchCommandBreaksOffChecks ++
+    dispatchRunCommandChecks
 
 /-- A scheme written for the test that breaks the contract: it yields the
 first binding that the keys so far begin, so it emits on a strict prefix. -/
@@ -13576,12 +13711,14 @@ abbrev EvilDriver :=
 /-- What a step of the evil checks is handed: no active keymaps, so that a
 key is looked up in the keymaps of its view's Vim state alone, and the
 commands compiled code registers for evil (`Evil.commands`) and those of
-`more`, each under the name it is registered under, then `commands`. -/
+`more`, each under the name it is registered under, then `commands`. A
+command of `more` runs in place of one of evil's of the same name, as the
+registry's latest entry of a name does. -/
 def evilHanded (more : Array Config.Registration := #[])
     (commands : List (String × Dispatched) := []) : Loop.Keys Vim.Default.scheme :=
   {
     command? := fun name =>
-      match (Evil.commands ++ more).find? (·.name == name) with
+      match (Evil.commands ++ more).findRev? (·.name == name) with
       | some { action := .call run, .. } =>
         some fun call => do
           run call
@@ -15743,7 +15880,7 @@ def evilRepeatChecks : List Check :=
             evilEdited "a|bc" "y l ." == some ⟨"a|bc", charwise "b", false, ""⟩ &&
             evilGaveUp named "a|bc" Evil.nothingToRepeat },
     { name :=
-        "what is not repeated gives the command up and changes nothing: a change over a visual selection, and a change whose command the table of changes does not have"
+        "what is not repeated gives the command up and changes nothing: a change over a visual selection, and a change whose command the registry has none of"
       run :=
         pure <|
           let unknown :=
@@ -15799,11 +15936,60 @@ def evilRepeatChecks : List Check :=
               some ⟨"|\nh", charwise "ab g", false, said⟩ &&
             evilEdited "\nab cd |ef gh ij" "d 2 b . G $ ." ==
               some ⟨"\nef |j", charwise "gh i", false, ""⟩ },
-    { name := "every command of the table of changes is one evil registers, under the same name"
+    { name :=
+        ". replays a change with the command the registry holds for its name, which is the one the change's own keys ran: with operate registered again over the operators that ship and one more, and a key bound to that operator, the key and w erase a word and . erases the next; with a command registered in place of delete-char that deletes two cells, x deletes two and . two more; and with one in place of append that inserts before the cursor, a, a text and <Escape> insert before it and . does again"
       run :=
         pure <|
-          !Evil.changes.isEmpty &&
-            Evil.changes.all fun (name, _) => Evil.commands.any (·.name == name) }]
+          let erase : Vocabulary.Operator := { Evil.delete with name := "erase" }
+          let more : Array Config.Registration :=
+            #[{ name := Vim.operateCommand
+                action := .call (Evil.operate (Evil.operators.push erase) Evil.motions) },
+              { name := "delete-char"
+                action :=
+                  .call fun call => Evil.deleteChar { call with arguments := [.nat 2, .str ""] } },
+              { name := "append", action := .call Evil.insert }]
+          let handed : Loop.Keys Vim.Default.scheme :=
+            { evilHanded more with
+              maps := fun _ _ =>
+                [Keymap.ofList [(keys "Z", Vim.Bound.operator { name := erase.name })]] }
+          let typed (fixture keys : String) : Option (String × String) :=
+            (evilDriver fixture handed).map fun driver =>
+              let after := evilFed driver keys
+              (evilShown after, after.loop.state.echo)
+          typed "|a b c d" "Z w" == some ("|b c d", "") &&
+            typed "|a b c d" "Z w ." == some ("|c d", "") &&
+            typed "|abcdef" "x" == some ("|cdef", "") &&
+            typed "|abcdef" "x ." == some ("|ef", "") &&
+            typed "a|b" "a X <Escape>" == some ("a|Xb", "") &&
+            typed "a|b" "a X <Escape> ." == some ("a|XXb", "") },
+    { name :=
+        "the repeat command handed its own name as the change gives up, with the sentence its function makes: a replay is no change"
+      run :=
+        pure <|
+          let named :=
+            (evilRegistered "a|bc").map fun driver =>
+              evilLeft
+                (driver.stepped
+                    (driver.loop.invoke driver.handed
+                      { command := Vim.repeatCommand
+                        arguments :=
+                          [.bool false, .str "", .str Vim.repeatCommand, .bool false, .str "",
+                            .str "delete-char", .nat 0, .str ""] })).1
+          evilGaveUp named "a|bc" (Evil.notRepeated Vim.repeatCommand) },
+    { name :=
+        "every command a default key of the Vim scheme is bound to as changing text is one evil registers, and so is the command an operator's keys run: . finds each in the registry"
+      run :=
+        pure <|
+          let changing :=
+            (Vim.Default.normalCommands ++ Vim.Default.insertCommands ++
+                  Vim.Default.visualCommands ++
+                  Vim.Default.visualLineCommands).filterMap
+              fun (_, bound) =>
+              match bound with
+              | .command command => if command.changes then some command.name else none
+              | _ => none
+          !changing.isEmpty &&
+            (Vim.operateCommand :: changing).all fun name => Evil.commands.any (·.name == name) }]
 
 /-- Every check, in the order they run.
 

@@ -126,7 +126,7 @@ edits, undoes and repeats with no config.
 | `put-after`, `put-before` | `p`, `P` | Puts the unnamed register after or before the cursor, or below or above the line when the register holds whole lines. With nothing to put it gives up. |
 | `open-below`, `open-above` | `o`, `O` | Opens an empty line below or above the cursor's line and begins an insert on it. |
 | `undo`, `redo` | `u`, `C-r` | Undoes or redoes one step of the buffer's history, or a count of them, and puts the cursor where it was before the change, or where the change left it. |
-| `repeat` | `.` | Makes the last change again at the cursor, with the text typed in it. A count before `.` replaces the change's count. Run by its name, which hands it no change, it gives up. |
+| `repeat` | `.` | Makes the last change again at the cursor, with the text typed in it. A count before `.` replaces the change's count. It runs the command that is registered under the change's name when `.` is pressed, so config's command of that name is what it replays. Run by its name, which hands it no change, it gives up. |
 
 **Registers.** A yank and a deletion set the unnamed register. `"` and
 then `+` before an operator, `x`, `p` or `P` names the clipboard: the

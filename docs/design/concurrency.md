@@ -870,9 +870,33 @@ event.**
 **A command has another command run after it the same way, with no
 prompt.** Built by the command loop's phase 12.
 
-- **A command cannot run another command.** A command is a program over
+- **A command cannot hold another command.** A command is a program over
   the editor's port, the registry is the host's, and the one way a
   command had another run after it was a prompt's continuation.
+- **A command can have another run inside it, where the other is to be
+  part of it** (`runCommand name call`, `StateRequest.runCommand`; the
+  command loop's phase 13). The loop puts the named command's program
+  before the rest of the asking command's, as it puts a mode's on-enter
+  action: guarded, answered from the same state, one step of the history
+  with the asking command, rolled back with it, and said under its name
+  when it fails. The reply says whether a command was registered under
+  the name; it cannot hold the command, since a command is a program
+  over the port the reply is part of.
+  - The name is looked up as a key's invocation is: the loop makes what
+    the dispatcher is told of the registry's commands from the lookup
+    `Loop.run` makes, so config's command of a compiled command's name is
+    the one run.
+  - A command run this way that asks for a store to be written gives the
+    asking command up: only the command the loop runs has its write
+    written back.
+  - Its first user is evil's dot repeat, which replays a change with the
+    command the change's own keys ran
+    ([keymaps-and-modes.md](keymaps-and-modes.md), "The last change").
+    A replay is one step of the history and is said under `repeat`, so
+    the two reasons that set this aside for the ex line are what a replay
+    wants. The ex line still asks for its command to be run after it.
+  - Pinned by `ModelTest.dispatchStateChecks` and
+    `ModelTest.dispatchRunCommandChecks`.
 - **`invoke invocation` records the invocation** where a prompt's answer
   is recorded (`EditorState.answered`), after what is there. So that
   field, and what a step hands back (`Loop.Stepped.answered`), is the

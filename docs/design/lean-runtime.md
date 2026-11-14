@@ -755,6 +755,7 @@ made of state requests and text requests. Config sees it through
 | Ask for a string, without waiting for it, and accept or cancel the open prompt | `prompt label continuation initial`, which names the command that receives the answer as an invocation; `acceptPrompt`, `cancelPrompt` | To make the minibuffer's text and its markers, and to read the answer; a cancel reaches nothing |
 | Ask which command an ex name is bound to, and what the name takes | `exBinding name`, answered by the loop from the registry as it is at that step | No |
 | Have another command run after it, as a step of its own | `invoke invocation` | No: the host runs it once the command has ended |
+| Have the command registered under a name run inside it, as part of it, and learn whether there was one | `runCommand name call`, answered by the loop from the lookup a key's invocation goes through ([concurrency.md](concurrency.md), "Prompts") | Whatever the command run makes |
 | End itself with a reason, rolled back, with the reason in the echo area | `giveUp reason` ([concurrency.md](concurrency.md), "Foreground: commands") | No |
 | End itself with a reason and keep what it did, with the reason in the echo area and the input scheme back at rest | `breakOff reason` ([concurrency.md](concurrency.md), "Foreground: commands") | No |
 | Keep a register, a text and whether it is line-wise, under a name, and read one | `setRegister name register`; `EditorState.register?` on `editorState` | No |
@@ -830,8 +831,8 @@ made of state requests and text requests. Config sees it through
 - **Evil's editing commands** (the command loop's phase 13): the operators
   and the operate command, `x`, the registers and the two puts, the two
   commands that open a line, undo and redo, and dot repeat, each in a
-  module of its own beside `lean/Editor/Evil.lean`. They needed three state
-  requests (`giveUp`, `breakOff`, `setRegister`), one operation of the API
+  module of its own beside `lean/Editor/Evil.lean`. They needed four state
+  requests (`giveUp`, `breakOff`, `setRegister`, `runCommand`), one operation of the API
   (`replaceCarrying`, with a case in `lean/Editor/Api/Cases.lean`), and
   one new sub-port, the clipboard's, with its model and its contract
   ("The editor's port is a composite"). An operator is a vocabulary entry
@@ -874,7 +875,7 @@ made of state requests and text requests. Config sees it through
 | Evil's operators, as vocabulary entries, their table, what an operator takes, the operate command and `x` | `lean/Editor/Evil/Operators.lean` |
 | Evil's registers, storing and fetching, and the two puts | `lean/Editor/Evil/Registers.lean` |
 | Evil's undo and redo, which place the selection a step hands back | `lean/Editor/Evil/Undo.lean` |
-| Evil's dot repeat: the table of changes and the repeat command | `lean/Editor/Evil/Repeat.lean` |
+| Evil's dot repeat: the repeat command | `lean/Editor/Evil/Repeat.lean` |
 | What is proved of evil on the text model, and of the undo tree | `lean/Editor/Evil/Theorems.lean`, `lean/Editor/UndoTree/Theorems.lean` |
 | Evil's commands as compiled code registers them | `lean/Editor/Evil/Compiled.lean` |
 | An ex line as data: its name and argument, and an ex binding | `lean/Editor/Ex/Line.lean` |

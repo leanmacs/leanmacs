@@ -1,4 +1,4 @@
-import Editor.Evil.Operators
+import Editor.Evil
 import Editor.InputScheme.Vim
 
 /-!
@@ -14,11 +14,22 @@ command the change compiles to, and then that command's own arguments.
 
 ## The repeat command
 
-`Evil.repeat changes` is the command, a function of the table it looks the
-change's command up in (`Evil.changes`, the compiled table: `operate`, `x`,
-the two puts, the two commands that open a line, and the four that begin an
-insert).
+`Evil.repeat` is the command. It names no command it replays and holds no
+table of them.
 
+- **The change's command is the one the registry holds for its name**,
+  which is the one the change's own keys ran: the repeat command has the
+  loop run it inside itself (`runCommand`, `Editor/Api.lean`), and the
+  loop looks the name up as it looks up a key's invocation
+  (`Editor/Loop.lean`, "A command run inside another"). So config's
+  command of a name evil registers, such as `operate` registered again
+  over a vocabulary with operators of config's own, is what `.` replays,
+  and so is a command of config's that a scheme's table binds as changing
+  text. A command cannot hold the registry and no reply of the loop's can
+  hold a command, which is why the loop runs it.
+- **Which commands are changes is the scheme's to say**
+  (`Vim.Command.changes`, `Vim.Operator.changes`): a change is whatever
+  edit the scheme kept as the last change.
 - **A change with no insert session** is run with the repeat's call, with
   the change's arguments in place of the call's.
 - **A change with an insert session** is three things in one command: the
@@ -38,10 +49,12 @@ insert).
   with a key (`i a I A o O`) it replaces a count those commands ignore.
 - **What is not replayed gives the command up**, with nothing changed: no
   change, which is the command run by its name (`nothingToRepeat`); a
-  command the table does not have, which is a command of config's bound as
-  changing text (`notRepeated`); and a change over a visual selection,
-  which Vim repeats over the same amount of text from the cursor
-  (`notRepeated overSelection`).
+  name no command is registered under (`notRepeated`); the repeat
+  command's own name, since a replay is no change and would run for ever;
+  and a change over a visual selection, which Vim repeats over the same
+  amount of text from the cursor (`notRepeated overSelection`). A change
+  whose command asks for a store to be written gives it up too, by the
+  loop's rule for a command run inside another.
 - **A yank is not repeated**: its operator changes no text, so it never is
   the last change.
 
@@ -65,32 +78,29 @@ does not replay. -/
 def overSelection : String :=
   "a change over a selection"
 
-/-- The changes the repeat command replays: the name a change compiles to,
-with the command evil registers under that name
-(`Editor/Evil/Compiled.lean`). -/
-def changes : Array (String × (Call → EditorM Unit)) :=
-  #[(Vim.operateCommand, operate operators motions), ("delete-char", deleteChar),
-    ("put-after", putAfter), ("put-before", putBefore), ("open-below", openBelow),
-    ("open-above", openAbove), ("insert", insert), ("append", append),
-    ("insert-line-start", insertLineStart), ("append-line-end", appendLineEnd)]
-
-/-- The repeat command over the table `changes`, as it is called ("The
-repeat command", in the module docs): its arguments are whether the change
-began an insert session, the text typed in it, the name of the command the
-change compiles to, and then that command's own arguments. The change is
-run again from where the cursor is, with the text typed after it, as one
-command. A call that hands it no change, a command the table does not
-have, and a change over a selection each give it up.
+/-- The repeat command, as it is called ("The repeat command", in the
+module docs): its arguments are whether the change began an insert session,
+the text typed in it, the name of the command the change compiles to, and
+then that command's own arguments. The change is run again from where the
+cursor is, by the command the registry holds for that name, with the text
+typed after it, as one command. A call that hands it no change, a name no
+command is registered under, its own name and a change over a selection
+each give it up.
 
 Its name is written `«repeat»` because `repeat` is a keyword of Lean's: it
 is `Evil.repeat` to whoever calls it. -/
-def «repeat» (changes : Array (String × (Call → EditorM Unit))) (call : Call) : EditorM Unit := do
+def «repeat» (call : Call) : EditorM Unit := do
   let .bool session :: .str text :: .str command :: arguments :=
     call.arguments | giveUp nothingToRepeat
-  let some (_, change) := changes.find? (·.1 == command) | giveUp (notRepeated command)
+  if command == Vim.repeatCommand then
+    giveUp (notRepeated command)
   if command == Vim.operateCommand then
     if let _ :: .str "selection" :: _ := arguments then
       giveUp (notRepeated overSelection)
+  -- The change's command, as the registry has it: the one its keys ran.
+  let change (call : Call) : EditorM Unit := do
+    unless ← runCommand command call do
+      giveUp (notRepeated command)
   if session then
     -- The change, as a key that enters insert state runs it: told of an
     -- exclusive selection that no motion extends, which is all a command

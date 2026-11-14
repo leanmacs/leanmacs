@@ -29,7 +29,7 @@ they hold when config fails to load, and a reload does not replace them.
   | `put-after`, `put-before` | `Evil.putAfter`, `Evil.putBefore`: the register the call names, after and before the cursor (`Editor/Evil/Registers.lean`) |
   | `open-below`, `open-above` | `Evil.openBelow`, `Evil.openAbove`: an empty line below and above the cursor's, and an insert on it |
   | `undo`, `redo` | `Evil.undo`, `Evil.redo`: steps of the buffer's history, with the cursor placed (`Editor/Evil/Undo.lean`) |
-  | `repeat` (`Vim.repeatCommand`) | `Evil.repeat` over the compiled table of changes, `Evil.changes`: the last change again, with the text typed after it (`Editor/Evil/Repeat.lean`) |
+  | `repeat` (`Vim.repeatCommand`) | `Evil.repeat`: the last change again, by the command the registry holds for the name the change compiled to, with the text typed after it (`Editor/Evil/Repeat.lean`) |
 
   The seven of the second and third rows enter a state only when a key
   that enters it runs them: the scheme enters the state, at the key, and
@@ -69,6 +69,6 @@ def commands : Array Config.Registration :=
     { name := "open-below", action := .call openBelow },
     { name := "open-above", action := .call openAbove }, { name := "undo", action := .call undo },
     { name := "redo", action := .call redo },
-    { name := Vim.repeatCommand, action := .call («repeat» changes) }]
+    { name := Vim.repeatCommand, action := .call «repeat» }]
 
 end Editor.Evil

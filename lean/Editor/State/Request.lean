@@ -1,3 +1,4 @@
+import Editor.Command.Call
 import Editor.Ex.Line
 import Editor.Invocation
 import Editor.State
@@ -30,13 +31,21 @@ the models and against the library alike (`Editor/Command/Dispatch.lean`).
 - **A request holds plain data.** It cannot hold a command or a job, which
   are programs over ports that would then refer to themselves: a mode is
   named, and so is a job, and what the name stands for is the registry's.
-  So three requests are answered with more than this handler by the loop,
+  So four requests are answered with more than this handler by the loop,
   which knows the registry: `setMajorMode`, which there refuses a name no
   mode is registered under and runs the mode's on-enter actions,
-  `startJob`, which there refuses a name no job is registered under, and
+  `startJob`, which there refuses a name no job is registered under,
   `ex`, which there is answered the binding the registry has for an ex
-  name (`Editor/Ex/Line.lean`). Here the first two take any name, and
-  `ex` is answered `none`: this handler knows no registry.
+  name (`Editor/Ex/Line.lean`), and `runCommand`, which there runs the
+  command registered under a name inside the asking command. Here the
+  first two take any name, `ex` is answered `none`, and `runCommand` is
+  answered `false` and runs nothing: this handler knows no registry.
+- **A reply holds plain data too**, so no request is answered a command:
+  a command is a program over the port these requests are part of, and a
+  reply that held one would be a type that refers to itself. A command
+  that needs what the registry holds for a command's name has the loop
+  run it (`runCommand`), with the call it hands it, which is plain data
+  (`Editor/Command/Call.lean`).
 - **A marker is made by the caller.** `split` and `show` are handed the
   markers of the window they make or change, which the command marked on
   the buffer's text first: the handler asks the text store nothing.
@@ -55,8 +64,15 @@ the models and against the library alike (`Editor/Command/Dispatch.lean`).
   is put after the invocations already recorded
   (`EditorState.answered`), a prompt's answer among them, and the loop
   hands them to its host once the command has run to its end
-  (`Editor/Loop.lean`, "Prompts"). A command cannot run another command
-  inside itself: this is how it has one run after it.
+  (`Editor/Loop.lean`, "Prompts"). This is how a command has another run
+  after it, as a step of its own.
+- **A command is run inside the asking command by one request**,
+  `runCommand`, with the name it is registered under and the call it is
+  to be run with. It is the loop's to act on: the transformation that
+  runs a command puts the named command's program before the rest of the
+  asking command's (`Editor/Command/Dispatch.lean`, "Requests that name
+  something registered"). The reply says whether a command was registered
+  under the name.
 - **The editor is asked to quit by one request**, `quit`, which sets the
   state's flag and nothing else (`Editor/State.lean`, "Quit"). The handler
   does not judge whether the editor may quit: the command that asks
@@ -167,6 +183,9 @@ inductive StateRequest where
   | ex (name : String)
   /-- Have `invocation` run after this command, as a step of its own. -/
   | invoke (invocation : Invocation)
+  /-- Run the command registered under `name` inside this command, with
+  `call`. -/
+  | runCommand (name : String) (call : Call)
   /-- Ask the editor to quit. -/
   | quit
   /-- Ask for the config to be reloaded. -/
@@ -204,6 +223,7 @@ abbrev StateRequest.Reply : StateRequest → Type
   | .setWanted .. => Except LayoutRefusal Unit
   | .ex _ => Option Ex.Binding
   | .invoke _ => Unit
+  | .runCommand .. => Bool
   | .quit => Unit
   | .reload => Unit
   | .giveUp _ => Unit
@@ -253,6 +273,7 @@ def handle : (request : StateRequest) → EditorState → request.Reply × Edito
   | .setWanted view wanted, state => state.setWanted view wanted
   | .ex _, state => (none, state)
   | .invoke invocation, state => ((), { state with answered := state.answered.push invocation })
+  | .runCommand .., state => (false, state)
   | .quit, state => ((), { state with quitting := true })
   | .reload, state => ((), { state with reload := true })
   | .giveUp _, state => ((), state)

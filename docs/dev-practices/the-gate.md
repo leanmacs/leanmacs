@@ -413,10 +413,13 @@ the table of motions the editor ships, as it is and with a motion of
 config's own added, and the cursor goes where config's motion says. That
 is the check of what the root module lets config name of evil: a config
 that cannot name the table is rejected, and the check fails. A second
-config names the operators, the table of changes and evil's undo: a
+config names the operators, the repeat command and evil's undo: a
 command of config's that runs the operate command with the arguments of
 `d w` deletes a word, one that hands the repeat command that change
-deletes the next, and one that runs evil's undo gives it back. Another
+deletes the next, and one that runs evil's undo gives it back. A third
+registers the operate command again, over the operators that ship and one
+of its own, and the repeat command replays a change made with that
+operator: it runs the command the registry holds for the name. Another
 check runs a command of config's that writes the clipboard and one that
 reads it through the host, which keeps a clipboard of its own, and a
 finished job's command reads it too.

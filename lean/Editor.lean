@@ -1,5 +1,6 @@
 import Editor.Api.Theorems
 import Editor.Command.Append
+import Editor.Evil.Operators
 import Editor.Evil.Repeat
 import Editor.Evil.Theorems
 import Editor.Evil.Undo
@@ -76,8 +77,11 @@ function of the operators and the motions it looks names up in
 (`Evil.operate Evil.operators Evil.motions`). That module brings the
 commands and the motions with it. Undo and redo, which place the cursor a
 step of the history hands back, are in `Editor/Evil/Undo.lean`, and dot
-repeat, which replays the change the Vim scheme hands it, in
-`Editor/Evil/Repeat.lean`, the import that brings the operators. What is
+repeat, which replays the change the Vim scheme hands it with the command
+the registry holds for the change's name, in `Editor/Evil/Repeat.lean`:
+config's command of a name evil registers, such as `operate` registered
+again over a vocabulary with an operator of config's own, is what `.`
+replays. What is
 proved of evil on the text model is in `Editor/Evil/Theorems.lean`, with
 what it needs of the undo tree in `Editor/UndoTree/Theorems.lean`; they
 are imported so that the build checks the proofs.

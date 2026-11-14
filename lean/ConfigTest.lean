@@ -1,6 +1,7 @@
 import ConfigFixture
 import Editor.Config.Directory
 import Editor.Config.Elaborate
+import Editor.Evil.Compiled
 import Editor.Ex.Compiled
 import Editor.Files.Compiled
 import Editor.Headless
@@ -2773,10 +2774,10 @@ call, over the tables the editor ships, each named by the chunk and none
 restated: `delete-word` moves to the line's start (`Evil.move`) and runs
 evil's operate command (`Evil.operate Evil.operators Evil.motions`) with
 the arguments the Vim scheme compiles `d w` to; `again` hands evil's repeat
-command (`Evil.repeat Evil.changes`) that same change, as the scheme's
-repeat key would; and `back` is evil's undo (`Evil.undo`). The names of the
-operator, the motions and the command are read off the editor's own
-entries. -/
+command (`Evil.repeat`) that same change, as the scheme's repeat key would,
+which the repeat command has the registry's operate command run; and `back`
+is evil's undo (`Evil.undo`). The names of the operator, the motions and
+the command are read off the editor's own entries. -/
 def operatorsChunk : String :=
   "def deleteWord : List Argument :=
   [.str Evil.delete.name, .str \"motion\", .str Evil.wordForward.name, .nat 0, .str \"\"]
@@ -2786,10 +2787,35 @@ def setup : SetupM Unit := do
     Evil.move Evil.motions { call with arguments := [.str Evil.lineStart.name] }
     Evil.operate Evil.operators Evil.motions { call with arguments := deleteWord }
   commandWith \"again\" fun call =>
-    Evil.repeat Evil.changes
+    Evil.repeat
       { call with
         arguments := [.bool false, .str \"\", .str Vim.operateCommand] ++ deleteWord }
   commandWith \"back\" Evil.undo
+"
+
+/-- A chunk with an operator of its own, `erase`, which is the editor's
+`delete` under another name, and a `setup` that registers evil's operate
+command again, under the name the editor registers it (`Vim.operateCommand`),
+over the operators the editor ships and `erase`. `erase-word` runs the
+operate command over those tables, from the line's start, with the
+arguments the Vim scheme compiles `erase` over `w` to, and `again` hands
+evil's repeat command that same change, as the scheme's repeat key would. -/
+def ownOperatorChunk : String :=
+  "def erase : Vocabulary.Operator :=
+  { Evil.delete with name := \"erase\" }
+
+def eraseWord : List Argument :=
+  [.str erase.name, .str \"motion\", .str Evil.wordForward.name, .nat 0, .str \"\"]
+
+def setup : SetupM Unit := do
+  commandWith Vim.operateCommand (Evil.operate (Evil.operators.push erase) Evil.motions)
+  commandWith \"erase-word\" fun call => do
+    Evil.move Evil.motions { call with arguments := [.str Evil.lineStart.name] }
+    Evil.operate (Evil.operators.push erase) Evil.motions { call with arguments := eraseWord }
+  commandWith \"again\" fun call =>
+    Evil.repeat
+      { call with
+        arguments := [.bool false, .str \"\", .str Vim.operateCommand] ++ eraseWord }
 "
 
 /-- The checks of evil from config through the headless host
@@ -2821,26 +2847,45 @@ def evilChecks (context : Context) : List Check :=
               lines.contains "run own: ok" &&
               lines.contains "run first-shipped: ok" },
     { name :=
-        "config names the operators the editor ships and hands them, with the motions, to evil's operate command: a command of config's that runs it with the arguments of d w from the line's start deletes a word; one that hands the repeat command the same change, over the table of changes that ships, deletes the next; and one that runs evil's undo gives that word back"
+        "config names the operators the editor ships and hands them, with the motions, to evil's operate command: a command of config's that runs it with the arguments of d w from the line's start deletes a word; one that hands the repeat command the same change deletes the next, with the operate command the host was handed as compiled code; and one that runs evil's undo gives that word back"
       run :=
-        withHost context [("10-operators.lean", operatorsChunk)] fun session => do
-          session.ask [.reload]
-          unless ← Event.post (.commit "one two three") do
-            return false
-          session.ask [.run "delete-word"]
-          let deleted ← session.scene
-          session.ask [.run "again"]
-          let again ← session.scene
-          session.ask [.run "back"]
-          let back ← session.scene
-          let lines ← session.lines
-          return deleted == ("".quote, #[viewLine "two three" 0]) &&
-              again == ("".quote, #[viewLine "three" 0]) &&
-              back == ("".quote, #[viewLine "two three" 0]) &&
-              lines.contains "reload 1: installed, 1 chunks, 3 commands" &&
-              lines.contains "run delete-word: ok" &&
-              lines.contains "run again: ok" &&
-              lines.contains "run back: ok" }]
+        withHost context [("10-operators.lean", operatorsChunk)]
+          (fun session => do
+            session.ask [.reload]
+            unless ← Event.post (.commit "one two three") do
+              return false
+            session.ask [.run "delete-word"]
+            let deleted ← session.scene
+            session.ask [.run "again"]
+            let again ← session.scene
+            session.ask [.run "back"]
+            let back ← session.scene
+            let lines ← session.lines
+            return deleted == ("".quote, #[viewLine "two three" 0]) &&
+                again == ("".quote, #[viewLine "three" 0]) &&
+                back == ("".quote, #[viewLine "two three" 0]) &&
+                lines.contains "run delete-word: ok" &&
+                lines.contains "run again: ok" &&
+                lines.contains "run back: ok")
+          { commands := Evil.commands } },
+    { name :=
+        "the repeat command replays a change with the command the registry holds for its name: with config's operate command registered over the operators that ship and one of config's own, in place of the compiled one, a change made with config's operator is replayed with it, and deletes the next word"
+      run :=
+        withHost context [("10-operators.lean", ownOperatorChunk)]
+          (fun session => do
+            session.ask [.reload]
+            unless ← Event.post (.commit "one two three") do
+              return false
+            session.ask [.run "erase-word"]
+            let erased ← session.scene
+            session.ask [.run "again"]
+            let again ← session.scene
+            let lines ← session.lines
+            return erased == ("".quote, #[viewLine "two three" 0]) &&
+                again == ("".quote, #[viewLine "three" 0]) &&
+                lines.contains "run erase-word: ok" &&
+                lines.contains "run again: ok")
+          { commands := Evil.commands } }]
 
 /-- A chunk whose `setup` registers two jobs that each load a file and whose
 handler makes a text of what was loaded: `open`, of `note.txt` in

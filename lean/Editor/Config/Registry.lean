@@ -330,7 +330,10 @@ def activeMaps (registry : Registry) (scheme : InputScheme) (state : EditorState
 its lineage, root first, whose on-enter actions run when the mode becomes a
 buffer's major mode; whether a job is registered under a name, for a
 command to start; and the ex binding of an ex name (`ex?`), for the ex
-line. -/
+line. Which command a name stands for, for a command run inside another,
+is not said here: the loop takes it from the lookup it runs an invocation
+by (`Loop.Keys.command?`, `Editor/Loop.lean`, "A command run inside
+another"). -/
 def registered (registry : Registry) : Loop.Registered :=
   { entering := fun name => (registry.mode? name).map fun _ => (registry.lineage name).reverse
     jobs := fun name => (registry.findJob? name).isSome, ex := registry.ex? }

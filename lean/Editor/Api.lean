@@ -300,12 +300,35 @@ program over the editor's port and cannot hold the registry.
 
 `invoke invocation` asks for an invocation to be run once this command has
 run to its end, as a step of its own, before the next event
-(`Editor/Loop.lean`, "Prompts"). A command cannot run another inside
-itself: the other would be looked up before this one's write to a store
-was written back, and its failure would be said under this one's name. The
-command is looked up when its step runs, and a name no command is
-registered under is said then. A command that does not run to its end has
-nothing run after it. Pinned by `ModelTest.promptChecks`.
+(`Editor/Loop.lean`, "Prompts"). The command is looked up when its step
+runs, and a name no command is registered under is said then. A command
+that does not run to its end has nothing run after it. It is the way to
+have another command run for what the other command is: one that writes a
+store has its write written back, and its failure is said under its own
+name. Pinned by `ModelTest.promptChecks`.
+
+`runCommand name call` has the command registered under `name` run inside
+this command, with `call`, and answers whether there was one
+(`Editor/Command/Dispatch.lean`, "Requests that name something
+registered"; `Editor/Loop.lean`, "A command run inside another").
+
+- **The command is the one a key's invocation of the name runs**, looked
+  up in the registry as it is at this step, so config's command of a name
+  a compiled command has is the one that runs. A command is a program over
+  the editor's port and cannot hold the registry, and no reply can hold a
+  command, so the loop runs it.
+- **It is part of this command**: one step of the history with it, rolled
+  back with it, and said under this command's name when it fails. A
+  command run this way that gives up, breaks off or is refused ends this
+  command the same way.
+- **A command that asks for a store to be written gives this command up**:
+  only a command the loop runs has its write written back, so the write
+  would be lost.
+- **`false`, with nothing run**, for a name no command is registered
+  under, and where no loop runs the command.
+- It is how evil's dot repeat replays a change (`Editor/Evil/Repeat.lean`).
+  Pinned by `ModelTest.dispatchStateChecks` and
+  `ModelTest.dispatchRunCommandChecks`.
 
 ## Quit
 
@@ -480,6 +503,15 @@ runs, and what the name takes (`Ex.Binding`, `Editor/Ex/Line.lean`). `none`
 for a name nobody bound, and where no loop runs the command. -/
 def exBinding (name : String) : EditorM (Option Ex.Binding) :=
   EditorState.ask (.ex name)
+
+/-- Has the command registered under `name` run inside this command, with
+`call`, and answers whether there was one ("Running another command", in
+the module docs): the command is the one a key's invocation of the name
+runs, and it is part of this command. `false`, with nothing run, for a
+name no command is registered under, and where no loop runs the
+command. -/
+def runCommand (name : String) (call : Call) : EditorM Bool :=
+  EditorState.ask (.runCommand name call)
 
 /-- Asks for `invocation` to be run once this command has run to its end, as
 a step of its own, before the next event: the command is looked up then,

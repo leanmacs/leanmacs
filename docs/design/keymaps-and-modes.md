@@ -41,7 +41,7 @@ registers, undo and dot repeat, on the editor API:
 | Evil's three operators and their table, what an operator takes, the operate command, and `x` | `lean/Editor/Evil/Operators.lean` |
 | Evil's registers: the unnamed one and the clipboard's, storing, fetching, and `p` and `P` | `lean/Editor/Evil/Registers.lean` |
 | Evil's undo and redo | `lean/Editor/Evil/Undo.lean` |
-| Evil's dot repeat: the table of changes and the repeat command | `lean/Editor/Evil/Repeat.lean` |
+| Evil's dot repeat: the repeat command | `lean/Editor/Evil/Repeat.lean` |
 | What is proved of evil on the text model: `x` then `u` restores the text | `lean/Editor/Evil/Theorems.lean`, with `lean/Editor/UndoTree/Theorems.lean` |
 | The clipboard port, its model, its contract, and the clipboard of a host with no window | `lean/Editor/Clipboard.lean`, `lean/Editor/Clipboard/Model.lean`, `lean/Editor/Clipboard/Contract.lean`, `lean/Editor/Clipboard/InProcess.lean` |
 | Evil's commands as compiled code registers them | `lean/Editor/Evil/Compiled.lean` |
@@ -1057,11 +1057,28 @@ for). Typed text is no edit, so the change alone would not hold it.
   the escape) and a key yields one invocation.
 
 **The repeat command replays the change as one command**
-(`Evil.repeat changes`, `lean/Editor/Evil/Repeat.lean`), a function of the
-table it looks the change's command up in (`Evil.changes`: `operate`,
-`delete-char`, the two puts, the two commands that open a line, and the
-four that begin an insert).
+(`Evil.repeat`, `lean/Editor/Evil/Repeat.lean`).
 
+- **The change's command is the one the registry holds for its name**,
+  as the change's own keys ran it. The repeat command has the loop run
+  the command of that name inside itself (`runCommand`,
+  [concurrency.md](concurrency.md), "Prompts"), and the loop looks the
+  name up as it looks up a key's invocation. The repeat command holds no
+  table of commands.
+  - So config's command of a name evil registers is what `.` replays: a
+    config that registers `operate` again over a vocabulary with an
+    operator of its own, or its own `delete-char`, gets that command from
+    `.` as from the keys. A command of config's that a scheme's table
+    binds as changing text is replayed too.
+  - Which commands are changes is the scheme's data (`changes` of a
+    `Vim.Command` and of a `Vim.Operator`), and nothing in evil restates
+    it.
+  - **Set aside: a table of changes in evil**, each name with the function
+    registered under it. It was a second place where a name was given a
+    command, and it did not know of config's command of the same name: `.`
+    ran the shipped function where the key had run config's.
+  - **Set aside: a request answered the command.** A command is a program
+    over the editor's port, and a reply of that port cannot hold one.
 - **A change with no insert session** is run with the repeat's call, with
   the change's arguments in place of the call's.
 - **A change with an insert session** is three things in one command: the
@@ -1077,10 +1094,11 @@ four that begin an insert).
   to and ends the command there, with no typed text inserted, as Vim's `.`
   does ("Operators as built").
 - **What is not repeated gives the command up**, with nothing changed: no
-  change, which is the command run by its name; a command the table does
-  not have, which is a command of config's bound as changing text; and a
-  change over a visual selection, which Vim repeats over the same amount
-  of text from the cursor.
+  change, which is the command run by its name; a name no command is
+  registered under; the repeat command's own name; a change whose command
+  asks for a store to be written, which a command run inside another
+  cannot; and a change over a visual selection, which Vim repeats over
+  the same amount of text from the cursor.
 - A count before `.` on a change that begins an insert with a key
   (`i a I A o O`) replaces a count those commands ignore.
 - **A yank is not repeated**: its operator changes no text, so it never is
@@ -2284,7 +2302,8 @@ command an ex name runs is a step of its own.**
   binding an ex name has (`exBinding`) is answered by the loop from the
   registry as it is at that step: a command is a program over the
   editor's port and cannot hold the registry. And that an invocation be
-  run after it (`invoke`): a command cannot run another inside itself
+  run after it (`invoke`): the bound command is to be a step of its own,
+  with its own write and its failure under its own name
   ([concurrency.md](concurrency.md), "Prompts").
 - **So one accepted ex line is three steps**: the accept command, `ex`
   with the line, and the bound command, each with a scene. A name bound to
@@ -2709,11 +2728,13 @@ every build). The second is proved on the text model
 - **A text read from the clipboard is line-wise when it ends in a line
   feed** ("Registers"). The clipboard holds a text and no flag; whoever
   binds a system's clipboard may be able to carry one.
-- **A change over a visual selection is not repeated**, and neither is a
-  command of config's bound as changing text ("The last change"). Vim
-  repeats the first over the same amount of text from the cursor. The
-  second needs config to add to the table of changes, which is the
-  compiled table until a registry holds it.
+- **A change over a visual selection is not repeated** ("The last
+  change"). Vim repeats it over the same amount of text from the cursor.
+- **A change whose command writes a store is not repeated** ("The last
+  change"): a command run inside another has nothing written back
+  ([concurrency.md](concurrency.md), "Prompts"). No command that ships is
+  one; a config that binds a store's command as changing text would need
+  the replay to carry the write.
 - **`p` and `P` in a visual state, named registers, and text objects**
   are not built.
 - **A put that ends in a cell of more than one character** carries the

@@ -150,6 +150,33 @@ jobs are handed back, and a scene is published after it.
   and the refusal, or `<label>: interrupted`, as an invocation's does under
   its name.
 
+## A command run inside another
+
+A command can have the command registered under a name run inside it
+(`runCommand`, `Editor/Api.lean`), which is no fourth way: the named
+command's program becomes part of the asking command's
+(`Editor/Command/Dispatch.lean`, "Requests that name something
+registered"), so it is guarded, answered, rolled back and said with it.
+
+- **The name is looked up as a key's invocation is** (`Loop.dispatch`):
+  what the dispatcher is told of the registry's commands
+  (`Loop.Registered.command`) is made, for each command the loop runs,
+  from `Loop.Keys.command?`, the lookup `Loop.run` makes. So a name stands
+  for one command at a step, whether a key, a name or another command runs
+  it, and a reload changes all three together.
+- **A command run this way has nothing written back.** What a command
+  over a store asks to be written is the value of the command the loop
+  ran, and a command run inside another is not that one. So one that asks
+  for a write gives the asking command up (`Loop.writesInside`), and the
+  loop rolls both back: the write is not lost in silence.
+- **Why it exists.** Evil's dot repeat replays a change by the name the
+  change's keys compiled to (`Editor/Evil/Repeat.lean`). Looked up in a
+  table of its own, the name could stand for another command than the one
+  the key ran: config's command of a compiled command's name runs in its
+  place, and a second table would not know.
+
+Pinned by `ModelTest.dispatchRunCommandChecks`.
+
 ## Jobs from commands
 
 A command starts a job by the name it is registered under, with plain
@@ -692,7 +719,8 @@ structure Loop.Keys (scheme : InputScheme) where
   milliseconds: one that takes longer is logged. -/
   slowAfter : Nat := Loop.slowAfter
   /-- What a command's state requests are told of the registry
-  (`Editor/Command/Dispatch.lean`). -/
+  (`Editor/Command/Dispatch.lean`). Its `command` is not read: the loop
+  tells a command run inside another what `command?` says of the name. -/
   registered : Loop.Registered := {}
 
 /-- How a command the loop ran ended. -/
@@ -1181,6 +1209,13 @@ than `threshold`, and none otherwise. -/
 def slow (name : String) (took threshold : Nat) : Array String :=
   if took > threshold then #[s!"slow command: {name} took {took} ms"] else #[]
 
+/-- What a command gives up with when a command it had run inside it, the
+one registered under `name`, asked for a store to be written: only the
+command the loop runs has its write written back ("A command run inside
+another", in the module docs). -/
+def writesInside (name : String) : String :=
+  s!"{name} writes a store, which a command run inside another cannot"
+
 /-- Runs `command` from `state`, under `name`, as the loop runs every
 command ("Every command goes through the loop", in the module docs):
 dispatched (`EditorM.dispatched`: guarded, with its state requests answered
@@ -1194,6 +1229,10 @@ state from before it, with what could not be said after it. The reason of
 a command that broke off is said the same way, and the state it reached is
 kept as that of a command that ran to its end is.
 
+A command the command has run inside it is the one `keys` has of the name
+(`Loop.Keys.command?`), and one that asks for a store to be written gives
+the command up ("A command run inside another", in the module docs).
+
 Only the command is guarded. What this makes of its own requests, keeping
 before it, rolling back after it and giving up what a command that ran to
 its end dropped (`gaveUp`), is not, so a flag that is up does not stop a
@@ -1206,7 +1245,15 @@ def dispatch (keys : Keys scheme) (state : EditorState) (name : String)
     (command : EditorM (Option Config.Write)) : EditorM Ran := do
   let kept ← keep state
   let started ← Watch.now
-  let (outcome, left) ← command.dispatched keys.registered state
+  -- A command run inside this one is looked up as an invocation's is, and
+  -- gives this one up if it asks for a write.
+  let registered : Registered :=
+    { keys.registered with
+      command := fun inside =>
+        (keys.command? inside).map fun run call => do
+          if (← run call).isSome then
+            giveUp (writesInside inside) }
+  let (outcome, left) ← command.dispatched registered state
   let log := slow name ((← Watch.now) - started) keys.slowAfter
   let failed (what : String) (ending : Ending) : EditorM Ran := do
     let (state, unrestored) ← kept.restore state left

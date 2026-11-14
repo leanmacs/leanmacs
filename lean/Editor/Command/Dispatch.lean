@@ -141,11 +141,34 @@ from the next command.
   name runs and what it takes, or `none` for a name nobody bound. The
   state is not read and not changed. What the answer is used for, the ex
   line's rules, is the asking command's (`Editor/Ex.lean`).
+- **Running a command inside the asking command**
+  (`StateRequest.runCommand`) is answered `false` for a name no command is
+  registered under (`Loop.Registered.command`), with nothing run.
+  Otherwise the command's program, for the call the request hands it, is
+  put before the rest of the asking command's, as an on-enter action's
+  is, and the reply is `true` once it has run to its end. A reply cannot
+  hold the command itself: a command is a program over the port the reply
+  is part of.
+  - **It is part of the asking command.** Its state requests are answered
+    from the state the asking command had reached, its other requests are
+    guarded, and what it did is rolled back with the asking command if
+    that does not run to its end.
+  - **How it ends is how the asking command ends**, when it does not run
+    to its end: refused, it refuses the asking command at the request;
+    giving up or breaking off, it ends the asking command's program, as
+    the request made by the asking command itself would.
+  - **Which command a name stands for is the loop's to say.** The loop
+    fills `Loop.Registered.command` from the lookup a key's invocation
+    goes through (`Editor/Loop.lean`, "A command run inside another"), so
+    a name is one command however it comes to run. It is how evil's dot
+    repeat replays a change with the command the change's own keys ran
+    (`Editor/Evil/Repeat.lean`).
 
-Putting an action's program before the rest of the command makes the
-transformation recurse into a program that is no part of the one it was
-given, so it is `partial`, and no theorem is about it. On-enter actions
-that set each other's major modes for ever are runaway config code, which
+Putting an action's program, or a command's, before the rest of the command
+makes the transformation recurse into a program that is no part of the one
+it was given, so it is `partial`, and no theorem is about it. On-enter
+actions that set each other's major modes for ever, and commands that run
+each other inside themselves for ever, are runaway config code, which
 nothing here stops (`docs/design/concurrency.md`, "Runaway code is not a
 design driver").
 
@@ -189,6 +212,11 @@ structure Loop.Registered where
   /-- The ex binding of an ex name (`Editor/Ex/Line.lean`): the command it
   runs and what it takes. `none` for a name nobody bound. -/
   ex : String → Option Ex.Binding := fun _ => none
+  /-- The command registered under this name, as one run inside another is
+  run: given the call, its program. `none` for a name no command is
+  registered under. The loop fills it from the lookup a key's invocation
+  goes through (`Loop.dispatch`), in place of what it is handed here. -/
+  command : String → Option (Call → EditorM Unit) := fun _ => none
 
 /-- A program that ends at once, interrupted, with no state: what the
 compiler is shown for `Program.dispatched`, which is `partial`. -/
@@ -208,7 +236,9 @@ A request to set a major mode is answered with what `registered` says of
 the mode ("Requests that name something registered", in the module docs):
 the on-enter actions it runs are put before the rest of the program. A
 request to start a job and one for an ex binding are answered with what
-`registered` says of the name. -/
+`registered` says of the name, and for a request to run a command the
+command `registered` has of the name is put before the rest of the
+program. -/
 partial def Program.dispatched {α : Type} (registered : Loop.Registered) :
     EditorState →
       Program editorPort (Except TextError α) → Program editorPort (Guarded α × EditorState)
@@ -235,6 +265,16 @@ partial def Program.dispatched {α : Type} (registered : Loop.Registered) :
       dispatched registered state (next reply)
     else dispatched registered state (next (.error (.noSuchJob name)))
   | state, .step (.state (.ex name)) next => dispatched registered state (next (registered.ex name))
+  | state, .step (.state (.runCommand name call)) next =>
+    match registered.command name with
+    | none => dispatched registered state (next false)
+    | some command =>
+      dispatched registered state do
+        match ← (command call).run with
+        | .ok () =>
+          next true
+        | .error error =>
+          pure (.error error)
   | state, .step (.state (.giveUp reason)) _ => .done (.gaveUp reason, state)
   | state, .step (.state (.breakOff reason)) _ => .done (.brokeOff reason, state)
   | state, .step (.state request) next =>
