@@ -1,4 +1,5 @@
 import Editor.Event
+import Editor.InputScheme
 import Editor.Invocation
 import Editor.State
 
@@ -26,6 +27,16 @@ arguments, the keys that yielded it, and what the command acts on.
   answers.
 - **The keys are the chords that yielded the invocation**: what the scheme
   reported as pending before the last key, then that key's chord.
+- **The report is what the input scheme says of the target's view**
+  (`Call.report`, an `InputScheme.Report`, `Editor/InputScheme.lean`): the
+  shape its selection has, whether a motion extends it, and the rest. A
+  command cannot ask the scheme: its state is the loop's, at a type the
+  loop does not know. For a key's command it is the report in the scheme's
+  state after the key, so the command of the key that enters a state is
+  told of that state; for a command no key ran, the report in the state
+  the scheme is in. It is the default report where no scheme said
+  anything: for a call made by hand, and under a scheme that reports
+  nothing.
 
 ## Where an addition goes
 
@@ -35,13 +46,15 @@ arguments, the keys that yielded it, and what the command acts on.
 | A new kind of argument | A variant of `Argument` (`Editor/Invocation.lean`); nothing here |
 | Something a command asks of the editor | A request of the editor's port (`Editor/Command.lean`), and for the editor state an operation of the editor API (`Editor/Api.lean`); nothing here |
 
-Pinned by `ModelTest.reloadChecks`, where a command is handed its call.
+Pinned by `ModelTest.reloadChecks`, where a command is handed its call, and
+the report by `ModelTest.dispatchReportChecks`, through the loop.
 -/
 
 namespace Editor
 
 /-- What a command is called with: what it acts on, the arguments of the
-invocation, and the keys that yielded it. -/
+invocation, the keys that yielded it, and what the input scheme says of the
+view it acts on. -/
 structure Call where
   /-- The window the command acts on and its buffer: the focused window's,
   when a key ran the command. -/
@@ -51,6 +64,10 @@ structure Call where
   /-- The chords of the key sequence that yielded the invocation; none for a
   command no key ran. -/
   keys : List Key := []
+  /-- What the input scheme says of the target's view: for a key's command,
+  in the scheme's state after the key. The default report where no scheme
+  said anything. -/
+  report : InputScheme.Report := {}
   deriving BEq, Repr
 
 end Editor

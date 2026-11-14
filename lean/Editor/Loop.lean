@@ -69,9 +69,14 @@ command's name and plain arguments, and the loop runs it (`Loop.run`):
    said in the echo area: `<name>: no such command`.
 3. **It is run with a `Call`** (`Editor/Command/Call.lean`): the focused
    window and its buffer, the invocation's arguments, which hold the count
-   where the scheme laid it out, and the keys that yielded it, which are
+   where the scheme laid it out, the keys that yielded it, which are
    what the scheme reported as pending before the last key, then that key's
-   chord.
+   chord, and what the scheme reports of the focused view
+   (`InputScheme.report`) in its state after the key. So the command of
+   the key that enters a state of the scheme's is told of that state. When
+   the command does not run to its end the scheme goes back to its state
+   at rest ("The scheme after a command that failed", below), so the
+   report a later command is told is the one from before the failed key.
 4. **Its state requests are answered from the loop's state**
    (`EditorM.dispatched`, `Editor/Command/Dispatch.lean`), each from the
    state the one before left, starting with the echo area cleared. When the
@@ -114,7 +119,8 @@ jobs are handed back, and a scene is published after it.
 - **A key's invocation** (`Loop.key`, above).
 - **An invocation no key yielded** (`Loop.invoke`): the echo area is
   cleared, the name is looked up, and the command is called with the
-  focused window, the invocation's arguments and no keys. The scheme's
+  focused window, the invocation's arguments, no keys, and what the scheme
+  reports of the focused view in the state it is in. The scheme's
   states are left as they are but for a view the command closed: no key
   was typed. Two things are run this way: a command run by its name
   (`Loop.runNamed`), for a host's driver, which is an invocation with no
@@ -1027,11 +1033,12 @@ def dispatch (keys : Keys scheme) (state : EditorState) (name : String)
 /-- Runs `invocation`, which the keys `typed` yielded, from `state` ("Running
 an invocation", in the module docs): clears the echo area, looks the
 command up, and runs it (`dispatch`) with the focused window, the
-invocation's arguments and the keys. It is not refused: a name with no
-command and a state with no focused window are each said in the echo area,
-as what became of a command that did not run to its end is. -/
-def run (keys : Keys scheme) (state : EditorState) (invocation : Invocation) (typed : List Key) :
-    EditorM Ran := do
+invocation's arguments, the keys, and `report`, what the scheme says of the
+focused view. It is not refused: a name with no command and a state with no
+focused window are each said in the echo area, as what became of a command
+that did not run to its end is. -/
+def run (keys : Keys scheme) (state : EditorState) (invocation : Invocation) (typed : List Key)
+    (report : InputScheme.Report := {}) : EditorM Ran := do
   let state := { state with echo := "" }
   let name := invocation.command
   let some command :=
@@ -1039,7 +1046,8 @@ def run (keys : Keys scheme) (state : EditorState) (invocation : Invocation) (ty
       name | return { state := said state name "no such command", ending := .noSuchCommand }
   let some target :=
     state.focusedTarget? | return { state := said state name "no window is focused", ending := .noWindow }
-  dispatch keys state name (command { target, arguments := invocation.arguments, keys := typed })
+  dispatch keys state name
+      (command { target, arguments := invocation.arguments, keys := typed, report })
 
 /-- What a step that ran a command hands back, before its scene is
 published: `loop` with the state the command left, and the scheme's two
@@ -1062,7 +1070,9 @@ def ranInto (loop : Loop scheme) (ran : Ran) : Stepped scheme :=
 yields, if it yields one, run (`run`): what the step hands back, with the
 loop after them, whose scene is not yet published. The keys the command is
 told of are what the scheme reported as pending before the key, then the
-key's chord.
+key's chord, and the report it is told of is the scheme's of the focused
+view in its state after the key: the key that enters a state of the
+scheme's runs its command in that state.
 
 The scheme's state after the key is kept, and it is the state at rest from
 then on, when the invocation ran to its end, or when the key yielded
@@ -1078,7 +1088,9 @@ def key (keys : Keys scheme) (loop : Loop scheme) (key : Key) : EditorM (Stepped
           { loop with
             input, atRest := if (scheme.pending input).isEmpty then input else loop.atRest }
         next := .continue }
-  let ran ← run keys loop.state invocation (before ++ [key.chord])
+  let ran ←
+    run keys loop.state invocation (before ++ [key.chord])
+        (scheme.report input loop.state.frame.focused)
   if ran.finished then
     return ({ loop with
               input, atRest := input } :
@@ -1089,12 +1101,13 @@ def key (keys : Keys scheme) (loop : Loop scheme) (key : Key) : EditorM (Stepped
 
 /-- Runs `invocation`, which no key yielded (`run`), and publishes a scene of
 the state after it: the echo area is cleared, the command is looked up, and
-it is called with the focused window, the invocation's arguments and no
-keys. The scheme's states are left as they are, but for a view the command
-closed. -/
+it is called with the focused window, the invocation's arguments, no keys,
+and what the scheme reports of the focused view in the state it is in. The
+scheme's states are left as they are, but for a view the command closed. -/
 def invoke (keys : Keys scheme) (loop : Loop scheme) (invocation : Invocation) :
     EditorM (Stepped scheme) := do
-  let stepped := loop.ranInto (← run keys loop.state invocation [])
+  let report := scheme.report loop.input loop.state.frame.focused
+  let stepped := loop.ranInto (← run keys loop.state invocation [] report)
   return { stepped with loop := ← stepped.loop.publish }
 
 /-- Runs the command registered under `name` as an invocation with no

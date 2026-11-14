@@ -7499,18 +7499,79 @@ def dispatchUndoChecks : List Check :=
               ("xabcd", "crossing: refused: bad range; the command moved in the history", "abcd",
                 "") }]
 
+/-- A report as a command of the checks says it in the echo area. -/
+def reportText (report : InputScheme.Report) : String :=
+  reprStr report
+
+/-- The command `say` of the report checks: it says the report its call
+carries in the echo area (`reportText`). -/
+def say : Dispatched := fun call => do
+  message (reportText call.report)
+  return none
+
+/-- The checks of what a command is told of its view
+(`Editor/Command/Call.lean`, `Editor/Loop.lean`), on the editor's models,
+with the scheme `switching`, whose report a key's invocation switches, and
+a command that says the report it was called with. -/
+def dispatchReportChecks : List Check :=
+  let handed (commands : List (String × Dispatched) := []) : Loop.Keys switching :=
+    switchingKeys [("C-s", invoke "say")] (("say", say) :: commands)
+  let echoes (text : String) (commands : List (String × Dispatched) := []) :
+    Option (Array String) :=
+    (switched (EditorState.initial ⟨640, 480⟩) text (handed := handed commands)).map
+      (·.2.1.map (·.echo))
+  [{  name :=
+        "a command is called with what the scheme reports of its view: the default before any key switched it, and, for the key whose invocation switches the report, the switched report, since the command sees the scheme's state after its key; the next key's command is called with it too"
+      run :=
+        pure
+          (echoes "C-s C-m C-s" [("mark", say)] ==
+              some #[reportText {}, reportText markedReport, reportText markedReport] &&
+            reportText markedReport != reportText {}) },
+    { name :=
+        "a command that is refused leaves the scheme at rest: the next key's command is called with the report from before the failed key, and not with the one that key would have switched to"
+      run :=
+        pure <|
+          let failing : Dispatched := fun _ => throw .badRange
+          match echoes "C-m C-b C-s" [("begin", failing)], echoes "C-m C-b C-s" with
+          | some #[_, failed, after], some #[_, _, begun] =>
+            failed == "begin: refused: bad range" && after == reportText markedReport &&
+              begun == reportText { session := true }
+          | _, _ => false },
+    { name :=
+        "a command run by its name, which no key yielded, is called with what the scheme reports of the focused view in the state the scheme is in"
+      run :=
+        pure <|
+          let program : EditorM (String × String) := do
+            let loop : Loop switching := { state := ← EditorState.initial ⟨640, 480⟩ }
+            let fresh := (← loop.runNamed (handed []) "say").loop.state.echo
+            let (loop, _) ← stepsWith (handed []) loop (presses "C-m")
+            return (fresh, (← loop.runNamed (handed []) "say").loop.state.echo)
+          (program.runModel editorModel).1.toOption ==
+            some (reportText {}, reportText markedReport) },
+    { name :=
+        "under a scheme that says nothing of a view a command is called with the default report, by a key and by its name"
+      run :=
+        pure <|
+          let keys := dispatchKeys [("C-s", invoke "say")] [("say", say)]
+          let program : EditorM (String × String) := do
+            let loop : TestLoop := { state := ← EditorState.initial ⟨640, 480⟩ }
+            let (loop, _) ← stepsWith keys loop (presses "C-s")
+            return (loop.state.echo, (← loop.runNamed keys "say").loop.state.echo)
+          (program.runModel editorModel).1.toOption == some (reportText {}, reportText {}) }]
+
 /-- The checks of key dispatch in the loop (`Editor/Loop.lean`), on the
 editor's models: keys through the scheme and the commands they run,
 rollback, the interrupt, the slow-command log, a command's state requests,
 what the loop gives up after a command, the scheme's notice of a closed
-view, and undo from a command. -/
+view, undo from a command, and what a command is told of its view. -/
 def dispatchChecks : List Check :=
   dispatchKeyChecks ++ dispatchRollbackChecks ++ dispatchInterruptChecks ++ dispatchSlowChecks ++
     dispatchStateChecks ++
     dispatchGiveUpChecks ++
     dispatchCloseViewChecks ++
     dispatchMinibufferNoticeChecks ++
-    dispatchUndoChecks
+    dispatchUndoChecks ++
+    dispatchReportChecks
 
 /-- A scheme written for the test that breaks the contract: it yields the
 first binding that the keys so far begin, so it emits on a strict prefix. -/
