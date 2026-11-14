@@ -292,11 +292,14 @@ latency of 1, on every platform.**
 
 **This is a decision taken by reading. Nothing has been measured.** A
 present mode is a property of a window's surface, and a measurement of
-one needs a window on a display. The renderer so far draws to a texture
-of its own and opens no window, so no surface has been created,
-configured or presented to: what follows is what wgpu's source and
-documentation say at the pin, and each row says so. The measurements are
-the display pipeline's phase 6's, by the steps written down in
+one needs a window on a display. When it was taken the renderer drew to
+a texture of its own and no surface existed: what follows is what wgpu's
+source and documentation say at the pin, and each row says so. A surface
+exists since the display pipeline's phase 5, which configures one with
+this choice and presents to it; one row below has since been seen on a
+surface, and says so. Seeing what a surface offers is not measuring a
+mode: the measurements are the display pipeline's phase 6's, by the steps
+written down in
 [on-demand-checks.md](../dev-practices/on-demand-checks.md), "The present
 mode, measured on a window". They may overturn the choice.
 
@@ -317,15 +320,34 @@ mode, measured on a window". They may overturn the choice.
 
 **What wgpu 30.0.2 offers, by platform and back end.** Every row was read
 in the source at the pin (`wgpu-hal` 30.0.2, `wgpu-types` 30.0.2) on
-2026-11-14 and not run: no surface exists to ask.
+2026-11-14. The Vulkan row was also seen on a surface that day; the other
+two have not been run.
 
 | Platform, back end | Present modes the back end reports | Frame latency the back end reports | Where it was read |
 |---|---|---|---|
-| macOS, Metal | `Fifo` and `Immediate` (the second by turning the layer's display sync off) | 1 to 2: the layer's `maximumDrawableCount` is the latency plus 1 | `wgpu-hal/src/metal/adapter.rs` |
-| Linux, Vulkan | Whatever the surface reports, of `Fifo`, `FifoRelaxed`, `Immediate` and `Mailbox`. `Fifo` is the mode Vulkan's specification requires of every surface, which is the specification's word and was not read in wgpu | The swapchain's least image count less 1, to its greatest less 1 | `wgpu-hal/src/vulkan/swapchain/native.rs`, `conv.rs` |
-| Linux, OpenGL | `Fifo` alone | Reported as 2, and ignored: the back end does not use it | `wgpu-hal/src/gles/adapter.rs` |
+| macOS, Metal | `Fifo` and `Immediate` (the second by turning the layer's display sync off). Read, not run | 1 to 2: the layer's `maximumDrawableCount` is the latency plus 1 | `wgpu-hal/src/metal/adapter.rs` |
+| Linux, Vulkan | Whatever the surface reports, of `Fifo`, `FifoRelaxed`, `Immediate` and `Mailbox`. `Fifo` is the mode Vulkan's specification requires of every surface, which is the specification's word and was not read in wgpu. **Seen**, on llvmpipe (Mesa 25.0.7) on an X11 window under Xvfb: `Immediate`, `Mailbox`, `Fifo`, `FifoRelaxed`, in that order | The swapchain's least image count less 1, to its greatest less 1. A surface's capabilities do not report the range: wgpu holds the latency asked for to it | `wgpu-hal/src/vulkan/swapchain/native.rs`, `conv.rs` |
+| Linux, OpenGL | `Fifo` alone. Read, not run: the container has no EGL | Reported as 2, and ignored: the back end does not use it | `wgpu-hal/src/gles/adapter.rs` |
 
 Windows has no row: it has not been attempted ([README.md](README.md)).
+
+**What a surface was seen to report** (2026-11-14, in the planner's spike
+of the display pipeline's phase 5 and again by that phase's window, both
+in the Linux container, aarch64, under Xvfb, on llvmpipe through Vulkan):
+
+- formats `Bgra8UnormSrgb` and `Bgra8Unorm`, in that order; Metal's, as
+  read, are `Bgra8Unorm`, `Bgra8UnormSrgb` and `Rgba16Float`, so the
+  first format offered is not an sRGB one everywhere, and the renderer
+  takes the first that is;
+- the four present modes above, with `Immediate` first; wgpu's default
+  configuration for that surface was `Immediate` at a frame latency of 2,
+  which tears, so the choice here is made and never defaulted;
+- usages that include copying from the surface's texture, which is how
+  the window's picture is read back for a check;
+- no refresh rate from the display: Xvfb's monitor says none.
+
+Configured `Fifo` at a latency of 1 there, frames were presented from the
+render thread and read back as drawn.
 
 The modes wgpu names are `Fifo`, `FifoRelaxed`, `Immediate` and
 `Mailbox`, and two that pick from those by what is supported,
@@ -350,8 +372,11 @@ techniques the survey found:
 `crates/editor-render-wgpu` is the decision as a pure function of the
 modes and the latency range a surface offers, with tests: `Fifo` from
 Metal's offer, from OpenGL's and from one of every mode, and a latency
-of 1 clamped into the range offered. Phase 6 configures its surface from
-what that function gives.
+of 1 clamped into the range offered. The display pipeline's phase 5
+configures a window's surface from what that function gives for the
+modes the surface offers (`crates/editor-render-wgpu`, `gpu` and
+`surface`), with a test that llvmpipe's offer as seen gives `Fifo`. What
+is left to phase 6 is the measuring.
 
 ## Risks this raises for our planned stack
 

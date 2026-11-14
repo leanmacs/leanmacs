@@ -1253,9 +1253,16 @@ and what every back end shares in `crates/editor-render`, and the real
 adapters in `crates/editor-render-wgpu`. The facts of each part are in the
 module docs; these are the decisions. None is confirmed by the owner yet
 (tasks `display-pipeline-renderer-port-owner` and
-`display-pipeline-text-core-pitfalls`). Nothing starts the render thread
-or opens a surface yet: that, the real clock, and the journal reaching
-Lean are phase 6's.
+`display-pipeline-text-core-pitfalls`).
+
+Phase 4 started no thread and opened no surface, and its plan and this
+section gave both, with the real clock, to phase 6. Phase 5 built all
+three, because a window that draws needs them ("The window, as built",
+below): `editor-ffi` starts the render thread and lends the loop the
+clock that stamps input, and the wgpu adapter presents to a window's
+surface. What is still phase 6's is anything from Lean reaching them:
+frames published from Lean, the real shaper behind the display handle,
+and the journal read from Lean.
 
 - **The `Renderer` port is `editor-render`'s.** It is a crate of its own,
   which depends on `editor-layout` alone, for the reasons the window port
@@ -1280,11 +1287,14 @@ Lean are phase 6's.
   shown, a dirty mark, a new size or scale, or an animation deadline that
   has come. A frame equal to the one shown, the same value or an equal
   one, is no demand: nothing is drawn. There is at most one draw for each
-  refresh interval, which is data (the window gives it in phase 6), and
-  with no demand the render thread waits on a condition variable with no
+  refresh interval, which is data: the window tells how often its display
+  refreshes, and the interval is the loop's default until it does. With
+  no demand the render thread waits on a condition variable with no
   deadline. A resize draws the frame shown again on the new target at
   once, without waiting for Lean. A draw that fails to present leaves
-  its demands, and is tried again a refresh later.
+  its demands, and is tried again a refresh later. A target the loop is
+  told is hidden is not drawn on at all: what is asked is kept, and one
+  draw serves it when the target is shown.
 - **The fake and the contract.** `RecordingRenderer` records every
   request and draws nothing. The contract is nine properties of what a
   renderer says it built: a first frame builds every row; the same frame
@@ -1356,6 +1366,112 @@ Lean are phase 6's.
   real GPU draws is compared with the same image on demand
   ([the-gate.md](../dev-practices/the-gate.md),
   [on-demand-checks.md](../dev-practices/on-demand-checks.md)).
+
+### The window, as built
+
+The display pipeline's phase 5 built the window the renderer draws in:
+the winit adapter's full translation, what a window tells whatever draws
+in it, the render thread, the surface, and a clipboard adapter. The facts
+of each part are in the module docs of `crates/editor-platform`,
+`crates/editor-platform-winit`, `crates/editor-platform-arboard`,
+`crates/editor-ffi` (`render`) and `crates/editor-render-wgpu`
+(`surface`, `gpu`); these are the decisions. **None is confirmed by the
+owner.** Nothing of it reaches Lean: no input variant, no row of the
+event table, no Lean module and no C function changed, and the process's
+window is still run with nothing drawing in it. The threads are in
+[concurrency.md](concurrency.md), "Sharing state".
+
+- **Redraw is on demand, from end to end.** winit's loop waits for the
+  next event, and the adapter never asks it for a redraw and never sets
+  its control flow. The render thread waits on the render loop's park
+  with no deadline. A draw happens because something asked for one: a
+  frame was published, or the window said it was resized or damaged. A
+  key, the pointer, the focus and a composition ask for nothing by
+  themselves: they are input, and it is what the editor publishes in
+  answer that draws. The interrupt key is not singled out: every input
+  takes one path to the queue.
+- **The window tells what draws in it through a second listener.** The
+  window port's `Platform::run` takes a drawer beside its report, and
+  hands it a `Canvas`: the window opened (with its native window, its
+  size and its display's refresh rate), a new size or scale, a new
+  refresh rate, damage, hidden or shown, closing. It is not a variant of
+  `Input`, because every `Input` becomes an event for Lean and a native
+  window is nothing Lean can use. The contract holds the order: the
+  drawer hears the window opened before anyone is told of the window, so
+  whoever learns of it from the queue finds the render loop there; and it
+  hears the window is closing last, before the window is gone.
+- **The native window is the port's own data.** `NativeWindow` is an
+  AppKit view, an Xlib window or a Wayland surface, as the pointers and
+  numbers the system defines. The window adapter fills it from the
+  handles winit gives, and the renderer turns it back into the handles
+  wgpu takes, each through its own library's re-export of
+  `raw-window-handle`: no type of winit, of wgpu or of that crate is
+  public anywhere, and no crate of the workspace depends on it.
+- **A key's names are winit's, which are the W3C's.** winit documents its
+  named keys and key codes as the W3C UI Events values, so a variant's
+  own name is taken, and the three places winit says it differs are
+  written out: the system key is `Meta` and its codes `MetaLeft` and
+  `MetaRight`, and Space is the character it types. A table of some five
+  hundred variants written by hand would make every key winit adds
+  unidentified until someone listed it.
+- **A key's text is what the port documents, not always what winit
+  gives.** On X11 winit gives a release the text of its press and gives
+  Escape the text U+001B. The port says a release produces no text and
+  that a key known by its name produces none. So a release carries none,
+  and text that holds a control character is no text: Escape, Enter, Tab
+  and Backspace are known by their names. This decides what Lean sees
+  for those keys.
+- **Modifiers are those winit last reported**, and are not put right. On
+  X11 a modifier's own press arrives before the change that names it, so
+  the press of Control carries no `control`. No command binds a bare
+  modifier.
+- **The pointer.** A press and a release are where the pointer last was.
+  A move with a button held is a drag, carrying the button held longest;
+  a move with none held is remembered and not reported. A wheel carries
+  winit's delta as it is, in lines or pixels, positive when the content
+  moves right and down. Touch is not mapped.
+- **Size and scale.** A resize is the new size at the scale last known,
+  and a change of scale a resize at the size last known. A window says
+  its size as it opens, in a resize straight after `Opened`: the port has
+  no other way to say how large a window is, and Lean must know before
+  it lays anything out.
+- **The refresh rate is read after the events that can change it.** winit
+  has no event for it. A window comes to be on another display by being
+  moved, resized or rescaled, so after each the translation asks the
+  display, and tells the drawer when the answer is another than the
+  last. The session turns thousandths of a hertz into the loop's
+  interval; a display that does not say leaves the loop's default.
+- **The surface.** Its format is the first sRGB one it offers, wherever
+  that is in the offer, since the blend is in linear light and Metal
+  offers a format that is not sRGB first; with none, the first, drawn on
+  through its sRGB form. Its present mode and frame latency are the
+  choice already on record, `Fifo` at 1, and never wgpu's default, which
+  on llvmpipe's surface was a mode that tears. An outdated or lost
+  surface is configured again and tried once; an occluded one is not
+  presented to. The picture is copied out of the surface only when a
+  check asks for it.
+- **The clipboard is a port of its own, below Lean's.** Text in and out
+  of the system clipboard, in `editor-platform`, with a fake and a
+  contract; `editor-platform-arboard` is the adapter. What the editor
+  asks of a clipboard (which register, when, what a yank writes) is the
+  clipboard interface in Lean, the command loop's, and binding this to it
+  is phase 6's. arboard needs no window, which is what lets the adapter
+  be checked without one.
+- **How it is tested.** The gate opens no window, makes no surface and
+  touches no clipboard. Everything decided is pure and tested there: the
+  translation, on winit's own values built in the tests; which call on
+  the render loop each thing told becomes, on a loop stepped by hand;
+  the session's thread, on the scripted platform and the recording
+  renderer; the surface's choices; how arboard's answers become the
+  port's. What is left is the calls themselves, and they run on demand:
+  under Xvfb in a container, where the real window keeps the port's
+  contract, a fixture frame of real text is drawn in it and read back
+  from its surface within 3 of 255 of the CPU's picture, nothing is
+  drawn over an idle second, input given by xdotool arrives on the queue
+  as documented, and the clipboard keeps its contract in one process and
+  across two ([on-demand-checks.md](../dev-practices/on-demand-checks.md),
+  "The window on Linux, on demand"). That task, and not the gate, is
+  what confirms a window draws and a clipboard round-trips.
 
 ### The frame is device-independent
 
@@ -1457,11 +1573,17 @@ frame journal and the renderer's counters.
   refused draw is answered by its next draw that presents, as if the two
   were one draw: the work is counted once, in that frame's entry, and a
   row the refused draw built is there a row built, not a row reused.
-- **What is not built.** The journal's clock is a port with only a fake:
-  for a latency to mean anything the journal must read the clock that
-  stamped the input, which is `editor-ffi`'s, so the real one is written
-  there in phase 6. Neither the journal nor the counters reach Lean yet.
-  Nothing has been measured with them. Layout's counters are layout's
+- **The clock.** For a latency to mean anything the journal must read the
+  clock that stamped the input, which is `editor-ffi`'s. That crate
+  implements the render loop's clock port for its input clock, and a
+  window's session runs the loop on it: an entry's time from input to
+  presentation is a subtraction on one clock. A frame published in answer
+  to an event is submitted with that event's stamp.
+- **What is not built.** Neither the journal nor the counters reach Lean
+  yet. Nothing has been measured with them: the one figure there is, some
+  220 ms from a window's size arriving to its first frame presented, is
+  of a debug build on a software driver, and includes making the
+  renderer. Layout's counters are layout's
   ("Layout and rendering", as built); which ranges have been visible is
   not built.
 
@@ -1631,11 +1753,22 @@ frame journal and the renderer's counters.
   plan of the display pipeline's phase 4 took and the owner has not
   confirmed.
 - **No present mode has been measured.** `Fifo` at a frame latency of 1
-  was chosen by reading wgpu's source; no surface exists yet, so what
-  each platform offers is what was read, not what a surface reported.
-  The measurements are phase 6's
+  was chosen by reading wgpu's source. A surface exists now, and one has
+  reported what it offers: llvmpipe's, on an X11 window under Xvfb, where
+  the choice was configured and frames were presented. What Metal's
+  offers is still what was read. The measurements are phase 6's
   ([rendering-prior-art.md](rendering-prior-art.md), "Present mode and
   pacing").
+- **The window draws only in the container.** The surface, the render
+  thread and the window's translation have run on Linux under Xvfb and
+  nowhere else: not on macOS, not on Wayland, not on a real display
+  ([concurrency.md](concurrency.md), "Still to verify").
+- **The window's choices await the owner**: that the render thread draws
+  and the main thread does not; that the window tells what draws in it
+  through a second listener of the port, with its native window as the
+  port's own data; that a key's text is none for a release and for a
+  control character, which decides what Lean sees for Escape and Enter;
+  and where the clipboard's port lives.
 - **The GPU's picture is checked on demand only.** The gate checks the
   wgpu adapter's calls, on a back end that draws nothing, and the CPU
   compositor's picture. That a real GPU draws the same is seen when

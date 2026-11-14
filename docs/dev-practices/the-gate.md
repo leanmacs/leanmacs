@@ -12,11 +12,61 @@ the real bindings and the checks of the config session against the real
 elaborator (`mise run ffi-test`); and the C format check. `hk check` runs the
 same task.
 
-The gate opens no window and needs neither a display nor Docker. Every
-window it runs is the window port's fake, the scripted platform
-(`crates/editor-platform`), which reports a fixed script and opens nothing.
-What needs a display, a person or a container is a task of its own
+The gate opens no window, makes no surface on one, reads and writes no
+clipboard, and needs neither a display nor Docker. Every window it runs is
+the window port's fake, the scripted platform (`crates/editor-platform`),
+which reports a fixed script and opens nothing; every clipboard is the
+clipboard port's fake, which keeps text in memory. What needs a display, a
+person or a container is a task of its own
 ([`on-demand-checks.md`](on-demand-checks.md)).
+
+**So a green gate does not say a window draws or a clipboard works.** Two
+things the editor must do are confirmed only outside it, by
+`mise run linux-window`, in a container under Xvfb: that the window draws
+a scene and input given to it arrives on the queue, and that text written
+through the clipboard adapter is the text read back. A change that
+touches the window, the surface or the clipboard is done when both this
+gate and that task exit 0.
+
+What the gate does check of the window, with none open:
+
+- **The translation**, in `crates/editor-platform-winit`, on winit's own
+  values built in the tests: a key's logical key, physical key, modifiers
+  and text; the pointer's press, drag, release and wheel; a resize and a
+  change of scale; the native handles; and what the drawer is told for
+  each, damage and hiding among it, and after which events the display is
+  asked for its refresh rate. Two of winit's events cannot be built
+  outside winit, a key and a change of scale, so those are translated
+  from their parts.
+- **The port's contract**, in `crates/editor-platform`, on the fake and on
+  platforms written to break each rule, those about the drawer among
+  them; and the clipboard port's, on its fake and on clipboards written to
+  break each property.
+- **What the window tells reaching the render loop**, in
+  `crates/editor-ffi`: which call on the loop each thing told becomes, on
+  a loop stepped by hand over the render crate's fakes; and the session
+  that starts the render thread, on a real thread over the scripted
+  platform and the recording renderer, where a frame is drawn once for
+  itself and once for a resize, nothing more is drawn, and the renderer is
+  dropped on the thread that ran the window. Nothing sleeps: a renderer
+  says on a channel that it drew, and each word is read with a bound.
+- **What is decided about a surface**, in `crates/editor-render-wgpu`: the
+  format, the present mode, and what is done when the surface gives no
+  texture; and that a surface no adapter can present to is refused with a
+  reason, on wgpu's no-op back end.
+- **How the clipboard library's answers become the port's**, in
+  `crates/editor-platform-arboard`, on values built in the tests.
+
+What it cannot check, and so does not claim: winit's own loop, and the few
+lines of the adapter that only a real window runs (the two that take a key
+event and a change of scale apart, the readings of the window's size, its
+handles and its display's refresh rate, and telling the drawer the window
+is closing); the calls that configure a surface, take its texture, copy
+it out and present it, since the no-op back end hands out no surface
+texture; and anything a real clipboard does. `mise run lint` forbids to
+tests the calls that open a clipboard and that make a renderer on a
+window (`crates/editor-platform-arboard/clippy.toml`,
+`crates/editor-render-wgpu/clippy.toml`, `crates/editor-ffi/clippy.toml`).
 
 The Rust half needs no Lean toolchain: `mise run test` (`cargo test
 --workspace`) builds and tests every crate with Cargo alone. Text storage
@@ -105,8 +155,10 @@ call that does (`crates/editor-render-wgpu/clippy.toml`). The validation
 is not everything either: a vertex attribute of the wrong type is
 refused, and one with too few components is not. The picture a real GPU
 draws is compared with the reference image by tasks of their own, outside
-the gate ([`on-demand-checks.md`](on-demand-checks.md)), and nothing with
-a window is drawn anywhere yet.
+the gate ([`on-demand-checks.md`](on-demand-checks.md)), and so is what
+is drawn in a window: a frame presented to a window's surface is read
+back and compared with the CPU's picture by `mise run linux-window`, in
+the container, and by `mise run window-contract` on a desktop.
 
 The Lean half's logic needs no Rust library. The editor reaches the library
 through interfaces it defines, each with a pure Lean model, and

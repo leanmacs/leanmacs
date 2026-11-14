@@ -455,33 +455,44 @@ are the steps by which the display pipeline's phase 6 measures the present
 mode on a window. They are written down now because the decision was
 taken first, by reading: `Fifo` at a frame latency of 1 on every platform
 ([`rendering-prior-art.md`](../design/rendering-prior-art.md), "Present
-mode and pacing"). A measurement needs a window on a display, which
-nothing built so far has; these steps are how that decision is borne out
-or overturned.
+mode and pacing"). A measurement needs a window on a display. A window
+that draws exists since the display pipeline's phase 5, and has run only
+under Xvfb, which has no display to pace against; these steps are how
+that decision is borne out or overturned.
 
 Who runs it, and when: whoever builds phase 6, at a real window, on a
 quiet machine, once on macOS and once on Linux on a desktop (not under
 Xvfb, which has no display to pace against).
 
-What phase 6 must have built first:
+What is there already, built by phase 5, and so no longer phase 6's to
+build first:
 
 - a surface on the window, configured from what `present::choose`
-  (`crates/editor-render-wgpu`) gives for the modes and the frame latency
-  the surface reports;
-- a way to ask for another present mode and another frame latency for
-  one run, which the editor does not otherwise offer: a flag of the
-  measuring command, not a setting;
+  (`crates/editor-render-wgpu`) gives for the modes the surface offers
+  (a surface does not report its range of frame latency: the one asked
+  for is held to it by wgpu);
 - the render loop running on its thread, on the clock that stamps window
   input (`editor-ffi`'s), so that an entry's input time and its present
   time are on one clock;
-- a way to read the frame journal at the end of a run.
+- the frame journal, read through the loop's handle at the end of a run,
+  in Rust (`crates/editor-ffi/examples/window.rs` reads it so).
+
+What phase 6 must still build first:
+
+- a way to ask for another present mode and another frame latency for
+  one run, which the editor does not otherwise offer: a flag of the
+  measuring command, not a setting;
+- frames published from Lean reaching the window, so that a key typed
+  draws a frame; and a way to read the journal from the measuring
+  command.
 
 The steps, for each platform:
 
-1. Note what the surface reports: its present modes and its range of
-   frame latency. Compare them with the table in
-   `rendering-prior-art.md`, which was read from wgpu's source and not
-   seen on a surface, and correct the table where they differ.
+1. Note what the surface reports: its formats and its present modes.
+   Compare them with the table in `rendering-prior-art.md`, of which the
+   Vulkan row has been seen on a surface (llvmpipe, under Xvfb) and the
+   others only read in wgpu's source, and correct the table where they
+   differ.
 2. For each of these that the surface offers, one run each: `Fifo` at a
    frame latency of 1; `Fifo` at 2; `Immediate`; `Mailbox`;
    `FifoRelaxed`.
