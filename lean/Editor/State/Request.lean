@@ -23,7 +23,7 @@ the models and against the library alike (`Editor/Command/Dispatch.lean`).
   put a state of its own making in place of the editor's.
 - **A refusal is a value.** A reply that can be refused is an `Except` of
   the operation's refusal (`LayoutRefusal`, `BufferRefusal`, `ModeRefusal`,
-  `JobRefusal`), with the state as it was. Nothing is thrown, so a command
+  `JobRefusal`, `PromptRefusal`), with the state as it was. Nothing is thrown, so a command
   matches on it, and a command's error stays a `TextError`.
 - **A request holds plain data.** It cannot hold a command or a job, which
   are programs over ports that would then refer to themselves: a mode is
@@ -36,6 +36,11 @@ the models and against the library alike (`Editor/Command/Dispatch.lean`).
 - **A marker is made by the caller.** `split` and `show` are handed the
   markers of the window they make or change, which the command marked on
   the buffer's text first: the handler asks the text store nothing.
+- **A prompt's minibuffer is made by the caller too.** `openPrompt` is
+  handed the minibuffer's text, a history over it and the two markers of
+  its window, and names the command that receives the answer as an
+  invocation (`Editor/State.lean`, "Prompts"). It is refused with a
+  `PromptRefusal`.
 - **A file is attached by one request, and a save is two.** `attachFile`
   has a buffer hold a file a load answered. `beginSave` records a save in
   flight, with the snapshot it writes, which the command took first, and
@@ -101,6 +106,13 @@ inductive StateRequest where
   /-- End the save of the buffer `id` that writes `snapshot`: with the stamp
   of the file it wrote, or with `none` for a save that was refused. -/
   | endSave (id : BufferId) (snapshot : SnapshotId) (stamp : Option File.Stamp)
+  /-- Open a prompt labelled `label`, whose answer the command of
+  `continuation` receives: the minibuffer is a buffer over `text`, whose
+  history is `history`, in a window with `scroll` and `selection` as its
+  markers. -/
+  |
+  openPrompt (label : String) (continuation : Invocation) (text : TextId) (history : UndoTree)
+    (scroll selection : MarkerId)
 
 /-- The type of the reply to each request. -/
 abbrev StateRequest.Reply : StateRequest → Type
@@ -121,6 +133,7 @@ abbrev StateRequest.Reply : StateRequest → Type
   | .attachFile .. => Except BufferRefusal Unit
   | .beginSave .. => Except BufferRefusal Unit
   | .endSave .. => Except BufferRefusal Unit
+  | .openPrompt .. => Except PromptRefusal ViewId
 
 namespace EditorState
 
@@ -159,6 +172,8 @@ def handle : (request : StateRequest) → EditorState → request.Reply × Edito
   | .attachFile id path stamp ending, state => state.attachFile id path stamp ending
   | .beginSave id snapshot saved, state => state.beginSave id snapshot saved
   | .endSave id snapshot stamp, state => state.endSave id snapshot stamp
+  | .openPrompt label continuation text history scroll selection, state =>
+    state.openPrompt label continuation text history scroll selection
 
 end EditorState
 

@@ -3942,6 +3942,12 @@ def onTextModel {α : Type} (program : TextM α) : Option α :=
 def laidOut (state : EditorState) : Array (ViewId × Rect) :=
   state.frame.tree.rects (frameRect state.frame.size)
 
+/-- The continuation the prompts of these checks are asked with: a command's
+name and an argument of the asker's own. No command is registered under it
+here: a continuation is plain data. -/
+def asked : Invocation :=
+  { command := "greet", arguments := [.nat 7] }
+
 /-- Ways to spoil `threeWindows`, each breaking one layout invariant and
 keeping every other clause of `EditorState.wellFormed`, with what the state
 is then. So each is refused by one clause alone, and a `wellFormed` without
@@ -3963,7 +3969,21 @@ def spoilings : List (String × (EditorState → EditorState)) :=
     ("whose tree names a window there is none of, with as many leaves as there are windows",
       withWindow ⟨2⟩ ({ · with id := ⟨7⟩ })),
     ("with a window that is not in the tree", withTree (.split .rows top .minibuffer)),
-    ("with a window whose buffer does not exist", withWindow ⟨1⟩ ({ · with buffer := ⟨5⟩ }))]
+    ("with a window whose buffer does not exist", withWindow ⟨1⟩ ({ · with buffer := ⟨5⟩ })),
+    ("with a prompt whose view has no window", fun state =>
+      { state with
+        prompt := some { label := "", view := ⟨7⟩, asker := ⟨0⟩, continuation := asked } }),
+    ("with a prompt whose view is also a window of the tree", fun state =>
+      { state with
+        prompt := some { label := "", view := ⟨2⟩, asker := ⟨0⟩, continuation := asked } })]
+
+/-- `state` with a prompt asked for from its focused view, and the reply: the
+label `Name: `, the continuation `asked`, and a minibuffer over the text
+`text`, with a new history over it, an anchor that is its marker 0 and a
+selection that is its marker 1. The operation asks the text store nothing,
+so the ids are written out by hand. -/
+def prompted (state : EditorState) (text : Nat := 7) : Except PromptRefusal ViewId × EditorState :=
+  state.openPrompt "Name: " asked ⟨text⟩ (UndoTree.new ⟨text⟩ 0) ⟨⟨text⟩, 0⟩ ⟨⟨text⟩, 1⟩
 
 /-- The checks of the editor state and its layout invariants
 (`Editor/State.lean`), on the text model. -/
@@ -4013,7 +4033,7 @@ def stateChecks : List Check :=
               (named ["other<2>", "other<3>"]).freeName "other" == "other<4>" &&
               (named ["other<2>"]).freeName "other<2>" == "other<2><2>" },
     { name :=
-        "a state that breaks one layout invariant is not well formed: a focus outside the tree, no minibuffer leaf or two, a window named twice, a tree window with no window, a window outside the tree, a window with no buffer"
+        "a state that breaks one layout invariant is not well formed: a focus outside the tree, no minibuffer leaf or two, a window named twice, a tree window with no window, a window outside the tree, a window with no buffer, a prompt whose view has no window, a prompt whose view is a window of the tree"
       run := do
         let some state := onTextModel threeWindows | return false
         -- A failure names the spoiled states that were taken for well formed.
@@ -4150,7 +4170,140 @@ def stateChecks : List Check :=
               | (.error (.noSuchBuffer id), after) => id == ⟨5⟩ && after == state
               | _ => false
             refused (state.setMajorMode ⟨5⟩ "listing") && refused (state.addMinorMode ⟨5⟩ "one") &&
-              refused (state.removeMinorMode ⟨5⟩ "one") }]
+              refused (state.removeMinorMode ⟨5⟩ "one") },
+    { name := "the initial state has no prompt open"
+      run :=
+        pure <|
+          match onTextModel (EditorState.initial ⟨640, 480⟩) with
+          | none => false
+          | some state => state.prompt == none },
+    { name :=
+        "opening a prompt replies the minibuffer's view, a new one: the state has the prompt with its label, its continuation and the focused view as its asker, a buffer in the next slot over the text given, with the minibuffer's mode and a name no other buffer has, a window on it with the markers given, the focus on it, and the tree as it was; it is well formed"
+      run :=
+        pure <|
+          match onTextModel (EditorState.initial ⟨640, 480⟩) with
+          | none => false
+          | some state =>
+            match prompted state with
+            | (.ok view, after) =>
+              view == ⟨1⟩ &&
+                after.prompt ==
+                  some { label := "Name: ", view := ⟨1⟩, asker := ⟨0⟩, continuation := asked } &&
+                after.buffers.size == 2 &&
+                after.buffer? ⟨0⟩ == state.buffer? ⟨0⟩ &&
+                after.buffer? ⟨1⟩ ==
+                  some
+                    { name := Prompt.bufferName, text := ⟨7⟩, history := UndoTree.new ⟨7⟩ 0
+                      major := some Prompt.mode } &&
+                state.findBuffer Prompt.bufferName == none &&
+                after.windows ==
+                  state.windows.push
+                    { id := ⟨1⟩, buffer := ⟨1⟩, scroll := ⟨⟨7⟩, 0⟩, selection := ⟨⟨7⟩, 1⟩ } &&
+                after.frame == { state.frame with focused := ⟨1⟩ } &&
+                after.nextView == 2 &&
+                after.wellFormed
+            | _ => false },
+    { name :=
+        "the minibuffer's buffer gets the next free name when a buffer is already called by the minibuffer's name"
+      run :=
+        pure <|
+          match onTextModel (EditorState.initial ⟨640, 480⟩) with
+          | none => false
+          | some state =>
+            let (_, named) := state.addBuffer Prompt.bufferName ⟨3⟩ (UndoTree.new ⟨3⟩ 0)
+            match prompted named with
+            | (.ok _, after) =>
+              (after.buffer? ⟨2⟩).map (·.name) == some s!"{Prompt.bufferName}<2>" &&
+                after.findBuffer Prompt.bufferName == some ⟨1⟩ &&
+                after.wellFormed
+            | _ => false },
+    { name :=
+        "a second prompt is refused with alreadyOpen and the open prompt's view, a history or a marker of another text than the minibuffer's with notItsText, and a prompt asked for with no window focused with noWindow, each with the state as it was"
+      run :=
+        pure <|
+          match onTextModel (EditorState.initial ⟨640, 480⟩) with
+          | none => false
+          | some state =>
+            let (_, asking) := prompted state
+            let refused (refusal : PromptRefusal) (was : EditorState) :
+              Except PromptRefusal ViewId × EditorState → Bool
+              | (.error why, after) => why == refusal && after == was
+              | _ => false
+            let astray (history scroll selection : Nat) :=
+              state.openPrompt "Name: " asked ⟨7⟩ (UndoTree.new ⟨history⟩ 0) ⟨⟨scroll⟩, 0⟩
+                ⟨⟨selection⟩, 1⟩
+            asking.prompt.isSome && refused (.alreadyOpen ⟨1⟩) asking (prompted asking 8) &&
+              refused .notItsText state (astray 0 7 7) &&
+              refused .notItsText state (astray 7 0 7) &&
+              refused .notItsText state (astray 7 7 0) &&
+              refused .noWindow EditorState.none (prompted EditorState.none) },
+    { name :=
+        "the focus leaves the minibuffer's view for a window of the tree and comes back to it, and nothing else changes"
+      run :=
+        pure <|
+          match onTextModel (EditorState.initial ⟨640, 480⟩) with
+          | none => false
+          | some state =>
+            let (_, asking) := prompted state
+            match asking.focusWindow ⟨0⟩ with
+            | (.ok (), away) =>
+              away == { asking with frame := { asking.frame with focused := ⟨0⟩ } } &&
+                away.wellFormed &&
+                match away.focusWindow ⟨1⟩ with
+                | (.ok (), back) => back == asking
+                | _ => false
+            | _ => false },
+    { name :=
+        "removing, splitting and showing another buffer in the minibuffer's view, and showing the minibuffer's buffer in another window, are each refused with ofMinibuffer and the minibuffer's view, with the state as it was"
+      run :=
+        pure <|
+          match onTextModel twoBuffers with
+          | none => false
+          | some state =>
+            let (_, asking) := prompted state
+            let refused {α : Type} : Except LayoutRefusal α × EditorState → Bool
+              | (.error (.ofMinibuffer view), after) => view == ⟨2⟩ && after == asking
+              | _ => false
+            asking.prompt.map (·.view) == some ⟨2⟩ && refused (asking.removeWindow ⟨2⟩) &&
+              refused (asking.splitWindow ⟨2⟩ .rows ⟨⟨7⟩, 2⟩ ⟨⟨7⟩, 3⟩) &&
+              refused (asking.showBuffer ⟨2⟩ ⟨1⟩ ⟨⟨1⟩, 8⟩ ⟨⟨1⟩, 9⟩) &&
+              refused (asking.showBuffer ⟨0⟩ ⟨2⟩ ⟨⟨7⟩, 2⟩ ⟨⟨7⟩, 3⟩) },
+    { name :=
+        "with a prompt open over two windows, removing one window is done and leaves the prompt open, and removing the other is refused with onlyWindow: the minibuffer's window does not count"
+      run :=
+        pure <|
+          match onTextModel twoBuffers with
+          | none => false
+          | some state =>
+            let (_, asking) := prompted state
+            match asking.removeWindow ⟨1⟩ with
+            | (.ok removed, one) =>
+              removed.id == ⟨1⟩ && one.wellFormed && one.prompt == asking.prompt &&
+                one.frame.focused == ⟨2⟩ &&
+                one.windows.map (·.id) == #[⟨0⟩, ⟨2⟩] &&
+                match one.removeWindow ⟨0⟩ with
+                | (.error .onlyWindow, same) => same == one
+                | _ => false
+            | _ => false },
+    { name :=
+        "removing the minibuffer's buffer while its prompt is open is refused with shown and the minibuffer's view"
+      run :=
+        pure <|
+          match onTextModel (EditorState.initial ⟨640, 480⟩) with
+          | none => false
+          | some state =>
+            let (_, asking) := prompted state
+            match asking.removeBuffer ⟨1⟩ with
+            | (.error (.shown view), after) => view == ⟨1⟩ && after == asking
+            | _ => false },
+    { name := "why a prompt was refused is a sentence for the echo area, one for each refusal"
+      run :=
+        pure
+          (([PromptRefusal.alreadyOpen ⟨1⟩, .notOpen, .notItsText, .noWindow].map
+                  PromptRefusal.describe).eraseDups.length ==
+              4 &&
+            [PromptRefusal.alreadyOpen ⟨1⟩, .notOpen, .notItsText, .noWindow].all fun refusal =>
+              !refusal.describe.isEmpty) }]
 
 /-- `twoBuffers` with a third buffer, `hidden`, over a text of its own that
 no window shows, and that text. -/
@@ -4186,7 +4339,9 @@ def stateRequests : List StateRequest :=
     .show ⟨0⟩ ⟨2⟩ (marker 0 0) (marker 2 1), .show ⟨9⟩ ⟨2⟩ (marker 2 0) (marker 2 1), .message "hi",
     .startJob "count" [.nat 1], .attachFile ⟨2⟩ notePath noteStamp .crlf,
     .attachFile ⟨9⟩ notePath noteStamp .lf, .beginSave ⟨0⟩ ⟨4⟩ ⟨0⟩, .beginSave ⟨9⟩ ⟨4⟩ ⟨0⟩,
-    .endSave ⟨0⟩ ⟨4⟩ (some noteStamp), .endSave ⟨9⟩ ⟨4⟩ none]
+    .endSave ⟨0⟩ ⟨4⟩ (some noteStamp), .endSave ⟨9⟩ ⟨4⟩ none,
+    .openPrompt "Name: " asked ⟨8⟩ (UndoTree.new ⟨8⟩ 0) (marker 8 0) (marker 8 1),
+    .openPrompt "Name: " asked ⟨8⟩ (UndoTree.new ⟨8⟩ 0) (marker 0 0) (marker 8 1)]
 
 /-- The checks of the state requests' pure handler (`EditorState.handle`,
 `Editor/State/Request.lean`), on states made on the text model. The handler
@@ -4560,16 +4715,35 @@ def stateRequestChecks : List Check :=
               replied absent == .inl (.noSuchBuffer ⟨9⟩) &&
               last == saving },
     { name :=
-        "every kind of request, accepted and refused, leaves a well-formed state well formed, and the state with nothing in it answers each without a buffer or a window"
+        "the request to open a prompt is the state's operation: it replies the minibuffer's view and leaves the prompt open, and a second is refused with alreadyOpen, a value, with the state as it was"
+      run :=
+        pure <|
+          match onTextModel twoBuffers with
+          | none => false
+          | some state =>
+            let request : StateRequest :=
+              .openPrompt "Name: " asked ⟨7⟩ (UndoTree.new ⟨7⟩ 0) (marker 7 0) (marker 7 1)
+            let (made, asking) := state.handle request
+            let (again, same) := asking.handle request
+            replied made == .inr ⟨2⟩ && asking == (prompted state).2 && asking.prompt.isSome &&
+              replied again == .inl (.alreadyOpen ⟨2⟩) &&
+              same == asking },
+    { name :=
+        "every kind of request, accepted and refused, leaves a well-formed state well formed, with no prompt open and with one open, and the state with nothing in it answers each without a buffer or a window"
       run := do
         let some (state, _) := onTextModel hiddenBuffer | return false
-        let spoiled := stateRequests.filter fun request => !(state.handle request).2.wellFormed
+        let (_, asking) := prompted state
+        let spoiled :=
+          [state, asking].flatMap fun start =>
+            stateRequests.filter fun request => !(start.handle request).2.wellFormed
         unless spoiled.isEmpty do
           throw
               (IO.userError
                 s!"{spoiled.length} of the requests left a state that is not well formed")
         let (read, _) := EditorState.none.handle .read
-        return state.wellFormed && read.buffers.isEmpty && read.windows.isEmpty &&
+        return state.wellFormed && asking.wellFormed && asking.prompt.isSome &&
+            read.buffers.isEmpty &&
+            read.windows.isEmpty &&
             stateRequests.all fun request =>
               let (_, after) := EditorState.none.handle request
               after.windows.isEmpty && after.frame == EditorState.none.frame }]

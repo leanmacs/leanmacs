@@ -9,7 +9,8 @@ import Editor.Value
 
 What the editor is showing and editing, as one immutable value the editor
 thread holds (`EditorState`): the buffers, the windows, the one frame they
-are arranged in, the echo area and the input method's preedit. The command
+are arranged in, the echo area, the input method's preedit and the prompt
+that is open, if one is. The command
 loop (`Editor/Loop.lean`) takes it from one event to the next and publishes
 a scene of it after each.
 
@@ -45,12 +46,14 @@ takes all of it. So the minibuffer's place takes none while no prompt is
 open (the command loop's phase 10 gives it some), and the views tile the
 frame.
 
-The invariants are part of the model (`EditorState.wellFormed`):
+The invariants are part of the model (`EditorState.wellFormed`). They are
+stated over the state's views (`EditorState.views`): the tree's windows,
+in drawing order, then the minibuffer's view while a prompt is open
+("Prompts", below).
 
-- the focused window is in the tree;
+- the focused window is one of the views;
 - the tree has exactly one minibuffer leaf;
-- the tree's window ids are distinct, and they are exactly the windows'
-  ids;
+- the views' ids are distinct, and they are exactly the windows' ids;
 - each window's buffer exists.
 
 Each clause is seen to refuse: `ModelTest.spoilings` builds, for every
@@ -69,7 +72,9 @@ handler is these operations:
   the window was focused, the focus moves to the first window, in drawing
   order, of the subtree that took its place, or, when that subtree has
   none, to the first window of the tree.
-- `focusWindow` refuses `noSuchWindow` for a window not in the tree.
+- `focusWindow` takes a window of the tree, and the minibuffer's window
+  while a prompt is open, so the focus can leave the minibuffer and come
+  back. It refuses `noSuchWindow` for any other.
 - `splitWindow` puts a new window where the source window was, second in a
   split with it along the axis given: below it for `rows`, to its right
   for `columns`. The new window shows the source window's buffer, with the
@@ -91,9 +96,41 @@ past it. So what a scheme or a scene keeps under a closed view's id can
 never come to mean another view.
 
 The minibuffer's place has no `ViewId`, so no operation here can remove it.
-`LayoutRefusal` has only the constructors these can reach: a phase that
-adds an operation able to remove the minibuffer's place adds its
-constructor.
+The minibuffer's window is not theirs either: `removeWindow`, `splitWindow`
+and `showBuffer` refuse it with `ofMinibuffer` and its view, and
+`showBuffer` refuses the same way to show the minibuffer's buffer in
+another window. `removeWindow` counts the tree's windows alone, so the last
+ordinary window cannot be removed while a prompt is open.
+
+## Prompts
+
+A prompt is a request for one string, with a text to show beside the input
+(the label). How a command waits for the answer is in
+`docs/design/concurrency.md`, "Prompts".
+
+- **The open prompt is editor state** (`EditorState.prompt`, a `Prompt`):
+  its label, the minibuffer's view, the asking view, which was focused
+  when the prompt was asked for, and the continuation, the invocation that
+  receives the answer. One prompt is open at a time.
+- **The minibuffer is a buffer and a window of the state.** The buffer is
+  in the next slot, over a text the asking command made, with a name no
+  buffer has (`Prompt.bufferName`, made free by `freeName`) and the major
+  mode `Prompt.mode`. The window is in `windows`, with a new view id. So
+  what works on a buffer and a window works on them with no rule of its
+  own: a committed text is inserted there, the loop keeps and restores
+  its markers and its history, and the scene has its view.
+- **The tree does not change.** The minibuffer leaf says where the
+  minibuffer's place is, and `EditorState.prompt` says whether a prompt is
+  open and which window stands there. A view id on the leaf was set aside:
+  the open prompt would then be in two places that an invariant must keep
+  in step.
+- `openPrompt` adds the buffer and the window, records the prompt with the
+  focused view as its asker, focuses the new view and hands it back. It
+  refuses, with the state as it was, `alreadyOpen` and the open prompt's
+  view while one is open, `noWindow` when the focused view has no window
+  to ask from (the state with nothing in it), and `notItsText` for a
+  history or a marker of another text than the minibuffer's.
+  `PromptRefusal.describe` says each as a sentence.
 
 ## Buffers
 
@@ -210,6 +247,7 @@ registered is the loop's to ask, which also runs the mode's `onEnter`
 | The file a buffer shows (what the next save expects on disk) | A field of `Buffer.File` |
 | One view (a goal column, a scroll offset) | A field of `Window` |
 | The whole editor (registers, the pending key prefix) | A field of `EditorState` |
+| The open prompt (what completes it, what it has shown) | A field of `Prompt` |
 | What the user sees of it | A field of the scene (`Editor/Scene.lean`), filled in `Loop.scene`, or in `Loop.views` for a field of a view (`Editor/Loop.lean`) |
 
 Each is pinned by `ModelTest.stateChecks`, and what the scene shows of it by
@@ -331,6 +369,33 @@ structure JobStart where
   arguments : List Argument := []
   deriving DecidableEq, Repr
 
+/-- An open prompt: a request for one string ("Prompts", in the module
+docs). It is plain data: the command that receives the answer is named. -/
+structure Prompt where
+  /-- The text shown beside the input. -/
+  label : String
+  /-- The minibuffer's view: the window the answer is typed in, which stands
+  in the minibuffer's place while the prompt is open. -/
+  view : ViewId
+  /-- The asking view: the one that was focused when the prompt was asked
+  for, which gets the focus back when the prompt is closed. -/
+  asker : ViewId
+  /-- The continuation: the command that receives the answer, and plain
+  arguments of the asker's own, which follow the answer. -/
+  continuation : Invocation
+  deriving DecidableEq, Repr
+
+/-- The name of the major mode the minibuffer's buffer is made with. A mode
+is registered under it by whoever ships the minibuffer's commands
+(`Editor/Minibuffer.lean`); with none registered it contributes nothing. -/
+def Prompt.mode : String :=
+  "minibuffer"
+
+/-- What the minibuffer's buffer is called, unless a buffer already has the
+name (`EditorState.freeName`). -/
+def Prompt.bufferName : String :=
+  "minibuffer"
+
 /-- Everything the editor is showing and editing. -/
 structure EditorState where
   /-- The buffers, one a slot; a `BufferId` is an index here, and the slot of
@@ -350,6 +415,9 @@ structure EditorState where
   /-- The jobs commands asked to be started, in order, which the loop has
   not yet handed to its host. -/
   starts : Array JobStart := #[]
+  /-- The prompt that is open, if one is: its view is a window of `windows`
+  that is not in the frame's tree. -/
+  prompt : Option Prompt := none
   deriving BEq, Repr
 
 /-- What a handler acts on: a window and the buffer it shows. -/
@@ -371,7 +439,32 @@ inductive LayoutRefusal where
   /-- A marker handed in for a window is not a marker of the text of the
   buffer the window is to show. -/
   | markersOfAnotherText
+  /-- The operation is on the minibuffer's window, `view`, or would show the
+  minibuffer's buffer in another window: that window is closed by answering
+  or cancelling its prompt, and only it shows its buffer. -/
+  | ofMinibuffer (view : ViewId)
   deriving DecidableEq, Repr
+
+/-- Why an operation on the prompt was refused. -/
+inductive PromptRefusal where
+  /-- A prompt is open already, in `view`: there is one at a time. -/
+  | alreadyOpen (view : ViewId)
+  /-- No prompt is open. -/
+  | notOpen
+  /-- The history or a marker handed in for the minibuffer is of another
+  text than the minibuffer's. -/
+  | notItsText
+  /-- No window is focused for the prompt to be asked from. -/
+  | noWindow
+  deriving DecidableEq, Repr
+
+/-- Why an operation on the prompt was refused, as a sentence for the echo
+area. -/
+def PromptRefusal.describe : PromptRefusal → String
+  | .alreadyOpen _ => "a prompt is open already"
+  | .notOpen => "no prompt is open"
+  | .notItsText => "the minibuffer's history and markers are not of its text"
+  | .noWindow => "no window is focused to ask from"
 
 /-- Why an operation on a buffer was refused. -/
 inductive BufferRefusal where
@@ -502,11 +595,27 @@ def target? (state : EditorState) (id : ViewId) : Option Target := do
 def focusedTarget? (state : EditorState) : Option Target :=
   state.target? state.frame.focused
 
-/-- Whether the state keeps the layout invariants: the focused window is in
-the tree, the tree has one minibuffer leaf, its window ids are distinct and
-are exactly the windows' ids, and each window's buffer exists. -/
+/-- The minibuffer's view: the open prompt's, if a prompt is open. -/
+def minibufferView? (state : EditorState) : Option ViewId :=
+  state.prompt.map (·.view)
+
+/-- The minibuffer's buffer: the one the open prompt's window shows, if a
+prompt is open. -/
+def minibufferBuffer? (state : EditorState) : Option BufferId := do
+  return (← state.window? (← state.minibufferView?)).buffer
+
+/-- The views of the state: the windows of the frame's tree, in drawing
+order, then the minibuffer's view while a prompt is open. -/
+def views (state : EditorState) : Array ViewId :=
+  state.frame.tree.windows ++ state.minibufferView?.toArray
+
+/-- Whether the state keeps the layout invariants, over its views
+(`views`: the tree's windows, then the open prompt's view): the focused
+window is among them, the tree has one minibuffer leaf, the views' ids are
+distinct and are exactly the windows' ids, and each window's buffer
+exists. -/
 def wellFormed (state : EditorState) : Bool :=
-  let ids := state.frame.tree.windows
+  let ids := state.views
   ids.contains state.frame.focused && state.frame.tree.minibuffers == 1 &&
     ids.toList.eraseDups.length == ids.size &&
     ids.size == state.windows.size &&
@@ -531,12 +640,14 @@ def initial (size : Size) : TextM EditorState := do
 the split that held both, and the window is handed back, its markers the
 caller's to give up. A focused window's focus moves to the first window of
 what took its place, or of the tree when that has none. Refused, with the
-state unchanged, with `noSuchWindow` for a window not in the tree and with
-`onlyWindow` for the last one. -/
+state unchanged, with `ofMinibuffer` for the minibuffer's window, with
+`noSuchWindow` for a window not in the tree and with `onlyWindow` for the
+last one of the tree: the minibuffer's window does not count. -/
 def removeWindow (id : ViewId) (state : EditorState) : Except LayoutRefusal Window × EditorState :=
   let tree := state.frame.tree
-  match state.window? id, tree.windows.contains id with
-  | some window, true =>
+  match state.minibufferView? == some id, state.window? id, tree.windows.contains id with
+  | true, _, _ => (.error (.ofMinibuffer id), state)
+  | false, some window, true =>
     match tree.remove id with
     | some (rest, took) =>
       if rest.windows.isEmpty then (.error .onlyWindow, state)
@@ -552,12 +663,13 @@ def removeWindow (id : ViewId) (state : EditorState) : Except LayoutRefusal Wind
               { state.frame with
                 tree := rest, focused } })
     | none => (.error .onlyWindow, state)
-  | _, _ => (.error (.noSuchWindow id), state)
+  | false, _, _ => (.error (.noSuchWindow id), state)
 
-/-- Focuses the window `id`. Refused, with the state unchanged, with
-`noSuchWindow` for a window not in the tree. -/
+/-- Focuses the window `id`: a window of the tree, or the minibuffer's while
+a prompt is open. Refused, with the state unchanged, with `noSuchWindow`
+for any other. -/
 def focusWindow (id : ViewId) (state : EditorState) : Except LayoutRefusal Unit × EditorState :=
-  if state.frame.tree.windows.contains id then
+  if state.views.contains id then
     (.ok (), { state with frame := { state.frame with focused := id } })
   else (.error (.noSuchWindow id), state)
 
@@ -771,12 +883,15 @@ def freshView (state : EditorState) : ViewId :=
 /-- Splits the window `id` along `axis`: a new window on the same buffer,
 with `scroll` and `selection` as its markers, is second in a split where
 `id` was, and its id is handed back. The focus stays. Refused, with the
-state unchanged, with `noSuchWindow` for a window not in the tree, and with
+state unchanged, with `ofMinibuffer` for the minibuffer's window, with
+`noSuchWindow` for a window not in the tree, and with
 `markersOfAnotherText` when a marker is not of that buffer's text. -/
 def splitWindow (id : ViewId) (axis : Axis) (scroll selection : MarkerId) (state : EditorState) :
     Except LayoutRefusal ViewId × EditorState :=
-  match state.target? id, state.frame.tree.windows.contains id with
-  | some target, true =>
+  match state.minibufferView? == some id, state.target? id,
+    state.frame.tree.windows.contains id with
+  | true, _, _ => (.error (.ofMinibuffer id), state)
+  | false, some target, true =>
     if scroll.text != target.buffer.text || selection.text != target.buffer.text then
       (.error .markersOfAnotherText, state)
     else
@@ -787,32 +902,78 @@ def splitWindow (id : ViewId) (axis : Axis) (scroll selection : MarkerId) (state
             state.windows.push { id := made, buffer := target.window.buffer, scroll, selection }
           frame := { state.frame with tree := state.frame.tree.divide id axis made }
           nextView := made.index + 1 })
-  | _, _ => (.error (.noSuchWindow id), state)
+  | false, _, _ => (.error (.noSuchWindow id), state)
 
 /-- Has the window `id` show the buffer `buffer`, with `scroll` and
 `selection` as its markers. Refused, with the state unchanged, with
-`noSuchWindow` for a window not in the tree, with `noSuchBuffer` for a
-buffer there is none of, and with `markersOfAnotherText` when a marker is
-not of that buffer's text. -/
+`ofMinibuffer`, and the minibuffer's view, for the minibuffer's window and
+for the minibuffer's buffer in another window, with `noSuchWindow` for a
+window not in the tree, with `noSuchBuffer` for a buffer there is none of,
+and with `markersOfAnotherText` when a marker is not of that buffer's
+text. -/
 def showBuffer (id : ViewId) (buffer : BufferId) (scroll selection : MarkerId)
     (state : EditorState) : Except LayoutRefusal Unit × EditorState :=
-  if (state.window? id).isNone || !state.frame.tree.windows.contains id then
-    (.error (.noSuchWindow id), state)
-  else
-    match state.buffer? buffer with
-    | none => (.error (.noSuchBuffer buffer), state)
-    | some shown =>
-      if scroll.text != shown.text || selection.text != shown.text then
-        (.error .markersOfAnotherText, state)
-      else
-        (.ok (),
-          { state with
-            windows :=
-              state.windows.map fun window =>
-                if window.id == id then
-                  { window with
-                    buffer, scroll, selection }
-                else window })
+  match state.minibufferView? with
+  | some view =>
+    if view == id || state.minibufferBuffer? == some buffer then
+      (.error (.ofMinibuffer view), state)
+    else showing
+  | none => showing
+where
+  /-- The state with the buffer shown, for a window and a buffer that are
+  not the minibuffer's. -/
+  showing : Except LayoutRefusal Unit × EditorState :=
+    if (state.window? id).isNone || !state.frame.tree.windows.contains id then
+      (.error (.noSuchWindow id), state)
+    else
+      match state.buffer? buffer with
+      | none => (.error (.noSuchBuffer buffer), state)
+      | some shown =>
+        if scroll.text != shown.text || selection.text != shown.text then
+          (.error .markersOfAnotherText, state)
+        else
+          (.ok (),
+            { state with
+              windows :=
+                state.windows.map fun window =>
+                  if window.id == id then
+                    { window with
+                      buffer, scroll, selection }
+                  else window })
+
+/-- Opens a prompt, asked from the focused view: a buffer in the next slot
+over `text`, whose history is `history`, with the minibuffer's mode
+(`Prompt.mode`) and a name no buffer has (`Prompt.bufferName`, made free),
+and a window on it, with a new view id and `scroll` and `selection` as its
+markers. The prompt is recorded with `label`, `continuation` and the
+focused view as its asker; the new view is focused and handed back. The
+tree is as it was. Refused, with the state unchanged, with `alreadyOpen`,
+and its view, while a prompt is open, with `noWindow` when the focused view
+has no window, and with `notItsText` for a history or a marker of another
+text than `text`. -/
+def openPrompt (label : String) (continuation : Invocation) (text : TextId) (history : UndoTree)
+    (scroll selection : MarkerId) (state : EditorState) :
+    Except PromptRefusal ViewId × EditorState :=
+  match state.prompt, state.window? state.frame.focused with
+  | some asked, _ => (.error (.alreadyOpen asked.view), state)
+  | none, none => (.error .noWindow, state)
+  | none, some asker =>
+    if history.text != text || scroll.text != text || selection.text != text then
+      (.error .notItsText, state)
+    else
+      let view := state.freshView
+      (.ok view,
+        { state with
+          buffers :=
+            state.buffers.push
+              (some
+                { name := state.freeName Prompt.bufferName, text, history
+                  major := some Prompt.mode })
+          windows :=
+            state.windows.push { id := view, buffer := ⟨state.buffers.size⟩, scroll, selection }
+          frame := { state.frame with focused := view }
+          nextView := view.index + 1
+          prompt := some { label, view, asker := asker.id, continuation } })
 
 end EditorState
 
