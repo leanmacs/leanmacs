@@ -351,10 +351,16 @@ impl GlyphCache {
 
     /// Lets every image go, pinned or not, with every page: for when the
     /// frame's fonts are of another generation and no key means what it
-    /// did.
+    /// did. The atlas stays the one it was, so a page added from here on
+    /// has a number no page had before ([`Slot::page`]): what keeps a
+    /// copy of a page by its number never takes a new page for an old one.
     pub fn clear(&mut self) {
-        self.entries.clear();
-        self.atlas = Atlas::new(self.atlas.page_size());
+        for (_, held) in self.entries.drain() {
+            if let Some(slot) = held.placed.slot {
+                self.atlas.free(slot);
+            }
+        }
+        self.atlas.drop_empty();
     }
 
     /// Gives back what is not needed, at the start of a draw: every page
@@ -659,6 +665,38 @@ mod tests {
         let asked = rasterizer.asked.len();
         assert!(cache.get(key(7), &font, true, &mut rasterizer).is_some());
         assert_eq!(rasterizer.asked.len(), asked + 1);
+    }
+
+    #[test]
+    fn a_page_of_another_generation_has_a_number_no_page_had_before() {
+        let (mut cache, mut rasterizer) = (roomy(), FakeRasterizer::new());
+        let font = font(16.0);
+        let subpixel = GlyphKey {
+            subpixel: true,
+            ..key(7)
+        };
+        let numbers = |cache: &GlyphCache| -> Vec<u32> {
+            cache.atlas().pages().map(|page| page.number).collect()
+        };
+        cache.get(key(7), &font, true, &mut rasterizer);
+        cache.get(subpixel, &font, true, &mut rasterizer);
+        let earlier = numbers(&cache);
+        assert_eq!(earlier.len(), 2);
+        // The same glyphs again under the generation after: whatever keeps
+        // a copy of a page by its number must not take a new page for one
+        // it holds.
+        cache.clear();
+        cache.get(key(7), &font, true, &mut rasterizer);
+        cache.get(subpixel, &font, true, &mut rasterizer);
+        let later = numbers(&cache);
+        assert_eq!(later.len(), 2);
+        for number in &later {
+            assert!(!earlier.contains(number), "{number} of {earlier:?}");
+        }
+        // And an image placed says the page it is in by that number.
+        let placed = cache.get(key(7), &font, true, &mut rasterizer);
+        let page = placed.and_then(|placed| placed.slot).map(|slot| slot.page);
+        assert_eq!(page, Some(later[0]));
     }
 
     #[test]

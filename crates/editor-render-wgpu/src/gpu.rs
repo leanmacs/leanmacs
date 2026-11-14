@@ -26,6 +26,10 @@
 //! back end that is all a draw is, which is what the gate runs: the
 //! calls are validated and nothing is drawn.
 //!
+//! What reached the GPU in a draw it refused is not known, so a page is
+//! taken as sent only by a draw wgpu accepted: what a refused draw sent,
+//! the next sends again.
+//!
 //! # What is here and what is not
 //!
 //! The target is a texture this device makes, the size of the last draw's
@@ -37,6 +41,13 @@
 //! for each page that changed in a draw, and none for a draw that
 //! rasterised nothing; sending only the rectangle that changed is not
 //! done.
+//!
+//! The device knows what a page holds by the page's number and by how
+//! many images have been written to it. That is so of the pages of one
+//! atlas, which never uses a number again
+//! ([`Slot::page`](crate::atlas::Slot::page)), and the glyph cache keeps
+//! one atlas across the generations of the fonts. A texture whose format
+//! is not its page's kind's is not written to: one is made in its place.
 
 use std::collections::HashMap;
 use std::fmt;
@@ -102,7 +113,8 @@ struct PageTexture {
     texture: wgpu::Texture,
     /// What binds it for a run of quads.
     bind: wgpu::BindGroup,
-    /// How many images had been written to the page when it was sent.
+    /// How many images had been written to the page when it was last sent
+    /// in a draw wgpu accepted.
     sent: u64,
 }
 
@@ -327,7 +339,7 @@ impl Device {
         height: u32,
     ) -> Result<(), String> {
         let scope = self.device.push_error_scope(wgpu::ErrorFilter::Validation);
-        self.send_pages(atlas);
+        let sent = self.send_pages(atlas);
         let (width, height) = (width.max(1), height.max(1));
         if !self
             .target
@@ -412,30 +424,45 @@ impl Device {
             }
         }
         self.queue.submit([encoder.finish()]);
-        wait(scope.pop()).map_or(Ok(()), |error| Err(error.to_string()))
+        if let Some(error) = wait(scope.pop()) {
+            return Err(error.to_string());
+        }
+        // The draw was accepted: what it sent is what the textures hold.
+        for (number, written) in sent {
+            if let Some(texture) = self.pages.get_mut(&number) {
+                texture.sent = written;
+            }
+        }
+        Ok(())
     }
 
     /// Makes the textures hold what `atlas`'s pages hold: one for each
-    /// page, sent again when the page was written to since it was sent,
-    /// and none for a page that is gone.
-    fn send_pages(&mut self, atlas: &Atlas) {
+    /// page, of the page's kind, sent again when the page was written to
+    /// since it was sent, and none for a page that is gone. It gives the
+    /// number of each page it sent with how many images had been written
+    /// to it: the draw takes them as sent once wgpu has accepted it.
+    fn send_pages(&mut self, atlas: &Atlas) -> Vec<(u32, u64)> {
         let mut held: Vec<u32> = Vec::new();
+        let mut sent: Vec<(u32, u64)> = Vec::new();
         for page in atlas.pages() {
             held.push(page.number);
-            if self
-                .pages
-                .get(&page.number)
-                .is_some_and(|texture| texture.sent == page.written)
-            {
-                continue;
+            match self.pages.get(&page.number) {
+                // A texture of another kind cannot hold the page's bytes:
+                // one is made in its place.
+                Some(texture) if texture.texture.format() != format_of(page.kind) => {
+                    self.pages.remove(&page.number);
+                }
+                Some(texture) if texture.sent == page.written => continue,
+                _ => {}
             }
             let texture = self.pages.entry(page.number).or_insert_with(|| {
                 page_texture(&self.device, &self.page_layout, page.kind, page.size)
             });
-            texture.sent = page.written;
             send(&self.queue, &texture.texture, &page);
+            sent.push((page.number, page.written));
         }
         self.pages.retain(|number, _| held.contains(number));
+        sent
     }
 
     /// The target as it was last drawn, read back from the GPU; a picture
@@ -503,6 +530,16 @@ fn extent(width: u32, height: u32) -> wgpu::Extent3d {
     }
 }
 
+/// The format of the texture of a page of `kind`. The bytes as they are:
+/// a coverage is no colour, and a colour image's are made linear by the
+/// shader.
+fn format_of(kind: Kind) -> wgpu::TextureFormat {
+    match kind {
+        Kind::Mask => wgpu::TextureFormat::R8Unorm,
+        Kind::Subpixel | Kind::Color => wgpu::TextureFormat::Rgba8Unorm,
+    }
+}
+
 /// A texture for a page of `kind`, `size` pixels across and down, with
 /// what binds it; nothing has been sent to it.
 fn page_texture(
@@ -517,12 +554,7 @@ fn page_texture(
         mip_level_count: 1,
         sample_count: 1,
         dimension: wgpu::TextureDimension::D2,
-        // The bytes as they are: a coverage is no colour, and a colour
-        // image's are made linear by the shader.
-        format: match kind {
-            Kind::Mask => wgpu::TextureFormat::R8Unorm,
-            Kind::Subpixel | Kind::Color => wgpu::TextureFormat::Rgba8Unorm,
-        },
+        format: format_of(kind),
         usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
         view_formats: &[],
     });

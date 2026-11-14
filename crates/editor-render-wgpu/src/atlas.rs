@@ -92,11 +92,6 @@ impl Atlas {
         }
     }
 
-    /// How far across and down every page is.
-    pub fn page_size(&self) -> u32 {
-        self.page_size
-    }
-
     /// How many bytes a page of `kind` takes.
     pub fn page_bytes(&self, kind: Kind) -> u64 {
         u64::from(self.page_size) * u64::from(self.page_size) * u64::from(kind.bytes())

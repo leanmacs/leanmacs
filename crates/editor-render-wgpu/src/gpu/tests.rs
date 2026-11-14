@@ -20,6 +20,7 @@ use editor_render::contract;
 use editor_render::port::{DrawRequest, Renderer, Target};
 
 use super::{Device, INSTANCE_BYTES, Run, instances};
+use crate::atlas::Atlas;
 use crate::glyphs::Kind;
 use crate::glyphs::fake::FakeRasterizer;
 use crate::painter::Painter;
@@ -230,6 +231,114 @@ fn a_page_the_atlas_drops_is_dropped_by_the_device() {
         Ok(())
     );
     assert!(device.pages.is_empty());
+}
+
+/// Draws what `painter` last painted on `device`, on a target of 200 by
+/// 64 pixels.
+fn draw(device: &mut Device, painter: &Painter<FakeRasterizer>) -> Result<(), String> {
+    device.draw(painter.quads(), painter.atlas(), 200, 64)
+}
+
+/// For each page of `atlas`, in order, whether `device` takes its texture
+/// to hold the page as it now is.
+fn sent(device: &Device, atlas: &Atlas) -> Vec<bool> {
+    atlas
+        .pages()
+        .map(|page| device.pages.get(&page.number).map(|held| held.sent) == Some(page.written))
+        .collect()
+}
+
+#[test]
+fn the_pages_of_another_generation_are_sent_to_textures_of_their_own() {
+    let mut device = device(true);
+    let mut painter = painter(Antialiasing::Grayscale, true);
+    painter.paint(&dressed(), target(1.0));
+    assert_eq!(draw(&mut device, &painter), Ok(()));
+    let written = |painter: &Painter<FakeRasterizer>| -> Vec<(Kind, u64)> {
+        let pages = painter.atlas().pages();
+        pages.map(|page| (page.kind, page.written)).collect()
+    };
+    let before = written(&painter);
+    let earlier: Vec<wgpu::Texture> = device
+        .pages
+        .values()
+        .map(|page| page.texture.clone())
+        .collect();
+    assert_eq!(earlier.len(), 2);
+    // The same text under another generation of the fonts: the glyph
+    // images are others, as many of them, in as many pages of the same
+    // kinds.
+    let later = Frame {
+        generation: 1,
+        ..dressed()
+    };
+    painter.paint(&later, target(1.0));
+    assert_eq!(written(&painter), before);
+    assert_eq!(draw(&mut device, &painter), Ok(()));
+    // None of the textures drawn from is one that holds a page of the
+    // generation before.
+    assert_eq!(sent(&device, painter.atlas()), vec![true, true]);
+    assert_eq!(device.pages.len(), 2);
+    for page in device.pages.values() {
+        assert!(!earlier.contains(&page.texture));
+    }
+}
+
+/// An atlas of one page of `kind`, the first it numbers, with `images`
+/// images written to it.
+fn one_page(kind: Kind, images: usize) -> Atlas {
+    let mut atlas = Atlas::new(64);
+    atlas.add_page(kind);
+    let data = vec![0x80; (6 * 10 * kind.bytes()) as usize];
+    for _ in 0..images {
+        assert!(atlas.place(kind, 6, 10, &data).is_some());
+    }
+    atlas
+}
+
+#[test]
+fn a_texture_of_another_kind_than_its_page_is_made_again() {
+    let mut device = device(true);
+    let format = |device: &Device, atlas: &Atlas| {
+        let number = atlas.pages().next().map(|page| page.number);
+        let held = number.and_then(|number| device.pages.get(&number));
+        held.map(|held| held.texture.format())
+    };
+    // Two atlases number their first page alike. The device is handed one
+    // and then the other: the texture it holds under that number is of
+    // the first one's kind.
+    let masks = one_page(Kind::Mask, 1);
+    assert_eq!(device.draw(&[], &masks, 200, 64), Ok(()));
+    assert_eq!(format(&device, &masks), Some(wgpu::TextureFormat::R8Unorm));
+    // As many images written, in colour.
+    let colours = one_page(Kind::Color, 1);
+    assert_eq!(device.draw(&[], &colours, 200, 64), Ok(()));
+    assert_eq!(
+        format(&device, &colours),
+        Some(wgpu::TextureFormat::Rgba8Unorm)
+    );
+    assert_eq!(sent(&device, &colours), vec![true]);
+    // And back, with more written: the page's bytes are not sent to a
+    // texture of four bytes a pixel.
+    let masks = one_page(Kind::Mask, 2);
+    assert_eq!(device.draw(&[], &masks, 200, 64), Ok(()));
+    assert_eq!(format(&device, &masks), Some(wgpu::TextureFormat::R8Unorm));
+    assert_eq!(sent(&device, &masks), vec![true]);
+}
+
+#[test]
+fn after_a_draw_that_is_refused_no_page_is_taken_as_sent() {
+    let mut device = device(true);
+    let mut painter = painter(Antialiasing::Grayscale, true);
+    painter.paint(&dressed(), target(1.0));
+    // A target wider than the device makes one: the draw is refused.
+    let refused = device.draw(painter.quads(), painter.atlas(), 1_000_000, 64);
+    assert!(refused.is_err(), "{refused:?}");
+    // What reached the GPU in a draw it refused is not known.
+    assert_eq!(sent(&device, painter.atlas()), vec![false, false]);
+    // The next draw sends every page.
+    assert_eq!(draw(&mut device, &painter), Ok(()));
+    assert_eq!(sent(&device, painter.atlas()), vec![true, true]);
 }
 
 #[test]
