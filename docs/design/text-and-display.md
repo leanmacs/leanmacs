@@ -678,7 +678,7 @@ the text port: the undo tree (`lean/Editor/UndoTree.lean`, decided
 | An anchor | `crates/editor-text/src/anchor.rs` |
 | The markers a text holds and moves | `crates/editor-text/src/marker.rs`, and `Text::mark`, `marker`, `place` and `unmark` in `text.rs` |
 | A selection: its shape, its form, and mapping it | `crates/editor-text/src/selection.rs` |
-| The cell, forward and back, a row's content, and reading one row | `crates/editor-text/src/cell.rs` |
+| The cell, forward and back, and what one is (a line break or a character); a row's content, and reading one row | `crates/editor-text/src/cell.rs` |
 | What a selection covers | `crates/editor-text/src/extent.rs` |
 | What a blank and a word character are | `crates/editor-text/src/word.rs` |
 | The motions, and the walks that answer them | `crates/editor-text/src/motion.rs` |

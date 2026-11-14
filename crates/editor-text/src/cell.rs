@@ -4,26 +4,58 @@
 //! it together. A character is a Unicode scalar value, as everywhere in
 //! this crate: not an extended grapheme cluster, so a letter and a
 //! combining mark after it are two cells. This module is the one place
-//! that says so. What a selection covers ([`Snapshot::extents`]) is
-//! counted in cells, and the motions that move a cursor
-//! ([`Snapshot::motion`]) step by them, forward and back.
+//! that says so: where a cell ends ([`Snapshot::cell_end`]), where the one
+//! before starts ([`Snapshot::cell_start_before`]) and what a cell is
+//! ([`Snapshot::cell_kind`]). What a selection covers
+//! ([`Snapshot::extents`]) and a column in cells
+//! ([`PointCells`](crate::PointCells)) are counted by those steps, and the
+//! motions that move a cursor ([`Snapshot::motion`]) step by them, forward
+//! and back. A reader that needs to know more of a cell than where it
+//! ends, as a word motion does, asks here what it is and never looks at
+//! the text's characters for itself.
 
 use std::ops::Range;
 
 use crate::snapshot::Snapshot;
 
+/// What a cell is.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Kind {
+    /// A line break: a line feed, or a carriage return and the line feed
+    /// after it together.
+    LineBreak,
+    /// One character that is no line break. A carriage return with no line
+    /// feed after it is one.
+    Character(char),
+}
+
 impl Snapshot {
+    /// The cell that starts at the position `offset`: what it is, and its
+    /// length in bytes. `None` at the end of the text and past it, where no
+    /// cell starts, and for an offset inside a character. This is the one
+    /// statement of the cell going forward.
+    fn cell(&self, offset: usize) -> Option<(Kind, usize)> {
+        Some(match self.char_at(offset)? {
+            '\r' if self.char_at(offset.saturating_add(1)) == Some('\n') => (Kind::LineBreak, 2),
+            '\n' => (Kind::LineBreak, 1),
+            character => (Kind::Character(character), character.len_utf8()),
+        })
+    }
+
     /// Where the cell that starts at the position `offset` ends: after the
     /// character there, or after the line feed when the character is a
     /// carriage return with a line feed after it. At the end of the text,
     /// where no cell starts, it is the end of the text.
     pub(crate) fn cell_end(&self, offset: usize) -> usize {
-        let len = match self.char_at(offset) {
-            None => 0,
-            Some('\r') if self.char_at(offset.saturating_add(1)) == Some('\n') => 2,
-            Some(character) => character.len_utf8(),
-        };
-        offset.saturating_add(len)
+        offset.saturating_add(self.cell(offset).map_or(0, |(_, len)| len))
+    }
+
+    /// What the cell that starts at the position `offset` is. `None` at the
+    /// end of the text and past it, where no cell starts, and for an offset
+    /// inside a character. From between a carriage return and its line
+    /// feed it is a line break, as the line feed is a cell when started at.
+    pub(crate) fn cell_kind(&self, offset: usize) -> Option<Kind> {
+        self.cell(offset).map(|(kind, _)| kind)
     }
 
     /// Where the last cell that starts before the position `offset`
@@ -83,6 +115,7 @@ impl Snapshot {
 
 #[cfg(test)]
 mod tests {
+    use super::Kind;
     use crate::Text;
 
     /// Where the last cell before each of `offsets` starts in `text`.
@@ -216,6 +249,81 @@ mod tests {
             cells += 1;
         }
         assert_eq!(cells, 14 * 20_000);
+    }
+
+    /// What the cell at each of `offsets` is in `text`.
+    fn cell_kinds(text: &str, offsets: &[usize]) -> Vec<Option<Kind>> {
+        let snapshot = Text::from(text).snapshot();
+        offsets
+            .iter()
+            .map(|&offset| snapshot.cell_kind(offset))
+            .collect()
+    }
+
+    #[test]
+    fn a_line_feed_and_a_carriage_return_with_the_line_feed_after_it_are_line_breaks() {
+        assert_eq!(
+            cell_kinds("a\nb\r\nc", &[1, 3]),
+            [Some(Kind::LineBreak), Some(Kind::LineBreak)]
+        );
+        assert_eq!(
+            cell_kinds("\n\r\n\n", &[0, 1, 3]),
+            [Some(Kind::LineBreak); 3]
+        );
+        // The line feed of a carriage return and a line feed, started at.
+        assert_eq!(cell_kinds("a\r\nb", &[2]), [Some(Kind::LineBreak)]);
+    }
+
+    #[test]
+    fn a_cell_that_is_no_line_break_is_its_one_character_whatever_its_length_in_bytes() {
+        assert_eq!(
+            cell_kinds("aé€😀 ", &[0, 1, 3, 6, 10]),
+            ['a', 'é', '€', '😀', ' '].map(|character| Some(Kind::Character(character)))
+        );
+        // A letter and a combining mark after it are two cells.
+        assert_eq!(
+            cell_kinds("e\u{301}", &[0, 1]),
+            [Some(Kind::Character('e')), Some(Kind::Character('\u{301}'))]
+        );
+    }
+
+    #[test]
+    fn a_carriage_return_with_no_line_feed_after_it_is_a_character() {
+        assert_eq!(cell_kinds("a\rb", &[1]), [Some(Kind::Character('\r'))]);
+        assert_eq!(cell_kinds("a\r", &[1]), [Some(Kind::Character('\r'))]);
+        assert_eq!(
+            cell_kinds("\r\r\n", &[0, 1]),
+            [Some(Kind::Character('\r')), Some(Kind::LineBreak)]
+        );
+    }
+
+    #[test]
+    fn no_cell_is_at_the_end_of_the_text_past_it_or_inside_a_character() {
+        assert_eq!(cell_kinds("", &[0, 1]), [None, None]);
+        assert_eq!(cell_kinds("ab\n", &[3, 4, usize::MAX]), [None; 3]);
+        assert_eq!(cell_kinds("é", &[1]), [None]);
+    }
+
+    #[test]
+    fn a_cell_in_a_text_of_many_pieces_is_what_it_is_in_the_string() {
+        // A few hundred kilobytes, with a line break of each kind.
+        let string = "héllo 😀\r\nwörld\n".repeat(20_000);
+        let snapshot = Text::from(string.as_str()).snapshot();
+        let mut offset = 0;
+        let mut breaks = 0_usize;
+
+        while offset < string.len() {
+            let rest = &string[offset..];
+            let expected = if rest.starts_with("\r\n") || rest.starts_with('\n') {
+                breaks += 1;
+                Some(Kind::LineBreak)
+            } else {
+                rest.chars().next().map(Kind::Character)
+            };
+            assert_eq!(snapshot.cell_kind(offset), expected, "{offset}");
+            offset = snapshot.cell_end(offset);
+        }
+        assert_eq!(breaks, 2 * 20_000);
     }
 
     #[test]

@@ -13,7 +13,8 @@
 //!
 //! A line break separates words as a blank does, but it is a cell and not
 //! a character, so it is the motions' to tell (the private module
-//! `motion`).
+//! `motion`), of a cell the private module `cell` says is one. The motions
+//! bring here only the character of a cell that is no line break.
 
 /// Which words a motion goes by.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

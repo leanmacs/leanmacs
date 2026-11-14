@@ -147,15 +147,16 @@ impl Snapshot {
     /// row.
     pub fn point_cells_to_offset(&self, point: PointCells) -> Option<usize> {
         let row = self.row_range(point.row)?;
-        // Within a row's bytes, which stop before its line feed, every
-        // character starts a cell, so a column further on is a character
-        // further on.
+        // A column further on is a cell further on, as `cell_column`
+        // counts them. A cell that ends past the row's bytes is its line
+        // break, a carriage return and the line feed after it: the column
+        // after it starts is the row's last, where the bytes end.
         let mut offset = row.start;
         for _ in 0..point.column {
             if offset >= row.end {
                 return None;
             }
-            offset += self.char_at(offset)?.len_utf8();
+            offset = self.cell_end(offset).min(row.end);
         }
         Some(offset)
     }

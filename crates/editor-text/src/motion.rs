@@ -13,6 +13,7 @@
 
 use std::ops::Range;
 
+use crate::cell;
 use crate::snapshot::Snapshot;
 use crate::word::{self, WordKind};
 
@@ -153,13 +154,15 @@ impl Snapshot {
         self.row_content(row)
     }
 
-    /// The first position of `content`, the content of a row, whose
-    /// character is not a blank; its end when there is none.
+    /// The first position of `content`, the content of a row, whose cell
+    /// is not a blank; its end when there is none.
     fn first_non_blank(&self, content: Range<usize>) -> usize {
         let mut at = content.start;
         while at < content.end {
-            match self.char_at(at) {
-                Some(character) if word::is_blank(character) => at += character.len_utf8(),
+            match self.cell_kind(at) {
+                Some(cell::Kind::Character(character)) if word::is_blank(character) => {
+                    at = self.cell_end(at);
+                }
                 _ => break,
             }
         }
@@ -168,18 +171,18 @@ impl Snapshot {
 
     /// What the cell that starts at the cell start `start` is to a word
     /// motion of `kind`. `None` at the end of the text, where no cell
-    /// starts.
+    /// starts. What the cell is is the cell module's to say; what its
+    /// character is to a word, the word module's.
     fn cell_at(&self, kind: WordKind, start: usize) -> Option<Cell> {
-        let character = self.char_at(start)?;
-        let line_break = character == '\n'
-            || (character == '\r' && self.char_at(start.saturating_add(1)) == Some('\n'));
-        Some(if !line_break {
-            word::class(kind, character).map_or(Cell::Separator, Cell::Of)
-        } else if start == 0 || self.char_before(start) == Some('\n') {
+        Some(match self.cell_kind(start)? {
+            cell::Kind::Character(character) => {
+                word::class(kind, character).map_or(Cell::Separator, Cell::Of)
+            }
             // The line break starts its row, so the row has no content.
-            Cell::EmptyLine
-        } else {
-            Cell::Separator
+            cell::Kind::LineBreak if start == 0 || self.char_before(start) == Some('\n') => {
+                Cell::EmptyLine
+            }
+            cell::Kind::LineBreak => Cell::Separator,
         })
     }
 
