@@ -512,6 +512,179 @@ transaction through. Where those come from is open.
   every refusal as a value, so a save that was started is ended unless the
   loop itself ends first.
 
+### Prompts
+
+Status: decided 2026-11-14, with the command loop's phase 10, and not yet
+built.
+
+A command can need a string from the user: a file name, an ex command. It
+cannot wait for one. A command may not block, and while a command runs no
+key is handled, so the keys of the answer would never arrive. Emacs waits
+in a recursive edit, a command loop run inside the command; a blocked
+minibuffer read is what wedged `edmacs`. Nothing here runs a loop inside a
+command.
+
+**A command waits for an answer by naming the command that receives it.**
+
+- `prompt label continuation initial` opens the prompt and returns at
+  once. The asking command runs to its end like any command. When the
+  prompt is accepted, the continuation's command runs, as a command, with
+  the answer.
+- **The continuation is an invocation**: a command's name and plain
+  arguments, of the asker's own. It is plain data, so a request of the
+  editor's port can hold it, the editor state that holds it keeps its
+  derived equality, and a test can compare it.
+- **The command is looked up by its name when the answer arrives**, in the
+  registry as it then is, exactly as a key binding's name is. So after a
+  reload the answer runs the new config's command of that name, never a
+  closure of the old config, which a reload forbids ("Reload": no command
+  of the old config runs after the install). A name no command is
+  registered under says `<name>: no such command` in the echo area, as a
+  binding to such a name does. The name is not checked when the prompt is
+  asked for, for the reason a binding's is not: the registry may change
+  before the answer.
+- **The answer is the command's first argument.** The command is run with
+  the answer, a string, and then the continuation's own arguments.
+  `open-file` already reads its path as its first argument, so an
+  invocation of `open-file` with no argument is a continuation as it
+  stands. The asker's own arguments follow, so a command can carry what it
+  needs across the wait (a buffer's number, a flag).
+- **What it costs**: two prompts in a row are two commands, the second
+  asked by the first's continuation. That is what a continuation is.
+
+What was set aside:
+
+- **A prompt awaited from a job.** Four reasons, each read off the code.
+  - A job is started by the host after its command has ended, and whatever
+    it asks of the editor comes back through the queue, behind the keys
+    already there ("Getting results back"). A prompt opened that way would
+    open after the keys typed meanwhile, which would then run in the
+    asking window: with `:` and `w` typed quickly, `w` would be a motion.
+    Opened inside the command, the prompt has the focus before the next
+    key is looked up.
+  - A job cannot change editor state, so the answer would still be used by
+    the command the job finishes with. The job adds a thread hop and
+    removes no continuation.
+  - It needs a request of the job port that the editor thread answers,
+    with a clause in the job model, an answer in the runner and a property
+    in the contract run three ways. Every wait today is completed by a
+    library service.
+  - A job has an owner, and a reload that installs cancels config's jobs.
+    Every reload would withdraw the prompt of a command of config's.
+- **A function kept by the loop or by the registry.** A request cannot
+  carry it ([lean-runtime.md](lean-runtime.md), "A request that carries a
+  program over its own port"); kept past a reload it would run old
+  config's code; and the editor state could no longer be compared.
+- **A recursive edit**, as above.
+
+**One prompt at a time.** Asking for a prompt while one is open is
+refused, as a value the command sees, with nothing made and nothing
+changed. The command says so or does something else. A continuation can
+ask for the next prompt, because its own is closed by then. Replacing the
+open prompt was set aside: it would drop the first command's continuation
+without a word. So was a stack of prompts: it needs several minibuffer
+windows in one place, and neither the command line nor completion needs
+it.
+
+**The open prompt is editor state**, and the minibuffer is a buffer and a
+window of that state ([text-and-display.md](text-and-display.md), "Views
+as built"). While it is open no command is in flight: every command that
+runs meanwhile is one whole command.
+
+**Accept and cancel are commands over one request.**
+
+- **Accept** reads the minibuffer's text, which is the answer, and makes
+  one request of the editor state that closes the prompt with it.
+  **Cancel** makes that request with no answer, and nothing else. With no
+  prompt open each is refused, as a value.
+- **Closing** removes the minibuffer's window, empties its buffer's slot,
+  and gives the focus back to the asking view, the view that was focused
+  when the prompt was asked for. Given an answer it also records the
+  continuation with the answer as its first argument.
+- **Closing and recording the answer are one request**, and a request
+  about the editor state is answered without asking the interrupt flag ("A
+  state request is answered without asking"). So accepting cannot be
+  stopped between the window closing and the answer being recorded: it
+  happens whole, or the command is rolled back with the prompt open.
+- **The loop gives the minibuffer up by the rules that exist** ("Nothing is
+  given up until a command has ended"): the window is gone, so its markers
+  are given up, and the buffer's slot is empty, so its text is released,
+  once the accepting or cancelling command has run to its end. The scheme
+  is told the view is closed. No new rule.
+- **The focus goes to the asking view even if the user moved it
+  meanwhile**, so the answer's command runs with the window the prompt was
+  asked in, which is what a command that asks expects.
+- **When the asking view was closed while the prompt was open**, the
+  prompt stays open. On closing, the focus goes to the first window of the
+  tree, in drawing order, and the answer's command runs with that window.
+  A view's id is never used again, so the asker cannot come to mean
+  another view. This is `open-file`'s rule for a file that finishes
+  loading after its view was closed. Cancelling the prompt when its asker
+  is closed, and refusing to close the asker, were set aside: both make a
+  window command's result depend on a prompt it knows nothing of.
+
+**The answer's command runs as a step of its own, before the next
+event.**
+
+- The answered invocation is kept in the editor state until the accepting
+  command ends, as the jobs a command asked for are. After a command that
+  ran to its end the loop takes it out and hands it back with the step. A
+  command that did not run to its end answers nothing.
+- **The host runs each answered invocation before it pulls another
+  event**, as an invocation no key yielded: the echo area is cleared, the
+  command is looked up, and it is called with the focused window, the
+  invocation's arguments and no keys. The host takes that step in as it
+  takes any step in, and an answer's command that hands back answers of
+  its own has them run the same way. So a key typed after the accept key
+  is handled after the answer's command.
+- **Why the host and not the accepting command's step.** The host holds
+  the cells of the stores, and a command over a store is made over the
+  cell as it is when the command is looked up. Run inside the accepting
+  command's step, an answer's command would be looked up before that
+  step's write was written back. As a step of its own it is like every
+  other command: one rollback, one scene, one log entry, one ending.
+  Running it inside the accepting command, as an on-enter action runs
+  inside the command that set the mode, was set aside for this, and
+  because a refused answer's command would then roll the prompt open again
+  under the accept command's name.
+- **A chain that never ends** (an answer's command that asks and accepts
+  for ever) is runaway code. Each link makes text requests, so the
+  interrupt key stops it at the next one ("Runaway code is not a design
+  driver").
+
+**Rollback and the interrupt around a prompt.**
+
+- **A command that asks and then does not run to its end** is rolled back
+  to the state from before it, which has no prompt. The text and the
+  markers it made for the minibuffer are not released: that is the rule
+  for everything a failed command made ("What is not undone").
+- **An accept that is interrupted or refused** (it reads the text, a
+  request that is guarded) is rolled back with the prompt open and its
+  text as typed. Nothing was given up, since nothing is given up until a
+  command has ended.
+- **A cancel** makes one request about the editor state and cannot be
+  interrupted or refused.
+- **An answer's command that is refused or interrupted** is rolled back to
+  the state after the accept: the prompt stays closed, the answer is not
+  kept, and the echo area says what became of the command under its own
+  name. The prompt is not opened again.
+- **Any other command that fails while a prompt is open** is rolled back
+  to a state in which the prompt is open, with the minibuffer's history
+  and markers kept and restored like any buffer's and window's.
+- **The interrupt key does not close a prompt.** It raises the flag, the
+  loop lowers it as it takes the key, and the key is then stepped for the
+  focused view like any key. With no command running it interrupts
+  nothing, which is the rule that exists. A scheme may bind it; neither
+  scheme here does.
+- **A job's result is delivered while a prompt is open.** Nothing blocks:
+  the loop runs the job's command as always, on whatever it names, and the
+  prompt stays open.
+- **A reload leaves the prompt open.** It is compiled state. Its
+  continuation is a name, looked up when the answer arrives.
+
+How the minibuffer takes keys is in
+[keymaps-and-modes.md](keymaps-and-modes.md), "The minibuffer".
+
 ### Structured lifetimes
 
 Every job has an owner: a buffer, a view, an agent session, or a package.
