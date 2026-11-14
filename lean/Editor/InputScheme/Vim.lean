@@ -178,6 +178,23 @@ never a move. A reset keeps it, and so does entering a state. Typed text is
 not an edit and does not replace it. It is one for the scheme, not one a
 view. Replaying it is not here.
 
+**The text typed in the insert session the last change began is kept with
+it** (`State.inserted`, and `State.recording`, the view it is being kept
+for), since typed text is no edit and a replay of the change needs it:
+
+- An edit that changes text and enters a state where typing is text sets
+  `inserted` to the empty text and `recording` to the key's view. Any
+  other edit that changes text sets both to none.
+- Text typed in the recording view is added to `inserted`
+  (`State.typedText`). Text typed in another view, the minibuffer's
+  included, is not.
+- An edit that enters a state for the recording view, and that view being
+  closed, end the recording. What was kept stays.
+- A reset keeps both, as it keeps the last change.
+- A command that does not run to its end is not the last change and its
+  typed text is not kept, with no rule here: the loop puts the scheme back
+  in its state at rest (`Editor/Loop.lean`).
+
 ## The visual selection
 
 The selection is not in the scheme's state: it is the view's selection in
@@ -419,6 +436,12 @@ structure State where
   /-- The last edit that changed text, if one did: what dot repeat
   replays. -/
   lastChange : Option Edit := none
+  /-- The text typed in the insert session the last change began; `none`
+  when it began none. -/
+  inserted : Option String := none
+  /-- The view whose typed text is being added to `inserted`: the view of
+  the last change, while it is in the session that change began. -/
+  recording : Option ViewId := none
   deriving DecidableEq, Repr
 
 /-- The record of the Vim state `view` is in: the registry's record of the
@@ -498,15 +521,30 @@ inductive Parsed where
   deriving DecidableEq, Repr
 
 /-- The state with the edit begun dropped. A reset keeps which Vim state
-each view is in and the last change, and nothing else. -/
+each view is in, the last change and the text typed in the session it
+began, with the view that text is being kept for, and nothing else. -/
 private def State.reset (state : State) : State :=
-  { current := state.current, lastChange := state.lastChange }
+  { current := state.current, lastChange := state.lastChange, inserted := state.inserted
+    recording := state.recording }
 
-/-- The state once `view` is closed: without the Vim state kept for it. The
-edit begun and the last change are the scheme's, not the view's, and
-stay. -/
+/-- The state with the typed text of `view` no longer kept, when `view` is
+the view it is being kept for. The text kept so far stays. -/
+private def State.endRecording (state : State) (view : ViewId) : State :=
+  if state.recording == some view then { state with recording := none } else state
+
+/-- The state once `text` was typed in `view`: the text is added to what is
+kept for the last change when `view` is the view it is being kept for, and
+the state is as it was otherwise. -/
+def State.typedText (state : State) (view : ViewId) (text : String) : State :=
+  if state.recording == some view then { state with inserted := state.inserted.map (· ++ text) }
+  else state
+
+/-- The state once `view` is closed: without the Vim state kept for it, and
+with no more of its typed text kept for the last change. The edit begun,
+the last change and the text kept for it are the scheme's, not the view's,
+and stay. -/
 def State.closeView (view : ViewId) (state : State) : State :=
-  { state with current := state.current.filter (·.1 != view) }
+  { state.endRecording view with current := state.current.filter (·.1 != view) }
 
 /-- The state with `view` in the Vim state `name`. The initial state has no
 entry, and a name the registry does not have is the initial state's, so
@@ -531,11 +569,24 @@ def State.openMinibuffer (states : States) (view : ViewId) (state : State) : Sta
 /-- The edit begun, completed as `edit` by a key for `view`: the edit begun
 is dropped, the edit is the last change if it changes text, and the view
 enters the Vim state `enters`, if it is one: the state the edit names,
-unless the caller says another. -/
+unless the caller says another.
+
+What is typed in the insert session the last change began is kept for it
+("The last change", in the module docs): an edit that changes text and
+enters a state where typing is text begins keeping, with the empty text,
+for `view`; any other edit that changes text keeps none; and an edit that
+changes no text and enters a state for the view being kept for ends the
+keeping, with what was kept. -/
 private def State.finish (states : States) (view : ViewId) (state : State) (edit : Edit)
     (enters : Option String := edit.enters) : State × Parsed :=
   let next := state.reset
-  let next := if edit.changes then { next with lastChange := some edit } else next
+  let begins := (enters.map fun name => (states.get name).insertsText) == some true
+  let next :=
+    if edit.changes then
+      { next with
+        lastChange := some edit, inserted := if begins then some "" else none
+        recording := if begins then some view else none }
+    else if enters.isSome then next.endRecording view else next
   match enters with
   | some name => (next.enter states view name, .edit edit)
   | none => (next, .edit edit)
@@ -618,7 +669,9 @@ def parse (states : States) (maps : ViewId → List (Keymap Bound)) (view : View
             .nothing)
         else
           if record.insertsText && state.typed.isEmpty then
-            (state, (key.printed?.map Parsed.text).getD .nothing)
+            match key.printed? with
+            | some text => (state.typedText view text, .text text)
+            | none => (state, .nothing)
           else (state.reset, .nothing)
 
 /-- The name of the command typed text runs. -/

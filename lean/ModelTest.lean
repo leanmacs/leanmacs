@@ -9674,11 +9674,18 @@ def vimStateChecks : List Check :=
           (yields == [none, none] && decide (state = inserting) &&
             (vimFedFrom inserting "j" active).1.typed == keys "j" &&
             (vimFedFrom inserting "j k" active).1.current == []) },
-    { name := "a self-insert leaves the scheme's state as it was, with nothing pending"
+    { name :=
+        "a self-insert leaves the scheme's state as it was but for the text kept for the last change, with nothing pending; where no text is being kept it leaves the whole state as it was"
       run :=
         let (inserting, _) := vimFed "i"
         let (state, _) := vimFedFrom inserting "a b"
-        pure (decide (state = inserting) && state.typed == []) },
+        let minibuffer := Vim.State.openMinibuffer vimStates ⟨1⟩ vimInit
+        let (typed, yields) := vimFedFrom minibuffer "a b" (view := ⟨1⟩)
+        pure
+          (decide ({ state with inserted := inserting.inserted } = inserting) &&
+            state.typed == [] &&
+            yields.length == 2 &&
+            decide (typed = minibuffer)) },
     { name :=
         "in a state where operators act on the selection an operator yields its edit over the selection at once, waiting for no motion, and the view is then in the initial state"
       run :=
@@ -9761,6 +9768,54 @@ def vimStateChecks : List Check :=
       run :=
         let (inserting, _) := vimParsed "i"
         pure ((vimParsedFrom inserting "a b").1.lastChange == inserting.lastChange) },
+    { name :=
+        "the text typed in the insert session the last change began is kept: a change that enters a state where typing is text keeps the empty text for its view, the keys typed there are added in order, and the last change is as it was"
+      run :=
+        let (changing, _) := vimParsed "c w"
+        let (typed, _) := vimParsedFrom changing "a b 1"
+        pure
+          (vimInit.inserted == none && vimInit.recording == none && changing.inserted == some "" &&
+            changing.recording == some ⟨0⟩ &&
+            typed.inserted == some "ab1" &&
+            typed.recording == some ⟨0⟩ &&
+            typed.lastChange == changing.lastChange &&
+            (vimParsed "i x y").1.inserted == some "xy") },
+    { name :=
+        "the key that leaves the state ends the keeping and keeps the text: text typed in a later session that no change began is not added, and a reset keeps what was kept"
+      run :=
+        let peeking (_ : ViewId) : List (Keymap Vim.Bound) :=
+          [vimKeymap [("z", .command { name := "peek", enters := some "insert" })]]
+        let (left, _) := vimParsed "c w a b <Escape>"
+        pure
+          (left.inserted == some "ab" && left.recording == none &&
+            (vimParsedFrom left "z q" peeking).1.inserted == some "ab" &&
+            (vimParsedFrom left "d z").1.inserted == some "ab" &&
+            (vimParsedFrom left "u").1.inserted == some "ab" &&
+            (vimParsedFrom left "v <Escape>").1.inserted == some "ab") },
+    { name :=
+        "a change that enters no state where typing is text keeps no typed text, and a second change that begins a session empties what the first kept"
+      run :=
+        let (left, _) := vimParsed "c w a b <Escape>"
+        pure
+          ((vimParsed "d w").1.inserted == none && (vimParsedFrom left "x").1.inserted == none &&
+            (vimParsedFrom left "x").1.recording == none &&
+            (vimParsedFrom left "v d").1.inserted == none &&
+            (vimParsedFrom left "c w").1.inserted == some "" &&
+            (vimParsedFrom left "c w q").1.inserted == some "q") },
+    { name :=
+        "text typed in another view is not added, the minibuffer's included, and the view being closed ends the keeping and keeps the text"
+      run :=
+        let (typed, _) := vimParsed "c w a"
+        let other := Vim.State.openMinibuffer vimStates ⟨1⟩ typed
+        let (elsewhere, parsed) := vimParsedFrom other "q" (view := ⟨1⟩)
+        let closed := Vim.State.closeView ⟨0⟩ typed
+        pure
+          (parsed == [.text "q"] && elsewhere.inserted == some "a" &&
+            elsewhere.recording == some ⟨0⟩ &&
+            (vimParsedFrom elsewhere "b").1.inserted == some "ab" &&
+            closed.inserted == some "a" &&
+            closed.recording == none &&
+            (Vim.State.closeView ⟨1⟩ elsewhere).recording == some ⟨0⟩) },
     { name :=
         "a key a mode binds runs its command in normal state, and in insert state it is typed text, while a key an active keymap binds for no mode still runs there"
       run :=
