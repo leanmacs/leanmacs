@@ -98,9 +98,15 @@ names that ship, are in `Editor/Ex/Compiled.lean`.
   written and the editor goes on. Vim does the same.
 - **It saves a buffer that is not modified too**, as Vim's `wq` does.
 - **While an earlier save of the buffer is in flight** the save command
-  says so and starts none; the buffer has a save in flight, so the quit
-  is asked, and waits for that save, or is refused if the buffer was
-  edited since it began.
+  says so (`Files.beingSaved`) and starts none; the buffer has a save in
+  flight, so the quit is asked.
+  - It waits for that save, and the echo area keeps the save command's
+    message until the save's result is delivered.
+  - If the buffer was edited since that save began, the quit is refused
+    with the buffer's name, and the refusal (`notQuitting`) is what the
+    echo area says, in place of the save command's message. The earlier
+    save still writes the text from before the edit, and the buffer
+    stays modified.
 
 ## Reload
 

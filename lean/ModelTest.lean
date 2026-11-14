@@ -12647,6 +12647,39 @@ def exChecks : List Check :=
               bytesOf left path == some FileCases.noteBytes &&
               stampOf left path != stampOf opened path },
     { name :=
+        "the ex name w and then wq with the save not yet finished: the save command says the file is being saved and starts no second save, the quit is asked and waits for the one save, and the driver stops once it is finished, with the buffer's text in the file"
+      run :=
+        pure <|
+          match exNoteOpen with
+          | none => false
+          | some opened =>
+            let path := inFiles "note.txt"
+            let text := "x" ++ FileCases.noteText
+            let (asked, _) := fedTo opened ([.commit "x"] ++ exLine "w" ++ exLine "wq")
+            let (left, _) := asked.finish 2
+            asked.pending.size == 1 && !asked.stopped && asked.loop.state.quitting &&
+              promptEcho asked == Files.beingSaved path &&
+              left.stopped &&
+              bytesOf left path == some (FileModel.encode text) &&
+              (showing left).map (·.buffer.isModified) == some false },
+    { name :=
+        "the ex name w, an edit, and then wq with the save not yet finished: no second save is started and the quit is refused with the buffer's name, by the quit command's message, which is what the echo area says; the driver does not stop when the save is finished, the file holds the text from before the edit, and the buffer is still modified"
+      run :=
+        pure <|
+          match exNoteOpen with
+          | none => false
+          | some opened =>
+            let path := inFiles "note.txt"
+            let (asked, _) :=
+              fedTo opened ([.commit "x"] ++ exLine "w" ++ [.commit "y"] ++ exLine "wq")
+            let (saved, _) := asked.finish 2
+            asked.pending.size == 1 && !asked.stopped && !asked.loop.state.quitting &&
+              promptEcho asked == Ex.notQuitting (.unsaved "note.txt") &&
+              !saved.stopped &&
+              !saved.loop.state.quitting &&
+              bytesOf saved path == some (FileModel.encode ("x" ++ FileCases.noteText)) &&
+              (showing saved).map (·.buffer.isModified) == some true },
+    { name :=
         "the ex name wq in the scratch buffer says the buffer has no file, by the save command's message, starts nothing and does not ask to quit"
       run :=
         pure <|
