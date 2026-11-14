@@ -150,10 +150,10 @@ run = [
   # printed back with its logical key, physical key and modifiers
   # (`keys-expected`).
   "out=$(.lake/build/bin/editor headless \"$(lean --print-prefix)\" .lake/build/lib/lean ../tests/headless/config ../tests/headless/keys-script) && printf '%s\\n' \"$out\" | diff ../tests/headless/keys-expected -",
-  # The same, with a script that commits text as an input method would and
-  # asks for the scene: the editor loop's frame is made at the first window
-  # event, and the view's snapshot must hold the text, read from the library
-  # (`scene-expected`). Its second half reloads and runs a job once the
+  # The same, with a script that enters insert state, commits text as an
+  # input method would and asks for the scene: the editor loop's frame is
+  # made at the first window event, and the view's snapshot must hold the
+  # text, read from the library (`scene-expected`). Its second half reloads and runs a job once the
   # frame exists, and each must be followed by a scene.
   "out=$(.lake/build/bin/editor headless \"$(lean --print-prefix)\" .lake/build/lib/lean ../tests/headless/config ../tests/headless/scene-script) && printf '%s\\n' \"$out\" | diff ../tests/headless/scene-expected -",
   # Keys dispatched to commands, on a config of its own (tests/headless/

@@ -1,9 +1,10 @@
-scene 0x0, focused 0, echo "", preedit -, published 1
+key arrived: i KeyI -
+scene 0x0, focused 0, echo "", preedit -, published 2
 view 0 0,0 0x0: "hello", scroll 0, selections 5..5
-status 0: status.state "normal", status.name "scratch", status.modified "[+]"
+status 0: status.state "insert", status.name "scratch", status.modified "[+]"
 reload 1: installed, 2 chunks, 1 commands
 spawn count: job 1
 job 1 count: ok
-scene 0x0, focused 0, echo "", preedit -, published 8
+scene 0x0, focused 0, echo "", preedit -, published 9
 view 0 0,0 0x0: "hello", scroll 0, selections 5..5
-status 0: status.state "normal", status.name "scratch", status.modified "[+]"
+status 0: status.state "insert", status.name "scratch", status.modified "[+]"

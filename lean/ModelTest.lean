@@ -5681,6 +5681,28 @@ def commitChecks : List Check :=
           match looped (EditorState.initial ⟨640, 480⟩) [.preedit "k", .commit "か"] with
           | some ((loop, _), scenes, _) =>
             scenes.map (·.preedit) == #[some "k", none] && loop.state.preedit == none
+          | none => false },
+    { name :=
+        "a text committed where the scheme reports that the focused view takes no text is not inserted: the text and the selection are as they were, and the preedit is cleared all the same"
+      run :=
+        pure <|
+          match switched (holding "abcd" #[⟨1, 3⟩]) "C-d" [.preedit "ka", .commit "x"] with
+          | some (loop, scenes, model) =>
+            let selection :=
+              loop.state.focusedTarget?.bind fun target =>
+                (target.selection.runModel model.texts).1.toOption
+            model.texts.contents == #["abcd"] && selection.map (·.ranges) == some #[⟨1, 3⟩] &&
+              loop.state.preedit == none &&
+              scenes.map (·.preedit) == #[none, some "ka", none]
+          | none => false },
+    { name :=
+        "once the scheme reports that the focused view takes text again, a committed text replaces what the selection covers, as under a scheme that says nothing"
+      run :=
+        pure <|
+          let events : List Event :=
+            [.commit "x"] ++ (keys "C-p").map (Event.key · true "") ++ [.commit "y"]
+          match switched (holding "abcd" #[⟨1, 3⟩]) "C-d" events with
+          | some (_, _, model) => model.texts.contents == #["ayd"]
           | none => false }]
 
 /-- The key of the character `text`, with `modifiers` held, as a binding
@@ -12336,7 +12358,25 @@ def evilInsertChecks : List Check :=
             let (ran, _) :=
               driver.stepped (driver.loop.runNamed driver.handed Vim.selfInsertCommand)
             ran.loop.state.echo == Evil.noText && !Evil.noText.isEmpty && evilShown ran == "a|bc" &&
-              evilHistory ran == some (1, false) }]
+              evilHistory ran == some (1, false) },
+    { name :=
+        "a text an input method commits in normal state is not inserted: the text, the cursor and the history are as they were; committed inside an insert session it is inserted at the bar, and is one step of the history with what was typed"
+      run :=
+        pure <|
+          match evilDriver "a|bc" with
+          | none => false
+          | some driver =>
+            let commit (driver : EvilDriver) (text : String) : EvilDriver :=
+              (driver.feed { event := .commit text, stamp := 0 }).1
+            let ignored := commit driver "xy"
+            let typed := evilFed (commit (evilFed driver "i x") "yz") "w"
+            let ended := evilFed typed "<Escape>"
+            evilShown ignored == "a|bc" && evilHistory ignored == some (1, false) &&
+              evilShown typed == "axyzw|bc" &&
+              evilHistory typed == some (1, true) &&
+              evilShown ended == "axyz|wbc" &&
+              evilHistory ended == some (2, false) &&
+              evilText (evilUndone ended) == some "abc" }]
 
 /-- Every check, in the order they run.
 

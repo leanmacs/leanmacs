@@ -371,7 +371,7 @@ is queued, and marks that event. What the loop does with the flag is here
 
 | Event | What it does to the state |
 |---|---|
-| `commit text` | Replaces what each range of the focused window's selection covers with `text`, as one transaction with the user's origin, and clears the preedit |
+| `commit text` | Where the scheme reports that the focused view takes text (`InputScheme.Report.takesText`): replaces what each range of the focused window's selection covers with `text`, as one transaction with the user's origin. Elsewhere the text is dropped. Either way it clears the preedit |
 | `preedit text` | Sets the preedit to `text`; an empty one clears it |
 | `compositionDisabled` | Clears the preedit |
 | `resize` | Sets the frame's size; the views are laid out in it when the scene is made. Its scale is not kept: the scene has no field for it |
@@ -379,6 +379,15 @@ is queued, and marks that event. What the loop does with the flag is here
 | `closeRequested`, `quit` | Nothing: the step says stop, and publishes nothing |
 | a key press | It is stepped through the scheme, whose state the loop keeps ("The scheme"), and the invocation it yields, if it yields one, is run ("Running an invocation") |
 | a key release, the press of a modifier by itself, a pointer, `windowOpened`, `compositionEnabled`, a message, a completion | Nothing |
+
+**A committed text is typed text.** It is inserted only where the scheme
+says the view takes text, which under a scheme that says nothing is every
+view, and under the Vim scheme a view in insert state and the
+minibuffer's. In a state whose selection is on a cell, a commit would
+replace the character under the cursor and leave the cursor where the
+state does not let one rest, so there it is dropped
+(`docs/design/keymaps-and-modes.md`, "Insert sessions"). A commit inside
+an insert session joins the session's step of the history.
 
 A handler is given what it acts on (a `Target`: the window and its buffer),
 never "the current buffer". When one is refused, the state stays as it was
@@ -810,8 +819,9 @@ def insert (target : Target) (text : String) : TextM Unit :=
   target.replaceSelections text
 
 /-- What `event` does to `state` ("What each event does", in the module
-docs). -/
-def handle (state : EditorState) : Event → EditorM EditorState
+docs), `report` being what the scheme says of the focused view: a committed
+text is inserted only where the report says the view takes text. -/
+def handle (state : EditorState) (report : InputScheme.Report := {}) : Event → EditorM EditorState
   | .preedit text => return { state with preedit := if text.isEmpty then none else some text }
   | .compositionDisabled => return { state with preedit := none }
   | .resize resize =>
@@ -819,7 +829,8 @@ def handle (state : EditorState) : Event → EditorM EditorState
   | .focus gained => return { state with frame := { state.frame with hasFocus := gained } }
   | .commit text => do
     let some target := state.focusedTarget? | return { state with preedit := none }
-    insert target text
+    if report.takesText then
+      insert target text
     return { state with preedit := none }
   | _ => return state
 
@@ -1202,7 +1213,7 @@ def step (keys : Keys scheme) (loop : Loop scheme) (event : Event) : EditorM (St
   | _ =>
     let state ←
       try
-        handle loop.state event
+        handle loop.state (scheme.report loop.input loop.state.frame.focused) event
       catch refusal =>
         pure (loop.state.refused refusal)
     return { loop := ← { loop with state }.publish, next := .continue }

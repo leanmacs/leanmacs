@@ -3,6 +3,10 @@
 # the scene the editor loop published. What it prints must be exactly
 # `scene-expected`.
 
+# A committed text is typed text: it is inserted where the view takes text,
+# which under the Vim scheme is insert state, so `i` is pressed first. In
+# normal state the commit would be dropped.
+key i KeyI -
 commit hello
 scene
 
