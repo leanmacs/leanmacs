@@ -4879,7 +4879,8 @@ def stateRequests : List StateRequest :=
     .openPrompt "Name: " asked ⟨8⟩ (UndoTree.new ⟨8⟩ 0) (marker 0 0) (marker 8 1),
     .closePrompt none, .closePrompt (some "typed"),
     .setWanted ⟨0⟩ (some { column := .cells 3, head := 7 }), .setWanted ⟨1⟩ none,
-    .setWanted ⟨9⟩ (some { column := .lineEnd, head := 0 }), .ex "w", .invoke asked, .quit, .reload]
+    .setWanted ⟨9⟩ (some { column := .lineEnd, head := 0 }), .ex "w", .invoke asked, .quit, .reload,
+    .giveUp "no"]
 
 /-- The checks of the state requests' pure handler (`EditorState.handle`,
 `Editor/State/Request.lean`), on states made on the text model. The handler
@@ -5371,6 +5372,15 @@ def stateRequestChecks : List Check :=
           | some state =>
             let (_, asked) := state.handle .reload
             !state.reload && asked.reload && { asked with reload := false } == state },
+    { name :=
+        "the request by which a command gives up changes nothing of the state: the handler knows no command to end, and the state after it is the state before"
+      run :=
+        pure <|
+          match onTextModel twoBuffers with
+          | none => false
+          | some state =>
+            let (_, after) := state.handle (.giveUp "no such thing")
+            after == state },
     { name :=
         "every kind of request, accepted and refused, leaves a well-formed state well formed, with no prompt open and with one open, and the state with nothing in it answers each without a buffer or a window"
       run := do
@@ -7285,6 +7295,36 @@ def dispatchStateChecks : List Check :=
                 model.watch.arrived == 0
             | (.error _, _) => false },
     { name :=
+        "a command that edits, says something, gives up and would edit again ends as having given up, with its reason and the state it had reached: the first edit was made, the second was not, and a try round the call does not go on"
+      run :=
+        pure <|
+          let command : EditorM Unit := do
+            discard <| createText "one"
+            EditorState.ask (.message "said")
+            try
+              giveUp "cannot go on"
+            catch _ =>
+              pure ()
+            discard <| createText "two"
+            EditorState.ask (.message "late")
+          let program : EditorM (Guarded Unit × EditorState) := do
+            command.dispatched {} (← EditorState.initial ⟨640, 480⟩)
+          match program.runModel editorModel with
+          | (.ok (outcome, state), model) =>
+            outcome == .gaveUp "cannot go on" && state.echo == "said" &&
+              model.texts.contents == #["", "one"]
+          | (.error _, _) => false },
+    { name :=
+        "a command that gives up where no loop dispatches it is refused with badSelection, and nothing of its reason is kept: the handler of the runners changes nothing"
+      run :=
+        pure <|
+          let command : EditorM Unit := do
+            discard <| createText "one"
+            giveUp "cannot go on"
+          match command.runModel editorModel with
+          | (.error refusal, model) => refusal == .badSelection && model.texts.contents == #["one"]
+          | (.ok _, _) => false },
+    { name :=
         "a command that edits, moves in the history and records the move, edits again and is then refused: the rollback reverts the edit made since the move from the tree the command left, leaves the text at the node the move reached, says the command moved in the history, and what was undone can be redone"
       run :=
         pure <|
@@ -8142,11 +8182,107 @@ def dispatchReportChecks : List Check :=
             return (loop.state.echo, (← loop.runNamed keys "say").loop.state.echo)
           (program.runModel editorModel).1.toOption == some (reportText {}, reportText {}) }]
 
+/-- The checks of a command that gives up (`giveUp`, `Editor/Api.lean`;
+`Editor/Loop.lean`, "Running an invocation"), on the editor's models, with
+the scheme `switching`, whose report a key's invocation switches, and
+commands written here: the loop rolls the command back, says its reason in
+the echo area with no `refused:`, and puts the scheme back in its state at
+rest. -/
+def dispatchCommandGivesUpChecks : List Check :=
+  let reason := "nothing to do here"
+  -- Edits the text, moves the selection, and then gives up.
+  let quitter : Dispatched := fun call => do
+    Loop.insert call.target "typed"
+    giveUp reason
+  let handed (commands : List (String × Dispatched) := []) : Loop.Keys switching :=
+    switchingKeys [("C-s", invoke "say"), ("C-g", invoke "quitter")]
+      ([("say", say), ("quitter", quitter)] ++ commands)
+  [{  name :=
+        "a key whose command edits and then gives up: the text and the selection are those before the command, the history has no step for it, the echo area reads the command's name and its reason with no refused, and the step says the command gave up"
+      run :=
+        pure <|
+          let program :
+            EditorM (String × Array SelectionRange × String × Bool × Bool × Option Loop.Ending) :=
+            do
+            let loop : Loop switching := { state := ← holding "abcd" #[⟨1, 3⟩] }
+            -- A key that runs nothing: its publish records the fixture's own
+            -- insertion as a step, so the count read here is the one to keep.
+            let (loop, _) ← stepsWith (handed []) loop [pressF5]
+            let some before := loop.state.focusedTarget? | throw .noSuchText
+            let (loop, steps) ← stepsWith (handed []) loop (presses "C-g")
+            let some target := loop.state.focusedTarget? | throw .noSuchText
+            return (← target.buffer.text.read, (← target.selection).ranges, loop.state.echo,
+                target.buffer.history.nodes.size == before.buffer.history.nodes.size,
+                target.buffer.history.pending, (steps.back?).bind (·.ended))
+          (program.runModel editorModel).1.toOption ==
+            some
+              ("abcd", #[⟨1, 3⟩], s!"quitter: {reason}", true, false,
+                some (Loop.Ending.gaveUp reason)) },
+    { name :=
+        "a command that gives up leaves the scheme at rest: the next key's command is told the report from before the key that gave up, and not the one that key would have switched to; the same key with a command that runs to its end switches it"
+      run :=
+        pure <|
+          let giving : Dispatched := fun _ => giveUp reason
+          let echoes (commands : List (String × Dispatched)) : Option (Array String) :=
+            (switched (EditorState.initial ⟨640, 480⟩) "C-m C-b C-s" (handed :=
+                  handed commands)).map
+              (·.2.1.map (·.echo))
+          match echoes [("begin", giving)], echoes [] with
+          | some #[_, gave, after], some #[_, _, begun] =>
+            gave == s!"begin: {reason}" && after == reportText markedReport &&
+              begun == reportText { session := true }
+          | _, _ => false },
+    { name :=
+        "a command that has its buffer keep a value and then gives up leaves the editor state as it was: the buffer keeps no value under the name"
+      run :=
+        pure <|
+          let keeping : Dispatched := fun call => do
+            discard <| call.target.window.buffer.setValue "count" (.nat 7)
+            giveUp reason
+          let kept : Dispatched := fun call => do
+            discard <| call.target.window.buffer.setValue "count" (.nat 7)
+            return none
+          let bound (name : String) : Loop.Keys switching :=
+            switchingKeys [("C-k", invoke name)] [("keeping", keeping), ("kept", kept)]
+          let after (name : String) : Option (Option Value × String) :=
+            (switched (EditorState.initial ⟨640, 480⟩) "C-k" (handed := bound name)).map
+              fun (loop, _, _) => (loop.state.value? ⟨0⟩ "count", loop.state.echo)
+          after "keeping" == some (none, s!"keeping: {reason}") &&
+            after "kept" == some (some (.nat 7), "") },
+    { name :=
+        "a command that gives up inside an insert session leaves the session's earlier edit pending in the open group, with the text as the session left it: only what the command itself made is taken back"
+      run :=
+        pure <|
+          let typing : Dispatched := fun call => do
+            Loop.insert call.target "one"
+            return none
+          let program : EditorM (String × Bool × Nat × String) := do
+            let loop : Loop switching := { state := ← EditorState.initial ⟨640, 480⟩ }
+            let handed := handed [("begin", typing)]
+            let (loop, _) ← stepsWith handed loop (presses "C-b C-g")
+            let some target := loop.state.focusedTarget? | throw .noSuchText
+            return (← target.buffer.text.read, target.buffer.history.pending,
+                target.buffer.history.nodes.size, loop.state.echo)
+          (program.runModel editorModel).1.toOption ==
+            some ("one", true, 1, s!"quitter: {reason}") },
+    { name :=
+        "a command that gives up, run by its name, ends the same way: rolled back, with its name and its reason in the echo area, and the step says it gave up"
+      run :=
+        pure <|
+          let program : EditorM (String × String × Option Loop.Ending) := do
+            let loop : Loop switching := { state := ← holding "abcd" #[⟨1, 3⟩] }
+            let stepped ← loop.runNamed (handed []) "quitter"
+            let some target := stepped.loop.state.focusedTarget? | throw .noSuchText
+            return (← target.buffer.text.read, stepped.loop.state.echo, stepped.ended)
+          (program.runModel editorModel).1.toOption ==
+            some ("abcd", s!"quitter: {reason}", some (Loop.Ending.gaveUp reason)) }]
+
 /-- The checks of key dispatch in the loop (`Editor/Loop.lean`), on the
 editor's models: keys through the scheme and the commands they run,
 rollback, the interrupt, the slow-command log, a command's state requests,
-what the loop gives up after a command, the scheme's notice of a closed
-view, undo from a command, and what a command is told of its view. -/
+what the loop gives up after a command, a command that gives up, the
+scheme's notice of a closed view, undo from a command, and what a command
+is told of its view. -/
 def dispatchChecks : List Check :=
   dispatchKeyChecks ++ dispatchRollbackChecks ++ dispatchInterruptChecks ++ dispatchSlowChecks ++
     dispatchStateChecks ++
@@ -8154,7 +8290,8 @@ def dispatchChecks : List Check :=
     dispatchCloseViewChecks ++
     dispatchMinibufferNoticeChecks ++
     dispatchUndoChecks ++
-    dispatchReportChecks
+    dispatchReportChecks ++
+    dispatchCommandGivesUpChecks
 
 /-- A scheme written for the test that breaks the contract: it yields the
 first binding that the keys so far begin, so it emits on a strict prefix. -/

@@ -51,7 +51,7 @@ structure Case where
 
 /-- The case as one command: makes the state it starts from, and runs its
 command dispatched from it. Refused when the command is, and `false` when
-the command was interrupted, which nothing here does. -/
+the command was interrupted or gave up, which nothing here does. -/
 def Case.play (case : Case) : EditorM Bool := do
   let state ← case.start
   match ← case.run.dispatched {} state with
@@ -59,7 +59,7 @@ def Case.play (case : Case) : EditorM Bool := do
     return held
   | (.refused error, _) =>
     throw error
-  | (.interrupted, _) =>
+  | (.interrupted, _) | (.gaveUp _, _) =>
     return false
 
 /-- Whether `reply` is the refusal `refusal`. -/

@@ -29,8 +29,9 @@ else guards a program, and every command a host runs goes through it.
   request does not go on. What a command made before it stopped is the
   loop's to roll back.
 - **A dispatched command is not refused.** How it ended is its value
-  (`Guarded`): it finished, it was refused, or it was interrupted. So the
-  loop that runs it goes on to roll back and to publish whichever it was.
+  (`Guarded`): it finished, it was refused, it was interrupted, or it gave
+  up ("A command that gives up"). So the loop that runs it goes on to roll
+  back and to publish whichever it was.
 - **A state request is not guarded.** It is pure Lean, not a call into the
   library, and what the guard bounds is the requests that reach the library
   (`docs/design/concurrency.md`, "When it is asked"). It also keeps a move
@@ -57,14 +58,34 @@ else guards a program, and every command a host runs goes through it.
   after it. No state request is left in the program it returns, so none
   reaches a runner, and the handler is the same function on the models and
   against the library by construction.
-- **The state comes back however the command ended**: finished, refused or
-  interrupted. A rollback needs the undo trees the command left
-  (`Editor/Loop.lean`, "Rollback"), so the state a refused or interrupted
-  command had reached is handed back with how it ended, and the loop decides
-  what to keep of it.
+- **The state comes back however the command ended**: finished, refused,
+  interrupted or having given up. A rollback needs the undo trees the
+  command left (`Editor/Loop.lean`, "Rollback"), so the state a command
+  that did not run to its end had reached is handed back with how it
+  ended, and the loop decides what to keep of it.
 - **Only the command is dispatched.** The transformation is applied to the
   command alone. The loop's own requests round it are neither guarded nor
   answered here, so a flag that is up never stops a rollback or a scene.
+
+## A command that gives up
+
+A command ends itself, with a reason, by one state request
+(`StateRequest.giveUp`, made by `giveUp`, `Editor/Api.lean`): it found that
+what it was asked cannot be done, and what it did so far is to be taken
+back (`docs/design/concurrency.md`, "Foreground: commands").
+
+- **The program is finished at that request**, with `Guarded.gaveUp` of
+  the reason and the state the command had reached. The continuation is
+  not applied, as an interrupted command's is not: nothing is thrown, so a
+  `try`/`catch` round the call does not go on.
+- **It is not a refusal.** The store refused nothing, so the loop says the
+  reason alone, with no `refused:` (`Editor/Loop.lean`, "Running an
+  invocation"). A command that threw a `TextError` to end itself would be
+  said in the store's words for something the store did not refuse.
+- **It is not a message and a return.** A command that only said its
+  reason would have run to its end: the scheme would keep the state its
+  key entered, and what the command did so far would stay.
+- **The case recurses nowhere**: it ends the program.
 
 ## Requests that name something registered
 
@@ -127,6 +148,8 @@ inductive Guarded (α : Type) where
   /-- The interrupt flag was up before one of its requests, which it did not
   make, nor any after. -/
   | interrupted
+  /-- It gave up, with `reason`, and made no request after that one. -/
+  | gaveUp (reason : String)
   deriving BEq, Repr
 
 /-- What the loop is told of the registry for the state requests that name
@@ -153,7 +176,9 @@ instance {α : Type} : Inhabited (Program editorPort (Guarded α × EditorState)
 each from the state the one before left, and the interrupt flag asked
 before each of its other requests: how the command ended, and the state it
 left, or had reached when it was refused or when the flag was found up,
-with that request and everything after it not made.
+with that request and everything after it not made. A request to give up
+ends the program there, with its reason and the state it had reached ("A
+command that gives up", in the module docs).
 
 A request to set a major mode is answered with what `registered` says of
 the mode ("Requests that name something registered", in the module docs):
@@ -186,6 +211,7 @@ partial def Program.dispatched {α : Type} (registered : Loop.Registered) :
       dispatched registered state (next reply)
     else dispatched registered state (next (.error (.noSuchJob name)))
   | state, .step (.state (.ex name)) next => dispatched registered state (next (registered.ex name))
+  | state, .step (.state (.giveUp reason)) _ => .done (.gaveUp reason, state)
   | state, .step (.state request) next =>
     let (reply, state) := state.handle request
     dispatched registered state (next reply)
@@ -198,7 +224,7 @@ partial def Program.dispatched {α : Type} (registered : Loop.Registered) :
 requests answered in place, and stopped at its next other request once the
 interrupt flag is up. It is not itself refused: how the command ended is
 its value, with the editor state it left, or had reached when it was
-refused or interrupted. -/
+refused or interrupted, or gave up. -/
 def EditorM.dispatched {α : Type} (command : EditorM α) (registered : Loop.Registered)
     (state : EditorState) : EditorM (Guarded α × EditorState) :=
   ExceptT.lift (command.run.dispatched registered state)

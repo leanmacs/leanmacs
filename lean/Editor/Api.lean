@@ -205,6 +205,33 @@ does not run to its end leaves no message: the echo area then says what
 became of it (`Editor/Loop.lean`, "Running an invocation"). Pinned by
 `ModelTest.loopChecks`.
 
+## Giving up
+
+`giveUp reason` ends the command there: it found that what it was asked
+cannot be done (`docs/design/concurrency.md`, "Foreground: commands").
+
+- **Its type is `EditorM α` for any `α`**, so it stands wherever a value
+  is wanted: nothing after it runs.
+- **The loop rolls the command back** to the texts, the markers and the
+  editor state from before it, as it rolls back one that was refused, and
+  the echo area reads `<name>: <reason>`, with no `refused:`
+  (`Editor/Loop.lean`, "Running an invocation"). The input scheme goes
+  back to its state at rest, so a key that entered a state of the scheme's
+  has not entered it.
+- **It cannot be caught.** It makes one state request
+  (`StateRequest.giveUp`), at which the loop ends the command's program
+  (`Editor/Command/Dispatch.lean`, "A command that gives up"). Nothing is
+  thrown, so a `try` round the call does not go on.
+- **Run where no loop dispatches the command** it is refused, with
+  `badSelection`: the runners' handler changes nothing, and a command run
+  bare finds an editor with nothing in it to act on.
+- **A message is not this.** A command that says why it did nothing and
+  returns ran to its end: what it did so far stays, and a key that entered
+  a state has entered it. Give up when the call must leave no trace.
+
+It makes no request of the library. Pinned by
+`ModelTest.dispatchStateChecks` and `ModelTest.dispatchCommandGivesUpChecks`.
+
 ## Ex bindings
 
 `exBinding name` asks which command the ex name `name` is bound to, and
@@ -360,6 +387,15 @@ def editorState : EditorM EditorState :=
 scene published after the command, until the next invocation. -/
 def message (text : String) : EditorM Unit :=
   EditorState.ask (.message text)
+
+/-- Ends the command here, with `reason` ("Giving up", in the module docs):
+the loop that runs the command rolls it back and says `<name>: <reason>` in
+the echo area, and nothing after this runs, a `catch` round it included.
+Run where no loop dispatches the command it is refused with
+`badSelection`. -/
+def giveUp {α : Type} (reason : String) : EditorM α := do
+  EditorState.ask (.giveUp reason)
+  throw .badSelection
 
 /-- Asks for the job registered under `name` to be started with
 `arguments`, once this command has run to its end. Its result comes back

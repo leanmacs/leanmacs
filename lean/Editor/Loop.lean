@@ -87,7 +87,10 @@ command's name and plain arguments, and the loop runs it (`Loop.run`):
 5. **A refusal is said in the echo area**, `<name>: refused: ` and the
    refusal (`TextError.describe`), and the editor keeps running: the step
    is not refused, and the next key is handled. What the command did before
-   it was refused is rolled back ("Rollback").
+   it was refused is rolled back ("Rollback"). **A command that gives up**
+   (`giveUp`, `Editor/Api.lean`) is rolled back the same way, and what is
+   said is `<name>: ` and its reason, with no `refused:`: the store refused
+   nothing (`Editor/Command/Dispatch.lean`, "A command that gives up").
 6. **What the command asked to be written** (a command over a store) is
    handed back with the step (`Loop.Stepped.write`), for whoever holds the
    cells.
@@ -682,6 +685,8 @@ inductive Loop.Ending where
   /-- The interrupt flag was up before one of its requests, and it was
   rolled back. -/
   | interrupted
+  /-- It gave up, with `reason`, and was rolled back. -/
+  | gaveUp (reason : String)
   /-- No command is registered under the name. -/
   | noSuchCommand
   /-- No window is focused for the command to act on. -/
@@ -1151,10 +1156,10 @@ dispatched (`EditorM.dispatched`: guarded, with its state requests answered
 from `state`). The state of a command that ran to its end is the one it
 left, with the jobs it asked for, the invocations to run next and a reload
 it asked for taken out and handed back. It is not
-refused: a refusal of the command and an interrupt are each said in the
-echo area, after `name`, and a command that was refused or interrupted is
-rolled back to the state from before it, with what could not be said after
-it.
+refused: a refusal of the command, an interrupt and the reason of a command
+that gave up are each said in the echo area, after `name`, and a command
+that was refused or interrupted, or that gave up, is rolled back to the
+state from before it, with what could not be said after it.
 
 Only the command is guarded. What this makes of its own requests, keeping
 before it, rolling back after it and giving up what a command that ran to
@@ -1192,6 +1197,8 @@ def dispatch (keys : Keys scheme) (state : EditorState) (name : String)
     failed s!"refused: {refusal.describe}" (.refused refusal)
   | .interrupted =>
     failed "interrupted" .interrupted
+  | .gaveUp reason =>
+    failed reason (.gaveUp reason)
 
 /-- Runs `invocation`, which the keys `typed` yielded, from `state` ("Running
 an invocation", in the module docs): clears the echo area, looks the
@@ -1293,7 +1300,8 @@ publishes a scene of the state after it: how a finished job's command is
 run. It is run as every command is (`dispatch`), and it is no invocation:
 the echo area is not cleared, so a command that says nothing leaves what
 the user was reading. When it does not run to its end the echo area reads
-`<label>: refused: ` and the refusal, or `<label>: interrupted`. -/
+`<label>: refused: ` and the refusal, `<label>: interrupted`, or `<label>: `
+and the reason it gave up with. -/
 def deliver (keys : Keys scheme) (loop : Loop scheme) (label : String) (command : EditorM Unit) :
     EditorM (Stepped scheme) := do
   let ran ←

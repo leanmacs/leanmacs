@@ -77,6 +77,12 @@ the models and against the library alike (`Editor/Command/Dispatch.lean`).
   mark are set by that one request (`Editor/State.lean`, "A buffer's
   file"). The handler releases no snapshot: the loop does, once the
   command that ended the save has run to its end.
+- **A command gives up by one request**, `giveUp`, with its reason
+  (`giveUp`, `Editor/Api.lean`). It is the loop's to act on: the
+  transformation that runs a command ends the command's program at this
+  request, with the reason (`Editor/Command/Dispatch.lean`, "A command
+  that gives up"). This handler knows no command to end, so here the
+  request changes nothing and is answered like a write that has no reply.
 
 ## Where an addition goes
 
@@ -155,6 +161,8 @@ inductive StateRequest where
   | quit
   /-- Ask for the config to be reloaded. -/
   | reload
+  /-- End this command here, with `reason`: it gives up. -/
+  | giveUp (reason : String)
 
 /-- The type of the reply to each request. -/
 abbrev StateRequest.Reply : StateRequest → Type
@@ -182,6 +190,7 @@ abbrev StateRequest.Reply : StateRequest → Type
   | .invoke _ => Unit
   | .quit => Unit
   | .reload => Unit
+  | .giveUp _ => Unit
 
 namespace EditorState
 
@@ -228,6 +237,7 @@ def handle : (request : StateRequest) → EditorState → request.Reply × Edito
   | .invoke invocation, state => ((), { state with answered := state.answered.push invocation })
   | .quit, state => ((), { state with quitting := true })
   | .reload, state => ((), { state with reload := true })
+  | .giveUp _, state => ((), state)
 
 end EditorState
 

@@ -2128,6 +2128,15 @@ def startingChunk : String :=
   bindKey \"C-c a\" \"ask\"
 "
 
+/-- A chunk whose `setup` registers a command `quitter`: it inserts `typed`
+at the cursor of view 0, and then gives up, with a reason. -/
+def givingUpChunk : String :=
+  "def setup : SetupM Unit := do
+  command \"quitter\" do
+    discard <| (⟨0⟩ : ViewId).insertAtSelections \"typed\"
+    giveUp \"no can do\"
+"
+
 /-- What compiled code hands the host of the compiled job check: the job
 `nap`, which sleeps 10 ms on the job clock and whose command inserts
 `napped` at the cursor of view 0, and the command `rest`, which starts
@@ -2170,6 +2179,17 @@ def hostLoopChecks (context : Context) : List Check :=
             return (← session.output.get) == #["run boom: refused: bad range"] &&
                 (← session.scene) == ("boom: refused: bad range".quote, #[viewLine "abcd" 4]))
           dispatchCompiled },
+    { name :=
+        "the driver's run of a command of config's that gives up is rolled back and printed so: the output says it gave up, with its reason, the scene's echo is its name and the reason with no refused, and the view's text is that before the command"
+      run :=
+        withHost context [("config.lean", givingUpChunk)] fun session => do
+          session.ask [.reload]
+          unless ← Event.post (.commit "abcd") do
+            return false
+          session.ask [.run "quitter"]
+          return (← session.lines) ==
+                #["reload 1: installed, 1 chunks, 1 commands", "run quitter: gave up: no can do"] &&
+              (← session.scene) == ("quitter: no can do".quote, #[viewLine "abcd" 4]) },
     { name :=
         "the driver's run of a command is guarded: with the interrupt key arrived the command that loops over requests is stopped, the output says it was interrupted, and the flag is down once the loop has taken the key"
       run :=
