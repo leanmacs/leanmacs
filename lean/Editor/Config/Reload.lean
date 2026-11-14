@@ -24,7 +24,8 @@ the model tests run it with outcomes built by hand
   of them: the config that was loaded stays.
 - **The theme follows the registry.** `State.theme` is the built-in theme
   followed by the installed config's definitions of faces, so it changes
-  when, and only when, a reload installs.
+  when, and only when, a reload installs. The runtime that owns a display
+  hands it the theme then (`Config.retheme`, `Editor/Config/Display.lean`).
 - **A reload cancels the old config's jobs when, and only when, it
   installs.** An accepted outcome's effects begin with `cancelJobs config`,
   before its report and before a follow-up job starts; a rejected outcome has
