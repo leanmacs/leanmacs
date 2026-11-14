@@ -4,6 +4,60 @@
 //! it, and answers with plain data ([`Drawn`]). It is one method. What it
 //! draws with stays behind it: no type of a drawing library, a GPU or a
 //! font rasteriser is named here or by anything above the port.
+//!
+//! A frame reaches a renderer through the render loop
+//! ([`render_loop`](crate::render_loop)), which takes it from a mailbox
+//! where a newer frame replaces one not yet drawn. The frame journal and
+//! the counters ([`journal`](crate::journal)) are filled by that loop from
+//! what [`Renderer::draw`] returns, so every back end reports the same
+//! way and none keeps a journal of its own.
+//!
+//! # Where an addition goes
+//!
+//! The port grows by data, not by methods.
+//!
+//! | Addition | Where | Pinned by |
+//! |---|---|---|
+//! | Something more a draw is given: a setting that may change from one draw to the next | A field of [`DrawRequest`] | The adapter's tests |
+//! | Something more a draw says it did | A field of [`Drawn`], and of [`Counters`](crate::journal::Counters) when it is summed | [`journal`](crate::journal)'s tests, and the adapter's |
+//! | Something more to draw | Nothing here: it is a field of layout's frame, which a renderer reads | Layout's tests, and the adapter's |
+//! | Another reason to draw | A method of [`RenderHandle`](crate::render_loop::RenderHandle) that leaves word, and a field of [`Demands`](crate::schedule::Demands) | [`schedule`](crate::schedule)'s tests and [`render_loop`](crate::render_loop)'s, on the fake |
+//! | Which rows are built again | [`rows`](crate::rows), which every back end keeps its rows through | Its own tests |
+//! | A rule every renderer keeps | [`contract`](crate::contract) | Its own tests, on a renderer written to break it |
+//! | Reading back what was drawn | Not on the port: a method of the adapter that can | The adapter's tests |
+//!
+//! # The published fake and the contract
+//!
+//! [`RecordingRenderer`](crate::fake::RecordingRenderer) draws nothing and
+//! keeps every request; everything above the port is tested on it.
+//! [`contract::check`](crate::contract::check) is the list of rules it and
+//! every real adapter are held to. Each real adapter runs the check in its
+//! own crate's tests: the adapters are `editor-render-wgpu`'s, one that
+//! composites on the CPU and one that draws with wgpu.
+//!
+//! # Where the loop is run over a real adapter
+//!
+//! The loop's rules, the scheduler's and the journal's are pinned in this
+//! crate, on the fakes. A test that runs the loop, or layout, over a real
+//! adapter covers wiring only, and lives in the adapter's crate
+//! (`crates/editor-render-wgpu/tests`). It may read this crate's counters
+//! and journal ([`RenderHandle::counters`], [`RenderHandle::journal`]) and
+//! what [`Renderer::draw`] returned, and compare them: that a frame
+//! submitted twice was drawn once, that the rows a draw built are the rows
+//! the counters gained, that each presented draw has its entry. It states
+//! no decision of the scheduler, no size of the journal and no row, width
+//! or hash of layout's.
+//!
+//! Two of those tests may lay real text out with a real shaper, because a
+//! picture of text needs glyphs and only a shaper places them:
+//! `tests/reference.rs`, which compares one frame with the reference
+//! image, and `tests/reuse.rs`, which moves a cursor over real text. No
+//! other test of an adapter runs a real shaper: they draw frames of
+//! layout's fake, `CellShaper`, or frames they build by hand from the
+//! frame's public data.
+//!
+//! [`RenderHandle::counters`]: crate::render_loop::RenderHandle::counters
+//! [`RenderHandle::journal`]: crate::render_loop::RenderHandle::journal
 
 use std::sync::Arc;
 

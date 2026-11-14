@@ -42,9 +42,19 @@
 //! [`RenderLoop::step`] takes one decision and makes at most one draw, and
 //! never blocks: it says what it did or how long there is to wait. Tests
 //! step a loop by hand on a [`FakeClock`](crate::clock::FakeClock).
+//!
+//! [`RenderLoop::run`] is the render thread's whole life: it steps, and
+//! waits on the loop's [`Park`] whenever a step says to. The real park,
+//! [`CondvarPark`], is a lock and a condition variable, so an idle loop is
+//! a thread blocked with no deadline, which costs nothing; its timeout
+//! for a wait with a deadline is computed from the clock port. The fake,
+//! [`RecordingPark`], never blocks. Nothing here starts a thread: whoever
+//! wires the program together does.
 
+use std::collections::VecDeque;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
+use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError};
+use std::time::Duration;
 
 use editor_layout::frame::Frame;
 
@@ -67,18 +77,33 @@ pub trait Park: Send + Sync {
 
 /// The published fake of [`Park`]: it keeps the waits it was asked for and
 /// returns from each at once, and counts the notifications.
-#[derive(Debug, Default)]
+///
+/// A test that runs a loop on it ([`RenderLoop::run`]) gives it a script
+/// ([`RecordingPark::then`]): one thing to do at each wait, in order, in
+/// place of waiting. That is where the test leaves word for the loop or
+/// moves its clock, on the loop's own thread, and its last action stops
+/// the loop: a wait past the end of the script returns at once like any
+/// other, so a loop nobody stops never ends.
+#[derive(Default)]
 pub struct RecordingPark {
     /// The deadline of each wait, in order.
     waits: Mutex<Vec<Option<u64>>>,
     /// How many times it was notified.
     notifications: AtomicU64,
+    /// What is left to do at the waits to come.
+    script: Mutex<VecDeque<Box<dyn FnOnce() + Send>>>,
 }
 
 impl RecordingPark {
     /// A park nobody has waited on.
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Adds `action` to the script: it is run at the first wait that no
+    /// earlier action was run at.
+    pub fn then(&self, action: impl FnOnce() + Send + 'static) {
+        locked(&self.script).push_back(Box::new(action));
     }
 
     /// The deadline of each wait it was asked for, in order.
@@ -95,10 +120,78 @@ impl RecordingPark {
 impl Park for RecordingPark {
     fn wait(&self, until: Option<u64>) {
         locked(&self.waits).push(until);
+        // The action is taken out before it is run, so it may itself add
+        // to the script.
+        let next = locked(&self.script).pop_front();
+        if let Some(action) = next {
+            action();
+        }
     }
 
     fn notify(&self) {
         self.notifications.fetch_add(1, Ordering::SeqCst);
+    }
+}
+
+/// The real [`Park`]: a true wait, on a lock and a condition variable.
+///
+/// A wait with no deadline blocks the thread until it is notified. A wait
+/// with one blocks for as long as the clock it was given says is left,
+/// and returns at once when the deadline has passed. A notification is
+/// kept until a wait takes it, so one made between a loop's step and its
+/// wait is not lost. A wait may also end for no reason, as a condition
+/// variable's may: the loop decides again, and waits again.
+pub struct CondvarPark {
+    /// The clock a deadline is on.
+    clock: Arc<dyn Clock>,
+    /// Whether it was notified since a wait last returned.
+    notified: Mutex<bool>,
+    /// What a waiting thread is woken through.
+    wake: Condvar,
+}
+
+impl CondvarPark {
+    /// A park whose deadlines are times of `clock`.
+    pub fn new(clock: Arc<dyn Clock>) -> Self {
+        Self {
+            clock,
+            notified: Mutex::new(false),
+            wake: Condvar::new(),
+        }
+    }
+}
+
+impl Park for CondvarPark {
+    fn wait(&self, until: Option<u64>) {
+        let mut notified = locked(&self.notified);
+        match until {
+            None => {
+                while !*notified {
+                    notified = self
+                        .wake
+                        .wait(notified)
+                        .unwrap_or_else(PoisonError::into_inner);
+                }
+            }
+            Some(until) => {
+                let left = until.saturating_sub(self.clock.now_ns());
+                if !*notified && left > 0 {
+                    // Once, for as long as the clock says is left: the
+                    // loop reads its clock again when this returns.
+                    notified = self
+                        .wake
+                        .wait_timeout(notified, Duration::from_nanos(left))
+                        .unwrap_or_else(PoisonError::into_inner)
+                        .0;
+                }
+            }
+        }
+        *notified = false;
+    }
+
+    fn notify(&self) {
+        *locked(&self.notified) = true;
+        self.wake.notify_one();
     }
 }
 
@@ -383,6 +476,20 @@ impl<R: Renderer> RenderLoop<R> {
         }
     }
 
+    /// Runs the loop on the calling thread until it is told to stop, and
+    /// gives the renderer back: it steps, and waits on its park whenever a
+    /// step says there is nothing to do yet.
+    pub fn run(mut self) -> R {
+        let shared = Arc::clone(&self.shared);
+        loop {
+            match self.step() {
+                Step::Drew(_) => {}
+                Step::Wait(until) => shared.park.wait(until),
+                Step::Stopped => return self.renderer,
+            }
+        }
+    }
+
     /// Draws `frame` once, serving every demand there is at `now`.
     fn draw(&mut self, frame: Arc<Frame>, now: u64, refresh_ns: u64) -> Step {
         let shared = Arc::clone(&self.shared);
@@ -451,13 +558,15 @@ impl<R: Renderer> RenderLoop<R> {
 #[cfg(test)]
 mod tests {
     use std::sync::Arc;
+    use std::sync::mpsc::{Receiver, channel};
+    use std::time::Duration;
 
     use editor_layout::Layout;
     use editor_layout::frame::Frame;
     use editor_layout::scene::{Rect, Scene};
     use editor_layout::shaper::fake::CellShaper;
 
-    use super::{Park, RecordingPark, RenderHandle, RenderLoop, Step};
+    use super::{CondvarPark, Park, RecordingPark, RenderHandle, RenderLoop, Step};
     use crate::clock::{Clock, FakeClock};
     use crate::fake::RecordingRenderer;
     use crate::journal::{Counters, Entry};
@@ -955,6 +1064,96 @@ mod tests {
         assert_eq!(rig.render.step(), Step::Stopped);
         assert_eq!(rig.render.step(), Step::Stopped);
         assert_eq!(rig.requests(), 0);
+    }
+
+    #[test]
+    fn a_running_loop_waits_as_each_step_says_and_gives_its_renderer_back_when_stopped() {
+        let rig = rig();
+        rig.handle.submit(frame_of("one"), None);
+        // The script, run on the loop's own thread at each wait. After the
+        // first draw there is nothing to do: a mark is made, within the
+        // refresh of that draw.
+        let handle = rig.handle.clone();
+        rig.park.then(move || handle.mark_dirty());
+        // The loop waits for the refresh: the time passes.
+        let clock = rig.clock.clone();
+        rig.park.then(move || clock.advance(REFRESH));
+        // It draws again, and there is nothing to do: it is stopped.
+        let handle = rig.handle.clone();
+        rig.park.then(move || handle.stop());
+        let begun = rig.clock.peek();
+        let renderer = rig.render.run();
+        assert_eq!(rig.park.waits(), vec![None, Some(begun + REFRESH), None]);
+        assert_eq!(renderer.requests().len(), 2);
+        assert_eq!(rig.handle.counters().draws, 2);
+    }
+
+    /// A real park on `clock`.
+    fn condvar_park(clock: &FakeClock) -> Arc<CondvarPark> {
+        Arc::new(CondvarPark::new(Arc::new(clock.clone())))
+    }
+
+    /// Begins a wait on `park` on another thread: what receives a word
+    /// once the wait has returned.
+    fn waiting(park: &Arc<CondvarPark>, until: Option<u64>) -> Receiver<()> {
+        let (done, returned) = channel();
+        let park = Arc::clone(park);
+        std::thread::spawn(move || {
+            park.wait(until);
+            let _ = done.send(());
+        });
+        returned
+    }
+
+    /// Whether the wait behind `returned` has not returned, a little
+    /// while on: it is still waiting, or its thread has yet to begin.
+    fn still_waits(returned: &Receiver<()>) -> bool {
+        returned.recv_timeout(Duration::from_millis(30)).is_err()
+    }
+
+    /// Whether the wait behind `returned` returns. The bound is only so
+    /// that a wait that never ends fails its test and hangs nothing.
+    fn ends(returned: &Receiver<()>) -> bool {
+        returned.recv_timeout(Duration::from_secs(10)).is_ok()
+    }
+
+    #[test]
+    fn a_wait_with_no_deadline_ends_only_when_it_is_notified() {
+        let park = condvar_park(&FakeClock::new());
+        let returned = waiting(&park, None);
+        assert!(still_waits(&returned));
+        park.notify();
+        assert!(ends(&returned));
+    }
+
+    #[test]
+    fn a_notification_made_before_a_wait_is_not_lost_and_wakes_one_wait() {
+        let park = condvar_park(&FakeClock::new());
+        park.notify();
+        park.notify();
+        assert!(ends(&waiting(&park, None)));
+        // The two were one notification: the next wait has none to take.
+        let returned = waiting(&park, None);
+        assert!(still_waits(&returned));
+        park.notify();
+        assert!(ends(&returned));
+    }
+
+    #[test]
+    fn a_wait_whose_deadline_has_passed_returns_at_once() {
+        let clock = FakeClock::new();
+        clock.set(5000);
+        let park = condvar_park(&clock);
+        assert!(ends(&waiting(&park, Some(4000))));
+        assert!(ends(&waiting(&park, Some(5000))));
+    }
+
+    #[test]
+    fn a_wait_ends_at_its_deadline_by_the_clock_it_was_given() {
+        // Two milliseconds of the clock away, and nobody notifies.
+        let clock = FakeClock::new();
+        let park = condvar_park(&clock);
+        assert!(ends(&waiting(&park, Some(clock.peek() + 2_000_000))));
     }
 
     /// The handle crosses to other threads; the loop moves to its own.
