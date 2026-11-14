@@ -22,6 +22,7 @@ A key sequence parses to an `Edit`, and an edit compiles to an invocation
 | `move m c` | `moveCommand`, with `[.str m, .nat c]` |
 | `operate o over c r` | `operateCommand`, with `[.str o.name, .str kind, .str name, .nat c, .str r]`. Kind and name are `motion` and the motion, `text-object` and the object, `lines` and `""`, `selection` and `""` |
 | `run cmd c r` | `cmd.name`, with `[.nat c, .str r]` |
+| `replay change inserted` | `repeatCommand`, with `[.bool session, .str text, .str command]` and then the change's own arguments: whether the change began an insert session, the text typed in it, and the command the change compiles to |
 
 - **Every part of speech is named by its vocabulary name**, a `String`, so
   no vocabulary entry need exist for the grammar to parse.
@@ -195,6 +196,22 @@ for), since typed text is no edit and a replay of the change needs it:
   typed text is not kept, with no rule here: the loop puts the scheme back
   in its state at rest (`Editor/Loop.lean`).
 
+**The repeat key is a part of speech** (`Bound.repeat`), since the scheme
+cannot match on a command's name and a command cannot read the scheme:
+
+- With no last change, and while an operator waits, the key resets and
+  yields nothing.
+- Otherwise it yields `Edit.replay change inserted`: the last change, and
+  the text kept for it. The scheme hands the change to the command in the
+  invocation, since the command cannot ask for it.
+- **A count typed before it replaces the change's count**
+  (`Edit.withCount`) in what is yielded and in the last change, so the
+  repeats after it carry it. With none typed the change's own count is
+  used. This is Vim's rule.
+- A replay changes no text and enters no state for the grammar: it does
+  not become the last change, and the view stays in the state it is in.
+  What it replays is the command's (`Editor/Evil/Repeat.lean`).
+
 ## The visual selection
 
 The selection is not in the scheme's state: it is the view's selection in
@@ -287,6 +304,8 @@ inductive Bound where
   /-- The register prefix: the key after it names the register of the edit
   being typed. It is no part of speech. -/
   | register
+  /-- The repeat key: it yields the last change, to replay. -/
+  | repeat
   /-- A binding a mode contributes: the grammar reaches it as `bound`, and
   it does not hold where typing is text. -/
   | mode (bound : Bound)
@@ -318,7 +337,14 @@ inductive Edit where
   | operate (operator : Operator) (over : Over) (count : Option Nat) (register : Option String)
   /-- Run a command. -/
   | run (command : Command) (count : Option Nat) (register : Option String)
+  /-- Replay `change`, the last change, with `inserted`, the text typed in
+  the insert session it began, or none when it began none. -/
+  | replay (change : Edit) (inserted : Option String)
   deriving DecidableEq, Repr
+
+/-- The name of the command a replay compiles to. -/
+def repeatCommand : String :=
+  "repeat"
 
 /-- The name of the command a move compiles to. -/
 def moveCommand : String :=
@@ -336,6 +362,7 @@ def changes : Edit → Bool
   | .move .. => false
   | .operate operator .. => operator.changes
   | .run command .. => command.changes
+  | .replay .. => false
 
 /-- The Vim state the view is in after the edit, if its operator or its
 command names one. -/
@@ -343,6 +370,14 @@ def enters : Edit → Option String
   | .move .. => none
   | .operate operator .. => operator.enters
   | .run command .. => command.enters
+  | .replay .. => none
+
+/-- The edit with `count` as its count: a replay is left as it is. -/
+def withCount (count : Nat) : Edit → Edit
+  | .move motion _ => .move motion (some count)
+  | .operate operator over _ register => .operate operator over (some count) register
+  | .run command _ register => .run command (some count) register
+  | .replay change inserted => .replay change inserted
 
 /-- The invocation the edit compiles to (the table in the module docs). -/
 def compile : Edit → Invocation
@@ -360,6 +395,12 @@ def compile : Edit → Invocation
         [.str operator.name, .str kind, .str name, .nat (count.getD 0), .str (register.getD "")] }
   | .run command count register =>
     { command := command.name, arguments := [.nat (count.getD 0), .str (register.getD "")] }
+  | .replay change inserted =>
+    let compiled := change.compile
+    { command := repeatCommand
+      arguments :=
+        [.bool inserted.isSome, .str (inserted.getD ""), .str compiled.command] ++
+          compiled.arguments }
 
 end Edit
 
@@ -633,6 +674,15 @@ private def State.reached (states : States) (view : ViewId) (state : State) (typ
       ({ state with
           typed, multiplier := state.count, digits := none, awaitsRegister := true, walked := [] },
         .nothing)
+  | .repeat =>
+    match state.operator, state.lastChange with
+    | none, some change =>
+      -- A count typed before the key replaces the change's own, for this
+      -- replay and for those after it.
+      let change := (state.count.map change.withCount).getD change
+      let (next, parsed) := state.finish states view (.replay change state.inserted)
+      ({ next with lastChange := some change }, parsed)
+    | _, _ => (state.reset, .nothing)
   | .mode bound => State.reached states view state typed bound
 
 /-- One key of the grammar, a key for `view`: the state it leaves, and what

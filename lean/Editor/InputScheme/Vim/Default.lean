@@ -20,15 +20,15 @@ a name does. The motions' entries are `Evil.motions`
 registered in `Editor/Evil/Compiled.lean`,
 `Editor/Minibuffer/Compiled.lean` and, for `ex`, which `:` names and
 which opens the ex command line, `Editor/Ex/Compiled.lean`; a name with
-nothing registered under it
-(an operator's, `open-below`, `undo`) says so in the echo area when its key
-runs.
+nothing registered under it says so in the echo area when its key runs.
+The operators' entries are `Evil.operators`
+(`Editor/Evil/Operators.lean`).
 
 | Table | Binds |
 |---|---|
 | `motions` | The motions of normal state and the visual states |
 | `operators` | The operators. `c` names the state `insert`, and `y` changes no text |
-| `normalCommands` | Normal state's commands: those that begin an insert, those that change text, undo, redo, repeat and the command line, the two that enter a visual state, and the register prefix |
+| `normalCommands` | Normal state's commands: those that begin an insert, those that change text, undo, redo and the command line, the two that enter a visual state, the register prefix, and the repeat key, `.`, which is a part of speech of its own and no command's key (`Bound.repeat`) |
 | `insertCommands` | Insert state's: the key that returns to normal state |
 | `visualCommands`, `visualLineCommands` | A visual state's: the keys that return to normal state, the key that enters the other visual state, and the register prefix |
 | `minibufferCommands` | The minibuffer state's: `RET`, which accepts the prompt, and `<Escape>`, which cancels it |
@@ -142,9 +142,8 @@ def normalCommands : List (String × Bound) :=
   [("i", inserting "insert"), ("a", inserting "append"), ("I", inserting "insert-line-start"),
     ("A", inserting "append-line-end"), ("o", inserting "open-below"),
     ("O", inserting "open-above"), ("x", changing "delete-char"), ("p", changing "put-after"),
-    ("P", changing "put-before"), ("u", running "undo"), ("C-r", running "redo"),
-    (".", running "repeat"), (":", running "ex"), ("v", entering "visual"),
-    ("V", entering "visual-line"), ("\"", .register)]
+    ("P", changing "put-before"), ("u", running "undo"), ("C-r", running "redo"), (".", .repeat),
+    (":", running "ex"), ("v", entering "visual"), ("V", entering "visual-line"), ("\"", .register)]
 
 /-- Insert state's commands. -/
 def insertCommands : List (String × Bound) :=

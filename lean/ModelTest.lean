@@ -9866,6 +9866,64 @@ def vimStateChecks : List Check :=
             decide (there = typed) &&
             decide (idle = vimInit)) },
     { name :=
+        "a replay compiles to the repeat command, with whether the change began an insert session, the text typed in it, the command the change compiles to and then the change's own arguments; it changes no text and enters no state"
+      run :=
+        let change : Vim.Edit := .operate vimChange (.motion "word") (some 2) (some "a")
+        pure
+          ((Vim.Edit.replay change (some "xy")).compile ==
+              { command := Vim.repeatCommand
+                arguments :=
+                  [.bool true, .str "xy", .str Vim.operateCommand, .str "change", .str "motion",
+                    .str "word", .nat 2, .str "a"] } &&
+            (Vim.Edit.replay (.run vimInsert none none) none).compile ==
+              { command := Vim.repeatCommand
+                arguments := [.bool false, .str "", .str "insert", .nat 0, .str ""] } &&
+            !(Vim.Edit.replay change (some "xy")).changes &&
+            (Vim.Edit.replay change (some "xy")).enters == none &&
+            !Vim.repeatCommand.isEmpty) },
+    { name :=
+        "the repeat key yields the last change to replay, with the text typed in its session: nothing when there is no last change, and after a change the repeat command with the change's invocation; the replay is not the last change, and the view stays in the state it is in"
+      run :=
+        let dot (_ : ViewId) : List (Keymap Vim.Bound) := [vimKeymap [(".", .repeat)]]
+        let (deleted, _) := vimFed "d 2 w"
+        let (changed, _) := vimFed "c w a b <Escape>"
+        let replayed (arguments : List Argument) : List (Option Invocation) :=
+          [some { command := Vim.repeatCommand, arguments }]
+        let (idle, nothing) := vimFed "." dot
+        let (again, yielded) := vimFedFrom changed "." dot
+        pure
+          (nothing == [none] && decide (idle = vimInit) &&
+            (vimFedFrom deleted "." dot).2 ==
+              replayed
+                [.bool false, .str "", .str Vim.operateCommand, .str "delete", .str "motion",
+                  .str "word", .nat 2, .str ""] &&
+            decide ((vimFedFrom deleted "." dot).1 = deleted) &&
+            yielded ==
+              replayed
+                [.bool true, .str "ab", .str Vim.operateCommand, .str "change", .str "motion",
+                  .str "word", .nat 0, .str ""] &&
+            decide (again = changed)) },
+    { name :=
+        "a count typed before the repeat key replaces the last change's count, in what is yielded and in the last change, so a later bare repeat carries it; and while an operator waits the repeat key resets and yields nothing"
+      run :=
+        let dot (_ : ViewId) : List (Keymap Vim.Bound) := [vimKeymap [(".", .repeat)]]
+        let (deleted, _) := vimFed "d 2 w"
+        let thrice : Option Invocation :=
+          some
+            { command := Vim.repeatCommand
+              arguments :=
+                [.bool false, .str "", .str Vim.operateCommand, .str "delete", .str "motion",
+                  .str "word", .nat 3, .str ""] }
+        let (counted, yielded) := vimFedFrom deleted "3 ." dot
+        let (waiting, reset) := vimFedFrom deleted "d ." dot
+        pure
+          (yielded == [none, thrice] &&
+            counted.lastChange == some (.operate vimDelete (.motion "word") (some 3) none) &&
+            counted.typed == [] &&
+            (vimFedFrom counted "." dot).2 == [thrice] &&
+            reset == [none, none] &&
+            decide (waiting = deleted)) },
+    { name :=
         "a key a mode binds runs its command in normal state, and in insert state it is typed text, while a key an active keymap binds for no mode still runs there"
       run :=
         let scheme := Vim.scheme vimStates
@@ -10073,13 +10131,22 @@ def vimDefaultChecks : List Check :=
             changeKeys.all fun text =>
               (vimDefault text).1.current == [] && (vimDefault text).1.lastChange.isSome) },
     { name :=
-        "each of the default keys u C-r . : runs a command of its own that changes no text and enters no state"
+        "each of the default keys u C-r : runs a command of its own that changes no text and enters no state"
       run :=
-        let plainKeys := ["u", "C-r", ".", ":"]
+        let plainKeys := ["u", "C-r", ":"]
         pure
           (vimDefaultCommands plainKeys &&
             plainKeys.all fun text =>
               (vimDefault text).1.current == [] && (vimDefault text).1.lastChange == none) },
+    { name :=
+        "the default key . is the repeat key, and no command's: with no last change it yields nothing, and after x it yields the replay of that change and leaves it the last change"
+      run :=
+        let deleteChar : Vim.Edit := .run { name := "delete-char", changes := true } none none
+        pure
+          ((vimDefault ".").2 == [.nothing] && (vimDefault ".").1.lastChange == none &&
+            (vimDefault "x .").2.getLast? == some (.edit (.replay deleteChar none)) &&
+            (vimDefault "x .").1.lastChange == some deleteChar &&
+            (vimDefault "x .").1.current == []) },
     { name :=
         "the default keys v and V enter two different states where operators act on the selection, change no text, and each key typed again, and the other, goes where it should: back to the initial state, or to the other visual state"
       run :=
