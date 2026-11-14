@@ -19,6 +19,15 @@
 //! by itself: with nothing asked, nothing is drawn. A hidden loop still
 //! stops when it is told to.
 //!
+//! A renderer may find its target hidden before the loop is told so, or
+//! without its ever being told: a window on macOS is not on the screen
+//! for its first tenth of a second, refuses a draw meanwhile, and says
+//! only that it is shown, once it is. A draw refused so
+//! ([`Drawn::hidden`](crate::port::Drawn::hidden)) leaves what was asked,
+//! as any draw that does not present does, and is tried again when the
+//! loop is next told anything, and not a refresh later: being shown is a
+//! word like any other, and it wakes the loop.
+//!
 //! # What is a demand
 //!
 //! - **A frame** that is not the one shown. Submitting the frame shown
@@ -55,7 +64,9 @@
 //! and its `present_ns` when the renderer returns.
 //!
 //! A draw that does not present leaves its demands as they were, adds no
-//! entry, counts as failed, and is tried again a refresh later.
+//! entry, counts as failed, and is tried again a refresh later; or, when
+//! the renderer says its target is hidden, when the loop is next told
+//! anything ("A hidden target").
 //!
 //! # Stepping and running
 //!
@@ -572,7 +583,10 @@ impl<R: Renderer> RenderLoop<R> {
                 asked.since = Some(asked.since.map_or(at, |since| since.min(at)));
             }
             locked(&shared.record).counters.count(&drawn);
-            return Step::Wait(Some(draw_ns.saturating_add(refresh_ns)));
+            // A target nobody can see is not tried again every refresh:
+            // being told it is shown wakes the loop, as any word does.
+            let again = (!drawn.hidden).then(|| draw_ns.saturating_add(refresh_ns));
+            return Step::Wait(again);
         }
         let present_ns = shared.clock.now_ns();
         self.shown = Some(frame);
@@ -1069,6 +1083,57 @@ mod tests {
         assert_eq!((entry.serial, entry.input_ns), (2, 77));
         assert_eq!(rig.handle.journal().len(), 2);
         assert_eq!(rig.render.step(), Step::Wait(None));
+    }
+
+    #[test]
+    fn a_draw_whose_target_is_found_hidden_leaves_the_demand_and_waits_with_no_deadline() {
+        let mut rig = Rig::showing(&frame_of("one"));
+        let next = frame_of("two");
+        rig.handle.submit(Arc::clone(&next), Some(77));
+        rig.handle.mark_dirty();
+        rig.render.renderer_mut().hide_next_present();
+        // Nobody can see the target, and nobody had said so: there is no
+        // refresh to wait for, only to be told more.
+        assert_eq!(rig.render.step(), Step::Wait(None));
+        assert_eq!(rig.requests(), 2);
+        assert_eq!(rig.handle.journal().len(), 1);
+        let counters = rig.handle.counters();
+        assert_eq!((counters.draws, counters.draws_failed), (1, 1));
+        // Told more, a refresh and more on, it draws: the same frame,
+        // answering the same input.
+        rig.clock.advance(REFRESH);
+        rig.handle.set_hidden(false);
+        let entry = rig.drew();
+        assert!(Arc::ptr_eq(
+            &rig.render.renderer().requests()[2].frame,
+            &next
+        ));
+        assert_eq!((entry.serial, entry.input_ns), (2, 77));
+        assert_eq!(rig.render.step(), Step::Wait(None));
+    }
+
+    #[test]
+    fn a_running_loop_whose_target_is_found_hidden_draws_again_only_when_it_is_told_more() {
+        let mut rig = rig();
+        rig.handle.submit(frame_of("one"), None);
+        rig.render.renderer_mut().hide_next_present();
+        // The script, run on the loop's own thread at each wait. The draw
+        // found the target hidden: time passes, many refreshes of it, and
+        // nothing is drawn, since nothing wakes the loop. Then it is told
+        // the target is shown.
+        let (clock, handle) = (rig.clock.clone(), rig.handle.clone());
+        rig.park.then(move || {
+            clock.advance(REFRESH * 50);
+            handle.set_hidden(false);
+        });
+        // It draws, and there is nothing to do: it is stopped.
+        let handle = rig.handle.clone();
+        rig.park.then(move || handle.stop());
+        let renderer = rig.render.run();
+        assert_eq!(rig.park.waits(), vec![None, None]);
+        assert_eq!(renderer.requests().len(), 2);
+        let counters = rig.handle.counters();
+        assert_eq!((counters.draws, counters.draws_failed), (1, 1));
     }
 
     #[test]

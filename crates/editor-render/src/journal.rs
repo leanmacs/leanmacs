@@ -190,6 +190,7 @@ mod tests {
         let mut counters = Counters::default();
         let drawn = Drawn {
             presented: true,
+            hidden: false,
             rows_rebuilt: 3,
             rows_reused: 4,
             glyphs_rasterised: 5,

@@ -95,6 +95,13 @@ pub struct Drawn {
     /// renderer that built rows or glyph images for a draw it then could
     /// not present answers for them in the next draw it presents.
     pub presented: bool,
+    /// Whether the frame was not presented because nobody can see the
+    /// target: a window that is covered, or not yet on the screen. Such a
+    /// draw is tried again when the loop is next told anything, which
+    /// being shown is, and not a refresh later
+    /// ([`render_loop`](crate::render_loop), "A hidden target"). `false`
+    /// for a draw that presented.
+    pub hidden: bool,
     /// The rows it built draw data for: those of the frame whose content
     /// hash it did not hold, once for each distinct hash.
     pub rows_rebuilt: u64,

@@ -178,6 +178,12 @@ window, by a session the window is run with:
   draw, and a refused draw is tried again every refresh, which would be a
   timer for as long as the window stayed hidden. The loop is told the
   window is hidden, keeps what is asked, and draws once when it is shown.
+  A window is not always said to be hidden: on macOS one that opens is
+  not on the screen for its first tenth of a second, and says only that
+  it is shown, once it is (seen: nine draws refused meanwhile, one each
+  refresh). So a renderer that finds its target hidden says so in what
+  it answers, and the loop tries that draw again when it is next told
+  anything, which being shown is, and not a refresh later.
 - **The journal reads the clock that stamps input**: `editor-ffi`'s input
   clock is the loop's clock too, so a frame's latency is a subtraction on
   one clock.

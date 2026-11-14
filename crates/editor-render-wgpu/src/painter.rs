@@ -285,6 +285,8 @@ impl<Z: Rasterize> Painter<Z> {
         let after = self.glyphs.stats();
         let done = Drawn {
             presented: false,
+            // Whether the target can be seen is the device's to find.
+            hidden: false,
             rows_rebuilt: carried.rows_rebuilt + reuse.rebuilt,
             rows_reused: reused,
             glyphs_rasterised: carried.glyphs_rasterised + after.rasterised - before.rasterised,

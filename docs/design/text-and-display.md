@@ -1294,7 +1294,10 @@ and the journal read from Lean.
   once, without waiting for Lean. A draw that fails to present leaves
   its demands, and is tried again a refresh later. A target the loop is
   told is hidden is not drawn on at all: what is asked is kept, and one
-  draw serves it when the target is shown.
+  draw serves it when the target is shown. A draw whose renderer finds
+  the target hidden, when nobody had said so, leaves its demands too and
+  is tried again when the loop is next told anything, not a refresh
+  later (`Drawn::hidden`).
 - **The fake and the contract.** `RecordingRenderer` records every
   request and draws nothing. The contract is nine properties of what a
   renderer says it built: a first frame builds every row; the same frame

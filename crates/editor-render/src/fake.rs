@@ -7,7 +7,9 @@
 //!
 //! A test can tell it to fail its next present
 //! ([`RecordingRenderer::fail_next_present`]): that draw is recorded,
-//! builds nothing and answers `presented: false`. And a test can give it a
+//! builds nothing and answers `presented: false`; or to find its target
+//! hidden at its next draw ([`RecordingRenderer::hide_next_present`]),
+//! which answers `hidden: true` as well. And a test can give it a
 //! [`FakeClock`] to move on by a stated time in each draw
 //! ([`RecordingRenderer::taking`]), so a draw takes time on the clock the
 //! render loop reads.
@@ -38,6 +40,8 @@ pub struct RecordingRenderer {
     rows: RowCache<()>,
     /// Whether the next draw fails to present.
     fail_next: bool,
+    /// Whether the next draw finds its target hidden.
+    hide_next: bool,
     /// The clock a draw moves on, and by how far.
     clock: Option<(FakeClock, u64)>,
 }
@@ -62,6 +66,13 @@ impl RecordingRenderer {
         self.fail_next = true;
     }
 
+    /// Makes the next draw find its target hidden: it is recorded, builds
+    /// nothing and answers `presented: false` and `hidden: true`. The draw
+    /// after it presents.
+    pub fn hide_next_present(&mut self) {
+        self.hide_next = true;
+    }
+
     /// Every request it was given, in order.
     pub fn requests(&self) -> &[Request] {
         &self.requests
@@ -76,6 +87,12 @@ impl Renderer for RecordingRenderer {
         });
         if let Some((clock, ns)) = &self.clock {
             clock.advance(*ns);
+        }
+        if std::mem::take(&mut self.hide_next) {
+            return Drawn {
+                hidden: true,
+                ..Drawn::default()
+            };
         }
         if std::mem::take(&mut self.fail_next) {
             return Drawn::default();
@@ -212,6 +229,32 @@ mod tests {
         assert!(next.presented);
         assert_eq!((next.rows_rebuilt, next.rows_reused), (rows(&frame), 0));
         assert_eq!(renderer.requests().len(), 2);
+    }
+
+    #[test]
+    fn a_present_it_was_told_to_find_hidden_is_recorded_builds_nothing_and_says_so_once() {
+        let mut renderer = RecordingRenderer::new();
+        let frame = frame_of("one\ntwo");
+        let request = DrawRequest {
+            frame: &frame,
+            target: target(1.0),
+        };
+        renderer.hide_next_present();
+        assert_eq!(
+            renderer.draw(&request),
+            Drawn {
+                hidden: true,
+                ..Drawn::default()
+            }
+        );
+        assert_eq!(renderer.requests().len(), 1);
+        // The next draw presents, and builds what the hidden one did not.
+        let next = renderer.draw(&request);
+        assert!(next.presented && !next.hidden);
+        assert_eq!((next.rows_rebuilt, next.rows_reused), (rows(&frame), 0));
+        // A present told only to fail does not say its target is hidden.
+        renderer.fail_next_present();
+        assert_eq!(renderer.draw(&request), Drawn::default());
     }
 
     #[test]
