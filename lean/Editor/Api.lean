@@ -538,6 +538,11 @@ for a name nobody bound, and where no loop runs the command. -/
 def exBinding (name : String) : EditorM (Option Ex.Binding) :=
   EditorState.ask (.ex name)
 
+/-- The ex names that are bound, each once, in the order they were first
+bound. None where no loop runs the command. -/
+def exNames : EditorM (Array String) :=
+  EditorState.ask .exNames
+
 /-- Has the command registered under `name` run inside this command, with
 `call`, and answers whether there was one ("Running another command", in
 the module docs): the command is the one a key's invocation of the name

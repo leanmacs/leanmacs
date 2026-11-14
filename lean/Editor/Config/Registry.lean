@@ -236,6 +236,14 @@ def replaceEx (registry : Registry) (owner : Owner) (bindings : Array Ex.Binding
 def ex? (registry : Registry) (name : String) : Option Ex.Binding :=
   (registry.ex.findRev? (·.binding.name == name)).map (·.binding)
 
+/-- The ex names that are bound, each once, in the order they were first
+bound: a name two owners bind is at the place of its first entry. -/
+def exNames (registry : Registry) : Array String :=
+  registry.ex.foldl
+    (fun names entry =>
+      if names.contains entry.binding.name then names else names.push entry.binding.name)
+    #[]
+
 /-- `registry` with every entry of `owner` removed and `registrations` added
 as its entries. -/
 def replace (registry : Registry) (owner : Owner) (registrations : Array Registration) : Registry :=
@@ -358,14 +366,15 @@ def activeMaps (registry : Registry) (scheme : InputScheme) (state : EditorState
 (`Editor/Command/Dispatch.lean`): for a name a mode is registered under,
 its lineage, root first, whose on-enter actions run when the mode becomes a
 buffer's major mode; whether a job is registered under a name, for a
-command to start; and the ex binding of an ex name (`ex?`), for the ex
-line. Which command a name stands for, for a command run inside another,
+command to start; and the ex binding of an ex name (`ex?`) and the ex
+names that are bound (`exNames`), for the ex line. Which command a name stands for, for a command run inside another,
 is not said here: the loop takes it from the lookup it runs an invocation
 by (`Loop.Keys.command?`, `Editor/Loop.lean`, "A command run inside
 another"). -/
 def registered (registry : Registry) : Loop.Registered :=
   { entering := fun name => (registry.mode? name).map fun _ => (registry.lineage name).reverse
-    jobs := fun name => (registry.findJob? name).isSome, ex := registry.ex? }
+    jobs := fun name => (registry.findJob? name).isSome, ex := registry.ex?
+    exNames := registry.exNames }
 
 end Registry
 

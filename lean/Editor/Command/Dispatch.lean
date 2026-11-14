@@ -141,6 +141,10 @@ from the next command.
   name runs and what it takes, or `none` for a name nobody bound. The
   state is not read and not changed. What the answer is used for, the ex
   line's rules, is the asking command's (`Editor/Ex.lean`).
+- **Asking which ex names are bound** (`StateRequest.exNames`) is answered
+  the names the loop was told (`Loop.Registered.exNames`): each bound name
+  once. The state is not read and not changed. The ex line asks, for the
+  candidates of its prompt.
 - **Running a command inside the asking command**
   (`StateRequest.runCommand`) is answered `false` for a name no command is
   registered under (`Loop.Registered.command`), with nothing run.
@@ -212,6 +216,10 @@ structure Loop.Registered where
   /-- The ex binding of an ex name (`Editor/Ex/Line.lean`): the command it
   runs and what it takes. `none` for a name nobody bound. -/
   ex : String → Option Ex.Binding := fun _ => none
+  /-- The ex names that are bound, each once. Whoever fills this and `ex`
+  fills them from one list of bindings, so that every name here has a
+  binding there. -/
+  exNames : Array String := #[]
   /-- The command registered under this name, as one run inside another is
   run: given the call, its program. `none` for a name no command is
   registered under. The loop fills it from the lookup a key's invocation
@@ -265,6 +273,7 @@ partial def Program.dispatched {α : Type} (registered : Loop.Registered) :
       dispatched registered state (next reply)
     else dispatched registered state (next (.error (.noSuchJob name)))
   | state, .step (.state (.ex name)) next => dispatched registered state (next (registered.ex name))
+  | state, .step (.state .exNames) next => dispatched registered state (next registered.exNames)
   | state, .step (.state (.runCommand name call)) next =>
     match registered.command name with
     | none => dispatched registered state (next false)

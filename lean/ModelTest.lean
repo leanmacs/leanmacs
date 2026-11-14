@@ -2148,6 +2148,20 @@ def registryChecks : List Check :=
             (registry.ex? "q").map (·.command) == some "kept" &&
             ((registry.replaceEx .config #[]).ex? "w").map (·.command) == some "compiled") },
     { name :=
+        "what the loop is told of a registry's ex names is each bound name once, in the order they were first bound: a name config binds over a compiled one is listed once, at the compiled one's place, a name of config's alone comes after, and a registry with no ex binding has none"
+      run :=
+        let registry : Config.Registry :=
+          (({} : Config.Registry).replaceEx .compiled
+                #[{ name := "w", command := "compiled" },
+                  { name := "q", command := "kept" }]).replaceEx
+            .config
+            #[{ name := "greet", command := "greet-named" }, { name := "w", command := "config" }]
+        pure
+          (registry.registered.exNames == #["w", "q", "greet"] &&
+            registry.registered.exNames.all (fun name => (registry.registered.ex name).isSome) &&
+            ({} : Config.Registry).registered.exNames == #[] &&
+            (registry.replaceEx .config #[]).registered.exNames == #["w", "q"]) },
+    { name :=
         "replacing an owner's ex bindings leaves the commands, the jobs, the key bindings and the modes as they were"
       run :=
         let registry : Config.Registry :=
@@ -5478,8 +5492,9 @@ def stateRequests : List StateRequest :=
     .closePrompt none, .closePrompt (some "typed"), .setCandidates #["one", "two"],
     .chooseCandidate .next, .chooseCandidate .previous,
     .setWanted ⟨0⟩ (some { column := .cells 3, head := 7 }), .setWanted ⟨1⟩ none,
-    .setWanted ⟨9⟩ (some { column := .lineEnd, head := 0 }), .ex "w", .invoke asked, .quit, .reload,
-    .giveUp "no", .breakOff "far enough", .setRegister "a" { text := "a line\n", linewise := true }]
+    .setWanted ⟨9⟩ (some { column := .lineEnd, head := 0 }), .ex "w", .exNames, .invoke asked,
+    .quit, .reload, .giveUp "no", .breakOff "far enough",
+    .setRegister "a" { text := "a line\n", linewise := true }]
 
 /-- The checks of the state requests' pure handler (`EditorState.handle`,
 `Editor/State/Request.lean`), on states made on the text model. The handler
@@ -5959,6 +5974,15 @@ def stateRequestChecks : List Check :=
             ["w", "greet", ""].all fun name =>
               let (bound, after) := state.handle (.ex name)
               bound == none && after == state },
+    { name :=
+        "the handler knows no registry: asked which ex names are bound, it answers none, and leaves the state as it was"
+      run :=
+        pure <|
+          match onTextModel twoBuffers with
+          | none => false
+          | some state =>
+            let (names, after) := state.handle .exNames
+            names == #[] && after == state },
     { name :=
         "the request to have an invocation run next records it after what is recorded, the answer of a prompt that was closed among it, and changes nothing else"
       run :=
@@ -8110,6 +8134,19 @@ def dispatchStateChecks : List Check :=
           (told.ex "w" == some { name := "w", command := "config", takes := .text } &&
             told.ex "q" == some { name := "q", command := "kept" } &&
             told.ex "missing" == none) },
+    { name :=
+        "a command that asks which ex names are bound is answered the names the loop was told of the registry, in their order, and none where it was told none; the state is as it was"
+      run :=
+        pure <|
+          let registered : Loop.Registered := { exNames := #["w", "q", "greet"] }
+          let asks (registered : Loop.Registered) : Option (Guarded (Array String) × Bool) :=
+            let program : EditorM (Guarded (Array String) × Bool) := do
+              let start ← EditorState.initial ⟨640, 480⟩
+              let (outcome, state) ← exNames.dispatched registered start
+              return (outcome, state == start)
+            (program.runModel editorModel).1.toOption
+          asks registered == some (.finished #["w", "q", "greet"], true) &&
+            asks {} == some (.finished #[], true) },
     { name :=
         "a command that asks for the command of a name to be run inside it: the command the loop was told of under that name runs there, with the call it is handed, before the asking command goes on, and what it said is in the state the asking command then reads; a name the loop was told no command of is answered false, and nothing runs"
       run :=

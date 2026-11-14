@@ -31,14 +31,16 @@ the models and against the library alike (`Editor/Command/Dispatch.lean`).
 - **A request holds plain data.** It cannot hold a command or a job, which
   are programs over ports that would then refer to themselves: a mode is
   named, and so is a job, and what the name stands for is the registry's.
-  So four requests are answered with more than this handler by the loop,
+  So five requests are answered with more than this handler by the loop,
   which knows the registry: `setMajorMode`, which there refuses a name no
   mode is registered under and runs the mode's on-enter actions,
   `startJob`, which there refuses a name no job is registered under,
   `ex`, which there is answered the binding the registry has for an ex
-  name (`Editor/Ex/Line.lean`), and `runCommand`, which there runs the
+  name (`Editor/Ex/Line.lean`), `exNames`, which there is answered the ex
+  names that are bound, and `runCommand`, which there runs the
   command registered under a name inside the asking command. Here the
-  first two take any name, `ex` is answered `none`, and `runCommand` is
+  first two take any name, `ex` is answered `none`, `exNames` is answered
+  no name, and `runCommand` is
   answered `false` and runs nothing: this handler knows no registry.
 - **A reply holds plain data too**, so no request is answered a command:
   a command is a program over the port these requests are part of, and a
@@ -192,6 +194,8 @@ inductive StateRequest where
   | setWanted (view : ViewId) (wanted : Option Window.Wanted)
   /-- Which command the ex name `name` is bound to, and what it takes. -/
   | ex (name : String)
+  /-- Which ex names are bound. -/
+  | exNames
   /-- Have `invocation` run after this command, as a step of its own. -/
   | invoke (invocation : Invocation)
   /-- Run the command registered under `name` inside this command, with
@@ -235,6 +239,7 @@ abbrev StateRequest.Reply : StateRequest → Type
   | .chooseCandidate _ => Except PromptRefusal Unit
   | .setWanted .. => Except LayoutRefusal Unit
   | .ex _ => Option Ex.Binding
+  | .exNames => Array String
   | .invoke _ => Unit
   | .runCommand .. => Bool
   | .quit => Unit
@@ -287,6 +292,7 @@ def handle : (request : StateRequest) → EditorState → request.Reply × Edito
   | .chooseCandidate step, state => state.chooseCandidate step
   | .setWanted view wanted, state => state.setWanted view wanted
   | .ex _, state => (none, state)
+  | .exNames, state => (#[], state)
   | .invoke invocation, state => ((), { state with answered := state.answered.push invocation })
   | .runCommand .., state => (false, state)
   | .quit, state => ((), { state with quitting := true })
