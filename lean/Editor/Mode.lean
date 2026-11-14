@@ -28,12 +28,18 @@ scheme are made from that (`Mode.keymaps`).
   (`Config.ModeEntry`), as for commands and key bindings, so `setup`
   cannot choose it.
 - **`onEnter` runs when the mode becomes a buffer's major mode**, with the
-  view it was set through, once (`Config.Registry.setMajorMode`, which
-  refuses with a `ModeRefusal`, `Editor/State.lean`). It also runs, before the derived mode's,
-  when a mode derived from this one becomes the major mode: the registry
-  runs the on-enter of each mode of the new major mode's lineage, root
-  first. So the buffer's major mode, as it runs, may be a mode derived from
-  this one. It is a plain `EditorM` program, and cannot write a store.
+  view it was set through, once. A command asks for the mode
+  (`ViewId.setMajorMode`, `Editor/Api.lean`), and the loop that runs the
+  command runs the action inside it (`Editor/Command/Dispatch.lean`, which
+  refuses with a `ModeRefusal`, `Editor/State.lean`): the action's requests
+  are guarded and rolled back with the command, and its state requests are
+  answered from the state the command had reached, in which the mode is
+  already the buffer's. It also runs, before the derived mode's, when a
+  mode derived from this one becomes the major mode: the on-enter of each
+  mode of the new major mode's lineage runs, root first. So the buffer's
+  major mode, as it runs, may be a mode derived from this one. It is a
+  plain `EditorM` program, and cannot write a store. One that is refused
+  refuses the command that set the mode.
 
 ## A mode's keymaps for a scheme
 
@@ -86,8 +92,9 @@ structure Mode where
   locals : List (String × String) := []
   /-- What runs, given the view, when the mode becomes a buffer's major
   mode, and also, before the derived mode's own, when a mode derived from
-  this one does (`Config.Registry.setMajorMode` runs the lineage's, root
-  first): the buffer's major mode may then be the derived one. -/
+  this one does (the loop runs the lineage's, root first, inside the
+  command that set the mode): the buffer's major mode may then be the
+  derived one. -/
   onEnter : ViewId → EditorM Unit := fun _ => pure ()
 
 namespace Mode

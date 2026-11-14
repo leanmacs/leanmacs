@@ -140,6 +140,24 @@ a value, with their `LayoutRefusal`.
 
 A view's id is never used again (`Editor/State.lean`).
 
+## Buffer-local values and modes
+
+These are Lean state alone: none makes a request of the library, so none
+has a case on the real binding. They are pinned once, on the models
+(`ModelTest.apiStateChecks`, `ModelTest.modeEnterChecks`).
+
+- `BufferId.setValue id name value` has a buffer keep a plain tree
+  (`Value`, `Editor/Value.lean`) under a name, in place of the one the name
+  had, and `BufferId.value?` reads it.
+- `BufferId.addMinorMode` and `BufferId.removeMinorMode` add and remove a
+  minor mode. No action runs.
+- `ViewId.setMajorMode view name` makes a mode the major mode of the buffer
+  the view shows, and says whether it became it: `false`, with nothing
+  run, when the buffer already had it. The loop that runs the command
+  refuses a name no mode is registered under (`noSuchMode`) and runs the
+  on-enter actions of the mode's lineage, root first, inside the command
+  (`Editor/Command/Dispatch.lean`).
+
 Each operation that makes a text request has a case in
 `Editor/Api/Cases.lean`, played on the editor's models and on the real
 binding.
@@ -289,6 +307,28 @@ nothing done, when there is no step to redo, and whenever an edit is
 pending. Refused with `noSuchBuffer` for a buffer there is none of. -/
 def redo (id : BufferId) : EditorM (Except BufferRefusal (Option Undone)) :=
   id.moved (·.redo Origin.user)
+
+/-- Has the buffer `id` keep `value` under `name`, in place of the value the
+name had. Refused with `noSuchBuffer` for a buffer there is none of. -/
+def setValue (id : BufferId) (name : String) (value : Value) :
+    EditorM (Except BufferRefusal Unit) :=
+  EditorState.ask (.setValue id name value)
+
+/-- The value the buffer `id` keeps under `name`, if it keeps one. -/
+def value? (id : BufferId) (name : String) : EditorM (Option Value) :=
+  return (← editorState).value? id name
+
+/-- Adds the minor mode called `name` to the buffer `id`, first; one it has
+already changes nothing. Refused with `noSuchBuffer` for a buffer there is
+none of. -/
+def addMinorMode (id : BufferId) (name : String) : EditorM (Except BufferRefusal Unit) :=
+  EditorState.ask (.addMinorMode id name)
+
+/-- Removes the minor mode called `name` from the buffer `id`; one it does
+not have changes nothing. Refused with `noSuchBuffer` for a buffer there is
+none of. -/
+def removeMinorMode (id : BufferId) (name : String) : EditorM (Except BufferRefusal Unit) :=
+  EditorState.ask (.removeMinorMode id name)
 
 end BufferId
 
@@ -441,6 +481,15 @@ def «show» (view : ViewId) (buffer : BufferId) : EditorM (Except LayoutRefusal
   let scroll ← shown.text.mark (.anchor { offset := 0, bias := .before })
   let selection ← shown.text.mark (.selection { ranges := #[⟨0, 0⟩], shape })
   EditorState.ask (.show view buffer scroll selection)
+
+/-- Makes the mode called `name` the major mode of the buffer the window of
+`view` shows, and says whether it became the major mode: `false`, with
+nothing run, when the buffer already had it. When it became it, the
+on-enter actions of the mode's lineage have run, root first, before this
+returns. Refused with `noSuchWindow` for a view with no window, and with
+`noSuchMode` for a name no mode is registered under. -/
+def setMajorMode (view : ViewId) (name : String) : EditorM (Except ModeRefusal Bool) :=
+  EditorState.ask (.setMajorMode view name)
 
 end ViewId
 

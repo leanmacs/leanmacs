@@ -7664,64 +7664,216 @@ def enterRegistry : Config.Registry :=
     #[entering "listing", entering "other", entering "root", entering "base" (some "root"),
       entering "child" (some "base")]
 
-/-- Sets the major mode of the buffer of each view in `steps` in turn,
-through `enterRegistry`, from `twoBuffers`, on the editor's models: the
-texts the on-enter actions made, in order, how each step was refused, if it
-was, and each buffer's major mode at the end. `none` when the run was
-refused. -/
-def entered (steps : List (ViewId × String)) :
-    Option (Array String × List (Option ModeRefusal) × Array (Option String)) :=
-  let program : EditorM (List (Option ModeRefusal) × EditorState) := do
+/-- What the command `enter` of the on-enter checks says of a refusal, in the
+echo area. -/
+def modeRefusalText : ModeRefusal → String
+  | .noSuchWindow id => s!"no window {id.index}"
+  | .noSuchMode name => s!"no mode {name}"
+
+/-- The command `enter` of the on-enter checks: it asks for the mode named
+by its second argument to be the major mode of the buffer the view of its
+first argument shows, by the request (`ViewId.setMajorMode`), and says a
+refusal in the echo area. With `fail` it is then refused with
+`badRange`. -/
+def enter (fail : Bool := false) : Dispatched := fun call => do
+  let [.nat view, .str name] := call.arguments | throw .badPosition
+  if let .error refusal← (⟨view⟩ : ViewId).setMajorMode name then
+    EditorState.ask (.message (modeRefusalText refusal))
+  if fail then
+    call.target.buffer.text.delete 9 99
+  return none
+
+/-- What a step of the on-enter checks is handed: the commands `enter` and
+`enter-fail`, and what `registry` says of its modes. -/
+def enterKeys (registry : Config.Registry) : Loop.Keys TestScheme.scheme :=
+  { command? := fun name =>
+      ([("enter", enter), ("enter-fail", enter true)].find? (·.1 == name)).map (·.2)
+    registered := registry.registered }
+
+/-- The invocation of `command` that sets the mode `name` through `view`. -/
+def entersMode (view : ViewId) (name : String) (command : String := "enter") : Invocation :=
+  { command, arguments := [.nat view.index, .str name] }
+
+/-- Sets the major mode of the buffer of each view in `steps` in turn, each
+by an invocation of `enter` the loop runs (`Loop.run`) over `registry`,
+from `twoBuffers`, on the editor's models with the watch model `watch`: the
+texts made, in order, after the two the state was made with, what each
+invocation left in the echo area, and each buffer's major mode at the end.
+`none` when the run was refused. -/
+def entered (steps : List (ViewId × String)) (registry : Config.Registry := enterRegistry)
+    (watch : WatchModel := {}) : Option (Array String × List String × Array (Option String)) :=
+  let program : EditorM (List String × EditorState) := do
     let mut state ← twoBuffers
-    let mut refusals := []
+    let mut echoes := []
     for (view, name) in steps do
-      let (result, next) ← enterRegistry.setMajorMode view name state
-      state := next
-      refusals :=
-        refusals ++
-          [match result with
-            | .ok () => none
-            | .error refusal => some refusal]
-    return (refusals, state)
-  match program.runModel editorModel with
-  | (.ok (refusals, state), model) =>
+      state := (← Loop.run (enterKeys registry) state (entersMode view name) []).state
+      echoes := echoes ++ [state.echo]
+    return (echoes, state)
+  match program.runModel { editorModel with watch } with
+  | (.ok (echoes, state), model) =>
     let texts := model.texts.contents
-    some (texts.extract 2 texts.size, refusals, state.buffers.map (·.bind (·.major)))
+    some (texts.extract 2 texts.size, echoes, state.buffers.map (·.bind (·.major)))
   | (.error _, _) => none
 
-/-- The checks of a mode's on-enter action (`Config.Registry.setMajorMode`),
-on the editor's models: it runs once, with the view, when the mode becomes
-a buffer's major mode. -/
+/-- The checks of a mode's on-enter action, on the editor's models: a
+command asks for a major mode by the request, and the loop that runs the
+command runs the mode's on-enter actions inside it
+(`Editor/Command/Dispatch.lean`). -/
 def modeEnterChecks : List Check :=
   [{  name :=
         "the on-enter action runs once, with the view, when the mode becomes a buffer's major mode"
       run :=
         pure
-          (entered [(⟨0⟩, "listing")] ==
-              some (#["listing in 0"], [none], #[some "listing", none]) &&
+          (entered [(⟨0⟩, "listing")] == some (#["listing in 0"], [""], #[some "listing", none]) &&
             entered [(⟨1⟩, "listing")] ==
-              some (#["listing in 1"], [none], #[none, some "listing"])) },
+              some (#["listing in 1"], [""], #[none, some "listing"])) },
     { name :=
         "setting the major mode a buffer already has runs nothing; setting another and then it again runs each"
       run :=
         pure
           (entered [(⟨0⟩, "listing"), (⟨0⟩, "listing")] ==
-              some (#["listing in 0"], [none, none], #[some "listing", none]) &&
+              some (#["listing in 0"], ["", ""], #[some "listing", none]) &&
             entered [(⟨0⟩, "listing"), (⟨0⟩, "other"), (⟨0⟩, "listing")] ==
               some
-                (#["listing in 0", "other in 0", "listing in 0"], [none, none, none],
+                (#["listing in 0", "other in 0", "listing in 0"], ["", "", ""],
                   #[some "listing", none])) },
     { name := "a derived mode's lineage runs its on-enter actions root first, each once"
       run :=
         pure
           (entered [(⟨1⟩, "child")] ==
-            some (#["root in 1", "base in 1", "child in 1"], [none], #[none, some "child"])) },
+            some (#["root in 1", "base in 1", "child in 1"], [""], #[none, some "child"])) },
     { name :=
         "setting a mode no mode is registered under is refused with noSuchMode, and one for a view with no window with noSuchWindow; each changes nothing and runs nothing"
       run :=
         pure
-          (entered [(⟨0⟩, "ghost")] == some (#[], [some (.noSuchMode "ghost")], #[none, none]) &&
-            entered [(⟨9⟩, "listing")] == some (#[], [some (.noSuchWindow ⟨9⟩)], #[none, none])) }]
+          (entered [(⟨0⟩, "ghost")] == some (#[], ["no mode ghost"], #[none, none]) &&
+            entered [(⟨9⟩, "listing")] == some (#[], ["no window 9"], #[none, none]) &&
+            entered [(⟨9⟩, "ghost")] == some (#[], ["no window 9"], #[none, none])) },
+    { name :=
+        "an on-enter action's own state requests are answered from the state the command had reached and kept with it: its message is in the echo area, and the minor mode it adds is the buffer's"
+      run :=
+        pure <|
+          let loud : Mode :=
+            { name := "loud"
+              onEnter := fun view => do
+                let state ← editorState
+                let some target := state.target? view | throw .noSuchText
+                -- The mode is the buffer's major mode by the time its
+                -- action runs.
+                EditorState.ask
+                    (.message s!"{target.buffer.major.getD "none"} entered in {view.index}")
+                discard <| EditorState.ask (.addMinorMode target.window.buffer "ringing") }
+          let registry := enterRegistry.replaceModes .config #[loud]
+          let program : EditorM EditorState := do
+            return (← Loop.run (enterKeys registry) (← twoBuffers) (entersMode ⟨1⟩ "loud") []).state
+          match (program.runModel editorModel).1 with
+          | .ok state =>
+            state.echo == "loud entered in 1" &&
+              ((state.buffer? ⟨1⟩).map fun buffer => (buffer.major, buffer.minors)) ==
+                some (some "loud", #["ringing"]) &&
+              ((state.buffer? ⟨0⟩).map (·.minors)) == some #[]
+          | .error _ => false },
+    { name :=
+        "a command that is refused after it set a major mode is rolled back, the mode and what its on-enter action did alike: the buffer has no major mode, the action's edit and its minor mode are gone, and the echo area says the refusal"
+      run :=
+        pure <|
+          let stamping : Mode :=
+            { name := "stamping"
+              onEnter := fun view => do
+                discard <| view.insertAtSelections "!"
+                let some target := (← editorState).target? view | throw .noSuchText
+                discard <| EditorState.ask (.addMinorMode target.window.buffer "stamped") }
+          let keys := enterKeys (enterRegistry.replaceModes .config #[stamping])
+          let program (command : String) : EditorM (EditorState × String) := do
+            let ran ← Loop.run keys (← twoBuffers) (entersMode ⟨1⟩ "stamping" command) []
+            return (ran.state, ← (⟨1⟩ : TextId).read)
+          let modes (state : EditorState) :=
+            (state.buffer? ⟨1⟩).map fun buffer => (buffer.major, buffer.minors)
+          (match ((program "enter").runModel editorModel).1 with
+            | .ok (state, text) =>
+              text == "!other" && modes state == some (some "stamping", #["stamped"]) &&
+                state.echo == ""
+            | .error _ => false) &&
+            match ((program "enter-fail").runModel editorModel).1 with
+            | .ok (state, text) =>
+              text == "other" && modes state == some (none, #[]) &&
+                state.echo == "enter-fail: refused: bad range"
+            | .error _ => false },
+    { name :=
+        "an on-enter action is guarded with the command that set the mode: with the interrupt flag up its request of the store is not made, and the command is rolled back, so the mode is not the buffer's"
+      run :=
+        pure
+          (entered [(⟨0⟩, "listing")] (watch := { arrived := 1 }) ==
+            some (#[], ["enter: interrupted"], #[none, none])) }]
+
+/-- What `command`, run dispatched from the state `start` makes with nothing
+told of the registry, returned on the editor's models, and the state it
+left; `none` unless it ran to its end. -/
+def dispatchedFrom {α : Type} (command : EditorM α) (start : TextM EditorState := twoBuffers) :
+    Option (α × EditorState) :=
+  let program : EditorM (Guarded α × EditorState) := do
+    command.dispatched {} (← start)
+  match (program.runModel editorModel).1 with
+  | .ok (.finished value, state) => some (value, state)
+  | _ => none
+
+/-- The checks of the operations of the editor API that are Lean state
+alone (`Editor/Api.lean`): they make no request of the library, so they are
+pinned here, once, on the editor's models. -/
+def apiStateChecks : List Check :=
+  let one : BufferId := ⟨1⟩
+  let absent : BufferId := ⟨9⟩
+  [{  name :=
+        "a buffer-local value set from a command is read back by its name, a second value of the name replaces the first, another buffer has none, and setting one on a buffer there is none of is refused with noSuchBuffer"
+      run :=
+        pure <|
+          match
+            dispatchedFrom do
+              let set ← one.setValue "count" (.nat 1)
+              let first ← one.value? "count"
+              discard <| one.setValue "count" (.nat 2)
+              return (set, first, ← one.value? "count", ← (⟨0⟩ : BufferId).value? "count",
+                  ← absent.setValue "count" .null, ← absent.value? "count") with
+          | some ((set, first, second, other, refused, nothing), state) =>
+            replied set == .inr () && first == some (.nat 1) && second == some (.nat 2) &&
+              other == none &&
+              replied refused == .inl (.noSuchBuffer absent) &&
+              nothing == none &&
+              state.value? one "count" == some (.nat 2)
+          | none => false },
+    { name :=
+        "a minor mode added from a command is the buffer's, first, and one removed is gone; each is refused with noSuchBuffer for a buffer there is none of"
+      run :=
+        pure <|
+          match
+            dispatchedFrom do
+              let added ← one.addMinorMode "first"
+              discard <| one.addMinorMode "second"
+              let both := ((← editorState).buffer? one).map (·.minors)
+              let removed ← one.removeMinorMode "first"
+              return (added, both, removed, ← absent.addMinorMode "first",
+                  ← absent.removeMinorMode "first") with
+          | some ((added, both, removed, unadded, unremoved), state) =>
+            replied added == .inr () && both == some #["second", "first"] &&
+              replied removed == .inr () &&
+              replied unadded == .inl (.noSuchBuffer absent) &&
+              replied unremoved == .inl (.noSuchBuffer absent) &&
+              ((state.buffer? one).map (·.minors)) == some #["second"] &&
+              ((state.buffer? ⟨0⟩).map (·.minors)) == some #[]
+          | none => false },
+    { name :=
+        "a major mode asked for where nothing was told of the registry is refused with noSuchMode, and a view with no window with noSuchWindow first; the state is as it was"
+      run :=
+        pure <|
+          match
+            dispatchedFrom do
+              return (← (⟨0⟩ : ViewId).setMajorMode "listing",
+                  ← (⟨9⟩ : ViewId).setMajorMode "listing") with
+          | some ((unknown, unseen), state) =>
+            replied unknown == .inl (.noSuchMode "listing") &&
+              replied unseen == .inl (.noSuchWindow ⟨9⟩) &&
+              some state == onTextModel twoBuffers
+          | none => false }]
 
 /-- Every check, in the order they run.
 
@@ -7769,7 +7921,8 @@ def checks : List Check :=
     modeRecordChecks ++
     modeRegistryChecks ++
     modeDispatchChecks ++
-    modeEnterChecks
+    modeEnterChecks ++
+    apiStateChecks
 
 /-- Runs `checks` and returns the names of those that failed. A check that
 throws has failed, and its error is reported with its name. -/

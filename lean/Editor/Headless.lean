@@ -599,12 +599,14 @@ def publish (collaborators : Collaborators σ scheme) (running : Running σ sche
 /-- What a step of the loop is handed, from the registry as it is now: the
 active keymaps of each view (`Config.Registry.activeMaps`: the modes of the
 view's buffer, then every owner's key bindings), which the loop applies to
-its own state; the lookup an invocation uses (`Config.State.command?`); and
-the host's threshold for a slow command. It is made for each window event,
-so a reload changes it between two events. -/
+its own state; the lookup an invocation uses (`Config.State.command?`);
+the host's threshold for a slow command; and what a command's state
+requests are told of the registry (`Config.Registry.registered`: the modes
+whose on-enter actions a major mode runs). It is made for each window
+event, so a reload changes it between two events. -/
 def keys (collaborators : Collaborators σ scheme) (running : Running σ scheme) : Loop.Keys scheme :=
   { maps := running.config.registry.activeMaps scheme, command? := running.config.command?
-    slowAfter := collaborators.slowAfter }
+    slowAfter := collaborators.slowAfter, registered := running.config.registry.registered }
 
 /-- Handles an event from the window input: prints a key press with its
 identity, makes the frame if there is none, and has the editor loop take the

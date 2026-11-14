@@ -1,4 +1,5 @@
 import Editor.Command.Guard
+import Editor.Mode
 
 /-!
 # A dispatched command
@@ -37,15 +38,43 @@ the state it left.
 - **Only the command is dispatched.** The loop's own requests round it are
   neither guarded nor answered here.
 
-`Loop.Registered` is what the transformation is told of the registry, for
-the requests that name something registered. It is rebuilt by the loop's
-caller for each step, with the keymaps (`Loop.Keys`).
+## Requests that name something registered
+
+A request holds plain data, so it names a mode where it means one, and what
+the name stands for is the registry's. `Loop.Registered` is what the
+transformation is told of the registry. It is rebuilt by the loop's caller
+for each step, with the keymaps (`Loop.Keys`), so a reload's modes hold
+from the next command.
+
+- **Setting a major mode** (`StateRequest.setMajorMode`) is refused with
+  `noSuchWindow` for a view with no window, and then with `noSuchMode` for
+  a name no mode is registered under (`Loop.Registered.entering`), each
+  with the state as it was and nothing run. Otherwise the mode is set in
+  the state, and, when it became the buffer's major mode, the on-enter
+  action of each mode of its lineage runs, root first, each once, with the
+  view, before the command goes on with its reply. Setting the major mode
+  the buffer already has runs nothing.
+- **An on-enter action runs inside the command.** Its program is put before
+  the rest of the command's and goes through this same transformation: its
+  state requests are answered from the state the command had reached, its
+  other requests are guarded, and what it did is rolled back with the
+  command if the command does not run to its end.
+- **An on-enter action that is refused refuses the command**, at the
+  request that set the mode: the command cannot catch it, since it is no
+  reply to that request.
+
+Putting an action's program before the rest of the command makes the
+transformation recurse into a program that is no part of the one it was
+given, so it is `partial`, and no theorem is about it. On-enter actions
+that set each other's major modes for ever are runaway config code, which
+nothing here stops (`docs/design/concurrency.md`, "Runaway code is not a
+design driver").
 
 It is a pure transformation of the program, so it runs on the models as it
 runs against the library.
 
-Pinned by `ModelTest.dispatchStateChecks`; `EditorM.guarded` stays, pinned
-by `ModelTest.guardChecks`.
+Pinned by `ModelTest.dispatchStateChecks` and `ModelTest.modeEnterChecks`;
+`EditorM.guarded` stays, pinned by `ModelTest.guardChecks`.
 -/
 
 namespace Editor
@@ -54,21 +83,51 @@ namespace Editor
 something registered. A step is handed one, made from the registry as it
 then is. -/
 structure Loop.Registered where
+  /-- The modes whose on-enter actions run when the mode of this name
+  becomes a buffer's major mode: its lineage, root first. `none` for a name
+  no mode is registered under. -/
+  entering : String → Option (List Mode) := fun _ => none
 
-/-- `program` with its state requests answered from `state`, each from the
-state the one before left, and the interrupt flag asked before each of its
-other requests: the program's value and the state it left, or `none`, with
-that request and everything after it not made, and the state it had
-reached, once the flag is up. -/
-def Program.dispatched {α : Type} (registered : Loop.Registered) :
-    EditorState → Program editorPort α → Program editorPort (Option α × EditorState)
-  | state, .done value => .done (some value, state)
+/-- A program that ends at once, interrupted, with no state: what the
+compiler is shown for `Program.dispatched`, which is `partial`. -/
+instance {α : Type} : Inhabited (Program editorPort (Guarded α × EditorState)) :=
+  ⟨.done (.interrupted, EditorState.none)⟩
+
+/-- `program`, a command's, with its state requests answered from `state`,
+each from the state the one before left, and the interrupt flag asked
+before each of its other requests: how the command ended, and the state it
+left, or had reached when it was refused or when the flag was found up,
+with that request and everything after it not made.
+
+A request to set a major mode is answered with what `registered` says of
+the mode ("Requests that name something registered", in the module docs):
+the on-enter actions it runs are put before the rest of the program. -/
+partial def Program.dispatched {α : Type} (registered : Loop.Registered) :
+    EditorState →
+      Program editorPort (Except TextError α) → Program editorPort (Guarded α × EditorState)
+  | state, .done (.ok value) => .done (.finished value, state)
+  | state, .done (.error error) => .done (.refused error, state)
+  | state, .step (.state (.setMajorMode view name)) next =>
+    match state.target? view, registered.entering name with
+    | none, _ => dispatched registered state (next (.error (.noSuchWindow view)))
+    | some _, none => dispatched registered state (next (.error (.noSuchMode name)))
+    | some _, some lineage =>
+      match state.handle (.setMajorMode view name) with
+      | (.ok true, state) =>
+        let entering : EditorM Unit := lineage.forM (·.onEnter view)
+        dispatched registered state do
+          match ← entering.run with
+          | .ok () =>
+            next (.ok true)
+          | .error error =>
+            pure (.error error)
+      | (reply, state) => dispatched registered state (next reply)
   | state, .step (.state request) next =>
     let (reply, state) := state.handle request
     dispatched registered state (next reply)
   | state, .step request next =>
     .step (.watch .interrupted) fun (raised : Bool) =>
-      if raised then .done (none, state)
+      if raised then .done (.interrupted, state)
       else .step request fun reply => dispatched registered state (next reply)
 
 /-- `command` as the loop runs it from the editor state `state`: its state
@@ -78,13 +137,6 @@ its value, with the editor state it left, or had reached when it was
 refused or interrupted. -/
 def EditorM.dispatched {α : Type} (command : EditorM α) (registered : Loop.Registered)
     (state : EditorState) : EditorM (Guarded α × EditorState) :=
-  ExceptT.lift do
-    match ← command.run.dispatched registered state with
-    | (none, state) =>
-      return (.interrupted, state)
-    | (some (.ok value), state) =>
-      return (.finished value, state)
-    | (some (.error error), state) =>
-      return (.refused error, state)
+  ExceptT.lift (command.run.dispatched registered state)
 
 end Editor

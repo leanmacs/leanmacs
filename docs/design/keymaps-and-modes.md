@@ -819,29 +819,48 @@ wins over a role on the same key.
 
 ### A buffer's modes
 
-Built (`EditorState.setMajorMode`, `addMinorMode`, `removeMinorMode`;
-`Config.Registry.setMajorMode`). A buffer has one major mode, or none
-(`Buffer.major : Option String`), and minor modes (`Buffer.minors`, the one
-added last first). They are names: a buffer can hold a name no registered
-mode has (a reload may drop it), which contributes nothing.
+Built (`EditorState.setMajorMode`, `addMinorMode`, `removeMinorMode`; the
+requests over them, `lean/Editor/State/Request.lean`; and the operations a
+command calls, `ViewId.setMajorMode`, `BufferId.addMinorMode` and
+`BufferId.removeMinorMode`, `lean/Editor/Api.lean`). A buffer has one major
+mode, or none (`Buffer.major : Option String`), and minor modes
+(`Buffer.minors`, the one added last first). They are names: a buffer can
+hold a name no registered mode has (a reload may drop it), which
+contributes nothing.
 
 - **Pure state operations** set the major mode and add or remove a minor
   mode, shaped like `removeWindow`. Setting the major mode says whether the
   mode became the major mode; it did not when the buffer already had it.
   Adding a minor mode already there, and removing one not there, change
-  nothing. Phase 8 offers them as requests.
-- **`onEnter` runs when a mode becomes a buffer's major mode**, through the
-  registry's operation given a view (`Registry.setMajorMode`), with that
-  view, once. Setting the major mode the buffer already has changes nothing
-  and runs nothing. For a derived mode the actions of its lineage run root
-  first, each once, as Emacs's derived modes run their parent's body first.
-  Setting a name no registered mode has as the major mode through the
-  registry is refused (`noSuchMode`), as is a view with no window
-  (`noSuchWindow`), while the pure operation takes any name and refuses
-  only a buffer there is none of (`noSuchBuffer`).
+  nothing.
+- **A command sets a mode by a request.** The request names the mode: it
+  is plain data, and cannot hold the mode or its `onEnter`, which is a
+  program over the port the request belongs to. So the loop that runs the
+  command answers it with what it is told of the registry
+  (`Loop.Registered`, made by the host from the registry as it is at that
+  step; `lean/Editor/Command/Dispatch.lean`).
+- **`onEnter` runs when a mode becomes a buffer's major mode**, with the
+  view it was set through, once, inside the command that asked. Setting the
+  major mode the buffer already has changes nothing and runs nothing. For a
+  derived mode the actions of its lineage run root first, each once, as
+  Emacs's derived modes run their parent's body first. Setting a name no
+  registered mode has is refused (`noSuchMode`), after a view with no
+  window (`noSuchWindow`), each with nothing changed and nothing run; the
+  pure operation takes any name and refuses only a buffer there is none of
+  (`noSuchBuffer`).
+- **An on-enter action is part of the command.** Its program is put before
+  the rest of the command's, so its requests are guarded against the
+  interrupt and rolled back with the command, and its own state requests
+  are answered from the state the command had reached, in which the mode
+  is already the buffer's. An action that is refused refuses the command.
+  Phase 7 ran the actions from a registry operation that was handed the
+  state and handed it back; that operation is gone, because an action's
+  own state requests would have been answered from a state it could not
+  see.
 - **Adding a minor mode runs no action** yet (left open).
-- **No command sets a mode yet.** The operations are called by tests; phase
-  8 offers them as requests of a command.
+
+Pinned by `ModelTest.modeEnterChecks`, through the loop, and
+`ModelTest.apiStateChecks`.
 
 ### Why this shape
 

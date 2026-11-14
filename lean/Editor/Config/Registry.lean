@@ -1,4 +1,5 @@
 import Editor.Command.Call
+import Editor.Command.Dispatch
 import Editor.Config.Owner
 import Editor.InputScheme
 import Editor.Mode
@@ -68,14 +69,15 @@ is used in its place until a reload drops it.
   keymap (`keymap`). A name no mode is registered under contributes
   nothing, and a view with no window has the global keymap alone. The host
   makes them for each key, so a reload's modes hold from the next key.
-- **Setting a buffer's major mode through a view** (`setMajorMode`) sets it
-  in the state (`EditorState.setMajorMode`) and, when the mode became the
-  major mode, runs the on-enter action of each mode of its lineage, root
-  first, each once, with that view, as Emacs's derived modes run their
-  parent's body first. Setting the major mode the buffer already has runs
-  nothing. It refuses (`ModeRefusal`) a view with no window and a name no
-  mode is registered under, while the state operation takes any name.
-  Adding a minor mode runs no action.
+- **Setting a buffer's major mode** is a command's request
+  (`ViewId.setMajorMode`, `Editor/Api.lean`), which the loop that runs the
+  command answers (`Editor/Command/Dispatch.lean`). What the loop is told
+  of the registry for it is `registered`: for a name a mode is registered
+  under, the modes whose on-enter actions run when that mode becomes a
+  buffer's major mode, which are its lineage, root first, as Emacs's
+  derived modes run their parent's body first. A name no mode is
+  registered under is refused there (`ModeRefusal.noSuchMode`). Adding a
+  minor mode runs no action.
 
 Motions, operators and text objects will be registered the same way, as
 vocabulary: entries by owner, replaced as a set, the latest of a name
@@ -282,27 +284,12 @@ def activeMaps (registry : Registry) (scheme : InputScheme) (state : EditorState
     let major := (target.buffer.major.map (registry.modeKeymaps scheme)).getD []
     minors ++ major ++ [global]
 
-/-- Makes the mode called `name` the major mode of the buffer `view` shows
-(`EditorState.setMajorMode`), and when it became the major mode runs the
-on-enter action of each mode of its lineage, root first, each once, with
-`view`. Setting the major mode the buffer already has changes nothing and
-runs nothing. Refused, with the state unchanged and nothing run, with
-`noSuchWindow` for a view with no window and `noSuchMode` for a name no
-mode is registered under. -/
-def setMajorMode (registry : Registry) (view : ViewId) (name : String) (state : EditorState) :
-    EditorM (Except ModeRefusal Unit × EditorState) := do
-  let some target := state.target? view | return (.error (.noSuchWindow view), state)
-  if (registry.mode? name).isNone then
-    return (.error (.noSuchMode name), state)
-  match state.setMajorMode target.window.buffer name with
-  | (.ok true, next) =>
-    for mode in (registry.lineage name).reverse do
-      mode.onEnter view
-    return (.ok (), next)
-  | (.ok false, next) =>
-    return (.ok (), next)
-  | (.error _, _) =>
-    return (.error (.noSuchWindow view), state)
+/-- What the loop is told of the registry for a command's state requests
+(`Editor/Command/Dispatch.lean`): for a name a mode is registered under,
+its lineage, root first, whose on-enter actions run when the mode becomes a
+buffer's major mode. -/
+def registered (registry : Registry) : Loop.Registered :=
+  { entering := fun name => (registry.mode? name).map fun _ => (registry.lineage name).reverse }
 
 end Registry
 
