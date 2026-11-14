@@ -158,6 +158,17 @@ has a case on the real binding. They are pinned once, on the models
   on-enter actions of the mode's lineage, root first, inside the command
   (`Editor/Command/Dispatch.lean`).
 
+## Messages
+
+`message text` puts `text` in the echo area. The loop clears the echo area
+when an invocation runs, so a command's message is in the scene published
+after it and stays until the next invocation; a key that yields nothing
+leaves it. Of two messages in one command the last is the one shown: the
+echo area is one text, and there is no log of messages. A command that
+does not run to its end leaves no message: the echo area then says what
+became of it (`Editor/Loop.lean`, "Running an invocation"). Pinned by
+`ModelTest.loopChecks`.
+
 Each operation that makes a text request has a case in
 `Editor/Api/Cases.lean`, played on the editor's models and on the real
 binding.
@@ -173,6 +184,11 @@ def EditorState.ask (request : StateRequest) : EditorM request.Reply :=
 /-- The whole editor state, as it is now. -/
 def editorState : EditorM EditorState :=
   EditorState.ask .read
+
+/-- Puts `text` in the echo area, in place of what was there: it is in the
+scene published after the command, until the next invocation. -/
+def message (text : String) : EditorM Unit :=
+  EditorState.ask (.message text)
 
 /-- Replaces the bytes of `text` from `start` up to, not including, `stop`
 with `s`, as one transaction made by the user. Refused, changing nothing,

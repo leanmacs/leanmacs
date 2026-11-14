@@ -4572,6 +4572,34 @@ def loopChecks : List Check :=
           | (.ok (loop, shown, echoed), model) =>
             echoed && shown == "ab" && loop.state.wellFormed && loop.shown.size == 1 &&
               model.display.scenes.map (·.echo) == #["", "", "refused: no such snapshot"]
+          | (.error _, _) => false },
+    { name :=
+        "a message from a key's command is in the echo area of the scene published after it, the last of two when the command sent two; a key that yields nothing leaves it, and the next invocation clears it"
+      run :=
+        pure <|
+          let say (texts : List String) (_ : Call) : EditorM (Option Config.Write) := do
+            for text in texts do
+              message text
+            return none
+          let handed : Loop.Keys TestScheme.scheme :=
+            { maps := fun _ _ =>
+                [Keymap.ofList
+                    [(keys "C-c m", invoke "say"), (keys "C-c t", invoke "twice"),
+                      (keys "C-c q", invoke "quiet")]]
+              command? := fun name =>
+                ([("say", say ["hi"]), ("twice", say ["first", "second"]), ("quiet", say [])].find?
+                      (·.1 == name)).map
+                  (·.2) }
+          let program : EditorM TestLoop := do
+            let mut loop ← Loop.start TestScheme.scheme ⟨640, 480⟩
+            let pressed (text : String) : List Event := (keys text).map (.key · true "")
+            for event in pressed "C-c m" ++ [pressF5] ++ pressed "C-c t C-c q" do
+              loop := (← loop.step handed event).loop
+            return loop
+          match program.runModel editorModel with
+          | (.ok loop, model) =>
+            loop.state.echo == "" &&
+              model.display.scenes.map (·.echo) == #["", "hi", "hi", "hi", "second", "second", ""]
           | (.error _, _) => false }]
 
 /-- The focused window's buffer and window in `loop`'s state, or a refusal
