@@ -15,10 +15,12 @@
 //!    contract;
 //! 2. draws the fixture frame of `tests/common/mod.rs`, reads the target
 //!    back and compares it with what the headless adapter draws: with the
-//!    reference image `tests/render/frame.png` when the adapter blends by
-//!    a coverage for each channel, and otherwise with the headless
-//!    adapter's picture of the same frame in plain masks. No channel of
-//!    any pixel may differ by more than 3 of 255;
+//!    reference image `tests/render/frame.png`, which is in subpixel
+//!    masks, when the adapter blends by a coverage for each channel; and
+//!    in plain masks, as a display of scale 2 gets them, with the headless
+//!    adapter's picture of the same frame drawn the same way. No channel
+//!    of any pixel may differ by more than 3 of 255. The fixture has no
+//!    colour glyph, so a colour image is never drawn here;
 //! 3. prints how long a first frame, a frame with a row edited and a
 //!    frame that differs only in its cursor took, with the rows each
 //!    built. The times are for a person to read: nothing is asserted of
@@ -87,6 +89,26 @@ fn on_the_cpu(frame: &Arc<Frame>, settings: Settings) -> Image {
     renderer.image().clone()
 }
 
+/// Says how `image`, read back from the GPU, differs from `expected`,
+/// which is `against`: whether no channel of any pixel differs by more
+/// than [`TOLERANCE`].
+fn compared(image: &Image, expected: &Image, against: &str) -> bool {
+    let Some((worst, differing)) = common::difference(image, expected) else {
+        println!(
+            "render-gpu: the frame read back is {} by {} pixels, and {against} is {} by {}",
+            image.width, image.height, expected.width, expected.height
+        );
+        return false;
+    };
+    let within = worst <= TOLERANCE;
+    let verdict = if within { "within" } else { "PAST" };
+    println!(
+        "render-gpu: the frame read back is {} by {} pixels; against {against}, {differing} pixels differ, the worst by {worst} of 255: {verdict} the tolerance of {TOLERANCE}",
+        image.width, image.height
+    );
+    within
+}
+
 fn main() -> ExitCode {
     let mut renderer = match on_this_machine(common::settings()) {
         Ok(renderer) => renderer,
@@ -131,20 +153,12 @@ fn main() -> ExitCode {
     let changed = frame(&edited, 7..7);
     let moved = frame(&edited, 1..1);
 
-    let (first, first_took) = draw(&mut renderer, &fixture);
-    let image = renderer.read_back();
-    let (expected, against) = if per_channel {
-        (common::decode(REFERENCE_PNG), "tests/render/frame.png")
-    } else {
-        let plain = Settings {
-            antialiasing: Antialiasing::Grayscale,
-            ..common::settings()
-        };
-        (
-            on_the_cpu(&fixture, plain),
-            "the headless adapter's picture in plain masks",
-        )
+    let plain = Settings {
+        antialiasing: Antialiasing::Grayscale,
+        ..common::settings()
     };
+    let masks = "the headless adapter's picture in plain masks";
+    let (first, first_took) = draw(&mut renderer, &fixture);
     if !first.presented {
         held = false;
         println!(
@@ -152,26 +166,28 @@ fn main() -> ExitCode {
             renderer.refused().unwrap_or("no reason given")
         );
     }
-    match common::difference(&image, &expected) {
-        Some((worst, differing)) => {
-            let verdict = if worst <= TOLERANCE {
-                "within"
-            } else {
+    let image = renderer.read_back();
+    if per_channel {
+        // With a coverage for each channel, as the reference image was
+        // drawn.
+        let reference = common::decode(REFERENCE_PNG);
+        held &= compared(&image, &reference, "tests/render/frame.png");
+        // And in plain masks, as a display of two physical pixels to a
+        // logical one gets them: another renderer, told to.
+        match on_this_machine(plain) {
+            Ok(mut other) => {
+                held &= draw(&mut other, &fixture).0.presented;
+                held &= compared(&other.read_back(), &on_the_cpu(&fixture, plain), masks);
+            }
+            Err(none) => {
                 held = false;
-                "PAST"
-            };
-            println!(
-                "render-gpu: the frame read back is {} by {} pixels; against {against}, {differing} pixels differ, the worst by {worst} of 255: {verdict} the tolerance of {TOLERANCE}",
-                image.width, image.height
-            );
+                println!("render-gpu: {none}");
+            }
         }
-        None => {
-            held = false;
-            println!(
-                "render-gpu: the frame read back is {} by {} pixels, and {against} is {} by {}",
-                image.width, image.height, expected.width, expected.height
-            );
-        }
+    } else {
+        // An adapter that cannot blend by a coverage for each channel
+        // draws plain masks whatever it is told.
+        held &= compared(&image, &on_the_cpu(&fixture, plain), masks);
     }
 
     // 3. The times, for a person.

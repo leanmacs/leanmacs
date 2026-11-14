@@ -272,14 +272,17 @@ What the spikes left unchecked and is now seen:
   differs from the reference image the CPU compositor drew by at most 1
   of 255 in any channel: in 42 of its 24576 pixels on Metal (an Apple M5
   Max) and in 247 on Mesa's llvmpipe through Vulkan, in the Linux
-  container. Run on demand, once each, on 2026-11-14
+  container. The same frame in plain masks differs from the CPU
+  compositor's picture in plain masks by at most 1 too, in 14 pixels on
+  Metal and 168 on llvmpipe. Run on demand, on 2026-11-14
   ([on-demand-checks.md](../dev-practices/on-demand-checks.md)).
 - The Linux build of the pins, and the tests there: the gate passes in
   the container, aarch64, with no GPU driver installed.
 
-Still not checked: x86_64; a colour glyph from a real font; anything
-with a window; how the text looks to a person at a low-resolution
-display; any timing.
+Still not checked: x86_64; a colour glyph from a real font, and a colour
+image drawn by any GPU (the gate validates that path of the shader and
+nothing has drawn it); anything with a window; how the text looks to a
+person at a low-resolution display; any timing.
 
 ## Present mode and pacing
 

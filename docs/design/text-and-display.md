@@ -1636,9 +1636,11 @@ frame journal and the renderer's counters.
   CPU's blend state one arithmetic twice, kept alike by hand.
 - **No colour glyph from a real font.** No fixture font has one. Colour
   is tested in the cache, the painter and the compositor on images the
-  tests make, and never through the rasteriser. COLR version 1 glyphs
-  are not drawn in colour by `swash` at the pin, and a colour bitmap's
-  alpha convention was not checked.
+  tests make, and never through the rasteriser. No GPU has drawn a
+  colour image either: the on-demand check draws the fixture frame, in
+  subpixel masks and in plain ones, and that path of the shader is only
+  validated. COLR version 1 glyphs are not drawn in colour by `swash` at
+  the pin, and a colour bitmap's alpha convention was not checked.
 - **What only a person at a display can tune.** Hinting (on), the
   coverage adjustment for thin dark text (its amount is 0, which changes
   nothing), the amount of synthetic bold, where an underline and a

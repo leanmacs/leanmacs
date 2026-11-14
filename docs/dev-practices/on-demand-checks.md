@@ -231,10 +231,15 @@ the first two held:
 1. holds a renderer on this machine's adapter to the renderer port's
    contract (`crates/editor-render`, `contract`);
 2. draws the fixture frame of real text, reads it back and compares it
-   with the reference image `tests/render/frame.png`: no channel of any
-   pixel may differ by more than 3 of 255. On an adapter that cannot
-   blend by a coverage for each channel it compares with the headless
-   adapter's picture in plain masks instead, and says so;
+   with what the CPU compositor draws: no channel of any pixel may differ
+   by more than 3 of 255. In subpixel masks it is compared with the
+   reference image `tests/render/frame.png`; in plain masks, as a display
+   of two physical pixels to a logical one gets them, with the headless
+   adapter's picture of the same frame drawn the same way. An adapter
+   that cannot blend by a coverage for each channel draws only the
+   second. The fixture has no colour glyph, so a colour image is drawn by
+   no GPU here: that path of the shader is validated in the gate and has
+   never been seen;
 3. prints how long a first frame, a frame with a row edited and a frame
    that differs only in its cursor took, with the rows each built. The
    times are of one run of a debug build: nothing is asserted of them and
@@ -246,8 +251,9 @@ pass: a difference past it is a finding.
 
 It was run on 2026-11-14 on macOS (aarch64): Metal on an Apple M5 Max,
 blending by a coverage for each channel; all 9 properties of the contract
-held; 42 of the frame's pixels differed from the reference image, the
-worst by 1 of 255.
+held; 42 of the frame's 24576 pixels differed from the reference image,
+and 14 from the headless adapter's picture in plain masks, the worst by 1
+of 255 in each.
 
 ## The renderer on Linux, on demand
 
@@ -264,8 +270,9 @@ the same with them.
 
 It was run on 2026-11-14 (aarch64, Debian 13, Mesa 25.0.7): llvmpipe
 through Vulkan, blending by a coverage for each channel; all 9 properties
-held; 247 pixels differed from the reference image, the worst by 1 of
-255. It has not been run on x86_64.
+held; 247 pixels differed from the reference image, and 168 from the
+headless adapter's picture in plain masks, the worst by 1 of 255 in each.
+It has not been run on x86_64.
 
 ## The reference image, on demand
 
