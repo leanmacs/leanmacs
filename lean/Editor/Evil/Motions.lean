@@ -150,10 +150,19 @@ def lineStart : Vocabulary.Motion :=
     target := fun text origin => return { head := ← text.motion .lineStart origin.head } }
 
 /-- To the line's first character that is not a blank, or to where its
-content ends when it has none, whatever the count. -/
+content ends when it has none, whatever the count. Under an operator, on a
+line of blanks only, it leads to the line's last blank, which is where
+Vim's cursor goes: the operator takes the blanks before it and not that
+one. -/
 def lineFirstNonBlank : Vocabulary.Motion :=
   { name := "line-first-non-blank"
-    target := fun text origin => return { head := ← text.motion .lineFirstNonBlank origin.head } }
+    target := fun text origin => return { head := ← text.motion .lineFirstNonBlank origin.head }
+    taken := fun _ text origin => do
+      let first ← text.motion .lineFirstNonBlank origin.head
+      let stop ← text.motion .lineEnd origin.head
+      if first == stop && (← text.motion .lineStart origin.head) < stop then
+        return { head := ← text.motion .previousCell stop, reach := .exclusive }
+      return { head := first, reach := .exclusive } }
 
 /-- To where the content ends of the line `count - 1` lines below, of this
 line with no count, and of the last line when the text has fewer below.

@@ -1,7 +1,6 @@
 import Editor.Api.Theorems
 import Editor.Command.Append
-import Editor.Evil
-import Editor.Evil.Motions
+import Editor.Evil.Operators
 import Editor.Ex
 import Editor.InputScheme.Vim.Default
 import Editor.Minibuffer
@@ -69,6 +68,12 @@ their table, `Evil.motions`, in `Editor/Evil/Motions.lean`: the move
 command is a function of the table it looks a name up in, so a command of
 config's hands it the vocabulary that ships, or that vocabulary with
 motions of its own added (`Evil.move (Evil.motions.push mine)`). The
+operators are here too (`Editor/Evil/Operators.lean`, with the registers
+they set in `Editor/Evil/Registers.lean`): the operate command is a
+function of the operators and the motions it looks names up in
+(`Evil.operate Evil.operators Evil.motions`). That module is the one
+import here that brings evil: the commands and the motions come with it.
+The
 commands' registrations (`Editor/Evil/Compiled.lean`) name the registry
 and are not imported, as the file commands' and the minibuffer's are not.
 Pinned by `ConfigTest.evilChecks`, on a config the real elaborator loads.

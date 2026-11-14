@@ -324,7 +324,16 @@ registers for evil (`Editor/Evil/Compiled.lean`), on the loop's driver:
   rests, and that the head steps back;
 - `evilInsertChecks`: `i a I A`, typed text and `<Escape>`; that an insert
   session is one step of the history, by an undo request; a key typed into
-  a prompt; and a committed text in normal state and inside a session.
+  a prompt; and a committed text in normal state and inside a session;
+- `evilOperatorChecks`: the operators (`Editor/Evil/Operators.lean`). An
+  operator's keys are pressed with a sentinel in the unnamed register
+  (`evilEdited`), so a register left as it was is seen, and a row
+  (`OperatorRow`, `operatorRows`) says the text, the cursor, the register
+  and whether it is line-wise, whether the view is left in insert state,
+  and whether the command gave up. `operatorTable` is every operator over
+  every motion in five situations; beside it are the special cases, the
+  calls of the operate command that give up, and that an operator is one
+  step of the history.
 
 Each expected text of a row is written by hand from Vim's documented
 behaviour (`docs/design/keymaps-and-modes.md`, "Motions as built"). No
@@ -14097,6 +14106,255 @@ def evilInsertChecks : List Check :=
               evilHistory ended == some (2, false) &&
               evilText (evilUndone ended) == some "abc" }]
 
+/-- What the unnamed register holds before the keys of an operator's row:
+a text no row yields, so that a register the keys left as it was is seen. -/
+def evilSentinel : Register :=
+  { text := "the sentinel", linewise := true }
+
+/-- What the keys of an operator's row left, as the checks read it. -/
+structure EvilEdited where
+  /-- The buffer's text with a bar at the head of the selection's primary
+  range. -/
+  shown : String
+  /-- The unnamed register; `none` when it is as it was before the keys. -/
+  register : Option Register
+  /-- Whether the scene's status line says the view is in insert state: its
+  first field is the one the scheme reports of that state. -/
+  insert : Bool
+  /-- What the echo area says. -/
+  echo : String
+  deriving DecidableEq, Repr
+
+/-- A driver of the evil checks over the state the fixture `fixture` says,
+with the unnamed register holding `evilSentinel`. -/
+def evilRegistered (fixture : String) : Option EvilDriver :=
+  let (contents, head) := barred fixture
+  (Loop.Driver.over evilHanded (fun _ => none)
+      (do
+        return (← evilState contents head).setRegister Evil.unnamed evilSentinel)
+      editorModel).toOption
+
+/-- What `driver`, made by `evilRegistered`, shows after its keys. -/
+def evilLeft (driver : EvilDriver) : EvilEdited :=
+  let register := driver.loop.state.register? Evil.unnamed
+  { shown := evilShown driver
+    register := if register == some evilSentinel then none else register
+    insert :=
+      ((evilSeen driver).bind (·.status[0]?)) == (vimDefaultReport "i").status[0]? &&
+        (vimDefaultReport "i").status[0]? != (vimDefaultReport "").status[0]?
+    echo := driver.loop.state.echo }
+
+/-- The keys the key string `typed` names, pressed under the Vim scheme that
+ships with evil's commands, from the text and the cursor `fixture` says,
+with the unnamed register holding a sentinel: what they left. -/
+def evilEdited (fixture typed : String) : Option EvilEdited :=
+  (evilRegistered fixture).map fun driver => evilLeft (evilFed driver typed)
+
+/-- The operate command called with `arguments`, as an invocation no key
+yielded, from the text and the cursor `fixture` says: what it left. -/
+def evilOperated (fixture : String) (arguments : List Argument) : Option EvilEdited :=
+  (evilRegistered fixture).map fun driver =>
+    evilLeft
+      (driver.stepped
+          (driver.loop.invoke driver.handed { command := Vim.operateCommand, arguments })).1
+
+/-- A register's text that is not line-wise, as a row expects it. -/
+def charwise (text : String) : Option Register :=
+  some { text }
+
+/-- A register's text that is line-wise, as a row expects it. -/
+def linewise (text : String) : Option Register :=
+  some { text, linewise := true }
+
+/-- The register a row expects its keys to leave as it was. -/
+def asItWas : Option Register :=
+  none
+
+/-- One row of an oracle table of the operators: keys, the text and the
+cursor they are pressed from, and what Vim leaves. -/
+structure OperatorRow where
+  /-- The text before, with the cursor as a bar. -/
+  before : String
+  /-- The key string. -/
+  keys : String
+  /-- The text after, with a bar at the cursor: the cell the cursor is on in
+  normal state, and where the insert begins in insert state. -/
+  after : String
+  /-- The unnamed register after; `none` when it is as it was. -/
+  register : Option Register
+  /-- Whether the view is left in insert state. -/
+  insert : Bool := false
+  /-- Whether the command gave up: something is said in the echo area, which
+  is no refusal, and nothing changed. -/
+  gaveUp : Bool := false
+
+namespace OperatorRow
+
+/-- A row whose keys leave the view in normal state. -/
+def rests (before keys after : String) (register : Option Register) : OperatorRow :=
+  { before, keys, after, register }
+
+/-- A row whose keys leave the view in insert state, the bar at `after`'s. -/
+def inserts (before keys after : String) (register : Option Register) : OperatorRow :=
+  { before, keys, after, register, insert := true }
+
+/-- A row whose keys' command gives up: the text, the cursor and the
+register are as they were, and the view is in normal state. -/
+def givesUp (before keys : String) : OperatorRow :=
+  { before, keys, after := before, register := none, gaveUp := true }
+
+/-- What is wrong with the row, if anything: what its keys left when that
+is not what the row says, and a key string that names no keys. -/
+def wrong (row : OperatorRow) : Option String :=
+  if (ModelTest.keys row.keys).isEmpty then some s!"{repr row.keys} names no keys"
+  else
+    match evilEdited row.before row.keys with
+    | none => some s!"no driver for {repr row.before}"
+    | some left =>
+      let saidSo := !left.echo.isEmpty && (left.echo.splitOn "refused").length == 1
+      if
+          left.shown == row.after && left.register == row.register && left.insert == row.insert &&
+            (if row.gaveUp then saidSo else left.echo.isEmpty) then
+        none
+      else some s!"{row.keys} from {repr row.before} left {repr left}"
+
+end OperatorRow
+
+/-- Whether each row of `rows` holds (`OperatorRow.wrong`). A failure names
+each row that does not hold, with what its keys left. -/
+def operatorRows (rows : List OperatorRow) : IO Bool := do
+  let wrong := rows.filterMap (·.wrong)
+  unless wrong.isEmpty do
+    throw (IO.userError ("; ".intercalate wrong))
+  return true
+
+/-- The text and the cursor of the oracle table's first two situations: a
+cursor in the middle of a line that has words, punctuation and an indent,
+with lines above and below. -/
+def plainText : String :=
+  "ab\ncd\n  ef |gh.ij kl\nmn\nop\n"
+
+/-- The text and the cursor of the oracle table's third situation: a cursor
+on an empty line. -/
+def emptyLineText : String :=
+  "ab cd\n|\n  ef gh\n"
+
+/-- The text and the cursor of the oracle table's fourth situation: a cursor
+on the last character of a buffer that ends in a line feed. -/
+def endText : String :=
+  "ab cd\n  ef g|h\n"
+
+/-- The text and the cursor of the oracle table's fifth situation: a cursor
+on the last character of a buffer with no final line feed. -/
+def bareEndText : String :=
+  "ab cd\n  ef g|h"
+
+/-- The oracle table's rows for `d` over `h`, `l`, `0` and `^`, in its five
+situations: no count, a count of 2, on an empty line, and on the buffer's
+last character with and without a final line feed. `0` takes no count of
+its own, so its counted row has the count before the operator. -/
+def deleteAlongRows : List OperatorRow :=
+  [.rests plainText "d h" "ab\ncd\n  ef|gh.ij kl\nmn\nop\n" (charwise " "),
+    .rests plainText "d l" "ab\ncd\n  ef |h.ij kl\nmn\nop\n" (charwise "g"),
+    .rests plainText "d 0" "ab\ncd\n|gh.ij kl\nmn\nop\n" (charwise "  ef "),
+    .rests plainText "d ^" "ab\ncd\n  |gh.ij kl\nmn\nop\n" (charwise "ef "),
+    .rests plainText "d 2 h" "ab\ncd\n  e|gh.ij kl\nmn\nop\n" (charwise "f "),
+    .rests plainText "d 2 l" "ab\ncd\n  ef |.ij kl\nmn\nop\n" (charwise "gh"),
+    .rests plainText "2 d 0" "ab\ncd\n|gh.ij kl\nmn\nop\n" (charwise "  ef "),
+    .rests plainText "d 2 ^" "ab\ncd\n  |gh.ij kl\nmn\nop\n" (charwise "ef "),
+    .rests emptyLineText "d h" "ab cd\n|\n  ef gh\n" asItWas,
+    .rests emptyLineText "d l" "ab cd\n|\n  ef gh\n" asItWas,
+    .rests emptyLineText "d 0" "ab cd\n|\n  ef gh\n" asItWas,
+    .rests emptyLineText "d ^" "ab cd\n|\n  ef gh\n" asItWas,
+    .rests endText "d h" "ab cd\n  ef |h\n" (charwise "g"),
+    .rests endText "d l" "ab cd\n  ef |g\n" (charwise "h"),
+    .rests endText "d 0" "ab cd\n|h\n" (charwise "  ef g"),
+    .rests endText "d ^" "ab cd\n  |h\n" (charwise "ef g"),
+    .rests bareEndText "d h" "ab cd\n  ef |h" (charwise "g"),
+    .rests bareEndText "d l" "ab cd\n  ef |g" (charwise "h"),
+    .rests bareEndText "d 0" "ab cd\n|h" (charwise "  ef g"),
+    .rests bareEndText "d ^" "ab cd\n  |h" (charwise "ef g")]
+
+/-- The rows of the operator × motion table, in the order the motions were
+built. -/
+def operatorTable : List OperatorRow :=
+  deleteAlongRows
+
+/-- Whether `echo`, what the echo area says after a command gave up, ends
+with `reason`, the sentence the command gave. -/
+def evilGaveUp (left : Option EvilEdited) (shown reason : String) : Bool :=
+  !reason.isEmpty &&
+    match left with
+    | some left =>
+      left.shown == shown && left.register == none && !left.insert && left.echo.endsWith reason &&
+        (left.echo.splitOn "refused").length == 1
+    | none => false
+
+/-- The checks of evil's operators (`Editor/Evil/Operators.lean`) on the
+loop's driver over the editor's models, under the Vim scheme that ships
+with evil's commands: an operator's keys are pressed in a text with the
+cursor written into it, with a sentinel in the unnamed register, and each
+expected text, cursor and register is written by hand from Vim's
+documented behaviour, case by case. -/
+def evilOperatorChecks : List Check :=
+  [{  name :=
+        "an operator's key and a motion's run the operate command: d l deletes the cell under the cursor into the unnamed register, and nothing is said in the echo area"
+      run := pure (evilEdited "a|bc" "d l" == some ⟨"a|c", charwise "b", false, ""⟩) },
+    { name :=
+        "each operator over each motion, in five situations (no count, a count of 2, on an empty line, on the buffer's last character with and without a final line feed), leaves the text, the cursor and the unnamed register Vim leaves"
+      run := operatorRows operatorTable },
+    { name :=
+        "d ^ on a line of blanks only deletes from the cursor up to the line's last blank, and nothing from the last blank; d h at a line's start and d l on an empty line delete nothing and leave the register as it was"
+      run :=
+        operatorRows
+          [.rests "|   " "d ^" "| " (charwise "  "), .rests "  | " "d ^" "  | " asItWas,
+            .rests "|abc" "d h" "|abc" asItWas, .rests "ab\n|abc" "d h" "ab\n|abc" asItWas,
+            .rests "ab\n|\ncd" "d l" "ab\n|\ncd" asItWas] },
+    { name :=
+        "operate gives up, with the sentence its function makes and nothing changed, when it names an operator no entry has, a motion no entry has, a text object, a kind there is none of, and when its arguments are not an operator's"
+      run :=
+        pure <|
+          let operated (arguments : List Argument) := evilOperated "a|bc" arguments
+          evilGaveUp (operated [.str "frob", .str "motion", .str Evil.right.name, .nat 0, .str ""])
+              "a|bc" (Evil.noSuchOperator "frob") &&
+            evilGaveUp
+              (operated [.str Evil.delete.name, .str "motion", .str "nowhere", .nat 0, .str ""])
+              "a|bc" (Evil.noSuchMotion "nowhere") &&
+            evilGaveUp
+              (operated [.str Evil.delete.name, .str "text-object", .str "word", .nat 0, .str ""])
+              "a|bc" Evil.noTextObject &&
+            evilGaveUp (operated [.str Evil.delete.name, .str "sideways", .str "", .nat 0, .str ""])
+              "a|bc" Evil.noOperatorNamed &&
+            evilGaveUp (operated []) "a|bc" Evil.noOperatorNamed &&
+            evilGaveUp (operated [.str Evil.delete.name, .str "motion"]) "a|bc"
+              Evil.noOperatorNamed &&
+            operated
+                [.str Evil.delete.name, .str "motion", .str Evil.right.name, .nat 2, .str ""] ==
+              some ⟨"|a", charwise "bc", false, ""⟩ },
+    { name :=
+        "an operator leaves the window with no wanted column: after j the window keeps one, and after d l it keeps none"
+      run :=
+        pure <|
+          match evilDriver "ab|cd\nxyz\nabcd" with
+          | none => false
+          | some driver =>
+            let wanted (driver : EvilDriver) := (driver.loop.state.window? ⟨0⟩).bind (·.wanted)
+            let moved := evilFed driver "j"
+            let deleted := evilFed moved "d l"
+            (wanted moved).isSome && (wanted deleted).isNone &&
+              evilShown deleted == "abcd\nx|y\nabcd" },
+    { name :=
+        "a deletion is one step of the history: after d l the buffer's tree has one node more and nothing pending, and one undo request gives the text from before it"
+      run :=
+        pure <|
+          match evilDriver "a|bc" with
+          | none => false
+          | some driver =>
+            let deleted := evilFed driver "d l"
+            evilHistory driver == some (1, false) && evilHistory deleted == some (2, false) &&
+              evilText deleted == some "ac" &&
+              evilText (evilUndone deleted) == some "abc" }]
+
 /-- Every check, in the order they run.
 
 The order matters where the process's one pool is measured. `poolChecks` run
@@ -14155,7 +14413,8 @@ def checks : List Check :=
     evilRestChecks ++
     evilMotionChecks ++
     evilStateChecks ++
-    evilInsertChecks
+    evilInsertChecks ++
+    evilOperatorChecks
 
 /-- Runs `checks` and returns the names of those that failed. A check that
 throws has failed, and its error is reported with its name. -/

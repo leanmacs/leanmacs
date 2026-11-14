@@ -23,6 +23,8 @@ registers is moved in by the same commands.
 |---|---|
 | `Editor/Evil.lean` | The resting rule and the commands, each a function of its call |
 | `Editor/Evil/Motions.lean` | The motions, as vocabulary entries, and their table (`Evil.motions`) |
+| `Editor/Evil/Operators.lean` | The operators, as vocabulary entries, their table (`Evil.operators`), and the operate command |
+| `Editor/Evil/Registers.lean` | The registers a yank and a deletion set |
 | `Editor/Evil/Compiled.lean` | The commands' registrations, under the names the Vim scheme's invocations carry |
 
 ## The move command
