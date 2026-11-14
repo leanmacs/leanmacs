@@ -7816,16 +7816,18 @@ def vimEscapeTable : List (String × Vim.Bound) :=
 
 /-- The registry of Vim states the grammar's checks run on, written here so
 that no check of the grammar names a default binding: `normal`, the initial
-state; `insert`, where typing is text, which is also the state the
-registry names for the minibuffer's view; and `visual`, where an operator
-acts on the selection and normal's keys are bound too. -/
+state; `insert`, where typing is text and the selection is exclusive, which
+is also the state the registry names for the minibuffer's view; and
+`visual`, where an operator acts on the selection and normal's keys are
+bound too. -/
 def vimStates : Vim.States :=
   { initial := { name := "normal", keymaps := [vimKeymap vimNormalTable] }
     others :=
       [{  name := "insert"
           keymaps := [vimKeymap vimEscapeTable]
           cursor := .bar
-          insertsText := true },
+          insertsText := true
+          shape := .exclusive },
         { name := "visual"
           keymaps := [vimKeymap vimEscapeTable, vimKeymap vimNormalTable]
           operatesOnSelection := true }]
@@ -7877,7 +7879,17 @@ def vimRegistryChecks : List Check :=
         pure
           (vimSeen replaced.initial == ("normal", .underline, false, false, 0) &&
             vimSeen (replaced.get "normal") == ("normal", .underline, false, false, 0) &&
-            replaced.others.map (·.name) == ["insert", "visual"]) }]
+            replaced.others.map (·.name) == ["insert", "visual"]) },
+    { name :=
+        "a Vim state's record says the shape of its selection: inclusive unless it says otherwise, and the shape it was registered with"
+      run :=
+        let added := vimStates.register { name := "lines", shape := .line }
+        pure
+          (({ name := "bare" } : Vim.StateRecord).shape == .inclusive &&
+            (vimStates.get "normal").shape == .inclusive &&
+            (vimStates.get "visual").shape == .inclusive &&
+            (vimStates.get "insert").shape == .exclusive &&
+            (added.get "lines").shape == .line) }]
 
 /-- No active keymaps, for every view: a key is looked up in the keymaps of
 the view's Vim state alone. -/
@@ -8347,6 +8359,51 @@ which Vim state a view is in, how one is entered, and what the grammar
 reads of a state's record. -/
 def vimStateChecks : List Check :=
   [{  name :=
+        "the Vim scheme reports a view with no entry by the initial record: its cursor shape in the face cursor. and its name, one status field with its name in the state's face, its shape, no selecting, no insert session, and a view that takes no text"
+      run :=
+        let scheme := Vim.scheme vimStates
+        pure
+          (scheme.report vimInit ⟨0⟩ ==
+              { cursor := { shape := .block, face := ⟨"cursor.normal"⟩ }
+                status := #[{ text := "normal", face := Vim.stateFace }], shape := .inclusive
+                selecting := false, session := false, takesText := false } &&
+            scheme.report vimInit ⟨5⟩ == scheme.report vimInit ⟨0⟩ &&
+            Vim.stateFace == ⟨"status.state"⟩) },
+    { name :=
+        "after a key that enters a state where typing is text, the Vim scheme reports that record's cursor, name and shape, an insert session, and a view that takes text"
+      run :=
+        let scheme := Vim.scheme vimStates
+        pure
+          (scheme.report (vimFed "i").1 ⟨0⟩ ==
+            { cursor := { shape := .bar, face := ⟨"cursor.insert"⟩ }
+              status := #[{ text := "insert", face := Vim.stateFace }], shape := .exclusive
+              selecting := false, session := true, takesText := true }) },
+    { name :=
+        "the Vim scheme reports selecting for a view in a state whose operators act on the selection, and the record a check registers by its own cursor, name and shape"
+      run :=
+        let states := vimWithTest.register { vimWithTest.get "test" with shape := .line }
+        let visual := (Vim.scheme vimStates).report (vimFed "v").1 ⟨0⟩
+        pure
+          (visual.selecting && !visual.session && !visual.takesText && visual.shape == .inclusive &&
+            visual.status == #[{ text := "visual", face := Vim.stateFace }] &&
+            (Vim.scheme states).report (vimFed "q" (states := states)).1 ⟨0⟩ ==
+              { cursor := { shape := .underline, face := ⟨"cursor.test"⟩ }
+                status := #[{ text := "test", face := Vim.stateFace }], shape := .line
+                selecting := false, session := false, takesText := false }) },
+    { name :=
+        "the Vim scheme's report is one view's: a key for one view leaves another view's report as it was, a view told closed is reported by the initial record again, and a view told to be the minibuffer's by the record the registry names for it"
+      run :=
+        let scheme := Vim.scheme vimStates
+        let (entered, _) := vimFed "i"
+        let closed : Vim.State := scheme.closeView ⟨0⟩ entered
+        let told : Vim.State := scheme.openMinibuffer ⟨3⟩ vimInit
+        pure
+          (scheme.report entered ⟨1⟩ == scheme.report vimInit ⟨1⟩ &&
+            scheme.report entered ⟨0⟩ != scheme.report vimInit ⟨0⟩ &&
+            scheme.report closed ⟨0⟩ == scheme.report vimInit ⟨0⟩ &&
+            scheme.report told ⟨3⟩ == scheme.report entered ⟨0⟩ &&
+            scheme.report told ⟨0⟩ == scheme.report vimInit ⟨0⟩) },
+    { name :=
         "a state a check registers, entered by a key bound in the normal state's keymap, is the view's state, and the next key is looked up in its keymap"
       run :=
         let (state, yields) := vimFed "q m" (states := vimWithTest)

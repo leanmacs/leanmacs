@@ -148,6 +148,24 @@ A Vim state (normal, insert, a visual state) is a record in a registry
 - **The edit begun is one for the scheme**, not one a view: there is one
   keyboard. A key for another view goes on with it, and is looked up in the
   keymaps of its own view and that view's state.
+- **A record says the shape of the view's selection** (`StateRecord.shape`,
+  inclusive unless the record says otherwise). The grammar does not read
+  it: the command that enters the state reshapes the selection by it
+  (`docs/design/keymaps-and-modes.md`, "Vim states").
+- **The scheme reports the record of a view's state** (`State.report`,
+  which the scheme reports as `InputScheme.report`), since nothing outside
+  the scheme can read one:
+
+  | Field of the report | From the record |
+  |---|---|
+  | `cursor` | Its cursor shape, in the face `cursor.` followed by its name (`cursorFace`) |
+  | `status` | One field: its name, in the face `stateFace` |
+  | `shape` | Its `shape` |
+  | `selecting` | `operatesOnSelection`: where operators act on the selection, a motion extends it |
+  | `session`, `takesText` | `insertsText`: where typing is text, the view is in an insert session and a committed text is inserted |
+
+  A key that yields nothing changes no view's state, so it changes no
+  report, which the scheme contract asks.
 
 ## The last change
 
@@ -201,6 +219,7 @@ config's `bindKey`, holds in every state.
 | A new target of an operator | A variant of `Over`, and its row in `Edit.compile` |
 | A new fact about an operator or a command that the grammar needs | A field of `Operator` or of `Command` |
 | A new fact about a Vim state | A field of `StateRecord` |
+| A new fact about a Vim state that the loop, the scene or a command reads | A field of `StateRecord`, and how `State.report` reads it into the report |
 | A new part of speech | A variant of `Bound`, and its case in `State.reached` |
 | Something the scheme remembers between keys | A field of `State`, with what a reset does to it (`State.reset`) |
 | A new default key or default Vim state | A row of a table in `Editor/InputScheme/Vim/Default.lean`; nothing here |
@@ -339,8 +358,10 @@ structure StateRecord where
   text, and a digit is not a count. -/
   insertsText : Bool := false
   /-- Whether an operator acts on the view's selection at once, and waits
-  for no motion. -/
+  for no motion. A motion in such a state extends the selection. -/
   operatesOnSelection : Bool := false
+  /-- The shape the view's selection has in the state. -/
+  shape : Shape := .inclusive
   deriving Repr
 
 /-- The registry of Vim states the scheme is built over: an open set, with
@@ -409,6 +430,29 @@ def State.record (states : States) (state : State) (view : ViewId) : StateRecord
 /-- The name of the Vim state `view` is in. -/
 def State.stateOf (states : States) (state : State) (view : ViewId) : String :=
   (state.record states view).name
+
+/-- The face of the status field that names a view's Vim state. -/
+def stateFace : FaceName :=
+  ⟨"status.state"⟩
+
+/-- The face a view's cursors take in the Vim state called `name`:
+`cursor.` and the name. -/
+def cursorFace (name : String) : FaceName :=
+  ⟨s!"cursor.{name}"⟩
+
+/-- What the scheme says of `view`, read off the record of the Vim state it
+is in: the record's cursor shape in the face of its name, one status field,
+the state's name in `stateFace`, and the record's shape. A motion extends
+the selection where operators act on it, and the view is in an insert
+session and takes committed text where typing is text. -/
+def State.report (states : States) (state : State) (view : ViewId) : InputScheme.Report :=
+  let record := state.record states view
+  { cursor := { shape := record.cursor, face := cursorFace record.name }
+    status := #[{ text := record.name, face := stateFace }]
+    shape := record.shape
+    selecting := record.operatesOnSelection
+    session := record.insertsText
+    takesText := record.insertsText }
 
 /-- The product of two counts, with an absent one left out; none when both
 are absent. -/
@@ -608,9 +652,11 @@ no state: the grammar cannot look either up. A key a mode binds, and a
 hand-tuned key, is marked as a mode's (`Bound.mode`). Its own keymaps are
 every state's. A view that is closed has its Vim state forgotten, and a
 view that is opened as the minibuffer's is put in the state the registry
-names for it. -/
+names for it. What it reports of a view is read off the record of the
+view's Vim state (`State.report`). -/
 def scheme (states : States) (modes : ModeKeys := {}) : InputScheme :=
   { State, Binding := Bound, init := {}, step := step states, pending := (·.typed)
+    report := State.report states
     command := fun name => .command { name }
     roles := modes.roles
     leader := modes.leader
