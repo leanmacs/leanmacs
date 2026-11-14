@@ -1,0 +1,20 @@
+# The script `mise run ffi-test` has the editor's headless mode run against
+# the config in `config/`, to run the file commands the editor ships. What
+# it prints must be exactly `expected`. It touches no file.
+
+reload
+settle
+
+# `save-buffer` is a compiled command: the editor has it with no config.
+# The scratch buffer shows no file, which the echo area says.
+run save-buffer
+scene
+
+# `open-relative` is config's: it calls `Files.open` with a path that is not
+# absolute. The compiled job `load-file` is started, and the library refuses
+# the path before it asks the file system. `join` waits for the job: its
+# result comes back as a command, which says the refusal in the echo area,
+# and the view still shows the scratch buffer.
+run open-relative
+join
+scene

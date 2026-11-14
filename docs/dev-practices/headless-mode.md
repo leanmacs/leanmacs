@@ -119,19 +119,21 @@ $ .lake/build/bin/editor headless "$(lean --print-prefix)" .lake/build/lib/lean 
 reload 1: installed, 2 chunks, 1 commands
 run greet: ok
 run missing: no such command
-commands: greet
+commands: open-file save-buffer greet
 text 0: ""
 text 1: "hello, world"
 spawn count: job 1
 job 1 count: ok
-commands: greet
+commands: open-file save-buffer greet
 text 0: ""
 text 1: "hello, world"
 text 2: "counted 42"
 ```
 
 Text 0 is the scratch buffer's: the editor loop makes its frame, and that
-buffer, for the first command it runs.
+buffer, for the first command it runs. `open-file` and `save-buffer` are
+the commands the editor ships, compiled in: `show` lists them before
+config's.
 
 The gate runs a second script on the same config, `tests/headless/keys-script`,
 whose output must be exactly `tests/headless/keys-expected`:
@@ -197,6 +199,38 @@ status 0: status.name "scratch", status.modified "[+]"
 The status line after the first scene's view has the name alone: `spin` was
 rolled back, so the buffer is not modified. After `mark` it has the
 modified field too.
+
+A fifth, `tests/headless/files/script`, runs the file commands the editor
+ships, on the config in `tests/headless/files/config`, and touches no file.
+`save-buffer` is compiled in, so it runs with no config registering it: on
+the scratch buffer, which shows no file, it says so in the echo area. The
+config registers `open-relative`, which calls `Files.open` on the focused
+view with a path that is not absolute:
+
+```lean
+def openRelative : EditorM Unit := do
+  Files.open (← editorState).frame.focused "notes/relative.txt"
+```
+
+That starts the compiled job `load-file`. The library refuses a path that
+is not absolute before it asks the file system, the refusal comes back as
+the job's result, and the job's command says it in the echo area. Its
+output must be exactly `tests/headless/files/expected`:
+
+```console
+$ .lake/build/bin/editor headless "$(lean --print-prefix)" .lake/build/lib/lean ../tests/headless/files/config ../tests/headless/files/script
+reload 1: installed, 1 chunks, 1 commands
+run save-buffer: ok
+scene 0x0, focused 0, echo "scratch has no file to save to", preedit -, published 1
+view 0 0,0 0x0: "", scroll 0, selections 0..0
+status 0: status.name "scratch"
+run open-relative: ok
+job 1 load-file: started
+job 1 load-file: ok
+scene 0x0, focused 0, echo "cannot open notes/relative.txt: the path is not absolute", preedit -, published 5
+view 0 0,0 0x0: "", scroll 0, selections 0..0
+status 0: status.name "scratch"
+```
 
 The editor runs its command loop, under the Vim scheme. The loop has no
 frame until it is first needed: for the first event from the window input

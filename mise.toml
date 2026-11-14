@@ -164,6 +164,13 @@ run = [
   # (`dispatch/expected`). A command that is not stopped loops for longer
   # than the time limit.
   "out=$(.lake/build/bin/editor headless \"$(lean --print-prefix)\" .lake/build/lib/lean ../tests/headless/dispatch/config ../tests/headless/dispatch/script) && printf '%s\\n' \"$out\" | diff ../tests/headless/dispatch/expected -",
+  # The file commands the editor ships, on a config of its own (tests/
+  # headless/files): `save-buffer`, which no config registers, says the
+  # scratch buffer has no file, and a command of config's opens a path that
+  # is not absolute, which starts the compiled job `load-file` and is
+  # refused by the library before it asks the file system, so the run
+  # touches no file (`files/expected`).
+  "out=$(.lake/build/bin/editor headless \"$(lean --print-prefix)\" .lake/build/lib/lean ../tests/headless/files/config ../tests/headless/files/script) && printf '%s\\n' \"$out\" | diff ../tests/headless/files/expected -",
   # The editor's failure statuses. A command line it does not understand is
   # status 2, with the usage on stderr.
   "status=0; .lake/build/bin/editor bogus || status=$?; test \"$status\" -eq 2",

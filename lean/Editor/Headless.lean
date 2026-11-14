@@ -3,6 +3,7 @@ import Editor.Config.Elaborate
 import Editor.Config.Reload
 import Editor.Display.Recorder
 import Editor.Event.Queue
+import Editor.Files.Compiled
 import Editor.InputScheme.Vim.Default
 import Editor.Job.Jobs
 import Editor.Job.Pool
@@ -93,10 +94,14 @@ as before, so reload and job completion work as they did.
   name runs in its place until a reload drops it. A compiled job is
   started by a command, by its name, as config's is, for the owner
   `compiled`: a reload that installs cancels config's jobs only, so a
-  compiled job runs across a reload. The executable is handed no binding
-  and no mode: the commands its scheme's keys name are not built yet, so a
-  key of the Vim scheme says `<name>: no such command` in the echo area,
-  and no mode ships.
+  compiled job runs across a reload. The executable is handed the file
+  commands and their jobs (`Files.commands`, `Files.jobs`,
+  `Editor/Files/Compiled.lean`): `open-file` and `save-buffer`, the first
+  commands it ships, which `show` lists before config's, and the jobs
+  `load-file` and `save-file`. It is handed no binding and no mode: the
+  commands its scheme's keys name are not built yet, so a key of the Vim
+  scheme says `<name>: no such command` in the echo area, and no mode
+  ships.
 - **The interrupt key.** When the loop starts the host tells the library
   which key raises the interrupt flag (`Collaborators.interruptKey`, `C-g`),
   and leaves it with none when the loop ends. The loop's programs are run
@@ -263,9 +268,10 @@ end of the script and for a loop that did not stop.
 
 `main` is the executable's headless mode,
 `editor headless <sysroot> <olean dir> <config dir> <script file>`: `run`
-with the real elaborator, a directory as the source, stdout as the output
-and the library's timer service and file service for the jobs, then the quit
-and the explicit exit. Before the loop starts it warms the pool (`Editor/Job/Pool.lean`) and
+with the real elaborator, a directory as the source, stdout as the output,
+the library's timer service and file service for the jobs, and the file
+commands and their jobs as its compiled ones, then the quit and the
+explicit exit. Before the loop starts it warms the pool (`Editor/Job/Pool.lean`) and
 starts the completion pump on a dedicated task (`Editor/Job/Real.lean`),
 which the quit ends. Its exit status is 0 when the script ran to its end and
 1 when it could not, and then it says why on stderr: the script cannot be
@@ -292,7 +298,11 @@ leaves the compiled ones, and a slow command is logged, on the fake clock.
 through the loop, makes the frame, is rolled back when it fails and is
 stopped by the interrupt key; a key's command starts a job, whose result
 comes back as a command after the keys sent meanwhile; and a job's command
-that loops is stopped by the interrupt key.
+that loops is stopped by the interrupt key; and a host is handed a compiled
+job, which a compiled command starts before any config is loaded and a
+reload does not cancel. `ConfigTest.fileChecks` are hosts over the
+library's file service, handed the file commands and their jobs as compiled
+code registers them, on real files in temporary directories.
 The `ffi-test` task runs the real executable
 once, on the fixture under `tests/headless`, which covers the command line,
 the pump and the timer service: the fixture's job sleeps on the real clock.
@@ -300,8 +310,12 @@ It runs it a second time on `tests/headless/keys-script`, which sends keys
 with their identity through the library's window input, a third on
 `tests/headless/scene-script`, which commits text, asks for the scene, and
 then reloads and runs a job once the frame exists, each followed by a
-scene, and a fourth on `tests/headless/dispatch`, whose keys run commands
-config binds, one of which starts a job with an argument.
+scene, a fourth on `tests/headless/dispatch`, whose keys run commands
+config binds, one of which starts a job with an argument, and a fifth on
+`tests/headless/files`, which runs the file commands the executable ships
+and touches no file: `save-buffer` on the scratch buffer, and a command of
+config's that opens a path the library refuses before it asks the file
+system.
 -/
 
 namespace Editor.Headless
@@ -1303,8 +1317,8 @@ def main (sysroot oleanDir configDir scriptPath : String) : IO UInt32 := do
           services :=
             { completions, timers := Job.realTimers completions,
               files := Job.realFiles completions published.reader held },
-          published, held, requests := 1, wakeups := 2, jobs := 3, log := IO.eprintln }
-        directives settlePatience
+          published, held, requests := 1, wakeups := 2, jobs := 3, commands := Files.commands
+          compiledJobs := Files.jobs, log := IO.eprintln } directives settlePatience
   (← IO.getStdout).flush
   if let some failure := failure then
     IO.eprintln s!"editor: {failure.describe settlePatience}"
