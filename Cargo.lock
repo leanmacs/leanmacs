@@ -372,6 +372,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "editor-render-wgpu"
+version = "0.1.0"
+dependencies = [
+ "editor-layout",
+ "editor-render",
+]
+
+[[package]]
 name = "editor-shape-parley"
 version = "0.1.0"
 dependencies = [

@@ -1,0 +1,73 @@
+# What no line of `editor-render-wgpu` may name, its tests included: a real
+# file, a directory of the machine, a process or a clock. The renderer is
+# handed frames as values and fonts as the bytes a frame carries, and its
+# tests are handed the fixture fonts under `tests/fonts`, compiled in with
+# `include_bytes!`: nothing is read when a test runs. A cost is counted
+# (`Drawn`), never timed, and time reaches the render loop through
+# `editor-render`'s `Clock` port.
+#
+# Clippy reads the first `clippy.toml` it finds from a package's manifest
+# directory upwards, and the workspace root has none, so this file governs
+# every target of this crate and no other. `disallowed_methods` and
+# `disallowed_types` are on by default at `warn`, and `mise run lint` denies
+# warnings, so a line that names one of these fails the gate.
+#
+# The list is `crates/editor-layout/clippy.toml`'s; `crates/editor-text/
+# clippy.toml`'s header says what a list of names does not hold.
+#
+# Seen to bite once by hand, on 2026-11-14: with a test added to
+# `src/quads.rs` that calls `std::fs::read("/nonexistent")`, `mise run lint`
+# fails with "use of a disallowed method `std::fs::read`". With the test
+# taken out it passes.
+
+disallowed-methods = [
+  # Every free function of `std::fs`.
+  { path = "std::fs::canonicalize", reason = "the renderer touches no file: a frame reaches it as a value and a font as bytes" },
+  { path = "std::fs::copy", reason = "the renderer touches no file: a frame reaches it as a value and a font as bytes" },
+  { path = "std::fs::create_dir", reason = "the renderer touches no file: a frame reaches it as a value and a font as bytes" },
+  { path = "std::fs::create_dir_all", reason = "the renderer touches no file: a frame reaches it as a value and a font as bytes" },
+  { path = "std::fs::exists", reason = "the renderer touches no file: a frame reaches it as a value and a font as bytes" },
+  { path = "std::fs::hard_link", reason = "the renderer touches no file: a frame reaches it as a value and a font as bytes" },
+  { path = "std::fs::metadata", reason = "the renderer touches no file: a frame reaches it as a value and a font as bytes" },
+  { path = "std::fs::read", reason = "the renderer touches no file: a frame reaches it as a value and a font as bytes" },
+  { path = "std::fs::read_dir", reason = "the renderer touches no file: a frame reaches it as a value and a font as bytes" },
+  { path = "std::fs::read_link", reason = "the renderer touches no file: a frame reaches it as a value and a font as bytes" },
+  { path = "std::fs::read_to_string", reason = "the renderer touches no file: a frame reaches it as a value and a font as bytes" },
+  { path = "std::fs::remove_dir", reason = "the renderer touches no file: a frame reaches it as a value and a font as bytes" },
+  { path = "std::fs::remove_dir_all", reason = "the renderer touches no file: a frame reaches it as a value and a font as bytes" },
+  { path = "std::fs::remove_file", reason = "the renderer touches no file: a frame reaches it as a value and a font as bytes" },
+  { path = "std::fs::rename", reason = "the renderer touches no file: a frame reaches it as a value and a font as bytes" },
+  { path = "std::fs::set_permissions", reason = "the renderer touches no file: a frame reaches it as a value and a font as bytes" },
+  { path = "std::fs::symlink_metadata", reason = "the renderer touches no file: a frame reaches it as a value and a font as bytes" },
+  { path = "std::fs::write", reason = "the renderer touches no file: a frame reaches it as a value and a font as bytes" },
+  # The methods of `Path` that ask the disk.
+  { path = "std::path::Path::canonicalize", reason = "the renderer touches no file: a frame reaches it as a value and a font as bytes" },
+  { path = "std::path::Path::exists", reason = "the renderer touches no file: a frame reaches it as a value and a font as bytes" },
+  { path = "std::path::Path::is_dir", reason = "the renderer touches no file: a frame reaches it as a value and a font as bytes" },
+  { path = "std::path::Path::is_file", reason = "the renderer touches no file: a frame reaches it as a value and a font as bytes" },
+  { path = "std::path::Path::is_symlink", reason = "the renderer touches no file: a frame reaches it as a value and a font as bytes" },
+  { path = "std::path::Path::metadata", reason = "the renderer touches no file: a frame reaches it as a value and a font as bytes" },
+  { path = "std::path::Path::read_dir", reason = "the renderer touches no file: a frame reaches it as a value and a font as bytes" },
+  { path = "std::path::Path::read_link", reason = "the renderer touches no file: a frame reaches it as a value and a font as bytes" },
+  { path = "std::path::Path::symlink_metadata", reason = "the renderer touches no file: a frame reaches it as a value and a font as bytes" },
+  { path = "std::path::Path::try_exists", reason = "the renderer touches no file: a frame reaches it as a value and a font as bytes" },
+  # The directories of the machine.
+  { path = "std::env::current_dir", reason = "the renderer has no directory of the machine, and a test leaves the process as it found it" },
+  { path = "std::env::set_current_dir", reason = "the renderer has no directory of the machine, and a test leaves the process as it found it" },
+  { path = "std::env::temp_dir", reason = "the renderer has no directory of the machine, and a test leaves the process as it found it" },
+  # Processes.
+  { path = "std::process::Command::new", reason = "the renderer starts no process" },
+  # The clocks.
+  { path = "std::time::SystemTime::now", reason = "the renderer reads no clock: a cost is counted (`Drawn`), never timed" },
+  { path = "std::time::Instant::now", reason = "the renderer reads no clock: a cost is counted (`Drawn`), never timed" },
+  # The file port's real adapter, which this crate does not depend on.
+  { path = "editor_fs_std::StdFs::system", reason = "the renderer touches no file system, real or fake" },
+]
+
+disallowed-types = [
+  { path = "std::fs::File", reason = "the renderer touches no file: a frame reaches it as a value and a font as bytes" },
+  { path = "std::fs::OpenOptions", reason = "the renderer touches no file: a frame reaches it as a value and a font as bytes" },
+  { path = "std::fs::DirBuilder", reason = "the renderer touches no file: a frame reaches it as a value and a font as bytes" },
+  { path = "std::fs::ReadDir", reason = "the renderer touches no file: a frame reaches it as a value and a font as bytes" },
+  { path = "std::fs::DirEntry", reason = "the renderer touches no file: a frame reaches it as a value and a font as bytes" },
+]

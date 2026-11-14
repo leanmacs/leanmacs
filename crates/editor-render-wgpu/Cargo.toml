@@ -1,0 +1,16 @@
+[package]
+name = "editor-render-wgpu"
+version = "0.1.0"
+description = "The Renderer port's real adapters: a glyph atlas and quads of our own, composited on the CPU or drawn with wgpu"
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+# The port this crate implements, with its fake, its contract check and
+# the row cache every back end keeps its rows through. `deny.toml` lists
+# this crate as editor-render's one wrapper.
+editor-render = { path = "../editor-render" }
+# The frame a renderer draws, as plain data. `deny.toml` lists this crate
+# among editor-layout's wrappers.
+editor-layout = { path = "../editor-layout" }
