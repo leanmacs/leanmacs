@@ -36,7 +36,9 @@ looks the motion's name up in, so the caller supplies the vocabulary.
 - **It reads the primary range of its target's selection**, asks the motion
   for the raw target from that range's head, rests the raw target by the
   rule of the call's report ("Where a cursor rests"), and places one range
-  with the report's shape, whose two ends are the new head.
+  with the report's shape. Its head is the rested target. Its anchor is
+  the anchor the range had where the report says a motion extends the
+  selection (`selecting`: the visual states), and the new head otherwise.
 - **It hands the motion the wanted column the window keeps, when that
   column still holds** (`Window.wanted`, `Editor/State.lean`, "The wanted
   column"): when the head is where the cursor was left when the column was
@@ -47,6 +49,33 @@ looks the motion's name up in, so the caller supplies the vocabulary.
 - **Placing a marker is no edit**, so a motion is no step of the history.
 - **One cursor.** No command makes a second range; this one reads the
   primary range and places one range.
+
+## Entering a state
+
+`enter` is the command a key that enters a Vim state runs, whichever state
+it is: it reshapes the selection by what the scheme reports of the view,
+which is the report of the state being entered, since a command sees the
+scheme's state after its key (`Editor/Command/Call.lean`). The rule
+(`docs/design/keymaps-and-modes.md`, "Vim states"):
+
+1. The selection takes the report's shape.
+2. Its two ends are kept where the report says a motion extends the
+   selection (the visual states). Otherwise it is collapsed onto its head.
+3. When the selection was exclusive and the new shape is not, which is an
+   insert session ending, the head first steps back one cell, and stays
+   where it is at the start of its line. This is Vim's escape.
+4. The head is then put where the state lets it rest ("Where a cursor
+   rests"), and so is the anchor where it is kept.
+
+- **So entering a visual state from normal state changes nothing but the
+  shape**: the selection is already one range with equal ends on the cell
+  under the cursor, and the next motion moves its head alone. From one
+  visual state to the other both ends are kept, so the columns survive
+  line-wise selection.
+- **The window keeps no wanted column once the selection is collapsed**
+  (`ViewId.setWanted`), as Vim's escape resets it; entering a state that
+  keeps both ends leaves it.
+- **It ignores its count and its register.**
 
 ## Where a cursor rests
 
@@ -84,9 +113,10 @@ For the two rules that are not `anywhere`, in order:
 - **The rule is applied after the motion and not inside it**, so a motion
   answers the raw target, which an operator needs.
 
-Pinned by `ModelTest.evilRestChecks`, on the text model, and the move
-command by `ModelTest.evilMotionChecks`, on the loop's driver under the Vim
-scheme that ships.
+Pinned by `ModelTest.evilRestChecks`, on the text model, and, on the
+loop's driver under the Vim scheme that ships, the move command by
+`ModelTest.evilMotionChecks` and entering a state by
+`ModelTest.evilStateChecks`.
 
 ## Where an addition goes
 
@@ -148,8 +178,10 @@ def noSuchMotion (name : String) : String :=
 move command", in the module docs): its first argument names the motion and
 its second is the count, 0 for none. The head of the primary range of the
 target's selection goes where the motion leads, rested by the rule of the
-call's report, and the selection is one range there, of the report's shape.
-A name with no motion is said in the echo area, and nothing moves. -/
+call's report, and the selection is one range of the report's shape, from
+the anchor it had where the report says a motion extends the selection,
+and with both ends on the new head otherwise. A name with no motion is
+said in the echo area, and nothing moves. -/
 def move (motions : Array Vocabulary.Motion) (call : Call) : EditorM Unit := do
   let (name, count) :=
     match call.arguments with
@@ -165,8 +197,38 @@ def move (motions : Array Vocabulary.Motion) (call : Call) : EditorM Unit := do
   let wanted := (window.wanted.filter (·.head == range.head)).map (·.column)
   let raw ← motion.target text { head := range.head, count, wanted }
   let head ← rested (restOf call.report) text raw.head
-  call.target.select { ranges := #[⟨head, head⟩], shape := call.report.shape }
+  let anchor := if call.report.selecting then range.anchor else head
+  call.target.select { ranges := #[⟨anchor, head⟩], shape := call.report.shape }
   let keeps := if head == range.head then raw.unmoved else raw.wanted
   discard <| window.id.setWanted (keeps.map fun column => { column, head })
+
+/-- The command that enters a Vim state, as it is called ("Entering a
+state", in the module docs): the selection of the target's window becomes
+one range of the shape the call's report says, with both its ends kept
+where the report says a motion extends the selection and collapsed onto its
+head otherwise. A head that leaves an exclusive selection for another shape
+first steps back one cell on its line, and each end kept is put where the
+report's state lets a cursor rest. Once the selection is collapsed the
+window keeps no wanted column. -/
+def enter (call : Call) : EditorM Unit := do
+  let text := call.target.buffer.text
+  let report := call.report
+  let selection ← call.target.selection
+  let some range := selection.ranges[selection.primary]? | throw .badSelection
+  let leavesInsert := selection.shape == .exclusive && report.shape != .exclusive
+  let back ←
+    if leavesInsert && (← text.motion .lineStart range.head) < range.head then
+      text.motion .previousCell range.head
+    else
+      pure range.head
+  let head ← rested (restOf report) text back
+  let anchor ←
+    if report.selecting then
+      rested (restOf report) text range.anchor
+    else
+      pure head
+  call.target.select { ranges := #[⟨anchor, head⟩], shape := report.shape }
+  unless report.selecting do
+    discard <| call.target.window.id.setWanted none
 
 end Editor.Evil

@@ -12049,6 +12049,130 @@ def evilMotionChecks : List Check :=
           throw (IO.userError ("; ".intercalate wrong.toList))
         return !Evil.motions.isEmpty }]
 
+/-- What a scene shows of one view, as the evil checks read it. -/
+structure EvilSeen where
+  /-- The selection the view's one selection marker holds. -/
+  selection : Selection
+  /-- The text each range of that selection covers, by its shape. -/
+  covered : Array String
+  /-- How the view's cursors are drawn. -/
+  cursor : Cursor
+  /-- The view's status line. -/
+  status : Array StatusField
+  deriving DecidableEq, Repr
+
+/-- What the last scene `driver`'s display recorded shows of the view
+`view`: the selection its selection marker holds in the text model, what
+that selection covers, the view's cursor and its status line. `none` when
+no scene has the view, or it does not name one selection marker. -/
+def evilSeen (driver : EvilDriver) (view : ViewId := ⟨0⟩) : Option EvilSeen := do
+  let scene ← driver.model.display.scenes.back?
+  let shown ← scene.views.find? (·.id == view)
+  let #[marker] := shown.selections | none
+  let program : TextM (Selection × Array String) := do
+    let .selection selection ← marker.text.marker marker | throw .noSuchMarker
+    let extents ← marker.text.extents selection
+    return (selection, ← extents.mapM fun extent => marker.text.slice extent.start extent.stop)
+  let (selection, covered) ← (program.runModel driver.model.texts).1.toOption
+  return { selection, covered, cursor := shown.cursor, status := shown.status }
+
+/-- What the scene after the keys `typed`, pressed from the fixture
+`fixture`, shows of view 0 (`evilSeen`). -/
+def evilScene (fixture typed : String) : Option EvilSeen :=
+  (evilDriver fixture).bind fun driver => evilSeen (evilFed driver typed)
+
+/-- The selection the scene shows after the keys `typed`, pressed from the
+fixture `fixture`: its ranges, as an anchor and a head each, its shape,
+and the text each range covers. -/
+def evilSelected (fixture typed : String) : Option (List (Nat × Nat) × Shape × List String) :=
+  (evilScene fixture typed).map fun seen =>
+    ((seen.selection.ranges.map fun range => (range.anchor, range.head)).toList,
+      seen.selection.shape, seen.covered.toList)
+
+/-- The cursor and the status line a scene shows of a view of the buffer
+`scratch`, not modified, in the Vim state view 0 is in after the keys
+`typed` under the grammar alone: what the default scheme reports of that
+state, and then the buffer's name. -/
+def evilLooks (typed : String) : Cursor × Array StatusField :=
+  let report := vimDefaultReport typed
+  (report.cursor, report.status ++ #[{ text := "scratch", face := Loop.nameFace }])
+
+/-- The checks of evil's states (`Editor/Evil.lean`) on the loop's driver
+over the editor's models, under the Vim scheme that ships with evil's
+commands: what entering a visual state and leaving one does to the view's
+selection, read from the selection marker the scene names, and what the
+scene then shows of the state. -/
+def evilStateChecks : List Check :=
+  [{  name :=
+        "v and then a motion: the scene shows one inclusive selection from the cell the cursor started on to the cell the motion leads to, which covers both cells and what is between them"
+      run :=
+        pure
+          (evilSelected "foo |bar baz" "v w" == some ([(4, 8)], .inclusive, ["bar b"]) &&
+            evilSelected "foo |bar baz" "v" == some ([(4, 4)], .inclusive, ["b"]) &&
+            evilSelected "foo |bar baz" "v 2 l" == some ([(4, 6)], .inclusive, ["bar"])) },
+    { name :=
+        "v and then a motion backwards: the anchor stays on the cell the cursor started on and the head is before it, and the selection covers from the head through the anchor's cell"
+      run :=
+        pure
+          (evilSelected "foo |bar baz" "v b" == some ([(4, 0)], .inclusive, ["foo b"]) &&
+            evilSelected "foo b|ar baz" "v h h" == some ([(5, 3)], .inclusive, [" ba"])) },
+    { name :=
+        "V and then a motion: the scene shows one line-shaped selection whose two ends are the cells the cursor started on and came to, which covers every line from the starting line to the target line, each with its line break"
+      run :=
+        pure
+          (evilSelected "ab|cd\nefgh\nijkl" "V j" == some ([(2, 7)], .line, ["abcd\nefgh\n"]) &&
+            evilSelected "ab|cd\nefgh\nijkl" "V" == some ([(2, 2)], .line, ["abcd\n"]) &&
+            evilSelected "abcd\nefgh\nij|kl" "V k k" ==
+              some ([(12, 2)], .line, ["abcd\nefgh\nijkl"]) &&
+            evilSelected "ab|cd\nefgh\nijkl" "V 2 j w" ==
+              some ([(2, 13)], .line, ["abcd\nefgh\nijkl"])) },
+    { name :=
+        "in a visual state the head may rest on a line break: v then $ puts it there and the selection covers the line break, and so do l from a line's last character and j onto a shorter line"
+      run :=
+        pure
+          (evilSelected "a|bc\ndef" "v $" == some ([(1, 3)], .inclusive, ["bc\n"]) &&
+            evilSelected "ab|c\ndef" "v l" == some ([(2, 3)], .inclusive, ["c\n"]) &&
+            evilSelected "abc|d\nx\nabcd" "v j" == some ([(3, 6)], .inclusive, ["d\nx\n"]) &&
+            evilSelected "foo |bar\n" "v w" == some ([(4, 7)], .inclusive, ["bar\n"])) },
+    { name :=
+        "<Escape> from a visual state leaves one inclusive selection with equal ends on the head, which then rests as normal state's cursor does: off the line break after v and $"
+      run :=
+        pure
+          (evilSelected "foo |bar baz" "v w <Escape>" == some ([(8, 8)], .inclusive, ["b"]) &&
+            evilSelected "foo |bar baz" "v b <Escape>" == some ([(0, 0)], .inclusive, ["f"]) &&
+            evilSelected "ab|cd\nefgh\nijkl" "V j <Escape>" == some ([(7, 7)], .inclusive, ["g"]) &&
+            evilSelected "a|bc\ndef" "v $ <Escape>" == some ([(2, 2)], .inclusive, ["c"]) &&
+            evilKeys "a|bc\ndef" "v $ <Escape>" == "ab|c\ndef" &&
+            evilKeys "abc|d\nx\nabcd" "v j <Escape>" == "abcd\n|x\nabcd") },
+    { name :=
+        "V in the state v enters and v in the state V enters change the selection's shape and keep both its ends; v typed again in the state it enters, and V in its own, leave the selection as <Escape> does"
+      run :=
+        pure
+          (evilSelected "foo |bar baz" "v w V" == some ([(4, 8)], .line, ["foo bar baz"]) &&
+            evilSelected "foo |bar baz" "V w v" == some ([(4, 8)], .inclusive, ["bar b"]) &&
+            evilSelected "foo |bar baz" "v w v" == some ([(8, 8)], .inclusive, ["b"]) &&
+            evilSelected "foo |bar baz" "V w V" == some ([(8, 8)], .inclusive, ["b"])) },
+    { name :=
+        "a departure from Vim, recorded in keymaps-and-modes.md under Where a cursor rests: on a last line with no line feed the head of a visual selection stops on the last character, where Vim's goes one past it, since there is no cell there"
+      run := pure (evilSelected "foo |bar" "v w" == some ([(4, 6)], .inclusive, ["bar"])) },
+    { name :=
+        "the scene's cursor and status line are the state's after each key that enters one: a visual state's after v and after V, each with its own status field, and normal state's again after <Escape>"
+      run :=
+        pure <|
+          let looks (typed : String) : Option (Cursor × Array StatusField) :=
+            (evilScene "foo |bar baz" typed).map fun seen => (seen.cursor, seen.status)
+          ["v", "V", "v V", "V v", "v <Escape>", "V <Escape>", "v w v", "<Escape>"].all
+              (fun typed => looks typed == some (evilLooks typed)) &&
+            (evilLooks "v").2 != (evilLooks "V").2 &&
+            (evilLooks "v").2 != (evilLooks "").2 &&
+            evilLooks "v <Escape>" == evilLooks "" },
+    { name :=
+        "the wanted column is kept through v, so j in the state v enters aims for it, and is not kept through <Escape>: the next j aims for the cursor's own column"
+      run :=
+        evilRows
+          [("j v j", "abc|d\nx\nabcd", "abcd\nx\nabc|d"),
+            ("j v <Escape> j", "abc|d\nx\nabcd", "abcd\nx\n|abcd")] }]
+
 /-- Every check, in the order they run.
 
 The order matters where the process's one pool is measured. `poolChecks` run
@@ -12101,7 +12225,8 @@ def checks : List Check :=
     promptChecks ++
     fileCommandChecks ++
     evilRestChecks ++
-    evilMotionChecks
+    evilMotionChecks ++
+    evilStateChecks
 
 /-- Runs `checks` and returns the names of those that failed. A check that
 throws has failed, and its error is reported with its name. -/

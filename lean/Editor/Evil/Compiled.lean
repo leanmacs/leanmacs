@@ -18,6 +18,7 @@ they hold when config fails to load, and a reload does not replace them.
   | Name | Runs |
   |---|---|
   | `move` (`Vim.moveCommand`) | `Evil.move` over the compiled vocabulary, `Evil.motions` |
+  | `normal`, `visual`, `visual-line` | `Evil.enter`, one function for the three: it reads the state it enters from its call's report |
 
 A name here and the name the Vim scheme's default tables give a key
 (`Editor/InputScheme/Vim/Default.lean`) are changed together: the scheme
@@ -28,13 +29,16 @@ This module is apart from `Editor/Evil.lean` because it names the registry,
 which is the config session's: `Editor.lean` imports the commands, so that
 config can call them, and not this.
 
-Pinned by `ModelTest.evilMotionChecks`, on the models.
+Pinned by `ModelTest.evilMotionChecks` and `ModelTest.evilStateChecks`, on
+the models.
 -/
 
 namespace Editor.Evil
 
 /-- Evil's commands, as a host registers them for the owner `compiled`. -/
 def commands : Array Config.Registration :=
-  #[{ name := Vim.moveCommand, action := .call (move motions) }]
+  #[{ name := Vim.moveCommand, action := .call (move motions) },
+    { name := "normal", action := .call enter }, { name := "visual", action := .call enter },
+    { name := "visual-line", action := .call enter }]
 
 end Editor.Evil
