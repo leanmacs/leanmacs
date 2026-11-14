@@ -205,7 +205,7 @@ service.
 The config session's decisions are tested here too, with no elaborator:
 
 - `setupChecks`: what a `setup` registers, commands, stores, jobs, key
-  bindings and modes, and when it is refused;
+  bindings, modes and ex bindings, and when it is refused;
 - `registryChecks`: the registry, its commands, its jobs, its key
   bindings, its modes and its ex bindings, replaced by owner;
 - `storeChecks`: the rule that meets a new config's stores with the cells
@@ -218,8 +218,8 @@ The config session's decisions are tested here too, with no elaborator:
   double-register, a store value survives a reload), and `config-test` runs
   them again with the real elaborator, queue and text binding. The reducer
   also says when the old config's jobs are cancelled: when a reload
-  installs, and only then. An install replaces config's key bindings and
-  modes and keeps the compiled ones.
+  installs, and only then. An install replaces config's key bindings,
+  modes and ex bindings and keeps the compiled ones.
 
 How a key becomes an invocation is pure Lean with no port, so its checks
 need no model and no fake of a collaborator:
@@ -1752,6 +1752,47 @@ def setupChecks : List Check :=
           (refusal twice == some "the keys `C-x C-s` are bound twice" &&
             refusal same == some "the keys `C-q` are bound twice" &&
             refusal apart == none) },
+    { name :=
+        "a setup that binds ex names collects each binding, in order, with what it takes, nothing unless it says, and registers no command"
+      run :=
+        let setup : SetupM Unit := do
+          exCommand "greet" "greet-named" (takes := .text)
+          exCommand "w" "write"
+        match Config.Registrations.ofSetup setup with
+        | .error _ => pure false
+        | .ok collected =>
+          pure
+            (collected.ex ==
+                #[{ name := "greet", command := "greet-named", takes := .text },
+                  { name := "w", command := "write" }] &&
+              collected.commands.isEmpty) },
+    { name :=
+        "a setup that binds one ex name twice is refused with a message that names it, whether to one command or to two; two names for one command are not"
+      run :=
+        let twice : SetupM Unit := do
+          exCommand "greet" "one"
+          exCommand "w" "write"
+          exCommand "greet" "two"
+        let same : SetupM Unit := do
+          exCommand "w" "write"
+          exCommand "w" "write"
+        let apart : SetupM Unit := do
+          exCommand "w" "write"
+          exCommand "write" "write"
+        pure
+          (refusal twice == some "the ex name `greet` is bound twice" &&
+            refusal same == some "the ex name `w` is bound twice" &&
+            refusal apart == none) },
+    { name :=
+        "a setup that binds an ex name that is empty or holds white space is refused, with a message that names it and the command: it could not be typed on the ex line"
+      run :=
+        let after (name : String) : SetupM Unit := do
+          command "write" (makes "1")
+          exCommand name "write"
+        pure
+          (["", "w q", " w", "w\t"].all
+              (fun name => refusal (after name) == some (unusableExName name "write")) &&
+            refusal (after "w-q!") == none) },
     { name := "defineMode registers the mode, in order, beside the commands"
       run :=
         let setup : SetupM Unit := do
@@ -2741,7 +2782,36 @@ def reloadChecks : List Check :=
             names reloaded == #["kept", "listing"] &&
             parentOf reloaded == some "second" &&
             names kept == names loaded &&
-            parentOf kept == some "first") }]
+            parentOf kept == some "first") },
+    { name :=
+        "an accepted outcome replaces the config's ex bindings and leaves compiled ones: a name the new config binds to another command runs that one, one it no longer binds is found no more, and a compiled name it bound is the compiled one again; a rejected outcome keeps them; an ex binding is not counted as a command"
+      run :=
+        let compiled : Config.State Elaborated :=
+          {
+            registry :=
+              ({} : Config.Registry).replaceEx .compiled
+                #[{ name := "w", command := "compiled" }, { name := "q", command := "kept" }] }
+        let first : SetupM Unit := do
+          exCommand "greet" "one" (takes := .text)
+          exCommand "old" "gone"
+          exCommand "w" "config"
+        let (loaded, _) := reduceFrom compiled [.requested, .finished (accepted ["a"] first)]
+        let (reloaded, effects) :=
+          reduceFrom loaded [.requested, .finished (accepted ["a"] (exCommand "greet" "two"))]
+        let (kept, _) := reduceFrom loaded [.requested, .finished (rejected "a")]
+        let runs (state : Config.State Elaborated) (name : String) : Option String :=
+          (state.registry.ex? name).map (·.command)
+        pure
+          (runs loaded "greet" == some "one" && runs loaded "old" == some "gone" &&
+            runs loaded "w" == some "config" &&
+            runs loaded "q" == some "kept" &&
+            reloaded.registry.ex? "greet" == some { name := "greet", command := "two" } &&
+            runs reloaded "old" == none &&
+            runs reloaded "w" == some "compiled" &&
+            runs reloaded "q" == some "kept" &&
+            reloaded.registry.ex.size == 3 &&
+            effects == #[.start (some #[]) #["a"], .cancelJobs "config", .report 2 true #[] 1 0] &&
+            kept.registry.ex == loaded.registry.ex) }]
 
 /-- A key press that produced `text`. -/
 def pressed (text : String) : WindowCheck.Input :=

@@ -1,4 +1,5 @@
 import Editor.Command.Call
+import Editor.Ex.Line
 import Editor.Job
 import Editor.Key.Notation
 import Editor.Mode
@@ -82,6 +83,27 @@ command and is not counted as one. It is called `bindKey` and not `bind`,
 which would shadow the monad's inside `namespace Editor` and for config,
 which opens it.
 
+An ex name is bound to a command's name (`exCommand`): a line of the ex
+command line whose first word is the name runs that command
+(`docs/design/keymaps-and-modes.md`, "The ex command line"). By default the
+name takes nothing after it; with `takes := .text` the rest of the line is
+the command's first argument, a string, which is where a prompt's answer
+goes, so the continuation above is an ex command as it stands:
+
+```lean
+def setup : SetupM Unit := do
+  commandWith "greet-named" fun call =>
+    match call.arguments with
+    | .str name :: _ => message s!"hello {name}"
+    | _ => message "hello"
+  exCommand "greet" "greet-named" (takes := .text)
+```
+
+The command's name is looked up when the line is run, as a key binding's
+is. An ex binding is not a command and is not counted as one. `exCommand`
+refuses a name that is empty or holds white space, which could not be
+typed as a line's first word.
+
 `setup` is a program over a port of its own, the *setup port*, whose requests
 carry what is registered. It is plain data like any program
 (`Editor/Program.lean`): it holds no `IO` and changes nothing by itself. After
@@ -97,7 +119,7 @@ with that message, and the config that was loaded before stays.
 The editor refuses a `setup` too, the same way, when what it registered
 cannot be meant: a command name or a job name registered twice (the first
 could never run), a key sequence bound twice (the first binding could never
-run), a store name declared twice, a command over a store the `setup`
+run), an ex name bound twice, a store name declared twice, a command over a store the `setup`
 does not declare, a mode name defined twice, or a mode that cannot be meant
 under any scheme (`Mode.problems`: a role that is not registered, a suffix
 used twice, a suffix that is not keys). The diagnostic names the command,
@@ -147,6 +169,10 @@ inductive SetupRequest where
   | bind (keys : List Key) (command : String)
   /-- Define the mode `mode`. -/
   | mode (mode : Mode)
+  /-- Bind an ex name to a command's name (`Ex.Binding`,
+  `Editor/Ex/Line.lean`). The command's name is looked up when a line of
+  that name is run. -/
+  | ex (binding : Ex.Binding)
 
 /-- The type of the reply to each request: nothing, for all of them. -/
 def SetupRequest.Reply : SetupRequest → Type
@@ -157,6 +183,7 @@ def SetupRequest.Reply : SetupRequest → Type
   | .job .. => Unit
   | .bind .. => Unit
   | .mode _ => Unit
+  | .ex _ => Unit
 
 /-- The setup port: `SetupRequest` and the reply to each request. -/
 abbrev setupPort : Port :=
@@ -232,6 +259,25 @@ def bindKey (keys : String) (command : String) : SetupM Unit := do
     throw (boundToNoKeys command)
   | .ok chords =>
     ExceptT.lift (Program.request (port := setupPort) (.bind chords command))
+
+/-- The message a binding of the ex name `name` to the command called
+`command` is refused with when the name is empty or holds white space. -/
+def unusableExName (name command : String) : String :=
+  s!"the ex name `{name}` of the command `{command}` cannot be typed: it is empty or holds white space"
+
+/-- Binds the ex name `name` to the command called `command`: a line of the
+ex command line whose first word is `name` runs that command. With
+`takes := .text` the rest of the line is the command's first argument, a
+string; by default the name takes nothing, and a line with more is refused
+when it is run. The command's name is looked up when the line is run, so
+the command need not be one this `setup` registers.
+
+Refuses the `setup` for a name that is empty or holds white space, which
+could not be typed as a line's first word. -/
+def exCommand (name command : String) (takes : Ex.Takes := .nothing) : SetupM Unit := do
+  if name.isEmpty || name.any (·.isWhitespace) then
+    throw (unusableExName name command)
+  ExceptT.lift (Program.request (port := setupPort) (.ex { name, command, takes }))
 
 /-- Defines the mode `mode`: its roles and suffixes name commands, looked
 up when the keys are typed, so they need not be ones this `setup`

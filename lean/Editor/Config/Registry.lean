@@ -34,7 +34,8 @@ handler of the setup port and then checked. `Registrations.ofSetup` is the
 whole of it: the registrations, or the message the `setup` is refused with.
 A `setup` is refused when it declares a store name twice, registers a
 command name twice or a job name twice, binds a key sequence twice or binds
-no keys, or registers a command over a store it does not declare
+no keys, binds an ex name twice, or registers a command over a store it
+does not declare
 (`Registrations.problem?`). So one owner's entries have different names, and
 the number of commands a config registers is the number of names it can be
 run by. Two owners may still register one name: a lookup then finds the
@@ -347,6 +348,8 @@ structure Registrations where
   bindings : Array KeyBinding := #[]
   /-- The modes, in the order they were defined. -/
   modes : Array Mode := #[]
+  /-- The ex bindings, in the order they were made. -/
+  ex : Array Ex.Binding := #[]
 
 namespace Registrations
 
@@ -368,6 +371,7 @@ def collect : (request : SetupRequest) → Registrations → request.Reply × Re
       { collected with
         bindings := collected.bindings.push { keys := keys.map Key.chord, command } })
   | .mode mode, collected => ((), { collected with modes := collected.modes.push mode })
+  | .ex binding, collected => ((), { collected with ex := collected.ex.push binding })
 
 /-- The first of `items` that an earlier one already is, if any. -/
 def repeated? {α : Type} [BEq α] (items : Array α) : Option α := do
@@ -379,17 +383,18 @@ def repeated? {α : Type} [BEq α] (items : Array α) : Option α := do
 
 /-- What is wrong with what was collected, if anything: a store declared
 twice, a command name or a job name registered twice, a key sequence bound
-twice, a binding of no keys, a command over a store that is not declared, a
-mode name defined twice, or a mode with a problem under any scheme
-(`Mode.problems`), of which the first is named.
+twice, a binding of no keys, an ex name bound twice, a command over a store
+that is not declared, a mode name defined twice, or a mode with a problem
+under any scheme (`Mode.problems`), of which the first is named.
 
 One config's names are each registered once. A second command under a name
 would make the first unreachable, which is a mistake in the config and never
 what it meant, so it is refused like a second store of a name; and so is a
 second job, a second binding of one key sequence, to the same command or to
-another, and a second mode of a name. A job and a command may share a name:
-one is run and the other is spawned. A binding's command is not looked up:
-it may be compiled, or not registered at all; nor is a mode's. -/
+another, a second binding of one ex name, and a second mode of a name. A
+job and a command may share a name: one is run and the other is spawned. A
+binding's command is not looked up: it may be compiled, or not registered
+at all; nor is a mode's, nor an ex binding's. -/
 def problem? (collected : Registrations) : Option String := do
   let stores := collected.stores.map (·.name)
   if let some name := repeated? stores then
@@ -403,6 +408,8 @@ def problem? (collected : Registrations) : Option String := do
       return boundToNoKeys binding.command
   if let some keys := repeated? (collected.bindings.map (·.keys)) then
     return s!"the keys `{Key.notations keys}` are bound twice"
+  if let some name := repeated? (collected.ex.map (·.name)) then
+    return s!"the ex name `{name}` is bound twice"
   for registration in collected.commands do
     if let .store store _ := registration.action then
       unless stores.contains store do
