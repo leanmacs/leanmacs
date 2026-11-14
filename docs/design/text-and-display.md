@@ -1633,9 +1633,12 @@ window is still run with nothing drawing in it. The threads are in
   is left alone for a second, shows a frame laid out for the size and
   scale it last said. At Xvfb's scale of 1 the first of those cannot
   tell a layout that was told the scale from one that was not: that the
-  window's scale reaches layout is shown only at another scale, and has
-  been seen on one desktop at scale 2, where 14 points were 28 pixels
-  and, with the example made not to tell its layout, 14 and a failure.
+  window's scale reaches layout is shown only at another scale. So the
+  task runs the window a second time with winit told a scale of 2, and
+  requires a frame laid out at scale 2 whose 14 points are 28 pixels;
+  with the example made not to tell its layout, that run prints 14 and
+  fails, there as on one desktop at scale 2. It is winit that is told:
+  no display in the container is at scale 2.
   What the gate holds of the scale is layout's arithmetic and its cost,
   on the fake shaper, and what the example makes of what it saw, in its
   unit tests. What neither holds is for a person: an apparent size

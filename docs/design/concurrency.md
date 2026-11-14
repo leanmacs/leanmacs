@@ -716,9 +716,10 @@ handler never runs.
   main thread from the window's X11 handles, configured, drawn on and
   presented on the render thread, and dropped before the window; a
   fixture frame of real text, read back from the surface, within 1 of
-  255 of the CPU's picture; each frame's 14 points drawn at 14 pixels, at
-  a scale of 1, where that does not show the scale reaching layout; no
-  frame drawn over an idle second; and a key, a
+  255 of the CPU's picture; each frame's 14 points drawn at 14 pixels at
+  a scale of 1, where that does not show the scale reaching layout, and
+  at 28 pixels in a second run where winit is told a scale of 2, where
+  it does; no frame drawn over an idle second; and a key, a
   named key, a key with modifiers, a press, a drag, a release, a wheel
   turn and a resize each arriving on the queue as the port documents it.
   What has run on macOS (2026-11-14, one desktop, aarch64, Metal, one

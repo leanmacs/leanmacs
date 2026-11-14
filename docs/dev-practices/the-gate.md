@@ -98,14 +98,16 @@ copy it out and present it, since the no-op back end hands out no surface
 texture, and the few lines that forward to them
 (`crates/editor-render-wgpu`, `gpu`, `OnSurface`); and anything a real
 clipboard does. Of the scale and of fullscreen it cannot see anything a
-window or a display does: that a window's scale reaches layout (the
-example's line `14 points are <p> pixels`, which shows it only on a
-display at a scale other than 1: `mise run linux-window` runs at scale
-1, where a layout never told the scale gives the same line, and a
-desktop at scale 2 has shown `28 pixels`); an apparent size
-beside another app; a second display and a window moved to it; the
-system's fullscreen; another Space; or what a window shows between two
-sizes. Those are a person's to see
+window or a display does. That a window's scale reaches layout is seen
+outside it, by `mise run linux-window`: the example's line `14 points
+are <p> pixels` shows it only at a scale other than 1, so that task runs
+the window a second time with winit told a scale of 2 and requires `at
+scale 2: 14 points are 28 pixels`, which a layout never told the scale
+does not give ([`on-demand-checks.md`](on-demand-checks.md), "The window
+on Linux, on demand", part 4). The rest is a person's to see: an
+apparent size beside another app; a display that is itself at scale 2;
+a second display and a window moved to it; the system's fullscreen;
+another Space; or what a window shows between two sizes
 ([`on-demand-checks.md`](on-demand-checks.md), "Scale and fullscreen, by
 hand"), and no person has yet. `mise run lint` forbids to
 tests the calls that open a clipboard, that make a renderer on a window

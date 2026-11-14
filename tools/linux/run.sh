@@ -19,7 +19,8 @@
 # focus and typing into it; the same with composition not allowed; the
 # window that draws, `editor-ffi`'s example, with the wgpu renderer drawing
 # a fixture frame in the real window on Mesa's software Vulkan driver and
-# xdotool giving it keys, the pointer and a resize; the arboard adapter's
+# xdotool giving it keys, the pointer and a resize, once at the display's
+# own scale of 1 and once at scale 2; the arboard adapter's
 # example, which holds that display's clipboard to the clipboard port's
 # contract; and text written to it by one process, read by another. Its
 # input is synthetic, and its output says so. The clipboard is the
@@ -181,8 +182,19 @@ inside_clipboard_across() {
 # release, a turn of the wheel and a resize. Fails if the example fails
 # (a frame not laid out at the window's scale, no frame presented, a
 # picture that is not the frame's, a frame drawn that nothing asked for,
-# no input), if no frame said its 14 points are 14 pixels, or if any of
-# those inputs did not come off the queue as the port documents it.
+# no input), if no frame at the scale asked for said its 14 points are 14
+# pixels times that scale, or if any of those inputs did not come off the
+# queue as the port documents it.
+#
+# `$1` is the scale the window is to be at: 1 or 2. Xvfb's display is at
+# scale 1, and for 1 the window is opened on it as it is. For 2 winit is
+# told the scale in `WINIT_X11_SCALE_FACTOR`, which its X11 back end takes
+# in place of what the display says (seen at the pin: the window then
+# says scale 2 as it opens, and the pictures are compared as at scale 1).
+# This is the run that shows the window's scale reaching layout: at scale
+# 1 a layout that was never told the scale lays out the same, and at 2 it
+# does not. It is winit that is told, not the display: nothing here is a
+# display at scale 2.
 #
 # `--require-picture`: every frame's picture must have been read back from
 # the surface and compared, or the example fails. Without it the example
@@ -190,8 +202,13 @@ inside_clipboard_across() {
 # a desktop's may be. This one does (llvmpipe's, seen), so here a picture
 # that was not compared is a read-back that broke.
 inside_drawing_window() {
-  local log=/tmp/window.log pid window status=0 waited=0 wanted
-  /work/target/debug/examples/window --seconds 6 --require-picture >"$log" 2>&1 &
+  local scale=$1 log=/tmp/window-$1.log pid window status=0 waited=0 wanted
+  local -a told=()
+  [ "$scale" = 1 ] || told=("WINIT_X11_SCALE_FACTOR=$scale")
+  echo "linux-window: 4 of 6, the window at scale $scale"
+  # The log is there before it is read.
+  : >"$log"
+  env "${told[@]}" /work/target/debug/examples/window --seconds 6 --require-picture >"$log" 2>&1 &
   pid=$!
   # The example says so once it has drawn its frame and left the window
   # alone for a second: nothing is sent before, so that second is idle.
@@ -199,7 +216,7 @@ inside_drawing_window() {
     waited=$((waited + 1))
     if [ "$waited" -ge 600 ] || ! kill -0 "$pid" 2>/dev/null; then
       cat "$log"
-      die "the window that draws was never ready for input"
+      die "the window that draws, at scale $scale, was never ready for input"
     fi
     sleep 0.1
   done
@@ -217,16 +234,16 @@ inside_drawing_window() {
   xdotool windowsize "$window" 300 120
   wait "$pid" || status=$?
   cat "$log"
-  [ "$status" -eq 0 ] || die "the window that draws exited $status"
-  # The display is at scale 1 and the fixture's text is 14 points: a frame
-  # laid out at the scale the window said has glyphs of 14 pixels. The
-  # example fails by itself on any other size; this is that it said so of
-  # a frame at all. At scale 1 a layout never told the scale gives the
-  # same line, so this shows the fixture's 14 points reaching the shaper,
-  # and not the window's scale reaching layout: only a display at another
-  # scale shows that.
-  grep -qF -- ": 14 points are 14 pixels" "$log" ||
-    die "no frame said its 14 points are 14 pixels: the fixture's size did not reach the shaper as it was stated"
+  [ "$status" -eq 0 ] || die "the window that draws, at scale $scale, exited $status"
+  # The fixture's text is 14 points: a frame laid out at the scale the
+  # window said has glyphs of 14 pixels times that scale. The example
+  # fails by itself on any other size; this is that it said so of a frame
+  # at all, and of one at the scale this run asked for. At scale 1 a
+  # layout never told the scale gives the same line, so there it shows
+  # the fixture's 14 points reaching the shaper; at scale 2 it shows the
+  # window's scale reaching layout.
+  grep -qF -- "at scale $scale: 14 points are $((14 * scale)) pixels" "$log" ||
+    die "no frame said it is laid out at scale $scale and its 14 points are $((14 * scale)) pixels"
   # Each input as the port documents it, read back from its event. The key
   # with control held carries no text, whatever the X server gave it (`A`,
   # seen): a key pressed with control or the system key inserts nothing.
@@ -238,8 +255,9 @@ inside_drawing_window() {
     "input: pointer drag primary at (30, 40) with none" \
     "input: pointer release primary at (30, 40) with none" \
     "input: pointer wheel 0 across and 1 down in lines at (30, 40) with none" \
-    "input: resized 300 by 120 at scale 1"; do
-    grep -qF -- "$wanted" "$log" || die "no input came off the queue as: $wanted"
+    "input: resized 300 by 120 at scale $scale"; do
+    grep -qF -- "$wanted" "$log" ||
+      die "at scale $scale, no input came off the queue as: $wanted"
   done
 }
 
@@ -277,8 +295,9 @@ inside_window() {
   inside_typed_check "2 of 6: the keyboard check"
   inside_typed_check "3 of 6: the keyboard check with composition not allowed" --no-ime
 
-  echo "linux-window: 4 of 6: the window that draws a fixture frame, with input given by xdotool: synthetic, nobody at a keyboard"
-  inside_drawing_window
+  echo "linux-window: 4 of 6: the window that draws a fixture frame, at scale 1 and then at scale 2, with input given by xdotool: synthetic, nobody at a keyboard"
+  inside_drawing_window 1
+  inside_drawing_window 2
 
   echo "linux-window: 5 of 6: the system clipboard against the clipboard port's contract, in one process, under Xvfb"
   /work/target/debug/examples/clipboard contract

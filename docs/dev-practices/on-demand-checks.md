@@ -535,12 +535,24 @@ display asleep, so that no window could be seen and no draw presented:
   pixels` and failed with `frame 1 is laid out for a window at scale 2,
   where 14 points are 28 pixels, and its glyphs are drawn at 14 pixels`.
 
+- In the container again, with part 4's second run, where winit is told
+  a scale of 2 (`WINIT_X11_SCALE_FACTOR=2`): `14 points are 28 pixels`
+  for the frame at 800 by 600 and for the one at 300 by 120, each of
+  three draws presented and ending `its glyphs as plain masks`, each
+  picture compared, and `window: left alone 2 times, and each time the
+  window showed what was laid out for it`. With the example changed by
+  hand as in the item above, and changed back, that run failed with the
+  same line as the desktop's and the run at scale 1 passed.
+
 So the window's scale reaching the shaper through layout is seen at scale
-2, on one display, and seen to fail the run when it does not. The
-container's scale of 1 does not show it: there a layout told nothing lays
-out the same. **Not seen by anyone**: a draw at scale 2 presented with
-these changes, and the masks it says; a change of scale; fullscreen;
-another Space; the size beside another app.
+2, on one display and in the container, and seen to fail the run when it
+does not. The container's run at scale 1 does not show it: there a
+layout told nothing lays out the same. Its run at scale 2 shows it each
+time `mise run linux-window` is run, on a window winit was told is at
+scale 2, with a draw presented and plain masks said, on llvmpipe. **Not
+seen by anyone**: a draw at scale 2 presented on a display that is at
+scale 2, and on Metal; a change of scale; fullscreen; another Space; the
+size beside another app.
 
 ### What the owner's run showed
 
@@ -623,32 +635,46 @@ fails:
 4. the window that draws, as `window-contract` runs it second
    (`crates/editor-ffi/examples/window.rs`), on Mesa's software Vulkan
    driver, llvmpipe, and with `--require-picture`, which that task does
-   not give. Once it says it is ready, xdotool gives it `a`, Escape,
-   Control-Shift-A, a press, a drag, a release, a turn of the wheel and
-   a resize. The key with Control held must come off with no text: the
-   X server gives it `A` (seen), and a key pressed with Control produced
-   nothing to insert. The part fails if the example fails (a frame whose glyphs
-   are not drawn at 14 points times the window's scale; no frame
-   presented; a frame whose picture was not read back from the surface
-   and compared, whatever the reason; a picture more than 3 of 255 from
-   the headless renderer's; a frame drawn that nothing asked for; a
-   window left alone for a second with a frame not laid out for the size
-   and scale it last said; no input), if any of those eight inputs did
-   not come off the queue as the port documents it, and if no frame
-   printed `14 points are 14 pixels`. **That line shows less here than
-   on a display at another scale.** Xvfb's display is at scale 1, where
-   a layout that was told the scale and one that was not lay out alike:
-   the line shows that the fixture's 14 points reach the real shaper and
-   come back in the frame's fonts, and not that the window's scale
-   reached layout. That is shown only at a scale other than 1: on a
-   desktop at scale 2 the line reads `14 points are 28 pixels` (seen),
-   and with the example made not to tell its layout the scale it reads
-   `14 points are 14 pixels` there and the run fails with `frame 1 is
-   laid out for a window at scale 2, where 14 points are 28 pixels, and
-   its glyphs are drawn at 14 pixels` (seen once by hand, on 2026-11-14).
-   The timeline in the container ends each presented draw `its glyphs as
-   subpixel masks, red first`: scale 1, on llvmpipe, which blends by a
-   coverage for each channel;
+   not give. It is run twice: at scale 1, which is what Xvfb's display
+   is at, and at scale 2. Each time, once it says it is ready, xdotool
+   gives it `a`, Escape, Control-Shift-A, a press, a drag, a release, a
+   turn of the wheel and a resize. The key with Control held must come
+   off with no text: the X server gives it `A` (seen), and a key pressed
+   with Control produced nothing to insert. Each run fails if the
+   example fails (a frame whose glyphs are not drawn at 14 points times
+   the window's scale; no frame presented; a frame whose picture was not
+   read back from the surface and compared, whatever the reason; a
+   picture more than 3 of 255 from the headless renderer's; a frame
+   drawn that nothing asked for; a window left alone for a second with a
+   frame not laid out for the size and scale it last said; no input), if
+   any of those eight inputs did not come off the queue as the port
+   documents it, the resize at the run's scale, and if no frame printed
+   `at scale 1: 14 points are 14 pixels` in the first run and `at scale
+   2: 14 points are 28 pixels` in the second.
+
+   **The second run is what shows the window's scale reaching layout.**
+   At scale 1 a layout that was told the scale and one that was not lay
+   out alike, so the first run's line shows only that the fixture's 14
+   points reach the real shaper and come back in the frame's fonts. For
+   the second run winit is told the scale in the environment
+   (`WINIT_X11_SCALE_FACTOR=2`, which its X11 back end takes in place of
+   what the display says: seen at the pin). The window then says scale 2
+   as it opens, the example's editor thread reads that off the resize it
+   pulls from the queue and tells its layout, and the frame's fonts come
+   back at 28 pixels. With the example made not to tell its layout the
+   scale, the first run still passes and the second prints `14 points
+   are 14 pixels` and fails with `frame 1 is laid out for a window at
+   scale 2, where 14 points are 28 pixels, and its glyphs are drawn at
+   14 pixels` (seen in the container, on 2026-11-14, and once before
+   that on a desktop at scale 2). The pictures are read back and
+   compared at scale 2 as at scale 1. The timeline ends each presented
+   draw `its glyphs as subpixel masks, red first` in the first run and
+   `its glyphs as plain masks` in the second, on llvmpipe, which blends
+   by a coverage for each channel; the task requires neither line.
+   **What the second run is not**: a display at scale 2. It is winit
+   that is told, the window is 800 by 600 pixels as it opens at either
+   scale, and nothing shows how large 28 pixels look. Nor is it a change
+   of scale: each window keeps the scale it opened at;
 5. the clipboard adapter's example, as `clipboard-contract` runs it: that
    display's clipboard held to the clipboard port's contract, in one
    process;
@@ -685,8 +711,13 @@ compared, and this run requires it (--require-picture)`, for each
 frame); the idle second, with a render loop
 that marks its frame dirty after every draw (10 frames drawn, 0 asked for)
 and with a window that asks for a redraw whenever it is asked for one
-(270139 asked for); an input's line, with Escape named `Esc`; and the
-input itself, with nothing sent. Those two mutations of the idle second
+(270139 asked for); an input's line, with Escape named `Esc`; the
+input itself, with nothing sent; the scale reaching layout, with the
+example made not to tell its layout the scale (the run at scale 1 passes
+and the run at scale 2 exits 1, as quoted under part 4); and that a
+frame was laid out at scale 2 at all, with winit not told the scale in
+the second run (`no frame said it is laid out at scale 2 and its 14
+points are 28 pixels`). Those two mutations of the idle second
 were made again once the example judged each draw by what asked for it,
 and each still fails the task: the first with `334 of the 336 draws were
 asked for by nothing: the first is draw 2, which began 256.1 ms after
@@ -725,10 +756,23 @@ by 120 at scale 1: 14 points are 14 pixels`; three frames were presented
 and each was read back and differed from the headless renderer's picture
 by 1 of 255 at the worst; each draw ended `presented, its glyphs as
 subpixel masks, red first`; and no frame was drawn in the idle second.
-The container has one display, at scale 1: no other scale and no change
-of scale is seen there. And once more with the fifth check: all six
-parts passed, with the same lines and `window: left alone 2 times, and
-each time the window showed what was laid out for it`.
+And once more with the fifth check: all six parts passed, with the same
+lines and `window: left alone 2 times, and each time the window showed
+what was laid out for it`. In those runs part 4 ran the window once, at
+scale 1.
+
+It was run again that day with part 4's second run, at scale 2: all six
+parts passed. The second run printed `input: resized 800 by 600 at scale
+2`, `window: frame 1 is laid out for 800 by 600 at scale 2: 14 points are
+28 pixels` and, after the resize, `window: frame 2 is laid out for 300 by
+120 at scale 2: 14 points are 28 pixels`; three frames were presented and
+each was read back and differed from the headless renderer's picture by 1
+of 255 at the worst; each draw ended `presented, its glyphs as plain
+masks`; no frame was drawn in the idle second; the window was left alone
+twice and showed what was laid out for it; and the eight inputs came off
+the queue as in the first run, the resize at scale 2. The container has
+one display, at scale 1: the scale of 2 is what winit was told, and no
+change of scale is seen there.
 
 ## The clipboard, on demand
 
