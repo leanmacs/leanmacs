@@ -16,6 +16,7 @@ import Editor.Job.Model
 import Editor.Job.Pool
 import Editor.Key.Notation
 import Editor.Loop
+import Editor.Role
 import Editor.Scene
 import Editor.State
 import Editor.Text.Contract
@@ -207,6 +208,12 @@ with no model:
 
 The grammar's checks run on a registry and keymaps written here
 (`vimStates`), so that none of them names a default binding.
+
+Modes are checked on the test scheme, by the roles and the leader it reports
+(`InputScheme.roleKey`, `InputScheme.leader`), so that no check of a mode
+names a scheme's key:
+
+- `modeRecordChecks`: the registered roles (`Editor/Role.lean`).
 -/
 
 namespace ModelTest
@@ -6410,6 +6417,19 @@ def vimContractChecks : List Check :=
         pure
           (failsOnly { vimSubject with unbound := charKey "z" } [SchemeContract.unboundResets]) }]
 
+/-- The checks of roles and of the mode record (`Editor/Role.lean`,
+`Editor/Mode.lean`): the roles the core registers. -/
+def modeRecordChecks : List Check :=
+  [{  name :=
+        "the registered roles are next-item, previous-item, activate, quit, refresh, toggle and mark, each a name of its own"
+      run :=
+        pure
+          (Role.registered.map (·.name) ==
+              ["next-item", "previous-item", "activate", "quit", "refresh", "toggle", "mark"] &&
+            [Role.nextItem, Role.previousItem, Role.activate, Role.quit, Role.refresh, Role.toggle,
+                Role.mark] ==
+              Role.registered) }]
+
 /-- Every check, in the order they run.
 
 The order matters where the process's one pool is measured. `poolChecks` run
@@ -6451,7 +6471,8 @@ def checks : List Check :=
     vimGrammarChecks ++
     vimStateChecks ++
     vimDefaultChecks ++
-    vimContractChecks
+    vimContractChecks ++
+    modeRecordChecks
 
 /-- Runs `checks` and returns the names of those that failed. A check that
 throws has failed, and its error is reported with its name. -/
