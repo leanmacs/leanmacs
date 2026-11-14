@@ -604,7 +604,8 @@ def framed (collaborators : Collaborators σ scheme) (running : Running σ schem
   return (made, { running with frame := made })
 
 /-- How a command the loop ran ended, as the host prints it after
-`run <name>: ` or `job <id> <name>: `. -/
+`run <name>: ` or `job <id> <name>: `. The host prints a line for every
+ending, so this matches on each: a new ending gets its words here. -/
 def describeEnding : Loop.Ending → String
   | .finished => "ok"
   | .refused refusal => s!"refused: {refusal.describe}"

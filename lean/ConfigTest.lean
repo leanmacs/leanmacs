@@ -355,8 +355,9 @@ structure Compiled where
   modes : Array Mode := #[]
   /-- How long a command may take before it is logged, in milliseconds. -/
   slowAfter : Nat := Loop.slowAfter
-  /-- The major mode the scratch buffer starts in, if any. No command can
-  set one yet, so the host's frame is made with it set. -/
+  /-- The major mode the scratch buffer starts in, if any: the host's frame
+  is made with it set, so the mode's keys hold from the first key and no
+  on-enter action runs. -/
   major : Option String := none
 
 /-- A stage for a host over `elaborator` and `source`, with what `compiled`
