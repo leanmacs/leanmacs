@@ -10,6 +10,9 @@
 //! - [`clock`]: the [`Clock`](clock::Clock) port and its fake.
 //! - [`mailbox`]: one slot in which a newer value replaces one not yet
 //!   taken.
+//! - [`schedule`]: when to draw, as a pure function of what is asked for
+//!   and the time.
 
 pub mod clock;
 pub mod mailbox;
+pub mod schedule;
