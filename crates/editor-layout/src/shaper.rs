@@ -20,11 +20,14 @@
 //! - **A font attribute** (a family, a size, a weight, a slant, a line
 //!   height; later a stretch or a variation axis): a field of [`FontSpec`],
 //!   the port's term for a font. Layout resolves the faces over a run to
-//!   a spec ([`face`](crate::face)), asks the shaper for the spec's
+//!   a spec ([`face`](crate::face)), puts it at its scale
+//!   ([`FontSpec::scaled`]), asks the shaper for that spec's
 //!   [`FontId`] ([`Shaper::font`]) and names the run's font by it; the
 //!   table from an id to its spec is the adapter's. Only what changes a
 //!   glyph or a line's height is a font attribute: colours, underlines and
-//!   strike-through are paint, and never reach a shaper.
+//!   strike-through are paint, and never reach a shaper. An attribute that
+//!   is a length is multiplied in [`FontSpec::scaled`], so that the port
+//!   stays in physical pixels.
 //! - **A shaping feature** (an OpenType feature, a language): data on
 //!   [`ShapeInput`] or on [`FontRun`], read by the adapter.
 //! - **A metric layout needs** of a font: a field of [`Metrics`].
@@ -151,18 +154,29 @@ impl fmt::Debug for ResolvedFont {
     }
 }
 
-/// A length in 64ths of a physical pixel: a whole number, so it is exact as
-/// an `f32` and can be hashed and compared.
+/// A length in 64ths: a whole number, so it is exact as an `f32` and can
+/// be hashed and compared.
+///
+/// **Which unit it is in depends on where it is.** In a face
+/// ([`face`](crate::face), "Units") it is in logical points, of which one
+/// is a physical pixel at scale 1. In a [`FontSpec`] handed to a
+/// [`Shaper`] it is in physical pixels: layout has multiplied it by its
+/// scale by then ([`Length::scaled`], in
+/// [`Styles::style`](crate::decoration::Styles::style)), so a shaper and
+/// every adapter of this port see physical pixels and no scale. The names
+/// below say "pixels" for both, as they did when a theme stated physical
+/// pixels.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Length(pub u32);
 
 impl Length {
-    /// `pixels` whole pixels.
+    /// `pixels` whole pixels, or whole points where the length is one a
+    /// face states.
     pub const fn pixels(pixels: u32) -> Self {
         Self(pixels.saturating_mul(64))
     }
 
-    /// The length in pixels.
+    /// The length in pixels, or in points where it is one a face states.
     pub fn as_pixels(self) -> f32 {
         self.0 as f32 / 64.0
     }
@@ -178,7 +192,10 @@ impl Length {
     }
 }
 
-/// The size of a font whose face sets none: 16 pixels.
+/// The size of a font whose face sets none: 16 points. Layout puts it at
+/// its scale like a size a face states, so at scale 1 it is 16 physical
+/// pixels. It is also the size of [`FontSpec::default`], font 0, which is
+/// in physical pixels as every spec a shaper sees is.
 pub const BASE_SIZE: Length = Length::pixels(16);
 
 /// A font's weight, from 1 to 1000: 400 is normal and 700 bold.
@@ -210,7 +227,8 @@ pub enum LineHeight {
     /// A multiple of the font's own line height at its size, in 64ths: 64
     /// is the font's own.
     Multiple(u32),
-    /// A height in pixels, whatever the font's own.
+    /// A height as a length, whatever the font's own: points in a face,
+    /// and physical pixels in the spec a shaper is handed ([`Length`]).
     Pixels(Length),
 }
 
@@ -222,6 +240,13 @@ impl LineHeight {
 /// A font, in the port's terms: what a run of text is shaped in. Two runs
 /// are in one font exactly when their specs are equal. The line height is
 /// part of it, since it changes how tall a line of the font is.
+///
+/// A spec a shaper is handed is in physical pixels: its size is the size
+/// its glyphs are drawn at. What the faces over a run merge into
+/// ([`face`](crate::face)) is a spec in points, and layout puts it at its
+/// scale before any shaper sees it ([`FontSpec::scaled`]). So the scale a
+/// frame is laid out at is part of every font's identity, and of nothing
+/// else in this port.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct FontSpec {
     /// The family's name; `None` is the adapter's default family.

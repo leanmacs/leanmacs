@@ -10,9 +10,15 @@
 //! | The scene | its width and height; the focus's presence and view id; the echo's length; the pending prefix's length; the preedit's presence and length; the count of views; each view |
 //! | A view | its id; its rectangle's x, y, width and height; its snapshot's presence and index in the list of handles; its scroll marker's presence and number; the count of its selection markers and each one's number; its cursor's shape (0 block, 1 bar, 2 underline, 3 hollow) and its face's length; the count of its decorations and each one's start, stop and face's length; the count of its status fields and each one's text's length and face's length |
 //! | The faces, after the last view | their presence (0: as last published); when present, the count of definitions and each definition |
-//! | A definition | its name's length; then, for each attribute in this order, a presence and its value, an absent value written as 0: the family's length; the size in 64ths of a pixel; the weight (1 to 1000); the slant (0 upright, 1 italic, 2 oblique); the foreground as `0xRRGGBBAA`; the background; the underline's style (0 none, 1 single, 2 double, 3 curly, 4 dotted, 5 dashed) followed by its colour's presence and colour; strike-through (0 or 1); the line height's kind (0 a multiple of the font's own in 64ths, 1 pixels in 64ths) followed by its value |
+//! | A definition | its name's length; then, for each attribute in this order, a presence and its value, an absent value written as 0: the family's length; the size in 64ths of a point; the weight (1 to 1000); the slant (0 upright, 1 italic, 2 oblique); the foreground as `0xRRGGBBAA`; the background; the underline's style (0 none, 1 single, 2 double, 3 curly, 4 dotted, 5 dashed) followed by its colour's presence and colour; strike-through (0 or 1); the line height's kind (0 a multiple of the font's own in 64ths, 1 a length in 64ths of a point) followed by its value |
 //!
 //! A definition is 22 words.
+//!
+//! A point is a logical one: a physical pixel at scale 1. A face's two
+//! lengths cross as the theme states them, in points, and no scale
+//! crosses with them: layout multiplies them by the scale it has
+//! (`editor_layout::face`, "Units"). Every other length of a scene, its
+//! size and each view's rectangle, is in physical pixels.
 //!
 //! The string is every text of the scene one after another, in the order
 //! the words give their lengths: the echo, the pending prefix, the preedit
@@ -42,7 +48,7 @@
 //! A size or a line height of 0 is a length like any other and crosses as
 //! it is. Lines of no height are layout's to bound, whatever made them so
 //! (`editor_layout::query`, "The rows that fit"); refusing 0 here would
-//! bound nothing, since a size of a 64th of a pixel is as flat.
+//! bound nothing, since a size of a 64th of a point is as flat.
 //!
 //! A marker's number is its document's number for it: the display resolves
 //! it against the document of the view's snapshot

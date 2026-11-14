@@ -17,7 +17,7 @@
 //! 2. the decorations of the view, a later one in the view's list over an
 //!    earlier one;
 //! 3. (lowest) the face [`DEFAULT_FACE`]; and where that leaves an
-//!    attribute unset, the base value: no family, 16 pixels, weight 400,
+//!    attribute unset, the base value: no family, 16 points, weight 400,
 //!    upright, black on white, no underline, no strike-through, and lines
 //!    of the font's own height ([`FontSpec::default`], [`BASE_FOREGROUND`],
 //!    [`BASE_BACKGROUND`]).
@@ -46,10 +46,29 @@
 //!
 //! # Units
 //!
-//! A colour is one word, `0xRRGGBBAA` ([`Color`]). A size and a line
-//! height in pixels are whole 64ths of a physical pixel
-//! ([`Length`]). A theme states physical pixels: nothing here
-//! scales by a window's scale factor.
+//! A colour is one word, `0xRRGGBBAA` ([`Color`]).
+//!
+//! **A length a face states is in points.** A size, a line height stated
+//! as a length, and the base size where no face sets one are whole 64ths
+//! of a logical point ([`Length`]). A point is one physical pixel at
+//! scale 1: what a window system calls a logical pixel, and not the
+//! typographic point of a 72nd of an inch. Layout multiplies each by the
+//! scale it was last told ([`Layout::set_scale`], the scale factor of the
+//! target the frame is drawn on) once the faces over a run are merged and
+//! before it asks the shaper for the font
+//! ([`Styles::style`](crate::decoration::Styles::style)), so `size := 14`
+//! is 14 physical pixels at scale 1 and 28 at scale 2. A line height that
+//! is a multiple of the font's own is not a length, and follows the size.
+//! No other attribute is a length: a face has no padding and no margin.
+//! One added later is in points, and is multiplied where these are.
+//!
+//! The names do not say so: [`Length::pixels`] and [`LineHeight::Pixels`]
+//! keep the names they had when a theme stated physical pixels. In a
+//! face they are points; in the [`FontSpec`] a shaper is handed they are
+//! physical pixels, which is all a shaper ever sees.
+//!
+//! Everything layout gives back is in physical pixels, as a scene's
+//! rectangles are: a frame's geometry and the answers of the queries.
 //!
 //! A size or a line height of 0 is a value like any other: no face is
 //! refused or changed for it. The font it resolves to has lines of no
@@ -65,6 +84,8 @@
 
 use std::collections::HashMap;
 
+#[cfg(doc)]
+use crate::Layout;
 #[cfg(doc)]
 use crate::scene::Scene;
 use crate::shaper::{FontSpec, Length, LineHeight, Slant, Weight};

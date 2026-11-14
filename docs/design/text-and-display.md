@@ -716,7 +716,7 @@ of a run is that of the highest layer over the run that sets it:
 2. the scene's decorations of the view, a later one in the view's list over
    an earlier one;
 3. (lowest) the face `default`; and where `default` leaves an attribute
-   unset, layout's base value: no family, 16 pixels, weight 400, upright,
+   unset, layout's base value: no family, 16 points, weight 400, upright,
    black on white, no underline, no strike-through, and a line height of
    one times the font's own.
 
@@ -727,15 +727,46 @@ So a theme is overridden by appending to it. A status field's face is over
 nothing defines sets nothing. A decoration source added later (syntax
 highlighting) states its place in this order when it is added.
 
-**Units.** A colour is one word, `0xRRGGBBAA`. A length, which is a font
-size or a line height in pixels, is a whole number of 64ths of a physical
-pixel, so it is exact as a float and can be hashed. A weight is 1 to 1000,
-with 400 normal and 700 bold. A line height is a multiple of the font's
-own, in 64ths, or pixels. A theme states physical pixels: nothing scales a
-length by the window's scale factor yet. A size or a line height of 0 is
-taken as it is, where a weight outside its range is not: the lines of such
-a font have no height, and how many a view shows is layout's rule ("Layout
-and rendering", as built, "A row counts as at least a pixel").
+**Units.** A colour is one word, `0xRRGGBBAA`. A weight is 1 to 1000, with
+400 normal and 700 bold. A line height is a multiple of the font's own, in
+64ths, or a length. A size or a line height of 0 is taken as it is, where
+a weight outside its range is not: the lines of such a font have no
+height, and how many a view shows is layout's rule ("Layout and
+rendering", as built, "A row counts as at least a pixel").
+
+**A length a face states is in logical points.** A length is a font size,
+a line height stated as a length, or the base size where no face sets one.
+It is a whole number of 64ths of a point, so it is exact as a float and
+can be hashed. A point is one physical pixel at scale 1: what a window
+system calls a logical pixel. It is not the typographic point of a 72nd of
+an inch. On macOS the two are the same number; on a Linux desktop a "14
+pt" font in another app is 14 × 96/72 pixels at scale 1.
+
+- **Layout multiplies, once.** Layout is told the scale factor of the
+  target it lays out for (`Layout::set_scale`; 1 until it is told). The
+  faces over a run are merged in points; the font they come to is put at
+  the scale and only then asked of the shaper
+  (`crates/editor-layout/src/decoration.rs`, `Styles::style`, the one
+  place layout asks a shaper for a font). So `size := 14` is 14 physical
+  pixels at scale 1 and 28 at scale 2, and looks the same size on both.
+- **What is multiplied**: a size, a line height stated as a length, and
+  the base size. A product is to the nearest 64th of a pixel, at any
+  positive scale, fractional ones among them: 14 points at 1.25 are 17.5
+  pixels. A line height that is a multiple of the font's own is not a
+  length and follows the size. A face has no padding and no margin; a
+  length added to a face later is in points and is multiplied in the same
+  place.
+- **The shaper port stays physical.** A font a shaper is asked for is in
+  physical pixels, so no shaper adapter knows a scale.
+- **Lean knows no scale for faces.** A theme and config state points. No
+  scale crosses with a face, and Lean multiplies nothing.
+- **Everything else is physical pixels**, as before: a scene's size and
+  rectangles, a frame's geometry, the answers of the layout queries, and a
+  pointer's position.
+- **The names are older than the unit.** Lean's `Pixels`, `Pixels.whole`
+  and `LineHeight.pixels`, and Rust's `Length::pixels` and
+  `LineHeight::Pixels`, keep the names they had when a theme stated
+  physical pixels. Their documentation says which unit each is in.
 
 **Themes and config.** `Theme.builtin` defines `default`, which sets every
 attribute, and `cursor`, `selection`, `echo-area`, `minibuffer-prompt` and
@@ -1129,6 +1160,15 @@ part are in the module docs; these are the decisions.
   is shaped in; the line height is among them because it changes a row's
   height. The foreground, the background, the underline and
   strike-through are paint, and never reach the shaper.
+- **The scale.** A face's lengths are logical points ("Decorations", as
+  built, "A length a face states is in logical points"). Layout holds a
+  scale, 1 until `Layout::set_scale` tells it another, and multiplies in
+  one place: `Styles::style` puts the font a stack of faces resolves to at
+  the scale (`FontSpec::scaled`: the size and a line height stated as a
+  length, each to the nearest 64th of a pixel) as it asks the shaper for
+  the font's id. The `Shaper` port, its fake, its contract and the real
+  adapter are unchanged and in physical pixels. A frame and the answers
+  of the queries are in physical pixels at the scale last set.
 - **Decorations.** A source gives the spans of a range of a snapshot and is
   asked only for the rows laid out. Selections and the scene's decorations
   are the first two; a range with equal ends of an exclusive, an inclusive
@@ -1354,8 +1394,11 @@ and the journal read from Lean.
   frame is in physical pixels and so is a target. What the renderer
   itself sizes is `max(1, round(scale))` pixels thick: an underline, a
   strike-through, a bar or underline cursor, a hollow cursor's edge.
-  Rows built at one scale are built again at another. Scaling a theme's
-  font sizes by the scale is layout's open question.
+  Rows built at one scale are built again at another. A theme's lengths
+  are multiplied by the scale in layout, before shaping ("Layout and
+  rendering", as built, "The scale"), so a frame reaches the renderer
+  already at its target's scale, and the renderer multiplies nothing in
+  it: nothing is scaled twice.
 - **A ligature across a change of paint** is drawn whole in the paint of
   its first byte: a glyph has one cluster, and the painter paints a
   glyph by the run that holds it.
@@ -1742,10 +1785,12 @@ frame journal and the renderer's counters.
   it. The command loop's view commands are the first caller that needs it;
   a query for a view's text area, or the status row's height in an
   answer, would settle it.
-- **Sizes and the window's scale factor.** A theme states its sizes in
-  physical pixels and nothing scales them. Whether a size is logical and
-  scaled by the frame's scale factor, and where, waits for the window.
-  The real shaper takes sizes as physical pixels too, and hints nothing.
+- **Sizes and the window's scale factor** (answered): a theme states its
+  lengths in logical points, and layout multiplies them by the scale
+  factor of the target it lays out for, before shaping ("Decorations", as
+  built, "A length a face states is in logical points"; "Layout and
+  rendering", as built, "The scale"). The real shaper still takes sizes
+  as physical pixels, and hints nothing.
 - **Right-to-left geometry.** Layout's cells have no direction, since
   the port's glyph carries none. So three things are not right for
   right-to-left text: the cells of a right-to-left cluster of several

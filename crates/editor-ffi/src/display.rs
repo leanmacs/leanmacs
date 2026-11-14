@@ -9,6 +9,13 @@
 //! [`editor_ffi_display_new_cells`], counted live, and freed by
 //! [`editor_ffi_display_free`].
 //!
+//! **A display lays out at scale 1.** It has no window behind it, and is
+//! never told a scale ([`Layout::set_scale`]): a point of a face's lengths
+//! is a physical pixel here, so every frame and every answer is what it
+//! was when a theme stated physical pixels. How a scene published from
+//! Lean comes to be laid out at its window's scale is not built
+//! (`docs/design/text-and-display.md`, open questions).
+//!
 //! **A text crosses as a snapshot handle.** Each query names the snapshot it
 //! is about by its handle, and layout keeps what it laid out per key of the
 //! text ([`crate::snapshot`]): a document's snapshots share their

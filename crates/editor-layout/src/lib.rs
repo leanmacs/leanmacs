@@ -28,6 +28,15 @@
 //! - which spans each decoration source gives, that a cursor covers
 //!   nothing, how spans merge into styled runs, and that a run is in the
 //!   font its faces resolve to, lowest layer first ([`decoration`]);
+//! - the scale: a length a face states is in points; a length and a font
+//!   at a scale ([`shaper::Length::scaled`], [`shaper::FontSpec::scaled`]);
+//!   that a font is asked of the shaper at the scale last set
+//!   ([`Layout::set_scale`], [`decoration`]); that the same theme at scale
+//!   2 gives rows twice as tall and lines twice as wide, in rectangles
+//!   that are still physical pixels, and that the queries answer at the
+//!   scale (`tests/scale.rs`); and that a change of scale alone shapes
+//!   every row shown again and the scale a layout has shapes none
+//!   (`tests/counters.rs`);
 //! - the rows a view shows, at most one for each pixel of its height
 //!   whatever height a font gives its lines, and where a move goes, with
 //!   its goal x ([`query`]);
@@ -123,6 +132,29 @@ impl<S: Shaper> Layout<S> {
         if self.styles.define(definitions) {
             self.base = self.styles.style(&self.shaper, &[]).font;
         }
+    }
+
+    /// Takes `scale` as the scale to lay out at from now on: how many
+    /// physical pixels a point of a face's lengths is, which is the scale
+    /// factor of the target the frames are drawn on. A layout begins at 1,
+    /// and a scale that is not a finite number above 0 is taken as 1.
+    ///
+    /// Frames and queries are both at the scale last set, so a query
+    /// after a change answers at the new scale with no frame between.
+    /// What is kept of a text is not dropped: an entry keeps the font
+    /// runs it was shaped with, and at another scale every run is in
+    /// another font, so each row is shaped again when a frame or a query
+    /// next reaches it, and the scale a layout already has shapes
+    /// nothing.
+    pub fn set_scale(&mut self, scale: f32) {
+        if self.styles.set_scale(scale) {
+            self.base = self.styles.style(&self.shaper, &[]).font;
+        }
+    }
+
+    /// The scale it lays out at ([`Layout::set_scale`]).
+    pub fn scale(&self) -> f32 {
+        self.styles.scale()
     }
 
     /// The shaper.

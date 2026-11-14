@@ -26,6 +26,20 @@
 //! queries read and fill the same entries, so a query after a frame lays
 //! out nothing the frame laid out, and a frame after a query likewise.
 //!
+//! **What a kept row is of.** An entry is the layout of one segment in
+//! the font runs it was shaped with, under the shaper's generation, at a
+//! width, and is used again only when all three are what is asked now. A
+//! font's id is the shaper's for a spec in physical pixels, which is the
+//! faces' spec at the scale layout was last told
+//! ([`Layout::set_scale`](crate::Layout::set_scale)). So the scale is in
+//! the key as the font, and has no field of its own: at another scale
+//! every run is in another font, and each kept row is shaped again when a
+//! frame or a query next reaches it. Nothing is dropped for a change of
+//! scale but the styles kept by stack of faces and the base font, which
+//! are not keyed by a font
+//! ([`Styles::set_scale`](crate::decoration::Styles::set_scale)). A row
+//! shaped at 28 points at scale 1 is the row of 14 points at scale 2.
+//!
 //! **A view's status row is kept by view**, not by text
 //! (`StatusKept`): its fields are the scene's own text. It is shaped
 //! again when its text, its font runs or the shaper's generation change,

@@ -429,6 +429,106 @@ fn a_selection_in_a_face_that_sets_a_weight_shapes_the_rows_it_covers() {
     assert_eq!(unmade, count(3, 3, 17));
 }
 
+/// The scene of the twenty rows `text` in a view tall enough for all of
+/// them at scale 2 as at scale 1, with rows 3 and 4 in the face `heavy`,
+/// which sets a weight and so a font of its own that changes no row's
+/// height.
+fn at_any_scale(text: &TextRef, start: &impl Fn(usize) -> usize) -> Scene {
+    let heavy = Face {
+        weight: Some(Weight::BOLD),
+        ..Face::default()
+    };
+    let mut scene = styled(text, start(3)..start(5) - 1, "heavy", &[("heavy", heavy)]);
+    scene.views[0].rect.height = 2 * 40 * 16;
+    scene
+}
+
+#[test]
+fn a_change_of_scale_alone_lays_the_visible_rows_out_again() {
+    let (text, start) = twenty();
+    // With no face defined, every row is in the base font and no source
+    // is asked for a row's fonts; with a face that sets a font, each
+    // row's fonts are found run by run. A change of scale reaches both.
+    let scenes = [
+        ("no face", scene_rows(&text, 400, 0, 80)),
+        ("a face with a font", at_any_scale(&text, &start)),
+    ];
+    for (name, scene) in scenes {
+        let mut layout = Layout::new(CellShaper::new(10.0, 16.0));
+        let mut rows = 0;
+        let first = counted(&mut layout, |layout| {
+            rows = layout.frame(&scene).views[0].rows.len();
+        });
+        assert_eq!(rows, 20, "{name}");
+        assert_eq!(first, count(20, 20, 0), "{name}");
+        // The same scene again shapes nothing and reuses every row shown.
+        let again = counted(&mut layout, |layout| {
+            layout.frame(&scene);
+        });
+        assert_eq!(again, count(0, 0, 20), "{name}");
+        // The scale, and nothing else: the scene is the one it was. Every
+        // row shown is shaped again and none is reused.
+        layout.set_scale(2.0);
+        let scaled = counted(&mut layout, |layout| {
+            rows = layout.frame(&scene).views[0].rows.len();
+        });
+        assert_eq!(rows, 20, "{name}");
+        assert_eq!(scaled, count(20, 20, 0), "{name}");
+        // Once more at the same scale: every row reused, none shaped.
+        let settled = counted(&mut layout, |layout| {
+            layout.frame(&scene);
+        });
+        assert_eq!(settled, count(0, 0, 20), "{name}");
+    }
+}
+
+#[test]
+fn the_scale_it_already_has_lays_nothing_out() {
+    let (text, start) = twenty();
+    let scene = at_any_scale(&text, &start);
+    let mut layout = Layout::new(CellShaper::new(10.0, 16.0));
+    layout.frame(&scene);
+    // The scale a layout begins at.
+    layout.set_scale(1.0);
+    let same = counted(&mut layout, |layout| {
+        layout.frame(&scene);
+    });
+    assert_eq!(same, count(0, 0, 20));
+    layout.set_scale(2.0);
+    layout.frame(&scene);
+    layout.set_scale(2.0);
+    let same = counted(&mut layout, |layout| {
+        layout.frame(&scene);
+    });
+    assert_eq!(same, count(0, 0, 20));
+}
+
+#[test]
+fn a_change_of_scale_shapes_the_status_row_again() {
+    let (text, _) = twenty();
+    let fields = [("words.txt", "name"), (" 1:1", "position")];
+    let mut scene = with_status(&text, &fields, &[]);
+    // Tall enough for the twenty rows and the status row at scale 2.
+    scene.views[0].rect.height = 2 * 40 * 16;
+    let mut layout = Layout::new(CellShaper::new(10.0, 16.0));
+    let first = bytes_shaped(&mut layout, |layout| {
+        layout.frame(&scene);
+    });
+    // The twenty rows, and the status row's thirteen bytes.
+    assert_eq!(first, text.snapshot.len() - 19 + 13);
+    layout.set_scale(2.0);
+    let scaled = bytes_shaped(&mut layout, |layout| {
+        layout.frame(&scene);
+    });
+    assert_eq!(scaled, first);
+    // The scale it has shapes nothing: neither a row nor the status row.
+    layout.set_scale(2.0);
+    let same = bytes_shaped(&mut layout, |layout| {
+        layout.frame(&scene);
+    });
+    assert_eq!(same, 0);
+}
+
 /// Five thousand rows of one letter, and an empty row after them.
 fn five_thousand_rows() -> TextRef {
     TextRef::fixed(

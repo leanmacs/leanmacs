@@ -58,19 +58,65 @@ pub struct Style {
     pub paint: Paint,
 }
 
-/// The faces a layout holds, and what each stack of them asked for so far
-/// comes to, kept until the definitions change. A font's id is its
-/// shaper's for the shaper's life, so what is kept stays true of the
-/// shaper it was asked with.
-#[derive(Debug, Default)]
+/// The faces a layout holds, the scale their lengths are put at, and what
+/// each stack of them asked for so far comes to, kept until the
+/// definitions or the scale change. A font's id is its shaper's for the
+/// shaper's life, so what is kept stays true of the shaper it was asked
+/// with.
+///
+/// **The scale.** A face states its lengths in points
+/// ([`face`](crate::face), "Units"), and a shaper is asked for a font in
+/// physical pixels. [`Styles::style`] is where the one becomes the other,
+/// and the only place: the faces over a run are merged in points
+/// ([`Faces::resolve`]), and the font they come to is put at the scale
+/// ([`FontSpec::scaled`](crate::shaper::FontSpec::scaled)) as it is handed
+/// to [`Shaper::font`]. A paint has no length, and is what it was at any
+/// scale.
+#[derive(Debug)]
 pub struct Styles {
     /// The faces.
     faces: Faces,
-    /// The style of each stack asked for since the definitions were given.
+    /// The scale: how many physical pixels a point is. A finite number
+    /// above 0.
+    scale: f32,
+    /// The style of each stack asked for since the definitions and the
+    /// scale were given.
     kept: RefCell<HashMap<Vec<FaceId>, Style>>,
 }
 
+/// No face defined, at scale 1: a point is a pixel.
+impl Default for Styles {
+    fn default() -> Self {
+        Self {
+            faces: Faces::default(),
+            scale: 1.0,
+            kept: RefCell::default(),
+        }
+    }
+}
+
 impl Styles {
+    /// The scale: how many physical pixels a point of a face's lengths is.
+    pub fn scale(&self) -> f32 {
+        self.scale
+    }
+
+    /// Takes `scale` in place of the scale held, and says whether they
+    /// differ. A scale that is not a finite number above 0 is taken as 1.
+    pub fn set_scale(&mut self, scale: f32) -> bool {
+        let scale = if scale.is_finite() && scale > 0.0 {
+            scale
+        } else {
+            1.0
+        };
+        if scale == self.scale {
+            return false;
+        }
+        self.scale = scale;
+        self.kept.get_mut().clear();
+        true
+    }
+
     /// The id of the face `name` ([`Faces::intern`]).
     pub fn intern(&mut self, name: &str) -> FaceId {
         self.faces.intern(name)
@@ -94,14 +140,14 @@ impl Styles {
 
     /// What the faces `stack`, given lowest first, come to over the
     /// default face ([`Faces::resolve`]), with the font as `shaper`'s id
-    /// for it.
+    /// for it at the scale.
     pub fn style<S: Shaper>(&self, shaper: &S, stack: &[FaceId]) -> Style {
         if let Some(style) = self.kept.borrow().get(stack) {
             return *style;
         }
         let resolved = self.faces.resolve(stack);
         let style = Style {
-            font: shaper.font(&resolved.font),
+            font: shaper.font(&resolved.font.scaled(self.scale)),
             paint: resolved.paint,
         };
         self.kept.borrow_mut().insert(stack.to_vec(), style);
@@ -307,7 +353,7 @@ mod tests {
     };
     use crate::face::{Color, Face, FaceDef, FaceId, Paint};
     use crate::shaper::fake::CellShaper;
-    use crate::shaper::{FontId, FontSpec, Shaper, Weight};
+    use crate::shaper::{BASE_SIZE, FontId, FontSpec, Length, LineHeight, Shaper, Weight};
 
     /// The spans `source` gives for `bytes` of `text`.
     fn asked(source: &dyn DecorationSource, text: &str, bytes: Range<usize>) -> Vec<Span> {
@@ -388,6 +434,84 @@ mod tests {
         assert_eq!(lighter.paint, Paint::default());
         // The same definitions again are no change.
         assert!(!styles.define(&[def("heavy", weighing(100))]));
+    }
+
+    #[test]
+    fn a_stack_of_faces_comes_to_the_shapers_font_for_its_spec_at_the_scale() {
+        let shaper = CellShaper::new(10.0, 16.0);
+        let mut styles = Styles::default();
+        let red = Color::rgb(9, 0, 0);
+        styles.define(&[
+            def(
+                "tall",
+                Face {
+                    line_height: Some(LineHeight::Pixels(Length::pixels(20))),
+                    foreground: Some(red),
+                    ..Face::default()
+                },
+            ),
+            def(
+                "loose",
+                Face {
+                    line_height: Some(LineHeight::Multiple(96)),
+                    ..Face::default()
+                },
+            ),
+        ]);
+        let (tall, loose) = (styles.intern("tall"), styles.intern("loose"));
+        let stacks: [&[_]; 3] = [&[], &[tall], &[loose]];
+        // Each stack is asked for before the scale changes, so each has a
+        // style kept.
+        let at_one = stacks.map(|stack| styles.style(&shaper, stack));
+        assert!(styles.set_scale(2.0));
+        let doubled = Length(BASE_SIZE.0 * 2);
+        let at_two = stacks.map(|stack| styles.style(&shaper, stack));
+        // No face: the base size, doubled.
+        let plain = FontSpec {
+            size: doubled,
+            ..FontSpec::default()
+        };
+        assert_eq!(at_two[0].font, shaper.font(&plain));
+        // A line height of 20 points is one of 40 pixels.
+        let taller = FontSpec {
+            line_height: LineHeight::Pixels(Length::pixels(40)),
+            ..plain.clone()
+        };
+        assert_eq!(at_two[1].font, shaper.font(&taller));
+        // A multiple of the font's own is the same multiple.
+        let looser = FontSpec {
+            line_height: LineHeight::Multiple(96),
+            ..plain.clone()
+        };
+        assert_eq!(at_two[2].font, shaper.font(&looser));
+        // The paint is what it was.
+        assert_eq!(at_two[1].paint.foreground, red);
+        for (two, one) in at_two.iter().zip(&at_one) {
+            assert_ne!(two.font, one.font);
+            assert_eq!(two.paint, one.paint);
+        }
+        // Back at 1, each is the style it was.
+        assert!(styles.set_scale(1.0));
+        assert_eq!(stacks.map(|stack| styles.style(&shaper, stack)), at_one);
+    }
+
+    #[test]
+    fn a_scale_that_is_no_positive_number_is_one_and_the_scale_it_has_is_no_change() {
+        let mut styles = Styles::default();
+        assert_eq!(styles.scale(), 1.0);
+        assert!(!styles.set_scale(1.0));
+        assert!(styles.set_scale(2.0));
+        assert_eq!(styles.scale(), 2.0);
+        assert!(!styles.set_scale(2.0));
+        assert!(styles.set_scale(1.25));
+        assert_eq!(styles.scale(), 1.25);
+        for none in [0.0, -2.0, f32::INFINITY, f32::NEG_INFINITY, f32::NAN] {
+            styles.set_scale(2.0);
+            // From 2 it is a change, to 1; said again it is none.
+            assert!(styles.set_scale(none), "{none}");
+            assert_eq!(styles.scale(), 1.0, "{none}");
+            assert!(!styles.set_scale(none), "{none}");
+        }
     }
 
     #[test]

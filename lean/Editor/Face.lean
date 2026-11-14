@@ -25,9 +25,19 @@ call, and only when the theme changed (`Editor/Display/Real.lean`).
 ## Units
 
 - A colour is red, green, blue and alpha, each 0 to 255 (`Color`).
-- A length is a whole number of 64ths of a physical pixel (`Pixels`), and a
-  numeric literal is whole pixels: `size := some 14`. Nothing scales a
-  length by a window's scale factor: a theme states physical pixels.
+- A length is a whole number of 64ths of a logical point (`Pixels`), and a
+  numeric literal is whole points: `size := some 14`. A point is one
+  physical pixel on a display at scale 1 and two at scale 2: what a window
+  system calls a logical pixel, not the typographic point of a 72nd of an
+  inch. A theme states points, and layout in the Rust library multiplies
+  each length by the scale factor of the window it lays out for, before it
+  shapes (`crates/editor-layout/src/face.rs`, "Units"). So a face is the
+  same apparent size on every display, and nothing here knows a scale: Lean
+  multiplies nothing, and reads no scale to state a face. The type keeps
+  the name `Pixels` from when a theme stated physical pixels.
+- Only a face's lengths are points. A scene's sizes and rectangles
+  (`Editor/Scene.lean`), a pointer's position and a resize's size
+  (`Editor/Event.lean`) are physical pixels, as before.
 - A weight is 1 to 1000: 400 is normal and 700 bold. The binding sends a
   weight outside that range as the nearest end of it.
 - A size or a line height of 0 is sent as it is. The lines of such a font
@@ -74,14 +84,16 @@ def Color.rgba (red green blue alpha : UInt8) : Color :=
 def Color.rgb (red green blue : UInt8) : Color :=
   Color.rgba red green blue 255
 
-/-- A length in 64ths of a physical pixel. A numeric literal is whole
+/-- A length a face states, in 64ths of a logical point: one physical pixel
+at scale 1, which layout multiplies by the window's scale factor. A numeric
+literal is whole points. The name is from when a theme stated physical
 pixels. -/
 structure Pixels where
-  /-- The length, in 64ths of a pixel. -/
+  /-- The length, in 64ths of a point. -/
   sixtyFourths : UInt32
   deriving DecidableEq, Repr
 
-/-- `pixels` whole pixels; the longest length for more than a `Pixels`
+/-- `pixels` whole points; the longest length for more than a `Pixels`
 holds. -/
 def Pixels.whole (pixels : Nat) : Pixels :=
   { sixtyFourths := (min (pixels * 64) (UInt32.size - 1)).toUInt32 }
@@ -129,7 +141,8 @@ inductive LineHeight where
   /-- A multiple of the font's own line height at its size, in 64ths: 64 is
   the font's own, and 96 one and a half times it. -/
   | multiple (sixtyFourths : UInt32)
-  /-- A height in pixels, whatever the font's own. -/
+  /-- A height in points, whatever the font's own: layout multiplies it by
+  the window's scale factor, as it does a size. -/
   | pixels (height : Pixels)
   deriving DecidableEq, Repr
 
