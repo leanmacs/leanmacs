@@ -692,6 +692,65 @@ A **face** is a set of optional attributes (family, size, weight, slant,
 colours, underline, strike-through, line height) with a documented merge
 order. Faces are named and defined in Lean.
 
+### As built
+
+Of the kinds above, span faces are built, from two sources: the selections
+and the decorations a scene carries. The rest are not.
+
+**A face** sets any of nine attributes and leaves the rest unset: a family,
+a size, a weight, a slant, a foreground, a background, an underline (a
+style and a colour), strike-through and a line height. It is the same nine
+in Lean (`lean/Editor/Face.lean`) and in Rust
+(`crates/editor-layout/src/face.rs`).
+
+**Lean defines, Rust merges.** Lean holds faces as data and merges nothing:
+a theme is an ordered list of definitions, each a name and the attributes
+it sets. Layout holds the list last sent and applies one rule to all of it.
+Doing the merge in Lean instead would put layout policy in two halves and
+make every publish cost the spans.
+
+**The precedence.** Attributes merge one by one. The value of an attribute
+of a run is that of the highest layer over the run that sets it:
+
+1. (highest) the selection, drawn in the face `selection`;
+2. the scene's decorations of the view, a later one in the view's list over
+   an earlier one;
+3. (lowest) the face `default`; and where `default` leaves an attribute
+   unset, layout's base value: no family, 16 pixels, weight 400, upright,
+   black on white, no underline, no strike-through, and a line height of
+   one times the font's own.
+
+The same rule orders definitions: where what is sent defines a name more
+than once, a later definition's set attributes are over an earlier one's.
+So a theme is overridden by appending to it. A status field's face is over
+`mode-line` over `default`, and a cursor's face is over `default`. A name
+nothing defines sets nothing. A decoration source added later (syntax
+highlighting) states its place in this order when it is added.
+
+**Units.** A colour is one word, `0xRRGGBBAA`. A length, which is a font
+size or a line height in pixels, is a whole number of 64ths of a physical
+pixel, so it is exact as a float and can be hashed. A weight is 1 to 1000,
+with 400 normal and 700 bold. A line height is a multiple of the font's
+own, in 64ths, or pixels. A theme states physical pixels: nothing scales a
+length by the window's scale factor yet.
+
+**Themes and config.** `Theme.builtin` defines `default`, which sets every
+attribute, and `cursor`, `selection`, `echo-area`, `minibuffer-prompt` and
+`mode-line`; its colours are placeholders. Layout reads three names by
+itself: `default`, `selection` and `mode-line`. `echo-area` and
+`minibuffer-prompt` are defined and nothing draws them. Any other name is
+one a scene names and a theme or config defines, so a cursor face for each
+evil state is a definition added by the command loop, with no change to
+layout. Config sets a face in `setup`, `face "name" { … }`; a name is set
+once in a `setup`. The theme a display is sent is the built-in one followed
+by the installed config's definitions, so a face config sets takes
+config's attributes over the theme's, and one it stops setting is the
+theme's again at the next reload that installs
+([lean-runtime.md](lean-runtime.md), "Config and reload").
+
+Not built: a face naming another as its base; choosing between whole
+themes.
+
 ### Text is the only layout engine
 
 The library is a text display engine, not a GUI toolkit (decided
@@ -865,6 +924,28 @@ view is sent as the same handles. Faces are names; what they look like is
 the display pipeline's. Which cursor and which status fields a view has are
 chosen by the command loop's later phases; the scene only carries them.
 
+**What the faces look like travels with the scene, in the binding.** Lean's
+`Scene` and the display interface are unchanged by faces: a scene names
+them and nothing more. The display's real binding
+(`lean/Editor/Display/Real.lean`) holds the theme and writes its
+definitions into the same words and the same string as the scene, after
+the views, so a scene and its faces reach layout in one call under one
+lock, and no frame is built between the two. They are written only on the
+first publish after the theme was set: the words carry a presence, and
+absent means "as last published", so a publish costs the faces only when
+they changed. The alternatives were a field of the scene or a request of
+the display interface, which change the contract the command loop builds
+on and its model, and a second C call, which lets a frame be built between
+a scene and its faces. The Rust scene (`crates/editor-layout/src/scene.rs`)
+is therefore Lean's scene and one field more, the definitions, with none
+meaning "as last given". The layout of the words is the table in
+`crates/editor-ffi/src/display/wire.rs`.
+
+After a reload that installs, the runtime that owns a display hands the
+binding the new theme (`Config.retheme`, `lean/Editor/Config/Display.lean`).
+No runtime does yet: the headless loop has no display, and the loop over
+the real display is the display pipeline's last phase.
+
 Lean publishes the scene and asks layout's two questions through the
 display interface (`lean/Editor/Display.lean`): the rows a view shows from
 its scroll anchor, and the position some visual lines above or below a
@@ -918,24 +999,43 @@ facts of each part are in the module docs; these are the decisions.
   binding passes the display contract by construction; it is also what the
   display handle runs on until Parley (phase 3), and it is the "cell
   shaper" of the table below. Its published contract check
-  (`shaper::contract`) holds the fake and every real adapter to six
+  (`shaper::contract`) holds the fake and every real adapter to seven
   properties that leave the breaking policy open.
+- **A font is named by its spec.** `FontSpec` is the port's term for a
+  font: a family, a size, a weight, a slant and a line height. A shaper
+  gives each spec an id (`Shaper::font`): equal specs one id, different
+  specs different ids, for the shaper's life, with the default spec font
+  0. A run names its font by that id, so no glyph and no cache comparison
+  carries a spec, and the table from an id to its spec is the adapter's.
+  The fake's rule for a spec: a family has a cell at the base size of 16
+  pixels, a font's advance and own line height are that cell times its
+  size over the base size, and weight and slant change no geometry but
+  are still another id.
+- **What is font and what is paint.** Of a face's attributes the family,
+  the size, the weight, the slant and the line height are the font a run
+  is shaped in; the line height is among them because it changes a row's
+  height. The foreground, the background, the underline and
+  strike-through are paint, and never reach the shaper.
 - **Decorations.** A source gives the spans of a range of a snapshot and is
   asked only for the rows laid out. Selections and the scene's decorations
   are the first two; a range with equal ends of an exclusive, an inclusive
   or a block selection is a cursor and gives no span, so a cursor move
   changes no row, while a line-wise range covers its rows whatever its
   ends, so one with equal ends highlights its row. A span names its face
-  by an id interned from its name. Merging gives runs that carry every
-  face over them, in
-  source and then span order; no precedence is decided before phase 2.
-  Shaping runs split only where the font changes, and in phase 1 every face
-  is in the default font unless a test sets one, so decorations are
-  paint-only.
+  by an id interned from its name, which stays inside layout. Spans are
+  collected lowest layer first, the selections' last, so the faces over a
+  run are a stack, and the run's font and paint are what the stack
+  resolves to by the precedence ("Decorations", as built). Shaping runs
+  split only where the font changes. No source is asked for a segment's
+  fonts while no face but `default` sets a font attribute.
 - **Caches.** An entry keeps its shaped value, the font runs and the
   shaper's generation it was shaped under, and its breaks at one width:
   text and font changes shape again, a width change breaks again, and a
-  paint-only change does neither. Entries are moved through the edit log's
+  paint-only change does neither. Faces need no invalidation of their own:
+  a face whose font attributes change resolves to another font id, so the
+  rows drawn in it are shaped again and no other, and a face whose paint
+  changes resolves to the same id, so its rows are reused. A change of
+  `default`'s font shapes every row. Entries are moved through the edit log's
   patches, pulled through the view's snapshot, and not cleared; when the
   patch is refused (behind the horizon, or the text is gone) the text's
   state is rebuilt from the snapshot at hand, and a snapshot older than
@@ -948,19 +1048,43 @@ facts of each part are in the module docs; these are the decisions.
   their text, and the state of every text it does not name. A tree waits
   for a layer that needs sums over a whole text (folds, a scroll bar).
 - **The queries** lay out whatever they reach, in the same call, from the
-  same entries the frame uses, and in the fonts of the last frame that
-  showed the text.
+  same entries the frame uses, with the selections and decorations of the
+  last frame that showed the text, in the faces as they are now.
 - **The frame** is a plain immutable value (`Send + Sync`): per view, the
   rows from the anchor's visual line, as many as fit whole, each with its
-  glyphs shared with the store, its styled runs and a content hash over
-  glyphs, runs and height relative to the row's start; the cursor at the
-  head of every range of every selection; and selection areas. A row's
+  glyphs shared with the store, its runs and a content hash; the cursor at
+  the head of every range of every selection; and selection areas. A row's
   runs cover its glyphs exactly and a selection's area is as wide as the
   glyphs it covers, so a tab whose spaces cross a soft wrap takes its faces
   and its selection on both rows, over the spaces each holds. A test
   compares a frame as text (`Frame::describe`), and one fixture frame
   (`tests/display/frame.expected`) is compared from Rust and, through the
   real binding, from Lean.
+- **The frame carries resolved values and no face.** A run carries its
+  paint (a foreground, a background, an underline with its style and
+  colour, strike-through), and neighbouring runs of one paint are one run;
+  an underline with no colour of its own takes the run's foreground. A
+  glyph carries its font's id. A cursor carries the paint of the face the
+  scene names for it over `default`: its background is the cursor's
+  colour, and its foreground the glyph's under a block cursor. A view
+  carries `default`'s background and the selection's, for its selection
+  areas. A row's hash covers its glyphs with their fonts, its runs with
+  their paint, its height and its baseline, relative to the row's start;
+  a cursor is no part of a row, so moving it or changing its face changes
+  no hash. A font's id is its shaper's, given in the order it was first
+  asked for, so two frames are compared as text only from layouts handed
+  the same scenes and faces in the same order.
+- **The mode line.** A view with at least one status field has a status
+  row: its fields' texts one after another with no separator, each in its
+  face over `mode-line` over `default`, shaped as one unbroken line
+  through the `Shaper` port, at the bottom of the view's rectangle. A tab,
+  a carriage return or a line feed in a field is shaped as a space. The
+  row is as tall as its shaped line, and the view's text rows are those
+  that fit whole in the height that remains. A view with no status field
+  is laid out across its whole rectangle. The row is kept per view and
+  shaped again only when its text or its font runs change. The
+  alternatives were to draw it over the last text row, which hides rows,
+  or outside the view's rectangle, for which the scene has no rectangle.
 - **Counters** count segments shaped, broken and reused, each once per call;
   every cost claim above is pinned by one.
 - **The binding.** A document has a key and a snapshot carries its
@@ -969,7 +1093,10 @@ facts of each part are in the module docs; these are the decisions.
   only the read half of its table of snapshots. A published scene crosses
   as words, one string and a list of snapshot handles; markers cross by
   number and are read in the snapshot's document as it is when the scene
-  arrives, each on its own. Who writes the cache, and when a resize is
+  arrives, each on its own. The definitions of the faces cross in the
+  same words and string, behind a presence ("The scene", as built); words
+  that spell no face are refused, and the frame, the scene and the faces
+  published before stay. Who writes the cache, and when a resize is
   shown, is open: [concurrency.md](concurrency.md), "Sharing state".
 
 ### The frame is device-independent
@@ -1155,8 +1282,30 @@ these hunks" is a fact the editor can state.
   rows again on every frame. Keeping breaks per width is an addition when
   splits of one buffer arrive.
 - **Where the echo area, the pending prefix and the preedit are drawn.**
-  The scene carries them and phase 1 lays out none of them; no phase of
-  the display pipeline owns drawing them yet.
+  The scene carries them and layout lays out none of them; no phase of
+  the display pipeline owns drawing them yet. The faces `echo-area` and
+  `minibuffer-prompt` are defined for them and nothing draws in either.
+- **The height of a view's text area, for the rows query.** A view's
+  status row takes its height from the bottom of the view, and the frame
+  shows the text rows that fit above it. The rows query takes an explicit
+  height, and Lean has no way to learn the status row's height, so a
+  caller of `Display.rowsShown` cannot yet ask for exactly the text area:
+  with a status row, the frame shows fewer rows than the query answers for
+  the view's whole height. Nothing was added to the display contract for
+  it. The command loop's view commands are the first caller that needs it;
+  a query for a view's text area, or the status row's height in an
+  answer, would settle it.
+- **Sizes and the window's scale factor.** A theme states its sizes in
+  physical pixels and nothing scales them. Whether a size is logical and
+  scaled by the frame's scale factor, and where, waits for the window.
+- **Face inheritance.** A face cannot name another as its base. A theme
+  that wants `comment` to follow `default` leaves the attributes unset,
+  which covers the one level the precedence gives; anything deeper is not
+  built.
+- **Where a decoration source that is not the scene's sits in the
+  precedence.** Syntax highlighting is a third source. The order has a
+  place below the scene's decorations, which a test hook uses; the source
+  states its place when it is added.
 - **Accessibility of text not laid out**: only visible lines have layout,
   but a screen reader may want to read past the viewport. Expose the
   viewport and scroll on request, or supply unlaid-out text as well?
