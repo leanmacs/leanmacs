@@ -8,6 +8,38 @@
 //! shares the shaped line ([`LineEntry::rebreak`]), so a frame that holds
 //! the old one keeps it as it was.
 //!
+//! # Cells
+//!
+//! A position, a cursor and a selection are found by a visual line's
+//! **cells** ([`Cells`]), one for each character the line holds, and never
+//! by its glyphs as they are listed. A shaper's glyphs are in the order
+//! they are drawn in, which is not the order of the text where text runs
+//! right to left; one glyph may draw several characters (a ligature); and
+//! one cluster may be several glyphs (a letter and its mark) and several
+//! characters.
+//!
+//! - The glyphs of one cluster are one box: from the first one's pen
+//!   position, across all their advances.
+//! - The box holds the characters from its cluster's offset up to the
+//!   next cluster's on the line, or to the line's end.
+//! - Each of those characters is a cell with an even share of the box, in
+//!   the order of the text from the box's left. So the second character
+//!   of a ligature of two is at the middle of its glyph, as a caret is
+//!   placed by a browser, and a cursor can stand between a letter and its
+//!   combining mark, since a cell is a character
+//!   (`docs/design/text-and-display.md`, open questions).
+//! - The x of a position is its cell's left edge, and of a line's end the
+//!   line's width; an x aims for the cell it is in.
+//!
+//! On a shaper that gives a glyph for each character, in the order of the
+//! text, a cell is a glyph. Three things need the direction of a cluster,
+//! which the port's glyph does not carry, and are not right for
+//! right-to-left text: the cells of a right-to-left cluster of several
+//! characters are placed left to right; a position on a right-to-left
+//! cell is at the cell's left edge, though the character starts at its
+//! right; and the end of a line that ends in right-to-left text is at the
+//! line's right edge.
+//!
 //! # Where a position is
 //!
 //! - A position at a wrap is the start of the later visual line.
@@ -33,6 +65,106 @@ use crate::layer::Bias;
 use crate::shaper::{FontId, FontRun, ShapeInput, ShapedLine, Shaper, VisualLine};
 use crate::tabs::Expanded;
 
+/// One character of a visual line, as the box it is drawn in: the cell a
+/// position, a cursor and a selection are found by.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Cell {
+    /// The byte offset of the character in the segment's expanded text.
+    pub column: usize,
+    /// Its left edge, in pixels from the visual line's left edge.
+    pub x: f32,
+    /// How far across it is.
+    pub width: f32,
+}
+
+/// The cells of one visual line, in the order they are drawn in, from the
+/// line's left edge.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct Cells {
+    /// The cells, left to right.
+    cells: Vec<Cell>,
+    /// Whether they are in the order of their columns too, as they are on
+    /// a line with no reordered text.
+    in_text_order: bool,
+}
+
+impl Cells {
+    /// The cells of `line`, whose glyphs' clusters are offsets of `text`.
+    ///
+    /// The glyphs of one cluster are one box, from the first one's pen
+    /// position across all their advances. The box holds the characters of
+    /// `text` from its cluster's offset to the next cluster's on the line,
+    /// or to the line's end, and each of them has an even share of it, in
+    /// the order of the text from the left.
+    fn of(line: &VisualLine, text: &str) -> Self {
+        // Each cluster's box, in the order its first glyph is drawn in.
+        let mut boxes: Vec<Cell> = Vec::new();
+        for glyph in &line.glyphs {
+            match boxes.last_mut() {
+                Some(last) if last.column == glyph.cluster => last.width += glyph.advance,
+                _ => boxes.push(Cell {
+                    column: glyph.cluster,
+                    x: glyph.x,
+                    width: glyph.advance,
+                }),
+            }
+        }
+        // Where each cluster's characters stop: at the next cluster of the
+        // line in the text's order.
+        let mut starts: Vec<usize> = boxes.iter().map(|cluster| cluster.column).collect();
+        starts.sort_unstable();
+        starts.dedup();
+        let mut cells = Vec::with_capacity(boxes.len());
+        for cluster in boxes {
+            let next = starts.partition_point(|start| *start <= cluster.column);
+            let end = starts.get(next).copied().unwrap_or(line.bytes.end);
+            let characters = text
+                .get(cluster.column..end.max(cluster.column))
+                .map_or(0, |held| held.chars().count())
+                .max(1);
+            let width = cluster.width / characters as f32;
+            let held = text.get(cluster.column..).unwrap_or_default();
+            let offsets = held.char_indices().map(|(offset, _)| offset);
+            // A cluster that is no offset of the text is one cell.
+            for (index, offset) in offsets.chain([0]).take(characters).enumerate() {
+                cells.push(Cell {
+                    column: cluster.column + offset,
+                    x: cluster.x + index as f32 * width,
+                    width,
+                });
+            }
+        }
+        let in_text_order = cells.windows(2).all(|pair| pair[0].column < pair[1].column);
+        Self {
+            cells,
+            in_text_order,
+        }
+    }
+
+    /// The cells, left to right.
+    pub fn cells(&self) -> &[Cell] {
+        &self.cells
+    }
+
+    /// The cell that holds `column`: the one whose character starts at or
+    /// last before it.
+    fn holding(&self, column: usize) -> Option<&Cell> {
+        if self.in_text_order {
+            let after = self.cells.partition_point(|cell| cell.column <= column);
+            return self.cells[..after].last();
+        }
+        self.cells
+            .iter()
+            .filter(|cell| cell.column <= column)
+            .max_by_key(|cell| cell.column)
+    }
+
+    /// The leftmost cell `x` is in or left of.
+    fn at(&self, x: f32) -> Option<&Cell> {
+        self.cells.iter().find(|cell| x < cell.x + cell.width)
+    }
+}
+
 /// One laid-out segment of a buffer row.
 pub struct LineEntry<L> {
     /// The segment's bytes, relative to its row's start.
@@ -49,6 +181,8 @@ pub struct LineEntry<L> {
     width: Option<f32>,
     /// Its visual lines at that width.
     lines: Vec<Arc<VisualLine>>,
+    /// The cells of each of those lines.
+    cells: Vec<Cells>,
     /// Whether it is its row's last segment.
     last: bool,
 }
@@ -170,11 +304,13 @@ pub fn lay_out<S: Shaper>(
         text: source.expanded.text().to_owned(),
         runs: runs.clone(),
     }));
+    let lines = visual_lines(&*shaped, &source.expanded, width, source.last);
     LineEntry {
         bytes: source.bytes,
         runs,
         generation: shaper.generation(),
-        lines: visual_lines(&*shaped, &source.expanded, width, source.last),
+        cells: cells_of(&lines, &source.expanded),
+        lines,
         expanded: source.expanded,
         shaped,
         width,
@@ -182,10 +318,19 @@ pub fn lay_out<S: Shaper>(
     }
 }
 
+/// The cells of each of `lines`, which were shaped from `expanded`.
+fn cells_of(lines: &[Arc<VisualLine>], expanded: &Expanded) -> Vec<Cells> {
+    lines
+        .iter()
+        .map(|line| Cells::of(line, expanded.text()))
+        .collect()
+}
+
 impl<L: ShapedLine> LineEntry<L> {
     /// This entry broken again at `width`, sharing its shaped line.
     #[must_use]
     pub fn rebreak(&self, width: Option<f32>) -> Self {
+        let lines = visual_lines(&*self.shaped, &self.expanded, width, self.last);
         Self {
             bytes: self.bytes.clone(),
             expanded: self.expanded.clone(),
@@ -193,7 +338,8 @@ impl<L: ShapedLine> LineEntry<L> {
             generation: self.generation,
             shaped: Arc::clone(&self.shaped),
             width,
-            lines: visual_lines(&*self.shaped, &self.expanded, width, self.last),
+            cells: cells_of(&lines, &self.expanded),
+            lines,
             last: self.last,
         }
     }
@@ -295,57 +441,56 @@ impl<L> LineEntry<L> {
         self.expanded.column(offset - self.bytes.start)
     }
 
+    /// The cells of visual line `index`, left to right. `None` past its
+    /// last.
+    pub fn cells(&self, index: usize) -> Option<&Cells> {
+        self.cells.get(index)
+    }
+
     /// The x of `offset`, relative to the row's start, on visual line
-    /// `index`: the left edge of the glyph that draws it, or the line's
-    /// width past its last glyph.
+    /// `index`: the left edge of the cell that holds it, or the line's
+    /// width at its end.
     pub fn x_of(&self, index: usize, offset: usize) -> f32 {
         self.x_of_column(index, self.column(offset))
     }
 
-    /// The x of the expanded column `column` on visual line `index`.
+    /// The x of the expanded column `column` on visual line `index`: the
+    /// left edge of the cell that holds it, the line's width at or past
+    /// its end, and 0 before its first cell.
     pub fn x_of_column(&self, index: usize, column: usize) -> f32 {
-        let Some(line) = self.lines.get(index) else {
+        let (Some(line), Some(cells)) = (self.lines.get(index), self.cells.get(index)) else {
             return 0.0;
         };
         if column >= line.bytes.end {
             return line.width;
         }
-        line.glyphs
-            .iter()
-            .rev()
-            .find(|glyph| glyph.cluster <= column)
-            .map_or(0.0, |glyph| glyph.x)
+        cells.holding(column).map_or(0.0, |cell| cell.x)
     }
 
-    /// The expanded column on visual line `index` at `x`: the cluster of
-    /// the glyph `x` is in, or the line's end past its last glyph.
+    /// The expanded column on visual line `index` at `x`: the column of
+    /// the cell `x` is in, or the line's end past its last cell.
     pub fn column_at(&self, index: usize, x: f32) -> Option<usize> {
-        let line = self.lines.get(index)?;
-        Some(
-            line.glyphs
-                .iter()
-                .find(|glyph| x < glyph.x + glyph.advance)
-                .map_or(line.bytes.end, |glyph| glyph.cluster),
-        )
+        let (line, cells) = (self.lines.get(index)?, self.cells.get(index)?);
+        Some(cells.at(x).map_or(line.bytes.end, |cell| cell.column))
     }
 
     /// The offset, relative to the row's start, on visual line `index`
-    /// that `x` aims for: the start of the glyph `x` is in; past the last
-    /// glyph, the row's end on the line that holds it, and the last
-    /// glyph's start on any other line.
+    /// that `x` aims for: the character of the cell `x` is in; past the
+    /// rightmost cell, the row's end on the line that holds it, and the
+    /// rightmost cell's character on any other line.
     pub fn offset_at(&self, index: usize, x: f32) -> usize {
-        let (Some(line), Some(bytes)) = (self.lines.get(index), self.line_bytes(index)) else {
+        let (Some(cells), Some(bytes)) = (self.cells.get(index), self.line_bytes(index)) else {
             return self.bytes.end;
         };
-        let glyph = match line.glyphs.iter().find(|glyph| x < glyph.x + glyph.advance) {
-            Some(glyph) => glyph,
+        let cell = match cells.at(x) {
+            Some(cell) => cell,
             None if self.holds_the_end(index) => return bytes.end,
-            None => match line.glyphs.last() {
-                Some(glyph) => glyph,
+            None => match cells.cells().last() {
+                Some(cell) => cell,
                 None => return bytes.start,
             },
         };
-        let offset = self.bytes.start + self.expanded.offset(glyph.cluster, Bias::Before);
+        let offset = self.bytes.start + self.expanded.offset(cell.column, Bias::Before);
         offset.clamp(bytes.start, bytes.end)
     }
 }
@@ -358,7 +503,8 @@ mod tests {
 
     use super::{LineEntry, Source, lay_out};
     use crate::shaper::fake::{CellLine, CellShaper};
-    use crate::shaper::{FontId, FontSpec, ResolvedFontId, Shaper};
+    use crate::shaper::scripted::{ScriptedLine, ScriptedShaper, glyph, line};
+    use crate::shaper::{FontId, FontSpec, Glyph, ResolvedFontId, Shaper};
     use crate::tabs::{TabSnapshot, expand, row_content};
 
     /// The font of the family `tall` of [`shaper`], whose cells are 20 by
@@ -448,6 +594,145 @@ mod tests {
     fn glyph_x(entry: &LineEntry<CellLine>, offset: usize) -> f32 {
         let index = entry.line_of(offset);
         entry.x_of(index, offset)
+    }
+
+    /// Row 0 of `text`, unbroken, on a shaper that shapes it to the one
+    /// visual line of `glyphs`: what a real shaper gives and the fake never
+    /// does.
+    fn scripted(text: &str, glyphs: Vec<Glyph>) -> LineEntry<ScriptedLine> {
+        let shaper = ScriptedShaper::new(10.0, 16.0).with(text, vec![line(0..text.len(), glyphs)]);
+        lay_out(
+            &shaper,
+            Source {
+                bytes: 0..text.len(),
+                expanded: expand(text, 4),
+                last: true,
+                fonts: &[],
+                base: FontId(0),
+            },
+            None,
+        )
+    }
+
+    /// The x of each of `offsets` on the first visual line of `entry`.
+    fn xs<L>(entry: &LineEntry<L>, offsets: &[usize]) -> Vec<f32> {
+        offsets
+            .iter()
+            .map(|offset| entry.x_of(0, *offset))
+            .collect()
+    }
+
+    /// The offset each of `xs` aims for on the first visual line of
+    /// `entry`.
+    fn offsets<L>(entry: &LineEntry<L>, xs: &[f32]) -> Vec<usize> {
+        xs.iter().map(|x| entry.offset_at(0, *x)).collect()
+    }
+
+    #[test]
+    fn glyphs_in_reverse_cluster_order_give_each_position_its_own_glyph() {
+        // `abcd` drawn right to left: d is the leftmost glyph.
+        let glyphs = vec![
+            glyph('d', 3, 0.0, 10.0),
+            glyph('c', 2, 10.0, 10.0),
+            glyph('b', 1, 20.0, 10.0),
+            glyph('a', 0, 30.0, 10.0),
+        ];
+        let entry = scripted("abcd", glyphs);
+        // Each position is at the left edge of its own glyph, and the
+        // line's end at its width.
+        assert_eq!(xs(&entry, &[0, 1, 2, 3]), vec![30.0, 20.0, 10.0, 0.0]);
+        assert_eq!(entry.x_of(0, 4), 40.0);
+        // And each x aims for the character drawn there.
+        assert_eq!(offsets(&entry, &[5.0, 15.0, 25.0, 35.0]), vec![3, 2, 1, 0]);
+        assert_eq!(entry.offset_at(0, 100.0), 4);
+        assert_eq!(entry.column_at(0, 15.0), Some(2));
+        assert_eq!(entry.column_at(0, 100.0), Some(4));
+    }
+
+    #[test]
+    fn a_line_of_two_directions_gives_each_position_its_own_glyph() {
+        // `ab` left to right, then `cd` right to left: a, b, d, c.
+        let glyphs = vec![
+            glyph('a', 0, 0.0, 10.0),
+            glyph('b', 1, 10.0, 10.0),
+            glyph('d', 3, 20.0, 10.0),
+            glyph('c', 2, 30.0, 10.0),
+        ];
+        let entry = scripted("abcd", glyphs);
+        assert_eq!(xs(&entry, &[0, 1, 2, 3]), vec![0.0, 10.0, 30.0, 20.0]);
+        assert_eq!(offsets(&entry, &[5.0, 15.0, 25.0, 35.0]), vec![0, 1, 3, 2]);
+    }
+
+    #[test]
+    fn a_glyph_that_draws_two_characters_is_split_evenly_between_them() {
+        // `afib` with `fi` one glyph 20 across: the second character of
+        // the glyph is at its middle, and an x in its second half aims for
+        // the second character.
+        let glyphs = vec![
+            glyph('a', 0, 0.0, 10.0),
+            glyph('f', 1, 10.0, 20.0),
+            glyph('b', 3, 30.0, 10.0),
+        ];
+        let entry = scripted("afib", glyphs);
+        assert_eq!(
+            xs(&entry, &[0, 1, 2, 3, 4]),
+            vec![0.0, 10.0, 20.0, 30.0, 40.0]
+        );
+        assert_eq!(
+            offsets(&entry, &[5.0, 12.0, 19.0, 20.0, 29.0, 35.0]),
+            vec![0, 1, 1, 2, 2, 3]
+        );
+        assert_eq!(entry.column_at(0, 25.0), Some(2));
+        // A glyph that draws the line's last characters ends at the line's
+        // width.
+        let entry = scripted(
+            "afi",
+            vec![glyph('a', 0, 0.0, 10.0), glyph('f', 1, 10.0, 20.0)],
+        );
+        assert_eq!(xs(&entry, &[1, 2, 3]), vec![10.0, 20.0, 30.0]);
+        assert_eq!(offsets(&entry, &[25.0, 100.0]), vec![2, 3]);
+    }
+
+    #[test]
+    fn a_cluster_of_two_glyphs_is_one_box() {
+        // `e`, a combining mark, `x`: the letter and its mark are one
+        // cluster of two glyphs, 6 and 4 across, and of two characters, so
+        // the box is 10 across and each character has half of it.
+        let glyphs = vec![
+            glyph('e', 0, 0.0, 6.0),
+            glyph('\u{301}', 0, 6.0, 4.0),
+            glyph('x', 3, 10.0, 10.0),
+        ];
+        let entry = scripted("e\u{301}x", glyphs);
+        assert_eq!(xs(&entry, &[0, 1, 3, 4]), vec![0.0, 5.0, 10.0, 20.0]);
+        assert_eq!(
+            offsets(&entry, &[2.0, 4.9, 5.0, 6.5, 9.0, 12.0]),
+            vec![0, 0, 1, 1, 1, 3]
+        );
+        // A mark of no advance changes nothing: the box is the letter's.
+        let glyphs = vec![
+            glyph('e', 0, 0.0, 10.0),
+            glyph('\u{301}', 0, 10.0, 0.0),
+            glyph('x', 3, 10.0, 10.0),
+        ];
+        let entry = scripted("e\u{301}x", glyphs);
+        assert_eq!(xs(&entry, &[0, 1, 3]), vec![0.0, 5.0, 10.0]);
+    }
+
+    #[test]
+    fn a_glyph_per_character_in_order_is_a_cell_per_glyph() {
+        // What the fake gives: every answer is the glyph's own.
+        let entry = row("aé😀b", None);
+        assert_eq!(
+            xs(&entry, &[0, 1, 3, 7, 8]),
+            vec![0.0, 10.0, 20.0, 30.0, 40.0]
+        );
+        // An offset inside a character is that character's.
+        assert_eq!(xs(&entry, &[2, 5]), vec![10.0, 20.0]);
+        assert_eq!(
+            offsets(&entry, &[0.0, 15.0, 29.9, 30.0, 99.0]),
+            vec![0, 1, 3, 7, 8]
+        );
     }
 
     #[test]

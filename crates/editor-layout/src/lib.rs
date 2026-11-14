@@ -17,8 +17,10 @@
 //! - tab stops, the cut of a long row into segments and the content of a
 //!   row ([`tabs`]);
 //! - where a position is in a laid-out row: at a wrap, at a row's end,
-//!   inside a tab's spaces ([`line`](mod@line)), and how entries are kept, broken
-//!   again and moved through edits ([`wrap`]);
+//!   inside a tab's spaces, and by the cells of a visual line, whatever
+//!   the order of its glyphs and however many characters a glyph draws
+//!   ([`line`](mod@line)), and how entries are kept, broken again and
+//!   moved through edits ([`wrap`]);
 //! - what a face sets, the precedence by which the faces over a run merge
 //!   attribute by attribute, the fall-through to the default face and to
 //!   the base values, and which attributes are the font and which are paint

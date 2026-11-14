@@ -316,6 +316,7 @@ mod tests {
     use crate::Layout;
     use crate::scene::{TextKey, TextRef};
     use crate::shaper::fake::CellShaper;
+    use crate::shaper::scripted::{ScriptedShaper, glyph, line};
     use crate::tabs::SEGMENT_BYTES;
 
     /// A layout on cells 10 by 16.
@@ -411,6 +412,47 @@ mod tests {
         // The position between the return and the line feed is the row's
         // end, on its row.
         assert_eq!(rows("ab\r\ncd", 4, 1, 3), vec![(0, 2)]);
+    }
+
+    #[test]
+    fn a_move_lands_on_the_character_under_its_goal_in_a_reordered_line() {
+        // Three rows. The second is drawn right to left, z leftmost; the
+        // third has `fi` as one glyph 20 across. The first and the last
+        // row are the fake's.
+        let reversed = vec![
+            glyph('z', 3, 0.0, 10.0),
+            glyph('y', 2, 10.0, 10.0),
+            glyph('x', 1, 20.0, 10.0),
+            glyph('w', 0, 30.0, 10.0),
+        ];
+        let ligature = vec![
+            glyph('a', 0, 0.0, 10.0),
+            glyph('f', 1, 10.0, 20.0),
+            glyph('b', 3, 30.0, 10.0),
+        ];
+        let shaper = ScriptedShaper::new(10.0, 16.0)
+            .with("wxyz", vec![line(0..4, reversed)])
+            .with("afib", vec![line(0..4, ligature)]);
+        let mut layout = Layout::new(shaper);
+        let text = TextRef::fixed(TextKey(1), Text::from("abcd\nwxyz\nafib\nabcd").snapshot());
+        let mut moved = |position: usize, lines: i64| {
+            let moved = layout.lines_from(&text, 400.0, position, lines, None);
+            let Moved { position, goal } = moved.unwrap();
+            (position, goal)
+        };
+        // Down from `b`, at x 10: the character drawn there is `y`, the
+        // third of its row.
+        assert_eq!(moved(1, 1), (7, 10.0));
+        // The goal of a move from a reordered line is the x its character
+        // is drawn at: `x`, the second of its row, is at 20, over `c`.
+        assert_eq!(moved(6, -1), (2, 20.0));
+        // And down from it, x 20 is the second half of the ligature: `i`.
+        assert_eq!(moved(6, 1), (12, 20.0));
+        // From `i`, at the middle of its glyph, to the row below and back.
+        assert_eq!(moved(12, 1), (17, 20.0));
+        assert_eq!(moved(17, -1), (12, 20.0));
+        // From the first half, `f`.
+        assert_eq!(moved(16, -1), (11, 10.0));
     }
 
     #[test]
