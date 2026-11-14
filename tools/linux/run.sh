@@ -20,7 +20,8 @@
 # window that draws, `editor-ffi`'s example, with the wgpu renderer drawing
 # a fixture frame in the real window on Mesa's software Vulkan driver and
 # xdotool giving it keys, the pointer and a resize, once at the display's
-# own scale of 1 and once at scale 2; the arboard adapter's
+# own scale of 1, ending with a change of scale to 2, and once at scale 2
+# from the start; the arboard adapter's
 # example, which holds that display's clipboard to the clipboard port's
 # contract; and text written to it by one process, read by another. Its
 # input is synthetic, and its output says so. The clipboard is the
@@ -196,6 +197,24 @@ inside_clipboard_across() {
 # does not. It is winit that is told, not the display: nothing here is a
 # display at scale 2.
 #
+# The run at scale 1 ends with a change of scale, to 2, while the window
+# is open: the one way here to make winit send the event for it, which no
+# test can build, so that the line of the adapter that takes it apart is
+# run (`App::window_event`, the `ScaleFactorChanged` arm). winit's X11
+# back end hears of a scale from the display's settings: `Xft/DPI` of
+# XSETTINGS when a daemon serves them, else `Xft.dpi` of the X resources.
+# It is told of a change to the first and not, here, of a change to the
+# second: nothing selects property changes on the root window, so `xrdb
+# -merge` of another `Xft.dpi` reached no window (seen), with or without a
+# RandR event after it. So xsettingsd serves 96 dots an inch from before
+# the window opens, and once the resize has arrived and been drawn its
+# file is rewritten to 192 and it is signalled to read it again. The port
+# documents a change of scale as a resize at the size last known and the
+# new scale, so the run requires `input: resized 300 by 120 at scale 2`.
+# winit then asks the X server for the window at twice its size, and that
+# resize arrives as its own or does not (600 by 240, seen eighteen times
+# of twenty): it is not required.
+#
 # `--require-picture`: every frame's picture must have been read back from
 # the surface and compared, or the example fails. Without it the example
 # lets a surface pass that does not let its texture be copied from, which
@@ -203,9 +222,27 @@ inside_clipboard_across() {
 # that was not compared is a read-back that broke.
 inside_drawing_window() {
   local scale=$1 log=/tmp/window-$1.log pid window status=0 waited=0 wanted
+  local settings=/tmp/xsettings.conf serving=/tmp/xsettingsd.log daemon=
   local -a told=()
   [ "$scale" = 1 ] || told=("WINIT_X11_SCALE_FACTOR=$scale")
   echo "linux-window: 4 of 6, the window at scale $scale"
+  if [ "$scale" = 1 ]; then
+    # The display's settings, served before the window opens: winit asks
+    # who owns them once, as it connects. `Xft/DPI` is in 1024ths of a
+    # dot an inch, and 96 dots an inch is a scale of 1.
+    printf 'Xft/DPI %d\n' $((96 * 1024)) >"$settings"
+    : >"$serving"
+    xsettingsd -c "$settings" >"$serving" 2>&1 &
+    daemon=$!
+    until grep -q 'Took ownership of selection' "$serving"; do
+      waited=$((waited + 1))
+      if [ "$waited" -ge 50 ] || ! kill -0 "$daemon" 2>/dev/null; then
+        die "xsettingsd did not come to serve the display's settings: $(cat "$serving")"
+      fi
+      sleep 0.1
+    done
+    waited=0
+  fi
   # The log is there before it is read.
   : >"$log"
   env "${told[@]}" /work/target/debug/examples/window --seconds 6 --require-picture >"$log" 2>&1 &
@@ -232,7 +269,31 @@ inside_drawing_window() {
   xdotool mouseup 1
   xdotool click 4
   xdotool windowsize "$window" 300 120
+  if [ -n "$daemon" ]; then
+    # The change of scale, once the resize has arrived: before it, the
+    # size last known would be the one the window opened at, or the two
+    # would race.
+    waited=0
+    until grep -qF -- "input: resized 300 by 120 at scale 1" "$log"; do
+      waited=$((waited + 1))
+      if [ "$waited" -ge 100 ] || ! kill -0 "$pid" 2>/dev/null; then
+        cat "$log"
+        die "the resize did not come off the queue, so the scale was not changed after it"
+      fi
+      sleep 0.1
+    done
+    # And once the window has been left alone at that size for a second:
+    # the frame laid out for the resize is drawn and judged first, as in
+    # the run at scale 2, and not overtaken by the frame for the scale.
+    sleep 1.5
+    printf 'Xft/DPI %d\n' $((192 * 1024)) >"$settings"
+    kill -HUP "$daemon"
+  fi
   wait "$pid" || status=$?
+  if [ -n "$daemon" ]; then
+    kill "$daemon" 2>/dev/null || true
+    wait "$daemon" 2>/dev/null || true
+  fi
   cat "$log"
   [ "$status" -eq 0 ] || die "the window that draws, at scale $scale, exited $status"
   # The fixture's text is 14 points: a frame laid out at the scale the
@@ -259,6 +320,14 @@ inside_drawing_window() {
     grep -qF -- "$wanted" "$log" ||
       die "at scale $scale, no input came off the queue as: $wanted"
   done
+  # The change of scale, as the port documents it: a resize at the size
+  # last known and the new scale. The window opened at scale 1, so the
+  # line is after the change.
+  if [ -n "$daemon" ]; then
+    wanted="input: resized 300 by 120 at scale 2"
+    grep -qF -- "$wanted" "$log" ||
+      die "the change of scale did not come off the queue as: $wanted"
+  fi
 }
 
 # The real window on a display that needs no screen and no person (Xvfb):

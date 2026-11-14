@@ -440,7 +440,8 @@ run = "tools/linux/run.sh ci"
 # `--require-picture`, so that a frame whose picture was not read back and
 # compared fails it, and with xdotool giving it a key, a named key, a key
 # with modifiers, a press, a drag, a release, a turn of the wheel and a
-# resize, once at the display's scale of 1 and once with winit told a
+# resize, once at the display's scale of 1, ending with a change of the
+# display's scale to 2 under the open window, and once with winit told a
 # scale of 2, which is what shows the window's scale reaching layout; then
 # the clipboard
 # adapter's example on that display's clipboard, and a text written to it

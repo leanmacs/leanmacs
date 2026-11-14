@@ -37,6 +37,16 @@ RUN apt-get update \
         mesa-vulkan-drivers libvulkan1 \
     && rm -rf /var/lib/apt/lists/*
 
+# For `linux-window`'s change of scale: a daemon that owns the display's
+# XSETTINGS selection and serves settings from a file it reads again when
+# it is signalled. Xvfb has no such daemon of its own, and a change of its
+# `Xft/DPI` is how the window library's X11 back end hears of a new scale
+# while a window is open (tools/linux/run.sh, `inside_drawing_window`).
+RUN apt-get update \
+    && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+        xsettingsd \
+    && rm -rf /var/lib/apt/lists/*
+
 # mise and elan, each at an exact version, each download checked against the
 # SHA-256 of the release file. Only the arm64 files have been run; the amd64
 # checksums are those of the same releases.

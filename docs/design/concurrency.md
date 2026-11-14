@@ -721,7 +721,10 @@ handler never runs.
   at 28 pixels in a second run where winit is told a scale of 2, where
   it does; no frame drawn over an idle second; and a key, a
   named key, a key with modifiers, a press, a drag, a release, a wheel
-  turn and a resize each arriving on the queue as the port documents it.
+  turn and a resize each arriving on the queue as the port documents it;
+  and a change of scale under an open window, from 1 to 2, made by
+  changing the display's settings, arriving as a resize at the size last
+  known and the new scale, with the frame laid out for it at 28 pixels.
   What has run on macOS (2026-11-14, one desktop, aarch64, Metal, one
   display at scale 2 that refreshes at 120 hertz;
   [on-demand-checks.md](../dev-practices/on-demand-checks.md), "What the

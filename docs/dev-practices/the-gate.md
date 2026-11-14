@@ -91,8 +91,10 @@ What the gate does check of the window, with none open:
 
 What it cannot check, and so does not claim: winit's own loop, and the few
 lines of the adapter that only a real window runs (the two that take a key
-event and a change of scale apart, the readings of the window's size, its
-handles and its display's refresh rate, and telling the drawer the window
+event and a change of scale apart, which `mise run linux-window` runs on
+winit's own events, keys typed by xdotool and a change of the display's
+settings while the window is open; the readings of the window's size, its
+handles and its display's refresh rate; and telling the drawer the window
 is closing); wgpu's own calls that configure a surface, take its texture,
 copy it out and present it, since the no-op back end hands out no surface
 texture, and the few lines that forward to them
@@ -104,7 +106,8 @@ are <p> pixels` shows it only at a scale other than 1, so that task runs
 the window a second time with winit told a scale of 2 and requires `at
 scale 2: 14 points are 28 pixels`, which a layout never told the scale
 does not give ([`on-demand-checks.md`](on-demand-checks.md), "The window
-on Linux, on demand", part 4). The rest is a person's to see: an
+on Linux, on demand", part 4). That task also changes the scale under
+an open window, once, from 1 to 2. The rest is a person's to see: an
 apparent size beside another app; a display that is itself at scale 2;
 a second display and a window moved to it; the system's fullscreen;
 another Space; or what a window shows between two sizes

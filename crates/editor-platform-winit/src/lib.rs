@@ -71,6 +71,16 @@
 //! from. Run the first after a change to this crate. Under Xvfb the
 //! display says no refresh rate, so the reading is run there and what a
 //! real display answers is not seen.
+//!
+//! The handler's two arms are run on winit's own events by `mise run
+//! linux-window` too, in the window that draws (`editor-ffi`'s example
+//! `window`): the key's by keys xdotool types, and the change of scale's
+//! by a change of the display's settings while the window is open, which
+//! the task requires to come off the queue as a resize at the size last
+//! known and the new scale (`docs/dev-practices/on-demand-checks.md`, "The
+//! window on Linux, on demand"). That is winit's X11 back end. What its
+//! macOS back end sends when a window is moved between two displays has
+//! not been seen.
 
 mod names;
 mod native;

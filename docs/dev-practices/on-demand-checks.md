@@ -434,7 +434,9 @@ The steps:
 3. **Two displays.** Drag the window to the display at scale 1 and let
    go; wait a second. Expected in the terminal: `input: resized … at
    scale 1`, once for the scale and again for the size (winit sends one
-   and then the other: read, not seen), and `window: frame <n> is laid
+   and then the other: read, and not seen on macOS; on X11, in the
+   container, the first came every time and the second most times), and
+   `window: frame <n> is laid
    out for <w> by <h> at scale 1: 14 points are 14 pixels`. On screen:
    the text is the size TextEdit's is when its window is dragged over
    too. Take a picture of the window (Command-Shift-4, Space, click) and
@@ -549,10 +551,16 @@ So the window's scale reaching the shaper through layout is seen at scale
 does not. The container's run at scale 1 does not show it: there a
 layout told nothing lays out the same. Its run at scale 2 shows it each
 time `mise run linux-window` is run, on a window winit was told is at
-scale 2, with a draw presented and plain masks said, on llvmpipe. **Not
-seen by anyone**: a draw at scale 2 presented on a display that is at
-scale 2, and on Metal; a change of scale; fullscreen; another Space; the
-size beside another app.
+scale 2, with a draw presented and plain masks said, on llvmpipe. A
+change of scale under an open window is seen there too, each time, from
+1 to 2, on X11, by the display's settings being changed ("The window on
+Linux, on demand", "The change of scale"): the resize at the new scale
+comes off the queue, the frame laid out for it has glyphs of 28 pixels,
+and the draw after it says plain masks where the draws before said
+subpixel ones. **Not seen by anyone**: a draw at scale 2 presented on a
+display that is at scale 2, and on Metal; a window moved between two
+displays, and a change of scale from 2 to 1; fullscreen; another Space;
+the size beside another app.
 
 ### What the owner's run showed
 
@@ -640,7 +648,9 @@ fails:
    gives it `a`, Escape, Control-Shift-A, a press, a drag, a release, a
    turn of the wheel and a resize. The key with Control held must come
    off with no text: the X server gives it `A` (seen), and a key pressed
-   with Control produced nothing to insert. Each run fails if the
+   with Control produced nothing to insert. The first run then ends with
+   a change of scale, to 2, while the window is open ("The change of
+   scale", below). Each run fails if the
    example fails (a frame whose glyphs are not drawn at 14 points times
    the window's scale; no frame presented; a frame whose picture was not
    read back from the surface and compared, whatever the reason; a
@@ -662,19 +672,66 @@ fails:
    as it opens, the example's editor thread reads that off the resize it
    pulls from the queue and tells its layout, and the frame's fonts come
    back at 28 pixels. With the example made not to tell its layout the
-   scale, the first run still passes and the second prints `14 points
-   are 14 pixels` and fails with `frame 1 is laid out for a window at
-   scale 2, where 14 points are 28 pixels, and its glyphs are drawn at
-   14 pixels` (seen in the container, on 2026-11-14, and once before
-   that on a desktop at scale 2). The pictures are read back and
+   scale, the second run prints `14 points are 14 pixels` and fails with
+   `frame 1 is laid out for a window at scale 2, where 14 points are 28
+   pixels, and its glyphs are drawn at 14 pixels` (seen in the
+   container, on 2026-11-14, and once before that on a desktop at scale
+   2). The first run passed under that change for as long as it kept its
+   scale of 1 to the end (seen); now that it ends with a change of scale
+   it fails there too, on the frame laid out after the change, and the
+   task stops before the second (seen). The pictures are read back and
    compared at scale 2 as at scale 1. The timeline ends each presented
-   draw `its glyphs as subpixel masks, red first` in the first run and
-   `its glyphs as plain masks` in the second, on llvmpipe, which blends
-   by a coverage for each channel; the task requires neither line.
+   draw `its glyphs as subpixel masks, red first` in the first run, until
+   its change of scale, and `its glyphs as plain masks` after that and
+   in the second, on llvmpipe, which blends by a coverage for each
+   channel; the task requires neither line.
    **What the second run is not**: a display at scale 2. It is winit
    that is told, the window is 800 by 600 pixels as it opens at either
-   scale, and nothing shows how large 28 pixels look. Nor is it a change
-   of scale: each window keeps the scale it opened at;
+   scale, and nothing shows how large 28 pixels look.
+
+   **The change of scale.** The first run ends with the one change of
+   scale the container can make, so that the adapter's line that takes
+   winit's event for it apart is run on a real one (`App::window_event`
+   in `crates/editor-platform-winit`, the `ScaleFactorChanged` arm: the
+   event cannot be built in a test). winit's X11 back end reads the
+   scale from the display's settings: `Xft/DPI` of XSETTINGS where a
+   daemon serves them, else `Xft.dpi` of the X resources. For that run
+   `xsettingsd`, which the image has for this alone, serves 96 dots an
+   inch from before the window opens. Once the resize to 300 by 120 has
+   come off the queue, and a second and a half more have passed so that
+   the frame laid out for that resize is drawn and judged first, its
+   file is rewritten to 192 and it is signalled to read it again. winit
+   then sends the event, and the run requires
+   what the port documents for it, a resize at the size last known and
+   the new scale: `input: resized 300 by 120 at scale 2`. The example
+   lays a frame out for it, which must say `14 points are 28 pixels` or
+   the example fails. winit then asks the X server for the window at
+   twice its size, and `input: resized 600 by 240 at scale 2` follows or
+   does not (it followed in eighteen runs of twenty, and why not in the
+   other two was not looked into): that line is not required. The
+   required line came in all twenty. With the arm made to do nothing
+   the run prints `input: resized 600 by 240 at scale 1`, the example
+   passes, and the task fails with `the change of scale did not come off
+   the queue as: input: resized 300 by 120 at scale 2` (seen).
+
+   What was tried first, and does not work here: `xrdb -merge` of
+   `Xft.dpi: 192` while the window is open. winit has a handler for a
+   change of the root window's `RESOURCE_MANAGER`, but at the pin it
+   asks the X server for property changes of its own windows and of the
+   settings daemon's, not of the root (read); `xwininfo -root -events`
+   listed no event of the core protocol that anybody wants of the root
+   while the window was open, a property's change among them (seen);
+   and no change of scale arrived, nor after `xrandr --dpi
+   192` or `xrandr --fb 1000x700` following it, each of which the window
+   answered as hidden, shown and damaged and no more (seen). `xrdb` and
+   `xrandr` are not in the image.
+
+   **What the change of scale is not**: a window moved between two
+   displays. Here one display changes its settings, on X11. winit sends
+   the same event for both, and the adapter's line is the same; what
+   macOS sends around it, in which order the scale and the size come,
+   and the antialiasing changing on a real display, are still step 3 of
+   "Scale and fullscreen, by hand";
 5. the clipboard adapter's example, as `clipboard-contract` runs it: that
    display's clipboard held to the clipboard port's contract, in one
    process;
@@ -713,11 +770,13 @@ that marks its frame dirty after every draw (10 frames drawn, 0 asked for)
 and with a window that asks for a redraw whenever it is asked for one
 (270139 asked for); an input's line, with Escape named `Esc`; the
 input itself, with nothing sent; the scale reaching layout, with the
-example made not to tell its layout the scale (the run at scale 1 passes
-and the run at scale 2 exits 1, as quoted under part 4); and that a
-frame was laid out at scale 2 at all, with winit not told the scale in
-the second run (`no frame said it is laid out at scale 2 and its 14
-points are 28 pixels`). Those two mutations of the idle second
+example made not to tell its layout the scale (a run at scale 2 exits 1,
+as quoted under part 4); that a frame was laid out at scale 2 at all,
+with winit not told the scale in the second run (`no frame said it is
+laid out at scale 2 and its 14 points are 28 pixels`); and the change of
+scale, with the adapter's arm for it made to do nothing (`the change of
+scale did not come off the queue as: input: resized 300 by 120 at scale
+2`). Those two mutations of the idle second
 were made again once the example judged each draw by what asked for it,
 and each still fails the task: the first with `334 of the 336 draws were
 asked for by nothing: the first is draw 2, which began 256.1 ms after
@@ -771,8 +830,25 @@ of 255 at the worst; each draw ended `presented, its glyphs as plain
 masks`; no frame was drawn in the idle second; the window was left alone
 twice and showed what was laid out for it; and the eight inputs came off
 the queue as in the first run, the resize at scale 2. The container has
-one display, at scale 1: the scale of 2 is what winit was told, and no
-change of scale is seen there.
+one display, at scale 1: the scale of 2 is what winit was told.
+
+And again that day, six times, with the change of scale at the end of
+part 4's first run: all six parts passed each time. A second and a half
+after `input: resized 300 by 120 at scale 1` the first run printed
+`input: resized 300 by 120 at scale 2`, `window: frame 3 is laid out for
+300 by 120 at scale 2: 14 points are 28 pixels`, `input: resized 600 by
+240 at scale 2` and `window: frame 4 is laid out for 600 by 240 at scale
+2: 14 points are 28 pixels`. Five frames were presented: three at scale
+1, in subpixel masks, as before; then the frame laid out at scale 1 on
+300 by 120 at scale 2, which is the one draw a frame of the old scale
+gets on the new one; then the frame laid out for 600 by 240 at scale 2;
+those two in plain masks. Each picture was compared, the worst by 1 of
+255, and the window was left alone three times and showed what was laid
+out for it each time. Before that the scale was changed fourteen times
+as soon as the resize had arrived, without the wait, seven of them by
+hand with no pointer input: the required line came every time, and the
+window grew to 600 by 240 in twelve and stayed 300 by 120 at scale 2 in
+two, where the run passed as well.
 
 ## The clipboard, on demand
 

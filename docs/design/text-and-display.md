@@ -1638,7 +1638,13 @@ window is still run with nothing drawing in it. The threads are in
   requires a frame laid out at scale 2 whose 14 points are 28 pixels;
   with the example made not to tell its layout, that run prints 14 and
   fails, there as on one desktop at scale 2. It is winit that is told:
-  no display in the container is at scale 2.
+  no display in the container is at scale 2. The first run ends with a
+  change of scale under the open window, from 1 to 2, made by changing
+  the display's settings: winit's own event for it, which no test can
+  build, is taken apart by the adapter there, and the task requires the
+  resize at the size last known and the new scale that the port
+  documents. That is one display changing its scale on X11, not a window
+  moved between two displays on macOS.
   What the gate holds of the scale is layout's arithmetic and its cost,
   on the fake shaper, and what the example makes of what it saw, in its
   unit tests. What neither holds is for a person: an apparent size
