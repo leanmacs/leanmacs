@@ -976,8 +976,10 @@ fake shaper whose glyphs all have the cells' size.
   this port and assumes nothing about pixels.
 - Drawing goes through a `Renderer` port, which takes a device-independent
   frame (see below). The wgpu adapter rasterises glyphs once into an atlas
-  and draws them as quads, plus rectangles. Rasterising, the atlas and
-  glyph identities are inside that adapter, not in the frame.
+  and draws them as quads, plus rectangles. Rasterising and the atlas are
+  inside that adapter, not in the frame. The frame names the font each
+  glyph is drawn in, resolved in layout, with a generation stamp so a
+  stale cache is detectable; it never names an atlas.
 - Nothing is drawn when nothing changed. Frames are drawn on demand, at
   most one per display refresh, by a scheduler that is a pure function of
   its inputs and so is tested with a fake clock.
@@ -1002,8 +1004,31 @@ facts of each part are in the module docs; these are the decisions.
   binding passes the display contract by construction; it is also what the
   display handle runs on until Parley (phase 3), and it is the "cell
   shaper" of the table below. Its published contract check
-  (`shaper::contract`) holds the fake and every real adapter to seven
-  properties that leave the breaking policy open.
+  (`shaper::contract`) holds the fake and every real adapter to nine
+  properties that leave the breaking policy open. Two of them are what
+  layout relies on of a line and the fake could never break: a line's
+  glyphs are in order from its left edge, whatever the order of their
+  clusters, and nothing in a text forces a break. A segment holds no line
+  feed, and every other character is content: a carriage return alone,
+  U+2028 and U+2029 reach a shaper, since a row is split at line feeds
+  only, and stay on their line.
+- **A glyph says where it is drawn and in which font.** A glyph has a pen
+  position and an advance, which positions are found by, and an offset
+  from the pen position and the baseline, which only a renderer reads.
+  The font it is drawn in is not the font its run asked for: a character
+  the font asked for lacks is drawn in a fallback, and two specs that
+  differ in line height are one font. So there are two kinds of id. A
+  spec's id is what a run asks for and what metrics are asked about; a
+  resolved font's id is what a glyph carries, an index into the shaper's
+  table of resolved fonts (`Shaper::resolved`). An entry is one face of
+  one font file at a size, with what a rasteriser needs: the bytes, a
+  number for the file so two entries are compared without reading bytes,
+  the face's index, the variation coordinates, and whether bold or a
+  slant is synthesised. Every glyph names an entry of the table as it was
+  when its line was shaped; within one generation of the shaper the table
+  only grows and an entry never changes. One id space for both was set
+  aside: it gives one number two meanings. The fake draws a spec's glyphs
+  in the resolved font of the spec's number, with no bytes.
 - **A font is named by its spec.** `FontSpec` is the port's term for a
   font: a family, a size, a weight, a slant and a line height. A shaper
   gives each spec an id (`Shaper::font`): equal specs one id, different
@@ -1086,16 +1111,29 @@ facts of each part are in the module docs; these are the decisions.
   paint (a foreground, a background, an underline with its style and
   colour, strike-through), and neighbouring runs of one paint are one run;
   an underline with no colour of its own takes the run's foreground. A
-  glyph carries its font's id. A cursor carries the paint of the face the
-  scene names for it over `default`: its background is the cursor's
-  colour, and its foreground the glyph's under a block cursor. A view
-  carries `default`'s background and the selection's, for its selection
-  areas. A row's hash covers its glyphs with their fonts, its runs with
-  their paint, its height and its baseline, relative to the row's start;
-  a cursor is no part of a row, so moving it or changing its face changes
-  no hash. A font's id is its shaper's, given in the order it was first
-  asked for, so two frames are compared as text only from layouts handed
-  the same scenes and faces in the same order.
+  glyph carries the id of the font it is drawn in. A cursor carries the
+  paint of the face the scene names for it over `default`: its background
+  is the cursor's colour, and its foreground the glyph's under a block
+  cursor. A view carries `default`'s background and the selection's, for
+  its selection areas. A row's hash covers its glyphs with their fonts
+  and offsets, its runs with their paint, its height and its baseline,
+  relative to the row's start; a cursor is no part of a row, so moving it
+  or changing its face changes no hash. A font's id is its shaper's,
+  given in the order it first drew a glyph in each, so two frames are
+  compared, as text or as values, only from layouts handed the same
+  scenes and faces in the same order.
+- **The frame carries its fonts and a generation.** Beside its views a
+  frame holds the shaper's table of resolved fonts and the shaper's
+  generation, both read once the views are laid out, so every glyph of
+  the frame names an entry of the table it travels with. That is how
+  whatever draws frames gets exact font identities with a generation
+  stamp, with no call back into the shaper, which the render thread may
+  not make: it keys what it keeps by font id and glyph id, and drops it
+  all when a frame of another generation arrives. Fonts are compared by
+  what they name, never by their bytes. The frame still holds no atlas
+  id and no rasterised glyph, and `Frame::describe` prints neither the
+  generation nor the table. No `Renderer` port was made for this: where
+  it goes is still open (task `display-pipeline-renderer-port-owner`).
 - **The mode line.** A view with at least one status field has a status
   row: its fields' texts one after another with no separator, each in its
   face over `mode-line` over `default`, shaped as one unbroken line
