@@ -902,10 +902,17 @@ it was kept at.**
   that every cursor-moving operation clears the column would bind every
   command anyone writes.
 - **One state request sets it**, refused for a view with no window, and
-  the editor API has the operation over it. A command reads it from its
-  target's window. Showing another buffer in the window clears it, because
-  offsets of one text mean nothing in another, and a window a split makes
-  has none.
+  the editor API has the operation over it. Showing another buffer in the
+  window clears it, because offsets of one text mean nothing in another,
+  and a window a split makes has none.
+- **A command reads it from the editor state, when it needs it**, and not
+  from the window its call hands it, which is the window as it was when
+  the command was called. The move command sets the column, so a command
+  of config's that calls it twice with one call would otherwise hand the
+  second move the column from before the first. Read from the state, two
+  moves in one command are two keys: down and then down across a shorter
+  line lands in the column it started in (pinned by `evilMotionChecks`,
+  with a command written in the check).
 - **It is rolled back with the command**, because it is editor state.
 - **Who keeps what** ("Motions as built" has the motions' side):
   - `j` and `k` aim for the kept column, or for the cursor's own column
@@ -1824,7 +1831,7 @@ keys are pressed against a text:
 | List | Checks |
 |---|---|
 | `evilRestChecks` | Where a cursor rests under each rule, from every position of a few small texts, on the text model; the rule a report gives |
-| `evilMotionChecks` | Each motion's key, with and without a count, in a text with the cursor written into it ("Keys against the model"); the wanted column; a sweep of every motion of the table from every resting position; that every default motion key has an entry |
+| `evilMotionChecks` | Each motion's key, with and without a count, in a text with the cursor written into it ("Keys against the model"); the wanted column, by keys and by a command that calls the move command twice; a sweep of every motion of the table from every resting position; that every default motion key has an entry |
 | `evilStateChecks` | `v`, `V` and `<Escape>`: the selection the scene shows, its shape and what it covers; the scene's cursor and status field in each state; and, by `Evil.enter` called with a report written by hand, a state that keeps both ends entered from an exclusive selection, which no default key does: where the anchor rests, and that the head steps back |
 | `evilInsertChecks` | `i a I A`, typed text and `<Escape>`; that a session is one step of the history, by an undo request; a key typed into a prompt; a committed text in normal state and in a session |
 

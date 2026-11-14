@@ -277,9 +277,10 @@ registers for evil (`Editor/Evil/Compiled.lean`), on the loop's driver:
   position of a few small texts, on the text model alone;
 - `evilMotionChecks`: each motion's key in a text with the cursor written
   into it as a bar (`evilKeys`, `evilRows`), with no count, a count of 1, a
-  count inside the text and a count past it; the wanted column; a sweep of
-  every motion of the vocabulary from every position a cursor may rest at;
-  and that every default motion key has a motion of its name;
+  count inside the text and a count past it; the wanted column, by keys
+  and by a command that calls the move command twice with one call; a
+  sweep of every motion of the vocabulary from every position a cursor may
+  rest at; and that every default motion key has a motion of its name;
 - `evilStateChecks`: `v`, `V` and `<Escape>`: the selection the scene
   shows, its shape and what it covers, and the scene's cursor and status
   field in each state; and, by the entering command called with a report
@@ -12109,6 +12110,34 @@ def evilMotionChecks : List Check :=
               (placed.loop.state.window? ⟨0⟩).map (·.wanted) ==
                 some (some { column := .cells 3, head := 7 }) &&
               evilShown (evilFed placed "j") == "abcd\nxyz\n|abcd" },
+    { name :=
+        "the move command reads the column the window keeps when it is called, not the one the window kept when its command was called, so a command written here that calls it twice with one call moves as two keys do: down and then down across a shorter line lands in the column it started in, and the window then keeps what it keeps after j and j; down and then up returns to where it started; and neither says anything"
+      run := do
+        let fixture := "abc|d\nx\nabcd"
+        let moving (names : List String) : Dispatched := fun call => do
+          for name in names do
+            Evil.move Evil.motions { call with arguments := [.str name] }
+          return none
+        let handed :=
+          evilHanded (commands :=
+            [("down-down", moving [Evil.down.name, Evil.down.name]),
+              ("down-up", moving [Evil.down.name, Evil.up.name])])
+        let some driver := evilDriver fixture handed | throw (IO.userError "no driver")
+        let ran (name : String) : EvilDriver :=
+          (driver.stepped (driver.loop.runNamed driver.handed name)).1
+        let wanted (driver : EvilDriver) : Option (Option Window.Wanted) :=
+          (driver.loop.state.window? ⟨0⟩).map (·.wanted)
+        let twice := ran "down-down"
+        let back := ran "down-up"
+        let keyed := evilFed driver "j j"
+        unless evilShown twice == "abcd\nx\nabc|d" && evilShown back == fixture do
+          throw
+              (IO.userError
+                s!"down and down left {repr (evilShown twice)}, down and up {repr (evilShown back)}")
+        return evilShown keyed == evilShown twice && wanted twice == wanted keyed &&
+            wanted twice == some (some { column := .cells 3, head := 10 }) &&
+            twice.loop.state.echo.isEmpty &&
+            back.loop.state.echo.isEmpty },
     { name :=
         "a departure from Vim, recorded in keymaps-and-modes.md under The wanted column: the column j and k aim for counts cells, and Vim's counts display columns, so from the character after a tab j lands two cells in, where Vim's lands at the tab stop's column"
       run := evilRows [("j", "a\t|b\n0123456789", "a\tb\n01|23456789")] },

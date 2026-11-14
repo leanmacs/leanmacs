@@ -694,7 +694,7 @@ made of state requests and text requests. Config sees it through
 | Close the undo group, undo and redo, each move handing back the selection to place | `BufferId.closeGroup`, `undo`, `redo`, over the buffer's undo tree | Yes: `applyInverse` and `dropInverses`, the undo tree's own; no new library call |
 | Split, close and focus a window, and show another buffer in one | `ViewId.split`, `close`, `focus`, `show` | To mark the new window's markers |
 | Set and read a buffer-local value; set the major mode, add and remove a minor mode | `BufferId.setValue`, `value?`, `ViewId.setMajorMode`, `BufferId.addMinorMode`, `removeMinorMode` | No |
-| Keep a view's wanted column, the column its vertical motions aim for, with the offset the cursor was left at; read it from the view's window | `ViewId.setWanted`; `Window.wanted` | No |
+| Keep a view's wanted column, the column its vertical motions aim for, with the offset the cursor was left at; read it from the view's window in the state, as it is when the command asks | `ViewId.setWanted`; `Window.wanted`, of `EditorState.window?` on `editorState` | No |
 | Say something in the echo area | `message` | No |
 | Start a job, with arguments | `startJob`, for a job registered with `jobWith` or `job` | No: the host starts it once the command has ended |
 | Break a line with the buffer's line ending, and ask whether a buffer is modified | `ViewId.insertLineBreak`, `Target.insertLineBreak`; `BufferId.isModified` | Yes: `apply`, and the text's revision |

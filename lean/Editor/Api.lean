@@ -178,8 +178,10 @@ has a case on the real binding. They are pinned once, on the models
 - `ViewId.setWanted view wanted` has the view's window keep a wanted
   column, the column its vertical motions aim for, with the offset the
   cursor was left at, or none (`Editor/State.lean`, "The wanted column").
-  A command reads it from its target's window (`Target.window.wanted`), or
-  from the state.
+  A command reads it from the state (`EditorState.window?` on
+  `editorState`), which has what the command's own requests have left. Its
+  target's window (`Target.window.wanted`) has the column kept when the
+  command was called.
 - `BufferId.setValue id name value` has a buffer keep a plain tree
   (`Value`, `Editor/Value.lean`) under a name, in place of the one the name
   had, and `BufferId.value?` reads it.

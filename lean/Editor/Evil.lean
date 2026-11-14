@@ -55,6 +55,12 @@ looks the motion's name up in, so the caller supplies the vocabulary.
   new head (`ViewId.setWanted`): the motion's `wanted`, or its `unmoved`
   when the head came to rest where it started. Only here is it known
   whether the cursor moved, since the resting rule is applied here.
+- **It reads that column from the editor state when it is called**
+  (`editorState`), as it reads the selection from its marker, and not from
+  its call's window, which is the window as it was when the command was
+  called (`Editor/Command/Call.lean`). So a command that calls it more
+  than once with one call moves as that many keys do: down and then down
+  across a shorter line lands in the column it started in.
 - **Placing a marker is no edit**, so a motion is no step of the history.
 - **One cursor.** No command makes a second range; this one reads the
   primary range and places one range.
@@ -243,9 +249,11 @@ its second is the count, 0 or left out for none. The head of the primary
 range of the target's selection goes where the motion leads, rested by the
 rule of the call's report, and the selection is one range of the report's
 shape, from the anchor it had where the report says a motion extends the
-selection, and with both ends on the new head otherwise. A call that names
-no motion (`noMotionNamed`) and a name with no motion (`noSuchMotion`) are
-each said in the echo area, and nothing moves. -/
+selection, and with both ends on the new head otherwise. The wanted column
+it hands the motion is the one the window keeps when this is called, read
+from the editor state. A call that names no motion (`noMotionNamed`) and a
+name with no motion (`noSuchMotion`) are each said in the echo area, and
+nothing moves. -/
 def move (motions : Array Vocabulary.Motion) (call : Call) : EditorM Unit := do
   let named : Option (String × Option Nat) :=
     match call.arguments with
@@ -255,17 +263,21 @@ def move (motions : Array Vocabulary.Motion) (call : Call) : EditorM Unit := do
   let some (name, count) := named | message noMotionNamed
   let some motion := motions.find? (·.name == name) | message (noSuchMotion name)
   let text := call.target.buffer.text
-  let window := call.target.window
+  let view := call.target.window.id
   let selection ← call.target.selection
   let some range := selection.ranges[selection.primary]? | throw .badSelection
+  -- Read from the state, not from the call's window, which is the window as
+  -- it was when the command was called: an earlier move of the same command
+  -- has had the window keep another column since.
+  let kept := ((← editorState).window? view).bind (·.wanted)
   -- The kept column holds only while the cursor is where it was kept.
-  let wanted := (window.wanted.filter (·.head == range.head)).map (·.column)
+  let wanted := (kept.filter (·.head == range.head)).map (·.column)
   let raw ← motion.target text { head := range.head, count, wanted }
   let head ← rested (restOf call.report) text raw.head
   let anchor := if call.report.selecting then range.anchor else head
   call.target.select { ranges := #[⟨anchor, head⟩], shape := call.report.shape }
   let keeps := if head == range.head then raw.unmoved else raw.wanted
-  discard <| window.id.setWanted (keeps.map fun column => { column, head })
+  discard <| view.setWanted (keeps.map fun column => { column, head })
 
 /-- Enters the Vim state the call's report says, with the head first put
 where `place` leads from where it is ("Entering a state", in the module
