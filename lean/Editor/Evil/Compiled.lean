@@ -28,8 +28,9 @@ yields an invocation of a name, and this is where the name is given a
 command.
 
 This module is apart from `Editor/Evil.lean` because it names the registry,
-which is the config session's: `Editor.lean` imports the commands, so that
-config can call them, and not this.
+which is the config session's: `Editor.lean` imports the commands and the
+motions (`Editor/Evil/Motions.lean`), so that config can call them, and
+not this, which is the one module of evil's it leaves out.
 
 Pinned by `ModelTest.evilMotionChecks`, `ModelTest.evilStateChecks` and
 `ModelTest.evilInsertChecks`, on the models.

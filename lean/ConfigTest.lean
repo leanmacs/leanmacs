@@ -71,6 +71,11 @@ fakes. The checks here pin what only real collaborators can show:
   and it is looked up after the accepting command's write to a store was
   written back. The accept key and the cancel key are the test scheme's
   for the roles the minibuffer's mode fills;
+- `evilChecks`: evil from config through the host, with the test scheme:
+  a config that the real elaborator loads names the vocabulary the editor
+  ships (`Evil.motions`) and hands it to evil's move command, as it is and
+  with a motion of config's own added. It shows what `Editor.lean` lets
+  config name; where a motion of the editor's leads is not said here;
 - `fileChecks`: files through the host, over the library's file service.
   They are the checks whose hosts are over a real service, so they share
   one table of waits and the one completion pump, which the first of them
@@ -2486,6 +2491,52 @@ def promptChecks (context : Context) : List Check :=
                 (← session.scene) == ("".quote, #[viewLine "" 0]))
           minibufferCompiled }]
 
+/-- A chunk with a motion of its own, `to-second`, which answers the offset
+1 from anywhere, and a `setup` that registers two commands that are given
+their call. Each runs evil's move command (`Evil.move`) over a vocabulary
+the chunk names: `own` over the one the editor ships (`Evil.motions`) with
+`to-second` added, by `to-second`'s name, and `first-shipped` over the one
+the editor ships as it is, by the name its first entry has. So the chunk
+names no motion of the editor's, and says nothing of where one leads. -/
+def vocabularyChunk : String :=
+  "def toSecond : Vocabulary.Motion :=
+  { name := \"to-second\", target := fun _ _ => pure { head := 1 } }
+
+def setup : SetupM Unit := do
+  commandWith \"own\" fun call =>
+    Evil.move (Evil.motions.push toSecond) { call with arguments := [.str \"to-second\"] }
+  commandWith \"first-shipped\" fun call =>
+    Evil.move Evil.motions
+      { call with arguments := [.str ((Evil.motions[0]?.map (·.name)).getD \"\")] }
+"
+
+/-- The checks of evil from config through the headless host
+(`Editor/Headless.lean`), on the real queue, the real text binding and the
+real elaborator, with the test scheme: what `Editor.lean` lets config name
+of evil (`Editor/Evil.lean`, `Editor/Evil/Motions.lean`). Where a motion
+leads is evil's, pinned by `ModelTest.evilMotionChecks`, and is not said
+here. -/
+def evilChecks (context : Context) : List Check :=
+  [{  name :=
+        "config names the vocabulary the editor ships and hands it to evil's move command: a command of config's that moves by a motion of config's own, added to that vocabulary, puts the cursor where that motion says, and one that moves by the name of the vocabulary's first entry runs to its end and says nothing in the echo area, so the entry was found"
+      run :=
+        withHost context [("10-vocabulary.lean", vocabularyChunk)] fun session => do
+          session.ask [.reload]
+          unless ← Event.post (.commit "hello") do
+            return false
+          let committed ← session.scene
+          session.ask [.run "own"]
+          let own ← session.scene
+          session.ask [.run "first-shipped"]
+          let (echo, _) ← session.scene
+          let lines ← session.lines
+          return committed == ("".quote, #[viewLine "hello" 5]) &&
+              own == ("".quote, #[viewLine "hello" 1]) &&
+              echo == "".quote &&
+              lines.contains "reload 1: installed, 1 chunks, 2 commands" &&
+              lines.contains "run own: ok" &&
+              lines.contains "run first-shipped: ok" }]
+
 /-- A chunk whose `setup` registers two jobs that each load a file and whose
 handler makes a text of what was loaded: `open`, of `note.txt` in
 `directory`, and `missing`, of a file that is not there. A load that is
@@ -2787,6 +2838,7 @@ def checks (context : Context) : List Check :=
     hostLoopChecks context ++
     modeChecks context ++
     promptChecks context ++
+    evilChecks context ++
     fileChecks context
 
 /-- Runs `checks` and returns the names of those that failed. A check that

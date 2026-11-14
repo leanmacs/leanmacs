@@ -446,6 +446,12 @@ structure Vocabulary.Motion where
   a function of the table it looks names up in (`Evil.move motions`), so
   the caller supplies the vocabulary. A name with no entry says
   `<name>: no such motion` in the echo area and moves nothing.
+- **Config can name the table and its entries**: the root module imports
+  `lean/Editor/Evil/Motions.lean`, which names no registry. So a command
+  of config's runs the move command over the vocabulary that ships, or
+  over that vocabulary with motions of its own added
+  (`Evil.move (Evil.motions.push mine)`), without registering anything
+  (`ConfigTest.evilChecks`).
 - **Not built: registering a motion from `setup`.** Nothing needs it yet.
   When it is built, the registry holds motions by owner and hands the move
   command the table as it is when the command is looked up, which is how a

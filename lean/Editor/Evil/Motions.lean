@@ -10,6 +10,11 @@ ones the Vim scheme's default tables bind keys to
 (`Editor/InputScheme/Vim/Default.lean`): a name is changed in its row there
 and in its entry here together. Nothing here names a key.
 
+`Editor.lean` imports this module, so config can name the entries and the
+table: a command of config's hands the move command the vocabulary that
+ships, or that vocabulary with motions of its own added
+(`ConfigTest.evilChecks`). Nothing here names the registry.
+
 Each entry answers the raw target, which the move command then rests by the
 view's state (`Editor/Evil.lean`, "Where a cursor rests"). What a count
 means, and what a motion does when it cannot go the whole way, is Vim's

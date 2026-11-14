@@ -9,8 +9,9 @@ Vim's states, motions and commands written on the editor API
 (`docs/design/keymaps-and-modes.md`, "The Vim scheme"). The Vim scheme
 (`Editor/InputScheme/Vim.lean`) is the grammar: keys in, an invocation out,
 with no editor API. This module is what those invocations run: programs
-over the editor's port, which name no key. `Editor.lean` imports it, so
-config can call them.
+over the editor's port, which name no key. `Editor.lean` imports it and
+the motions (`Editor/Evil/Motions.lean`), so config can call them, and can
+hand the move command the vocabulary that ships.
 
 Each command here is given its call (`Editor/Command/Call.lean`), and reads
 what the input scheme reports of its view from it (`Call.report`): the

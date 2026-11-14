@@ -754,11 +754,17 @@ made of state requests and text requests. Config sees it through
   and begin an insert, and the one typed text runs. Each is given its
   call, which carries what the input scheme reports of its view
   (`Call.report`), since a command cannot ask the scheme. They add no
-  request to a port, so there is no new model and no new contract. Config
-  sees them through `Editor.lean`; their registrations
-  (`lean/Editor/Evil/Compiled.lean`) name the registry and are not
-  imported. A motion is a vocabulary entry (`lean/Editor/Vocabulary.lean`),
-  a program over the text port alone.
+  request to a port, so there is no new model and no new contract. A
+  motion is a vocabulary entry (`lean/Editor/Vocabulary.lean`), a program
+  over the text port alone. Config sees the commands, the motions and
+  their table through `Editor.lean`, which imports `lean/Editor/Evil.lean`
+  and `lean/Editor/Evil/Motions.lean`: the move command is a function of
+  the table it looks a name up in, so a command of config's hands it the
+  vocabulary that ships (`Evil.motions`), or that vocabulary with motions
+  of its own added. The registrations (`lean/Editor/Evil/Compiled.lean`)
+  name the registry and are the one module of evil's that is not imported.
+  Pinned by `ConfigTest.evilChecks`, on a config the real elaborator
+  loads.
 - **Out of the API still**: commands that ask layout a question (phase
   15).
 

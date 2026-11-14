@@ -1,6 +1,7 @@
 import Editor.Api.Theorems
 import Editor.Command.Append
 import Editor.Evil
+import Editor.Evil.Motions
 import Editor.Files
 import Editor.InputScheme.Vim.Default
 import Editor.Minibuffer
@@ -54,9 +55,16 @@ mode fills (`Editor/Role.lean`). The test
 scheme and the scheme contract (`Editor/InputScheme/Test.lean`,
 `Editor/InputScheme/Contract.lean`) are for tests, and are not imported.
 
-What the Vim scheme's invocations run is here as well: evil
-(`Editor/Evil.lean`), Vim's states, motions and commands written on the
-editor API, so a command of config's can call them.
+What the Vim scheme's invocations run is here as well: evil, Vim's states,
+motions and commands written on the editor API, so a command of config's
+can call them. The commands are in `Editor/Evil.lean`, and the motions and
+their table, `Evil.motions`, in `Editor/Evil/Motions.lean`: the move
+command is a function of the table it looks a name up in, so a command of
+config's hands it the vocabulary that ships, or that vocabulary with
+motions of its own added (`Evil.move (Evil.motions.push mine)`). The
+commands' registrations (`Editor/Evil/Compiled.lean`) name the registry
+and are not imported, as the file commands' and the minibuffer's are not.
+Pinned by `ConfigTest.evilChecks`, on a config the real elaborator loads.
 
 It never imports `Editor.Ffi` or a port's real binding (`Editor/Text/Real.lean`).
 Those reach the Rust library, and only an executable linked with it imports

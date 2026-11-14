@@ -273,6 +273,13 @@ answer's command run before a key sent right after the accept key; and a
 continuation over a store reading the cell after the accepting command's
 write.
 
+`config-test` also loads a config that names evil's vocabulary
+(`ConfigTest.evilChecks`): a command of config's hands the move command
+the table of motions the editor ships, as it is and with a motion of
+config's own added, and the cursor goes where config's motion says. That
+is the check of what the root module lets config name of evil: a config
+that cannot name the table is rejected, and the check fails.
+
 `config-test` also runs jobs through the headless host, on a fake clock it
 moves: a job's handler runs on the editor thread, a reload that installs
 cancels the old config's jobs and a rejected one does not, and a `join` that
