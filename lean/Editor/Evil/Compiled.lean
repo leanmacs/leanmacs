@@ -2,6 +2,7 @@ import Editor.Config.Registry
 import Editor.Evil
 import Editor.Evil.Motions
 import Editor.Evil.Operators
+import Editor.Evil.Undo
 import Editor.InputScheme.Vim
 
 /-!
@@ -26,6 +27,7 @@ they hold when config fails to load, and a reload does not replace them.
   | `delete-char` | `Evil.deleteChar`: the cell under the cursor, which is the operator `delete` over the motion `right` |
   | `put-after`, `put-before` | `Evil.putAfter`, `Evil.putBefore`: the register the call names, after and before the cursor (`Editor/Evil/Registers.lean`) |
   | `open-below`, `open-above` | `Evil.openBelow`, `Evil.openAbove`: an empty line below and above the cursor's, and an insert on it |
+  | `undo`, `redo` | `Evil.undo`, `Evil.redo`: steps of the buffer's history, with the cursor placed (`Editor/Evil/Undo.lean`) |
 
   The seven of the second and third rows enter a state only when a key
   that enters it runs them: the scheme enters the state, at the key, and
@@ -63,6 +65,7 @@ def commands : Array Config.Registration :=
     { name := "put-after", action := .call putAfter },
     { name := "put-before", action := .call putBefore },
     { name := "open-below", action := .call openBelow },
-    { name := "open-above", action := .call openAbove }]
+    { name := "open-above", action := .call openAbove }, { name := "undo", action := .call undo },
+    { name := "redo", action := .call redo }]
 
 end Editor.Evil

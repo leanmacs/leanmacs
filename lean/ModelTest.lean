@@ -342,7 +342,11 @@ registers for evil (`Editor/Evil/Compiled.lean`), on the loop's driver:
   clipboard register on the clipboard model (`evilClipped`), and `p` and
   `P`, by the same rows;
 - `evilOpenChecks`: `o` and `O`, by the same rows, and their insert
-  session.
+  session;
+- `evilUndoChecks`: `u` and `C-r` after one change of each kind
+  (`undoRows`): the text and the cursor from before the change, and those
+  the change left. They are the phase's rule and are not compared with
+  Vim, which leaves the cursor at the start of the changed text.
 
 Each expected text of a row is written by hand from Vim's documented
 behaviour (`docs/design/keymaps-and-modes.md`, "Motions as built"). No
@@ -14559,9 +14563,10 @@ pressed with each motion key, with no count and with a count of 2, from
 every position of a text holding `contents` where a normal-state cursor may
 rest. For each: the echo area says no refusal; after an operator that
 enters no state the cursor is where normal state lets one rest; an operator
-that changes no text leaves the text; and when the text changed, one undo
-request, after `<Escape>` for an operator that enters a state, gives the
-text back. It reads the tables, so it covers a key added later. -/
+that changes no text leaves the text; and when the text changed, `u`, after
+`<Escape>` for an operator that enters a state, gives the text back and
+puts the cursor where it was. It reads the tables, so it covers a key added
+later. -/
 def operatorSweep (contents : String) : List String :=
   ((List.range (contents.utf8ByteSize + 1)).filter (restsWell contents)).flatMap fun position =>
     Vim.Default.operators.flatMap fun (operatorKey, bound) =>
@@ -14589,11 +14594,12 @@ def operatorSweep (contents : String) : List String :=
                   | _, _ => false
               let kept := operator.changes || text == some contents
               let ended := if operator.enters.isSome then evilFed after "<Escape>" else after
-              let undone := text == some contents || evilText (evilUndone ended) == some contents
+              let undone :=
+                text == some contents || evilShown (evilFed ended "u") == withBar contents position
               if !refused && rests && kept && undone then none
               else
                 some
-                  s!"{what}: left {repr (evilShown after)}, echo {repr after.loop.state.echo}, undone to {repr (evilText (evilUndone ended))}"
+                  s!"{what}: left {repr (evilShown after)}, echo {repr after.loop.state.echo}, undone to {repr (evilShown (evilFed ended "u"))}"
       | _ => []
 
 /-- Whether `left` is what a command that gave up with `reason` leaves: the
@@ -14630,7 +14636,7 @@ def evilOperatorChecks : List Check :=
               let pairs := operatorPairs before counted
               pairs.length == defaultPairs.length && defaultPairs.all pairs.contains },
     { name :=
-        "a sweep of every default operator key over every default motion key, with no count and with a count of 2, from every position a cursor may rest at in a few texts: nothing is refused, after an operator that enters no state the cursor is where normal state lets one rest, an operator that changes no text leaves the text, and one undo request gives back a text that changed"
+        "a sweep of every default operator key over every default motion key, with no count and with a count of 2, from every position a cursor may rest at in a few texts: nothing is refused, after an operator that enters no state the cursor is where normal state lets one rest, an operator that changes no text leaves the text, and u gives back a text that changed, with the cursor where it was"
       run := do
         let wrong := sweepTexts.flatMap operatorSweep
         unless wrong.isEmpty do
@@ -15128,6 +15134,113 @@ def evilOpenChecks : List Check :=
           ran "open-below" == some ⟨"ab\ncd\n|\nef", asItWas, false, ""⟩ &&
             ran "open-above" == some ⟨"ab\n|\ncd\nef", asItWas, false, ""⟩ }]
 
+/-- One change of each kind, for the checks of `u` and `C-r`: the text and
+the cursor it is made from, its keys, and the text and the cursor from
+before the change's command, which is the fixture unless keys before the
+change's own moved the cursor. -/
+def undoRows : List (String × String × String) :=
+  [("|a b c", "d w", "|a b c"), ("ab\n|cd\nef", "d d", "ab\n|cd\nef"),
+    ("ab\nc|d\nef\ngh", "d j", "ab\nc|d\nef\ngh"),
+    ("foo |bar baz", "c w X <Escape>", "foo |bar baz"),
+    ("ab\nc|d\nef", "c c X <Escape>", "ab\nc|d\nef"), ("foo |bar baz", "v e d", "foo ba|r baz"),
+    ("abc\nd|ef\nghi\njk", "V j d", "abc\ndef\ng|hi\njk"), ("a|bc", "x", "a|bc"),
+    ("a|bcde", "3 x", "a|bcde"), ("foo |bar baz", "y w p", "foo |bar baz"),
+    ("ab\nc|d\nef", "y y p", "ab\nc|d\nef"), ("ab\nc|d\nef", "y y P", "ab\nc|d\nef"),
+    ("foo |bar baz", "y w P", "foo |bar baz"), ("ab\nc|d\nef", "o X <Escape>", "ab\nc|d\nef"),
+    ("ab\nc|d\nef", "O X <Escape>", "ab\nc|d\nef")]
+
+/-- The checks of evil's undo and redo (`Editor/Evil/Undo.lean`), by key,
+on the loop's driver over the editor's models, under the Vim scheme that
+ships with evil's commands. What `u` leaves is the phase's rule and not
+Vim's, which leaves the cursor at the start of the changed text. -/
+def evilUndoChecks : List Check :=
+  [{  name :=
+        "u after a change restores the text and the cursor from before the change's command, and C-r reapplies it, leaving the text and the cursor the change left: for d over a motion, lines and a selection, c with typed text, x, p, P, o and O"
+      run := do
+        let wrong :=
+          undoRows.filterMap fun (fixture, typed, before) =>
+            match evilDriver fixture with
+            | none => some s!"no driver for {repr fixture}"
+            | some driver =>
+              let changed := evilFed driver typed
+              let undone := evilFed changed "u"
+              let redone := evilFed undone "C-r"
+              if
+                  evilText changed != evilText driver && evilShown undone == before &&
+                    undone.loop.state.echo.isEmpty &&
+                    evilShown redone == evilShown changed &&
+                    redone.loop.state.echo.isEmpty then
+                none
+              else
+                some
+                  s!"{typed} from {repr fixture} left {repr (evilShown changed)}, u {repr (evilShown undone)} saying {repr undone.loop.state.echo}, C-r {repr (evilShown redone)} saying {repr redone.loop.state.echo}"
+        unless wrong.isEmpty do
+          throw (IO.userError ("; ".intercalate wrong))
+        return true },
+    { name :=
+        "u after an insert session that typed text restores the text and leaves the cursor on the cell the insert began before, and C-r leaves the cursor where <Escape> left it"
+      run :=
+        pure <|
+          evilKeys "a|bc" "i X Y <Escape> u" == "a|bc" &&
+            evilKeys "a|bc" "a X Y <Escape> u" == "ab|c" &&
+            evilKeys "a|bc" "i X Y <Escape> u C-r" == evilKeys "a|bc" "i X Y <Escape>" &&
+            evilKeys "a|bc" "i X Y <Escape>" == "aX|Ybc" },
+    { name :=
+        "a count before u or C-r takes that many steps: 2 u takes two back, a count past the history stops at the first step, and 2 C-r takes two forward"
+      run :=
+        pure <|
+          evilKeys "|abcd" "x x x" == "|d" && evilKeys "|abcd" "x x x 2 u" == "|bcd" &&
+            evilKeys "|abcd" "x x x 9 u" == "|abcd" &&
+            evilKeys "|abcd" "x x x 9 u 2 C-r" == "|cd" &&
+            evilKeys "|abcd" "x x x 9 u 9 C-r" == "|d" },
+    { name :=
+        "u with nothing to undo and C-r with nothing to redo say so in the echo area, each with the sentence its function makes, and change nothing"
+      run :=
+        pure <|
+          match evilDriver "a|bc" with
+          | none => false
+          | some driver =>
+            let undone := evilFed driver "u"
+            let redone := evilFed driver "C-r"
+            !Evil.nothingToUndo.isEmpty && !Evil.nothingToRedo.isEmpty &&
+              undone.loop.state.echo == Evil.nothingToUndo &&
+              evilShown undone == "a|bc" &&
+              evilHistory undone == evilHistory driver &&
+              redone.loop.state.echo == Evil.nothingToRedo &&
+              evilShown redone == "a|bc" &&
+              (evilFed (evilFed driver "x u") "u").loop.state.echo == Evil.nothingToUndo },
+    { name :=
+        "u after a visual deletion leaves one range with equal ends at the selection's head, in normal state's shape"
+      run :=
+        pure <|
+          (evilSelected "foo |bar baz" "v e d u").map (fun (ranges, shape, _) => (ranges, shape)) ==
+            some ([(6, 6)], (vimDefaultReport "").shape) },
+    { name :=
+        "a step whose edits carried no selection is undone with the cursor rested where the selection's marker is: a command written here inserts at a position, and u after it leaves the cursor on the cell it was on"
+      run :=
+        pure <|
+          let stamp : Config.Registration :=
+            { name := "stamp"
+              action := .call fun _ => discard <| (⟨0⟩ : BufferId).insertAt 0 "XY" }
+          match evilDriver "ab|c" (evilHanded #[stamp]) with
+          | none => false
+          | some driver =>
+            let stamped :=
+              (driver.stepped (driver.loop.invoke driver.handed { command := "stamp" })).1
+            evilShown stamped == "XYab|c" && evilShown (evilFed stamped "u") == "ab|c" },
+    { name :=
+        "after u and after C-r the window keeps no wanted column: j keeps one, and the u and the C-r after it leave none"
+      run :=
+        pure <|
+          match evilDriver "ab|cd\nxyz\nabcd" with
+          | none => false
+          | some driver =>
+            let wanted (driver : EvilDriver) := (driver.loop.state.window? ⟨0⟩).bind (·.wanted)
+            let moved := evilFed driver "x j"
+            let undone := evilFed moved "u"
+            let again := evilFed (evilFed undone "j") "C-r"
+            (wanted moved).isSome && (wanted undone).isNone && (wanted again).isNone }]
+
 /-- Every check, in the order they run.
 
 The order matters where the process's one pool is measured. `poolChecks` run
@@ -15190,7 +15303,8 @@ def checks : List Check :=
     evilOperatorChecks ++
     evilSelectionChecks ++
     evilRegisterChecks ++
-    evilOpenChecks
+    evilOpenChecks ++
+    evilUndoChecks
 
 /-- Runs `checks` and returns the names of those that failed. A check that
 throws has failed, and its error is reported with its name. -/
