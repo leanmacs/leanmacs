@@ -532,7 +532,7 @@ mod tests {
 
     use editor_text::Text;
 
-    use super::{LineEntry, Source, lay_out};
+    use super::{Cell, LineEntry, Source, lay_out};
     use crate::shaper::fake::{CellLine, CellShaper};
     use crate::shaper::scripted::{ScriptedLine, ScriptedShaper, glyph, line};
     use crate::shaper::{FontId, FontSpec, Glyph, ResolvedFontId, Shaper};
@@ -748,6 +748,39 @@ mod tests {
         ];
         let entry = scripted("e\u{301}x", glyphs);
         assert_eq!(xs(&entry, &[0, 1, 3]), vec![0.0, 5.0, 10.0]);
+    }
+
+    /// A cell at `column`, from `x`, `width` across.
+    fn cell(column: usize, x: f32, width: f32) -> Cell {
+        Cell { column, x, width }
+    }
+
+    #[test]
+    fn a_cluster_that_is_no_offset_of_the_text_is_one_cell() {
+        // A shaper should give no such cluster. A line that has one is
+        // still laid out, and the glyph still has a cell: one, as wide as
+        // the glyph, where the glyph says it is.
+        //
+        // `é` is two bytes, so 1 is inside it and no character starts
+        // there.
+        let glyphs = vec![glyph('é', 1, 0.0, 10.0), glyph('b', 2, 10.0, 10.0)];
+        let entry = scripted("éb", glyphs);
+        let cells = entry.cells(0).expect("a line").cells();
+        assert_eq!(cells, [cell(1, 0.0, 10.0), cell(2, 10.0, 10.0)]);
+        assert_eq!(entry.column_at(0, 5.0), Some(1));
+        // A cluster past the text's end.
+        let glyphs = vec![
+            glyph('a', 0, 0.0, 10.0),
+            glyph('b', 1, 10.0, 10.0),
+            glyph('c', 7, 20.0, 6.0),
+        ];
+        let entry = scripted("ab", glyphs);
+        let cells = entry.cells(0).expect("a line").cells();
+        assert_eq!(
+            cells,
+            [cell(0, 0.0, 10.0), cell(1, 10.0, 10.0), cell(7, 20.0, 6.0)]
+        );
+        assert_eq!(entry.column_at(0, 22.0), Some(7));
     }
 
     #[test]
