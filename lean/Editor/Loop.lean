@@ -269,10 +269,13 @@ they were before it (`docs/design/concurrency.md`, "Foreground: commands").
   carried.
 - **No group of its own.** The kept state may be a point inside an open
   group, and the revert goes back to it, whether or not the command set a
-  boundary: the edits from before the command are then still pending. The
-  loop closes each group after every event (`Loop.publish`), so today the
-  kept state is a node's, and the revert leaves nothing pending, no node
-  and nothing to redo.
+  boundary: the edits from before the command are then still pending. That
+  is the case for a command run inside an insert session, whose buffer's
+  group the loop leaves open ("Insert sessions"): the session's earlier
+  edits stay pending, and are one step with what follows. For any other
+  buffer the loop closes the group after every event (`Loop.publish`), so
+  the kept state is a node's, and the revert leaves nothing pending, no
+  node and nothing to redo.
 - **What is not undone**: the texts, snapshots and markers the command
   made, and the scenes it published. The step publishes the true scene
   right after.
@@ -390,7 +393,8 @@ changed the state or not (`Loop.publish`):
 
 1. **The histories.** Each buffer's undo tree is told the revision its text
    is at, and its group is closed (`EditorState.recordHistories`): what an
-   event edited is one step of the history.
+   event edited is one step of the history. **But for a buffer in an
+   insert session**, whose group is left open ("Insert sessions", below).
 2. **The scene** (`Loop.views`, `Loop.scene`). Each window in the tree, in
    drawing order, is a view in the rectangle `Split.rects` gives it in the
    frame. While a prompt is open the minibuffer's window is a view too, in
@@ -428,6 +432,40 @@ changed the state or not (`Loop.publish`):
    and a real binding resolves them when it is published.
 
 Every edit the loop makes for an input event carries `Origin.user`.
+
+## Insert sessions
+
+A view is in an insert session while the scheme reports it so
+(`InputScheme.Report.session`): under the Vim scheme, while it is in a
+state where typing is text. What is edited in its buffer during one
+session is one step of the history
+(`docs/design/keymaps-and-modes.md`, "Insert sessions").
+
+- **The loop leaves a buffer's group open while a view of it is in a
+  session** (`Loop.sessions`, read from the scheme's state after the last
+  key): the tree is told the text's revision and not closed. Every other
+  buffer's group is closed after each event, as before.
+- **A session's boundary is the state change itself.** The scene published
+  after the command of the key that ends the session finds no view of the
+  buffer in one, and closes the group: one node for everything edited
+  meanwhile. The loop keeps nothing of its own for a session, and no
+  command sets or clears anything.
+- **A session with nothing edited makes no node**: closing a group with
+  nothing pending makes none.
+- **A buffer shown in two windows is held while either view is in a
+  session**, whichever window an edit is made through. A buffer no such
+  view shows is not held: an edit a command makes to it is a step at the
+  end of its event.
+- **Anything that edits the buffer during the session joins its step**: a
+  key's command, a job's command, a committed text.
+- **The buffer is modified while its group is open** (`Buffer.isModified`),
+  so its status line shows the modified field during the session.
+- **A command that fails inside a session** is rolled back to the point of
+  the open group it began at ("Rollback"): the session's earlier edits are
+  still pending, and are one step with what follows.
+
+Pinned by `ModelTest.dispatchUndoChecks`, with a scheme written in the test
+whose keys begin and end a session.
 
 ## When publishing is refused
 
@@ -608,19 +646,23 @@ def refusedBy (state : EditorState) : Option TextError → EditorState
   | none => state
 
 /-- Tells each buffer's undo tree the revision its text is at, and closes its
-group: what an event edited becomes one step of its history. It is not
-refused: a buffer whose text refuses, because it was released, keeps its
-history as it was, and the first such refusal is handed back. -/
-def recordHistories (state : EditorState) : TextM (EditorState × Option TextError) := do
+group, but for the buffers `held`, whose groups are left open: what an
+event edited becomes one step of its history, and what is edited in a held
+buffer goes on being one step with what is edited next. It is not refused:
+a buffer whose text refuses, because it was released, keeps its history as
+it was, and the first such refusal is handed back. -/
+def recordHistories (state : EditorState) (held : Array BufferId := #[]) :
+    TextM (EditorState × Option TextError) := do
   let mut buffers := #[]
   let mut refusal := none
-  for slot in state.buffers do
-    let some buffer := slot |
+  for index in [0:state.buffers.size] do
+    let some buffer := state.buffer? ⟨index⟩ |
       buffers := buffers.push none
       continue
     match ← observing buffer.history.sync with
     | .ok history =>
-      buffers := buffers.push (some { buffer with history := history.close })
+      let history := if held.contains ⟨index⟩ then history else history.close
+      buffers := buffers.push (some { buffer with history })
     | .error error =>
       buffers := buffers.push (some buffer)
       refusal := refusal <|> some error
@@ -733,13 +775,21 @@ completed, and empty when none is. -/
 def pending (loop : Loop scheme) : String :=
   Key.notations (scheme.pending loop.input)
 
-/-- Records the histories, publishes a scene of the state, and releases each
+/-- The buffers in an insert session: the buffer of each window whose view
+the scheme reports as in one (`InputScheme.Report.session`), in the scheme's
+state after the last key. -/
+def sessions (loop : Loop scheme) : Array BufferId :=
+  loop.state.windows.filterMap fun window =>
+    if (scheme.report loop.input window.id).session then some window.buffer else none
+
+/-- Records the histories, leaving open the group of each buffer in an insert
+session (`sessions`), publishes a scene of the state, and releases each
 snapshot the last scene named that this one does not. It is not refused
 ("When publishing is refused", in the module docs): a refusal of a buffer's
 text is in the echo area of the scene it publishes, and one of a release in
 the echo area of the state it returns. -/
 def publish (loop : Loop scheme) : EditorM (Loop scheme) := do
-  let (state, unrecorded) ← loop.state.recordHistories
+  let (state, unrecorded) ← loop.state.recordHistories loop.sessions
   let (views, shown, unshown) ← ({ loop with state } : Loop scheme).views
   let state := state.refusedBy (unrecorded <|> unshown)
   Display.publish (scene state views loop.pending)

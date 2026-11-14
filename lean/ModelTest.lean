@@ -7392,10 +7392,19 @@ def dispatchMinibufferNoticeChecks : List Check :=
           (told "C-c a C-c s" ==
             some (both [.minibuffer ⟨1⟩, .closed ⟨1⟩, .minibuffer ⟨2⟩], some ⟨2⟩)) }]
 
+/-- The history of the buffer `buffer` in `loop`'s state, as the loop keeps
+it. -/
+def treeOf {scheme : InputScheme} (loop : Loop scheme) (buffer : Nat := 0) : EditorM UndoTree := do
+  let some held := loop.state.buffer? ⟨buffer⟩ | throw .noSuchText
+  return held.history
+
 /-- The checks of undo from a command in the loop (`Editor/Api.lean`,
 `Editor/Loop.lean`), on the editor's models: a move in the history a key's
 command made is the loop's after the step, and a boundary set by a command
-that does not run to its end is rolled back with its edits. -/
+that does not run to its end is rolled back with its edits; and, with the
+scheme `switching`, two of whose keys begin and end an insert session of
+the focused view, that what is edited in a session is one step of the
+history. -/
 def dispatchUndoChecks : List Check :=
   let undo : Dispatched := fun call => do
     discard <| call.target.window.buffer.undo
@@ -7406,6 +7415,21 @@ def dispatchUndoChecks : List Check :=
   let keys :=
     dispatchKeys [("C-c s", invoke "stamp"), ("C-c u", invoke "undo"), ("C-c r", invoke "redo")]
       [("stamp", stamp), ("undo", undo), ("redo", redo)]
+  -- What a step of a loop over `switching` is handed: beside the keys that
+  -- begin and end a session, a key that stamps, one whose command edits and
+  -- is refused, one that edits the second buffer, and one that focuses the
+  -- second window.
+  let sessions : Loop.Keys switching :=
+    switchingKeys
+      [("C-c s", invoke "stamp"), ("C-c f", invoke "fail"), ("C-c o", invoke "elsewhere"),
+        ("C-c w", invoke "window")]
+      [("stamp", stamp), ("fail", boom),
+        ("elsewhere", fun _ => do
+          discard <| (⟨1⟩ : BufferId).insertAt 0 "x"
+          return none),
+        ("window", fun _ => do
+          discard <| (⟨1⟩ : ViewId).focus
+          return none)]
   [{  name :=
         "a key's command that undoes keeps the move after the step: the text is the one before the last key's edit, the buffer's tree has nothing pending and no node made for the move, and the next key's redo gives the edit back"
       run :=
@@ -7525,7 +7549,120 @@ def dispatchUndoChecks : List Check :=
           (program.runModel editorModel).1.toOption ==
             some
               ("xabcd", "crossing: refused: bad range; the command moved in the history", "abcd",
-                "") }]
+                "") },
+    { name :=
+        "two keys' edits made while the scheme reports the focused view as in an insert session, and then the key that ends the session, are one step of the history: no node is made inside the session, one is made when it ends, one undo gives the text from before the session and one redo the text after it"
+      run :=
+        pure <|
+          let program : EditorM (List Nat × List Bool × List String) := do
+            let loop : Loop switching := { state := ← holding "abcd" #[⟨1, 3⟩] }
+            -- The first step records what the buffer was made holding as a
+            -- step of the history.
+            let (loop, _) ← stepsWith sessions loop [pressF5]
+            let before ← treeOf loop
+            let (loop, _) ← stepsWith sessions loop (presses "C-b C-c s C-c s")
+            let inside ← treeOf loop
+            let (loop, _) ← stepsWith sessions loop (presses "C-e")
+            let ended ← treeOf loop
+            let typed ← ended.text.read
+            let some undone ← ended.undo Origin.user | throw .noInverse
+            let back ← ended.text.read
+            let some _ ← undone.tree.redo Origin.user | throw .noInverse
+            return ([before.nodes.size, inside.nodes.size, ended.nodes.size],
+                [before.pending, inside.pending, ended.pending], [typed, back, ← ended.text.read])
+          (program.runModel editorModel).1.toOption ==
+            some ([2, 2, 3], [false, true, false], ["aC-c sC-c sd", "abcd", "aC-c sC-c sd"]) },
+    { name :=
+        "the same two keys' edits with no view in an insert session are two steps of the history, each closed after its event"
+      run :=
+        pure <|
+          let program : EditorM (List Nat × Bool) := do
+            let loop : Loop switching := { state := ← holding "abcd" #[⟨1, 3⟩] }
+            let (loop, _) ← stepsWith sessions loop [pressF5]
+            let before ← treeOf loop
+            let (loop, _) ← stepsWith sessions loop (presses "C-c s")
+            let between ← treeOf loop
+            let (loop, _) ← stepsWith sessions loop (presses "C-c s")
+            let after ← treeOf loop
+            return ([before.nodes.size, between.nodes.size, after.nodes.size],
+                between.pending || after.pending)
+          (program.runModel editorModel).1.toOption == some ([2, 3, 4], false) },
+    { name :=
+        "a buffer is modified in the scene published after the first edit of an insert session, while its history has gained no node"
+      run :=
+        pure <|
+          let program : EditorM (Nat × Nat) := do
+            let loop : Loop switching := { state := ← EditorState.initial ⟨640, 480⟩ }
+            let (loop, _) ← stepsWith sessions loop (presses "C-b")
+            let before ← treeOf loop
+            let (loop, _) ← stepsWith sessions loop (presses "C-c s")
+            return (before.nodes.size, (← treeOf loop).nodes.size)
+          match program.runModel editorModel with
+          | (.ok (before, inside), model) =>
+            before == inside &&
+              -- One scene a key: the key that begins the session, the
+              -- prefix of the stamping sequence, and the key that stamps.
+              model.display.scenes.map (·.views.map (·.status.any (·.face == Loop.modifiedFace))) ==
+                #[#[false], #[false], #[true]]
+          | (.error _, _) => false },
+    { name :=
+        "a command that is refused inside an insert session is rolled back to the text from before it, with the session's earlier edit still pending and no node made; a later edit and the end of the session then make one step of both, which one undo takes back"
+      run :=
+        pure <|
+          let program : EditorM ((String × String × Nat × Bool) × Nat × String × String) := do
+            let loop : Loop switching := { state := ← holding "abcd" #[⟨1, 3⟩] }
+            let (loop, _) ← stepsWith sessions loop ([pressF5] ++ presses "C-b C-c s C-c f")
+            let failed ← treeOf loop
+            let rolled := (← failed.text.read, loop.state.echo, failed.nodes.size, failed.pending)
+            let (loop, _) ← stepsWith sessions loop (presses "C-c s C-e")
+            let ended ← treeOf loop
+            let typed ← ended.text.read
+            let some _ ← ended.undo Origin.user | throw .noInverse
+            return (rolled, ended.nodes.size, typed, ← ended.text.read)
+          (program.runModel editorModel).1.toOption ==
+            some (("aC-c sd", "fail: refused: bad range", 2, true), 3, "aC-c sC-c sd", "abcd") },
+    { name :=
+        "an insert session in which nothing was edited makes no step of the history: the tree has no node more and nothing pending"
+      run :=
+        pure <|
+          let program : EditorM (List Nat × Bool) := do
+            let loop : Loop switching := { state := ← holding "abcd" #[⟨1, 3⟩] }
+            let (loop, _) ← stepsWith sessions loop [pressF5]
+            let before ← treeOf loop
+            let (loop, _) ← stepsWith sessions loop (presses "C-b")
+            let inside ← treeOf loop
+            let (loop, _) ← stepsWith sessions loop (presses "C-e")
+            let ended ← treeOf loop
+            return ([before.nodes.size, inside.nodes.size, ended.nodes.size],
+                inside.pending || ended.pending)
+          (program.runModel editorModel).1.toOption == some ([2, 2, 2], false) },
+    { name :=
+        "of two buffers, the one shown by a view in an insert session has its group left open, and the one no such view shows has its group closed after each event"
+      run :=
+        pure <|
+          let program : EditorM (List Nat × List Bool) := do
+            let loop : Loop switching := { state := ← twoBuffers }
+            let (loop, _) ← stepsWith sessions loop [pressF5]
+            let (held, other) := (← treeOf loop, ← treeOf loop 1)
+            let (loop, _) ← stepsWith sessions loop (presses "C-b C-c s C-c o")
+            let (heldAfter, otherAfter) := (← treeOf loop, ← treeOf loop 1)
+            return ([held.nodes.size, other.nodes.size, heldAfter.nodes.size,
+                  otherAfter.nodes.size],
+                [heldAfter.pending, otherAfter.pending])
+          (program.runModel editorModel).1.toOption == some ([1, 1, 1, 2], [true, false]) },
+    { name :=
+        "of two windows on one buffer, one in an insert session, the buffer's group is left open after an edit made through the other window"
+      run :=
+        pure <|
+          let program : EditorM (List Nat × List Bool × Option ViewId) := do
+            let loop : Loop switching := { state := ← threeWindows }
+            let (loop, _) ← stepsWith sessions loop (presses "C-b C-c w")
+            let before ← treeOf loop
+            let (loop, _) ← stepsWith sessions loop (presses "C-c s")
+            let after ← treeOf loop
+            return ([before.nodes.size, after.nodes.size], [before.pending, after.pending],
+                some loop.state.frame.focused)
+          (program.runModel editorModel).1.toOption == some ([1, 1], [false, true], some ⟨1⟩) }]
 
 /-- A report as a command of the checks says it in the echo area. -/
 def reportText (report : InputScheme.Report) : String :=

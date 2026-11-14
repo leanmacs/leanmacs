@@ -124,6 +124,13 @@ at, does its part, and records the tree that comes back as the buffer's
   group after every event (`Editor/Loop.lean`, "After each event"). After a
   command that moved, that tells the moved tree nothing new and makes no
   node, so a move is not itself a step.
+- **But inside an insert session the loop sets no boundary.** While the
+  input scheme reports a view of the buffer as in an insert session, the
+  loop leaves the buffer's group open, and closes it once no view of the
+  buffer is in one: everything edited meanwhile is one step
+  (`Editor/Loop.lean`, "Insert sessions"). A command that wants a boundary
+  inside a session sets it itself (`BufferId.closeGroup`), and an undo
+  inside one closes the open group first, as always.
 - **A command that sets a boundary and then fails** is rolled back whole,
   from the tree the buffer had before it: the edits before the boundary
   and after it are taken back, and the steps the command closed are not in
