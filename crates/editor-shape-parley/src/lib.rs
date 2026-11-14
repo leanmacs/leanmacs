@@ -23,7 +23,15 @@
 //!   least as tall as a layout's default style; a text's default style
 //!   here has no height, and every byte states its font, so a line in a
 //!   small font is not held to font 0's height. An empty text is one line
-//!   as tall as its run's font.
+//!   as tall as its run's font. A line height in pixels is the line's
+//!   height, with one limit: Parley's line always holds its baseline, so a
+//!   height so small that the line would end above its baseline (under
+//!   about three quarters of the size) gives a line a little taller than
+//!   was asked, and a height of 0 pixels at a size that is not 0 is not a
+//!   line of no height. A font of size 0 is.
+//! - **Runs are shaped whole, and only runs.** A ligature forms inside a
+//!   font run and never across two, a letter and its combining mark are
+//!   one cluster, and each family on a line has its own advances.
 //! - **Heights and baselines are whole pixels and advances are the
 //!   font's own**: layouts are built with Parley's quantising on.
 //! - **Nothing in a text forces a break.** Parley breaks at a carriage
@@ -46,7 +54,11 @@
 //!   (`tests/contract.rs`);
 //! - what a font set holds and refuses (`tests/fixtures.rs`);
 //! - the rules above (`tests/adapter.rs`, and the stand-ins in
-//!   `src/shaper.rs`).
+//!   `src/shaper.rs`);
+//! - what shaping whole runs gives on real fonts: the `fi` ligature as one
+//!   glyph, a combining mark, two families on one line, and a spec's size,
+//!   weight, slant and line height reaching the font a glyph is drawn in
+//!   and the line's height (`tests/shaping.rs`).
 //!
 //! It pins no rule of layout's: which segments are shaped, and when, is
 //! `editor-layout`'s, pinned there on the port's fake.
