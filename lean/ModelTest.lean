@@ -200,7 +200,9 @@ with no model:
   and what a key sequence parses to and yields;
 - `vimStateChecks`: Vim states: which state a view is in, how one is
   entered, what the grammar reads of a state's record (typed text, an
-  operator over the selection), and the last change;
+  operator over the selection), the last change, and a mode's keys under
+  the Vim scheme: a hand-tuned key is typed text in insert state, and
+  `Mode.check` reads every state's keymaps;
 - `vimDefaultChecks`: the default states and bindings
   (`Editor/InputScheme/Vim/Default.lean`), observed through the grammar:
   what each default key parses to. They restate no table and name no
@@ -6489,7 +6491,30 @@ def vimStateChecks : List Check :=
           [vimKeymap [("z", .mode (.motion "zed"))]]
         pure
           ((vimFed "z" maps).2 == [some (vimMove "zed")] &&
-            (vimFed "d z" maps).2 == [none, some (vimOperate "delete" "motion" "zed")]) }]
+            (vimFed "d z" maps).2 == [none, some (vimOperate "delete" "motion" "zed")]) },
+    { name :=
+        "a hand-tuned key the Vim scheme has for a mode runs its command in normal state, and in insert state it is typed text"
+      run :=
+        let scheme :=
+          Vim.scheme vimStates
+            { vimModeKeys with tuned := [("tuning", keys "z", .command { name := "tuned-z" })] }
+        let tuning : Mode := { name := "tuning" }
+        let maps (_ : ViewId) : List (Keymap Vim.Bound) := tuning.keymaps scheme
+        let (inserting, _) := vimFed "i"
+        pure
+          ((vimFed "z" maps).2 == [some (vimRun "tuned-z")] &&
+            (vimFedFrom inserting "z" maps).2 == [some (Vim.selfInsert "z")]) },
+    { name :=
+        "Mode.check under the Vim scheme reports a hand-tuned key a state other than the initial one binds, and not one no state binds"
+      run :=
+        let scheme :=
+          Vim.scheme vimStates
+            { vimModeKeys with
+              tuned :=
+                [("tuning", keys "<Escape>", .command { name := "tuned-escape" }),
+                  ("tuning", keys "z", .command { name := "tuned-z" })] }
+        let tuning : Mode := { name := "tuning" }
+        pure (tuning.check scheme == [.shadowsScheme (keys "<Escape>")]) }]
 
 /-- The default Vim scheme's grammar folded from its initial state through
 the keys the key string `text` names, keys for view 0 with no active

@@ -1004,8 +1004,9 @@ names a scheme's key:
 Beside them, `stateChecks` pin the three state operations, `registryChecks`
 and `reloadChecks` modes by owner and their install, `setupChecks`
 `defineMode` and its refusals, `keymapChecks` `Keymap.filter`, and
-`vimStateChecks` that a mode's key is typed text in insert state and that a
-mode's binding is reached as what it wraps.
+`vimStateChecks` that a mode's key, a hand-tuned one among them, is typed
+text in insert state, that a mode's binding is reached as what it wraps,
+and that `Mode.check` under the Vim scheme reads every state's keymaps.
 
 ### Keys in, invocation out
 
