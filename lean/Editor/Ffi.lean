@@ -63,7 +63,11 @@ directions), `Document` (a string in, to `Document.new` and
 `USize`; a refusal as a `Bool`) and `Snapshot` (a structure of three numbers
 out, `SnapshotInfo`; an enumeration in, `ColumnUnit`; an option of a
 structure out, from `Snapshot.pointOf`, and an option of a number, from
-`Snapshot.offsetOf`; rows and columns as `UInt64`). A document's
+`Snapshot.offsetOf`; rows and columns as `UInt64`; an inductive whose
+constructors carry values in, `Motion`, which a private encoder here writes
+as a `UInt8` tag and the two numbers of a motion by rows, for
+`Snapshot.motion`; and an option of a string out, from `Snapshot.row` and
+`Snapshot.slice`). A document's
 transactions and its edit log are the example of lists: a `Transaction` in,
 as words and one string of everything it inserts (`Document.apply`); a
 `Patch` and a trace out, as words (`Document.changesSince`,
@@ -419,6 +423,9 @@ inductive ColumnUnit where
   | bytes
   /-- UTF-16 code units. -/
   | utf16
+  /-- Cells: how many cells of the row start before the position. A cell is
+  one character, or a carriage return and the line feed after it together. -/
+  | cells
   deriving DecidableEq, Repr
 
 /-- A row and a column of a text, as the glue builds it: `UInt64` fields
@@ -445,6 +452,99 @@ character. -/
 @[extern "editor_glue_snapshot_offset_of"]
 opaque Snapshot.offsetOf (snapshot : @& Snapshot) (unit : ColumnUnit) (row column : UInt64) :
     IO (Option UInt64)
+
+/-- Which words a motion goes by. -/
+inductive WordKind where
+  /-- Words: a longest run of word characters, or of punctuation. -/
+  | word
+  /-- WORDs: a longest run of characters that are not blank. -/
+  | bigWord
+  deriving DecidableEq, Repr
+
+/-- A motion of the library: a way from one position of a text to another.
+What each answers is the library's rule (`crates/editor-text`, `Motion`). A
+count and a column are words: the library reads the largest as past any
+text's rows or cells. -/
+inductive Motion where
+  /-- The first cell start after the position, or the end of the text. -/
+  | nextCell
+  /-- The last cell start before the position, or 0. -/
+  | previousCell
+  /-- The first start of a word of `kind` after the position, or the end of
+  the text. -/
+  | nextWordStart (kind : WordKind)
+  /-- The first end of a word of `kind` after the position, empty lines not
+  counted, or the end of the text. -/
+  | nextWordEnd (kind : WordKind)
+  /-- The last start of a word of `kind` before the position, or 0. -/
+  | previousWordStart (kind : WordKind)
+  /-- The last end of a word of `kind` before the position, or 0. -/
+  | previousWordEnd (kind : WordKind)
+  /-- Where the position's row starts. -/
+  | lineStart
+  /-- Where the content of the position's row ends. -/
+  | lineEnd
+  /-- The first position of the row's content whose character is not a
+  blank, or where the content ends. -/
+  | lineFirstNonBlank
+  /-- The start of the text. -/
+  | textStart
+  /-- The end of the text. -/
+  | textEnd
+  /-- The position `column` cells into the row `count` rows up, or the
+  first row. -/
+  | rowsUp (count column : UInt64)
+  /-- The position `column` cells into the row `count` rows down, or the
+  last row. -/
+  | rowsDown (count column : UInt64)
+  deriving DecidableEq, Repr
+
+/-- A motion as it crosses: its tag, and the count and the column of a
+motion by rows, which are 0 for every other. The table of tags is in the
+module docs of `crates/editor-ffi/src/motion.rs`, which checks the tag. -/
+private def Motion.encode : Motion → UInt8 × UInt64 × UInt64
+  | .nextCell => (0, 0, 0)
+  | .previousCell => (1, 0, 0)
+  | .nextWordStart .word => (2, 0, 0)
+  | .nextWordEnd .word => (3, 0, 0)
+  | .previousWordStart .word => (4, 0, 0)
+  | .previousWordEnd .word => (5, 0, 0)
+  | .nextWordStart .bigWord => (6, 0, 0)
+  | .nextWordEnd .bigWord => (7, 0, 0)
+  | .previousWordStart .bigWord => (8, 0, 0)
+  | .previousWordEnd .bigWord => (9, 0, 0)
+  | .lineStart => (10, 0, 0)
+  | .lineEnd => (11, 0, 0)
+  | .lineFirstNonBlank => (12, 0, 0)
+  | .textStart => (13, 0, 0)
+  | .textEnd => (14, 0, 0)
+  | .rowsUp count column => (15, count, column)
+  | .rowsDown count column => (16, count, column)
+
+/-- `Snapshot.motion` as it crosses: the motion as a tag, a count and a
+column. -/
+@[extern "editor_glue_snapshot_motion"]
+private opaque Snapshot.motionRaw (snapshot : @& Snapshot) (tag : UInt8) (count column : UInt64)
+    (offset : USize) : IO (Option UInt64)
+
+/-- Where `motion` leads from the byte offset `offset` of the snapshot.
+`none` unless the offset is a position of the text: within it, and not inside
+a character. -/
+def Snapshot.motion (snapshot : Snapshot) (motion : Motion) (offset : USize) : IO (Option UInt64) :=
+  let (tag, count, column) := motion.encode
+  snapshot.motionRaw tag count column offset
+
+/-- A copy of the content of the row `row` of the snapshot: the row without
+its line break. `none` when the text has no such row. It reads that row and
+no more of the text. -/
+@[extern "editor_glue_snapshot_row"]
+opaque Snapshot.row (snapshot : @& Snapshot) (row : UInt64) : IO (Option String)
+
+/-- A copy of the snapshot's text from the byte offset `start` up to, not
+including, `stop`. `none` unless both are positions of the text and
+`start ≤ stop`. It reads that range and no more of the text. -/
+@[extern "editor_glue_snapshot_slice"]
+opaque Snapshot.slice (snapshot : @& Snapshot) (start stop : USize) : IO (Option String)
 
 /-- How many snapshots the Rust library holds that have not been freed.
 

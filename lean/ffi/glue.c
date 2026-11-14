@@ -345,7 +345,9 @@ lean_obj_res editor_glue_document_forget(b_lean_obj_arg document,
 // document, not by a `new` function, and it outlives the document; the file
 // service hands one over too, as the text of a file it loaded (below). Its
 // functions hand back a record of numbers and take the tag of Lean's
-// `Editor.Ffi.ColumnUnit`, which the library checks.
+// `Editor.Ffi.ColumnUnit`, which the library checks. A motion is a tag too,
+// with two numbers, and one row or a range of the text comes back as an
+// option of a string.
 
 // The Rust library's snapshot.
 typedef struct editor_ffi_snapshot editor_ffi_snapshot;
@@ -374,6 +376,14 @@ bool editor_ffi_snapshot_point_of(const editor_ffi_snapshot *snapshot,
 bool editor_ffi_snapshot_offset_of(const editor_ffi_snapshot *snapshot,
                                    uint8_t unit, uint64_t row, uint64_t column,
                                    uint64_t *out);
+bool editor_ffi_snapshot_motion(const editor_ffi_snapshot *snapshot,
+                                uint8_t motion, uint64_t count, uint64_t column,
+                                size_t offset, uint64_t *out);
+bool editor_ffi_snapshot_row(const editor_ffi_snapshot *snapshot, uint64_t row,
+                             editor_ffi_raw_text *out);
+bool editor_ffi_snapshot_slice(const editor_ffi_snapshot *snapshot,
+                               size_t start, size_t end,
+                               editor_ffi_raw_text *out);
 void editor_ffi_snapshot_free(editor_ffi_snapshot *snapshot);
 uint64_t editor_ffi_snapshot_live(void);
 
@@ -464,6 +474,50 @@ lean_obj_res editor_glue_snapshot_offset_of(b_lean_obj_arg snapshot,
     return lean_io_result_mk_ok(lean_box(0)); // `none`
   }
   return lean_io_result_mk_ok(option_some(lean_box_uint64(offset)));
+}
+
+// `Editor.Ffi.Snapshot.motionRaw : @& Snapshot → UInt8 → UInt64 → UInt64 →
+// USize → IO (Option UInt64)`. The tag is one Lean's `Motion.encode` wrote,
+// and the library checks it.
+lean_obj_res editor_glue_snapshot_motion(b_lean_obj_arg snapshot,
+                                         uint8_t motion, uint64_t count,
+                                         uint64_t column, size_t offset) {
+  uint64_t answer;
+  if (!editor_ffi_snapshot_motion(lean_get_external_data(snapshot), motion,
+                                  count, column, offset, &answer)) {
+    return lean_io_result_mk_ok(lean_box(0)); // `none`
+  }
+  return lean_io_result_mk_ok(option_some(lean_box_uint64(answer)));
+}
+
+// The `some` of a text the library lent in `raw`, copied, with the buffer
+// handed back.
+static lean_object *some_text(editor_ffi_raw_text raw) {
+  lean_object *text =
+      lean_mk_string_from_bytes((const char *)raw.text, raw.text_len);
+  editor_ffi_text_free(raw.text, raw.text_len);
+  return option_some(text);
+}
+
+// `Editor.Ffi.Snapshot.row : @& Snapshot → UInt64 → IO (Option String)`
+lean_obj_res editor_glue_snapshot_row(b_lean_obj_arg snapshot, uint64_t row) {
+  editor_ffi_raw_text raw;
+  if (!editor_ffi_snapshot_row(lean_get_external_data(snapshot), row, &raw)) {
+    return lean_io_result_mk_ok(lean_box(0)); // `none`
+  }
+  return lean_io_result_mk_ok(some_text(raw));
+}
+
+// `Editor.Ffi.Snapshot.slice : @& Snapshot → USize → USize → IO (Option
+// String)`
+lean_obj_res editor_glue_snapshot_slice(b_lean_obj_arg snapshot, size_t start,
+                                        size_t stop) {
+  editor_ffi_raw_text raw;
+  if (!editor_ffi_snapshot_slice(lean_get_external_data(snapshot), start, stop,
+                                 &raw)) {
+    return lean_io_result_mk_ok(lean_box(0)); // `none`
+  }
+  return lean_io_result_mk_ok(some_text(raw));
 }
 
 // `Editor.Ffi.Snapshot.live : IO UInt64`
