@@ -1,9 +1,33 @@
-//! A window's surface: what is decided about one, as pure functions.
+//! A window's surface: everything that is decided about one, with no call
+//! of wgpu's.
 //!
 //! The calls that make a surface, configure it, take its next texture and
 //! present it are the device's (`gpu`), and need a window: no test in the
 //! gate reaches them. What those calls are told, and what is done with
 //! their answers, is decided here, on plain values a test builds.
+//!
+//! # What is known of a surface
+//!
+//! [`State`] is what a device keeps of one surface, and the one place
+//! anything about it is decided. It is made from what the surface offers
+//! ([`State::new`]): the formats and the present mode chosen as below,
+//! whether its texture may be copied from, or the reason nothing can be
+//! drawn on it, where it offers no format or no present mode. It says
+//! what format the pipeline is made for ([`State::target`]). It gets the
+//! texture of each draw ([`State::acquire`]): it configures the surface
+//! before the first draw, before a draw of another size, and before the
+//! draw after a texture that no longer fitted or after its picture began
+//! to be kept, and acts on each answer as [`next`] says. And it says how
+//! the picture of a draw is taken ([`State::keep_picture`],
+//! [`State::picture`]).
+//!
+//! The two calls it makes are a port, [`Calls`]: configure the surface,
+//! and ask it for its next texture. The device implements it with wgpu's
+//! (`gpu`, `OnSurface`). The tests here implement it with a surface that
+//! is a script: it records what it was configured with and when it was
+//! asked, and answers what the test says. So the rules are run in the
+//! gate, with every answer a surface can give, and wgpu's calls are run
+//! on a real window, on demand.
 //!
 //! # The handles
 //!
@@ -45,11 +69,24 @@
 //! A draw that is not presented is the render loop's to try again, and a
 //! window the loop has been told is hidden is not drawn on at all
 //! (`editor-render`'s `render_loop`).
+//!
+//! # The picture
+//!
+//! A check wants the picture of what was drawn in a window; the editor
+//! does not. Once it is asked for ([`State::keep_picture`]) the surface
+//! is configured so that its texture may be copied from, where the
+//! surface offers that, and [`State::picture`] says how each draw's is
+//! read: in the order the surface's own format holds the bytes of a
+//! pixel ([`order_of`]), which [`Order::rgba`] turns into a picture's,
+//! red first. A surface that does not let its texture be copied from has
+//! no picture, and neither has one of a format that is not four bytes a
+//! pixel, one for each channel: each says so, in words of its own.
 
 use editor_platform::NativeWindow;
 use wgpu::rwh::{RawDisplayHandle, RawWindowHandle};
 
-use crate::present::Mode;
+use crate::Image;
+use crate::present::{self, Mode};
 
 /// The handles wgpu takes for `window`: its window's, and its display's.
 ///
@@ -103,6 +140,19 @@ pub(crate) fn choose_format(offered: &[wgpu::TextureFormat]) -> Option<Formats> 
         surface,
         target: surface.add_srgb_suffix(),
     })
+}
+
+impl Formats {
+    /// The formats the surface's texture may be seen through besides its
+    /// own, which the surface is told when it is configured: `target`,
+    /// when it is another than `surface`.
+    pub(crate) fn views(self) -> Vec<wgpu::TextureFormat> {
+        if self.target == self.surface {
+            Vec::new()
+        } else {
+            vec![self.target]
+        }
+    }
 }
 
 /// wgpu's present mode by this crate's name, if it has one.
@@ -176,8 +226,186 @@ pub(crate) fn next(answer: Answer, asked_again: bool) -> Next {
     }
 }
 
+/// The calls on a surface that need a window, as [`State::acquire`] makes
+/// them. The device's are wgpu's (`gpu`); a test's record what they were
+/// told and answer from a script.
+pub(crate) trait Calls {
+    /// A texture of the surface.
+    type Texture;
+
+    /// Configures the surface as `config` says.
+    fn configure(&mut self, config: &wgpu::SurfaceConfiguration);
+
+    /// Asks the surface for its next texture: what it answered, and the
+    /// texture, when the answer comes with one.
+    fn next_texture(&mut self) -> (Answer, Option<Self::Texture>);
+}
+
+/// What a device knows of one window's surface: how it is to be
+/// configured, whether it is, and whether its pictures are kept.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct State {
+    /// How the surface is configured, or is to be: the format, the present
+    /// mode and the frame latency chosen from what it offers, and the size
+    /// of the last draw.
+    config: wgpu::SurfaceConfiguration,
+    /// The format its texture is drawn on through.
+    target: wgpu::TextureFormat,
+    /// Whether it is configured as `config` says. It is not before the
+    /// first draw, nor after a texture that no longer fitted it.
+    configured: bool,
+    /// Whether its texture may be copied from, so that a picture of it can
+    /// be kept.
+    copies: bool,
+    /// Whether the picture of each draw is kept.
+    keep: bool,
+}
+
+/// The order a surface's texture holds the bytes of a pixel in.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Order {
+    /// Red, green, blue, alpha: a picture's own.
+    Rgba,
+    /// Blue, green, red, alpha.
+    Bgra,
+}
+
+impl Order {
+    /// `image`, whose pixels are in this order, as a picture: red first.
+    pub(crate) fn rgba(self, mut image: Image) -> Image {
+        if self == Self::Bgra {
+            for pixel in image.rgba.as_chunks_mut::<4>().0 {
+                pixel.swap(0, 2);
+            }
+        }
+        image
+    }
+}
+
+/// The order a texture of `format` holds the bytes of a pixel in; an error
+/// for a format that is not four bytes a pixel, one for each channel,
+/// which is not read back as a picture.
+pub(crate) fn order_of(format: wgpu::TextureFormat) -> Result<Order, String> {
+    match format {
+        wgpu::TextureFormat::Bgra8Unorm | wgpu::TextureFormat::Bgra8UnormSrgb => Ok(Order::Bgra),
+        wgpu::TextureFormat::Rgba8Unorm | wgpu::TextureFormat::Rgba8UnormSrgb => Ok(Order::Rgba),
+        other => Err(format!(
+            "a surface of the format {other:?} is not read back as a picture"
+        )),
+    }
+}
+
+impl State {
+    /// What is known of a surface that offers `offered`, before anything
+    /// is drawn on it. The error says why nothing can be.
+    pub(crate) fn new(offered: &wgpu::SurfaceCapabilities) -> Result<Self, String> {
+        let formats = choose_format(&offered.formats)
+            .ok_or("the window's surface offers no format on this adapter")?;
+        if offered.present_modes.is_empty() {
+            return Err("the window's surface offers no present mode on this adapter".to_owned());
+        }
+        let modes: Vec<Mode> = offered
+            .present_modes
+            .iter()
+            .copied()
+            .filter_map(mode_of)
+            .collect();
+        // A surface does not say what frame latencies it takes: wgpu holds
+        // the one asked for to what the back end allows.
+        let presentation = present::choose(&modes, 0..=u32::MAX);
+        Ok(Self {
+            config: wgpu::SurfaceConfiguration {
+                usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+                format: formats.surface,
+                color_space: wgpu::SurfaceColorSpace::Auto,
+                // The size is the first draw's: 1 by 1 stands for "not
+                // yet".
+                width: 1,
+                height: 1,
+                present_mode: wgpu_mode(presentation.mode),
+                desired_maximum_frame_latency: presentation.frame_latency,
+                alpha_mode: wgpu::CompositeAlphaMode::Auto,
+                view_formats: formats.views(),
+            },
+            target: formats.target,
+            configured: false,
+            copies: offered.usages.contains(wgpu::TextureUsages::COPY_SRC),
+            keep: false,
+        })
+    }
+
+    /// Keeps the picture of each draw from here on: the surface is
+    /// configured again before the next draw, so that its texture can be
+    /// copied from, where the surface offers that.
+    pub(crate) fn keep_picture(&mut self) {
+        self.keep = true;
+        if self.copies {
+            self.config.usage |= wgpu::TextureUsages::COPY_SRC;
+            self.configured = false;
+        }
+    }
+
+    /// How the picture of a draw is taken: by copying the texture out and
+    /// reading its pixels in this order. `None` when no picture is kept;
+    /// an error where the surface does not let its texture be copied
+    /// from, or is of a format that is not read back.
+    pub(crate) fn picture(&self) -> Option<Result<Order, String>> {
+        if !self.keep {
+            return None;
+        }
+        if !self.copies {
+            return Some(Err(
+                "the window's surface does not let its texture be copied from".to_owned(),
+            ));
+        }
+        Some(order_of(self.config.format))
+    }
+
+    /// The format the surface's texture is drawn on through: what the
+    /// pipeline is made for.
+    pub(crate) fn target(&self) -> wgpu::TextureFormat {
+        self.target
+    }
+
+    /// The surface's next texture, `width` by `height`: the surface is
+    /// configured first when it is not, or is of another size, and what it
+    /// answers is acted on as [`next`] says. The error says why there is
+    /// no texture, and the draw is then not presented.
+    pub(crate) fn acquire<C: Calls>(
+        &mut self,
+        calls: &mut C,
+        width: u32,
+        height: u32,
+    ) -> Result<C::Texture, String> {
+        if !self.configured || (self.config.width, self.config.height) != (width, height) {
+            self.config.width = width;
+            self.config.height = height;
+            calls.configure(&self.config);
+            self.configured = true;
+        }
+        let mut asked_again = false;
+        loop {
+            let (answer, texture) = calls.next_texture();
+            match (next(answer, asked_again), texture) {
+                (Next::Draw, Some(texture)) => return Ok(texture),
+                (Next::DrawThenConfigure, Some(texture)) => {
+                    // The next draw configures the surface again.
+                    self.configured = false;
+                    return Ok(texture);
+                }
+                (Next::ConfigureAndAskAgain, _) => {
+                    calls.configure(&self.config);
+                    asked_again = true;
+                }
+                _ => return Err(format!("the window's surface gave no texture: {answer:?}")),
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
+    use std::collections::VecDeque;
     use std::ffi::c_void;
     use std::ptr::NonNull;
 
@@ -187,13 +415,425 @@ mod tests {
     };
     use wgpu::rwh::{RawDisplayHandle, RawWindowHandle};
 
-    use super::{Answer, Formats, Next, choose_format, handles, mode_of, next, wgpu_mode};
+    use super::{
+        Answer, Calls, Formats, Next, Order, State, choose_format, handles, mode_of, next,
+        order_of, wgpu_mode,
+    };
+    use crate::Image;
     use crate::present::{self, Mode};
 
     /// A pointer to something of the test's own, never read through: a
     /// handle is only carried.
     fn pointer(to: &mut u8) -> NonNull<c_void> {
         NonNull::from(to).cast()
+    }
+
+    /// What a surface offers: `formats` and `modes`, in those orders, and
+    /// that its texture may be copied from when `copies` says so.
+    fn offer(
+        formats: &[wgpu::TextureFormat],
+        modes: &[wgpu::PresentMode],
+        copies: bool,
+    ) -> wgpu::SurfaceCapabilities {
+        let mut usages = wgpu::TextureUsages::RENDER_ATTACHMENT;
+        if copies {
+            usages |= wgpu::TextureUsages::COPY_SRC;
+        }
+        wgpu::SurfaceCapabilities {
+            formats: formats.to_vec(),
+            present_modes: modes.to_vec(),
+            usages,
+            ..Default::default()
+        }
+    }
+
+    /// What llvmpipe's surface offered under Xvfb (seen).
+    fn llvmpipe() -> wgpu::SurfaceCapabilities {
+        offer(
+            &[Bgra8UnormSrgb, Bgra8Unorm],
+            &[
+                wgpu::PresentMode::Immediate,
+                wgpu::PresentMode::Mailbox,
+                wgpu::PresentMode::Fifo,
+                wgpu::PresentMode::FifoRelaxed,
+            ],
+            true,
+        )
+    }
+
+    /// What is known of a surface that offers `formats`, and `Fifo`.
+    fn state_of(formats: &[wgpu::TextureFormat]) -> State {
+        State::new(&offer(formats, &[wgpu::PresentMode::Fifo], true))
+            .expect("an offer with a format and a present mode")
+    }
+
+    /// One call made on a surface.
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    enum Call {
+        /// It was configured, this far across and down.
+        Configured(u32, u32),
+        /// It was asked for its next texture.
+        Asked,
+    }
+
+    /// A surface that is no window's: it records the calls made on it and
+    /// answers each time it is asked from a script. A texture of it is a
+    /// number, counted from 1.
+    struct Scripted {
+        /// What it answers, in order.
+        answers: VecDeque<Answer>,
+        /// The calls made on it, in order.
+        calls: Vec<Call>,
+        /// What it was configured with, each time.
+        configs: Vec<wgpu::SurfaceConfiguration>,
+        /// How many textures it has given.
+        textures: u32,
+    }
+
+    impl Scripted {
+        /// A surface that answers `answers`, in order.
+        fn answering(answers: &[Answer]) -> Self {
+            Self {
+                answers: answers.iter().copied().collect(),
+                calls: Vec::new(),
+                configs: Vec::new(),
+                textures: 0,
+            }
+        }
+    }
+
+    impl Calls for Scripted {
+        type Texture = u32;
+
+        fn configure(&mut self, config: &wgpu::SurfaceConfiguration) {
+            self.calls
+                .push(Call::Configured(config.width, config.height));
+            self.configs.push(config.clone());
+        }
+
+        fn next_texture(&mut self) -> (Answer, Option<u32>) {
+            self.calls.push(Call::Asked);
+            let answer = self
+                .answers
+                .pop_front()
+                .expect("the script has an answer for each time it is asked");
+            let texture = matches!(answer, Answer::Success | Answer::Suboptimal).then(|| {
+                self.textures += 1;
+                self.textures
+            });
+            (answer, texture)
+        }
+    }
+
+    #[test]
+    fn a_surface_is_told_of_the_format_it_is_drawn_on_through_when_that_is_not_its_own() {
+        let through_a_view = Formats {
+            surface: Bgra8Unorm,
+            target: Bgra8UnormSrgb,
+        };
+        assert_eq!(through_a_view.views(), [Bgra8UnormSrgb]);
+        let as_it_is = Formats {
+            surface: Bgra8UnormSrgb,
+            target: Bgra8UnormSrgb,
+        };
+        assert_eq!(as_it_is.views(), []);
+    }
+
+    #[test]
+    fn the_first_draw_configures_the_surface_at_its_size_with_what_was_chosen_from_the_offer() {
+        let mut state = State::new(&llvmpipe()).expect("an offer with a format and a mode");
+        let mut surface = Scripted::answering(&[Answer::Success]);
+        assert_eq!(state.acquire(&mut surface, 800, 600), Ok(1));
+        assert_eq!(surface.calls, [Call::Configured(800, 600), Call::Asked]);
+        // All a surface is told: drawn on and nothing else, the sRGB format
+        // with no view, without tearing, one frame waiting.
+        assert_eq!(
+            surface.configs,
+            [wgpu::SurfaceConfiguration {
+                usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+                format: Bgra8UnormSrgb,
+                color_space: wgpu::SurfaceColorSpace::Auto,
+                width: 800,
+                height: 600,
+                present_mode: wgpu::PresentMode::Fifo,
+                desired_maximum_frame_latency: present::FRAME_LATENCY,
+                alpha_mode: wgpu::CompositeAlphaMode::Auto,
+                view_formats: Vec::new(),
+            }]
+        );
+        // The pipeline is made for the format the surface has.
+        assert_eq!(state.target(), Bgra8UnormSrgb);
+    }
+
+    #[test]
+    fn a_surface_with_no_srgb_format_is_drawn_on_through_a_view_of_its_srgb_form() {
+        let mut state = state_of(&[Bgra8Unorm, Rgba8Unorm]);
+        let mut surface = Scripted::answering(&[Answer::Success]);
+        assert_eq!(state.acquire(&mut surface, 40, 30), Ok(1));
+        let [config] = surface.configs.as_slice() else {
+            panic!("configured once: {:?}", surface.calls);
+        };
+        assert_eq!(config.format, Bgra8Unorm);
+        assert_eq!(config.view_formats, [Bgra8UnormSrgb]);
+        // The pipeline is made for the view's format, not the surface's.
+        assert_eq!(state.target(), Bgra8UnormSrgb);
+    }
+
+    #[test]
+    fn a_surface_of_a_format_with_no_srgb_form_is_drawn_on_as_it_is_with_no_view() {
+        let mut state = state_of(&[Rgba16Float]);
+        let mut surface = Scripted::answering(&[Answer::Success]);
+        assert_eq!(state.acquire(&mut surface, 40, 30), Ok(1));
+        let [config] = surface.configs.as_slice() else {
+            panic!("configured once: {:?}", surface.calls);
+        };
+        assert_eq!(config.format, Rgba16Float);
+        assert_eq!(config.view_formats, []);
+        assert_eq!(state.target(), Rgba16Float);
+    }
+
+    #[test]
+    fn a_surface_that_offers_no_format_or_no_present_mode_is_refused_and_says_which() {
+        let fifo = [wgpu::PresentMode::Fifo];
+        assert_eq!(
+            State::new(&offer(&[], &fifo, true)),
+            Err("the window's surface offers no format on this adapter".to_owned())
+        );
+        assert_eq!(
+            State::new(&offer(&[Bgra8UnormSrgb], &[], true)),
+            Err("the window's surface offers no present mode on this adapter".to_owned())
+        );
+        // What wgpu gives for a surface its adapter cannot present to:
+        // nothing of either.
+        assert_eq!(
+            State::new(&wgpu::SurfaceCapabilities::default()),
+            Err("the window's surface offers no format on this adapter".to_owned())
+        );
+    }
+
+    #[test]
+    fn a_surface_is_configured_again_only_for_a_draw_of_another_size() {
+        let mut state = state_of(&[Bgra8UnormSrgb]);
+        let mut surface = Scripted::answering(&[Answer::Success; 4]);
+        assert_eq!(state.acquire(&mut surface, 800, 600), Ok(1));
+        // The same size: it is as it was configured.
+        assert_eq!(state.acquire(&mut surface, 800, 600), Ok(2));
+        // Another, and that one again.
+        assert_eq!(state.acquire(&mut surface, 300, 120), Ok(3));
+        assert_eq!(state.acquire(&mut surface, 300, 120), Ok(4));
+        assert_eq!(
+            surface.calls,
+            [
+                Call::Configured(800, 600),
+                Call::Asked,
+                Call::Asked,
+                Call::Configured(300, 120),
+                Call::Asked,
+                Call::Asked,
+            ]
+        );
+        // Only the size is another.
+        let [first, second] = surface.configs.as_slice() else {
+            panic!("configured twice: {:?}", surface.calls);
+        };
+        assert_eq!(
+            *second,
+            wgpu::SurfaceConfiguration {
+                width: 300,
+                height: 120,
+                ..first.clone()
+            }
+        );
+    }
+
+    #[test]
+    fn a_texture_that_no_longer_fits_is_drawn_on_and_the_next_draw_configures_the_surface_first() {
+        let mut state = state_of(&[Bgra8UnormSrgb]);
+        let mut surface =
+            Scripted::answering(&[Answer::Suboptimal, Answer::Success, Answer::Success]);
+        // The texture is given all the same, and nothing is configured
+        // while it is held.
+        assert_eq!(state.acquire(&mut surface, 800, 600), Ok(1));
+        assert_eq!(surface.calls, [Call::Configured(800, 600), Call::Asked]);
+        // The next draw, of the same size, configures first; the one after
+        // does not.
+        assert_eq!(state.acquire(&mut surface, 800, 600), Ok(2));
+        assert_eq!(state.acquire(&mut surface, 800, 600), Ok(3));
+        assert_eq!(
+            surface.calls[2..],
+            [Call::Configured(800, 600), Call::Asked, Call::Asked]
+        );
+    }
+
+    #[test]
+    fn an_outdated_or_lost_surface_is_configured_again_at_the_same_size_and_asked_once_more() {
+        for answer in [Answer::Outdated, Answer::Lost] {
+            let mut state = state_of(&[Bgra8UnormSrgb]);
+            let mut surface = Scripted::answering(&[Answer::Success, answer, Answer::Success]);
+            assert_eq!(state.acquire(&mut surface, 800, 600), Ok(1));
+            assert_eq!(state.acquire(&mut surface, 800, 600), Ok(2), "{answer:?}");
+            assert_eq!(
+                surface.calls[2..],
+                [Call::Asked, Call::Configured(800, 600), Call::Asked],
+                "{answer:?}"
+            );
+            // With what it was configured with before.
+            assert_eq!(surface.configs[1], surface.configs[0], "{answer:?}");
+        }
+    }
+
+    #[test]
+    fn a_surface_still_outdated_or_lost_once_configured_again_gives_no_texture_and_says_why() {
+        for (answer, name) in [(Answer::Outdated, "Outdated"), (Answer::Lost, "Lost")] {
+            let mut state = state_of(&[Bgra8UnormSrgb]);
+            let mut surface = Scripted::answering(&[answer, answer, answer, Answer::Success]);
+            assert_eq!(
+                state.acquire(&mut surface, 800, 600),
+                Err(format!("the window's surface gave no texture: {name}"))
+            );
+            // Asked twice, and no more: the script's third answer is left.
+            assert_eq!(
+                surface.calls,
+                [
+                    Call::Configured(800, 600),
+                    Call::Asked,
+                    Call::Configured(800, 600),
+                    Call::Asked,
+                ]
+            );
+            // The next draw tries as a first one does: asked, configured
+            // again, asked once more.
+            assert_eq!(state.acquire(&mut surface, 800, 600), Ok(1), "{name}");
+            assert_eq!(
+                surface.calls[4..],
+                [Call::Asked, Call::Configured(800, 600), Call::Asked]
+            );
+        }
+    }
+
+    #[test]
+    fn a_surface_that_is_occluded_times_out_or_is_refused_is_asked_once_and_says_which() {
+        for (answer, name) in [
+            (Answer::Occluded, "Occluded"),
+            (Answer::Timeout, "Timeout"),
+            (Answer::Validation, "Validation"),
+        ] {
+            let mut state = state_of(&[Bgra8UnormSrgb]);
+            let mut surface = Scripted::answering(&[answer, Answer::Success]);
+            assert_eq!(
+                state.acquire(&mut surface, 800, 600),
+                Err(format!("the window's surface gave no texture: {name}"))
+            );
+            assert_eq!(surface.calls, [Call::Configured(800, 600), Call::Asked]);
+            // It stays configured: the next draw only asks.
+            assert_eq!(state.acquire(&mut surface, 800, 600), Ok(1), "{name}");
+            assert_eq!(surface.calls[2..], [Call::Asked]);
+        }
+    }
+
+    #[test]
+    fn no_picture_is_taken_of_a_surface_until_one_is_asked_for() {
+        let state = State::new(&llvmpipe()).expect("an offer with a format and a mode");
+        assert_eq!(state.picture(), None);
+    }
+
+    #[test]
+    fn keeping_the_picture_configures_the_surface_again_so_that_its_texture_is_copied_from() {
+        let mut state = State::new(&llvmpipe()).expect("an offer with a format and a mode");
+        let mut surface = Scripted::answering(&[Answer::Success; 3]);
+        assert_eq!(state.acquire(&mut surface, 800, 600), Ok(1));
+        state.keep_picture();
+        // The next draw, of the same size, configures first; the one after
+        // does not.
+        assert_eq!(state.acquire(&mut surface, 800, 600), Ok(2));
+        assert_eq!(state.acquire(&mut surface, 800, 600), Ok(3));
+        assert_eq!(
+            surface.calls,
+            [
+                Call::Configured(800, 600),
+                Call::Asked,
+                Call::Configured(800, 600),
+                Call::Asked,
+                Call::Asked,
+            ]
+        );
+        // Drawn on and copied from, and nothing else is another.
+        assert_eq!(
+            surface.configs[1],
+            wgpu::SurfaceConfiguration {
+                usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
+                ..surface.configs[0].clone()
+            }
+        );
+        assert_eq!(state.picture(), Some(Ok(Order::Bgra)));
+    }
+
+    #[test]
+    fn a_surface_whose_texture_cannot_be_copied_from_is_left_as_it_is_and_its_picture_says_so() {
+        let offered = offer(&[Bgra8UnormSrgb], &[wgpu::PresentMode::Fifo], false);
+        let mut state = State::new(&offered).expect("an offer with a format and a mode");
+        let mut surface = Scripted::answering(&[Answer::Success; 2]);
+        assert_eq!(state.acquire(&mut surface, 800, 600), Ok(1));
+        state.keep_picture();
+        assert_eq!(state.acquire(&mut surface, 800, 600), Ok(2));
+        // It is not configured for a use it does not offer.
+        assert_eq!(
+            surface.calls,
+            [Call::Configured(800, 600), Call::Asked, Call::Asked]
+        );
+        assert_eq!(
+            state.picture(),
+            Some(Err(
+                "the window's surface does not let its texture be copied from".to_owned()
+            ))
+        );
+    }
+
+    #[test]
+    fn a_picture_is_read_in_the_order_the_surfaces_format_holds_a_pixel_in() {
+        for (format, order) in [
+            (Bgra8Unorm, Order::Bgra),
+            (Bgra8UnormSrgb, Order::Bgra),
+            (Rgba8Unorm, Order::Rgba),
+            (Rgba8UnormSrgb, Order::Rgba),
+        ] {
+            assert_eq!(order_of(format), Ok(order), "{format:?}");
+            let mut state = state_of(&[format]);
+            state.keep_picture();
+            assert_eq!(state.picture(), Some(Ok(order)), "{format:?}");
+        }
+        // The surface's own format says, not the view it is drawn on
+        // through: this one is `Bgra8Unorm` seen as `Bgra8UnormSrgb`.
+        let mut through_a_view = state_of(&[Bgra8Unorm, Rgba8Unorm]);
+        through_a_view.keep_picture();
+        assert_eq!(through_a_view.picture(), Some(Ok(Order::Bgra)));
+    }
+
+    #[test]
+    fn a_surface_of_a_format_that_is_not_four_bytes_a_pixel_is_not_read_back_and_says_so() {
+        let refusal = "a surface of the format Rgba16Float is not read back as a picture";
+        assert_eq!(order_of(Rgba16Float), Err(refusal.to_owned()));
+        let mut state = state_of(&[Rgba16Float]);
+        state.keep_picture();
+        assert_eq!(state.picture(), Some(Err(refusal.to_owned())));
+    }
+
+    #[test]
+    fn a_picture_held_blue_first_has_red_and_blue_changed_over_and_one_held_red_first_is_left() {
+        let held = Image {
+            width: 2,
+            height: 1,
+            rgba: vec![1, 2, 3, 4, 5, 6, 7, 8],
+        };
+        assert_eq!(
+            Order::Bgra.rgba(held.clone()),
+            Image {
+                width: 2,
+                height: 1,
+                rgba: vec![3, 2, 1, 4, 7, 6, 5, 8],
+            }
+        );
+        assert_eq!(Order::Rgba.rgba(held.clone()), held);
     }
 
     #[test]

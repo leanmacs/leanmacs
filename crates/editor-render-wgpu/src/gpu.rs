@@ -50,9 +50,18 @@
 //! is a copy of every pixel for every frame, which a check wants and the
 //! editor does not.
 //!
-//! The no-op back end presents to no surface, so those calls run in no
-//! test of the gate: what decides them is pinned in `surface`, and the
-//! calls themselves are run on a real window, on demand.
+//! None of that is decided here. `surface::State` holds what is known of
+//! the surface and decides all of it: what the surface is configured with
+//! and when, what is done with each answer, and whether and in what order
+//! of bytes its picture is read. It makes its calls through a port
+//! (`surface::Calls`), and this module's part is that port over wgpu
+//! (`OnSurface`), one call of wgpu's for each, and the copy of a texture
+//! out of the GPU.
+//!
+//! The no-op back end presents to no surface, so wgpu's calls run in no
+//! test of the gate: what decides them is pinned in `surface`, on a
+//! surface that is a script, and the calls themselves are run on a real
+//! window, on demand.
 //!
 //! # What is not done
 //!
@@ -77,9 +86,8 @@ use crate::atlas::{Atlas, PageView};
 use crate::blend::CONTRAST;
 use crate::cpu::CLEAR;
 use crate::glyphs::Kind;
-use crate::present::{self, Mode};
 use crate::quads::{Quad, QuadKind};
-use crate::surface::{Answer, Next, choose_format, mode_of, next, wgpu_mode};
+use crate::surface::{Answer, Calls, State};
 
 /// The body of the shader, shared by both blends.
 const SHADER: &str = include_str!("shader.wgsl");
@@ -155,113 +163,69 @@ struct TargetTexture {
 struct Window {
     /// The surface.
     surface: wgpu::Surface<'static>,
-    /// How it is configured, or is to be: the format, the present mode and
-    /// the frame latency chosen when the device was made, and the size of
-    /// the last draw.
-    config: wgpu::SurfaceConfiguration,
-    /// Whether it is configured as `config` says. It is not before the
-    /// first draw, nor after a texture that no longer fitted it.
-    configured: bool,
-    /// Whether its texture may be copied from, so that a picture of it can
-    /// be kept.
-    copies: bool,
-    /// Whether the picture of each draw is kept.
-    keep: bool,
+    /// What is known of it, and every decision about it: how it is
+    /// configured and when, what is done with its answers, and how its
+    /// picture is taken.
+    state: State,
     /// The picture of the last draw, or why there is none; `None` when no
     /// picture is kept or nothing was drawn.
     picture: Option<Result<Image, String>>,
 }
 
 impl Window {
-    /// The surface, to be configured from what it offers `adapter`: the
-    /// format and the present mode `surface` chooses. The error says why
-    /// nothing can be drawn on it.
+    /// The surface, with what `surface::State` decides from what it offers
+    /// `adapter`. The error says why nothing can be drawn on it.
     fn new(surface: wgpu::Surface<'static>, adapter: &wgpu::Adapter) -> Result<Self, String> {
-        let offered = surface.get_capabilities(adapter);
-        let formats = choose_format(&offered.formats)
-            .ok_or("the window's surface offers no format on this adapter")?;
-        let modes: Vec<Mode> = offered
-            .present_modes
-            .iter()
-            .copied()
-            .filter_map(mode_of)
-            .collect();
-        // A surface does not say what frame latencies it takes: wgpu holds
-        // the one asked for to what the back end allows.
-        let presentation = present::choose(&modes, 0..=u32::MAX);
-        // The size is the first draw's: 1 by 1 stands for "not yet".
-        let mut config = surface
-            .get_default_config(adapter, 1, 1)
-            .ok_or("the window's surface cannot be configured on this adapter")?;
-        config.format = formats.surface;
-        config.view_formats = if formats.target == formats.surface {
-            Vec::new()
-        } else {
-            vec![formats.target]
-        };
-        config.present_mode = wgpu_mode(presentation.mode);
-        config.desired_maximum_frame_latency = presentation.frame_latency;
+        let state = State::new(&surface.get_capabilities(adapter))?;
         Ok(Self {
             surface,
-            config,
-            configured: false,
-            copies: offered.usages.contains(wgpu::TextureUsages::COPY_SRC),
-            keep: false,
+            state,
             picture: None,
         })
     }
 
-    /// The format the surface's texture is drawn on through.
-    fn target_format(&self) -> wgpu::TextureFormat {
-        self.config
-            .view_formats
-            .first()
-            .copied()
-            .unwrap_or(self.config.format)
-    }
-
-    /// The surface's next texture, `width` by `height`: the surface is
-    /// configured first when it is not, or is of another size, and what it
-    /// answers is acted on as `surface::next` says. The error says why
-    /// there is no texture, and the draw is then not presented.
+    /// The surface's next texture, `width` by `height`, as
+    /// `surface::State::acquire` gets it with wgpu's calls. The error says
+    /// why there is no texture, and the draw is then not presented.
     fn acquire(
         &mut self,
         device: &wgpu::Device,
         width: u32,
         height: u32,
     ) -> Result<wgpu::SurfaceTexture, String> {
-        if !self.configured || (self.config.width, self.config.height) != (width, height) {
-            self.config.width = width;
-            self.config.height = height;
-            self.surface.configure(device, &self.config);
-            self.configured = true;
-        }
-        let mut asked_again = false;
-        loop {
-            let (answer, texture) = match self.surface.get_current_texture() {
-                wgpu::CurrentSurfaceTexture::Success(texture) => (Answer::Success, Some(texture)),
-                wgpu::CurrentSurfaceTexture::Suboptimal(texture) => {
-                    (Answer::Suboptimal, Some(texture))
-                }
-                wgpu::CurrentSurfaceTexture::Timeout => (Answer::Timeout, None),
-                wgpu::CurrentSurfaceTexture::Occluded => (Answer::Occluded, None),
-                wgpu::CurrentSurfaceTexture::Outdated => (Answer::Outdated, None),
-                wgpu::CurrentSurfaceTexture::Lost => (Answer::Lost, None),
-                wgpu::CurrentSurfaceTexture::Validation => (Answer::Validation, None),
-            };
-            match (next(answer, asked_again), texture) {
-                (Next::Draw, Some(texture)) => return Ok(texture),
-                (Next::DrawThenConfigure, Some(texture)) => {
-                    // The next draw configures the surface again.
-                    self.configured = false;
-                    return Ok(texture);
-                }
-                (Next::ConfigureAndAskAgain, _) => {
-                    self.surface.configure(device, &self.config);
-                    asked_again = true;
-                }
-                _ => return Err(format!("the window's surface gave no texture: {answer:?}")),
-            }
+        let mut calls = OnSurface {
+            surface: &self.surface,
+            device,
+        };
+        self.state.acquire(&mut calls, width, height)
+    }
+}
+
+/// The calls `surface::State` makes on a surface, as wgpu's: each is one
+/// call of wgpu's, and nothing is decided here.
+struct OnSurface<'a> {
+    /// The surface.
+    surface: &'a wgpu::Surface<'static>,
+    /// The device it is configured on.
+    device: &'a wgpu::Device,
+}
+
+impl Calls for OnSurface<'_> {
+    type Texture = wgpu::SurfaceTexture;
+
+    fn configure(&mut self, config: &wgpu::SurfaceConfiguration) {
+        self.surface.configure(self.device, config);
+    }
+
+    fn next_texture(&mut self) -> (Answer, Option<wgpu::SurfaceTexture>) {
+        match self.surface.get_current_texture() {
+            wgpu::CurrentSurfaceTexture::Success(texture) => (Answer::Success, Some(texture)),
+            wgpu::CurrentSurfaceTexture::Suboptimal(texture) => (Answer::Suboptimal, Some(texture)),
+            wgpu::CurrentSurfaceTexture::Timeout => (Answer::Timeout, None),
+            wgpu::CurrentSurfaceTexture::Occluded => (Answer::Occluded, None),
+            wgpu::CurrentSurfaceTexture::Outdated => (Answer::Outdated, None),
+            wgpu::CurrentSurfaceTexture::Lost => (Answer::Lost, None),
+            wgpu::CurrentSurfaceTexture::Validation => (Answer::Validation, None),
         }
     }
 }
@@ -340,7 +304,9 @@ impl Device {
             .map(|surface| Window::new(surface, &adapter))
             .transpose()
             .map_err(|reason| Unavailable(format!("{reason} ({})", info.name)))?;
-        let format = window.as_ref().map_or(OWN_FORMAT, Window::target_format);
+        let format = window
+            .as_ref()
+            .map_or(OWN_FORMAT, |window| window.state.target());
         let dual = wgpu::Features::DUAL_SOURCE_BLENDING;
         let per_channel = allow_per_channel && adapter.features().contains(dual);
         let (device, queue) = wait(adapter.request_device(&wgpu::DeviceDescriptor {
@@ -496,11 +462,7 @@ impl Device {
     /// target of its own, which is always read back.
     pub fn keep_picture(&mut self) {
         if let Some(window) = &mut self.window {
-            window.keep = true;
-            if window.copies {
-                window.config.usage |= wgpu::TextureUsages::COPY_SRC;
-                window.configured = false;
-            }
+            window.state.keep_picture();
         }
     }
 
@@ -662,37 +624,19 @@ impl Device {
 
     /// The picture of a window's `texture`, `width` by `height`, when the
     /// window's pictures are kept: the texture copied out and its pixels
-    /// put in the order a picture has them. An error where the surface
-    /// does not let its texture be copied from, or is of a format that is
-    /// not four bytes a pixel.
+    /// put in the order a picture has them, as `surface::State::picture`
+    /// says. The error is that function's, where there is no picture to
+    /// take, or wgpu's, where it refuses the copy.
     fn picture_of(
         &self,
         texture: &wgpu::Texture,
         width: u32,
         height: u32,
     ) -> Option<Result<Image, String>> {
-        let window = self.window.as_ref().filter(|window| window.keep)?;
-        if !window.copies {
-            return Some(Err(
-                "the window's surface does not let its texture be copied from".to_owned(),
-            ));
-        }
-        let blue_first = match window.config.format {
-            wgpu::TextureFormat::Bgra8Unorm | wgpu::TextureFormat::Bgra8UnormSrgb => true,
-            wgpu::TextureFormat::Rgba8Unorm | wgpu::TextureFormat::Rgba8UnormSrgb => false,
-            other => {
-                return Some(Err(format!(
-                    "a surface of the format {other:?} is not read back as a picture"
-                )));
-            }
-        };
-        Some(self.copy_out(texture, width, height).map(|mut image| {
-            if blue_first {
-                for pixel in image.rgba.as_chunks_mut::<4>().0 {
-                    pixel.swap(0, 2);
-                }
-            }
-            image
+        let order = self.window.as_ref()?.state.picture()?;
+        Some(order.and_then(|order| {
+            self.copy_out(texture, width, height)
+                .map(|image| order.rgba(image))
         }))
     }
 

@@ -22,12 +22,13 @@ use editor_platform::NativeWindow;
 use editor_render::contract;
 use editor_render::port::{DrawRequest, Renderer, Target};
 
-use super::{Device, INSTANCE_BYTES, Run, instances};
+use super::{Device, INSTANCE_BYTES, Run, Window, instances};
 use crate::atlas::Atlas;
 use crate::glyphs::Kind;
 use crate::glyphs::fake::FakeRasterizer;
 use crate::painter::Painter;
 use crate::quads::{Quad, QuadKind};
+use crate::surface::handles;
 use crate::{Antialiasing, Settings, SubpixelOrder, WgpuRenderer};
 
 /// An instance whose one adapter is wgpu's no-op back end.
@@ -468,7 +469,7 @@ fn an_instance_with_no_adapter_gives_no_renderer() {
 }
 
 #[test]
-fn a_surface_that_offers_nothing_is_refused_with_a_reason() {
+fn a_window_no_adapter_can_present_to_gives_no_renderer() {
     // A window made up for the test: the no-op back end makes a surface
     // from any handle and never touches it, so the view is never read.
     let mut made_up = 0_u8;
@@ -481,12 +482,44 @@ fn a_surface_that_offers_nothing_is_refused_with_a_reason() {
     let refused = unsafe { WgpuRenderer::over_window(&noop(), &window, Settings::default(), true) }
         .err()
         .expect("the no-op back end presents to no surface");
-    // The no-op back end has nothing to offer a surface, and its adapter
-    // says so: no renderer is made, and the reason is wgpu's.
+    // The no-op back end's adapter presents to no surface, and asked for
+    // one that can present to this one, wgpu has none: no renderer is
+    // made, and the reason is wgpu's. What the surface offers is never
+    // asked.
     let reason = refused.to_string();
     assert!(
         reason.starts_with("no GPU renderer: no adapter") && reason.contains("surface"),
         "{reason}"
+    );
+}
+
+#[test]
+fn a_surface_that_offers_its_adapter_nothing_is_refused_and_says_so() {
+    // As above, a window made up for the test and never touched.
+    let mut made_up = 0_u8;
+    let window = NativeWindow::AppKit {
+        view: NonNull::from(&mut made_up).cast(),
+    };
+    let instance = noop();
+    let (raw_window_handle, raw_display_handle) = handles(&window);
+    // SAFETY: the back end is the no-op one, which keeps the handle and
+    // does nothing with it; the surface is dropped here, before `made_up`
+    // is.
+    let surface = unsafe {
+        instance.create_surface_unsafe(wgpu::SurfaceTargetUnsafe::RawHandle {
+            raw_display_handle: Some(raw_display_handle),
+            raw_window_handle,
+        })
+    }
+    .expect("the no-op back end makes a surface from any handle");
+    // The adapter is asked for without the surface, so there is one: the
+    // no-op back end's, which the surface offers nothing.
+    let adapter = pollster::block_on(instance.request_adapter(&Default::default()))
+        .expect("the no-op adapter");
+    let refused = Window::new(surface, &adapter).err();
+    assert_eq!(
+        refused.as_deref(),
+        Some("the window's surface offers no format on this adapter")
     );
 }
 

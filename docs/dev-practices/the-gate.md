@@ -50,10 +50,17 @@ What the gate does check of the window, with none open:
   itself and once for a resize, nothing more is drawn, and the renderer is
   dropped on the thread that ran the window. Nothing sleeps: a renderer
   says on a channel that it drew, and each word is read with a bound.
-- **What is decided about a surface**, in `crates/editor-render-wgpu`: the
-  format, the present mode, and what is done when the surface gives no
-  texture; and that a surface no adapter can present to is refused with a
-  reason, on wgpu's no-op back end.
+- **What is decided about a surface**, in `crates/editor-render-wgpu`
+  (`surface`), all of it, on a surface that is a script: what it is
+  configured with from what it offers (the format, the view it is drawn
+  on through, the present mode, the frame latency) and the format the
+  pipeline is made for; that it is configured before the first draw,
+  before a draw of another size, after a texture that no longer fitted
+  and when its picture begins to be kept, and at no other time; what is
+  done with each answer it can give when asked for a texture; and whether
+  its picture is read back, and in what order of bytes. On wgpu's no-op
+  back end: that a window no adapter can present to gives no renderer,
+  and that a surface that offers its adapter nothing is refused.
 - **How the clipboard library's answers become the port's**, in
   `crates/editor-platform-arboard`, on values built in the tests.
 
@@ -61,9 +68,11 @@ What it cannot check, and so does not claim: winit's own loop, and the few
 lines of the adapter that only a real window runs (the two that take a key
 event and a change of scale apart, the readings of the window's size, its
 handles and its display's refresh rate, and telling the drawer the window
-is closing); the calls that configure a surface, take its texture, copy
-it out and present it, since the no-op back end hands out no surface
-texture; and anything a real clipboard does. `mise run lint` forbids to
+is closing); wgpu's own calls that configure a surface, take its texture,
+copy it out and present it, since the no-op back end hands out no surface
+texture, and the few lines that forward to them
+(`crates/editor-render-wgpu`, `gpu`, `OnSurface`); and anything a real
+clipboard does. `mise run lint` forbids to
 tests the calls that open a clipboard and that make a renderer on a
 window (`crates/editor-platform-arboard/clippy.toml`,
 `crates/editor-render-wgpu/clippy.toml`, `crates/editor-ffi/clippy.toml`).

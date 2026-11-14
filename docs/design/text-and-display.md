@@ -1449,7 +1449,11 @@ window is still run with nothing drawing in it. The threads are in
   on llvmpipe's surface was a mode that tears. An outdated or lost
   surface is configured again and tried once; an occluded one is not
   presented to. The picture is copied out of the surface only when a
-  check asks for it.
+  check asks for it. All of this is decided in one place that makes no
+  call of wgpu's (`surface::State`), which reaches the surface through a
+  port of two calls, configure and ask for the next texture: the device
+  implements the port with wgpu's, and the gate's tests with a surface
+  that is a script.
 - **The clipboard is a port of its own, below Lean's.** Text in and out
   of the system clipboard, in `editor-platform`, with a fake and a
   contract; `editor-platform-arboard` is the adapter. What the editor
@@ -1462,8 +1466,10 @@ window is still run with nothing drawing in it. The threads are in
   translation, on winit's own values built in the tests; which call on
   the render loop each thing told becomes, on a loop stepped by hand;
   the session's thread, on the scripted platform and the recording
-  renderer; the surface's choices; how arboard's answers become the
-  port's. What is left is the calls themselves, and they run on demand:
+  renderer; the surface's choices, and when it is configured, what is
+  done with each of its answers and how its picture is read, on a
+  surface that is a script; how arboard's answers become the port's.
+  What is left is the calls themselves, and they run on demand:
   under Xvfb in a container, where the real window keeps the port's
   contract, a fixture frame of real text is drawn in it and read back
   from its surface within 3 of 255 of the CPU's picture, nothing is

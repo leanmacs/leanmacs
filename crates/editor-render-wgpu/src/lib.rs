@@ -19,8 +19,9 @@
 //! end, to a target of its own, and its picture is checked on demand.
 //! [`present`] holds how a frame is presented to a window, as a decision
 //! and a pure function, and `surface` what else is decided about a
-//! window's surface: the handles wgpu is given, the format, and what is
-//! done when the surface gives no texture. The window reaches this crate
+//! window's surface: the handles wgpu is given, the format, when the
+//! surface is configured, what is done when it gives no texture, and how
+//! its picture is read. The window reaches this crate
 //! as the window port's own data (`editor_platform::NativeWindow`), and
 //! that type is all of the port this crate uses.
 //!
