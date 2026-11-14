@@ -28,13 +28,22 @@ a name does.
 
 ## The states
 
-| State | Keymaps, in precedence order | Cursor | The grammar reads |
-|---|---|---|---|
-| `normal`, the initial state | `normalCommands`, `operators`, `motions` | Block | |
-| `insert` | `insertCommands` | Bar | Typing is text |
-| `visual` | `visualCommands`, `operators`, `motions` | Block | Operators act on the selection |
-| `visual-line` | `visualLineCommands`, `operators`, `motions` | Block | Operators act on the selection |
-| `minibuffer`, the state of the minibuffer's view | `minibufferCommands` | Bar | Typing is text |
+| State | Keymaps, in precedence order | Cursor | Selection | The grammar reads |
+|---|---|---|---|---|
+| `normal`, the initial state | `normalCommands`, `operators`, `motions` | Block | Inclusive | |
+| `insert` | `insertCommands` | Bar | Exclusive | Typing is text |
+| `visual` | `visualCommands`, `operators`, `motions` | Block | Inclusive | Operators act on the selection |
+| `visual-line` | `visualLineCommands`, `operators`, `motions` | Block | Line | Operators act on the selection |
+| `minibuffer`, the state of the minibuffer's view | `minibufferCommands` | Bar | Exclusive | Typing is text |
+
+The selection's shape is the one the text store's shapes map a state onto
+(`docs/design/text-and-display.md`, "What a selection covers, and how evil
+maps onto it"): a cursor between characters where typing is text, a cursor
+on a cell in normal state, and what a visual state selects. What the scheme
+reports of a view in each state follows from its row
+(`Editor/InputScheme/Vim.lean`, "Vim states"): a motion extends the
+selection in the two visual states, and a view in `insert` or `minibuffer`
+is in an insert session and takes committed text.
 
 **The minibuffer's view is in a state of its own** (`states.minibuffer`
 names it), Vim's own command-line mode: no key enters it, and the scheme
@@ -166,17 +175,20 @@ def states : States :=
       [{  name := "insert"
           keymaps := [keymap insertCommands]
           cursor := .bar
-          insertsText := true },
+          insertsText := true
+          shape := .exclusive },
         { name := "visual"
           keymaps := [visualCommands, operators, motions].map keymap
           operatesOnSelection := true },
         { name := "visual-line"
           keymaps := [visualLineCommands, operators, motions].map keymap
-          operatesOnSelection := true },
+          operatesOnSelection := true
+          shape := .line },
         { name := "minibuffer"
           keymaps := [keymap minibufferCommands]
           cursor := .bar
-          insertsText := true }]
+          insertsText := true
+          shape := .exclusive }]
     minibuffer := some "minibuffer" }
 
 /-- The role table: each registered role and the key string it is on. -/

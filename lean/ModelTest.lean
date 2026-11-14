@@ -8726,6 +8726,11 @@ names. -/
 def vimDefaultRecord (text : String) : Vim.StateRecord :=
   (vimDefault text).1.record Vim.Default.states ⟨0⟩
 
+/-- What the default Vim scheme reports of view 0 after the keys `text`
+names. -/
+def vimDefaultReport (text : String) : InputScheme.Report :=
+  Vim.Default.scheme.report (vimDefault text).1 ⟨0⟩
+
 /-- Whether each of `texts` runs a command under the default Vim scheme,
 each a command of another name. -/
 def vimDefaultCommands (texts : List String) : Bool :=
@@ -8894,7 +8899,53 @@ def vimDefaultChecks : List Check :=
             (command "<Escape>").isSome &&
             command "RET" != command "<Escape>" &&
             (["RET", "<Escape>"].all fun text => (parsed text).1 == told) &&
-            told.stateOf states ⟨0⟩ == states.initial.name) }]
+            told.stateOf states ⟨0⟩ == states.initial.name) },
+    { name :=
+        "the default Vim scheme reports a fresh view as a block with an inclusive selection, no selecting and no insert session; after i a bar, an exclusive selection, an insert session and a view that takes text; and after i and <Escape> what it reported first"
+      run :=
+        let fresh := vimDefaultReport ""
+        let inserting := vimDefaultReport "i"
+        pure
+          (fresh.cursor.shape == .block && fresh.shape == .inclusive && !fresh.selecting &&
+            !fresh.session &&
+            !fresh.takesText &&
+            inserting.cursor.shape == .bar &&
+            inserting.shape == .exclusive &&
+            !inserting.selecting &&
+            inserting.session &&
+            inserting.takesText &&
+            inserting.cursor.face != fresh.cursor.face &&
+            vimDefaultReport "i <Escape>" == fresh) },
+    { name :=
+        "the default Vim scheme reports selecting in the states v and V enter, with an inclusive selection after v and a line-shaped one after V, neither an insert session; v then V is reported as V is, and V then v as v is"
+      run :=
+        let visual := vimDefaultReport "v"
+        let line := vimDefaultReport "V"
+        pure
+          (visual.selecting && visual.shape == .inclusive && !visual.session && !visual.takesText &&
+            line.selecting &&
+            line.shape == .line &&
+            !line.session &&
+            !line.takesText &&
+            vimDefaultReport "v V" == line &&
+            vimDefaultReport "V v" == visual &&
+            vimDefaultReport "v v" == vimDefaultReport "" &&
+            vimDefaultReport "V V" == vimDefaultReport "") },
+    { name :=
+        "the default Vim scheme reports the minibuffer's view as a bar with an exclusive selection, in an insert session, taking text; and the status fields and the cursor faces of its five states all differ"
+      run :=
+        let told : Vim.State := Vim.Default.scheme.openMinibuffer ⟨5⟩ Vim.Default.scheme.init
+        let minibuffer := Vim.Default.scheme.report told ⟨5⟩
+        let reports := minibuffer :: ["", "i", "v", "V"].map vimDefaultReport
+        pure
+          (minibuffer.cursor.shape == .bar && minibuffer.shape == .exclusive &&
+            !minibuffer.selecting &&
+            minibuffer.session &&
+            minibuffer.takesText &&
+            Vim.Default.scheme.report told ⟨0⟩ == vimDefaultReport "" &&
+            reports.all (·.status.size == 1) &&
+            (reports.map (·.status)).eraseDups.length == 5 &&
+            (reports.map (·.cursor.face)).eraseDups.length == 5) }]
 
 /-- The checks that the Vim scheme keeps the scheme contract
 (`Editor/InputScheme/Contract.lean`). -/
