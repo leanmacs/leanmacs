@@ -541,6 +541,16 @@ def promptCases : List Case :=
         return refusedAs refused (.alreadyOpen view) && after.index == before.index + 1 &&
             (← editorState) == state },
     { name :=
+        "asking for a prompt where no window is focused, in the editor with nothing in it, is refused with noWindow, a value, makes no text, the next text made having the id it would have had, and leaves the state as it was"
+      start := pure EditorState.none
+      run := do
+        let state ← editorState
+        let before ← createText ""
+        let refused ← prompt "Name: " greeting "lost"
+        let after ← createText ""
+        return refusedAs refused .noWindow && after.index == before.index + 1 &&
+            (← editorState) == state },
+    { name :=
         "splitting, closing and showing another buffer in the minibuffer's view, and showing the minibuffer's buffer in another view, are each refused with ofMinibuffer and the minibuffer's view, a value, and make no marker: the next marker made on each text has the number it would have had"
       run := do
         let .ok view ← prompt "Name: " greeting "hé" | return false
