@@ -138,7 +138,7 @@ what not to add.
  ┌──────────────────────────────────────────────────────────────┐
  │ Lean (owns the process)                                      │
  │  user config (interpreted, live-reloaded)                    │
- │  evil · modes · keymaps · themes · minibuffer                │
+ │  evil · modes · keymaps · themes · minibuffer · ex line      │
  │  agents · review · version control · navigation · rdm        │
  │  ACP and language-server clients                             │
  │  editor state · command loop · jobs · config session         │
@@ -184,7 +184,8 @@ Cargo for the static library:
 | `Editor.Minibuffer` | The minibuffer's commands and its mode: `minibuffer-accept` and `minibuffer-cancel`, which answer and cancel the open prompt, and the mode the minibuffer's buffer is made with, which fills the roles `activate` and `quit` with them. A command asks for a string by naming the command that receives the answer, and never waits; the open prompt is editor state, and the minibuffer a buffer and a window of it (`Editor.State`, `Editor.Api`). `Editor.Minibuffer.Compiled` registers the commands and the mode as compiled code, which the executable ships. |
 | `Editor.Vocabulary` | The parts of speech of editing as data any input scheme can use. One is built, the motion: a name and a function from a position and a count to a raw target, a program over the text interface that changes nothing. |
 | `Editor.Evil` | Vim's states, motions and commands on the editor API: what the Vim scheme's invocations run. Where a cursor may rest in each state, the move command over a table of motions, entering normal state and the visual states, the keys that begin an insert, and typed text. `Editor.Evil.Motions` holds the fifteen motions, each composed from the text interface's motion primitives, and `Editor.Evil.Compiled` registers the commands as compiled code, which the executable ships, so the editor moves and inserts with no config. Operators are not built. |
-| Standard library | evil's operators; later completion and the command line in the minibuffer, agents, review, version control, the rdm client. |
+| `Editor.Ex` | The ex command line: a prompt whose answer is run as a named ex command. `ex` asks for a line and has the command the line's first word is bound to run after it, as a step of its own, with the rest of the line as its argument; and the commands `quit`, `save-and-quit` and `reload-config`. A command cannot end the process or reload the config: it asks, and the loop hands the request to its host. `Editor.Ex.Line` is a line and an ex binding as data, with the parser; an ex name is bound to a command's name in the registry, by owner, from compiled code and from `setup`. `Editor.Ex.Compiled` registers the commands and the ex names `w`, `e`, `q`, `wq` and `reload` as compiled code, which the executable ships. Ranges, `!` and completion are not built. |
+| Standard library | evil's operators; later completion in the minibuffer, agents, review, version control, the rdm client. |
 | `Main` | Wires the real bindings together and starts the loop. |
 
 ## Milestones

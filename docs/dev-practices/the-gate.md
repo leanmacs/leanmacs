@@ -129,6 +129,41 @@ save in flight, the snapshot the loop releases once a save has ended and
 the saved mark a rollback takes back are checked with the state requests
 and the loop's dispatch.
 
+The ex command line (`lean/Editor/Ex.lean`) is checked there in layers,
+so that a change to one breaks no other's checks:
+
+- **A line and a binding, as data** (`exLineChecks`): what a typed line
+  parses to, and the invocation a binding makes of an argument. Pure.
+- **Ex bindings in the registry** (`registryChecks`, `setupChecks`,
+  `reloadChecks`): by owner, bound from `setup` with its refusals, and
+  replaced by an install, which keeps the compiled ones.
+- **The requests a command makes for it**: which command an ex name is
+  bound to, answered by the dispatcher from what it is told of the
+  registry (`stateRequestChecks`, `dispatchStateChecks`); an invocation
+  to be run after the command (`stateRequestChecks`, `promptChecks`, on
+  the driver); and quit (`stateChecks`, `stateRequestChecks`,
+  `apiStateChecks`, and one case of the API on the models and on the real
+  binding).
+- **Quit and reload in the loop** (`dispatchQuitChecks`), on the loop's
+  driver over the model of files, with commands written in the test that
+  name no ex name: the step says stop once the editor can leave, after
+  its scene; a quit asked while a save is in flight stops at the delivery
+  of the save's result; a quit is withdrawn when that save is refused and
+  when the buffer is edited meanwhile; and a reload a command asked for is
+  handed back with its step.
+- **The ex line and the names that ship** (`exChecks`), on that driver,
+  with the test scheme: the ex command and the accept and cancel commands
+  are on keys of the test scheme and a line is a committed text, so no
+  check names a Vim key. The ex line's own rules run on ex bindings
+  written in the test: a name nobody bound, an argument a name does not
+  take, an empty line, a bound command that is not registered or is
+  refused. The five names run on `Ex.bindings`: `e` and a path, `w`, `q`
+  with nothing modified, with a file's buffer modified and with the
+  scratch buffer alone modified, `w` then `q` and `wq` while the save is
+  in flight, `wq` with no file, with the file changed behind the editor
+  and with another buffer unsaved, and `reload`. Each message is read
+  from the function that makes it.
+
 Evil, Vim's states and motions on the editor API (`lean/Editor/Evil.lean`),
 is checked there in three layers, so that a change to one breaks no other's
 checks:
@@ -176,8 +211,9 @@ whatever `LEAN_NUM_THREADS` says: a bare `lake test` is enough.
 
 `mise run ffi-test` runs `lean/.lake/build/bin/ffi-test`, the test executable
 linked against the real library, then `contract-test`, `config-test`, and
-then the editor: once with no arguments, and seven times in its headless
-mode on the fixtures under `tests/headless`: with `script`, whose output must
+then the editor: once with no arguments, eight times in its headless
+mode on the fixtures under `tests/headless`, and twice more on a real file
+in a temporary directory (below): with `script`, whose output must
 be exactly `expected`; with `keys-script`, which sends keys with their
 identity through the library's window input and whose output must be exactly
 `keys-expected`; with `scene-script`, which enters insert state, commits
@@ -206,7 +242,57 @@ loads no config: it sends `i`, the keys of `hello`, `<Escape>` and `0`,
 and its scenes must show the text, the cursor after each, and the state's
 name in the status line, exactly as `evil-expected` has them. That run is
 evil's wiring on the real library: every command its keys run is one the
-editor ships.
+editor ships. The eighth is `ex/script`, which also has no `reload`: it
+runs the ex line three times, with a name nobody bound, with `w` in the
+scratch buffer and with `q`, which ends the loop, so that the `scene` line
+after it prints nothing; its output must be exactly `ex/expected`.
+
+Two more entries of the task run the executable on a real file, and read
+what a fixture's output cannot show: the process's exit status and the
+file's bytes. They are the phase's first two acceptance criteria on the
+executable.
+
+- **Each entry is one shell.** It makes a temporary directory with
+  `mktemp -d` and at once sets a trap that removes it when the shell ends,
+  whether the check passed or failed. It copies the fixture
+  `tests/headless/ex/note.txt` there, and writes the script there with
+  `sed` from a checked-in template, `ex/save-quit-script` or
+  `ex/wq-script`, in which `@FILE@` stands for the copy's absolute path:
+  the file port refuses a path that is not absolute, and a checked-in
+  script cannot name one. The headless mode runs a script written at run
+  time as it runs a checked-in one.
+- **What must hold**: the editor exits with status 0; the copy holds the
+  bytes of `ex/note-expected`; and no line of the output starts with
+  `commands:`, which the `show` line after the quit would print.
+- **The first** runs `e` on the file, waits for the load, enters insert
+  state, commits text, returns to normal state, runs `w`, waits for the
+  save, and runs `q`. **The second** runs `wq` in place of `w`, the wait
+  and `q`, and waits after it.
+- **Why the `wq` script waits after `wq`.** The quit `wq` asks for waits
+  for the save, so the loop is still running after the line. With no wait
+  the `show` line would be handled while the save runs, and the end of the
+  script would stop the loop, which cancels the save: the check would
+  print a `commands:` line and pass or fail on the file by timing. With
+  the `join` the script is read no further once the save's delivery has
+  ended the loop. Seen by hand: the template without its last `join`
+  printed the `commands:` line and left the file unwritten, six runs of
+  six, and each check as it is passed forty runs of forty
+  ([headless-mode.md](headless-mode.md), "A script waits where a command
+  starts a job").
+- **They are shell in this task and not Lean** because Lean spawns no
+  child process: child processes belong to the Rust process service, since
+  Lean never kills or reaps one (`docs/design/overview.md`, "Rules of the
+  boundary"). So `config-test` spawns nothing, and the editor is a child
+  of the task's shell, which the task's time limit ends if it hangs.
+- **They are hermetic.** The scripts have no `reload`, so nothing of the
+  config directory is loaded. The only file the editor opens or writes is
+  the copy: a save writes a temporary file beside its target and renames
+  it, so nothing is written outside the temporary directory. The
+  checked-in fixtures are read and never written.
+- **What is left behind if the task is killed** by a signal its shell
+  cannot catch: the temporary directory, in the system's temporary
+  directory, and nothing else.
+
 Two more runs
 pin its failure statuses: a command
 line it does not understand must give status 2, and a script that cannot be
@@ -272,6 +358,25 @@ arrives, across a reload that replaces it and one that drops it; the
 answer's command run before a key sent right after the accept key; and a
 continuation over a store reading the cell after the accepting command's
 write.
+
+`config-test` runs the ex command line through headless hosts too, with
+the test scheme and the ex line's commands and the ex names that ship as
+compiled code registers them. `ConfigTest.exChecks`, over the real
+elaborator: a config binds a key to a command, its file is rewritten to
+bind the key to another, the ex line `reload` is run, and the key runs the
+other command, with no restart; an ex name config binds runs config's
+command with the rest of the line, and is not an ex command after a
+reload of a config without the binding; config's binding of a shipped
+name runs in its place until a reload drops it; and a name nobody bound
+is said in the scene's echo, with the editor going on.
+`ConfigTest.exScriptChecks`, with `Headless.run` on scripts built in the
+check, over the library's file service on a file each check writes in a
+temporary directory of its own: `e`, a commit, `w`, a join and `q` leave
+the file with the buffer's text and end the script with no failure, with
+the `show` line after the quit not run; so does `wq` with a join after
+it; a `q` that is refused leaves the script running; and a wait on a host
+whose loop a command ended answers `ended`. No test of `config-test`
+spawns a process.
 
 `config-test` also loads a config that names evil's vocabulary
 (`ConfigTest.evilChecks`): a command of config's hands the move command

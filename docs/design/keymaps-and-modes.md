@@ -39,13 +39,18 @@ API:
 | Evil: where a cursor rests, the move command, entering a state, the keys that begin an insert, typed text | `lean/Editor/Evil.lean` |
 | Evil's fifteen motions and their table | `lean/Editor/Evil/Motions.lean` |
 | Evil's commands as compiled code registers them | `lean/Editor/Evil/Compiled.lean` |
+| An ex line as data: its name and argument, and an ex binding | `lean/Editor/Ex/Line.lean` |
+| Ex bindings by owner, and binding one from `setup` | `lean/Editor/Config/Registry.lean` (`replaceEx`, `ex?`), `lean/Editor/Setup.lean` (`exCommand`) |
+| The ex command, and the commands `quit`, `save-and-quit` and `reload-config` | `lean/Editor/Ex.lean` |
+| The ex line's commands and the ex names that ship, as compiled code registers them | `lean/Editor/Ex/Compiled.lean` |
 
 The command loop steps every key press through its one scheme and runs the
 invocation it yields, as a command looked up by name in the registry. The
 Vim scheme ships, and so do the commands its motion keys, `i a I A`,
-`v V`, `<Escape>` and typed text name, compiled into the executable, so
-with no config the editor moves and inserts. The operators and the other
-default commands (`x p P o O u C-r . :`) are not built: such a key echoes
+`v V`, `<Escape>`, `:` and typed text name, compiled into the executable,
+so with no config the editor moves and inserts, and `:` opens the ex
+command line ("The ex command line"). The operators and the other
+default commands (`x p P o O u C-r .`) are not built: such a key echoes
 `<name>: no such command` ("Default bindings"). One
 mode ships, the minibuffer's ("The minibuffer"); the others are built and
 tested with the modes their tests define. Of the vocabulary, motions are
@@ -1327,7 +1332,7 @@ Which names have something behind them:
 | `self-insert`, which no table names: typed text | Built and registered |
 | `minibuffer-accept`, `minibuffer-cancel` | Built and registered (`Minibuffer.commands`) |
 | The operators (`delete`, `change`, `yank`, run by the command `operate`), `open-below`, `open-above`, `delete-char`, `put-after`, `put-before`, `undo`, `redo`, `repeat`, and the register prefix's registers | Not built: the operators' phase. The key says `<name>: no such command` |
-| `ex` | Not built: the command line's phase |
+| `ex` | Built and registered (`Ex.commands`): `:` opens the ex command line ("The ex command line"). The key hands the command a count and a register, which it does not read |
 
 | Table | Keys |
 |---|---|
@@ -1750,6 +1755,134 @@ written for the checks and on the defaults), `ConfigTest.promptChecks`
 and `<Enter>` and `<Escape>` are pressed, under the Vim scheme the
 executable runs.
 
+## The ex command line
+
+Status: decided 2026-11-14 and built, by the command loop's phase 12
+(`lean/Editor/Ex/Line.lean` for a line and a binding as data,
+`lean/Editor/Ex.lean` for the commands, `lean/Editor/Ex/Compiled.lean` for
+their registrations and the names that ship; the module docs have the
+detail). How quitting and reloading reach the host is in
+[concurrency.md](concurrency.md), "Quit" and "Reload".
+
+The ex line is a prompt whose answer is run as a named ex command. The
+command `ex` opens it, and the Vim scheme's default table binds `:` to
+that name, so the key opens the line.
+
+**A line is its first word and the rest.**
+
+- **Parsing** (`Ex.parse`). Leading and trailing ASCII white space is
+  dropped. The *ex name* is everything up to the first white space. The
+  argument is the rest, with the white space before it dropped, kept
+  whole: the spaces inside it are part of it. A line that is empty or all
+  white space runs nothing and says nothing, as Vim's does.
+- **The argument is one string, handed on unchanged**: `e /tmp/my
+  notes.txt` opens that path. Nothing is escaped or expanded.
+- **Set aside: Vim's rule, a run of letters and then the rest** (`w!`,
+  `e#`, `w>>file`). A name config registers may hold a hyphen or a digit,
+  and `!`, ranges and `#` are not built. So `w!` is an unknown name and
+  says so. The parser is one pure function, and the phase that builds `!`
+  replaces it there.
+- **Set aside: a leading colon or a count.** Neither is dropped: `:w`
+  typed on the ex line is the unknown name `:w`.
+
+**An ex name is a binding to a command's name, held in the registry by
+owner.**
+
+- **A binding** (`Ex.Binding`) is the ex name, the name of the command it
+  runs, and what the name takes after it (`Ex.Takes`): nothing, or text.
+- **The registry has a table of them by owner** (`Registry.ex`), replaced
+  as a set (`replaceEx`), and a lookup finds the latest entry of a name
+  (`ex?`). So config's `w` runs in place of the compiled one until a
+  reload drops it, as for a command. A reload replaces config's ex
+  bindings and never the compiled ones. An ex binding is not a command,
+  and a reload's report does not count it.
+- **The invocation a line runs** (`Binding.invocation?`): with no
+  argument, the command with no arguments; with an argument and a name
+  that takes text, the command with the argument as its first argument, a
+  string, which is where a prompt's answer goes; with an argument and a
+  name that takes nothing, none, and the line is refused before anything
+  runs.
+- **Why a binding and not a second kind of program.** Every way a command
+  comes to run names it: a key binding, a role, a prompt's continuation. A
+  table of ex programs would be a second set of names for `show`, for the
+  reload's report and for "registered twice", and a command an ex name
+  runs could not be bound to a key. With a binding, the command a line
+  runs is run by the loop like any command: one rollback, one scene, and
+  its errors in the echo area under its own name.
+- **Why a binding says what it takes.** Without it `w notes.txt` would run
+  `save-buffer`, which ignores a string, and save the current file in
+  silence. With it the ex line refuses the argument, for every command,
+  and no command changes. It is data on the binding, so a later phase
+  adds a kind of argument (a file, for completion) with no new mechanism.
+- **Set aside: ex names as commands under a prefix** (`:w` registered as
+  a command). It needs no table, and puts a second namespace inside the
+  first: `show` would list them, and every lookup would build a string.
+
+**The ex line is one command that asks and then runs the answer; the
+command an ex name runs is a step of its own.**
+
+- **`ex` asks for its line when it is given none**, as `open-file` asks
+  for its path. With a string as its first argument it runs that line.
+  With anything else first, or nothing, it asks with a prompt labelled
+  `:`, whose continuation is `ex` itself. A key bound to it under the Vim
+  scheme hands it a count and a register, so it asks. Where the prompt is
+  refused, because one is open, it says so.
+- **Running a line**: parse it; ask which binding the name has; say
+  `<name>: not an ex command` for none; say `<name>: takes no argument`
+  for an argument the binding does not take; otherwise ask for the
+  invocation to be run after this command.
+- **A command asks two things of the loop for that**, each a state
+  request ([lean-runtime.md](lean-runtime.md), "The editor API"). Which
+  binding an ex name has (`exBinding`) is answered by the loop from the
+  registry as it is at that step: a command is a program over the
+  editor's port and cannot hold the registry. And that an invocation be
+  run after it (`invoke`): a command cannot run another inside itself
+  ([concurrency.md](concurrency.md), "Prompts").
+- **So one accepted ex line is three steps**: the accept command, `ex`
+  with the line, and the bound command, each with a scene. A name bound to
+  a command nobody registered says `<command>: no such command`, by the
+  loop's rule.
+- **An ex command's error goes to the echo area as a command's does**,
+  with no rule of its own: a refusal of the bound command is the loop's to
+  say, under that command's name, and an unknown ex name is a message of
+  `ex`, which ran to its end. The editor goes on.
+- **Set aside: running the bound command inside `ex`.** It would be looked
+  up before the step's write to a store was written back, and its failure
+  would be said under `ex`'s name.
+
+**The names that ship.**
+
+| Ex name | Command | Takes | What it does |
+|---|---|---|---|
+| `w` | `save-buffer` | Nothing | Saves the buffer of the window the line was asked from |
+| `e` | `open-file` | Text | Opens the path the rest of the line is. With no argument, asks for one, by `open-file`'s own rule |
+| `q` | `quit` | Nothing | Quits the editor |
+| `wq` | `save-and-quit` | Nothing | Starts the save, and quits once it has ended |
+| `reload` | `reload-config` | Nothing | Reloads the config |
+
+Where they differ from Vim:
+
+- **`q` does not refuse for a modified buffer with no file.** Such a
+  buffer cannot be saved, and `!` is not built, so the rule would leave no
+  way to quit once anything was typed in the scratch buffer. It refuses
+  while a buffer that holds a file has unsaved changes.
+- **`q` quits the editor, not the current window.** No shipped command
+  splits a window.
+- **`e` with no argument asks for a path.** Vim reads the current file
+  again, which is not built.
+- **`w` takes no file name.** Saving under another name is not built.
+- **`reload` is no Vim command.**
+
+Pinned by `ModelTest.exLineChecks` (the parser and the binding),
+`registryChecks`, `setupChecks` and `reloadChecks` (ex bindings by owner,
+from `setup`, and across an install), `exChecks` (the ex line and the five
+names, on the loop's driver over the editor's models and the model of
+files, with the test scheme), `ConfigTest.exChecks` and
+`ConfigTest.exScriptChecks` (through the headless host, with the real
+elaborator and the library's file service), the fixture
+`tests/headless/ex`, and the two process checks of the `ffi-test` task,
+which run the executable on a real file.
+
 ## Extending from config
 
 - Config registers modes, commands, vocabulary and bindings from `setup`,
@@ -1781,6 +1914,14 @@ executable runs.
   receives the answer as its first argument. Both kinds are commands under
   one set of names: a name registered twice is refused whichever the two
   are.
+- Built: `setup` binds an ex name to a command's name with
+  `exCommand "greet" "greet-named" (takes := .text)`
+  (`lean/Editor/Setup.lean`; "The ex command line"). By default the name
+  takes nothing. The command's name is looked up when the line is run, as
+  a key binding's is. A name that is empty or holds white space is
+  refused, since it could not be typed as a line's first word, and a
+  `setup` that binds one ex name twice is rejected. A reload replaces
+  config's ex bindings and never the compiled ones.
 - A key-string macro (`kbd "C-x C-s"`) could parse at elaboration time, so
   a mistyped key is an error in config before it runs. It is not built. See
   the open questions for its cost.
@@ -1896,6 +2037,35 @@ the test scheme's role table; and by `ConfigTest.promptChecks`, through
 the headless host. The keys the Vim scheme has for it are pinned by the
 Vim scheme's own lists, above, and pressed in the executable's fixture
 (`tests/headless/prompt`).
+
+The ex command line is checked by one pure list, one list on the models
+and two through the host:
+
+| List | Checks |
+|---|---|
+| `exLineChecks` | Pure: what a line parses to, and the invocation a binding makes of an argument, by what it takes |
+| `exChecks` | On the loop's driver over the editor's models and the model of files, with the test scheme: the ex command opens a prompt and runs the accepted line's command as a step of its own; a name nobody bound, an argument a name does not take, an empty line, a bound command that is not registered or is refused, a cancelled line; and the five names that ship, with `w` then `q` and `wq` while the save is in flight |
+| `ConfigTest.exChecks` | Through the headless host and the real elaborator, with the test scheme: the ex line `reload` reloads the config, an ex name config binds runs config's command until a reload drops the binding, config's binding of a shipped name runs in its place, and a name nobody bound is said in the scene's echo |
+| `ConfigTest.exScriptChecks` | Through `Headless.run` over the library's file service, on a file in a temporary directory: `e`, an edit, `w` and `q`, and the same with `wq`, leave the file with the buffer's text and end the script with no failure |
+
+- **The lists on the models name no Vim key**: the ex command and the
+  accept and cancel commands are on keys of the test scheme, and a line is
+  a committed text. The ex line's own rules are checked with ex bindings
+  written in the test, and the names that ship with `Ex.bindings`.
+- **Each message is read from the function that makes it** (`Ex.unknown`,
+  `Ex.noArgument`, `Ex.notQuitting`, and the file commands' in `Files`).
+- **The loop's part, stop and the withdrawn quit and the reload handed
+  back, is checked apart**, by `dispatchQuitChecks`, with commands written
+  in the test that name no ex name
+  ([concurrency.md](concurrency.md), "Quit").
+- **No new port and no new model.** The two requests that name the
+  registry are answered by the dispatcher, which is one function on the
+  models and against the library. The API's `quit` asks the text port for
+  revisions, so it has a case in `lean/Editor/Api/Cases.lean`, played on
+  the model and on the real binding.
+- **The wiring on the executable** is the fixture `tests/headless/ex`,
+  with no config, and two process checks of the `ffi-test` task, on a real
+  file in a temporary directory ([the gate](../dev-practices/the-gate.md)).
 
 ### Keys in, invocation out
 

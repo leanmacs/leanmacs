@@ -17,8 +17,10 @@ that the motions, operators and commands are registered under: a name is
 changed in its row and in its registration together. Nothing here says what
 a name does. The motions' entries are `Evil.motions`
 (`Editor/Evil/Motions.lean`), and the commands that are built are
-registered in `Editor/Evil/Compiled.lean` and
-`Editor/Minibuffer/Compiled.lean`; a name with nothing registered under it
+registered in `Editor/Evil/Compiled.lean`,
+`Editor/Minibuffer/Compiled.lean` and, for `ex`, which `:` names and
+which opens the ex command line, `Editor/Ex/Compiled.lean`; a name with
+nothing registered under it
 (an operator's, `open-below`, `undo`) says so in the echo area when its key
 runs.
 

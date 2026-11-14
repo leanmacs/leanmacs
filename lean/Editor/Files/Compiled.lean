@@ -21,6 +21,10 @@ for the owner `compiled` when its loop starts, before any config
     (`Files.saveCommand`), forced when its first argument is `true`. Its
     other arguments are ignored: an input scheme hands a command a key is
     bound to a count and a register.
+  - The ex names `e` and `w` are bound to these two
+    (`Editor/Ex/Compiled.lean`): `e` hands `open-file` the rest of its
+    line as the path, and `w` takes nothing, so `save-buffer` is never
+    handed a string it would ignore.
 - **`Files.jobs`**: `load-file`, under the editor's limit (`Files.limit`),
   and `save-file`. Each is started by its command with an order as its
   arguments. They are compiled jobs, so a reload does not cancel one: a

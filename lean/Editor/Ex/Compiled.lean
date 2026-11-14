@@ -44,7 +44,10 @@ This module is apart from `Editor/Ex.lean` because it names the registry,
 which is the config session's: `Editor.lean` imports the commands, so that
 config can call them, and not this.
 
-Pinned by `ModelTest.exChecks`, on the models.
+Pinned by `ModelTest.exChecks`, on the models; by `ConfigTest.exChecks` and
+`ConfigTest.exScriptChecks`, through the headless host; and on the
+executable by the fixture `tests/headless/ex` and the two process checks
+of the `ffi-test` task.
 -/
 
 namespace Editor.Ex

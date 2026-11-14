@@ -148,8 +148,55 @@ that enters it runs them:
 Why the command cannot do it, or say that it did not, is in
 `docs/design/keymaps-and-modes.md`, "What a scheme reports of a view".
 
+And it ships the ex command line, compiled in (`lean/Editor/Ex.lean`): a
+prompt labelled `:`, whose answer is run as a named ex command.
+
+| Command | Does |
+|---|---|
+| `ex` | Opens the ex line: a prompt labelled `:`. When it is accepted, the line's first word is looked up as an ex name and the command it is bound to runs, with the rest of the line as its first argument if the name takes one. The Vim scheme's `:` key runs it. With a string as its first argument it runs that line with no prompt. |
+| `quit` | Asks the editor to quit. It is refused while a buffer that holds a file has unsaved changes, and says `quit: <name> has unsaved changes`. A buffer with no file, the scratch buffer among them, never blocks it. While a save is in flight the editor quits once that save's result has been delivered. |
+| `save-and-quit` | Saves the buffer of the window it is called with, as `save-buffer` does, and asks the editor to quit if the save started. The quit waits for the save. |
+| `reload-config` | Asks for the config to be reloaded, as the `reload` directive does. It says nothing: the reload's report is printed. |
+
+| Ex name | Runs | Takes |
+|---|---|---|
+| `w` | `save-buffer` | Nothing |
+| `e <path>` | `open-file` | The rest of the line, whole, as the path. With none it asks for one |
+| `q` | `quit` | Nothing |
+| `wq` | `save-and-quit` | Nothing |
+| `reload` | `reload-config` | Nothing |
+
+- A line is its first word and the rest. White space round the line and
+  after the name is dropped; the rest is one argument, spaces included.
+  An empty line runs nothing.
+- A name nobody bound says `<name>: not an ex command` in the echo area,
+  and an argument for a name that takes nothing says
+  `<name>: takes no argument`. The editor goes on. So `w!` and `:w` are
+  unknown names: `!`, ranges and a leading colon are not read.
+- The command a line runs is run like any command: what became of it is
+  in the echo area under its own name.
+- An accepted line is three commands, one after the other, each followed
+  by a scene: `minibuffer-accept`, `ex` with the line, and the bound
+  command.
+- A script runs a line with `run ex`, a `commit` of the line and `key
+  <Enter> Enter -`, as the eighth fixture below does.
+
+`setup` binds an ex name to a command's name with `exCommand`, by default
+taking nothing:
+
+```lean
+def setup : SetupM Unit := do
+  commandWith "greet-named" greetNamed
+  exCommand "greet" "greet-named" (takes := .text)
+```
+
+Config's binding of a name the editor ships, `w` say, runs in its place
+until a reload drops it. A name that is empty or holds white space is
+refused, and so is a `setup` that binds one ex name twice. `show` does not
+list ex names.
+
 The other default keys of the Vim scheme (the operators `d c y`, `x p P`,
-`o O`, `u`, `C-r`, `.`, `:`) name commands that are not built: such a key
+`o O`, `u`, `C-r`, `.`) name commands that are not built: such a key
 says `<name>: no such command` in the echo area.
 
 A `setup` registers each command name and each job name once. One that
@@ -176,7 +223,7 @@ are skipped.
 
 | Directive | Does |
 |---|---|
-| `reload` | Asks for the config to be reloaded. Elaboration runs in the background, and the editor goes on answering. |
+| `reload` | Asks for the config to be reloaded. Elaboration runs in the background, and the editor goes on answering. The command `reload-config`, and so the ex line `reload`, asks the same. |
 | `settle` | Waits, for up to 30 seconds, until everything asked so far has been handled and no reload is running. |
 | `run <name>` | Runs the command registered under that name, through the editor loop, as a key would: with the focused window, guarded against the interrupt key, and rolled back if it does not run to its end. It is no key, so the input scheme's state is as it was: a command that a key enters a Vim state with enters none (the table of evil's commands, above). |
 | `spawn <name>` | Starts the job registered under that name. It runs in the background, and the editor goes on answering. |
@@ -194,12 +241,12 @@ $ .lake/build/bin/editor headless "$(lean --print-prefix)" .lake/build/lib/lean 
 reload 1: installed, 2 chunks, 1 commands
 run greet: ok
 run missing: no such command
-commands: open-file save-buffer minibuffer-accept minibuffer-cancel move normal visual visual-line insert append insert-line-start append-line-end self-insert greet
+commands: open-file save-buffer minibuffer-accept minibuffer-cancel move normal visual visual-line insert append insert-line-start append-line-end self-insert ex quit save-and-quit reload-config greet
 text 0: ""
 text 1: "hello, world"
 spawn count: job 1
 job 1 count: ok
-commands: open-file save-buffer minibuffer-accept minibuffer-cancel move normal visual visual-line insert append insert-line-start append-line-end self-insert greet
+commands: open-file save-buffer minibuffer-accept minibuffer-cancel move normal visual visual-line insert append insert-line-start append-line-end self-insert ex quit save-and-quit reload-config greet
 text 0: ""
 text 1: "hello, world"
 text 2: "counted 42"
@@ -207,9 +254,10 @@ text 2: "counted 42"
 
 Text 0 is the scratch buffer's: the editor loop makes its frame, and that
 buffer, for the first command it runs. `open-file`, `save-buffer`,
-`minibuffer-accept`, `minibuffer-cancel` and evil's nine, from `move` to
-`self-insert`, are the commands the editor ships, compiled in: `show`
-lists them before config's.
+`minibuffer-accept`, `minibuffer-cancel`, evil's nine, from `move` to
+`self-insert`, and the ex line's four, from `ex` to `reload-config`, are
+the commands the editor ships, compiled in: `show` lists them before
+config's.
 
 The gate runs a second script on the same config, `tests/headless/keys-script`,
 whose output must be exactly `tests/headless/keys-expected`:
@@ -410,6 +458,72 @@ between characters, after what was typed; in normal state it is on a
 character. `scene` prints a selection's two ends and not its shape or the
 cursor's.
 
+An eighth, `tests/headless/ex/script`, runs the ex command line on the
+first fixture's config directory, of which it loads nothing. Each line is
+run with `run ex`, which opens the prompt, a `commit` of the line, and
+`<Enter>`. `bogus` is a name nobody bound; `w` runs `save-buffer`, and the
+scratch buffer has no file; `q` quits the editor. The loop ends at that
+last `<Enter>`, so the `scene` line the script has after it is not run,
+and the exit status is 0. Its output must be exactly
+`tests/headless/ex/expected`:
+
+```console
+$ .lake/build/bin/editor headless "$(lean --print-prefix)" .lake/build/lib/lean ../tests/headless/config ../tests/headless/ex/script
+run ex: ok
+key arrived: <Enter> Enter -
+scene 0x0, focused 0, echo "bogus: not an ex command", preedit -, published 4
+view 0 0,0 0x0: "", scroll 0, selections 0..0
+status 0: status.state "normal", status.name "scratch"
+run ex: ok
+key arrived: <Enter> Enter -
+scene 0x0, focused 0, echo "scratch has no file to save to", preedit -, published 10
+view 0 0,0 0x0: "", scroll 0, selections 0..0
+status 0: status.state "normal", status.name "scratch"
+run ex: ok
+key arrived: <Enter> Enter -
+```
+
+Four scenes are published between the first `run ex` and the first
+`scene`: for `ex`, for the commit, for the accept command and for `ex`
+with the line. The second line adds a fifth, for `save-buffer`.
+
+Two more runs of the gate are on a real file, and so on a script that
+cannot be checked in whole: the file port takes absolute paths only. Each
+is one entry of the `ffi-test` task, a shell of its own that makes a
+temporary directory with `mktemp -d`, removes it by a trap when the shell
+ends, copies `tests/headless/ex/note.txt` into it, and writes the script
+there from a checked-in template in which `@FILE@` stands for the copy's
+path. The run must exit with status 0, the copy must then hold the bytes
+of `tests/headless/ex/note-expected`, and no line of the output may start
+with `commands:`, which the `show` line at the end of each script would
+print if the editor had not quit before it.
+
+- `tests/headless/ex/save-quit-script`: `e` and the path, `join`, `i`, a
+  committed text, `<Escape>`, `w`, `join`, `q`, and then `show`.
+- `tests/headless/ex/wq-script`: the same with `wq` in place of `w`, the
+  `join` and `q`, and a `join` after it, and then `show`.
+
+**A script waits where a command starts a job.** A script's lines are
+posted to the editor without waiting, and a job's result is queued when
+the job ends, so what the script has after a line that starts a job is
+handled before the job's result unless the script waits:
+
+- **After `e`.** The open is a job. Without a `join` the committed text
+  goes into the scratch buffer, `w` says that buffer has no file, `q`
+  still quits with status 0, and the file is as it was.
+- **Between `w` and `q`**, the `join` only puts the host's lines in one
+  order. Either order writes the file and quits: `q` waits for a save in
+  flight.
+- **After `wq`.** The quit `wq` asks for waits for the save, so the loop
+  is still running when the accept key has been handled. Without a `join`
+  the `show` line is handled while the save runs and prints a `commands:`
+  line, and the end of the script stops the loop, which cancels its jobs,
+  the save among them: the file is then left unwritten, or written, by
+  timing. With the `join`, the wait ends when the delivery of the save's
+  result has ended the loop; the script is read no further, and its end
+  stops nothing. The same holds for a `q` typed while a save is in
+  flight.
+
 The editor runs its command loop, under the Vim scheme. The loop has no
 frame until it is first needed: for the first event from the window input
 (a `key` or a `commit`), the first `run`, or the first job's command. It
@@ -421,11 +535,16 @@ recorder that stands in for the window's display: a window event, a
 request, a reload that installs, a job's command. `published` counts them,
 so the second `scene` of the third script, seven events after the first,
 shows that the reload and the job were each followed by one. A window's
-close request ends the loop.
+close request ends the loop, and so does a command that quits the editor
+(`quit`, `save-and-quit`), once no buffer that holds a file has unsaved
+changes and no save is in flight. The editor then cancels the jobs that
+are left and prints nothing more, and the lines of the script after the
+quit are not run: a `settle` or a `join` that was waiting ends at once,
+and is no failure.
 
 A key press is stepped through the scheme. Config's bindings are looked up
 first, then the scheme's own keymaps, which are those of the view's Vim
-state. The motions, `i a I A`, `v V`, `<Escape>`, typed text and the
+state. The motions, `i a I A`, `v V`, `<Escape>`, `:`, typed text and the
 minibuffer's two keys run commands the editor ships; a default key whose
 command is not built says `<name>: no such command` in the echo area. A
 command a key runs prints nothing: what became of it is
@@ -502,7 +621,8 @@ cancelled when the script ends.
 
 A reload that is rejected (a chunk does not elaborate, or `setup` throws)
 prints its diagnostics and leaves the config that was loaded in place, with
-its jobs still running. The exit status is 0 when the script ran to its end,
+its jobs still running. The exit status is 0 when the script ran to its end
+or a command quit the editor before it,
 1 when it could not, and 2 for a command line it does not understand. With
 status 1 a line on stderr says why: the script cannot be read; a `settle`,
 named by its line, ran out with a reload still running (a chunk or `setup`

@@ -320,6 +320,114 @@ The type of a command is `EditorM α`. It offers no blocking operations: no
 "run this process and wait", no "read this file", no "wait for this job".
 Long work belongs in a job.
 
+### Quit
+
+Status: decided 2026-11-14 and built, by the command loop's phase 12
+(`lean/Editor/State.lean`, "Quit"; `lean/Editor/Api.lean`, `quit`;
+`lean/Editor/Loop.lean`, "Quit"; `lean/Editor/Ex.lean` for the commands
+`quit` and `save-and-quit`; `lean/Editor/Headless.lean` for the host).
+
+A command asks the editor to quit, and the editor quits once it can. A
+command cannot end the process.
+
+**Quit reaches the host as editor state that the step turns into
+"stop".**
+
+- **Asked to quit is a flag of the editor state**
+  (`EditorState.quitting`), set by one state request. It is editor state,
+  so a command that asks and then does not run to its end is rolled back
+  to a state that was not asked.
+- **The editor leaves** when it was asked to quit, no buffer has unsaved
+  changes, and no save is in flight (`EditorState.leaves`).
+- **The step says stop.** Every step that publishes a scene says stop
+  when the state it left leaves, and to go on otherwise. The scene is
+  published first, so a quitting command's scene is the last one. A step
+  that says stop already ends a host's loop, as a window's close request
+  does: nothing new crosses to the host. The executable's `main` then
+  quits the queues and exits, as it does at the end of a script.
+- **A quit that cannot go ahead is withdrawn when the scene is made.**
+  After the histories were told their texts' revisions, so that "unsaved"
+  is right, a state asked to quit in which a buffer has unsaved changes is
+  no longer asked. This is the one place a waiting quit ends without
+  quitting: the save it waited for was refused, or the buffer was edited
+  while it waited.
+- **Set aside: a one-shot output of the step**, like the jobs to start. A
+  quit that waits for a save must outlive the command that asked, so it
+  is state.
+- **Not changed: a window's close request** stops the loop whatever is
+  unsaved. The rule here could be applied there; it is not this phase's.
+
+**`quit` refuses while a buffer that holds a file has unsaved changes, and
+waits for a save in flight.**
+
+- **A buffer has unsaved changes** when it holds a file, is modified, and
+  its text is in another state than the one a save in flight is writing.
+- **The API's `quit` checks before it asks.** It tells a copy of each
+  file-holding buffer's undo tree the text's revision, as a save does, so
+  an edit made earlier in the same command counts. If a buffer has unsaved
+  changes it refuses, as a value that names the buffer, and asks nothing.
+  The command `quit` says the refusal in the echo area:
+  `quit: <name> has unsaved changes`.
+- **A save in flight is waited for, not refused and not cancelled.** A
+  save is a job, and a buffer is still modified while its save runs: the
+  saved mark is set when the save's result is delivered. So a buffer whose
+  text is in the state its save in flight is writing has no unsaved
+  changes; the quit is asked, and the editor does not leave until that
+  result is delivered. The delivery's scene finds the buffer saved and
+  the step says stop; or finds it still modified, because the save was
+  refused, and the quit is withdrawn, with the save's refusal in the echo
+  area. So `w` then `q`, typed as fast as you like, writes the file and
+  quits.
+- **A buffer edited after its save began has unsaved changes**, and `quit`
+  refuses.
+- **A buffer with no file never blocks.** The scratch buffer cannot be
+  saved, and `!` is not built, so a rule that counted it would leave no
+  way to quit once anything was typed there. This departs from Vim, which
+  refuses.
+- **Other jobs do not block.** A load in flight and config's jobs are
+  cancelled when the loop ends. A reload that is running is abandoned.
+- **Set aside: refusing while a save is in flight.** `w` then `q` would
+  then fail or pass by timing.
+- **Set aside: quitting at once.** The host cancels its jobs when its
+  loop ends, the save among them.
+- **A quit that waits can wait for ever**, if a save's job never ends.
+  The editor goes on answering, and a window's close request still ends
+  it.
+
+**`save-and-quit` is one command: it starts the save, and asks to quit
+only if the save started.**
+
+- It saves its target's buffer, reads the state again, and, when that
+  buffer has a save in flight, asks to quit. The quit then waits for the
+  save by the rule above: the file is written, the result is delivered,
+  and that step says stop. The order is fixed by the wait, not by timing.
+- **When the save did not start, it does not quit.** A buffer with no file
+  says so, and the editor goes on, as Vim's `wq` does with no file name.
+- **When the save is refused**, the file having changed on disk, the quit
+  is withdrawn and the refusal is in the echo area.
+- **When another buffer has unsaved changes**, the save starts and the
+  quit is refused with that buffer's name: the file is written and the
+  editor goes on. Vim does the same.
+- It saves a buffer that is not modified too, as Vim's `wq` does.
+- **Set aside: a save order that carries what to run next.** An order
+  crosses as arguments, and the wait already gives the order.
+
+**What a driver of the editor must do.** A quit that is waiting for a save
+has not ended the loop. A script that posts more after `wq`, or reaches
+its end, before the save's result is delivered has those lines handled
+while the save runs, and the end of a script stops the loop, which cancels
+the save. So a script waits for the job after `wq`
+([headless-mode.md](../dev-practices/headless-mode.md)).
+
+Pinned by `ModelTest.stateChecks`, `stateRequestChecks` and
+`apiStateChecks` (the state's rules and the API's `quit`, which also has a
+case on the real binding), `dispatchQuitChecks` (the loop: stop, the wait
+and the withdrawn quit, with commands written in the test), `exChecks`
+(the commands and the ex names `q` and `wq`), `ConfigTest.exScriptChecks`
+(through the host, on real files), and the two process checks of the
+`ffi-test` task, which read the executable's exit status and the file's
+bytes.
+
 ### Runaway code is not a design driver
 
 A command stuck in a pure loop that never makes an API call cannot be
@@ -543,6 +651,8 @@ Status: decided 2026-11-14 and built, by the command loop's phase 10.
 | The hosts that run the answer's command before the next event | `lean/Editor/Loop/Driver.lean` (`Loop.Driver.took`), `lean/Editor/Headless.lean` (`Running.took`) |
 | `minibuffer-accept`, `minibuffer-cancel` and the minibuffer's mode | `lean/Editor/Minibuffer.lean`, `lean/Editor/Minibuffer/Compiled.lean` |
 | `open-file` asking for its path | `lean/Editor/Files.lean` (`openCommand`) |
+| An invocation a command asks to be run after it, with no prompt | `lean/Editor/State/Request.lean` (`StateRequest.invoke`), `lean/Editor/Api.lean` (`invoke`) |
+| `ex` asking for its line, and running the answer's command | `lean/Editor/Ex.lean` (`exCommand`, `run`) |
 
 Pinned on the models by `ModelTest.stateChecks` and `stateRequestChecks`
 (the state's operations), `promptChecks` (the loop, its host on the
@@ -697,6 +807,34 @@ event.**
   interrupt key stops it at the next one ("Runaway code is not a design
   driver").
 
+**A command has another command run after it the same way, with no
+prompt.** Built by the command loop's phase 12.
+
+- **A command cannot run another command.** A command is a program over
+  the editor's port, the registry is the host's, and the one way a
+  command had another run after it was a prompt's continuation.
+- **`invoke invocation` records the invocation** where a prompt's answer
+  is recorded (`EditorState.answered`), after what is there. So that
+  field, and what a step hands back (`Loop.Stepped.answered`), is the
+  invocations to run next: a prompt's continuation with its answer, and
+  what a command asked for. The names stay: they were given for the
+  first.
+- **Everything above holds for it unchanged**: the host runs it as a step
+  of its own before the next event, the command is looked up then, a name
+  no command is registered under says `<name>: no such command`, a
+  command that asks and does not run to its end has nothing run, and a
+  refused one is rolled back alone, under its own name.
+- **The ex line is its first user**: `ex` looks the line's name up and
+  asks for the bound command to be run after it
+  ([keymaps-and-modes.md](keymaps-and-modes.md), "The ex command line").
+  Running the bound command inside `ex` was set aside for the reasons
+  above: the lookup before the step's write, and a failure said under
+  `ex`'s name.
+- **Set aside: one request that looks an ex name up and records its
+  command.** The rule for an argument a name does not take would then be
+  in the dispatcher. With two requests the dispatcher answers a question,
+  and the ex line's rules are in `lean/Editor/Ex.lean`.
+
 **Rollback and the interrupt around a prompt.**
 
 - **A command that asks and then does not run to its end** is rolled back
@@ -743,7 +881,10 @@ event.**
 **What ships that asks.** `open-file`, run with no path as its first
 argument, asks `Open file: ` with itself as the continuation, so the
 answer is the path it opens, in the view it was asked from ("Getting
-results back"). `save-buffer` does not ask: a buffer with a file needs no
+results back"). `ex`, run with no line as its first argument, asks `:`
+with itself as the continuation, so the answer is the line it runs
+([keymaps-and-modes.md](keymaps-and-modes.md), "The ex command line").
+`save-buffer` does not ask: a buffer with a file needs no
 name, and one with no file needs a file that is not there yet, which is
 more than a prompt. Config asks with `prompt`, and registers the command
 that receives the answer with `commandWith`, which is given its call
@@ -1015,6 +1156,23 @@ As built (`lean/Editor/Config/Reload.lean`, `lean/Editor/Headless.lean`):
   is dropped once it is installed. `config-test` checks this with states
   that each hold a library handle. Whether Lean frees an old environment is
   observed by the benchmark's soak (`mise run config-bench`), not gated.
+
+- **A command asks for a reload** with `reloadConfig`
+  (`lean/Editor/Api.lean`), built by the command loop's phase 12. The
+  loop holds no config session, so the request is a one-shot output of
+  the step: a flag of the editor state until the command ends, which the
+  loop takes out after a command that ran to its end and hands back
+  (`Loop.Stepped.reload`), as it does the jobs to start. A command that
+  did not run to its end asks for none. The host feeds the reducer a
+  request, which is what its driver's `reload` does, so the rules above
+  hold unchanged. The command `reload-config` asks, and the ex name
+  `reload` is bound to it. The reload is asynchronous: a key typed before
+  the install runs the old config's binding. Nothing shows a reload's
+  report in the echo area: the headless host prints it. On the models the
+  loop's driver counts the requests, since it has no config session
+  (`ModelTest.dispatchQuitChecks`, `exChecks`); through the host,
+  `ConfigTest.exChecks` rewrites a config's file, runs the ex line
+  `reload`, and sees the key run the new command.
 
 `config-test` shows the editor answering while a chunk elaborates: with a
 chunk's elaboration held open through the elaborator port, 100 events fed

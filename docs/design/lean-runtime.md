@@ -91,6 +91,17 @@ and the compiler and entry-point workarounds above.
 Shutdown posts a quit event, unblocks every dedicated task, and calls exit.
 Returning from `main` while a task is blocked in Rust hangs.
 
+**Quit from a command, as built.** A command cannot end the process. It
+asks (`quit`, `lean/Editor/Api.lean`), which sets a flag of the editor
+state; the loop's step says stop once the editor can leave, when no buffer
+that holds a file has unsaved changes and no save is in flight
+([concurrency.md](concurrency.md), "Quit"); the host ends its loop, as it
+does for a window's close request; and the executable's `main` then quits
+the queues and exits, as it does at the end of a script. The headless
+mode's driver sees a loop that ended by itself, stops reading its script
+there, and exits with status 0
+([headless-mode.md](../dev-practices/headless-mode.md)).
+
 **The window, as built.** The main thread is parked in a small service
 (`crates/editor-ffi/src/main_thread.rs`), and "run the window" is one
 request of it, with which platform and how the window is opened. The main
@@ -202,7 +213,8 @@ elaborator.
 | Stores: a value of config's type as a plain tree with a version | `lean/Editor/Store.lean` |
 | Diagnostics: failure as data | `lean/Editor/Config/Diagnostic.lean` |
 | Owners: who registered or started something | `lean/Editor/Config/Owner.lean` |
-| The registry of commands, of jobs and of key bindings, replaced by owner, the keymap of the bindings, and the handler that collects a `setup` | `lean/Editor/Config/Registry.lean` |
+| The registry of commands, of jobs, of key bindings, of modes and of ex bindings, replaced by owner, the keymap of the bindings, and the handler that collects a `setup` | `lean/Editor/Config/Registry.lean` |
+| An ex line and an ex binding, as data | `lean/Editor/Ex/Line.lean` |
 | What a command is run with when a key runs it: the focused window and its buffer, the arguments and the keys | `lean/Editor/Command/Call.lean` |
 | The cells of the stores, and the rule that installs a config's stores | `lean/Editor/Config/Stores.lean` |
 | One reload: the chunks, the plan, the build, over the two ports | `lean/Editor/Config/Session.lean` |
@@ -283,6 +295,22 @@ elaborator.
   buffer that had a mode a reload drops keeps its name, which then
   contributes nothing ([keymaps-and-modes.md](keymaps-and-modes.md),
   "Modes").
+- **An ex name is data too**: `exCommand "greet" "greet-named" (takes :=
+  .text)` in `setup` binds an ex name to a command's name, with what the
+  name takes after it (`Ex.Binding`, `lean/Editor/Ex/Line.lean`). The
+  registry holds ex bindings by owner, and a reload replaces config's as
+  a set and never the compiled ones, so config's binding of a shipped
+  name runs in its place until a reload drops it. A name that is empty or
+  holds white space, and a name bound twice in one `setup`, reject the
+  reload. The command's name is not looked up until a line of that name
+  is run. Ex bindings are not counted in the report
+  ([keymaps-and-modes.md](keymaps-and-modes.md), "The ex command line").
+- **A command asks for a reload.** `reloadConfig` sets a flag of the
+  editor state, which the loop takes out after a command that ran to its
+  end and hands back with the step; the host then feeds the reload
+  reducer a request, as its driver's `reload` does. So the ex line
+  `reload` is a command like any other, and the reducer's rules hold
+  unchanged ([concurrency.md](concurrency.md), "Reload").
 - **A job is the value `setup` registered, too**:
   `job "count" count fun n => …` registers a `Work`, the job with the
   handler that makes the command its result is taken to the editor with.
@@ -700,6 +728,10 @@ made of state requests and text requests. Config sees it through
 | Break a line with the buffer's line ending, and ask whether a buffer is modified | `ViewId.insertLineBreak`, `Target.insertLineBreak`; `BufferId.isModified` | Yes: `apply`, and the text's revision |
 | Open a file into a buffer and save a buffer to its file | `Files.open`, `Files.save` (`lean/Editor/Files.lean`), each of which starts a compiled job | For the snapshot a save writes; the file is the job's to load or save |
 | Ask for a string, without waiting for it, and accept or cancel the open prompt | `prompt label continuation initial`, which names the command that receives the answer as an invocation; `acceptPrompt`, `cancelPrompt` | To make the minibuffer's text and its markers, and to read the answer; a cancel reaches nothing |
+| Ask which command an ex name is bound to, and what the name takes | `exBinding name`, answered by the loop from the registry as it is at that step | No |
+| Have another command run after it, as a step of its own | `invoke invocation` | No: the host runs it once the command has ended |
+| Ask the editor to quit; refused, as a value, while a buffer that holds a file has unsaved changes | `quit` | For the revision of each buffer that holds a file |
+| Ask for the config to be reloaded | `reloadConfig` | No: the host asks its config session once the command has ended |
 
 - **Edits go through `apply`**, as one transaction made by the user
   (`Origin.user`): one revision, one entry of the edit log, and one step
@@ -765,6 +797,23 @@ made of state requests and text requests. Config sees it through
   name the registry and are the one module of evil's that is not imported.
   Pinned by `ConfigTest.evilChecks`, on a config the real elaborator
   loads.
+- **The ex line is commands over the API** (`lean/Editor/Ex.lean`, built
+  by the command loop's phase 12;
+  [keymaps-and-modes.md](keymaps-and-modes.md), "The ex command line"):
+  `ex`, which asks for a line and runs it, and `quit`, `save-and-quit` and
+  `reload-config`. They needed four state requests. Two name something
+  the host holds: which command an ex name is bound to (`exBinding`),
+  which the dispatcher answers from the registry, as it answers a major
+  mode's name and a job's; and a reload (`reloadConfig`), a one-shot
+  output of the step. One has a command run after another (`invoke`), in
+  the field a prompt's answer is recorded in. One asks the editor to quit
+  (`quit`), which is a flag of the state the step turns into "stop"
+  ([concurrency.md](concurrency.md), "Quit"). None adds a request to
+  another port, so there is no new model and no new contract; `quit` asks
+  the text port for revisions, and has a case in
+  `lean/Editor/Api/Cases.lean`. The registrations and the ex names that
+  ship (`lean/Editor/Ex/Compiled.lean`) name the registry and are not
+  imported by `Editor.lean`.
 - **Out of the API still**: commands that ask layout a question (phase
   15).
 
@@ -781,6 +830,9 @@ made of state requests and text requests. Config sees it through
 | Evil: where a cursor rests, and the commands the Vim scheme's invocations run | `lean/Editor/Evil.lean` |
 | Evil's motions, as vocabulary entries, and their table | `lean/Editor/Evil/Motions.lean` |
 | Evil's commands as compiled code registers them | `lean/Editor/Evil/Compiled.lean` |
+| An ex line as data: its name and argument, and an ex binding | `lean/Editor/Ex/Line.lean` |
+| The ex command, and the commands `quit`, `save-and-quit` and `reload-config`, with what they say in the echo area | `lean/Editor/Ex.lean` |
+| The ex line's commands and the ex names that ship, as compiled code registers them | `lean/Editor/Ex/Compiled.lean` |
 | The loop on the models with jobs, for tests of a command that starts a job: a job reads the snapshots commands took, and its command is handed what the job loaded | `lean/Editor/Loop/Driver.lean` |
 
 ## Where state lives
@@ -790,9 +842,10 @@ made of state requests and text requests. Config sees it through
 | Buffers, windows, keymaps, registers, the agent table | Compiled Lean, on the editor thread. Buffers, windows, the frame's split tree, the echo area and the preedit are the editor state (`lean/Editor/State.lean`), which the command loop (`lean/Editor/Loop.lean`) holds and is the one writer of: a command changes it by requests the loop answers. Buffers are kept in slots, so a buffer's id is never used again, and neither is a view's | Untouched | Lost unless its owner persists it |
 | A buffer's local values: plain trees by name (`Value`), as a store's cell holds | Compiled Lean, a field of the buffer in the editor state, set and read by a command (`BufferId.setValue`, `BufferId.value?`) | Untouched: a tree names no type of config's | Lost |
 | The input scheme's state: the pending keys and what the scheme keeps for each view (the Vim scheme's states, its last change) | Compiled Lean, in the command loop, which runs one scheme for its life | Untouched | Lost |
-| Compiled commands, jobs, key bindings and modes | Compiled Lean, in the registry, for the owner `compiled`. The executable ships the file commands, `open-file` and `save-buffer`, and their jobs, `load-file` and `save-file` (`lean/Editor/Files/Compiled.lean`), the minibuffer's commands, `minibuffer-accept` and `minibuffer-cancel`, and its mode, `minibuffer` (`lean/Editor/Minibuffer/Compiled.lean`), and evil's nine commands, `move`, `normal`, `visual`, `visual-line`, `insert`, `append`, `insert-line-start`, `append-line-end` and `self-insert`, over its compiled table of motions (`lean/Editor/Evil/Compiled.lean`) | Untouched: a reload replaces config's, and cancels config's jobs only, so a compiled job that is running goes on | Registered again when the host starts |
+| Compiled commands, jobs, key bindings, modes and ex bindings | Compiled Lean, in the registry, for the owner `compiled`. The executable ships the ex line's four commands, `ex`, `quit`, `save-and-quit` and `reload-config`, and the ex names `w`, `e`, `q`, `wq` and `reload` (`lean/Editor/Ex/Compiled.lean`), the file commands, `open-file` and `save-buffer`, and their jobs, `load-file` and `save-file` (`lean/Editor/Files/Compiled.lean`), the minibuffer's commands, `minibuffer-accept` and `minibuffer-cancel`, and its mode, `minibuffer` (`lean/Editor/Minibuffer/Compiled.lean`), and evil's nine commands, `move`, `normal`, `visual`, `visual-line`, `insert`, `append`, `insert-line-start`, `append-line-end` and `self-insert`, over its compiled table of motions (`lean/Editor/Evil/Compiled.lean`) | Untouched: a reload replaces config's, and cancels config's jobs only, so a compiled job that is running goes on | Registered again when the host starts |
 | An open prompt: its label, the minibuffer's view, the asking view and the continuation, with the minibuffer's buffer and window | Compiled Lean, a field of the editor state (`EditorState.prompt`, `lean/Editor/State.lean`) and a buffer and a window of it, from the command that asks until the one that accepts or cancels | Untouched: the prompt stays open, and its continuation is a name, looked up in the registry as it is when the answer arrives | Lost |
 | A save in flight: the snapshot a save writes and the state its text was in | Compiled Lean, with the buffer's file in the editor state, from the save command until the save's result is delivered | Untouched | Lost with the buffer |
+| Asked to quit: whether a command asked the editor to quit | Compiled Lean, a field of the editor state (`EditorState.quitting`), from the command that asks until the step that says stop, or until the scene that withdraws it because a buffer has unsaved changes | Untouched: a quit that is waiting for a save still waits | Not kept: the process has ended |
 | A view's wanted column: the column its vertical motions aim for, with the offset the cursor was left at | Compiled Lean, a field of the view's window in the editor state (`Window.wanted`), set by a command (`ViewId.setWanted`) | Untouched | Lost |
 | A buffer's modes: its major mode and its minor modes, by name | Compiled Lean, a field of the buffer in the editor state | Untouched: a name whose mode a reload drops contributes nothing | Lost |
 | A mode's own state | A compiled mode's, a typed field where the editor state's table puts it (the one mode that ships, the minibuffer's, keeps none); a config mode's, a store its `setup` declares, whose commands fill its roles and suffixes, with per-buffer state in the buffer's local values, or inside the store's value | As for compiled state, and as for a store | As for compiled state, and as for a store |
