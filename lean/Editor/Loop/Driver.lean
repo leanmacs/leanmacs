@@ -40,9 +40,32 @@ operations take it on:
 - **A step that is refused changes the models and not the loop.** No
   program of the loop is refused today (`Editor/Loop.lean`, "When
   publishing is refused"); one that is hands back the refusal.
-- **What a job loaded is not handed to its command.** The snapshots a job
-  holds when it ends are for the phase that loads files to hand over; a
-  delivered command here is handed nothing.
+
+## Snapshots across the two models
+
+A job reads the snapshots commands took, and its command takes in what the
+job loaded. The driver hands both across as values, as the runtime does for
+real (`Job.finishWith`, `Editor/Job/Real.lean`) and as the cases across the
+two ports are played (`Editor/File/Cases.lean`):
+
+- **A job reads what the editor has published.** When a job is started,
+  the job model's published snapshots (`FileModel.snapshots`) are set to
+  the text model's, as they are after the step that asked for the job. So
+  a job saves a snapshot its command took, by its id.
+- **What a job loaded is kept with the job** (`Pending.held`): the ids its
+  loads made, until its command has run.
+- **A finished job's command is handed what its job held, and nothing
+  else.** For the delivery the text model's `arrived` holds those
+  snapshots, under the job's ids; it is emptied after the delivery, and
+  the job's snapshots are released in the file model
+  (`FileModel.released`). So a command adopts what its own job loaded, and
+  is refused another job's id, and its own job's once it has run.
+- **A job that failed or was cancelled holds nothing.** No command will
+  run for it, so what it loaded is released when it ends, which here is
+  when it is started.
+- **The files are the driver's `jobs.files`.** A test sets them before it
+  feeds an event, and changes them between two events to stand for another
+  program writing a file.
 
 Pinned by `ModelTest.driverChecks`.
 -/
@@ -58,6 +81,9 @@ structure Loop.Driver.Pending where
   name : String
   /-- How it ended on the job model, with the command it finished with. -/
   outcome : Job.Outcome (EditorM Unit)
+  /-- The snapshots its loads made, which it holds until its command has
+  run; none for a job that did not finish. -/
+  held : Array JobSnapshotId := #[]
 
 /-- The command loop on the editor's models, with the jobs its commands
 start run on the job model, for a loop that runs the input scheme
@@ -99,21 +125,42 @@ def handed (driver : Loop.Driver scheme) : Loop.Keys scheme :=
     registered :=
       { driver.keys.registered with jobs := fun name => (driver.registered name).isSome } }
 
+/-- The job model with each of the job snapshots `held` released. -/
+def releasing (jobs : JobModel) (held : Array JobSnapshotId) : JobModel :=
+  { jobs with files := held.foldl FileModel.released jobs.files }
+
+/-- The driver's editor models with `arrived` as what a run of a command is
+handed (`TextModel.arrived`). -/
+def handing (driver : Loop.Driver scheme) (arrived : Array (JobSnapshotId × TextContent)) :
+    Loop.Driver scheme :=
+  { driver with model := { driver.model with texts := { driver.model.texts with arrived } } }
+
 /-- The driver once each of `starts` is started: the job registered under
 its name, applied to its arguments, is run on the job model, and what it
 ended with is kept as not delivered, under the next id. A start whose name
 no job is registered under is passed over: the loop refused it when the
-command asked. -/
+command asked.
+
+The job reads the text model's snapshots as the published ones. What its
+loads made is kept with it when it finished, and released otherwise
+("Snapshots across the two models", in the module docs). -/
 def started (driver : Loop.Driver scheme) (starts : Array JobStart) : Loop.Driver scheme :=
   starts.foldl
     (fun driver start =>
       match driver.registered start.name with
       | none => driver
       | some work =>
-        let (outcome, jobs) := (work start.arguments ()).runModel driver.jobs
+        let files := { driver.jobs.files with snapshots := driver.model.texts.snapshots }
+        let (outcome, jobs) := (work start.arguments ()).runModel { driver.jobs with files }
+        let loaded : Array JobSnapshotId :=
+          (Array.range (jobs.files.held.size - files.held.size)).map (⟨files.held.size + ·⟩)
+        let finished := outcome matches .finished _
         { driver with
-          jobs
-          pending := driver.pending.push { id := driver.next, name := start.name, outcome }
+          jobs := if finished then jobs else releasing jobs loaded
+          pending :=
+            driver.pending.push
+              { id := driver.next, name := start.name, outcome
+                held := if finished then loaded else #[] }
           next := driver.next + 1 })
     driver
 
@@ -141,7 +188,10 @@ def feed (driver : Loop.Driver scheme) (received : Received) :
 is handed the command it finished with (`Loop.deliver`), labelled
 `job <id> <name>`. The step the delivery handed back; `none`, with nothing
 delivered, for an id that names no job started and not delivered, for a job
-that failed or was cancelled, and for a delivery that was refused. -/
+that failed or was cancelled, and for a delivery that was refused.
+
+The delivery is handed what the job held, and nothing is handed or held
+once it has run ("Snapshots across the two models", in the module docs). -/
 def finish (driver : Loop.Driver scheme) (id : Nat) :
     Loop.Driver scheme × Option (Loop.Stepped scheme) :=
   match driver.pending.find? (·.id == id) with
@@ -150,9 +200,13 @@ def finish (driver : Loop.Driver scheme) (id : Nat) :
     let driver := { driver with pending := driver.pending.filter (·.id != id) }
     match job.outcome with
     | .finished command =>
+      let arrived :=
+        job.held.filterMap fun held => (driver.jobs.files.held[held.number]?).join.map (held, ·)
       let (driver, stepped) :=
-        driver.stepped (driver.loop.deliver driver.handed s!"job {job.id} {job.name}" command)
-      (driver, stepped.toOption)
+        (driver.handing arrived).stepped
+          (driver.loop.deliver driver.handed s!"job {job.id} {job.name}" command)
+      (({ driver with jobs := releasing driver.jobs job.held } : Loop.Driver scheme).handing #[],
+        stepped.toOption)
     | .failed _ | .cancelled => (driver, none)
 
 end Loop.Driver

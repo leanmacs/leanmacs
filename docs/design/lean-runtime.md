@@ -718,7 +718,7 @@ made of state requests and text requests. Config sees it through
 | The operations | `lean/Editor/Api.lean` |
 | Their cases, played on the models and on the real binding | `lean/Editor/Api/Cases.lean` |
 | What is proved of them on the text model | `lean/Editor/Api/Theorems.lean` |
-| The loop on the models with jobs, for tests of a command that starts a job | `lean/Editor/Loop/Driver.lean` |
+| The loop on the models with jobs, for tests of a command that starts a job: a job reads the snapshots commands took, and its command is handed what the job loaded | `lean/Editor/Loop/Driver.lean` |
 
 ## Where state lives
 

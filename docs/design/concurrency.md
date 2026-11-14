@@ -434,7 +434,10 @@ transaction through. Where those come from is open.
   end with it) is not built. On the models the loop's driver
   (`lean/Editor/Loop/Driver.lean`) is the host: it runs each job on the job
   model and delivers its command when the test says the job is finished
-  (`ModelTest.driverChecks`).
+  (`ModelTest.driverChecks`). It hands snapshots across as the runtime
+  does: a job reads the snapshots commands took, its command is handed
+  what the job loaded and nothing else, and what a job held is released
+  once its command has run, or when the job fails.
 
 ### Structured lifetimes
 

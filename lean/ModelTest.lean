@@ -8209,7 +8209,14 @@ abbrev TestDriver :=
 /-- The jobs of the driver checks, by name. `double` doubles the number it
 is started with, and its command inserts the result, in brackets, at the
 cursor of view 0. `bad` finishes with a command that inserts and is then
-refused. `chain` finishes with a command that starts `double` with 5. -/
+refused. `chain` finishes with a command that starts `double` with 5.
+
+Four reach files, in `fileRoot`. `load` loads the file it is named and
+finishes with a command that makes a text of it. `adopt` loads nothing, and
+finishes with a command that adopts the job snapshot of the number it is
+started with. `save` saves the snapshot of the store whose index it is
+started with as `out.txt`, which must not be there. `lose` loads `note.txt`
+and then throws. -/
 def driverJobs (name : String) : Option (List Argument → Work) :=
   let inserts (text : String) : EditorM Unit := discard <| (⟨0⟩ : ViewId).insertAtSelections text
   match name with
@@ -8228,20 +8235,53 @@ def driverJobs (name : String) : Option (List Argument → Work) :=
         (⟨0⟩ : TextId).delete 9 99
   | "chain" =>
     some fun _ => Work.of (fun _ => pure ()) fun _ => discard <| startJob "double" [.nat 5]
+  | "load" =>
+    some fun arguments =>
+      Work.of
+        (fun _ => do
+          let [.str name] := arguments | throw "load takes one name"
+          return (← JobContract.loaded (fileRoot / name)).snapshot)
+        fun file => discard file.toText
+  | "adopt" =>
+    some fun arguments =>
+      Work.of
+        (fun _ => do
+          let [.nat number] := arguments | throw "adopt takes one number"
+          return number)
+        fun number => discard (JobSnapshotId.mk number).adopt
+  | "save" =>
+    some fun arguments =>
+      Work.of
+        (fun _ => do
+          let [.nat index] := arguments | throw "save takes one number"
+          discard <| JobContract.saved (.snapshot ⟨index⟩) (fileRoot / "out.txt") .absent)
+        fun _ => pure ()
+  | "lose" =>
+    some fun _ =>
+      Work.of
+        (fun _ => do
+          discard <| JobContract.loaded (fileRoot / "note.txt")
+          throw "lost")
+        fun (_ : Unit) => pure ()
   | _ => none
 
 /-- The commands of the driver checks, bound under `C-c`: `ask` (`a`)
 messages `asked` and starts `double` with 21; `missing` (`m`) starts a job
 no one registered and messages the refusal; `fail` (`f`) starts `double`
 and is then refused; `none` (`n`) starts `double` with no argument; `bad`
-(`b`) and `chain` (`c`) start the jobs of those names. -/
+(`b`) and `chain` (`c`) start the jobs of those names; `load` (`l`) starts
+`load` with `note.txt`, `adopt` (`s`) starts `adopt` with 0, `save` (`w`)
+takes a snapshot of its buffer's text and starts `save` with its index, and
+`lose` (`t`) starts `lose`. -/
 def driverKeys : Loop.Keys TestScheme.scheme :=
   let starts (name : String) (arguments : List Argument := []) : Dispatched := fun _ => do
     discard <| startJob name arguments
     return none
   dispatchKeys
     [("C-c a", invoke "ask"), ("C-c m", invoke "missing"), ("C-c f", invoke "fail"),
-      ("C-c n", invoke "none"), ("C-c b", invoke "bad"), ("C-c c", invoke "chain")]
+      ("C-c n", invoke "none"), ("C-c b", invoke "bad"), ("C-c c", invoke "chain"),
+      ("C-c l", invoke "load"), ("C-c s", invoke "adopt"), ("C-c w", invoke "save"),
+      ("C-c t", invoke "lose")]
     [("ask", fun _ => do
         message "asked"
         discard <| startJob "double" [.nat 21]
@@ -8251,12 +8291,24 @@ def driverKeys : Loop.Keys TestScheme.scheme :=
           message s!"no job {name}"
         return none),
       ("fail", failingAfter fun _ => discard <| startJob "double" [.nat 1]),
-      ("none", starts "double"), ("bad", starts "bad"), ("chain", starts "chain")]
+      ("none", starts "double"), ("bad", starts "bad"), ("chain", starts "chain"),
+      ("load", starts "load" [.str "note.txt"]), ("adopt", starts "adopt" [.nat 0]),
+      ("save", fun call => do
+        let taken ← call.target.buffer.text.snapshot
+        discard <| startJob "save" [.nat taken.index]
+        return none),
+      ("lose", starts "lose")]
 
 /-- A driver over the initial state, with the commands and the jobs of the
 driver checks; `none` if making the state was refused. -/
 def newDriver : Option TestDriver :=
   (Loop.Driver.over driverKeys driverJobs (EditorState.initial ⟨640, 480⟩) editorModel).toOption
+
+/-- `newDriver` whose jobs reach the directory `fileRoot`, holding the file
+`note.txt` with `FileCases.noteBytes`. -/
+def fileDriver : Option TestDriver :=
+  newDriver.map fun driver =>
+    { driver with jobs := { files := fileModelOf #[("note.txt", FileCases.noteBytes)] } }
 
 /-- Feeds `driver` the `events` in order: the driver after them, and what
 each step handed back, `none` for a step that was refused. -/
@@ -8396,7 +8448,63 @@ def driverChecks : List Check :=
               echoes == #["", "boom: refused: bad range", "nope: no such command"] &&
               text == "ad" &&
               model.display.scenes.map (·.echo) == echoes
-          | (.error _, _) => false }]
+          | (.error _, _) => false },
+    { name :=
+        "a finished job's command is handed what the job loaded: a job that loads a file finishes with a command that makes a text of it, and once the job is finished the store holds the file's text in a new text, no snapshot more than before, and nothing is left as handed or held"
+      run :=
+        pure <|
+          match fileDriver with
+          | none => false
+          | some driver =>
+            let (asked, _) := fedTo driver (presses "C-c l")
+            let (finished, delivered) := asked.finish 1
+            asked.model.texts.contents == #[""] &&
+              (delivered.map (·.ended)) == some (some .finished) &&
+              finished.model.texts.contents == #["", FileCases.noteText] &&
+              finished.model.texts.snapshots.filterMap id ==
+                asked.model.texts.snapshots.filterMap id &&
+              finished.model.texts.arrived.isEmpty &&
+              finished.jobs.files.held == #[none] },
+    { name :=
+        "what a job loaded is handed to its own command and to no other: a second job's command that adopts the first job's snapshot is refused with noSuchSnapshot when it is delivered before the first job's command and when it is delivered after it, and the first job's command still makes its text"
+      run :=
+        pure <|
+          match fileDriver with
+          | none => false
+          | some driver =>
+            let (asked, _) := fedTo driver (presses "C-c l C-c s")
+            let (early, stolen) := asked.finish 2
+            let (made, delivered) := early.finish 1
+            let (again, _) := fedTo made (presses "C-c s")
+            let (late, gone) := again.finish 3
+            (stolen.map (·.ended)) == some (some (.refused .noSuchSnapshot)) &&
+              (delivered.map (·.ended)) == some (some .finished) &&
+              (gone.map (·.ended)) == some (some (.refused .noSuchSnapshot)) &&
+              late.model.texts.contents == #["", FileCases.noteText] },
+    { name :=
+        "a job reads a snapshot its command took: a command takes a snapshot of its buffer's text and starts a job with its index, the job saves that snapshot, and the files then hold its bytes"
+      run :=
+        pure <|
+          match fileDriver with
+          | none => false
+          | some driver =>
+            let (saved, _) := fedTo driver ([.commit "héllo"] ++ presses "C-c w")
+            (saved.pending.map fun job => job.outcome matches .finished _) == #[true] &&
+              (saved.jobs.files.file? (fileRoot / "out.txt")).map (·.bytes) ==
+                some "héllo".toUTF8 },
+    { name :=
+        "a job that loads and then throws holds nothing afterwards: its snapshot is released when it ends, and no command is delivered for it"
+      run :=
+        pure <|
+          match fileDriver with
+          | none => false
+          | some driver =>
+            let (lost, _) := fedTo driver (presses "C-c t")
+            let (finished, delivered) := lost.finish 1
+            (lost.pending.map fun job => job.outcome matches .failed "lost") == #[true] &&
+              lost.jobs.files.held == #[none] &&
+              delivered.isNone &&
+              finished.model.texts.contents == #[""] }]
 
 /-- Every check, in the order they run.
 

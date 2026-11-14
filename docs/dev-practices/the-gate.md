@@ -94,7 +94,8 @@ and at selections, undo and redo, and windows. A command that starts a job
 is checked there too, on the loop's driver over the models and the job
 model (`lean/Editor/Loop/Driver.lean`): the job is handed its argument,
 its result comes back as a command, and events fed meanwhile are handled
-first. The build checks the theorem that inserting at a position and
+first; a job saves a snapshot its command took, and a job's command is
+handed what its job loaded and no other job's. The build checks the theorem that inserting at a position and
 deleting what was inserted leaves the text
 (`lean/Editor/Api/Theorems.lean`). The task
 shows by behaviour
