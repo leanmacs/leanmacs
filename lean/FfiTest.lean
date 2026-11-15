@@ -2436,16 +2436,17 @@ def usage : IO UInt32 := do
 
 /-- The window mode's wiring (`Editor.Window.host`) on the library's
 scripted platform, on the absolute path `file`: a cells display bound to the
-presenter, a clipboard of its own, no config. The sample window opens,
-reports its fixed input and asks to close, which ends the host's loop and
-closes the window. 0 when the window ran and the latest render session's
-counters, read once `windowRun` has returned (the presenter's last handle),
-show a frame drawn; 1 otherwise, saying why on stderr. The process starts no
-other render session, so the counters are this run's. -/
+presenter, a clipboard of its own, no config, and the report asked for. The
+sample window opens, reports its fixed input and asks to close, which ends
+the host's loop and closes the window, and the report is printed to stderr.
+0 when the window ran, the latest render session's counters, read once
+`windowRun` has returned (the presenter's last handle), show a frame drawn,
+and no surface said what it offered; 1 otherwise, saying why on stderr. The
+process starts no other render session, so the counters are this run's. -/
 def windowHostScenario (file : String) : IO UInt8 := do
   let options : Editor.Window.Options :=
     { file, config := none, configGiven := false, sysroot := none, oleans := ""
-      composition := true }
+      composition := true, report := true }
   let status ←
     Editor.Window.host .scripted options (.skip none) (← Editor.Ffi.Display.newCells 8 16)
         (← Editor.Clipboard.InProcess.new).handle #[]
@@ -2457,6 +2458,11 @@ def windowHostScenario (file : String) : IO UInt8 := do
     return 1
   unless counters.draws > 0 do
     IO.eprintln "ffi-test window-host: no frame was drawn in the window"
+    return 1
+  -- The scripted platform draws with the recording renderer, which has no
+  -- surface to say anything of.
+  unless (← Editor.Ffi.windowPresentation) == none do
+    IO.eprintln "ffi-test window-host: a scripted window said what a surface offered"
     return 1
   IO.println "ffi-test window-host: the window ran and closed, and frames were drawn in it"
   return 0

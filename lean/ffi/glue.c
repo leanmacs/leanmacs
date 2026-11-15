@@ -1190,6 +1190,15 @@ lean_obj_res editor_glue_render_resting(void) {
   return lean_io_result_mk_ok(lean_box(editor_ffi_render_resting()));
 }
 
+void editor_ffi_window_presentation(editor_ffi_raw_words *out);
+
+// `Editor.Ffi.windowPresentationRaw : IO RawWords`
+lean_obj_res editor_glue_window_presentation(void) {
+  editor_ffi_raw_words raw;
+  editor_ffi_window_presentation(&raw);
+  return lean_io_result_mk_ok(raw_words_take(raw));
+}
+
 // ---- The clipboard ----
 //
 // A clipboard handle is the library's, held by Lean as an external object

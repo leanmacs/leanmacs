@@ -28,6 +28,18 @@ There is one editor loop; this module only wires it to a window:
   whether the default config directory exists.
 - **What is printed.** The host's output and its log go to stderr: the
   reload's report among them, whose first error the echo area says too.
+- **`--report`** prints, to stderr once the window has closed
+  (`reportLines`): what the surface offered, what the run asked for and
+  what it was configured with (`Ffi.windowPresentation`), the counters,
+  each journal entry's present time since the window was asked to open
+  with its `present − input`, their median, 99th percentile (nearest rank)
+  and largest, and the longest stretch with no frame (`Report.lines`,
+  pinned in `model-test`). It reads them through the latest render
+  session's handle, which outlives the window.
+- **`--present-mode` and `--frame-latency`** ask for another presentation
+  for this run, to measure it (`docs/dev-practices/on-demand-checks.md`):
+  the renderer gives the mode asked when the surface offers it, and the
+  latency held to the range offered.
 
 `host` is the wiring with the platform, the display and the clipboard
 handed in, so that `ffi-test` runs it on the library's scripted platform
@@ -45,6 +57,47 @@ loop to draw what was published last before it closes the window, in
 milliseconds. -/
 def drawPatience : Nat :=
   1000
+
+/-- The library's name of a present mode the command line asked for. -/
+def PresentMode.library : PresentMode → Ffi.PresentMode
+  | .fifo => .fifo
+  | .fifoRelaxed => .fifoRelaxed
+  | .immediate => .immediate
+  | .mailbox => .mailbox
+
+/-- A present mode of the library's, by wgpu's name. -/
+def modeName : Ffi.PresentMode → String
+  | .fifo => "fifo"
+  | .fifoRelaxed => "fifo-relaxed"
+  | .immediate => "immediate"
+  | .mailbox => "mailbox"
+
+/-- A present mode and a frame latency, as the report says them. -/
+def presentationText (presentation : Ffi.PresentMode × Nat) : String :=
+  s!"{modeName presentation.1} at a frame latency of {presentation.2}"
+
+/-- The report `--report` prints to stderr once the window has closed, read
+through the latest render session's handle, which outlives the window: the
+presentation the surface offered and was configured with, the counters,
+then each journal entry and the figures (`Report.lines`), for a window
+asked to open at `opened` and closed at `closed`, on the input clock. -/
+def reportLines (opened closed : Nat) : IO (Array String) := do
+  let presentation :=
+    match ← Ffi.windowPresentation with
+    | some offered =>
+      let modes := ", ".intercalate (offered.modes.map modeName).toList
+      let asked := (offered.asked.map presentationText).getD "nothing"
+      s!"presentation: offered {modes}; asked {asked}; configured {presentationText offered.configured}"
+    | none => "presentation: none (no window drew with the wgpu renderer)"
+  let counters :=
+    match ← Ffi.renderCounters with
+    | some c =>
+      s!"counters: {c.draws} draws ({c.drawsFailed} failed), {c.framesSubmitted} frames submitted ({c.framesReplaced} replaced), rows {c.rowsRebuilt} rebuilt and {c.rowsReused} reused, glyphs {c.glyphsRasterised} rasterised, {c.glyphsReused} reused, {c.glyphsEvicted} evicted and {c.glyphsSkipped} skipped, atlas {c.atlasBytes} bytes, {c.journalDropped} journal entries dropped"
+    | none => "counters: no render session"
+  let entries :=
+    ((← Ffi.renderJournal 0).getD #[]).map fun entry =>
+      ({ inputNs := entry.inputNs.toNat, presentNs := entry.presentNs.toNat } : Report.Entry)
+  return #[presentation, counters] ++ Report.lines opened closed entries
 
 /-- Runs the editor on `options.file` in a window of `platform`, drawn from
 `display` and with `clipboard` as its clipboard, and returns once the window
@@ -78,7 +131,11 @@ def host (platform : Ffi.Platform) (options : Options) (plan : ConfigPlan) (disp
             Headless.within drawPatience do
               return (← Ffi.renderResting) != some false
         Ffi.windowClose platform
-  let ran ← Ffi.windowRun platform options.composition
+  let opened ← Ffi.inputClock
+  let ran ←
+    Ffi.windowRun platform options.composition (options.presentMode.map PresentMode.library)
+        options.frameLatency
+  let closed ← Ffi.inputClock
   -- The window has closed, or never opened: a loop still running is ended.
   let ended ←
     try
@@ -89,6 +146,9 @@ def host (platform : Ffi.Platform) (options : Options) (plan : ConfigPlan) (disp
   discard <| IO.wait closer
   match ran with
   | .ok () =>
+    if options.report then
+      for line in ← reportLines opened.toNat closed.toNat do
+        IO.eprintln line
     return if ended then 0 else 1
   | .error reason =>
     IO.eprintln s!"editor: the window could not be opened: {reason}"

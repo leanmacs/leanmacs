@@ -3681,7 +3681,67 @@ def windowOptionChecks : List Check :=
             refused ["f", "--bogus"] &&
             refused ["f", "--config"] &&
             refused ["--sysroot"] &&
-            refused ["--no-ime"]) }]
+            refused ["--no-ime"]) },
+    { name :=
+        "--present-mode with each of wgpu's names, --frame-latency with a number and --report are read; with none of them the renderer decides and nothing is reported"
+      run :=
+        let read (arguments : List String) :
+          Option (Option Window.PresentMode × Option Nat × Bool) :=
+          (parsed arguments).map fun options =>
+            (options.presentMode, options.frameLatency, options.report)
+        pure
+          (read ["f"] == some (none, none, false) &&
+            read ["--present-mode", "immediate", "f"] == some (some .immediate, none, false) &&
+            read ["--present-mode", "fifo", "f"] == some (some .fifo, none, false) &&
+            read ["--present-mode", "fifo-relaxed", "f"] == some (some .fifoRelaxed, none, false) &&
+            read ["--present-mode", "mailbox", "f"] == some (some .mailbox, none, false) &&
+            read ["f", "--frame-latency", "2"] == some (none, some 2, false) &&
+            read ["--report", "f"] == some (none, none, true) &&
+            read ["--report", "--present-mode", "immediate", "--frame-latency", "2", "f"] ==
+              some (some .immediate, some 2, true)) },
+    { name :=
+        "a present mode wgpu has no name for, and a frame latency that is no number or is 0, are refused with the usage"
+      run :=
+        pure
+          (refused ["--present-mode", "vsync", "f"] && refused ["--frame-latency", "x", "f"] &&
+            refused ["--frame-latency", "0", "f"] &&
+            refused ["f", "--present-mode"]) }]
+
+/-- A journal entry of the window report's checks: its `present − input`
+is `latency` microseconds, and it was presented `at` microseconds after the
+window was asked to open. -/
+def reportEntry (at_ latency : Nat) : Window.Report.Entry :=
+  { inputNs := (at_ - latency) * 1000, presentNs := at_ * 1000 }
+
+/-- The checks of the window mode's report (`Window.Report`): its figures
+over journal entries built by hand. -/
+def windowReportChecks : List Check :=
+  let entries :=
+    #[reportEntry 10000 5000, reportEntry 20000 1000, reportEntry 90000 3000,
+      reportEntry 100000 2000, reportEntry 110000 4000]
+  [{  name :=
+        "the report's latencies are each entry's present - input, in microseconds: the median and the 99th percentile by nearest rank, and the largest"
+      run :=
+        let summary := Window.Report.summary 0 120000000 entries
+        pure
+          (summary.frames == 5 && summary.median == 3000 && summary.p99 == 5000 &&
+            summary.max == 5000 &&
+            (Window.Report.summary 0 1 (entries.extract 0 4)).median == 2000 &&
+            (Window.Report.summary 0 1 (entries.extract 0 4)).p99 == 5000) },
+    { name :=
+        "the longest stretch with no entry is the longest of: from the open to the first entry, between two entries, and from the last entry to the close"
+      run :=
+        pure
+          ((Window.Report.summary 0 120000000 entries).longestGap == 70000 &&
+            (Window.Report.summary 0 300000000 entries).longestGap == 190000 &&
+            (Window.Report.summary 0 120000000 #[reportEntry 100000 1000]).longestGap == 100000) },
+    { name :=
+        "an empty journal has no frame, latencies of 0, and one stretch from the open to the close"
+      run :=
+        let summary := Window.Report.summary 5000000 65000000 #[]
+        pure
+          (summary.frames == 0 && summary.median == 0 && summary.p99 == 0 && summary.max == 0 &&
+            summary.longestGap == 60000) }]
 
 /-- A scene of two views, with every field of a scene and of a view set: the
 first view focused, with two selections, a decoration and two status fields;
@@ -19008,6 +19068,7 @@ def checks : List Check :=
     windowLoopChecks ++
     windowArgumentChecks ++
     windowOptionChecks ++
+    windowReportChecks ++
     undoTreeChecks ++
     textModelStepChecks ++
     fileModelChecks ++

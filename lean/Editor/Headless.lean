@@ -17,6 +17,7 @@ import Editor.Loop
 import Editor.Minibuffer.Compiled
 import Editor.Text.Real
 import Editor.Watch.Real
+import Editor.Window
 
 /-!
 # The headless host
@@ -1772,18 +1773,17 @@ def idled (render : Option Render) (patience milliseconds : Nat) : IO String := 
     | none => 0
   return s!"idle {milliseconds}: {drawn} frames drawn, {submitted} frames submitted"
 
-/-- The nearest-rank `rank`th percentile of `sorted`, which is in ascending
-order: the value at rank ⌈rank × n / 100⌉ of the n values; 0 for none. -/
-def nearestRank (sorted : Array Nat) (rank : Nat) : Nat :=
-  sorted.getD (((rank * sorted.size + 99) / 100) - 1) 0
-
 /-- What `journal` prints of `entries`, the frames presented since the last
 `journal` line: how many, and the median, the 99th percentile (nearest
-rank) and the largest of their `present − input`, in microseconds. -/
+rank) and the largest of their `present − input`, in microseconds, by the
+window report's rule (`Window.Report.summary`). -/
 def journalLine (entries : Array Ffi.JournalEntry) : String :=
-  let latencies :=
-    (entries.map fun entry => (entry.presentNs - entry.inputNs).toNat / 1000).qsort (· < ·)
-  s!"journal: {entries.size} frames presented, present - input median {nearestRank latencies 50} us, p99 {nearestRank latencies 99} us, max {latencies.back?.getD 0} us"
+  let entries :=
+    entries.map fun entry =>
+      ({ inputNs := entry.inputNs.toNat, presentNs := entry.presentNs.toNat } : Window.Report.Entry)
+  let first := (entries[0]?.map (·.presentNs)).getD 0
+  let summary := Window.Report.summary first ((entries.back?.map (·.presentNs)).getD first) entries
+  s!"journal: {summary.frames} frames presented, present - input median {summary.median} us, p99 {summary.p99} us, max {summary.max} us"
 
 /-- What `journal` prints, once the editor thread has settled: it waits
 until the render loop is at rest, then reads the journal's entries after

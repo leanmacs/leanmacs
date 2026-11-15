@@ -43,6 +43,34 @@ structure Environment where
   appPath : String
   deriving DecidableEq, Repr
 
+/-- A way a frame reaches the display, by wgpu's names, that one run may ask
+for in place of the renderer's decision, to measure it. -/
+inductive PresentMode where
+  /-- `fifo`. -/
+  | fifo
+  /-- `fifo-relaxed`. -/
+  | fifoRelaxed
+  /-- `immediate`. -/
+  | immediate
+  /-- `mailbox`. -/
+  | mailbox
+  deriving DecidableEq, Repr
+
+/-- The present mode a command line names, by wgpu's names. -/
+def PresentMode.named? : String → Option PresentMode
+  | "fifo" => some .fifo
+  | "fifo-relaxed" => some .fifoRelaxed
+  | "immediate" => some .immediate
+  | "mailbox" => some .mailbox
+  | _ => none
+
+/-- A present mode's name, as the command line and the report say it. -/
+def PresentMode.name : PresentMode → String
+  | .fifo => "fifo"
+  | .fifoRelaxed => "fifo-relaxed"
+  | .immediate => "immediate"
+  | .mailbox => "mailbox"
+
 /-- What the window mode's command line asks for. -/
 structure Options where
   /-- The file to open, absolute. -/
@@ -58,11 +86,20 @@ structure Options where
   oleans : String
   /-- Whether an input method may compose: `false` with `--no-ime`. -/
   composition : Bool
+  /-- Whether the window mode prints its report to stderr once the window
+  has closed (`--report`). -/
+  report : Bool := false
+  /-- The present mode this run asks for (`--present-mode`); none for the
+  renderer's decision. -/
+  presentMode : Option PresentMode := none
+  /-- The frame latency this run asks for (`--frame-latency`); none for the
+  renderer's decision. -/
+  frameLatency : Option Nat := none
   deriving DecidableEq, Repr
 
 /-- The window mode's command line, as the usage says it. -/
 def usage : String :=
-  "[--config <dir>] [--sysroot <dir>] [--oleans <dir>] [--no-ime] <file>"
+  "[--config <dir>] [--sysroot <dir>] [--oleans <dir>] [--no-ime] [--report] [--present-mode fifo|fifo-relaxed|immediate|mailbox] [--frame-latency <n>] <file>"
 
 /-- What the echo area says when no config is loaded because no toolchain
 was given. -/
@@ -97,6 +134,12 @@ structure Read where
   oleans : Option String := none
   /-- `false` once `--no-ime` is read. -/
   composition : Bool := true
+  /-- `true` once `--report` is read. -/
+  report : Bool := false
+  /-- `--present-mode`'s mode. -/
+  presentMode : Option PresentMode := none
+  /-- `--frame-latency`'s number. -/
+  frameLatency : Option Nat := none
 
 /-- Reads `arguments` into `read`, or says what is wrong. -/
 def readAll (read : Read) : List String → Except String Read
@@ -105,11 +148,23 @@ def readAll (read : Read) : List String → Except String Read
   | "--sysroot" :: directory :: rest => readAll { read with sysroot := some directory } rest
   | "--oleans" :: directory :: rest => readAll { read with oleans := some directory } rest
   | "--no-ime" :: rest => readAll { read with composition := false } rest
+  | "--report" :: rest => readAll { read with report := true } rest
+  | "--present-mode" :: mode :: rest =>
+    match PresentMode.named? mode with
+    | some mode => readAll { read with presentMode := some mode } rest
+    | none => .error s!"{mode} is not a present mode: fifo, fifo-relaxed, immediate or mailbox"
+  | "--frame-latency" :: count :: rest =>
+    match count.toNat? with
+    | some (latency + 1) => readAll { read with frameLatency := some (latency + 1) } rest
+    | _ => .error s!"{count} is not a frame latency: a number from 1"
   | argument :: rest =>
     if argument.startsWith "-" then
       if ["--config", "--sysroot", "--oleans"].contains argument then
         .error s!"{argument} needs a directory after it"
-      else .error s!"{argument} is not an option"
+      else
+        if ["--present-mode", "--frame-latency"].contains argument then
+          .error s!"{argument} needs a value after it"
+        else .error s!"{argument} is not an option"
     else
       match read.file with
       | some _ => .error "only one file is opened"
@@ -133,7 +188,10 @@ def parse (environment : Environment) (arguments : List String) : Except String 
           configGiven := read.config.isSome
           sysroot := read.sysroot
           oleans := read.oleans.getD (executable / ".." / "lib" / "lean").toString
-          composition := read.composition }
+          composition := read.composition
+          report := read.report
+          presentMode := read.presentMode
+          frameLatency := read.frameLatency }
 
 /-- Whether config is loaded at start, and what the echo area says if it
 is not. -/
@@ -154,5 +212,65 @@ def Options.configPlan (options : Options) (defaultExists : Bool) : ConfigPlan :
   | some _, none => .skip none
   | some _, some directory =>
     if options.configGiven || defaultExists then .load directory else .skip none
+
+namespace Report
+
+/-- A frame the render loop presented, as the report reads it from the
+journal: when the input it answers was stamped, and when it was presented,
+in nanoseconds of the input clock. -/
+structure Entry where
+  /-- When the input it answers was stamped. -/
+  inputNs : Nat
+  /-- When the renderer returned, having presented it. -/
+  presentNs : Nat
+  deriving DecidableEq, Repr
+
+/-- What the report says of a journal, in microseconds. -/
+structure Summary where
+  /-- How many frames were presented. -/
+  frames : Nat
+  /-- The median of their `present − input`, by nearest rank. -/
+  median : Nat
+  /-- The 99th percentile of their `present − input`, by nearest rank. -/
+  p99 : Nat
+  /-- The largest of their `present − input`. -/
+  max : Nat
+  /-- The longest stretch with no frame presented: from the open to the
+  first, between two, or from the last to the close. -/
+  longestGap : Nat
+  deriving DecidableEq, Repr
+
+/-- The nearest-rank `rank`th percentile of `sorted`, which is in ascending
+order: the value at rank ⌈rank × n / 100⌉, from 1, of its n values; 0 for
+none. -/
+def nearestRank (sorted : Array Nat) (rank : Nat) : Nat :=
+  sorted.getD (((rank * sorted.size + 99) / 100) - 1) 0
+
+/-- The report's figures over `entries`, oldest first, for a window asked to
+open at `opened` and closed at `closed`, both in nanoseconds of the input
+clock: `present − input` of each entry, and the stretches between the open,
+each entry's present and the close. -/
+def summary (opened closed : Nat) (entries : Array Entry) : Summary :=
+  let latencies := (entries.map fun entry => (entry.presentNs - entry.inputNs) / 1000).qsort (· < ·)
+  let marks := #[opened] ++ entries.map (·.presentNs) ++ #[closed]
+  let gaps :=
+    (List.range (marks.size - 1)).map fun index => (marks[index + 1]! - marks[index]!) / 1000
+  { frames := entries.size, median := nearestRank latencies 50, p99 := nearestRank latencies 99
+    max := latencies.back?.getD 0, longestGap := gaps.foldl Nat.max 0 }
+
+/-- The report's lines for `entries`, for a window asked to open at `opened`
+and closed at `closed`: each entry's present time since the open, in
+milliseconds, with its `present − input` in microseconds; then the figures
+(`summary`). -/
+def lines (opened closed : Nat) (entries : Array Entry) : Array String :=
+  let summary := summary opened closed entries
+  let each :=
+    entries.map fun entry =>
+      s!"frame at {(entry.presentNs - opened) / 1000000} ms: present - input {(entry.presentNs - entry.inputNs) / 1000} us"
+  each ++
+    #[s!"frames: {summary.frames}; present - input median {summary.median} us, p99 {summary.p99} us, max {summary.max} us",
+      s!"longest stretch with no frame: {summary.longestGap / 1000} ms"]
+
+end Report
 
 end Editor.Window

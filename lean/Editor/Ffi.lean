@@ -2103,6 +2103,55 @@ def renderResting : IO (Option Bool) := do
     | 2 => some true
     | _ => some false
 
+/-- What a window's surface offered, what its run asked for and what it was
+configured with, as the wgpu renderer says it. -/
+structure WindowPresentation where
+  /-- The present modes the surface offered, in its order. -/
+  modes : Array PresentMode
+  /-- The present mode and frame latency the run asked for, if it asked. -/
+  asked : Option (PresentMode × Nat)
+  /-- The present mode and frame latency the surface was configured with. -/
+  configured : PresentMode × Nat
+  deriving DecidableEq, Repr
+
+/-- `windowPresentation` as it crosses. -/
+@[extern "editor_glue_window_presentation"]
+private opaque windowPresentationRaw : IO RawWords
+
+/-- The present mode a tag of the library's names: the inverse of
+`PresentMode.tag`. -/
+private def PresentMode.ofTag? : UInt64 → Option PresentMode
+  | 1 => some .fifo
+  | 2 => some .fifoRelaxed
+  | 3 => some .immediate
+  | 4 => some .mailbox
+  | _ => none
+
+/-- What the surface of the latest window drawn with the wgpu renderer
+offered, what its run asked for and what it was configured with, read after
+it has closed too; `none` when no window has drawn with it, as on the
+scripted platforms. -/
+def windowPresentation : IO (Option WindowPresentation) := do
+  let raw ← windowPresentationRaw
+  if raw.status != 0 then
+    return none
+  let problem := IO.userError "the library's presentation is not its words"
+  let some words := wordsOf? raw.words | throw problem
+  let count := (words[0]?.getD 0).toNat
+  let mode (index : Nat) : IO PresentMode := do
+    let some mode := PresentMode.ofTag? (words[index]?.getD 0) | throw problem
+    return mode
+  unless words.size == 1 + count + 5 do
+    throw problem
+  let modes ← (Array.range count).mapM fun index => mode (1 + index)
+  let at_ := 1 + count
+  let asked ←
+    if words[at_]!.toNat == 1 then
+      pure (some (← mode (at_ + 1), words[at_ + 2]!.toNat))
+    else
+      pure none
+  return some { modes, asked, configured := (← mode (at_ + 3), words[at_ + 4]!.toNat) }
+
 /-! ## The clipboard -/
 
 /-- The type behind `Clipboard`. It is opaque, so the only ways to get a

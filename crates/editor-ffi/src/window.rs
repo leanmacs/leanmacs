@@ -84,7 +84,7 @@ use editor_platform::{
 use editor_platform_winit::WinitPlatform;
 use editor_render::fake::RecordingRenderer;
 use editor_render::port::{DrawRequest, Drawn, Renderer};
-use editor_render_wgpu::present::{self, Mode, Presentation};
+use editor_render_wgpu::present::{self, Mode, Offered, Presentation};
 use editor_render_wgpu::{Settings, WgpuRenderer};
 
 use crate::events::{Event, EventKind, Queue, QueueId, Source, SourceKind};
@@ -706,20 +706,114 @@ where
     run(platform, options, clock, queue, interrupt, session.drawer())
 }
 
-/// What draws in the process's window: the recording fake on the scripted
-/// platforms, which open no window, and the wgpu renderer in a real one.
-enum WindowRenderer {
-    /// The fake.
-    Recording(RecordingRenderer),
-    /// The real renderer, on the window.
-    Wgpu(Box<WgpuRenderer>),
+/// Where a window's renderer leaves what its surface offered, what the run
+/// asked for and what the surface was configured with
+/// ([`WgpuRenderer::presentation`]), after each draw: so that it can be
+/// read once the window has closed and the renderer is gone. The
+/// process's is [`PRESENTATION`]; a test makes its own.
+#[derive(Debug, Default)]
+pub(crate) struct PresentationSlot(std::sync::Mutex<Option<Offered>>);
+
+impl PresentationSlot {
+    /// Keeps `offered`, when there is one; a renderer that says nothing
+    /// leaves what was kept.
+    fn write(&self, offered: Option<Offered>) {
+        if offered.is_some() {
+            *self
+                .0
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner) = offered;
+        }
+    }
+
+    /// What was kept last, if a renderer has said anything.
+    pub(crate) fn read(&self) -> Option<Offered> {
+        self.0
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()
+    }
 }
 
-impl Renderer for WindowRenderer {
+/// What the process's window's renderer left of its surface's
+/// presentation, which [`editor_ffi_window_presentation`] reads. Only
+/// [`run_on_this_thread`] hands it to a renderer.
+static PRESENTATION: LazyLock<PresentationSlot> = LazyLock::new(PresentationSlot::default);
+
+/// The tag a present mode crosses the boundary as: the one a run asks for
+/// it by ([`asked_presentation`]).
+fn mode_tag(mode: Mode) -> u64 {
+    match mode {
+        Mode::Fifo => 1,
+        Mode::FifoRelaxed => 2,
+        Mode::Immediate => 3,
+        Mode::Mailbox => 4,
+    }
+}
+
+/// `offered` as words: how many modes the surface offered and each one's
+/// tag ([`mode_tag`]), in its order; then whether the run asked, with the
+/// mode's tag and the latency asked (0 and 0 when it did not); then the
+/// mode's tag and the latency the surface was configured with.
+fn offered_words(offered: &Offered) -> Vec<u64> {
+    let mut words = vec![offered.modes.len() as u64];
+    words.extend(offered.modes.iter().map(|mode| mode_tag(*mode)));
+    match offered.asked {
+        Some(asked) => words.extend([1, mode_tag(asked.mode), u64::from(asked.frame_latency)]),
+        None => words.extend([0, 0, 0]),
+    }
+    words.extend([
+        mode_tag(offered.configured.mode),
+        u64::from(offered.configured.frame_latency),
+    ]);
+    words
+}
+
+/// What the process's window's surface offered, what its run asked for and
+/// what it was configured with, as words ([`offered_words`]), from the
+/// latest window that drew with the wgpu renderer, read after it has
+/// closed too. The status is 1, with no words, when none has.
+///
+/// # Safety
+///
+/// `out` points to a writable [`RawWords`](crate::log::RawWords).
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn editor_ffi_window_presentation(out: *mut crate::log::RawWords) {
+    let raw = match PRESENTATION.read() {
+        None => crate::log::RawWords::with_status(1, Vec::new()),
+        Some(offered) => {
+            let offered = offered_words(&offered);
+            let mut writer = words::Writer::with_capacity(offered.len());
+            for word in offered {
+                writer.word(word);
+            }
+            crate::log::RawWords::with_status(0, writer.finish())
+        }
+    };
+    // SAFETY: the caller guarantees `out` is writable.
+    unsafe { out.write(raw) };
+}
+
+/// What draws in the process's window: the recording fake on the scripted
+/// platforms, which open no window, and the wgpu renderer in a real one,
+/// which leaves what its surface offered in a slot after each draw.
+enum WindowRenderer<'a> {
+    /// The fake.
+    Recording(RecordingRenderer),
+    /// The real renderer, on the window, and where it leaves what its
+    /// surface offered.
+    Wgpu(Box<WgpuRenderer>, &'a PresentationSlot),
+}
+
+impl Renderer for WindowRenderer<'_> {
     fn draw(&mut self, request: &DrawRequest<'_>) -> Drawn {
         match self {
             Self::Recording(renderer) => renderer.draw(request),
-            Self::Wgpu(renderer) => renderer.draw(request),
+            Self::Wgpu(renderer, slot) => {
+                let drawn = renderer.draw(request);
+                slot.write(renderer.presentation());
+                drawn
+            }
         }
     }
 }
@@ -728,11 +822,12 @@ impl Renderer for WindowRenderer {
 /// `presentation` asks: the recording fake for a scripted platform, and
 /// the wgpu renderer on the native window for the real one, in the
 /// platform's weight of text (Core Text's on macOS).
-fn window_renderer(
+fn window_renderer<'a>(
     platform: PlatformId,
     window: Option<&NativeWindow>,
     presentation: Option<Presentation>,
-) -> Result<WindowRenderer, String> {
+    slot: &'a PresentationSlot,
+) -> Result<WindowRenderer<'a>, String> {
     match platform {
         PlatformId::Scripted | PlatformId::ScriptedFailing => {
             Ok(WindowRenderer::Recording(RecordingRenderer::new()))
@@ -757,7 +852,7 @@ fn window_renderer(
                 reason = "the process's window draws with the wgpu renderer; no test runs the winit platform"
             )]
             let made = unsafe { WgpuRenderer::on_window(window, settings) };
-            made.map(|renderer| WindowRenderer::Wgpu(Box::new(renderer)))
+            made.map(|renderer| WindowRenderer::Wgpu(Box::new(renderer), slot))
                 .map_err(|error| error.to_string())
         }
     }
@@ -774,7 +869,7 @@ pub(crate) fn run_on_this_thread(
 ) -> Result<(), CannotOpen> {
     let session = Session::new(
         Arc::new(ProcessClock),
-        move |window, _| window_renderer(platform, window, presentation),
+        move |window, _| window_renderer(platform, window, presentation, &PRESENTATION),
         Arc::clone(&PRESENTER),
     );
     run_with(
@@ -2013,6 +2108,62 @@ mod tests {
         assert_eq!(asked_presentation(0, 3), asked(Mode::Fifo, 3));
         // A tag that names no mode asks for nothing.
         assert_eq!(asked_presentation(5, 2), None);
+    }
+
+    #[test]
+    fn what_a_surface_offered_crosses_as_its_modes_then_what_was_asked_then_what_was_configured() {
+        let offered = Offered {
+            modes: vec![Mode::Fifo, Mode::Immediate, Mode::Mailbox],
+            asked: Some(Presentation {
+                mode: Mode::Immediate,
+                frame_latency: 2,
+            }),
+            configured: Presentation {
+                mode: Mode::Immediate,
+                frame_latency: 2,
+            },
+        };
+        assert_eq!(offered_words(&offered), vec![3, 1, 3, 4, 1, 3, 2, 3, 2]);
+        let decided = Offered {
+            modes: vec![Mode::FifoRelaxed],
+            asked: None,
+            configured: Presentation {
+                mode: Mode::Fifo,
+                frame_latency: 1,
+            },
+        };
+        assert_eq!(offered_words(&decided), vec![1, 2, 0, 0, 0, 1, 1]);
+        // Each mode's tag is the one a run asks for it by.
+        for mode in [
+            Mode::Fifo,
+            Mode::FifoRelaxed,
+            Mode::Immediate,
+            Mode::Mailbox,
+        ] {
+            let tag = u8::try_from(mode_tag(mode)).expect("a tag is small");
+            assert_eq!(
+                asked_presentation(tag, 1).map(|asked| asked.mode),
+                Some(mode)
+            );
+        }
+    }
+
+    #[test]
+    fn a_window_renderer_on_a_scripted_platform_leaves_no_presentation() {
+        let slot = PresentationSlot::default();
+        let mut renderer = window_renderer(PlatformId::Scripted, None, None, &slot)
+            .unwrap_or_else(|reason| panic!("the recording renderer is made: {reason}"));
+        let frame = Arc::new(editor_layout::frame::Frame::default());
+        let request = DrawRequest {
+            frame: &frame,
+            target: editor_render::port::Target {
+                width: 8,
+                height: 8,
+                scale: 1.0,
+            },
+        };
+        let _ = renderer.draw(&request);
+        assert_eq!(slot.read(), None);
     }
 
     #[test]
