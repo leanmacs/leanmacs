@@ -86,12 +86,30 @@
 # and with the `expect` taken off, it fails with "use of a disallowed
 # method `editor_platform_arboard::SystemClipboard::open`".
 #
+# A sixth place is marked, for real processes:
+# `editor_process_std::StdProcesses::system` is on the list. Its one caller
+# is the static `PROCESSES` in `src/processes.rs`, the process's process
+# service, under its own `expect`. The unit tests there run on the port's
+# fake, `editor_process::fake::FakeProcesses`. The wiring tests,
+# `tests/processes.rs` and `tests/processes_shutdown.rs`, start real
+# processes only through the C functions, so neither names the adapter and
+# neither has an `expect` for it; `tests/processes_shutdown.rs` has one, on
+# the one function that reads the ids its children wrote with
+# `std::fs::read_to_string`. `std::process::Command::new` stays on the
+# list: this crate itself starts no process. Seen to bite once by hand, on
+# 2026-11-15, twice: with the entry not yet on the list, `mise run lint`
+# failed on the static's `expect` ("this lint expectation is
+# unfulfilled"); and with the `expect` taken off, it fails with "use of a
+# disallowed method `editor_process_std::StdProcesses::system`".
+#
 # What this does not hold is what `crates/editor-text/clippy.toml` says of
 # its own list: it is a list of names.
 
 disallowed-methods = [
   # The file port's real adapter.
   { path = "editor_fs_std::StdFs::system", reason = "the real file system is made in one place, the process's file service; everything else here takes an `Fs`, and a test hands it `FakeFs`" },
+  # The process port's real adapter.
+  { path = "editor_process_std::StdProcesses::system", reason = "real processes are started in one place, the process's process service; its unit tests run on `FakeProcesses`, and the wiring tests reach real processes only through the C functions" },
   # The desktop's clipboard: what it holds is the person's.
   { path = "editor_platform_arboard::SystemClipboard::open", reason = "no test reads or writes the desktop's clipboard: the process's clipboard is opened in one place, for Lean's window mode; every test is on `MemoryClipboard`" },
   # A renderer on a window: it needs a window, and a real adapter.

@@ -460,10 +460,13 @@ dependencies = [
  "editor-platform",
  "editor-platform-arboard",
  "editor-platform-winit",
+ "editor-process",
+ "editor-process-std",
  "editor-render",
  "editor-render-wgpu",
  "editor-shape-parley",
  "editor-text",
+ "rustix 1.1.6",
  "tempfile",
 ]
 
