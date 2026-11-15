@@ -18141,6 +18141,41 @@ def viewChecks : List Check :=
                 own.index.isSome
             | _, _, _ => false },
     { name :=
+        "the minibuffer's view follows its cursor: an answer typed into a prompt until it wraps over more rows than the minibuffer's strip shows moves the minibuffer's anchor, and the rows the display answers from it include the cursor's row; the view that asked keeps its anchor"
+      run :=
+        pure <|
+          let ask : Dispatched := fun _ => do
+            discard <| prompt "Name: " { command := "greet" }
+            return none
+          let cells : Display.Cells := { advance := 8, lineHeight := 16 }
+          let answer := "abcdefghijklm"
+          let typed := " ".intercalate (answer.toList.map (·.toString))
+          let handed := evilHanded Minibuffer.commands [("ask", ask)]
+          let model : EditorModel := { editorModel with display := { cells } }
+          match viewDriver (numbered 20) ⟨32, 64⟩ (handed := handed) (model := model) with
+          | none => false
+          | some driver =>
+            let asking := viewRan driver "ask"
+            let typing := evilFed asking typed
+            let rows := allRows answer 32 cells
+            match asking.loop.state.minibufferView? with
+            | none => false
+            | some view =>
+              match viewSeen asking view, viewSeen typing view, viewSeen typing with
+              | some was, some now, some asker =>
+                was.anchor == 0 && was.index == some 0 && evilShown typing view == answer ++ "|" &&
+                  now.head == answer.utf8ByteSize &&
+                  -- The answer has more rows than the strip shows, and the
+                  -- cursor is on the last of them.
+                  !now.shown.isEmpty &&
+                  now.shown.size < rows.size &&
+                  now.row == rows.back? &&
+                  now.anchor != 0 &&
+                  now.index.isSome &&
+                  asker.anchor == 0 &&
+                  asker.index.isSome
+              | _, _, _ => false },
+    { name :=
         "a command that moves the cursor below the rows its view shows and then fails leaves the view's anchor where it was: the view follows the cursor that was put back"
       run :=
         pure <|
