@@ -1221,7 +1221,9 @@ echo area, the preedit, and the prompt that is open, if one is.
     (`EditorState.scrollMargin`), 0 by default, set by a command
     (`setScrollMargin`). The margin in force is at most half the rows the
     view fits, so a margin of 99 centres the cursor's row, and it gives
-    way at the text's start and end. Config cannot set it when it loads:
+    way at the text's start and end. A view that shows its whole text
+    keeps the margin as set (below, "How many rows a view has room for").
+    Config cannot set it when it loads:
     `setup` registers and runs no command, and there are no settings yet.
   - **Whether the cursor is shown is decided by comparing rows the display
     answered**, never offsets: a position at a wrap is the start of the
@@ -1240,6 +1242,29 @@ echo area, the preedit, and the prompt that is open, if one is.
   - **How many rows a view fits** is asked as the rows it shows from the
     text's start, which are the text's rows when the text is shorter than
     the view. It is right where rows are one height.
+  - **How many rows a view has room for is missing**, where its text has
+    fewer rows or exactly as many. The display answers the rows shown from
+    an anchor and not the view's capacity, so half the rows a view fits is
+    half the text's rows when the text is the shorter, and that is not the
+    view's middle. A view that shows its whole text from its start
+    (`Scroll.Area.whole`: the text has no row after the last row shown
+    from there) is therefore treated on its own: `z z` places the text's
+    first row, so no row that fits is hidden, and the follow keeps the
+    scroll margin as set and not at half the text's rows.
+    - **A departure: a text that fills its view exactly is treated as one
+      shorter than it.** The two cannot be told apart from what the two
+      queries answer: both show the same rows, and there is no row after
+      them to ask about. Asking again with other heights would assume the
+      height of rows that do not exist. Of the two readings the one taken
+      never hides a row that would fit. So in a view its text fills
+      exactly `z z` on a row below the middle keeps the anchor at the
+      first row, where Vim scrolls, and a margin larger than half the view
+      brings such a view back to the text's first row. A text one row
+      longer than its view is not affected.
+    - A query that answers a view's capacity in rows, or the open
+      question's query for a view's text area ("Open questions", "The
+      height of a view's text area") if it answers that too, would settle
+      it; `Scroll.Area.whole` is what goes when it exists.
 - **A view is scrolled by commands** (the command loop's phase 15): by half
   a view, by a view, and so that the cursor's row is at the top, in the
   middle or at the bottom ([keymaps-and-modes.md](keymaps-and-modes.md),

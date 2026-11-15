@@ -53,6 +53,11 @@ the editor state, 0 by default, which this module is handed.
   fits (`Area.fits`), not by the rows shown, which are fewer when the view
   shows past the text's end: capped by those, a second follow would move
   the anchor again.
+- **A view that shows its whole text keeps the margin as set**, not half
+  the rows it fits ("A view that shows its whole text", below). Such a
+  view scrolled away from the text's start, as `z t` leaves it, is brought
+  back until the margin's rows are above the cursor's row, or to the
+  text's first row where it has fewer.
 - **At the text's start and end the margin gives way.** The first row shown
   cannot be above the text's first row, and a cursor fewer than the margin
   from the text's last row keeps as many rows below it as the text has.
@@ -71,10 +76,46 @@ A command that scrolls asks here where its anchor goes, in the same way:
   two when it fits an even number), or last. Near the text's start the
   anchor stops at the first row, so the cursor's row cannot be put in the
   middle or at the bottom there; near its end the view shows past the
-  text's end.
+  text's end. To the middle, in a view that shows its whole text, the
+  anchor is the text's first row ("A view that shows its whole text").
 
 Each answers none in a view that shows no row. None of them reads the
 margin: the follow that comes before the next scene holds it.
+
+## A view that shows its whole text
+
+How many rows a view has room for is not asked of the display: it answers
+the rows shown from an anchor, and `Area.fits`, the rows shown from the
+text's start, is the text's rows where the text has fewer than the view
+has room for. Half of that number is not half the view. In a view of ten
+rows over a text of four, the middle of four would put the anchor on the
+text's third row for a cursor on its fourth, and hide two rows that fit.
+
+So a view that shows its whole text from its start (`Area.whole`: the text
+has no row after the last row shown from there) is treated on its own:
+
+- **A scroll to the middle places the text's first row.** No row of a text
+  that fits its view is scrolled out of sight by `z z`.
+- **The follow keeps the margin as set**, as above.
+- **A scroll by rows and a scroll to the bottom need nothing**: with the
+  text's rows as the rows the view fits, a scroll down places none, and a
+  scroll to the bottom places the text's first row.
+- **A scroll to the top** still places the cursor's row, and shows past
+  the text's end.
+
+**A departure: a text that fills its view exactly is treated as one
+shorter than it.** The two cannot be told apart from what the queries
+answer. Both show the same rows from the text's start, and the text has no
+row after them whose place could say whether the view has room for one
+more. Asking the rows again with other heights would count the pixels of
+the rows there are and assume the same of rows there are not, which the
+contract does not say and real rows do not hold to. So of the two readings
+the one taken is the one that never hides a row that would fit. In a view
+its text fills exactly, the view's middle is known and is not used: `z z`
+on the last of ten rows in a view of ten keeps the anchor at the first
+row, where Vim shows from the sixth, and a margin of 99 brings a view of
+five rows scrolled to the third of five, with the cursor on the fifth, back
+to the first, where half the view would keep it. A text one row longer than its view is not affected.
 
 ## What is asked
 
@@ -111,10 +152,13 @@ anchor, which the caller asked:
 | Cursor above, no margin | 1 |
 | Cursor below, no margin | 2: and one move; 1 in a view of one row |
 | A margin set that does not hold as set | 2: and the rows the view fits; 3 where the anchor moves |
+| The same, in a view scrolled from the text's start that shows fewer rows than it fits | 2 more: whether it shows its whole text |
 
 A scroll by rows is one move going up and two going down, after the rows
 the view fits, which its caller asks. A scroll to the cursor's row is one
-request to the top, and two to the middle and to the bottom.
+request to the top, and two to the middle and to the bottom; to the
+middle it is two more where the anchor would leave the text's first row,
+which ask whether the view shows its whole text.
 
 Not done: answering "is the cursor shown" from the rows shown alone, which
 would write the display's wrap rule here for one request a view; and
@@ -137,6 +181,11 @@ does not see.
   from the text's start: the rows that fit, or all of the text's rows when
   it has fewer. It is right where rows are one height, which is the
   model's.
+- **How many rows a view has room for**, where its text has fewer, or
+  exactly as many. With it the middle of a view taller than its text would
+  be known, and a text that fills its view would be told from a shorter
+  one. Without it a view that shows its whole text is treated as taller
+  than the text ("A view that shows its whole text", the departure).
 
 Pinned by `ModelTest.scrollChecks`, on the display model alone.
 -/
@@ -202,6 +251,19 @@ which are all of the text's rows when it has fewer. -/
 def fits (area : Area) : DisplayM Nat :=
   return (← area.rows 0).size
 
+/-- Whether the view shows the whole text from its start, where `fitted` is
+the rows it shows from there (`area.rows 0`): whether the text has no row
+after the last of them. It is asked as a move one row down from that row,
+which stops on it where it is the text's last, and the row the move's answer
+is in. False of a view that shows no row.
+
+True both of a text shorter than its view and of one that fills it exactly:
+the two are not told apart (the module docs, "What is the display's, and
+missing"). -/
+def whole (area : Area) (fitted : Array Display.Row) : DisplayM Bool := do
+  let some last := fitted.back? | return false
+  return (← area.rowStart (← area.below last.start 1)) == last.start
+
 end Area
 
 /-- The follow policy (the module docs): where to place the scroll anchor of
@@ -231,12 +293,23 @@ def follow (area : Area) (margin : Nat) (shown : Array Display.Row) (head : Nat)
   -- The margin in force is at most half the rows the view fits. With no
   -- margin the rows shown stand for them: they are used only for a cursor
   -- below the rows shown, where the view is full.
-  let size ←
+  let fitted ←
     if margin == 0 then
-      pure shown.size
+      pure shown
     else
-      area.fits
-  let margin := min margin ((size - 1) / 2)
+      area.rows 0
+  let size := fitted.size
+  -- A view that shows its whole text keeps the margin as set: the rows it
+  -- fits are then the text's rows, which may be fewer than the view's, and
+  -- half of them would hide rows the margin asks for. Only a view scrolled
+  -- away from the text's start that shows fewer rows than fit from there
+  -- can be one, so only that is asked.
+  let whole ←
+    if margin != 0 && first.start != 0 && shown.size < size then
+      area.whole fitted
+    else
+      pure false
+  let margin := if whole then margin else min margin ((size - 1) / 2)
   if holds margin then
     return none
   -- The cursor's row is too near the top, or above it.
@@ -316,14 +389,23 @@ cursor.
 
 The rows the view fits, and not the rows it shows: after a scroll to the
 top on the text's last line the view shows one row, and with that as its
-rows a scroll to the bottom would do nothing. -/
+rows a scroll to the bottom would do nothing.
+
+To the middle, in a view that shows its whole text from its start
+(`Area.whole`), it is the text's first row: the rows the view fits are then
+the text's rows, which may be fewer than the view's, and their middle would
+scroll rows out of sight that fit. It is asked only where the anchor would
+leave the text's first row. -/
 def lineTo (place : Place) (area : Area) (head : Nat) : DisplayM (Option Nat) := do
   if place == .top then
     return (← area.rows head)[0]?.map (·.start)
-  let fits ← area.fits
-  if fits == 0 then
-    return none
-  return some (← area.above head (if place == .middle then (fits - 1) / 2 else fits - 1))
+  let fitted ← area.rows 0
+  let some first := fitted[0]? | return none
+  let fits := fitted.size
+  let target ← area.above head (if place == .middle then (fits - 1) / 2 else fits - 1)
+  if place == .middle && target != first.start && (← area.whole fitted) then
+    return some first.start
+  return some target
 
 end Scroll
 

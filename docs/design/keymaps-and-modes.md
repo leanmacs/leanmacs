@@ -1851,6 +1851,10 @@ display pipeline's phase 6.
   change nothing else: not the text, the selection or the wanted column.
   - **The middle** is the middle row of those the view fits, the upper of
     two when it fits an even number.
+  - **In a view that shows its whole text `z z` shows it from its first
+    row**, wherever the cursor is: no row that fits is scrolled out of
+    sight. `z b` does the same there, and `z t` shows from the cursor's
+    row.
   - They ignore their count and their register.
   - **At the text's start** the anchor stops at the first row, so a cursor
     near the start cannot be put in the middle or at the bottom. **At its
@@ -3026,6 +3030,16 @@ every build). The second is proved on the text model
 - **`C-f` and `C-b` move a whole view with no overlap**, and the cursor
   keeps its row of the view. Vim keeps two lines of the page before and
   puts the cursor on the new page's first line.
+- **A text that fills its view exactly is scrolled as one shorter than
+  its view.** How many rows a view has room for is not asked of the
+  display, and the two cannot be told apart by the rows it answers
+  ([text-and-display.md](text-and-display.md), "Views as built", "How
+  many rows a view has room for is missing"). So `z z` never moves the
+  anchor of a view that shows its whole text from the text's first row,
+  where Vim, in a view the text fills, scrolls for a cursor below the
+  middle; and a scroll margin larger than half such a view shows the
+  text from its first row. In a view taller than its text `C-d` and
+  `C-u` move the cursor half the text's rows, not half the view's.
 - **A count before `C-d` is not remembered.** Vim's sets the `scroll`
   option for later `C-d` and `C-u`; remembering it is one more number of
   editor state.

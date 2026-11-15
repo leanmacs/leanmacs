@@ -89,6 +89,14 @@ or the last (`Scroll.lineTo`), and does nothing else.
 - **The middle** is the middle row of those the view fits, the upper of
   the two when it fits an even number: the third of five, and the third of
   six.
+- **In a view that shows its whole text `z z` shows it from its first
+  row**, wherever the cursor is, so no row that fits is hidden. That is
+  Vim's view where the cursor's row is above the view's middle. It departs
+  from Vim in a view its text fills exactly, or nearly, with the cursor
+  below the view's middle, where Vim scrolls: how many rows such a view
+  has room for is not asked (`Editor/Scroll.lean`, "A view that shows its
+  whole text"). `z b` there shows the text from its first row too, and
+  `z t` shows from the cursor's row, past the text's end.
 - **The text, the selection and the wanted column are not touched.** It
   ignores its count and its register: Vim's count is a line number, which
   is not built.
@@ -103,7 +111,8 @@ or the last (`Scroll.lineTo`), and does nothing else.
 - **With a scroll margin set** the follow before the next scene moves the
   anchor again to hold it (`Editor/Loop.lean`, "Following the cursor"), so
   `z t` with a margin of two leaves two rows above the cursor's row, as
-  Vim's does with `scrolloff`.
+  Vim's does with `scrolloff`. In a view that shows its whole text the
+  margin is held as set, and not at half the text's rows.
 - **A view that shows no row**: nothing moves and nothing is said.
 
 Pinned by `ModelTest.viewChecks`, by key, on the loop's driver over the

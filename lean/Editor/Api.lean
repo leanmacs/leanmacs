@@ -234,7 +234,8 @@ Each makes a text request, and each has a case in `Editor/Api/Cases.lean`.
   holds it from the next scene on. A command reads it from the state
   (`EditorState.scrollMargin` on `editorState`).
   - **It is never refused**: any number is taken, and a view keeps at most
-    half the rows it fits.
+    half the rows it fits, or as many as its text has where it shows the
+    whole text.
   - **It is editor state**, so a command that sets it and then does not
     run to its end leaves the margin there was, and a reload leaves it.
   - It makes no request of the library. Pinned by

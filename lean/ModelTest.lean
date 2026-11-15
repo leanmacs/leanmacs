@@ -4676,10 +4676,14 @@ def scrollSweep (text : String) (width height : Nat) : Bool :=
 a scroll to the cursor's row places an anchor from which the model shows
 that row first, in the middle of the rows the view fits (the upper of two)
 and last; or, where the text has fewer rows above the cursor than that
-takes, the text's first row first. -/
+takes, the text's first row first. Where the view shows the whole text from
+its start, a scroll to the middle places the text's first row first,
+wherever the cursor is. -/
 def lineToSweep (text : String) (width height : Nat) : Bool :=
   let rows := allRows text width
   let fits := (rowsFrom text width height 0).size
+  -- Whether the rows shown from the text's start are all of its rows.
+  let whole := fits == rows.size
   fits > 0 &&
     (List.range (text.utf8ByteSize + 1)).all fun head =>
       match rowAt text width head with
@@ -4687,13 +4691,14 @@ def lineToSweep (text : String) (width height : Nat) : Bool :=
       | some row =>
         let cursor := (rows.findIdx? (· == row)).getD rows.size
         -- The cursor's row is to be `up` rows below the first row shown.
-        let placed (place : Scroll.Place) (up : Nat) : Bool :=
+        let placed (place : Scroll.Place) (up : Nat) (kept : Bool := false) : Bool :=
           match onDisplay text (Scroll.lineTo place (areaOf width height) head) with
           | some (some anchor) =>
             let shown := rowsFrom text width height anchor
-            if cursor ≥ up then shown[up]? == some row else shown[0]? == rows[0]?
+            if cursor ≥ up && !kept then shown[up]? == some row else shown[0]? == rows[0]?
           | _ => false
-        placed .top 0 && placed .middle ((fits - 1) / 2) && placed .bottom (fits - 1)
+        placed .top 0 && placed .middle ((fits - 1) / 2) (kept := whole) &&
+          placed .bottom (fits - 1)
 
 /-- The checks of the policy by which a view follows its cursor and of the
 anchors a scroll places (`Editor/Scroll.lean`), on the display model alone,
@@ -4861,8 +4866,32 @@ def scrollChecks : List Check :=
         pure
           (lineToSweep sixteen 10 5 && lineToSweep sixteen 10 6 && lineToSweep ragged 4 3 &&
             lineToSweep ragged 4 4 &&
-            lineToSweep "a\nb\nc" 10 9 &&
             lineToSweep "" 4 3) },
+    { name :=
+        "a scroll to the middle never hides a row of a text its view shows whole: in a view taller than its text and in one the text fills exactly, of short lines and of wrapped ones, from every position as the cursor, it places the text's first row, while a scroll to the top still puts the cursor's row first; and in a view one row shorter than its text it puts the cursor's row in the middle"
+      run :=
+        pure <|
+          let rows := allRows sixteen 10
+          lineToSweep "a\nb\nc" 10 9 && lineToSweep "a\nb\nc\n" 10 9 &&
+            lineToSweep "a\nb\nc" 10 3 &&
+            lineToSweep sixteen 10 16 &&
+            lineToSweep ragged 4 (allRows ragged 4).size &&
+            lineToSweep ragged 4 40 &&
+            onDisplay "a\nb\nc\n" (Scroll.lineTo .middle (areaOf 10 10) 4) == some (some 0) &&
+            onDisplay sixteen (Scroll.lineTo .middle (areaOf 10 16) (startOf rows 15)) ==
+              some (some 0) &&
+            onDisplay sixteen (Scroll.lineTo .middle (areaOf 10 15) (startOf rows 15)) ==
+              some (some (startOf rows 8)) },
+    { name :=
+        "with a margin, in a view that shows its whole text, the follow keeps as many rows above the cursor's row as the margin asks and the text has, and is not capped by the text's rows: a sweep with a margin of two and one of 99, in a view taller than four lines and in one they fill exactly; and from the last of four rows as the first row shown, with the cursor on it, a margin of two shows from the second row"
+      run :=
+        pure <|
+          let four := "a\nb\nc\nd"
+          let rows := allRows four 10
+          marginSweep four 10 9 2 && marginSweep four 10 9 99 && marginSweep four 10 4 2 &&
+            marginSweep four 10 4 99 &&
+            followedFrom four 10 9 2 (startOf rows 3) (startOf rows 3) ==
+              some { moved := true, shown := rows.extract 1 4, index := some 2 } },
     { name :=
         "on the text's last line a scroll to the top leaves the view showing one row, and a scroll to the bottom from there shows as many rows as the view fits, the cursor's row the last"
       run :=
@@ -18414,6 +18443,53 @@ def viewChecks : List Check :=
                 bottom.anchor == 0 &&
                 bottom.index == some 1
             | _, _, _, _, _ => false },
+    { name :=
+        "in a view taller than its text z z hides no row: with the cursor on the last line of three lines and a line feed, in a view of ten rows, the anchor stays at the text's first row and every row of the text is shown; and after z t, which shows from the cursor's row, z z shows every row again"
+      run :=
+        pure <|
+          let contents := numbered 3 "\n"
+          let rows := allRows contents 10
+          match viewDriver contents ⟨10, 10⟩ with
+          | none => false
+          | some driver =>
+            let last := evilFed driver "G"
+            let top := evilFed last "z t"
+            match viewSeen last, viewSeen (evilFed last "z z"), viewSeen top,
+              viewSeen (evilFed top "z z") with
+            | some was, some now, some one, some back =>
+              rows.size == 4 && was.anchor == 0 && was.shown == rows && was.index == some 2 &&
+                now.anchor == 0 &&
+                now.shown == rows &&
+                now.index == some 2 &&
+                now.head == was.head &&
+                one.shown == rows.extract 2 4 &&
+                one.index == some 0 &&
+                back.anchor == 0 &&
+                back.shown == rows &&
+                back.index == some 2
+            | _, _, _, _ => false },
+    { name :=
+        "in a view taller than its text z b, C-d, C-u, C-f and C-b leave the anchor at the text's first row with every row shown: C-d moves the cursor half the text's rows and C-f to its last line, C-u and C-b to its first; and with the scroll margin set to two, z t on the last line leaves the two rows the text has above it shown"
+      run :=
+        pure <|
+          let contents := numbered 3 "\n"
+          let rows := allRows contents 10
+          match viewDriver contents ⟨10, 10⟩, viewDriver contents ⟨10, 10⟩ (margin := 2) with
+          | some driver, some margined =>
+            let second := evilFed driver "j"
+            let whole (typed : String) (cursor : Nat) : Bool :=
+              match viewSeen (evilFed second typed) with
+              | some now =>
+                now.anchor == 0 && now.shown == rows && now.place rows == some (0, cursor)
+              | none => false
+            viewPlaced second "" rows == some (0, 1) && whole "z b" 1 && whole "C-d" 2 &&
+              whole "C-u" 0 &&
+              whole "C-f" 2 &&
+              whole "C-b" 0 &&
+              whole "G C-d" 2 &&
+              viewPlaced driver "G z t" rows == some (2, 2) &&
+              viewPlaced margined "G z t" rows == some (0, 2)
+          | _, _ => false },
     { name :=
         "with the scroll margin set to two, after z t two rows are above the cursor's row, and after z b two rows are below it: the scroll puts the row at the edge, and the view then follows with the margin"
       run :=
