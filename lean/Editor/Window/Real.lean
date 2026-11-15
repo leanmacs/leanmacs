@@ -85,6 +85,14 @@ def modeName : Ffi.PresentMode → String
 def presentationText (presentation : Ffi.PresentMode × Nat) : String :=
   s!"{modeName presentation.1} at a frame latency of {presentation.2}"
 
+/-- What a run asked for, as the report says it: only the halves it asked
+for, and `nothing` when it asked for neither. -/
+def askedText : Option Ffi.PresentMode × Option Nat → String
+  | (none, none) => "nothing"
+  | (some mode, none) => modeName mode
+  | (none, some latency) => s!"a frame latency of {latency}"
+  | (some mode, some latency) => presentationText (mode, latency)
+
 /-- The report `--report` prints to stderr once the window has closed, read
 through the latest render session's handle, which outlives the window: the
 presentation the surface offered and was configured with, the counters,
@@ -95,8 +103,7 @@ def reportLines (opened closed : Nat) : IO (Array String) := do
     match ← Ffi.windowPresentation with
     | some offered =>
       let modes := ", ".intercalate (offered.modes.map modeName).toList
-      let asked := (offered.asked.map presentationText).getD "nothing"
-      s!"presentation: offered {modes}; asked {asked}; configured {presentationText offered.configured}"
+      s!"presentation: offered {modes}; asked {askedText offered.asked}; configured {presentationText offered.configured}"
     | none => "presentation: none (no window drew with the wgpu renderer)"
   let counters :=
     match ← Ffi.renderCounters with

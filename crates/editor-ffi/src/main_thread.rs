@@ -31,7 +31,7 @@ use std::sync::mpsc::{self, SyncSender};
 use std::sync::{Condvar, Mutex, MutexGuard, PoisonError};
 
 use editor_platform::{CannotOpen, WindowOptions};
-use editor_render_wgpu::present::Presentation;
+use editor_render_wgpu::present::Asked;
 
 use crate::window::{self, PlatformId, Ran};
 
@@ -87,9 +87,10 @@ pub enum Request {
         platform: PlatformId,
         /// How the window is opened.
         options: WindowOptions,
-        /// The present mode and frame latency the run asks for, to measure
-        /// them; `None` is the renderer's decision.
-        presentation: Option<Presentation>,
+        /// The present mode and frame latency the run asks for, each on
+        /// its own, to measure them; a half not asked for is the
+        /// renderer's decision.
+        presentation: Asked,
     },
 }
 
@@ -295,10 +296,10 @@ mod tests {
         let asked = Request::RunWindow {
             platform: PlatformId::Scripted,
             options: WindowOptions { composition: false },
-            presentation: Some(Presentation {
-                mode: Mode::Mailbox,
-                frame_latency: 2,
-            }),
+            presentation: Asked {
+                mode: Some(Mode::Mailbox),
+                frame_latency: Some(2),
+            },
         };
         let outcome = Reply::WindowClosed(Err(CannotOpen {
             reason: "no display".into(),

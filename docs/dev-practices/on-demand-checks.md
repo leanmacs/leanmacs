@@ -1226,12 +1226,15 @@ What phase 6 built for it:
 
 - `--present-mode fifo|fifo-relaxed|immediate|mailbox` and
   `--frame-latency <n>`, flags of the window mode for one run, not
-  settings: the renderer gives the mode asked when the surface offers it,
-  and the decision's otherwise, and the latency held to the range offered;
+  settings, each on its own: the renderer gives the mode asked when the
+  surface offers it, and the decision's otherwise or when none is asked,
+  and the latency asked, or the decision's when none is asked, held to the
+  range offered (`present::choose` in `editor-render-wgpu`);
 - frames published from Lean reaching the window, stamped with the key
   they answer, so that a key typed draws a frame;
 - `--report`, which prints to stderr once the window has closed what the
-  surface offered, what was asked and what was configured, the counters,
+  surface offered, only what was asked (`asked a frame latency of 2` for
+  `--frame-latency 2` alone) and what was configured, the counters,
   each journal entry's present time with its `present - input`, their
   median, 99th percentile (nearest rank) and largest, and the longest
   stretch with no frame.

@@ -2136,8 +2136,9 @@ configured with, as the wgpu renderer says it. -/
 structure WindowPresentation where
   /-- The present modes the surface offered, in its order. -/
   modes : Array PresentMode
-  /-- The present mode and frame latency the run asked for, if it asked. -/
-  asked : Option (PresentMode × Nat)
+  /-- The present mode and the frame latency the run asked for, each `none`
+  when it did not ask for it: only what was asked. -/
+  asked : Option PresentMode × Option Nat
   /-- The present mode and frame latency the surface was configured with. -/
   configured : PresentMode × Nat
   deriving DecidableEq, Repr
@@ -2169,16 +2170,20 @@ def windowPresentation : IO (Option WindowPresentation) := do
   let mode (index : Nat) : IO PresentMode := do
     let some mode := PresentMode.ofTag? (words[index]?.getD 0) | throw problem
     return mode
-  unless words.size == 1 + count + 5 do
+  unless words.size == 1 + count + 4 do
     throw problem
   let modes ← (Array.range count).mapM fun index => mode (1 + index)
   let at_ := 1 + count
-  let asked ←
-    if words[at_]!.toNat == 1 then
-      pure (some (← mode (at_ + 1), words[at_ + 2]!.toNat))
-    else
+  -- What was asked: a mode's tag and a latency, each 0 for none asked.
+  let askedMode ←
+    if words[at_]! == 0 then
       pure none
-  return some { modes, asked, configured := (← mode (at_ + 3), words[at_ + 4]!.toNat) }
+    else
+      some <$> mode at_
+  let askedLatency := (some words[at_ + 1]!.toNat).filter (· != 0)
+  return some
+      { modes, asked := (askedMode, askedLatency)
+        configured := (← mode (at_ + 2), words[at_ + 3]!.toNat) }
 
 /-! ## The clipboard -/
 

@@ -1344,7 +1344,16 @@ def windowChecks (_ : Unit) : List Check :=
                 "window-check: composition on, limit 120 s; the main-thread service is on the process's main thread: yes" &&
             lines[1]? == some s!"window: could not open: {scriptedFailure}" &&
             lines[7]? == some "ended: the window never opened" &&
-            status == 1 }]
+            status == 1 },
+    { name :=
+        "the window mode's report says only the halves of a presentation the run asked for, and nothing when it asked for none"
+      run :=
+        pure
+          (Editor.Window.askedText (none, none) == "nothing" &&
+            Editor.Window.askedText (some .mailbox, none) == "mailbox" &&
+            Editor.Window.askedText (none, some 2) == "a frame latency of 2" &&
+            Editor.Window.askedText (some .immediate, some 3) ==
+              "immediate at a frame latency of 3") }]
 
 /-- An event from the window number 1, of this kind, code and text. -/
 def fromWindow (kind : Editor.Ffi.EventKind) (code : UInt64) (text : String := "") :

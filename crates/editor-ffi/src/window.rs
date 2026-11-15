@@ -89,7 +89,7 @@ use editor_platform::{
 use editor_platform_winit::WinitPlatform;
 use editor_render::fake::RecordingRenderer;
 use editor_render::port::{DrawRequest, Drawn, Renderer};
-use editor_render_wgpu::present::{self, Mode, Offered, Presentation};
+use editor_render_wgpu::present::{Asked, Mode, Offered};
 use editor_render_wgpu::{Settings, WgpuRenderer};
 
 use crate::events::{Event, EventKind, Queue, QueueId, Source, SourceKind};
@@ -789,16 +789,16 @@ fn mode_tag(mode: Mode) -> u64 {
 }
 
 /// `offered` as words: how many modes the surface offered and each one's
-/// tag ([`mode_tag`]), in its order; then whether the run asked, with the
-/// mode's tag and the latency asked (0 and 0 when it did not); then the
-/// mode's tag and the latency the surface was configured with.
+/// tag ([`mode_tag`]), in its order; then the tag of the mode the run asked
+/// for and the latency it asked for, each 0 when it asked for none; then
+/// the mode's tag and the latency the surface was configured with.
 fn offered_words(offered: &Offered) -> Vec<u64> {
     let mut words = vec![offered.modes.len() as u64];
     words.extend(offered.modes.iter().map(|mode| mode_tag(*mode)));
-    match offered.asked {
-        Some(asked) => words.extend([1, mode_tag(asked.mode), u64::from(asked.frame_latency)]),
-        None => words.extend([0, 0, 0]),
-    }
+    words.extend([
+        offered.asked.mode.map_or(0, mode_tag),
+        offered.asked.frame_latency.map_or(0, u64::from),
+    ]);
     words.extend([
         mode_tag(offered.configured.mode),
         u64::from(offered.configured.frame_latency),
@@ -863,7 +863,7 @@ impl Renderer for WindowRenderer<'_> {
 fn window_renderer<'a>(
     platform: PlatformId,
     window: Option<&NativeWindow>,
-    presentation: Option<Presentation>,
+    presentation: Asked,
     slot: &'a PresentationSlot,
 ) -> Result<WindowRenderer<'a>, String> {
     match platform {
@@ -905,7 +905,7 @@ fn window_renderer<'a>(
 pub(crate) fn run_on_this_thread(
     platform: PlatformId,
     options: WindowOptions,
-    presentation: Option<Presentation>,
+    presentation: Asked,
 ) -> Result<Ran, CannotOpen> {
     let session = Session::new(
         Arc::new(ProcessClock),
@@ -924,26 +924,23 @@ pub(crate) fn run_on_this_thread(
 
 /// The presentation a run asks for, from its tags as they cross the
 /// boundary: `mode` 0 for none, then `fifo`, `fifo-relaxed`, `immediate`
-/// and `mailbox` from 1; and `frame_latency` 0 for none. With neither
-/// asked it is `None`, the renderer's decision; with one asked, the other
-/// is the decision's. `None` too for a mode tag that names no mode.
-pub fn asked_presentation(mode: u8, frame_latency: u32) -> Option<Presentation> {
+/// and `mailbox` from 1; and `frame_latency` 0 for none. Each half not
+/// asked for is left to the renderer's decision
+/// (`editor_render_wgpu::present::choose`), which this does not restate. A
+/// mode tag that names no mode asks for nothing.
+pub fn asked_presentation(mode: u8, frame_latency: u32) -> Asked {
     let mode = match mode {
         0 => None,
         1 => Some(Mode::Fifo),
         2 => Some(Mode::FifoRelaxed),
         3 => Some(Mode::Immediate),
         4 => Some(Mode::Mailbox),
-        _ => return None,
+        _ => return Asked::NOTHING,
     };
-    let frame_latency = (frame_latency != 0).then_some(frame_latency);
-    if mode.is_none() && frame_latency.is_none() {
-        return None;
+    Asked {
+        mode,
+        frame_latency: (frame_latency != 0).then_some(frame_latency),
     }
-    Some(Presentation {
-        mode: mode.unwrap_or(present::PREFERRED[0]),
-        frame_latency: frame_latency.unwrap_or(present::FRAME_LATENCY),
-    })
 }
 
 /// Why a window did not run, or why nothing drew in one that did, as it
@@ -1100,6 +1097,7 @@ mod tests {
         Button, Canvas, Key, LogicalKey, Modifiers, PhysicalKey, Pointer, PointerAction, Resize,
         WheelDelta,
     };
+    use editor_render_wgpu::present::Presentation;
     use std::sync::mpsc::{self, Receiver};
     use std::thread;
     use std::time::Duration;
@@ -2156,46 +2154,69 @@ mod tests {
 
     #[test]
     fn a_presentation_asked_for_crosses_as_a_mode_tag_and_a_latency_each_0_for_none() {
-        assert_eq!(asked_presentation(0, 0), None);
-        let asked = |mode, frame_latency| {
-            Some(Presentation {
-                mode,
-                frame_latency,
-            })
+        let asked = |mode, frame_latency| Asked {
+            mode,
+            frame_latency,
         };
-        assert_eq!(asked_presentation(1, 0), asked(Mode::Fifo, 1));
-        assert_eq!(asked_presentation(2, 0), asked(Mode::FifoRelaxed, 1));
-        assert_eq!(asked_presentation(3, 2), asked(Mode::Immediate, 2));
-        assert_eq!(asked_presentation(4, 0), asked(Mode::Mailbox, 1));
-        // A latency alone is the decision's mode at it.
-        assert_eq!(asked_presentation(0, 3), asked(Mode::Fifo, 3));
+        assert_eq!(asked_presentation(0, 0), Asked::NOTHING);
+        assert_eq!(asked_presentation(1, 0), asked(Some(Mode::Fifo), None));
+        assert_eq!(
+            asked_presentation(2, 0),
+            asked(Some(Mode::FifoRelaxed), None)
+        );
+        assert_eq!(
+            asked_presentation(3, 2),
+            asked(Some(Mode::Immediate), Some(2))
+        );
+        assert_eq!(asked_presentation(4, 0), asked(Some(Mode::Mailbox), None));
+        // A latency alone is a latency alone: the mode is the renderer's
+        // to decide.
+        assert_eq!(asked_presentation(0, 3), asked(None, Some(3)));
         // A tag that names no mode asks for nothing.
-        assert_eq!(asked_presentation(5, 2), None);
+        assert_eq!(asked_presentation(5, 2), Asked::NOTHING);
     }
 
     #[test]
     fn what_a_surface_offered_crosses_as_its_modes_then_what_was_asked_then_what_was_configured() {
+        let configured = Presentation {
+            mode: Mode::Immediate,
+            frame_latency: 2,
+        };
         let offered = Offered {
             modes: vec![Mode::Fifo, Mode::Immediate, Mode::Mailbox],
-            asked: Some(Presentation {
-                mode: Mode::Immediate,
-                frame_latency: 2,
-            }),
-            configured: Presentation {
-                mode: Mode::Immediate,
-                frame_latency: 2,
+            asked: Asked {
+                mode: Some(Mode::Immediate),
+                frame_latency: Some(2),
             },
+            configured,
         };
-        assert_eq!(offered_words(&offered), vec![3, 1, 3, 4, 1, 3, 2, 3, 2]);
+        assert_eq!(offered_words(&offered), vec![3, 1, 3, 4, 3, 2, 3, 2]);
+        // Each half asked for alone, the other 0.
+        let latency_only = Offered {
+            asked: Asked {
+                mode: None,
+                frame_latency: Some(2),
+            },
+            ..offered.clone()
+        };
+        assert_eq!(offered_words(&latency_only), vec![3, 1, 3, 4, 0, 2, 3, 2]);
+        let mode_only = Offered {
+            asked: Asked {
+                mode: Some(Mode::Mailbox),
+                frame_latency: None,
+            },
+            ..offered
+        };
+        assert_eq!(offered_words(&mode_only), vec![3, 1, 3, 4, 4, 0, 3, 2]);
         let decided = Offered {
             modes: vec![Mode::FifoRelaxed],
-            asked: None,
+            asked: Asked::NOTHING,
             configured: Presentation {
                 mode: Mode::Fifo,
                 frame_latency: 1,
             },
         };
-        assert_eq!(offered_words(&decided), vec![1, 2, 0, 0, 0, 1, 1]);
+        assert_eq!(offered_words(&decided), vec![1, 2, 0, 0, 1, 1]);
         // Each mode's tag is the one a run asks for it by.
         for mode in [
             Mode::Fifo,
@@ -2204,17 +2225,14 @@ mod tests {
             Mode::Mailbox,
         ] {
             let tag = u8::try_from(mode_tag(mode)).expect("a tag is small");
-            assert_eq!(
-                asked_presentation(tag, 1).map(|asked| asked.mode),
-                Some(mode)
-            );
+            assert_eq!(asked_presentation(tag, 1).mode, Some(mode));
         }
     }
 
     #[test]
     fn a_window_renderer_on_a_scripted_platform_leaves_no_presentation() {
         let slot = PresentationSlot::default();
-        let mut renderer = window_renderer(PlatformId::Scripted, None, None, &slot)
+        let mut renderer = window_renderer(PlatformId::Scripted, None, Asked::NOTHING, &slot)
             .unwrap_or_else(|reason| panic!("the recording renderer is made: {reason}"));
         let frame = Arc::new(editor_layout::frame::Frame::default());
         let request = DrawRequest {

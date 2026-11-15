@@ -53,7 +53,7 @@ use editor_platform::NativeWindow;
 use editor_render::port::{DrawRequest, Drawn, Renderer};
 
 use crate::painter::Painter;
-use crate::present::{Offered, Presentation};
+use crate::present::{Asked, Offered};
 use crate::raster::SwashRasterizer;
 
 /// A picture: what a renderer drew, read back.
@@ -414,10 +414,12 @@ pub struct Settings {
     pub atlas_budget: u64,
     /// How heavy text is drawn.
     pub weight: Weight,
-    /// The present mode and frame latency a run asks for in place of the
-    /// decision's, to measure another ([`present::choose`]); `None`, the
-    /// default, is the decision. Only a renderer on a window presents.
-    pub presentation: Option<Presentation>,
+    /// The present mode and the frame latency a run asks for in place of
+    /// the decision's, each on its own, to measure another
+    /// ([`present::choose`]); a half not asked for, as in the default
+    /// ([`Asked::NOTHING`]), is the decision's. Only a renderer on a window
+    /// presents.
+    pub presentation: Asked,
 }
 
 impl Default for Settings {
@@ -427,7 +429,7 @@ impl Default for Settings {
             hinting: true,
             atlas_budget: DEFAULT_ATLAS_BUDGET,
             weight: Weight::LINEAR,
-            presentation: None,
+            presentation: Asked::NOTHING,
         }
     }
 }

@@ -2,6 +2,7 @@
 //! them.
 
 use crate::blend;
+use crate::present::Asked;
 use crate::{
     Antialiasing, DEFAULT_ATLAS_BUDGET, Masks, PAGE_SIZE, Settings, SubpixelOrder, Weight,
 };
@@ -29,7 +30,7 @@ fn the_default_settings_leave_antialiasing_to_the_display_and_hint() {
             hinting: true,
             atlas_budget: DEFAULT_ATLAS_BUDGET,
             weight: Weight::LINEAR,
-            presentation: None,
+            presentation: Asked::NOTHING,
         }
     );
     assert_eq!(Antialiasing::default(), Antialiasing::Auto);

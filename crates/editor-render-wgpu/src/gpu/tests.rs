@@ -527,7 +527,7 @@ fn a_surface_that_offers_its_adapter_nothing_is_refused_and_says_so() {
     // no-op back end's, which the surface offers nothing.
     let adapter = pollster::block_on(instance.request_adapter(&Default::default()))
         .expect("the no-op adapter");
-    let refused = Window::new(surface, &adapter, None).err();
+    let refused = Window::new(surface, &adapter, crate::present::Asked::NOTHING).err();
     assert_eq!(
         refused.as_deref(),
         Some("the window's surface offers no format on this adapter")

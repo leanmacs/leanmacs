@@ -84,7 +84,7 @@ use std::fmt;
 use crate::atlas::{Atlas, PageView};
 use crate::cpu::CLEAR;
 use crate::glyphs::Kind;
-use crate::present::{Offered, Presentation};
+use crate::present::{Asked, Offered};
 use crate::quads::{Quad, QuadKind};
 use crate::surface::{Answer, Calls, State};
 use crate::{Image, Weight};
@@ -179,7 +179,7 @@ impl Window {
     fn new(
         surface: wgpu::Surface<'static>,
         adapter: &wgpu::Adapter,
-        asked: Option<Presentation>,
+        asked: Asked,
     ) -> Result<Self, String> {
         let state = State::new(&surface.get_capabilities(adapter), asked)?;
         Ok(Self {
@@ -300,14 +300,14 @@ impl Device {
     }
 
     /// A device on an adapter of `instance` that can present to `surface`,
-    /// and draws on it, presenting as `asked` when the run asked
-    /// (`present::choose`). It is refused, with the reason, when no
-    /// adapter can, or when the surface offers nothing to configure it
+    /// and draws on it, presenting as `asked` says of each half the run
+    /// asked for (`present::choose`). It is refused, with the reason, when
+    /// no adapter can, or when the surface offers nothing to configure it
     /// with.
     pub fn on_surface(
         instance: &wgpu::Instance,
         surface: wgpu::Surface<'static>,
-        asked: Option<Presentation>,
+        asked: Asked,
         allow_per_channel: bool,
     ) -> Result<Self, Unavailable> {
         Self::build(instance, Some((surface, asked)), allow_per_channel)
@@ -317,7 +317,7 @@ impl Device {
     /// there is one and on a target of its own otherwise.
     fn build(
         instance: &wgpu::Instance,
-        surface: Option<(wgpu::Surface<'static>, Option<Presentation>)>,
+        surface: Option<(wgpu::Surface<'static>, Asked)>,
         allow_per_channel: bool,
     ) -> Result<Self, Unavailable> {
         let adapter = wait(instance.request_adapter(&wgpu::RequestAdapterOptions {
