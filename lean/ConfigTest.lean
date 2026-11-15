@@ -1520,6 +1520,38 @@ def scriptChecks (context : Context) : List Check :=
             match Headless.script ("reload\n" ++ line) with
             | .error message => message.startsWith "line 2: "
             | .ok _ => false) },
+    { name := "a resize directive is a width and a height, two numbers, with its line's number"
+      run :=
+        pure
+          ((Headless.script "scene\nresize 640 480\n  resize  0   16  \n").toOption ==
+            some #[⟨1, .request .scene⟩, ⟨2, .resize 640 480⟩, ⟨3, .resize 0 16⟩]) },
+    { name :=
+        "a resize directive with no number, with one, with three, or with a part that is no number is refused, with the number of its line"
+      run :=
+        pure
+          (["resize", "resize 640", "resize 640 480 2", "resize wide 480", "resize -1 480",
+                "resize 640 4.5"].all
+            fun line =>
+            match Headless.script ("scene\n" ++ line) with
+            | .error message => message.startsWith "line 2: "
+            | .ok _ => false) },
+    { name :=
+        "a script that resizes the frame and asks for the scene prints the scene in a frame of that size, with its one view in the whole of it; a second resize is the next scene's size"
+      run :=
+        IO.FS.withTempDir fun directory => do
+          writeFiles directory greetConfig
+          let stage ← Stage.new context context.elaborator (Config.Directory.source directory)
+          let failure ←
+            Headless.run stage.collaborators
+                #[⟨1, .resize 640 480⟩, ⟨2, .request .scene⟩, ⟨3, .resize 320 200⟩,
+                  ⟨4, .request .scene⟩]
+                patience
+          return failure == none &&
+              (← stage.output.get) ==
+                #["scene 640x480, focused 0, echo \"\", preedit -, published 1",
+                  "view 0 0,0 640x480: \"\", scroll 0, selections 0..0", statusOf,
+                  "scene 320x200, focused 0, echo \"\", preedit -, published 3",
+                  "view 0 0,0 320x200: \"\", scroll 0, selections 0..0", statusOf] },
     { name :=
         "a script that commits text and asks for the scene prints the scene: its frame, and a view whose snapshot holds the text, read from the library, with the cursor after it"
       run :=

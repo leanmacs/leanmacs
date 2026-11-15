@@ -308,12 +308,19 @@ is handled before that reload is installed: settle first to see its effect.
 
 `run` drives a host through a script, one directive a line: `reload`,
 `run <name>`, `spawn <name>`, `show` and `scene` are requests, and `settle`,
-`join`, `key <logical> <physical> <modifiers>` and `commit <text>` are the
-driver's own. A `key` is sent with `Host.press`: a press with no text,
+`join`, `key <logical> <physical> <modifiers>`, `commit <text>` and
+`resize <width> <height>` are the driver's own. A `key` is sent with
+`Host.press`: a press with no text,
 posted through the library's window input as a window would report it
 (`Event.post`), in order with the requests. A `commit` is sent the same way
 with `Host.commit`, as an input method's composition ending with the rest of
-the line, trimmed; an empty one is refused. The loop decodes a window's
+the line, trimmed; an empty one is refused. A `resize` is sent the same way
+with `Host.resize`: a resize of the frame to that many physical pixels
+across and down, at a scale of 1; anything but two numbers is refused. It
+is how a script gives its views a height: the frame is made 0 by 0, and a
+view of no height shows no row, so no view of a script that does not
+resize follows its cursor (`Editor/Loop.lean`, "Following the cursor").
+The loop decodes a window's
 events (`Event.ofFfi`) and hands each to the editor loop. Blank lines and
 lines that start with `#` are skipped.
 
@@ -1178,6 +1185,14 @@ def commit (_ : Host) (text : String) : IO Unit := do
   unless ← Event.post (.commit text) do
     throw (IO.userError "the editor queue refused a commit: it has been quit")
 
+/-- Sends a resize of the frame to `width` by `height` physical pixels, at a
+scale of 1, as the window would report it: through the library's window
+input (`Event.post`), onto the editor queue after everything sent before.
+Throws if the queue refuses it, which it does once the queues are quit. -/
+def resize (_ : Host) (width height : Nat) : IO Unit := do
+  unless ← Event.post (.resize { width, height, scale := 1.0 }) do
+    throw (IO.userError "the editor queue refused a resize: it has been quit")
+
 /-- Waits until the editor thread has handled everything sent so far and
 `busy` no longer holds of its progress, for at most `patience` milliseconds.
 Says what the wait came to: `still` if it ran out with the editor thread up
@@ -1263,6 +1278,9 @@ inductive Directive where
   | key (key : Key)
   /-- Send this text, as an input method's composition would end with it. -/
   | commit (text : String)
+  /-- Send a resize of the frame to this many physical pixels across and
+  down, as the window would. -/
+  | resize (width height : Nat)
   deriving DecidableEq, Repr
 
 /-- The name a directive gives after its keyword, which is the first
@@ -1311,6 +1329,17 @@ def keyDirective? (line : String) : Except String Directive :=
     return .key { logical, physical := physicalKey physical, modifiers }
   | _ => .error s!"`{line}` is not a key: expected key <logical> <physical> <modifiers>"
 
+/-- The resize a `resize` directive's line names after its keyword: a width
+and a height, two numbers of physical pixels. -/
+def resizeDirective? (line : String) : Except String Directive :=
+  let problem := s!"`{line}` is not a resize: expected resize <width> <height>, two numbers"
+  match ((line.drop 6).trimAscii.toString.splitOn " ").filter (!·.isEmpty) with
+  | [width, height] =>
+    match width.toNat?, height.toNat? with
+    | some width, some height => .ok (.resize width height)
+    | _, _ => .error problem
+  | _ => .error problem
+
 /-- The directive `line` is, `none` for a blank line or a comment, or what is
 wrong with it. -/
 def directive? (line : String) : Except String (Option Directive) :=
@@ -1344,8 +1373,11 @@ def directive? (line : String) : Except String (Option Directive) :=
                       | none => .error s!"`{line}` commits no text"
                       | some text => .ok (some (.commit text))
                     else
-                      .error
-                        s!"`{line}` is not a directive: expected reload, run <name>, spawn <name>, show, scene, settle, join, key <logical> <physical> <modifiers> or commit <text>"
+                      if line == "resize" || line.startsWith "resize " then
+                        some <$> resizeDirective? line
+                      else
+                        .error
+                          s!"`{line}` is not a directive: expected reload, run <name>, spawn <name>, show, scene, settle, join, key <logical> <physical> <modifiers>, commit <text> or resize <width> <height>"
 
 /-- A directive of a script, and the line it is on. -/
 structure Line where
@@ -1442,6 +1474,9 @@ def run {σ : Type} {scheme : InputScheme} (collaborators : Collaborators σ sch
         continue
       | .commit text =>
         host.commit text
+        continue
+      | .resize width height =>
+        host.resize width height
         continue
       | .settle =>
         host.await patience
