@@ -8,9 +8,11 @@
 //! each writes only inside the directory, under a name of its own
 //! property's.
 //!
-//! The port's properties are [`RUN`] to [`AFTER_REAP`]; the service's,
-//! [`CANCEL`] to [`ESCAPED`], run [`Service`] over the processes the check
-//! is given, so a real adapter shows them on real processes. A child that
+//! The port's properties are [`RUN`] to [`AFTER_REAP`], and [`INPUT`] to
+//! [`NO_INPUT`] for a child's standard input; the service's, [`CANCEL`] to
+//! [`ESCAPED`] for runs and [`STREAM_LINES`] to [`STREAM_SHUTDOWN`] for
+//! streaming children, run [`Service`] over the processes the check is
+//! given, so a real adapter shows them on real processes. A child that
 //! starts a grandchild (`/bin/sleep 600 &`) is how the group's rules are
 //! seen: the script writes its own id (`$$`) and the grandchild's (`$!`) to
 //! files, and [`Ground::written`] reads them.
@@ -24,6 +26,17 @@
 //! (`editor-process-std`'s `tests/contract.rs`), the cancelled run never
 //! leaving `pending` and shutdown not returning within the deadline.
 //!
+//! The streaming properties wait on what the child shows, never for a
+//! fixed time: a marker file it makes (`: > written`), read with
+//! [`Ground::exists`], and [`Service::held`]. [`STREAM_COALESCED`]'s bound
+//! is exactly what its child writes, so its readers are held once every
+//! chunk has been read while its one read was pending. Seen to bite once
+//! by hand, on 2026-11-15, on the fake: with the reader's room check taken
+//! out, [`STREAM_HELD`] fails (and [`STREAM_ORDER`], [`STREAM_COALESCED`],
+//! [`STREAM_CANCEL`] and [`STREAM_SHUTDOWN`] with it, none of which is
+//! then held); with a completion queued for each chunk, [`STREAM_COALESCED`]
+//! alone fails.
+//!
 //! [`scripts`] is what each of the check's commands does, as the fake's
 //! scripts: so the fake runs the same check, and a real adapter's run is
 //! what shows those claims true.
@@ -31,8 +44,8 @@
 //! # The ground
 //!
 //! The port has no way to make a file, to read a file a child wrote, to
-//! ask whether a process is alive, or to end a process outside a child's
-//! group. The check needs each, so its caller
+//! ask whether a marker file is there, to ask whether a process is alive,
+//! or to end a process outside a child's group. The check needs each, so its caller
 //! supplies them as a [`Ground`]: for the fake, the fake itself
 //! ([`FakeProcesses::ground`](crate::fake::FakeProcesses::ground)); for a
 //! real adapter, the system, asked directly.
@@ -56,9 +69,13 @@ use std::sync::{Arc, Condvar, Mutex, PoisonError};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use crate::fake::{Hold, Script, Writer};
-use crate::service::{RunResult, Service};
-use crate::{Child, Command, Environment, Exit, Output, Processes, Refusal, RefusalKind, Stream};
+use crate::fake::{Hold, Script, Step, Writer};
+use crate::frame::{Frames, Framing};
+use crate::service::{Delivery, End, RunResult, Service, StreamReply, Streaming};
+use crate::{
+    Child, ChildInput, Command, Environment, Exit, Input, Output, Processes, Refusal, RefusalKind,
+    Stream,
+};
 
 /// What [`check`] needs done, or read, that the port has no method for. It
 /// is the truth the port's answers are compared with, so it must not be
@@ -142,6 +159,46 @@ pub const TOO_LARGE: &str = "output past the limit is too large, and kills the g
 pub const ESCAPED: &str =
     "a run whose descendant left its group holding its streams ends at a cancel and at shutdown";
 
+/// A child's standard input reaches it: `/bin/cat` given a line, a byte
+/// that is not UTF-8 and bytes with no line feed gives them back, and ends
+/// when its input is closed.
+pub const INPUT: &str = "what is written to a child's standard input reaches it, byte for byte";
+/// A write to an input the child has closed is a refusal as input closed,
+/// not a signal.
+pub const INPUT_CLOSED: &str = "a write to an input the child closed is refused as input closed";
+/// A command whose input is closed has no input to take.
+pub const NO_INPUT: &str = "a command whose input is closed has none to take";
+/// A job that asked for lines receives each line as the child writes it,
+/// a line written to the child's input reaches it, and the last delivery
+/// says how the child exited.
+pub const STREAM_LINES: &str =
+    "a streaming child's lines arrive as it writes them, and a line written reaches its input";
+/// Bytes framing delivers every byte, and lines framing gives the
+/// unterminated last line.
+pub const STREAM_BYTES: &str =
+    "bytes are delivered byte for byte, and a last line needs no line feed";
+/// Output faster than its job drains it arrives complete and in order, no
+/// delivery over the bound.
+pub const STREAM_ORDER: &str =
+    "output faster than its job drains it arrives complete and in order, a bound at a time";
+/// However fast the child writes, a pending read is completed once.
+pub const STREAM_COALESCED: &str = "a pending read is completed once however fast its child writes";
+/// A child at the bound is held, and goes on once its job reads, with
+/// nothing lost.
+pub const STREAM_HELD: &str = "a child at the bound is held until its job reads, and loses nothing";
+/// A line longer than the bound ends the child as line too long, and kills
+/// its group.
+pub const STREAM_LINE_TOO_LONG: &str =
+    "a line longer than the bound ends the child, and kills its group";
+/// A cancelled streaming child, held at the bound, ends with the process it
+/// started, and nothing is left pending.
+pub const STREAM_CANCEL: &str =
+    "a cancelled streaming child ends with its group, and nothing is pending";
+/// Shutdown ends a streaming child held at the bound and one waiting for
+/// input.
+pub const STREAM_SHUTDOWN: &str =
+    "after shutdown a held streaming child and one waiting for input are reaped";
+
 /// The program with which a child of the check's starts a process outside
 /// its group: Perl's `setpgrp`, which puts it in a group of its own, then
 /// `exec`s the rest of its arguments. macOS has no `setsid` command; both
@@ -150,7 +207,7 @@ pub const ESCAPED: &str =
 pub const ESCAPE: &str = "/usr/bin/perl";
 
 /// Every property, by name, in the order [`check`] runs them.
-pub const PROPERTIES: [&str; 14] = [
+pub const PROPERTIES: [&str; 25] = [
     RUN,
     SIGNAL,
     DIRECTORY,
@@ -165,6 +222,17 @@ pub const PROPERTIES: [&str; 14] = [
     SPAWN_REFUSAL,
     TOO_LARGE,
     ESCAPED,
+    INPUT,
+    INPUT_CLOSED,
+    NO_INPUT,
+    STREAM_LINES,
+    STREAM_BYTES,
+    STREAM_ORDER,
+    STREAM_COALESCED,
+    STREAM_HELD,
+    STREAM_LINE_TOO_LONG,
+    STREAM_CANCEL,
+    STREAM_SHUTDOWN,
 ];
 
 /// The script of [`RUN`]: `out` and a line feed on standard output, `err`
@@ -201,6 +269,36 @@ fn escaping(name: &str) -> String {
     format!(
         r#"echo $$ > {name}-child; {ESCAPE} -e 'setpgrp(0, 0) or die; open(F, ">", shift) or die; print F $$, qq(\n); close(F); exec @ARGV' {name}-escaped /bin/sleep 600 & wait"#
     )
+}
+
+/// The script of [`INPUT_CLOSED`]: a child that closes its input, says so,
+/// and sleeps.
+const INPUT_CLOSED_SCRIPT: &str = "exec 0<&-; echo closed; exec /bin/sleep 600";
+/// The script of [`STREAM_LINES`].
+const LINES_SCRIPT: &str = r#"echo one; read x; echo "$x"; echo err >&2; read y; exit 4"#;
+/// How many lines [`STREAM_ORDER`]'s child writes, and its bound.
+const ORDER: (usize, u64) = (20_000, 256);
+/// How many lines [`STREAM_COALESCED`]'s child writes.
+const COALESCED: usize = 10_000;
+/// How many lines [`STREAM_HELD`]'s child writes, and its bound.
+const HELD: (usize, u64) = (100_000, 4096);
+/// The capacity of a pipe, as the fake's scripts give it: 64 KiB, Linux's
+/// and the most macOS grows one to.
+const PIPE: usize = 1 << 16;
+/// A script that never stops writing `y` lines.
+const YES: &str = "while :; do echo y; done";
+
+/// The script that writes the numbers from 0 below `count`, a line each,
+/// then does `then`.
+fn counting(count: usize, then: &str) -> String {
+    format!("i=0; while [ $i -lt {count} ]; do echo $i; i=$((i+1)); done; {then}")
+}
+
+/// What [`counting`] writes.
+fn counted(count: usize) -> Vec<u8> {
+    (0..count)
+        .flat_map(|n| format!("{n}\n").into_bytes())
+        .collect()
 }
 
 /// `/bin/sh -c script` in `dir`.
@@ -343,7 +441,102 @@ pub fn scripts(dir: &Path) -> Vec<(Command, Result<Script, Refusal>)> {
                 .writes(at(&format!("{name}-escaped")), Writer::Escaped(0))),
         ));
     }
+    scripts.extend(stream_scripts(dir));
     scripts
+}
+
+/// The scripts of the input's and the streaming child's properties.
+fn stream_scripts(dir: &Path) -> Vec<(Command, Result<Script, Refusal>)> {
+    let at = |name: &str| dir.join(name);
+    let piped = |script: &str| sh(dir, script).with_input(Input::Pipe);
+    vec![
+        (
+            Command::new("/bin/cat", [""; 0], dir).with_input(Input::Pipe),
+            Ok(Script::ends(Exit::Code(0)).step(Step::EchoUntilClosed(Stream::Out))),
+        ),
+        (
+            piped(INPUT_CLOSED_SCRIPT),
+            Ok(Script::ends(Exit::Code(0)).hold(Hold::UntilKilled).steps([
+                Step::CloseInput,
+                Step::Write(Stream::Out, b"closed\n".to_vec()),
+            ])),
+        ),
+        (
+            piped(LINES_SCRIPT),
+            Ok(Script::ends(Exit::Code(4)).steps([
+                Step::Write(Stream::Out, b"one\n".to_vec()),
+                Step::EchoLine(Stream::Out),
+                Step::Write(Stream::Err, b"err\n".to_vec()),
+                Step::AwaitInputClosed,
+            ])),
+        ),
+        (
+            sh(dir, r"printf 'a\377b'"),
+            Ok(Script::ends(Exit::Code(0)).stdout(b"a\xffb".to_vec())),
+        ),
+        (
+            sh(dir, r"printf 'x\ny'"),
+            Ok(Script::ends(Exit::Code(0)).stdout("x\ny")),
+        ),
+        (
+            sh(dir, &counting(ORDER.0, "exit 0")),
+            Ok(Script::ends(Exit::Code(0))
+                .stdout(counted(ORDER.0))
+                .pipe_capacity(PIPE)),
+        ),
+        (
+            piped(&counting(COALESCED, ": > written; read x")),
+            Ok(Script::ends(Exit::Code(0))
+                .stdout(counted(COALESCED))
+                .pipe_capacity(PIPE)
+                .hold(Hold::UntilKilled)
+                .steps([Step::Touch(at("written")), Step::AwaitInputClosed])),
+        ),
+        (
+            sh(dir, &counting(HELD.0, ": > finished")),
+            Ok(Script::ends(Exit::Code(0))
+                .stdout(counted(HELD.0))
+                .pipe_capacity(PIPE)
+                .step(Step::Touch(at("finished")))),
+        ),
+        (
+            sh(
+                dir,
+                &family("t-child", "t-grandchild", "printf '%5000s' x; wait"),
+            ),
+            Ok(held_family()
+                .stdout(format!("{:>5000}", "x"))
+                .writes(at("t-child"), Writer::Child)
+                .writes(at("t-grandchild"), Writer::Member(0))),
+        ),
+        (
+            sh(
+                dir,
+                &family("c-child", "c-grandchild", &format!("{YES}; wait"))
+                    .replace("/bin/sleep 600 &", &format!("{YES} &")),
+            ),
+            Ok(held_family()
+                .stdout("y\n".repeat(PIPE))
+                .pipe_capacity(PIPE)
+                .writes(at("c-child"), Writer::Child)
+                .writes(at("c-grandchild"), Writer::Member(0))),
+        ),
+        (
+            sh(dir, &format!("echo $$ > h-child; {YES}")),
+            Ok(Script::ends(Exit::Code(0))
+                .hold(Hold::UntilKilled)
+                .stdout("y\n".repeat(PIPE))
+                .pipe_capacity(PIPE)
+                .writes(at("h-child"), Writer::Child)),
+        ),
+        (
+            piped("echo $$ > w-child; read x"),
+            Ok(Script::ends(Exit::Code(0))
+                .hold(Hold::UntilKilled)
+                .step(Step::AwaitInputClosed)
+                .writes(at("w-child"), Writer::Child)),
+        ),
+    ]
 }
 
 /// Holds `processes` to the contract in `dir`, a directory that exists, is
@@ -371,6 +564,17 @@ pub fn check<P: Processes + Clone + 'static>(
         (SPAWN_REFUSAL, check.spawn_refusal(processes)),
         (TOO_LARGE, check.too_large(processes)),
         (ESCAPED, check.escaped(processes)),
+        (INPUT, check.input(processes)),
+        (INPUT_CLOSED, check.input_closed(processes)),
+        (NO_INPUT, check.no_input(processes)),
+        (STREAM_LINES, check.stream_lines(processes)),
+        (STREAM_BYTES, check.stream_bytes(processes)),
+        (STREAM_ORDER, check.stream_order(processes)),
+        (STREAM_COALESCED, check.stream_coalesced(processes)),
+        (STREAM_HELD, check.stream_held(processes)),
+        (STREAM_LINE_TOO_LONG, check.stream_line_too_long(processes)),
+        (STREAM_CANCEL, check.stream_cancel(processes)),
+        (STREAM_SHUTDOWN, check.stream_shutdown(processes)),
     ];
     results
         .into_iter()
@@ -447,28 +651,7 @@ impl<G: Ground> Check<'_, G> {
 
     /// Starts `command` and a reader for each of its streams.
     fn start<P: Processes>(processes: &P, command: &Command) -> Result<Started<P::Child>, Refusal> {
-        let mut child = processes.spawn(command)?;
-        let streams = [Stream::Out, Stream::Err].map(|stream| {
-            let (sender, received) = mpsc::channel();
-            if let Some(mut output) = child.take_output(stream) {
-                thread::spawn(move || {
-                    let mut all = Vec::new();
-                    let mut buffer = [0; 4096];
-                    while let Ok(count) = output.read(&mut buffer) {
-                        if count == 0 {
-                            sender.send(all).ok();
-                            return;
-                        }
-                        all.extend_from_slice(&buffer[..count.min(buffer.len())]);
-                    }
-                });
-            }
-            received
-        });
-        Ok(Started {
-            child: Arc::new(child),
-            streams,
-        })
+        Ok(Self::reading(processes.spawn(command)?))
     }
 
     /// How `child` ended, if its wait returns within the deadline.
@@ -850,6 +1033,481 @@ impl<G: Ground> Check<'_, G> {
             && service.pending() == 0
             && completions.ids().is_empty()
     }
+
+    /// Writes every byte of `bytes` to `input`.
+    fn write_all(input: &mut impl ChildInput, bytes: &[u8]) -> Result<(), Refusal> {
+        let mut at = 0;
+        while at < bytes.len() {
+            match input.write(&bytes[at..])? {
+                0 => return Err(Refusal::new(RefusalKind::Failed, "a write wrote nothing")),
+                count => at += count.min(bytes.len() - at),
+            }
+        }
+        Ok(())
+    }
+
+    /// [`INPUT`].
+    fn input<P: Processes>(&self, processes: &P) -> bool {
+        let command = Command::new("/bin/cat", [""; 0], self.dir).with_input(Input::Pipe);
+        let Ok(mut child) = processes.spawn(&command) else {
+            return false;
+        };
+        let input = child.take_input();
+        let started = Self::reading(child);
+        let written = input.is_some_and(|mut input| {
+            let written = Self::write_all(&mut input, b"a\n\xffb").is_ok();
+            drop(input);
+            written
+        });
+        if !written {
+            started.child.kill();
+        }
+        let exit = self.wait(&started.child);
+        let streams = self.streams(&started);
+        written
+            && exit == Some(Exit::Code(0))
+            && streams.is_some_and(|(stdout, _)| stdout == b"a\n\xffb")
+    }
+
+    /// Takes the streams of `child` and starts a reader for each.
+    fn reading<C: Child>(mut child: C) -> Started<C> {
+        let streams = [Stream::Out, Stream::Err].map(|stream| {
+            let (sender, received) = mpsc::channel();
+            if let Some(mut output) = child.take_output(stream) {
+                thread::spawn(move || {
+                    let mut all = Vec::new();
+                    let mut buffer = [0; 4096];
+                    while let Ok(count) = output.read(&mut buffer) {
+                        if count == 0 {
+                            sender.send(all).ok();
+                            return;
+                        }
+                        all.extend_from_slice(&buffer[..count.min(buffer.len())]);
+                    }
+                });
+            }
+            received
+        });
+        Started {
+            child: Arc::new(child),
+            streams,
+        }
+    }
+
+    /// [`INPUT_CLOSED`].
+    fn input_closed<P: Processes>(&self, processes: &P) -> bool {
+        let command = sh(self.dir, INPUT_CLOSED_SCRIPT).with_input(Input::Pipe);
+        let Ok(mut child) = processes.spawn(&command) else {
+            return false;
+        };
+        let (Some(mut input), Some(mut out)) = (child.take_input(), child.take_output(Stream::Out))
+        else {
+            child.kill();
+            child.wait();
+            return false;
+        };
+        // Read until the child says it has closed its input, on a thread of
+        // its own so that a child that never says so cannot hold the check.
+        let (sender, said) = mpsc::channel();
+        thread::spawn(move || {
+            let mut all = Vec::new();
+            let mut buffer = [0; 64];
+            while !all.ends_with(b"closed\n") {
+                match out.read(&mut buffer) {
+                    Ok(0) | Err(_) => break,
+                    Ok(count) => all.extend_from_slice(&buffer[..count.min(buffer.len())]),
+                }
+            }
+            sender.send(all.ends_with(b"closed\n")).ok();
+        });
+        let closed = said.recv_timeout(self.ground.deadline()) == Ok(true);
+        let refused = closed
+            && matches!(
+                input.write(b"x"),
+                Err(Refusal {
+                    kind: RefusalKind::InputClosed,
+                    ..
+                })
+            );
+        let child = Arc::new(child);
+        child.kill();
+        refused && self.wait(&child).is_some()
+    }
+
+    /// [`NO_INPUT`].
+    fn no_input<P: Processes>(&self, processes: &P) -> bool {
+        let Ok(mut child) = processes.spawn(&sh(self.dir, "exit 0")) else {
+            return false;
+        };
+        let none = child.take_input().is_none();
+        let child = Arc::new(child);
+        none && self.wait(&child) == Some(Exit::Code(0))
+    }
+
+    /// Opens `command` on `service` as the child `id` with `streaming`, and
+    /// says whether it was opened.
+    fn open<P: Processes + 'static>(
+        &self,
+        (service, completions): &(Service<P>, Arc<Completions>),
+        id: u64,
+        command: Command,
+        streaming: Streaming,
+    ) -> bool {
+        service.open(id, command, streaming)
+            && completions.arrives(id, self.ground.deadline())
+            && service.take_stream(id) == Some(StreamReply::Opened)
+    }
+
+    /// Asks `service` for `ask` as the wait `wait`, and takes its reply
+    /// once it is completed within the deadline.
+    fn ask<P: Processes + 'static>(
+        &self,
+        (service, completions): &(Service<P>, Arc<Completions>),
+        wait: u64,
+        ask: impl FnOnce(&Service<P>) -> bool,
+    ) -> Option<StreamReply> {
+        if !ask(service) || !completions.arrives(wait, self.ground.deadline()) {
+            return None;
+        }
+        service.take_stream(wait)
+    }
+
+    /// The next delivery of the child `child`, read as the wait `wait`.
+    fn delivery<P: Processes + 'static>(
+        &self,
+        service: &(Service<P>, Arc<Completions>),
+        child: u64,
+        wait: u64,
+    ) -> Option<Delivery> {
+        match self.ask(service, wait, |service| service.read(child, wait))? {
+            StreamReply::Delivered(delivery) => Some(delivery),
+            _ => None,
+        }
+    }
+
+    /// Every delivery of the child `child` to its last, read with waits
+    /// counted up from `*wait`; `None` if a read is not answered within the
+    /// deadline.
+    fn to_the_end<P: Processes + 'static>(
+        &self,
+        service: &(Service<P>, Arc<Completions>),
+        child: u64,
+        wait: &mut u64,
+    ) -> Option<Vec<Delivery>> {
+        let mut deliveries = Vec::new();
+        loop {
+            *wait += 1;
+            let delivery = self.delivery(service, child, *wait)?;
+            let ended = delivery.ended.is_some();
+            deliveries.push(delivery);
+            if ended {
+                return Some(deliveries);
+            }
+        }
+    }
+
+    /// Shuts the service of a streaming property down, and passes on
+    /// whether the property held: a property leaves nothing running.
+    fn done<P: Processes + 'static>(
+        &self,
+        (service, _): &(Service<P>, Arc<Completions>),
+        held: bool,
+    ) -> bool {
+        self.shut(service) && held
+    }
+
+    /// [`STREAM_LINES`].
+    fn stream_lines<P: Processes + Clone + 'static>(&self, processes: &P) -> bool {
+        let service = Self::service(processes);
+        let command = sh(self.dir, LINES_SCRIPT);
+        let streaming = lines(Input::Pipe, ROOMY);
+        if !self.open(&service, 1, command, streaming) {
+            return self.done(&service, false);
+        }
+        let first = self.delivery(&service, 1, 2);
+        let as_written = first.is_some_and(|first| {
+            first.out == framed(&["one"]) && first.err == framed(&[]) && first.ended.is_none()
+        });
+        let written = self.ask(&service, 3, |service| {
+            service.write(1, 3, b"two\n".to_vec())
+        }) == Some(StreamReply::Written);
+        // `two` and `err` may come in one delivery or in two.
+        let mut wait = 3;
+        let mut deliveries = Vec::new();
+        while written && deliveries.len() < 2 {
+            wait += 1;
+            let Some(delivery) = self.delivery(&service, 1, wait) else {
+                break;
+            };
+            deliveries.push(delivery);
+            if lines_of(&deliveries, Stream::Out) == [b"two".to_vec()]
+                && lines_of(&deliveries, Stream::Err) == [b"err".to_vec()]
+            {
+                break;
+            }
+        }
+        let echoed = lines_of(&deliveries, Stream::Out) == [b"two".to_vec()]
+            && lines_of(&deliveries, Stream::Err) == [b"err".to_vec()];
+        wait += 1;
+        let closed = echoed
+            && self.ask(&service, wait, |service| service.close_input(1, wait))
+                == Some(StreamReply::Written);
+        let ended = closed
+            && self
+                .to_the_end(&service, 1, &mut wait)
+                .and_then(|rest| rest.last().and_then(|last| last.ended.clone()))
+                == Some(End::Exited(Exit::Code(4)));
+        self.done(&service, as_written && echoed && ended)
+    }
+
+    /// [`STREAM_BYTES`].
+    fn stream_bytes<P: Processes + Clone + 'static>(&self, processes: &P) -> bool {
+        let service = Self::service(processes);
+        let bytes = Streaming {
+            input: Input::Closed,
+            out: Framing::Bytes,
+            err: Framing::Bytes,
+            bound: ROOMY,
+        };
+        let mut wait = 10;
+        let raw = self.open(&service, 1, sh(self.dir, r"printf 'a\377b'"), bytes)
+            && self
+                .to_the_end(&service, 1, &mut wait)
+                .is_some_and(|all| bytes_of(&all, Stream::Out) == b"a\xffb");
+        let last_line = self.open(
+            &service,
+            2,
+            sh(self.dir, r"printf 'x\ny'"),
+            lines(Input::Closed, ROOMY),
+        ) && self
+            .to_the_end(&service, 2, &mut wait)
+            .is_some_and(|all| lines_of(&all, Stream::Out) == [b"x".to_vec(), b"y".to_vec()]);
+        self.done(&service, raw && last_line)
+    }
+
+    /// [`STREAM_ORDER`].
+    fn stream_order<P: Processes + Clone + 'static>(&self, processes: &P) -> bool {
+        let service = Self::service(processes);
+        let (count, bound) = ORDER;
+        let mut wait = 1;
+        let all = self
+            .open(
+                &service,
+                1,
+                sh(self.dir, &counting(count, "exit 0")),
+                lines(Input::Closed, bound),
+            )
+            .then(|| self.to_the_end(&service, 1, &mut wait))
+            .flatten();
+        let held = all.is_some_and(|all| {
+            bytes_of(&all, Stream::Out) == counted(count)
+                && all.len() >= 400
+                && all
+                    .iter()
+                    .all(|delivery| frame_bytes(&delivery.out) <= bound as usize)
+                && all.last().and_then(|last| last.ended.clone())
+                    == Some(End::Exited(Exit::Code(0)))
+        });
+        self.done(&service, held)
+    }
+
+    /// [`STREAM_COALESCED`]. Its bound is exactly what the child writes, so
+    /// the child's readers are held once all of it has been read: then
+    /// every chunk has been read while the one read was pending.
+    fn stream_coalesced<P: Processes + Clone + 'static>(&self, processes: &P) -> bool {
+        let service = Self::service(processes);
+        let script = counting(COALESCED, ": > written; read x");
+        let output = counted(COALESCED);
+        let opened = self.open(
+            &service,
+            1,
+            sh(self.dir, &script),
+            lines(Input::Pipe, output.len() as u64),
+        );
+        let (streams, completions) = &service;
+        let read = opened && streams.read(1, 2);
+        let all_read = read
+            && self.soon(|| self.ground.exists(&self.at("written")))
+            && self.soon(|| streams.held(1) == Some(true));
+        let once = all_read && completions.ids() == [1, 2];
+        let whole = once
+            && matches!(
+                streams.take_stream(2),
+                Some(StreamReply::Delivered(delivery))
+                    if bytes_of(std::slice::from_ref(&delivery), Stream::Out) == output
+            );
+        streams.cancel(1);
+        self.done(&service, whole)
+    }
+
+    /// [`STREAM_HELD`]. The child cannot finish while it is held: what is
+    /// outside it is at most the bound and a pipe's capacity.
+    fn stream_held<P: Processes + Clone + 'static>(&self, processes: &P) -> bool {
+        let service = Self::service(processes);
+        let (count, bound) = HELD;
+        let finished = self.at("finished");
+        let opened = self.open(
+            &service,
+            1,
+            sh(self.dir, &counting(count, ": > finished")),
+            lines(Input::Closed, bound),
+        );
+        let held = opened
+            && self.soon(|| service.0.held(1) == Some(true))
+            && !self.ground.exists(&finished);
+        let mut wait = 1;
+        let went_on =
+            held && self.to_the_end(&service, 1, &mut wait).is_some_and(|all| {
+                bytes_of(&all, Stream::Out) == counted(count)
+                    && all.last().and_then(|last| last.ended.clone())
+                        == Some(End::Exited(Exit::Code(0)))
+            }) && self.ground.exists(&finished);
+        self.done(&service, went_on)
+    }
+
+    /// [`STREAM_LINE_TOO_LONG`].
+    fn stream_line_too_long<P: Processes + Clone + 'static>(&self, processes: &P) -> bool {
+        let service = Self::service(processes);
+        let script = family("t-child", "t-grandchild", "printf '%5000s' x; wait");
+        if !self.open(
+            &service,
+            1,
+            sh(self.dir, &script),
+            lines(Input::Closed, 1024),
+        ) {
+            return self.done(&service, false);
+        }
+        let Some((child, grandchild)) = self.family_ids("t") else {
+            return self.done(&service, false);
+        };
+        let mut wait = 1;
+        let ended = self
+            .to_the_end(&service, 1, &mut wait)
+            .and_then(|all| all.last().and_then(|last| last.ended.clone()));
+        let held = ended
+            == Some(End::LineTooLong {
+                stream: Stream::Out,
+                bound: 1024,
+            })
+            && self.soon(|| !self.ground.alive(child))
+            && self.soon(|| !self.ground.alive(grandchild))
+            && self.soon(|| service.0.pending() == 0);
+        self.done(&service, held)
+    }
+
+    /// [`STREAM_CANCEL`].
+    fn stream_cancel<P: Processes + Clone + 'static>(&self, processes: &P) -> bool {
+        let service = Self::service(processes);
+        let script = family("c-child", "c-grandchild", &format!("{YES}; wait"))
+            .replace("/bin/sleep 600 &", &format!("{YES} &"));
+        if !self.open(&service, 1, sh(self.dir, &script), lines(Input::Closed, 64)) {
+            return self.done(&service, false);
+        }
+        let (streams, completions) = &service;
+        let Some((child, grandchild)) = self.family_alive("c") else {
+            streams.cancel(1);
+            return self.done(&service, false);
+        };
+        let held = self.soon(|| streams.held(1) == Some(true));
+        let cancelled = streams.cancel(1);
+        let ended = held
+            && cancelled
+            && self.soon(|| streams.pending() == 0)
+            && !self.ground.alive(child)
+            && self.soon(|| !self.ground.alive(grandchild))
+            && completions.ids() == [1];
+        self.done(&service, ended)
+    }
+
+    /// [`STREAM_SHUTDOWN`].
+    fn stream_shutdown<P: Processes + Clone + 'static>(&self, processes: &P) -> bool {
+        let service = Self::service(processes);
+        let held_open = self.open(
+            &service,
+            1,
+            sh(self.dir, &format!("echo $$ > h-child; {YES}")),
+            lines(Input::Closed, 64),
+        );
+        let waiting_open = self.open(
+            &service,
+            2,
+            sh(self.dir, "echo $$ > w-child; read x").with_input(Input::Pipe),
+            lines(Input::Pipe, ROOMY),
+        );
+        let ids = (
+            self.ground.written(&self.at("h-child")),
+            self.ground.written(&self.at("w-child")),
+        );
+        let held = held_open && waiting_open && self.soon(|| service.0.held(1) == Some(true));
+        let shut = self.shut(&service.0);
+        let (Some(held_child), Some(waiting_child)) = ids else {
+            return false;
+        };
+        held && shut
+            && !self.ground.alive(held_child)
+            && !self.ground.alive(waiting_child)
+            && service.0.pending() == 0
+    }
+}
+
+/// Lines framing for both streams, with `input` and `bound`.
+const fn lines(input: Input, bound: u64) -> Streaming {
+    Streaming {
+        input,
+        out: Framing::Lines,
+        err: Framing::Lines,
+        bound,
+    }
+}
+
+/// `lines` as frames.
+fn framed(lines: &[&str]) -> Frames {
+    Frames::Lines(lines.iter().map(|line| line.as_bytes().to_vec()).collect())
+}
+
+/// The frames of `stream` in `delivery`.
+const fn frames_of(delivery: &Delivery, stream: Stream) -> &Frames {
+    match stream {
+        Stream::Out => &delivery.out,
+        Stream::Err => &delivery.err,
+    }
+}
+
+/// Every line of `stream` in `deliveries`, in order.
+fn lines_of(deliveries: &[Delivery], stream: Stream) -> Vec<Vec<u8>> {
+    deliveries
+        .iter()
+        .flat_map(|delivery| match frames_of(delivery, stream) {
+            Frames::Lines(lines) => lines.clone(),
+            Frames::Bytes(_) => Vec::new(),
+        })
+        .collect()
+}
+
+/// How many bytes `frames` stand for, a line feed counted for each line.
+fn frame_bytes(frames: &Frames) -> usize {
+    match frames {
+        Frames::Lines(lines) => lines.iter().map(|line| line.len() + 1).sum(),
+        Frames::Bytes(bytes) => bytes.len(),
+    }
+}
+
+/// The bytes of `stream` in `deliveries`, end to end, a line feed after
+/// each line.
+fn bytes_of(deliveries: &[Delivery], stream: Stream) -> Vec<u8> {
+    let mut all = Vec::new();
+    for delivery in deliveries {
+        match frames_of(delivery, stream) {
+            Frames::Bytes(bytes) => all.extend_from_slice(bytes),
+            Frames::Lines(lines) => {
+                for line in lines {
+                    all.extend_from_slice(line);
+                    all.push(b'\n');
+                }
+            }
+        }
+    }
+    all
 }
 
 #[cfg(test)]
@@ -857,10 +1515,10 @@ mod tests {
     use super::PROPERTIES;
 
     #[test]
-    fn the_properties_are_fourteen_and_each_is_named_once() {
+    fn the_properties_are_twenty_five_and_each_is_named_once() {
         let mut names = PROPERTIES.to_vec();
         names.sort_unstable();
         names.dedup();
-        assert_eq!(names.len(), 14);
+        assert_eq!(names.len(), 25);
     }
 }

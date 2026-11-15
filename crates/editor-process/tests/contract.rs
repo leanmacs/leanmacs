@@ -8,7 +8,8 @@
 use std::path::Path;
 
 use editor_process::contract::{
-    self, AFTER_REAP, CANCEL, ESCAPED, KILL, RUN, SHUTDOWN, SIGNAL, STRAGGLERS, TOO_LARGE,
+    self, AFTER_REAP, CANCEL, ESCAPED, INPUT, INPUT_CLOSED, KILL, RUN, SHUTDOWN, SIGNAL,
+    STRAGGLERS, STREAM_CANCEL, STREAM_LINE_TOO_LONG, STREAM_LINES, STREAM_SHUTDOWN, TOO_LARGE,
 };
 use editor_process::fake::{FakeChild, FakeInput, FakeOutput, FakeProcesses, Flaws};
 use editor_process::{Child, Command, Exit, Output, Processes, Refusal, Stream};
@@ -51,7 +52,15 @@ fn a_fake_whose_group_kill_ends_only_the_child_is_reported() {
 
     assert_eq!(
         failures(&fake, &fake),
-        [KILL, STRAGGLERS, CANCEL, SHUTDOWN, TOO_LARGE]
+        [
+            KILL,
+            STRAGGLERS,
+            CANCEL,
+            SHUTDOWN,
+            TOO_LARGE,
+            STREAM_LINE_TOO_LONG,
+            STREAM_CANCEL
+        ]
     );
 }
 
@@ -64,7 +73,17 @@ fn a_fake_whose_wait_does_not_reap_is_reported() {
 
     assert_eq!(
         failures(&fake, &fake),
-        [KILL, STRAGGLERS, CANCEL, SHUTDOWN, TOO_LARGE, ESCAPED]
+        [
+            KILL,
+            STRAGGLERS,
+            CANCEL,
+            SHUTDOWN,
+            TOO_LARGE,
+            ESCAPED,
+            STREAM_LINE_TOO_LONG,
+            STREAM_CANCEL,
+            STREAM_SHUTDOWN
+        ]
     );
 }
 
@@ -76,6 +95,26 @@ fn a_fake_whose_wait_leaves_the_group_alive_at_a_normal_end_is_reported() {
     });
 
     assert_eq!(failures(&fake, &fake), [STRAGGLERS]);
+}
+
+#[test]
+fn a_fake_that_loses_what_is_written_to_a_childs_input_is_reported() {
+    let fake = fake(Flaws {
+        drop_input: true,
+        ..Flaws::default()
+    });
+
+    assert_eq!(failures(&fake, &fake), [INPUT, STREAM_LINES]);
+}
+
+#[test]
+fn a_fake_that_says_a_write_to_a_closed_input_succeeded_is_reported() {
+    let fake = fake(Flaws {
+        epipe_ok: true,
+        ..Flaws::default()
+    });
+
+    assert_eq!(failures(&fake, &fake), [INPUT_CLOSED]);
 }
 
 /// A child of a wrapped fake, with each of the wrapper's flaws.
@@ -132,7 +171,7 @@ impl Child for Bent {
     }
 
     fn take_input(&mut self) -> Option<FakeInput> {
-        None
+        self.child.take_input()
     }
 
     fn wait(&self) -> Exit {
@@ -179,7 +218,7 @@ fn a_fake_that_drops_standard_error_is_reported() {
         signal_as_code: false,
     };
 
-    assert_eq!(failures(&bending, &fake), [RUN]);
+    assert_eq!(failures(&bending, &fake), [RUN, STREAM_LINES]);
 }
 
 #[test]
@@ -210,7 +249,7 @@ fn a_wait_asked_again_and_a_kill_after_the_reap_are_part_of_the_contract() {
             self.0.take_output(stream)
         }
         fn take_input(&mut self) -> Option<FakeInput> {
-            None
+            self.0.take_input()
         }
         fn wait(&self) -> Exit {
             let exit = self.0.wait();
