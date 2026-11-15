@@ -134,11 +134,16 @@ namespace Loop.Driver
 variable {scheme : InputScheme}
 
 /-- A driver over the state `start` makes on `model`, with `keys` and the
-registered jobs `registered`. Refused when making the state is. -/
+registered jobs `registered`. The state begins with the heights `model`'s
+display answers (`EditorState.heights`), as a host's has them once it has
+published: so a step that changes nothing leaves the state as it was. Refused
+when making the state is. -/
 def over (keys : Loop.Keys scheme) (registered : String → Option (List Argument → Work))
     (start : TextM EditorState) (model : EditorModel) : Except TextError (Loop.Driver scheme) :=
   match (TextM.lift start).runModel model with
-  | (.ok state, model) => .ok { loop := { state }, model, keys, registered }
+  | (.ok state, model) =>
+    let state := { state with heights := model.display.cells.heights }
+    .ok { loop := { state }, model, keys, registered }
   | (.error refusal, _) => .error refusal
 
 /-- What a step of the driver's loop is handed: its `keys`, told which names

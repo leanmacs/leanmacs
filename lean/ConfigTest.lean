@@ -1536,7 +1536,7 @@ def scriptChecks (context : Context) : List Check :=
             | .error message => message.startsWith "line 2: "
             | .ok _ => false) },
     { name :=
-        "a script that resizes the frame and asks for the scene prints the scene in a frame of that size, with its one view in the whole of it; a second resize is the next scene's size"
+        "a script that resizes the frame and asks for the scene prints the scene in a frame of that size, with its one view in the whole of it above the bottom row, one 16-pixel cell of the recorder; a second resize is the next scene's size"
       run :=
         IO.FS.withTempDir fun directory => do
           writeFiles directory greetConfig
@@ -1549,9 +1549,9 @@ def scriptChecks (context : Context) : List Check :=
           return failure == none &&
               (← stage.output.get) ==
                 #["scene 640x480, focused 0, echo \"\", preedit -, published 1",
-                  "view 0 0,0 640x480: \"\", scroll 0, selections 0..0", statusOf,
+                  "view 0 0,0 640x464: \"\", scroll 0, selections 0..0", statusOf,
                   "scene 320x200, focused 0, echo \"\", preedit -, published 3",
-                  "view 0 0,0 320x200: \"\", scroll 0, selections 0..0", statusOf] },
+                  "view 0 0,0 320x184: \"\", scroll 0, selections 0..0", statusOf] },
     { name :=
         "a script that commits text and asks for the scene prints the scene: its frame, and a view whose snapshot holds the text, read from the library, with the cursor after it"
       run :=

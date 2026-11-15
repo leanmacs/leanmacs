@@ -1037,8 +1037,12 @@ ended, also when it was refused, and its refusal is then thrown: that is
 lookup and it. `none`, with nothing taken and nothing run, for a view that
 is not laid out (`EditorState.rect?`). -/
 def onArea {α : Type} (target : Target) (run : Scroll.Area → EditorM α) : EditorM (Option α) := do
-  let some rect := (← editorState).rect? target.window.id | return none
-  some <$> target.buffer.text.withSnapshot fun snapshot => run (.ofRect snapshot rect)
+  let state ← editorState
+  let some rect := state.rect? target.window.id | return none
+  -- A window's bottom row is its status row, and the minibuffer's view's
+  -- the frame's bottom row (`EditorState.bottomRow`).
+  let bottom := state.bottomRow target.window.id
+  some <$> target.buffer.text.withSnapshot fun snapshot => run (.ofRect snapshot rect bottom)
 
 end Target
 

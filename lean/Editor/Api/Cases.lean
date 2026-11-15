@@ -733,18 +733,21 @@ def scrollCases : List Case :=
             (← refusedWith .noSuchMarker target.anchor) &&
             (← refusedWith .noSuchMarker (target.scrollTo 0)) },
     { name :=
-        "a command asks about its view with a snapshot of its text and the view's rectangle: the rows asked inside are the display's rows of that text at the rectangle's width and height, and the snapshot is released afterwards; a view with no rectangle is answered none, with no snapshot taken; and a program that is refused inside is refused the same way, with its snapshot released; the editor state is as it was"
+        "a command asks about its view with a snapshot of its text and the view's rectangle: the rows asked inside are the display's rows of that text at the rectangle's width and its height less its status row, and the snapshot is released afterwards; a view with no rectangle is answered none, with no snapshot taken; and a program that is refused inside is refused the same way, with its snapshot released; the editor state is as it was"
       start := do
         let state ← holding "héllo\nwörld" (selection #[(0, 0)])
-        return { state with frame := { state.frame with size := ⟨3, 4⟩ } }
+        -- Rows of a pixel: the frame's bottom row is below the window, and
+        -- the window's status row is its own last.
+        return { state with
+            frame := { state.frame with size := ⟨3, 5⟩ }
+            heights := { text := 1, status := 1, message := 1 } }
       run := do
         let state ← editorState
         let some target := state.focusedTarget? | return false
         let some rect := state.rect? ⟨0⟩ | return false
         let own ← scratch.snapshot
-        let want ←
-          Display.rowsShown
-              { snapshot := own, width := rect.width, height := rect.height, anchor := 0 }
+        let height := rect.height - state.bottomRow ⟨0⟩
+        let want ← Display.rowsShown { snapshot := own, width := rect.width, height, anchor := 0 }
         let asked ←
           target.onArea fun area => do
               return (area, ← area.snapshot.read, ← area.rows 0)
@@ -761,7 +764,8 @@ def scrollCases : List Case :=
         -- after it is taken now: the view with no rectangle took none.
         let last ← scratch.snapshot
         let inside : SnapshotId := ⟨area.snapshot.index + 1⟩
-        return area == Scroll.Area.ofRect area.snapshot rect && area.snapshot != own &&
+        return area == Scroll.Area.ofRect area.snapshot rect (state.bottomRow ⟨0⟩) &&
+            area.snapshot != own &&
             read == "héllo\nwörld" &&
             rows == want &&
             !rows.isEmpty &&
@@ -772,23 +776,27 @@ def scrollCases : List Case :=
             (← refusedWith .noSuchSnapshot inside.read) &&
             (← editorState) == state },
     { name :=
-        "the loop's follow, over the views of the next scene, places the scroll anchor of a view whose cursor is below the rows it shows: from twenty lines in a frame of five rows with the cursor on the tenth, the rows the display answers from the anchor did not include the cursor's row and then do, the anchor keeps its bias, and the editor state is as it was"
+        "the loop's follow, over the views of the next scene, places the scroll anchor of a view whose cursor is below the rows it shows: from twenty lines in a view of five rows with the cursor on the tenth, the rows the display answers from the anchor did not include the cursor's row and then do, the anchor keeps its bias, and the editor state is as it was"
       start := do
         let lines := (List.range 20).map fun line => s!"{line / 10}{line % 10}"
         -- Each line is two digits and a line feed, so the tenth starts at
         -- byte 27.
         let state ← holding ("\n".intercalate lines) (selection #[(27, 27)])
-        return { state with frame := { state.frame with size := ⟨10, 5⟩ } }
+        -- Rows of a pixel: a frame of seven is a window of six, whose text
+        -- has five rows above its status row.
+        return { state with
+            frame := { state.frame with size := ⟨10, 7⟩ }
+            heights := { text := 1, status := 1, message := 1 } }
       run := do
         let state ← editorState
         let some target := state.focusedTarget? | return false
         let (views, _, unshown) ← ({ state } : Loop TestScheme.scheme).views
         let some view := views[0]? | return false
-        let area := Scroll.Area.ofRect view.snapshot view.rect
+        let area := Scroll.Area.ofRect view.snapshot view.rect (state.bottomRow view.id)
         let some row := (← area.rows 27)[0]? | return false
         let before ← target.anchor
         let hidden := !(← area.rows before.offset).contains row
-        Loop.followed state.scrollMargin views
+        Loop.followed state.scrollMargin state.bottomRow views
         let after ← target.anchor
         return unshown.isNone && views.size == 1 && hidden && after.offset != before.offset &&
             after.bias == before.bias &&

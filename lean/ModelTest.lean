@@ -4731,11 +4731,13 @@ with the scroll anchor and the cursor as offsets. A row is one the display model
 (`allRows`, `rowsFrom`, `rowAt`): no check says where a text wraps. -/
 def scrollChecks : List Check :=
   [{  name :=
-        "the area of a view asks with the snapshot of its text, its rectangle's width and its rectangle's whole height"
+        "the area of a view asks with the snapshot of its text, its rectangle's width and its rectangle's height less its bottom row"
       run :=
         pure
-          (Scroll.Area.ofRect ⟨3⟩ { x := 7, y := 9, width := 40, height := 30 } ==
-            { snapshot := ⟨3⟩, width := 40, height := 30 }) },
+          (Scroll.Area.ofRect ⟨3⟩ { x := 7, y := 9, width := 40, height := 30 } 16 ==
+              { snapshot := ⟨3⟩, width := 40, height := 14 } &&
+            (Scroll.Area.ofRect ⟨3⟩ { x := 7, y := 9, width := 40, height := 10 } 16).height ==
+              0) },
     { name :=
         "a cursor on the first row a view shows, on the last, and on one between them keeps the scroll anchor"
       run :=
@@ -5241,15 +5243,17 @@ def stateChecks : List Check :=
                   (laid.map (·.1)).filter (· != view) == tree.windows &&
                   laid.size == tree.windows.size + 1 },
     { name :=
-        "the minibuffer's place takes a strip of its split, the minibuffer's height along the split's axis, or the whole extent where that is less, and its sibling the rest: below a window, in the left of two columns, and first along columns; a tree that is the place alone gives the view the whole rectangle"
+        "the minibuffer's place takes a strip of its split, the extent it is given along the split's axis, or the whole extent where that is less, and its sibling the rest: below a window, in the left of two columns, and first along columns; a tree that is the place alone gives the view the whole rectangle"
       run :=
         pure <|
           let view : ViewId := ⟨9⟩
           let window (index : Nat) : Split := .window ⟨index⟩
           let below : Split := .split .rows (window 0) .minibuffer
-          let strip := Split.minibufferHeight
+          -- A prompt's place in a 16-pixel cell: a text row and the bottom
+          -- row.
+          let strip := 32
           let laid (tree : Split) (width height : Nat) :=
-            tree.rects (frameRect ⟨width, height⟩) (some view)
+            tree.rects (frameRect ⟨width, height⟩) (some view) strip
           strip > 0 && strip < 240 &&
             laid below 640 480 ==
               #[(⟨0⟩, { x := 0, y := 0, width := 640, height := 480 - strip }),
@@ -5270,13 +5274,15 @@ def stateChecks : List Check :=
                 (⟨0⟩, { x := strip, y := 0, width := 640 - strip, height := 480 })] &&
             laid .minibuffer 640 480 == #[(view, frameRect ⟨640, 480⟩)] },
     { name :=
-        "with no minibuffer's view given the minibuffer's place takes nothing: a window above it has the whole frame, and the place alone has no view"
+        "with no minibuffer's view given the minibuffer's place takes the extent it is given and holds no view, and with none given it takes nothing: a window above it has the rest of the frame, or the whole frame, and the place alone has no view"
       run :=
         pure <|
           let whole := frameRect ⟨640, 480⟩
-          (Split.split .rows (.window ⟨0⟩) .minibuffer).rects whole == #[(⟨0⟩, whole)] &&
-            (Split.split .rows (.window ⟨0⟩) .minibuffer).rects whole none == #[(⟨0⟩, whole)] &&
-            Split.minibuffer.rects whole == #[] },
+          let below : Split := .split .rows (.window ⟨0⟩) .minibuffer
+          below.rects whole == #[(⟨0⟩, whole)] && below.rects whole none == #[(⟨0⟩, whole)] &&
+            below.rects whole none 16 == #[(⟨0⟩, { whole with height := 464 })] &&
+            Split.minibuffer.rects whole == #[] &&
+            Split.minibuffer.rects whole none 16 == #[] },
     { name := "removing the only window is refused with onlyWindow, and the state is as it was"
       run :=
         pure <|
@@ -5910,7 +5916,9 @@ def stateChecks : List Check :=
             let asking := (prompted state).2
             -- Whether `rect?` answers, for every view, the tree's rectangle.
             let agrees (state : EditorState) : Bool :=
-              let laid := state.frame.tree.rects (frameRect state.frame.size) state.minibufferView?
+              let laid :=
+                state.frame.tree.rects (frameRect state.frame.size) state.minibufferView?
+                  state.minibufferPlace
               laid.map (·.1) == state.views &&
                 laid.all fun (id, rect) => state.rect? id == some rect
             agrees state && agrees asking && asking.views.size == state.views.size + 1 &&
@@ -6687,7 +6695,7 @@ def switched (start : TextM EditorState) (text : String) (events : List Event :=
 each event does to the state, and the scene it publishes. -/
 def loopChecks : List Check :=
   [{  name :=
-        "a resize to 641 by 479 of a frame of three windows publishes a scene whose views' rectangles tile 641 by 479"
+        "a resize to 641 by 479 of a frame of three windows publishes a scene whose views' rectangles tile 641 by 479 above its bottom row"
       run :=
         pure <|
           match looped threeWindows [.resize { width := 641, height := 479, scale := 2.0 }] with
@@ -6695,8 +6703,9 @@ def loopChecks : List Check :=
             nexts == #[.continue] && loop.state.frame.size == ⟨641, 479⟩ &&
               match scenes with
               | #[scene] =>
+                -- The display model's bottom row is a pixel tall.
                 scene.size == ⟨641, 479⟩ && scene.views.map (·.id) == #[⟨0⟩, ⟨1⟩, ⟨2⟩] &&
-                  tiles (frameRect ⟨641, 479⟩) (scene.views.map (·.rect))
+                  tiles (frameRect ⟨641, 478⟩) (scene.views.map (·.rect))
               | _ => false
           | none => false },
     { name :=
@@ -6741,7 +6750,7 @@ def loopChecks : List Check :=
           | some (_, scenes, _) => scenes.map (·.focused) == #[none, some ⟨0⟩]
           | none => false },
     { name :=
-        "a press of a key that is bound to nothing and prints nothing, a pointer and the window opening leave the state as it was, and each publishes one scene"
+        "a press of a key that is bound to nothing and prints nothing, a pointer and the window opening leave the state as it was, but for the heights the display answered, and each publishes one scene"
       run :=
         pure <|
           let events : List Event :=
@@ -6753,7 +6762,8 @@ def loopChecks : List Check :=
             return (state, loop, nexts)
           match (start.runModel editorModel) with
           | (.ok (state, loop, nexts), model) =>
-            loop.state == state && nexts == #[.continue, .continue, .continue] &&
+            loop.state == { state with heights := editorModel.display.cells.heights } &&
+              nexts == #[.continue, .continue, .continue] &&
               model.display.scenes.size == 3
           | (.error _, _) => false },
     { name := "a close request and a quit say stop and publish nothing"
@@ -6830,7 +6840,10 @@ def loopChecks : List Check :=
             return (state, loop, next)
           match program.runModel editorModel with
           | (.ok (state, loop, next), model) =>
-            next == .continue && loop.state == { state with echo := "refused: no such text" } &&
+            next == .continue &&
+              loop.state ==
+                { state with
+                  echo := "refused: no such text", heights := editorModel.display.cells.heights } &&
               loop.state.wellFormed &&
               loop.shown.isEmpty &&
               match model.display.scenes with
@@ -6972,7 +6985,8 @@ def loopChecks : List Check :=
                 Loop.promptFace != Loop.nameFace &&
                 scene.focused == some ⟨1⟩ &&
                 scene.views.map (fun view => (view.id, view.rect)) ==
-                  state.frame.tree.rects (frameRect state.frame.size) (some ⟨1⟩) &&
+                  state.frame.tree.rects (frameRect state.frame.size) (some ⟨1⟩)
+                    state.minibufferPlace &&
                 (scene.views.all fun view => state.rect? view.id == some view.rect) &&
                 tiles (frameRect state.frame.size) (scene.views.map (·.rect))
             | _, _ => false
@@ -6985,19 +6999,21 @@ def loopChecks : List Check :=
           | some (_, #[scene], model) => scene.views.map (shownText model) == #[some "", some "abc"]
           | _ => false },
     { name :=
-        "once the prompt is closed the next scene has one view, the window's, which has the whole frame"
+        "once the prompt is closed the next scene has one view, the window's, which has the frame above its bottom row"
       run :=
         pure <|
           let program : EditorM TestLoop := do
             let (loop, _) ← stepsFrom (promptedOver "ab") [pressF5]
             let (_, closed) := loop.state.closePrompt none
             return (← stepped { loop with state := closed } pressF5).1
+          -- The display model's rows are a pixel tall: the prompt's place is
+          -- two, and the bottom row one.
           match program.runModel editorModel with
           | (.ok _, model) =>
             model.display.scenes.map (·.views.map fun view => (view.id, view.rect)) ==
               #[(Split.split .rows (.window ⟨0⟩) .minibuffer).rects (frameRect ⟨640, 480⟩)
-                  (some ⟨1⟩),
-                #[(⟨0⟩, frameRect ⟨640, 480⟩)]]
+                  (some ⟨1⟩) 2,
+                #[(⟨0⟩, frameRect ⟨640, 479⟩)]]
           | (.error _, _) => false },
     { name :=
         "each view's cursor in the scene is what the scheme reports of that view: the default before a key, and, in the scene published after the key whose invocation switches the focused view's report, the switched one for that view and the default still for the others; a key that switches it back is followed by the default again"
@@ -7159,7 +7175,11 @@ def commitChecks : List Check :=
             return (state, loop, ← target.buffer.text.read)
           match program.runModel editorModel with
           | (.ok (state, loop, text), model) =>
-            loop.state == { state with echo := "refused: no such marker" } && text == "" &&
+            loop.state ==
+                { state with
+                  echo := "refused: no such marker",
+                  heights := editorModel.display.cells.heights } &&
+              text == "" &&
               (model.display.scenes.map (·.echo)) == #["refused: no such marker"]
           | (.error _, _) => false },
     { name :=
@@ -17933,10 +17953,17 @@ feeds, and then `ending`. -/
 def numbered (count : Nat) (ending : String := "") : String :=
   "\n".intercalate ((List.range count).map fun line => s!"{line / 10}{line % 10}") ++ ending
 
+/-- The frame whose one window's text area is `area`, in `cells`: two rows
+of a cell taller, for the window's status row and the frame's bottom row,
+which the display model answers a cell tall each. So "a view of six rows"
+of a check is a view whose rows are asked with six rows' height. -/
+def frameAround (area : Size) (cells : Display.Cells) : Size :=
+  ⟨area.width, area.height + 2 * cells.lineHeight⟩
+
 /-- A state of the view checks: `evilState` over `contents` with the cursor
 at `head`, in a frame of `size`, with the scroll margin `margin`. The one
-window has the whole frame, and its scroll anchor is at the text's
-start. -/
+window has the frame above its bottom row, and its scroll anchor is at the
+text's start. -/
 def viewState (contents : String) (size : Size) (margin : Nat := 0) (head : Nat := 0) :
     TextM EditorState := do
   let state ← evilState contents head
@@ -17944,11 +17971,12 @@ def viewState (contents : String) (size : Size) (margin : Nat := 0) (head : Nat 
 
 /-- A driver of the view checks over `viewState`, under the Vim scheme that
 ships, each step handed `handed`, on `model`; `none` if making the state was
-refused. -/
+refused. `size` is the window's text area (`frameAround`). -/
 def viewDriver (contents : String) (size : Size) (margin : Nat := 0) (head : Nat := 0)
     (handed : Loop.Keys Vim.Default.scheme := evilHanded) (model : EditorModel := editorModel) :
     Option EvilDriver :=
-  (Loop.Driver.over handed (fun _ => none) (viewState contents size margin head) model).toOption
+  let frame := frameAround size model.display.cells
+  (Loop.Driver.over handed (fun _ => none) (viewState contents frame margin head) model).toOption
 
 /-- What a scene shows of one view, as the view checks read it: where its
 markers are, and what the display model answers for it. -/
@@ -17986,7 +18014,9 @@ def seenIn (model : EditorModel) (view : ViewId := ⟨0⟩) : Option ViewSeen :=
     let .anchor anchor ← shown.scroll.text.marker shown.scroll | throw .noSuchMarker
     let .selection selection ← marker.text.marker marker | throw .noSuchMarker
     let some range := selection.ranges[selection.primary]? | throw .badSelection
-    let area := Scroll.Area.ofRect shown.snapshot shown.rect
+    -- A window's view, asked with its height less its status row, which
+    -- is the display model's cell.
+    let area := Scroll.Area.ofRect shown.snapshot shown.rect model.display.cells.heights.status
     return {
         scroll := shown.scroll, anchor := anchor.offset, selection, head := range.head
         shown := ← area.rows anchor.offset, row := (← area.rows range.head)[0]? }
@@ -17998,8 +18028,9 @@ def viewSeen (driver : EvilDriver) (view : ViewId := ⟨0⟩) : Option ViewSeen 
 
 /-- `driver` fed a resize of the frame to `size`. -/
 def viewResized (driver : EvilDriver) (size : Size) : EvilDriver :=
+  let frame := frameAround size driver.model.display.cells
   (driver.feed
-      { event := .resize { width := size.width, height := size.height, scale := 1.0 }
+      { event := .resize { width := frame.width, height := frame.height, scale := 1.0 }
         stamp := 0 }).1
 
 /-- `driver` after the command called `name` has run as an invocation no key
@@ -18062,7 +18093,9 @@ def splitViews (contents : String) (size : Size) (second : Nat) : TextM EditorSt
 in a view of twenty short lines in a frame of `size`, in `cells`. -/
 def viewCost (size : Size) (typed : String)
     (cells : Display.Cells := { advance := 1, lineHeight := 1 }) : Option Nat := do
-  let driver ← viewDriver (numbered 20) size (model := { countingModel with display := { cells } })
+  let model := { countingModel with display := { cells } }
+  let driver ←
+    (Loop.Driver.over evilHanded (fun _ => none) (viewState (numbered 20) size) model).toOption
   let pressed := keys typed
   let before :=
     (pressed.dropLast).foldl (fun driver key => (driver.feed { event := press key, stamp := 0 }).1)
@@ -18260,8 +18293,11 @@ def viewChecks : List Check :=
             return none
           let idle : Dispatched := fun _ => pure none
           let handed := evilHanded (commands := [("grow", grow), ("idle", idle)])
+          -- Rows of a pixel: a frame of twelve is eleven above its bottom
+          -- row, a window of five and one of six, whose texts have four rows
+          -- and five above their status rows.
           match
-            (Loop.Driver.over handed (fun _ => none) (splitViews contents ⟨10, 10⟩ (startOf rows 3))
+            (Loop.Driver.over handed (fun _ => none) (splitViews contents ⟨10, 12⟩ (startOf rows 3))
                 editorModel).toOption with
           | none => false
           | some driver =>
@@ -18377,12 +18413,15 @@ def viewChecks : List Check :=
             | some was, some now => now.scroll == was.scroll && now.anchor != was.anchor
             | _, _ => false },
     { name :=
-        "what following costs, as differences on the watch model's clock, for the same key: a frame of one row, whose one view keeps its anchor, costs four requests more than a frame of no height, where nothing is asked; and in cells of 8 by 16 a frame 8 pixels tall, whose view shows no row, costs two more than one of no height"
+        "what following costs, as differences on the watch model's clock, for the same key: a frame whose window's text has one row, whose one view keeps its anchor, costs four requests more than a frame of no height, where nothing is asked; and in cells of 8 by 16 a frame whose window's text area is 8 pixels tall, whose view shows no row, costs two more than one of no height"
       run :=
         pure <|
           let cells : Display.Cells := { advance := 8, lineHeight := 16 }
-          match viewCost ⟨10, 0⟩ "l", viewCost ⟨10, 1⟩ "l", viewCost ⟨80, 0⟩ "l" cells,
-            viewCost ⟨80, 8⟩ "l" cells with
+          -- In cells of a pixel a frame of three is a window of two above
+          -- the bottom row, whose text has one row above its status row; in
+          -- cells of 16 a frame of 40 is a window of 24 and a text area of 8.
+          match viewCost ⟨10, 0⟩ "l", viewCost ⟨10, 3⟩ "l", viewCost ⟨80, 0⟩ "l" cells,
+            viewCost ⟨80, 40⟩ "l" cells with
           | some bare, some one, some flat, some short =>
             bare > 0 && one == bare + 4 && flat == bare && short == flat + 2
           | _, _, _, _ => false },
@@ -18684,6 +18723,98 @@ def viewChecks : List Check :=
               | some now => now.anchor == 0 && now.head == 9 && after.loop.state.echo == ""
               | none => false }]
 
+/-- A rectangle at `x`, `y`, `width` across and `height` down. -/
+def rectAt (x y width height : Nat) : Rect :=
+  { x, y, width, height }
+
+/-- The initial state in a frame of `size`, with `heights` as the heights
+the display last answered. -/
+def sizedState (size : Size) (heights : Display.Heights := default) : Option EditorState :=
+  (onTextModel (EditorState.initial size)).map ({ · with heights })
+
+/-- The checks of how the views and the minibuffer's place are sized by the
+heights the display answers (`EditorState.rects`, `EditorState.bottomRow`,
+`Scroll.Area.ofRect`), and of what `Loop.publish` keeps of them; and that
+opening a prompt clears the echo, as Vim does (`EditorState.openPrompt`).
+The heights are the state's: a check sets them as the display would. -/
+def heightChecks : List Check :=
+  let sixteen : Display.Heights := { text := 16, status := 16, message := 16 }
+  let odd : Display.Heights := { text := 24, status := 20, message := 28 }
+  [{  name :=
+        "with no prompt open a window of a 640 by 480 frame ends above the bottom row, 640 by 464, and is asked about with its height less its status row"
+      run :=
+        pure <|
+          match sizedState ⟨640, 480⟩ sixteen with
+          | none => false
+          | some state =>
+            state.rects == #[(⟨0⟩, rectAt 0 0 640 464)] && state.bottomRow ⟨0⟩ == 16 &&
+              Scroll.Area.ofRect ⟨3⟩ (rectAt 0 0 640 464) (state.bottomRow ⟨0⟩) ==
+                { snapshot := ⟨3⟩, width := 640, height := 448 } },
+    { name :=
+        "with a prompt open the minibuffer's place is a text row and the bottom row, and the minibuffer's view is asked about with its height less the bottom row"
+      run :=
+        pure <|
+          match sizedState ⟨640, 480⟩ sixteen with
+          | none => false
+          | some state =>
+            match prompted state with
+            | (.ok view, asking) =>
+              asking.rects == #[(⟨0⟩, rectAt 0 0 640 448), (view, rectAt 0 448 640 32)] &&
+                asking.bottomRow view == 16 &&
+                Scroll.Area.ofRect ⟨3⟩ (rectAt 0 448 640 32) (asking.bottomRow view) ==
+                  { snapshot := ⟨3⟩, width := 640, height := 16 }
+            | _ => false },
+    { name :=
+        "with heights of 24, 20 and 28 a 640 by 480 frame gives a window of 452 asked about at 432, and a prompt's place of 52 asked about at 24"
+      run :=
+        pure <|
+          match sizedState ⟨640, 480⟩ odd with
+          | none => false
+          | some state =>
+            let window := rectAt 0 0 640 452
+            state.rects == #[(⟨0⟩, window)] &&
+              (Scroll.Area.ofRect ⟨3⟩ window (state.bottomRow ⟨0⟩)).height == 432 &&
+              match prompted state with
+              | (.ok view, asking) =>
+                let place := rectAt 0 428 640 52
+                asking.rects == #[(⟨0⟩, rectAt 0 0 640 428), (view, place)] &&
+                  (Scroll.Area.ofRect ⟨3⟩ place (asking.bottomRow view)).height == 24
+              | _ => false },
+    { name := "a frame of 0 by 0 gives views of 0 by 0, with a prompt open or not"
+      run :=
+        pure <|
+          match sizedState ⟨0, 0⟩ sixteen with
+          | none => false
+          | some state =>
+            state.rects == #[(⟨0⟩, rectAt 0 0 0 0)] &&
+              match prompted state with
+              | (.ok view, asking) =>
+                asking.rects == #[(⟨0⟩, rectAt 0 0 0 0), (view, rectAt 0 0 0 0)]
+              | _ => false },
+    { name := "a publish keeps the heights the display answered, for the commands until the next"
+      run :=
+        pure <|
+          match evilDriver "|abc" with
+          | none => false
+          | some driver =>
+            -- The display model's cells are 1 by 1, so its heights are 1.
+            (viewResized driver ⟨40, 30⟩).loop.state.heights ==
+              { text := 1, status := 1, message := 1 } },
+    { name := "opening a prompt clears the echo, and an open that is refused leaves it as it was"
+      run :=
+        pure <|
+          match sizedState ⟨640, 480⟩ with
+          | none => false
+          | some state =>
+            let said := { state with echo := "before" }
+            match prompted said with
+            | (.ok _, asking) =>
+              asking.echo == "" &&
+                match prompted { asking with echo := "before" } with
+                | (.error (.alreadyOpen _), refused) => refused.echo == "before"
+                | _ => false
+            | _ => false }]
+
 /-- Every check, in the order they run.
 
 The order matters where the process's one pool is measured. `poolChecks` run
@@ -18716,6 +18847,7 @@ def checks : List Check :=
     guardChecks ++
     scrollChecks ++
     originChecks ++
+    heightChecks ++
     stateChecks ++
     stateRequestChecks ++
     loopChecks ++

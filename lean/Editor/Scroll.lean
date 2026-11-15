@@ -166,16 +166,19 @@ remembering that a view was fine until something changed, which is a
 verdict of layout kept in Lean, stale when layout changes for a reason Lean
 does not see.
 
-## What is the display's, and missing
+## What is the display's
 
 - **The height of a view's text area.** The rows query takes a height, and
-  the real frame gives a view's bottom row to its status line. Lean cannot
-  learn that row's height, so a view is asked about with its whole height
-  (`Area.ofRect`, the one definition that says which height). On the model
-  and in the headless host that is exact: neither has a status row. Over
-  real layout the rows query answers one row more than the frame shows.
-  The fix is the display pipeline's (`docs/design/text-and-display.md`,
-  "Open questions"), and `Area.ofRect` is what changes when it exists.
+  the display's frame gives a view's bottom row to its status line, or to
+  the prompt for the minibuffer's view. The display answers those rows'
+  heights (`Display.heights`), which the state keeps, so a view is asked
+  about with its height less its bottom row (`Area.ofRect`, the one
+  definition that says which height, handed `EditorState.bottomRow`). Over
+  real layout the rows query then answers exactly the rows the frame shows
+  (`crates/editor-layout/tests/heights.rs`).
+
+## What is missing
+
 - **How many rows fit a view.** The display answers the rows shown from an
   anchor, which are fewer at the text's end. `Area.fits` is the rows shown
   from the text's start: the rows that fit, or all of the text's rows when
@@ -207,12 +210,13 @@ structure Area where
 
 namespace Area
 
-/-- The area of a view that shows `snapshot` in `rect`: its width, and its
-whole height. This is the one definition that says which height a view's
-rows are asked with (the module docs, "What is the display's, and
-missing"). -/
-def ofRect (snapshot : SnapshotId) (rect : Rect) : Area :=
-  { snapshot, width := rect.width, height := rect.height }
+/-- The area of a view that shows `snapshot` in `rect`, whose bottom row is
+`bottom` tall: its width, and its height less that row. This is the one
+definition that says which height a view's rows are asked with (the module
+docs, "What is the display's"); the bottom row's height is the state's
+(`EditorState.bottomRow`). -/
+def ofRect (snapshot : SnapshotId) (rect : Rect) (bottom : Nat) : Area :=
+  { snapshot, width := rect.width, height := rect.height - bottom }
 
 /-- The rows the view shows from `anchor`. -/
 def rows (area : Area) (anchor : Nat) : DisplayM (Array Display.Row) :=

@@ -1,3 +1,4 @@
+import Editor.Display
 import Editor.File
 import Editor.Invocation
 import Editor.Scene
@@ -42,20 +43,27 @@ minibuffer's place; a split divides its rectangle along an axis, rows
 (stacked) or columns (side by side), between its two children
 (`Split.rects`): the first takes half the extent, rounded down, and the
 second the rest. A subtree with no view takes no space and its sibling
-takes all of it. So the minibuffer's place takes none while no prompt is
-open, and the views tile the frame.
+takes all of it.
 
-**While a prompt is open the minibuffer's place takes a strip.**
-`Split.rects` is handed the minibuffer's view, or none. With a view, a
-split one of whose children is the minibuffer's place gives that place
-`Split.minibufferHeight` physical pixels along its axis, or the whole
-extent when that is less, and the sibling the rest; the view's rectangle
-is the place's, where the leaf is in drawing order, and the views still
-tile the frame. A tree that is the place alone gives the view the whole
-rectangle. The height is 32: two rows of a 16-pixel cell, one for the
-input and one for the status line that carries the prompt text
-(`Editor/Loop.lean`). It is a placeholder with no font behind it: nothing
-in Lean knows the height of a row, since layout is the display's.
+**The minibuffer's place always takes the frame's bottom row.**
+`Split.rects` is handed the minibuffer's view, or none, and the extent of
+the place (`EditorState.minibufferPlace`). With no prompt open the place
+is the frame's bottom row, `heights.message` tall, where the display draws
+the echo, and holds no view. With a prompt open it is a text row and that
+bottom row, `heights.text + heights.message`: the input, then the prompt.
+A split one of whose children is the place gives it that extent along its
+axis, or the whole extent when that is less, and the sibling the rest; the
+view's rectangle, when there is one, is the place's. A tree that is the
+place alone gives the view the whole rectangle.
+
+**The heights of the rows** are the display's (`Display.heights`):
+`EditorState.heights` holds what it last answered, which `Loop.publish`
+asks before it lays out the views, and a 16-pixel cell's before the first.
+A view's rows are asked with its height less its bottom row
+(`EditorState.bottomRow`): the status row for a window, and the bottom row
+for the minibuffer's view. That is the height the display's frame gives
+its text, so a command's questions of layout are answered with the rows
+the frame shows.
 
 **The rectangles of a state's views** are `EditorState.rects`: the tree
 laid out in the whole frame, with the minibuffer's view while a prompt is
@@ -727,6 +735,12 @@ structure EditorState where
   /-- How many rows every view keeps between its cursor's row and the first
   and the last row it shows ("The scroll margin", in the module docs). -/
   scrollMargin : Nat := 0
+  /-- The heights of a text row, a window's status row and the frame's
+  bottom row, as the display last answered them: what the views and the
+  minibuffer's place are sized by ("The heights of the rows", in the module
+  docs). A publish asks them again (`Loop.publish`); before the first, a
+  16-pixel cell's. -/
+  heights : Display.Heights := { text := 16, status := 16, message := 16 }
   deriving BEq, Repr
 
 /-- What a handler acts on: a window and the buffer it shows. -/
@@ -855,13 +869,6 @@ along the axis, rounded down, and the second the rest. -/
 def halve (axis : Axis) (rect : Rect) : Rect × Rect :=
   cut axis rect (extent axis rect / 2)
 
-/-- How much of its split's extent the minibuffer's place takes while a
-prompt is open, in physical pixels: two rows of a 16-pixel cell, one for
-the input and one for the status line that carries the prompt text. It is a
-placeholder: nothing here knows the height of a row. -/
-def minibufferHeight : Nat :=
-  32
-
 /-- Whether the subtree is the minibuffer's place and nothing else: it has
 the minibuffer leaf and no window. -/
 def isMinibufferPlace (tree : Split) : Bool :=
@@ -871,29 +878,30 @@ def isMinibufferPlace (tree : Split) : Bool :=
 order: its windows, and `minibuffer`, the minibuffer's view while a prompt
 is open, where the minibuffer's place is. A split halves its rectangle
 along its axis; a subtree with no view takes nothing, and its sibling takes
-all of it. So with no minibuffer's view the minibuffer's place takes
-nothing. With one, a split one of whose children is the minibuffer's place
-gives that place `minibufferHeight` along its axis, or the whole extent
-when that is less, and the sibling the rest. -/
-def rects (tree : Split) (rect : Rect) (minibuffer : Option ViewId := none) :
+all of it. The minibuffer's place takes `place` along its split's axis, or
+the whole extent when that is less, and its sibling the rest, whether or
+not the minibuffer's view is there: with no view the place shows the echo,
+and with one the view is the place's rectangle. A place of 0 with no view
+takes nothing. -/
+def rects (tree : Split) (rect : Rect) (minibuffer : Option ViewId := none) (place : Nat := 0) :
     Array (ViewId × Rect) :=
   match tree with
   | .window id => #[(id, rect)]
   | .minibuffer => (minibuffer.map (·, rect)).toArray
   | .split axis first second =>
     let empty (child : Split) : Bool :=
-      child.windows.isEmpty && !(minibuffer.isSome && child.isMinibufferPlace)
-    if empty first then second.rects rect minibuffer
+      child.windows.isEmpty && !((minibuffer.isSome || place > 0) && child.isMinibufferPlace)
+    if empty first then second.rects rect minibuffer place
     else
-      if empty second then first.rects rect minibuffer
+      if empty second then first.rects rect minibuffer place
       else
         let (one, other) :=
-          if first.isMinibufferPlace then cut axis rect minibufferHeight
+          if first.isMinibufferPlace then cut axis rect (min place (extent axis rect))
           else
             if second.isMinibufferPlace then
-              cut axis rect (extent axis rect - min minibufferHeight (extent axis rect))
+              cut axis rect (extent axis rect - min place (extent axis rect))
             else halve axis rect
-        first.rects one minibuffer ++ second.rects other minibuffer
+        first.rects one minibuffer place ++ second.rects other minibuffer place
 
 /-- The tree without the window `id`, whose sibling takes the place of the
 split that held both, and that sibling; `none` when `id` is not a leaf of the
@@ -956,14 +964,29 @@ order, then the minibuffer's view while a prompt is open. -/
 def views (state : EditorState) : Array ViewId :=
   state.frame.tree.windows ++ state.minibufferView?.toArray
 
+/-- How much the minibuffer's place takes along its split's axis: the
+frame's bottom row while no prompt is open, where the echo is drawn, and a
+text row above it while one is, for the input, with the prompt in the
+bottom row (`heights`). -/
+def minibufferPlace (state : EditorState) : Nat :=
+  if state.prompt.isSome then state.heights.text + state.heights.message else state.heights.message
+
 /-- The rectangle of each view of the state in its frame, in drawing order
-(`Split.rects`): the tree's windows, and the minibuffer's view, in the strip
-its place takes, while a prompt is open. It is what a scene's views are
+(`Split.rects`): the tree's windows, and the minibuffer's view while a
+prompt is open, in the place the minibuffer takes (`minibufferPlace`),
+which it takes with no prompt open too. It is what a scene's views are
 laid out in (`Loop.views`, `Editor/Loop.lean`). -/
 def rects (state : EditorState) : Array (ViewId × Rect) :=
   let frame := state.frame
   frame.tree.rects { x := 0, y := 0, width := frame.size.width, height := frame.size.height }
-    state.minibufferView?
+    state.minibufferView? state.minibufferPlace
+
+/-- How tall the bottom row of the view `id` is: the frame's bottom row for
+the minibuffer's view, which holds the prompt, and a window's status row
+for any other (`heights`). A view's rows are asked with its height less
+this (`Scroll.Area.ofRect`), which is what the display's frame shows. -/
+def bottomRow (state : EditorState) (id : ViewId) : Nat :=
+  if state.minibufferView? == some id then state.heights.message else state.heights.status
 
 /-- The rectangle of the view `id` in the frame (`rects`); none for a view
 that is not laid out: one with no window in the tree, and the minibuffer's
@@ -1369,7 +1392,8 @@ over `text`, whose history is `history`, with the minibuffer's mode
 (`Prompt.mode`) and a name no buffer has (`Prompt.bufferName`, made free),
 and a window on it, with a new view id and `scroll` and `selection` as its
 markers. The prompt is recorded with `label`, `continuation` and the
-focused view as its asker; the new view is focused and handed back. The
+focused view as its asker; the new view is focused and handed back; and
+the echo is cleared, as Vim clears it: the prompt takes the bottom row. The
 tree is as it was. Refused, with the state unchanged, with `alreadyOpen`,
 and its view, while a prompt is open, with `noWindow` when the focused view
 has no window, and with `notItsText` for a history or a marker of another
@@ -1396,7 +1420,10 @@ def openPrompt (label : String) (continuation : Invocation) (text : TextId) (his
             state.windows.push { id := view, buffer := ⟨state.buffers.size⟩, scroll, selection }
           frame := { state.frame with focused := view }
           nextView := view.index + 1
-          prompt := some { label, view, asker := asker.id, continuation } })
+          prompt := some { label, view, asker := asker.id, continuation }
+          -- The prompt takes the bottom row; what was said is gone, as in
+          -- Vim, and the row is empty once the prompt closes.
+          echo := "" })
 
 /-- The window of the tree that stands for the view the prompt `asked` was
 asked from: the asking view while it is a window of the tree, and the first

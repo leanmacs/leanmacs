@@ -1080,13 +1080,13 @@ it had. The display is asked with the view's own snapshot and rectangle.
 A view of no height is not asked about: no request is made for it. A view
 that shows no row keeps its anchor. Refused, with nothing placed, when a
 marker of the view was given up or its snapshot released. -/
-def follow (margin : Nat) (view : View) : EditorM Unit := do
+def follow (margin : Nat) (bottom : Nat) (view : View) : EditorM Unit := do
   -- No pixels hold no row under any layout.
   if view.rect.height == 0 then
     return
   let text := view.scroll.text
   let .anchor anchor ← text.marker view.scroll | throw .noSuchMarker
-  let area := Scroll.Area.ofRect view.snapshot view.rect
+  let area := Scroll.Area.ofRect view.snapshot view.rect bottom
   let shown ← area.rows anchor.offset
   if shown.isEmpty then
     return
@@ -1100,9 +1100,9 @@ def follow (margin : Nat) (view : View) : EditorM Unit := do
 `margin`. It is not refused: a view whose follow is refused, because one of
 its markers was given up or its snapshot released, is not followed, and the
 refusal is dropped ("Following the cursor", in the module docs). -/
-def followed (margin : Nat) (views : Array View) : EditorM Unit := do
+def followed (margin : Nat) (bottomOf : ViewId → Nat) (views : Array View) : EditorM Unit := do
   for view in views do
-    discard <| observing (follow margin view)
+    discard <| observing (follow margin (bottomOf view.id) view)
 
 /-- Records the histories, leaving open the group of each buffer in an insert
 session (`sessions`), withdraws a quit that cannot go ahead
@@ -1118,10 +1118,14 @@ def publish (loop : Loop scheme) : EditorM (Loop scheme) := do
   -- The histories know their texts' revisions now, so "unsaved" is right.
   let state := state.settleQuit
   let (state, unlisted) ← listed state
+  -- The heights of the rows, as the display answers them now, before the
+  -- views are laid out: they size the views and the minibuffer's place.
+  let state := { state with heights := ← Display.heights }
   let (views, shown, unshown) ← ({ loop with state } : Loop scheme).views
   -- Each view follows its cursor before the scene names its anchor: the
-  -- snapshots the questions of layout need were taken just above.
-  followed state.scrollMargin views
+  -- snapshots the questions of layout need were taken just above. Each is
+  -- asked with its height less its bottom row.
+  followed state.scrollMargin state.bottomRow views
   let state := state.refusedBy (unrecorded <|> unlisted <|> unshown)
   Display.publish (scene state views loop.pending)
   let mut unreleased := none

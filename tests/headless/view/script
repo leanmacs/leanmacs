@@ -12,11 +12,14 @@
 
 # The frame is made 0 by 0, and a view of no height shows no row. In the
 # recorder's cells of 8 by 16 pixels, 640 by 480 is 80 columns and 30 rows.
+# The frame's bottom row, one row, is the minibuffer's place, so the window
+# is 640 by 464; and its own last row is its status row, so its text has
+# 28 rows (448 pixels).
 resize 640 480
 
 # `:` opens the ex line and `e` opens the file. The open is a job: `join`
 # waits for its result, which makes the buffer and shows it. The view shows
-# lines 0 to 29, with its anchor at byte 0.
+# lines 0 to 27, with its anchor at byte 0.
 key : Semicolon shift
 commit e @FILE@
 key <Enter> Enter -
@@ -25,27 +28,27 @@ scene
 
 # `100j` moves the cursor 100 lines down, to line 100, at byte 400, which
 # is below the rows the view shows. The view follows by the least movement:
-# line 100 is the last of its 30 rows, so its anchor is at line 71, byte
-# 284.
+# line 100 is the last of its 28 rows, so its anchor is at line 73, byte
+# 292.
 key 1 Digit1 -
 key 0 Digit0 -
 key 0 Digit0 -
 key j KeyJ -
 scene
 
-# `C-u` scrolls half a view up: 15 rows, the anchor to line 56, byte 224,
-# and the cursor to line 85, byte 340.
+# `C-u` scrolls half a view up: 14 rows, the anchor to line 59, byte 236,
+# and the cursor to line 86, byte 344.
 key u KeyU control
 scene
 
-# `C-f` scrolls a view down: 30 rows, the anchor to line 86, byte 344, and
-# the cursor to line 115, byte 460.
+# `C-f` scrolls a view down: 28 rows, the anchor to line 87, byte 348, and
+# the cursor to line 114, byte 456.
 key f KeyF control
 scene
 
 # `C-f` at the text's end. The file ends in a line feed, so the text's last
 # row is the empty one after line 119, and the anchor stops where that is
-# the last row shown: line 91, byte 364. The cursor's 30 rows stop in that
+# the last row shown: line 93, byte 372. The cursor's 28 rows stop in that
 # empty row, where a cursor of normal state does not rest, so it is on the
 # last line, 119, at byte 476.
 key f KeyF control
@@ -57,14 +60,15 @@ key z KeyZ -
 key t KeyT -
 scene
 
-# `zb` puts it at the bottom: line 119 is the last of 30 rows, so the anchor
-# is at line 90, byte 360. The cursor does not move.
+# `zb` puts it at the bottom: line 119 is the last of 28 rows, so the anchor
+# is at line 92, byte 368. The cursor does not move.
 key z KeyZ -
 key b KeyB -
 scene
 
-# A resize to 160 pixels of height leaves the view 10 rows, fewer than the
-# cursor's row, which was its thirtieth. The view follows: line 119 is the
-# last of 10 rows, so the anchor is at line 110, byte 440.
+# A resize to 160 pixels of height leaves the window 144 (the bottom row
+# is below it) and its text 8 rows, fewer than the cursor's row, which was
+# its twenty-eighth. The view follows: line 119 is the last of 8 rows, so
+# the anchor is at line 112, byte 448.
 resize 640 160
 scene
