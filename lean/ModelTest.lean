@@ -5313,6 +5313,20 @@ def stateChecks : List Check :=
               { again with registers := #[] } == state &&
               (state.setRegister "" word).register? "" == some word },
     { name :=
+        "a new state's scroll margin is no rows; a margin set is the state's, a second one set replaces it, and nothing else of the state changes"
+      run :=
+        pure <|
+          match onTextModel threeWindows with
+          | none => false
+          | some state =>
+            let two := state.setScrollMargin 2
+            let five := two.setScrollMargin 5
+            state.scrollMargin == 0 && two.scrollMargin == 2 && five.scrollMargin == 5 &&
+              two != state &&
+              { five with scrollMargin := 0 } == state &&
+              five.setScrollMargin 0 == state &&
+              two.wellFormed },
+    { name :=
         "the initial state's selection is one cursor at 0, of the shape the state is made with, and exclusive when it is made with none"
       run :=
         pure <|
@@ -5881,7 +5895,7 @@ def stateRequests : List StateRequest :=
     .setWanted ⟨0⟩ (some { column := .cells 3, head := 7 }), .setWanted ⟨1⟩ none,
     .setWanted ⟨9⟩ (some { column := .lineEnd, head := 0 }), .ex "w", .exNames, .invoke asked,
     .quit, .reload, .giveUp "no", .breakOff "far enough",
-    .setRegister "a" { text := "a line\n", linewise := true }]
+    .setRegister "a" { text := "a line\n", linewise := true }, .setScrollMargin 2]
 
 /-- The checks of the state requests' pure handler (`EditorState.handle`,
 `Editor/State/Request.lean`), on states made on the text model. The handler
@@ -6441,6 +6455,19 @@ def stateRequestChecks : List Check :=
               set == state.setRegister "a" word &&
               replaced.register? "a" == some line &&
               { replaced with registers := #[] } == state },
+    { name :=
+        "the request to set the scroll margin sets the state's margin, in place of the one it had, and changes nothing else of the state: with no prompt open and with one open, and in the state with nothing in it"
+      run :=
+        pure <|
+          match onTextModel twoBuffers with
+          | none => false
+          | some state =>
+            [state, (prompted state).2, EditorState.none].all fun start =>
+              let (_, set) := start.handle (.setScrollMargin 2)
+              let (_, replaced) := set.handle (.setScrollMargin 7)
+              start.scrollMargin == 0 && set == start.setScrollMargin 2 && set.scrollMargin == 2 &&
+                replaced.scrollMargin == 7 &&
+                { replaced with scrollMargin := 0 } == start },
     { name :=
         "every kind of request, accepted and refused, leaves a well-formed state well formed, with no prompt open and with one open, and the state with nothing in it answers each without a buffer or a window"
       run := do
@@ -12019,6 +12046,29 @@ def apiStateChecks : List Check :=
           | .ok ((.finished (first, second, other), state), start, before, after) =>
             first == some word && second == some line && other == none &&
               state == start.setRegister "a" line &&
+              before > 0 &&
+              after == before
+          | _ => false },
+    { name :=
+        "a scroll margin set from a command is the editor state's, which the command then reads it from, and a second one set replaces it; none of it makes a request of the library"
+      run :=
+        pure <|
+          let program : EditorM _ := do
+            let start ← twoBuffers
+            let before ← Watch.now
+            let ran ←
+              EditorM.dispatched
+                  (do
+                    let unset := (← editorState).scrollMargin
+                    setScrollMargin 2
+                    let first := (← editorState).scrollMargin
+                    setScrollMargin 5
+                    return (unset, first, (← editorState).scrollMargin))
+                  {} start
+            return (ran, start, before, ← Watch.now)
+          match (program.runModel countingModel).1 with
+          | .ok ((.finished (unset, first, second), state), start, before, after) =>
+            unset == 0 && first == 2 && second == 5 && state == start.setScrollMargin 5 &&
               before > 0 &&
               after == before
           | _ => false },

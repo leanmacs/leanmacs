@@ -164,6 +164,28 @@ A register is a text a command set aside, to put back later
   end leaves them as they were.** The clipboard is not here: it is
   outside the editor, behind a port of its own.
 
+## The scroll margin
+
+The scroll margin is how many rows a view keeps between its cursor's row
+and the first and the last row it shows (`EditorState.scrollMargin`). Vim's
+`scrolloff` is the model for the setting. The policy that reads it is in
+`Editor/Scroll.lean`, which the loop runs before each scene
+(`Editor/Loop.lean`, "Following the cursor").
+
+- **It is 0 in a new state**: no margin, so a view moves only when its
+  cursor's row is not among the rows it shows.
+- **It is one number for every view**, kept for the whole editor. A margin
+  for each window is a field of `Window` when something wants two.
+- `setScrollMargin` sets it, in place of the one it had. It is never
+  refused: any number is taken, and a margin larger than a view can keep
+  is half the rows the view fits (`Editor/Scroll.lean`, "The margin"),
+  which the state does not know.
+- **It is a field of the state, so a command that does not run to its end
+  leaves it as it was.**
+- **It is set by a command**, since the state is. Nothing declares it when
+  config loads: `setup` registers and runs no command. A setting that
+  config declares is its home once there are settings.
+
 ## Prompts
 
 A prompt is a request for one string, with a text to show beside the input
@@ -399,7 +421,7 @@ registered is the loop's to ask, which also runs the mode's `onEnter`
 | One buffer (its line ending, its modes) | A field of `Buffer` |
 | The file a buffer shows (what the next save expects on disk) | A field of `Buffer.File` |
 | One view (a goal column, a scroll offset) | A field of `Window` |
-| The whole editor (registers, the pending key prefix) | A field of `EditorState` |
+| The whole editor (registers, the scroll margin, the pending key prefix) | A field of `EditorState` |
 | The open prompt (what completes it, what it has shown) | A field of `Prompt` |
 | What the user sees of it | A field of the scene (`Editor/Scene.lean`), filled in `Loop.scene`, or in `Loop.views` for a field of a view (`Editor/Loop.lean`) |
 
@@ -696,6 +718,9 @@ structure EditorState where
   /-- The registers, each under its name, in the order each name was first
   set ("Registers", in the module docs). No name is here twice. -/
   registers : Array (String × Register) := #[]
+  /-- How many rows every view keeps between its cursor's row and the first
+  and the last row it shows ("The scroll margin", in the module docs). -/
+  scrollMargin : Nat := 0
   deriving BEq, Repr
 
 /-- What a handler acts on: a window and the buffer it shows. -/
@@ -1205,6 +1230,12 @@ def setRegister (name : String) (register : Register) (state : EditorState) : Ed
       if state.registers.any (·.1 == name) then
         state.registers.map fun entry => if entry.1 == name then (name, register) else entry
       else state.registers.push (name, register) }
+
+/-- `state` with `rows` as its scroll margin, in place of the one it had
+("The scroll margin", in the module docs). Nothing else changes, and it is
+never refused. -/
+def setScrollMargin (rows : Nat) (state : EditorState) : EditorState :=
+  { state with scrollMargin := rows }
 
 /-- The value the buffer `id` keeps under `name`, if it keeps one. -/
 def value? (state : EditorState) (id : BufferId) (name : String) : Option Value := do

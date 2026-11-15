@@ -118,6 +118,10 @@ the models and against the library alike (`Editor/Command/Dispatch.lean`).
   string, and which names mean something is the asking command's rule. A
   command reads a register with a read of the state
   (`EditorState.register?`).
+- **The scroll margin is set by one request**, `setScrollMargin`, with a
+  number of rows (`Editor/State.lean`, "The scroll margin"). It is never
+  refused: any number is taken. A command reads the margin with a read of
+  the state (`EditorState.scrollMargin`).
 
 ## Where an addition goes
 
@@ -213,6 +217,9 @@ inductive StateRequest where
   /-- Keep `register` under `name`, in place of the register the name
   had. -/
   | setRegister (name : String) (register : Register)
+  /-- Keep `rows` rows between every view's cursor's row and the first and
+  the last row it shows. -/
+  | setScrollMargin (rows : Nat)
 
 /-- The type of the reply to each request. -/
 abbrev StateRequest.Reply : StateRequest → Type
@@ -247,6 +254,7 @@ abbrev StateRequest.Reply : StateRequest → Type
   | .giveUp _ => Unit
   | .breakOff _ => Unit
   | .setRegister .. => Unit
+  | .setScrollMargin _ => Unit
 
 namespace EditorState
 
@@ -300,6 +308,7 @@ def handle : (request : StateRequest) → EditorState → request.Reply × Edito
   | .giveUp _, state => ((), state)
   | .breakOff _, state => ((), state)
   | .setRegister name register, state => ((), state.setRegister name register)
+  | .setScrollMargin rows, state => ((), state.setScrollMargin rows)
 
 end EditorState
 

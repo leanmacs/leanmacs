@@ -228,6 +228,18 @@ about its view is here.
 
 Each makes a text request, and each has a case in `Editor/Api/Cases.lean`.
 
+- `setScrollMargin rows` sets the scroll margin: how many rows every view
+  keeps between its cursor's row and the first and the last row it shows
+  (`Editor/State.lean`, "The scroll margin"; Vim's `scrolloff`). The loop
+  holds it from the next scene on. A command reads it from the state
+  (`EditorState.scrollMargin` on `editorState`).
+  - **It is never refused**: any number is taken, and a view keeps at most
+    half the rows it fits.
+  - **It is editor state**, so a command that sets it and then does not
+    run to its end leaves the margin there was, and a reload leaves it.
+  - It makes no request of the library. Pinned by
+    `ModelTest.apiStateChecks`.
+
 ## Buffer-local values, modes and the wanted column
 
 These are Lean state alone: none makes a request of the library, so none
@@ -568,6 +580,12 @@ def breakOff {α : Type} (reason : String) : EditorM α := do
 request of the library. -/
 def setRegister (name : String) (register : Register) : EditorM Unit :=
   EditorState.ask (.setRegister name register)
+
+/-- Keeps `rows` rows between every view's cursor's row and the first and
+the last row it shows, from the next scene on ("Scrolling", in the module
+docs). It is never refused, and makes no request of the library. -/
+def setScrollMargin (rows : Nat) : EditorM Unit :=
+  EditorState.ask (.setScrollMargin rows)
 
 /-- Asks for the job registered under `name` to be started with
 `arguments`, once this command has run to its end. Its result comes back
