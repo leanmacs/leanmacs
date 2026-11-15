@@ -154,6 +154,160 @@ it. It also holds the benchmark `mise run config-bench` runs. -/
   moreLinkObjs := #[glue.o, rustlib]
   moreLinkArgs := linkArgs
 
+/-- Whether the build is for macOS on arm64, read from the target triple of
+the Lean toolchain Lake runs on (`arm64-apple-darwin24.6.0`). -/
+def isArm64Mac : Bool :=
+  Platform.isOSX && (Platform.target.startsWith "arm64-" || Platform.target.startsWith "aarch64-")
+
+/-- Fails the build with a reason anywhere but macOS on arm64: the app
+bundle is built and checked there only (`LSArchitecturePriority`, `lipo`,
+`codesign`). -/
+def requireArm64Mac : JobM Unit := do
+  unless isArm64Mac do
+    error
+        s!"the app bundle builds only on macOS on arm64 (this toolchain targets {Platform.target}); see `requireArm64Mac` in lakefile.lean"
+
+/-- The app's name: the bundle's, `<name>.app`, and its icon's. -/
+def appName : String :=
+  "Leanmacs"
+
+/-- The bundle identifier. The repository is leanmacs/leanmacs. -/
+def appIdentifier : String :=
+  "io.github.leanmacs.Leanmacs"
+
+/-- The lowest macOS the bundle has been run on (27.2, 2026-11-15); lower it
+only after running it there. -/
+def appMinimumSystemVersion : String :=
+  "27.2"
+
+/-- The bundle's `Contents/Info.plist`. There are no document types (the
+roadmap's phase 5 adds them) and no version keys, since the project has no
+version scheme yet. -/
+def appInfoPlist : String :=
+  s!"<?xml version=\"1.0\" encoding=\"UTF-8\"?>
+<!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">
+<plist version=\"1.0\">
+<dict>
+\t<key>CFBundleExecutable</key>
+\t<string>editor</string>
+\t<key>CFBundleIconFile</key>
+\t<string>{appName}</string>
+\t<key>CFBundleIdentifier</key>
+\t<string>{appIdentifier}</string>
+\t<key>CFBundleInfoDictionaryVersion</key>
+\t<string>6.0</string>
+\t<key>CFBundleName</key>
+\t<string>{appName}</string>
+\t<key>CFBundlePackageType</key>
+\t<string>APPL</string>
+\t<key>LSArchitecturePriority</key>
+\t<array>
+\t\t<string>arm64</string>
+\t</array>
+\t<key>LSMinimumSystemVersion</key>
+\t<string>{appMinimumSystemVersion}</string>
+\t<key>NSHighResolutionCapable</key>
+\t<true/>
+</dict>
+</plist>
+"
+
+/-- `n` as four bytes, the most significant first, as ICNS writes its
+lengths. -/
+def bigEndian32 (n : Nat) : ByteArray :=
+  ⟨#[(n / 16777216 % 256).toUInt8, (n / 65536 % 256).toUInt8, (n / 256 % 256).toUInt8,
+      (n % 256).toUInt8]⟩
+
+/-- An ICNS entry: its four-byte type, its length with its eight-byte
+header, and its data. -/
+def icnsEntry (type : String) (data : ByteArray) : ByteArray :=
+  type.toUTF8 ++ bigEndian32 (8 + data.size) ++ data
+
+/-- The placeholder icon, `Contents/Resources/Leanmacs.icns`, which the
+target writes and nothing checks in: a minimal ICNS of one 16×16 image in
+one flat colour. Its `is32` entry holds the red, green and blue channels
+one after the other, each 256 bytes run-length encoded as two runs (a byte
+of 0x80 + n − 3 repeats the next byte n times: 130, then 126), and its
+`s8mk` entry is the mask, 256 bytes of 0xFF. `mise run app-check` reads it
+with ImageIO (`sips`). -/
+def appIcon : ByteArray :=
+  let channel (value : UInt8) : ByteArray := ⟨#[0xFF, value, 0xFB, value]⟩
+  let entries :=
+    icnsEntry "is32" (channel 0x3A ++ channel 0x6E ++ channel 0xA5) ++
+      icnsEntry "s8mk" ⟨Array.replicate 256 0xFF⟩
+  "icns".toUTF8 ++ bigEndian32 (8 + entries.size) ++ entries
+
+/-- `Leanmacs.app`, the editor as a macOS app bundle, at
+`.lake/build/Leanmacs.app` (`mise run app`; `docs/dev-practices/building.md`,
+"The app bundle"). It is not a default target: the gate never builds it, and
+it is refused with the reason anywhere but macOS on arm64
+(`requireArm64Mac`).
+
+It holds `Contents/MacOS/editor`, a copy of the `editor` executable; under
+`Contents/Resources/lean`, the `.olean`, `.olean.server` and
+`.olean.private` files of the modules `Editor` imports (the closure
+`config-test bench-modules` lists), from the toolchain Lake runs on, which
+is the pinned one, and from this package, laid out by
+`tools/stage-bundle.sh` as `bundle-test` lays them out; `Contents/Info.plist`
+(`appInfoPlist`); and `Contents/Resources/Leanmacs.icns` (`appIcon`).
+
+The bundle is signed again as a whole, ad-hoc, and last: the linker's
+ad-hoc signature covers only the Mach-O, so `Info.plist` and the resources
+would be left unsealed, and any write after signing breaks the seal.
+Extended attributes are cleared first, since `codesign --verify --strict`
+refuses them.
+
+The trace mixes the executable's, `config-test`'s, the library's, the stage
+script's and this lakefile's traces with the toolchain's, the platform's,
+the property list's and the icon's, so the bundle is rebuilt, from nothing,
+only when one of them changed, or when the bundle is gone. The lakefile is
+in it because it is the recipe: without it, a change to how the bundle is
+made would leave the old bundle standing. -/
+target editorApp pkg : FilePath := do
+  requireArm64Mac
+  let exe ← editor.fetch
+  let lister ← «config-test».fetch
+  let library ← Editor.fetch
+  let stager ← inputTextFile <| pkg.dir / ".." / "tools" / "stage-bundle.sh"
+  -- This file is the recipe, so a change to it rebuilds the bundle too.
+  let recipe ← inputTextFile <| pkg.dir / "lakefile.lean"
+  let inputs :=
+    (((exe.zipWith Prod.mk lister).zipWith Prod.mk stager).zipWith (fun paths _ => paths)
+          library).zipWith
+      (fun paths _ => paths) recipe
+  inputs.mapM fun ((exe, lister), stager) => do
+      addLeanTrace
+      addPlatformTrace
+      addTrace (.ofHash (pureHash appInfoPlist) "Info.plist")
+      addTrace (.ofHash (Hash.ofByteArray appIcon) s!"{appName}.icns")
+      let bundle := pkg.buildDir / s!"{appName}.app"
+      let traceFile := pkg.buildDir / s!"{appName}.app.trace"
+      buildUnlessUpToDate bundle (← getTrace) traceFile do
+          -- A rebuild starts from nothing, so it never keeps a stale module.
+          if ← bundle.pathExists then
+            IO.FS.removeDirAll bundle
+          let sysroot ← getLeanSysroot
+          let closure := pkg.buildDir / s!"{appName}.app.closure"
+          let modules ←
+            captureProc
+                { cmd := lister.toString
+                  args := #["bench-modules", sysroot.toString, pkg.leanLibDir.toString, "Editor"] }
+          IO.FS.writeFile closure (modules ++ "\n")
+          proc (quiet := true)
+              { cmd := stager.toString
+                args :=
+                  #["--closure", closure.toString, bundle.toString, exe.toString, sysroot.toString,
+                    pkg.leanLibDir.toString, "olean", "olean.server", "olean.private"] }
+          IO.FS.writeFile (bundle / "Contents" / "Info.plist") appInfoPlist
+          IO.FS.writeBinFile (bundle / "Contents" / "Resources" / s!"{appName}.icns") appIcon
+          -- The system's tools, by absolute path: mise's PATH may hold others of
+          -- the same name (a Python package installs an `xattr` with no `-r`).
+          proc (quiet := true) { cmd := "/usr/bin/xattr", args := #["-cr", bundle.toString] }
+          -- Last: nothing may be written into the bundle after this.
+          proc (quiet := true)
+              { cmd := "/usr/bin/codesign", args := #["--force", "--sign", "-", bundle.toString] }
+      return bundle
+
 /-- The model tests (`ModelTest.lean`): `lake test` builds and runs this
 (`mise run lean-test`). It is not a default target and links no glue and no
 Rust archive, so nothing it needs reaches `rustlib`. `-L`: as in `linkArgs`,

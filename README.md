@@ -79,6 +79,10 @@ before the file:
 config unless given `--sysroot <dir>`, the Lean toolchain's directory
 (`lean --print-prefix`).
 
+On macOS on arm64, `mise run app` builds `lean/.lake/build/Leanmacs.app`,
+ad-hoc signed, which holds its own toolchain modules
+([building.md](docs/dev-practices/building.md), "The app bundle").
+
 ```sh
 mise run ci
 ```

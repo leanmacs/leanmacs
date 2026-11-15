@@ -374,6 +374,44 @@ dir = "lean"
 timeout = "120s"
 run = '''dir=$(mktemp -d) && trap 'rm -rf "$dir"' EXIT && sysroot=$(lean --print-prefix) && fixtures=$PWD/../tests/headless/bundle && .lake/build/bin/config-test bench-modules "$sysroot" .lake/build/lib/lean Editor >"$dir/closure" && ../tools/stage-bundle.sh --closure "$dir/closure" "$dir/Leanmacs.app" .lake/build/bin/editor "$sysroot" .lake/build/lib/lean olean olean.server olean.private && cp -R "$fixtures/config" "$dir/config" && cp "$fixtures/script" "$dir/script" && mkdir "$dir/elsewhere" && cd "$dir/elsewhere" && out=$(env -i "$dir/Leanmacs.app/Contents/MacOS/editor" headless "$dir/config" "$dir/script") && printf '%s\n' "$out" | diff "$fixtures/expected" -'''
 
+# Opt-in: run it by hand, on macOS on arm64, and do not add it to `ci` or to
+# hk.pkl. The bundle is about 600 MB and signing hashes all of it, and the
+# gate runs on Linux too, where the target is refused with the reason.
+#
+# It builds `lean/.lake/build/Leanmacs.app` with Lake (`editorApp` in
+# lean/lakefile.lean): the editor executable, the `.olean` files of the
+# modules `Editor` imports, Info.plist and a placeholder icon, ad-hoc
+# signed as a whole, last. Lake rebuilds it only when an input changed, so a
+# second run with nothing changed copies and signs nothing, and prints no
+# `Built editorApp` line. It waits for `lean` so that the Lake builds in
+# lean/ run in one chain, and sets LEAN_CC as `lean` does, since the
+# executables it fetches must be linked by the system compiler.
+[tasks.app]
+description = "Opt-in, never part of ci; macOS on arm64 only: build lean/.lake/build/Leanmacs.app with Lake (`editorApp` in lean/lakefile.lean), ad-hoc signed"
+depends = ["lean"]
+dir = "lean"
+env = { LEAN_CC = "/usr/bin/cc" }
+run = "lake build --wfail editorApp"
+
+# Opt-in: run it by hand, on macOS on arm64, and do not add it to `ci` or to
+# hk.pkl: the gate does not build the bundle, and runs on Linux too. It is
+# the check for any change to `editorApp`, tools/stage-bundle.sh or module
+# lookup (lean/Editor/ModuleLookup.lean).
+#
+# tools/app-check.sh copies the built bundle into a temporary directory
+# removed by a trap, verifies its signature with `codesign --verify
+# --strict --deep`, reads its Info.plist and icon as the system does, runs
+# its headless mode on tests/headless/bundle with no directory argument, an
+# empty environment and / as the working directory, which must print
+# exactly `expected`, and builds `editorApp` again to show that copies and
+# signs nothing. It ends `app-check: ok`. It opens no window and needs no
+# person.
+[tasks.app-check]
+description = "Opt-in, never part of ci; macOS on arm64 only: verify the built Leanmacs.app's signature and run its headless mode from a copy in a temporary directory, with no directory argument, an empty environment and / as the working directory (tools/app-check.sh, tests/headless/bundle)"
+depends = ["app"]
+timeout = "300s"
+run = "tools/app-check.sh lean"
+
 # Opt-in: run it by hand, and do not add it to `ci` or to hk.pkl. It ends in
 # an abort, and on macOS every abort makes the system write a crash report
 # under ~/Library/Logs/DiagnosticReports, so in the gate it would leave a file

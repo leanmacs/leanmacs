@@ -65,3 +65,63 @@ point (`-Wl,-e,_editor_entry`). On Linux that would skip the C library's
 start-up, so the link renames instead (`-Wl,--wrap=main`): the start-up code
 calls the glue's `__wrap_main`, and Lean's `main` is reached as
 `__real_main`.
+
+## The app bundle
+
+```sh
+mise run app
+```
+
+This builds `lean/.lake/build/Leanmacs.app`, the editor as a macOS app
+bundle, with Lake (`editorApp` in `lean/lakefile.lean`). It builds on
+macOS on arm64 only; anywhere else the target fails with
+`the app bundle builds only on macOS on arm64` and the toolchain's target.
+It is not part of the gate, which never builds it.
+
+What it holds:
+
+```
+Leanmacs.app/Contents/Info.plist
+Leanmacs.app/Contents/MacOS/editor                         a copy of the editor executable
+Leanmacs.app/Contents/Resources/Leanmacs.icns              a placeholder icon
+Leanmacs.app/Contents/Resources/lean/toolchain/lib/lean/   the toolchain's modules
+Leanmacs.app/Contents/Resources/lean/editor/               the editor's modules
+```
+
+The modules are the closure of `Editor`, the modules config is elaborated
+on, each as its `.olean`, `.olean.server` and `.olean.private` files: the
+layout and the file kinds `mise run bundle-test` stages
+([`headless-mode.md`](headless-mode.md), "From an app bundle"), laid out by
+the same `tools/stage-bundle.sh`. On 2026-11-15 that was 2,006 files,
+382 MB, beside a 196 MB executable: 579 MB in all. `Info.plist` names the
+bundle identifier `io.github.leanmacs.Leanmacs`, the executable `editor`,
+the icon, `NSHighResolutionCapable`, `LSArchitecturePriority` arm64 and
+`LSMinimumSystemVersion`, the lowest macOS the bundle has been run on
+(27.2). It has no document types and no version yet.
+
+Lake rebuilds the bundle only when an input changes: the executable, the
+`Editor` library's modules, `config-test` (which lists the closure), the
+stage script, the toolchain, the lakefile, the property list or the icon.
+A second `mise run app` with nothing changed copies and signs nothing, and
+Lake prints no `Built editorApp` line. A rebuild starts from an empty
+bundle, so it never keeps a module that is no longer imported.
+
+**It is signed again after assembly.** The linker signs the executable
+ad-hoc, and that signature covers the Mach-O alone: with the bundle
+assembled around it, `Info.plist` and `Contents/Resources` are not sealed,
+and `codesign --verify --strict` refuses the bundle (`code has no resources
+but signature indicates they must be present`). So the target clears the
+bundle's extended attributes and signs the bundle as a whole with
+`codesign --force --sign -`, as its last step: any write after that would
+break the seal. The signature is ad-hoc, for this machine only. Developer
+ID signing and notarization are a later task.
+
+**The installed app reads config from `~/.config/leanmacs`**, or from
+`$XDG_CONFIG_HOME/leanmacs` when that variable is set and not empty, as the
+editor does anywhere: never from `~/Library/Application Support`. launchd
+sets `HOME` for an app started from Finder, and normally not
+`XDG_CONFIG_HOME`. The toolchain and the modules config is elaborated on
+are the bundle's own, found from the executable's path.
+
+`mise run app-check` checks the built bundle
+([`on-demand-checks.md`](on-demand-checks.md), "The app bundle, on demand").

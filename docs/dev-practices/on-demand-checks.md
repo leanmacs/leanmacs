@@ -72,6 +72,39 @@ temporary disk. The figures, and what they decided, are in
 [`lean-runtime.md`](../design/lean-runtime.md), "What config may import,
 measured". Run it again when the Lean toolchain's pin moves.
 
+## The app bundle, on demand
+
+```sh
+mise run app-check
+```
+
+This builds `Leanmacs.app` (`mise run app`;
+[`building.md`](building.md), "The app bundle") and checks it, on macOS on
+arm64 only (`tools/app-check.sh`). In a temporary directory removed by a
+trap it copies the bundle with `ditto`, so what follows runs on a relocated
+copy; verifies the copy's signature with `codesign --verify --strict
+--deep`; reads its `Info.plist` with `plutil` (it lints,
+`CFBundleExecutable` is an executable file under `Contents/MacOS`,
+`LSArchitecturePriority` starts with arm64, `LSMinimumSystemVersion` is no
+later than this machine's macOS) and the executable with `lipo` (arm64
+alone); reads the icon with ImageIO (`sips`: 16 pixels wide); and runs the
+copy's `Contents/MacOS/editor headless` on `tests/headless/bundle` with no
+directory argument, an empty environment (`env -i`) and `/` as the working
+directory, which must exit 0 and print exactly `expected`. Last, it builds
+`editorApp` again and checks that the bundle's executable, its
+`CodeResources` and the build's trace file keep their modification times
+and inodes: the second build copied and signed nothing. Lake's output is
+printed, and holds no `Built editorApp` line. It ends `app-check: ok` with
+the bundle's size, and takes seconds.
+
+It writes nothing outside its temporary directory but that second build,
+which is shown to write nothing, opens no window and needs no person. It is
+not part of the gate because the gate does not build the bundle, which is
+about 600 MB and must be signed, and runs on Linux too. It is the check for
+any change to `editorApp`, to `tools/stage-bundle.sh` or to module lookup
+(`lean/Editor/ModuleLookup.lean`): such a change is not done until this
+ends `app-check: ok`.
+
 ## The job benchmark, on demand
 
 ```sh

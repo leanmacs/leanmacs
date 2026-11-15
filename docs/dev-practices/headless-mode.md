@@ -55,6 +55,10 @@ may import, measured"). Without `--closure` the script stages whole
 top-level directories: `--roots` names the toolchain's (`Init,Std` by
 default), and the package's `Editor` is always staged.
 
+`mise run app` builds this layout for real, as `Leanmacs.app`
+([`building.md`](building.md), "The app bundle"), and `mise run app-check`
+runs this mode from a copy of it.
+
 ## Drawing it: `--render`
 
 Without `--render` the display is a recorder: it keeps the scenes and

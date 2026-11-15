@@ -1,5 +1,6 @@
 # The script `mise run bundle-test` has the headless mode of a copy of the
-# editor run inside a staged bundle, with no directory argument, an empty
+# editor run inside a staged bundle, and `mise run app-check` inside a copy
+# of the built Leanmacs.app, each with no directory argument, an empty
 # environment and a working directory outside the bundle. The config in
 # `config/` is elaborated on the modules the bundle holds. What it prints
 # must be exactly `expected`.

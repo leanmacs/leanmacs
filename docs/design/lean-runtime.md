@@ -69,6 +69,15 @@ initialise (big-number constants, three mutexes, regions read from `.olean`
 files), nothing allocated by the glue or the Rust library, and the same
 count for a script a hundred times as long.
 
+**The app bundle is a Lake target too** (`editorApp`, not a default
+target; `mise run app`). It copies the executable and the `.olean` files of
+the closure of `Editor` into `Leanmacs.app`, laid out as module lookup
+expects (`lean/Editor/ModuleLookup.lean`), writes `Info.plist` and a
+placeholder icon, and signs the whole bundle ad-hoc, last. Lake's trace of
+its inputs makes it rebuild only when one changed. It builds on macOS on
+arm64 only. How to build it, what it holds and why it is signed again are
+in [building.md](../dev-practices/building.md), "The app bundle".
+
 There is no hand-written Lean start-up sequence and no scraping of
 generated symbol names, which the first prototype needed. What can break on
 a Lean upgrade is the `@[extern]` calling convention, the Lake build API,
