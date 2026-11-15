@@ -66,7 +66,10 @@ library.
   directory of its own, made here and removed whatever happened; the
   library's count of pending runs must be back where it was afterwards, so
   every child was reaped. `processChecks` then shows that cancelling a job
-  whose child is running ends the job and has the child reaped.
+  whose child is running ends the job and has the child reaped, and that a
+  run the library does not take, its id being in use there, is refused at
+  once as `failed`, the job going on, with the refusal kept until it is
+  taken and erased when its wait is withdrawn.
   `model-test` runs the same list against the model of processes and
   against the runner over the fake of the process service.
 
@@ -459,8 +462,36 @@ def processFailures (services : Job.Services) : IO (List String) := do
   return failed.map (s!"the job runner over the process service: {·}") ++
       if reaped then [] else [s!"{processLeakName} ({before} before, {after} after)"]
 
+/-- Whether `reply` is the refusal `expected`. -/
+def refusedAs (expected : ProcessError) : Except ProcessError Process.Ran → Bool
+  | .error refusal => refusal == expected
+  | .ok _ => false
+
+/-- Starts, straight through the library's bindings, a run under the id
+`id` that sleeps for ten minutes in `directory`, so that the library's
+process service refuses another run under that id. It is never completed: a
+check cancels it before it ends. Whether the library took it. -/
+def occupy (id : UInt64) (directory : System.FilePath) : IO Bool :=
+  Ffi.processesRun id "/bin/sleep" #["600"] false #[] #[] directory.toString 10
+
 /-- What only the real process service can show: that cancelling a job
-whose child is running kills the child, which the service then reaps. -/
+whose child is running kills the child, which the service then reaps; and
+that a run the library does not take is refused at once by the adapter,
+which keeps the refusal until it is taken or its wait is withdrawn
+(`realProcesses`). The library refuses a run whose id is in use there, so
+those checks first start a run under the id with `occupy`.
+
+Each such check has its own table of refusals, and registers its ids in the
+services' table of waits, so no id is one another wait in flight has. The
+id the job's first wait gets is the one after the id the check registers:
+no other wait is registered while a check runs. If it were not, the job's
+run would be taken and the check would fail, not pass.
+
+Seen to bite once by hand, on 2026-11-15, each with one line of
+`realProcesses` taken out: without the completion of a run not taken, both
+not-taken checks fail, the job waiting for ever; without keeping its
+refusal, the first fails, the job getting no result instead; and without
+the erasing in `cancel`, the second fails, the take finding the refusal. -/
 def processChecks (services : Job.Services) : List Check :=
   [{  name :=
         "a job whose child sleeps for ten minutes is cancelled: it ends cancelled, and the process service reaps the child, so nothing is pending that was not before"
@@ -481,6 +512,62 @@ def processChecks (services : Job.Services) : List Check :=
           let reaped ← eventually (return (← Ffi.processesPending) == before)
           return started && cancelled && reaped
         finally
+          IO.FS.removeDirAll directory },
+    { name :=
+        "a run the library does not take, its id being in use there, is refused at once as failed, and the job goes on to a run that ends; the refusal is gone once taken"
+      run := do
+        let directory ← IO.FS.createTempDir
+        let refused ← Job.RefusedRuns.new
+        let services :=
+          { services with processes := Job.realProcesses services.completions refused }
+        let (probe, _) ← services.completions.register
+        services.completions.finish probe .completed
+        let taken := probe + 1
+        let before ← Ffi.processesPending
+        try
+          let occupied ← occupy taken directory
+          let handle ←
+            Job.spawn services
+                (reporting fun _ => do
+                  let first ← Process.run (JobContract.sh directory "exit 0") 10
+                  let second ← Process.run (JobContract.sh directory "exit 0") 10
+                  return refusedAs Job.runNotTaken first &&
+                      match second with
+                      | .ok ran => ran.exit == .code 0
+                      | .error _ => false)
+                (pure ())
+          let ended ← endedAs handle (.finished #["true"])
+          unless ended do
+            handle.cancel
+          -- Asked again, the refusal is not there: the library answers, and
+          -- it has no result for its own run under the id, still sleeping.
+          let again ← services.processes.take taken (.run (JobContract.sh directory "exit 0") 10)
+          discard <| Ffi.processesCancel taken
+          let reaped ← eventually (return (← Ffi.processesPending) == before)
+          return occupied && ended && refusedAs Job.runNoResult again && reaped
+        finally
+          discard <| Ffi.processesCancel taken
+          IO.FS.removeDirAll directory },
+    { name :=
+        "a run the library does not take completes its wait at once, and withdrawing the wait erases the refusal kept for it"
+      run := do
+        let directory ← IO.FS.createTempDir
+        let processes := Job.realProcesses services.completions (← Job.RefusedRuns.new)
+        let (id, wait) ← services.completions.register
+        let before ← Ffi.processesPending
+        let request := ProcessRequest.run (JobContract.sh directory "exit 0") 10
+        try
+          let occupied ← occupy id directory
+          processes.start id request
+          let completed ← wait.isResolved
+          -- The withdrawal also cancels the library's run under the id.
+          processes.cancel id
+          let taken ← processes.take id request
+          let reaped ← eventually (return (← Ffi.processesPending) == before)
+          return occupied && completed && refusedAs Job.runNoResult taken && reaped
+        finally
+          discard <| Ffi.processesCancel id
+          services.completions.finish id .completed
           IO.FS.removeDirAll directory }]
 
 /-- `count` jobs that each sleep for an hour. -/
@@ -1307,6 +1394,6 @@ def main : IO UInt32 := do
   unless failed.isEmpty do
     IO.Process.exit 1
   IO.println
-      s!"contract-test: {properties.length + adoptProperties.length} properties hold of the real text binding, {cases.length} cases of the undo tree hold over it, and its documents and snapshots are freed when released and with its table; {Editor.JobContract.properties.length} properties hold of the job runner over the timer service, and {Editor.JobContract.fileProperties.length} file properties over the file service, on real files, and {Editor.JobContract.processProperties.length} process properties over the process service, on real processes, with {processChecks.length} check of a cancelled job's child; {checks.length} checks of the timer service passed, {fileChecks.length} of the file service, {Editor.FileCases.cases.length} cases across the text port and the job port hold of the binding and the file service; {(Editor.DisplayContract.properties { advance := 1, lineHeight := 1 }).length} properties of the display interface hold of its real binding in cells of {ContractTest.displayCells.length} sizes, and of the recorder over real snapshots in cells of the same sizes, and {recorderChecks.length} checks of the recorder passed; {Editor.ClipboardContract.properties.length} properties of the clipboard interface hold of the in-process clipboard and of the real binding over the library's memory clipboard, and {clipboardChecks.length} checks of it passed; {Editor.FuzzyContract.properties.length} properties of the fuzzy matching interface hold of its real binding, and {fuzzyChecks.length} check of a command's ranking passed; {Editor.WatchContract.properties.length} properties of the watch port hold of its real binding, and {watchChecks.length} checks of it passed; {Editor.ApiCases.cases.length} cases of the editor API hold of the real text binding; and quit ended the pump"
+      s!"contract-test: {properties.length + adoptProperties.length} properties hold of the real text binding, {cases.length} cases of the undo tree hold over it, and its documents and snapshots are freed when released and with its table; {Editor.JobContract.properties.length} properties hold of the job runner over the timer service, and {Editor.JobContract.fileProperties.length} file properties over the file service, on real files, and {Editor.JobContract.processProperties.length} process properties over the process service, on real processes, with {processChecks.length} checks of the process service's adapter; {checks.length} checks of the timer service passed, {fileChecks.length} of the file service, {Editor.FileCases.cases.length} cases across the text port and the job port hold of the binding and the file service; {(Editor.DisplayContract.properties { advance := 1, lineHeight := 1 }).length} properties of the display interface hold of its real binding in cells of {ContractTest.displayCells.length} sizes, and of the recorder over real snapshots in cells of the same sizes, and {recorderChecks.length} checks of the recorder passed; {Editor.ClipboardContract.properties.length} properties of the clipboard interface hold of the in-process clipboard and of the real binding over the library's memory clipboard, and {clipboardChecks.length} checks of it passed; {Editor.FuzzyContract.properties.length} properties of the fuzzy matching interface hold of its real binding, and {fuzzyChecks.length} check of a command's ranking passed; {Editor.WatchContract.properties.length} properties of the watch port hold of its real binding, and {watchChecks.length} checks of it passed; {Editor.ApiCases.cases.length} cases of the editor API hold of the real text binding; and quit ended the pump"
   (← IO.getStdout).flush
   IO.Process.exit 0
