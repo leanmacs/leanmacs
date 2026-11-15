@@ -1407,6 +1407,20 @@ def scriptChecks (context : Context) : List Check :=
             | .error message => message.startsWith "line 1: "
             | .ok _ => false) },
     { name :=
+        "agree, idle with a number of milliseconds, and journal are directives; agree asks the editor thread, and idle and journal are the driver's own"
+      run :=
+        pure
+          ((Headless.script "agree\n  idle 1000\nidle 0\njournal\n").toOption ==
+            some #[⟨1, .request .agree⟩, ⟨2, .idle 1000⟩, ⟨3, .idle 0⟩, ⟨4, .journal⟩]) },
+    { name :=
+        "an idle with no number, or one that is not a number, and an agree or a journal with anything after it, are refused, with the number of the line"
+      run :=
+        pure
+          (["idle", "idle x", "idle 10 20", "idle -1", "agree 3", "journal now"].all fun line =>
+            match Headless.script ("reload\n" ++ line) with
+            | .error message => message.startsWith "line 2: "
+            | .ok _ => false) },
+    { name :=
         "a script that sends a key with modifiers prints that the key arrived with those modifiers, in order with what it asked for"
       run :=
         IO.FS.withTempDir fun directory => do

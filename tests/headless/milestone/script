@@ -1,0 +1,105 @@
+# A template of a script: `mise run ffi-test` copies `source.txt` into a
+# temporary directory, writes this file there with `@FILE@` replaced by the
+# copy's absolute path, and has the editor's headless mode run it with
+# `--render` against the config in `../config/`, of which it loads nothing:
+# there is no `reload`, so every command its keys run is one the editor
+# ships. The run must exit with status 0, print exactly `expected` once the
+# temporary directory's path is written `@DIR@`, and leave the copy holding
+# the bytes of `source-expected`.
+#
+# It is milestone 1's check over the whole program: the display is the real
+# binding over the library's layout, in cells of 8 by 16 pixels, bound to
+# the library's headless render session, which draws every frame on the CPU
+# renderer. An evil session on a source file ends in `:w`; a layout query a
+# command made agrees with the frame drawn next (`agree`); and once the
+# session has settled, nothing is drawn or submitted for a second (`idle`).
+#
+# `source.txt` is 60 lines, `def v<n> : Nat := <n>` for n from 1 to 60,
+# each ended by a line feed: lines 1 to 9 are 18 bytes, so line n starts at
+# byte 18(n - 1), and lines 10 to 60 are 20 bytes, so line n starts at byte
+# 162 + 20(n - 10). The file is 1182 bytes.
+
+# In cells of 8 by 16, 640 by 480 is 80 columns and 30 rows. The frame's
+# bottom row is the minibuffer's place, so the window is 640 by 464, and its
+# own last row is its status row, so its text has 28 rows (448 pixels).
+resize 640 480
+
+# `:` opens the ex line and `e` opens the file. The open is a job: `join`
+# waits for its result, which makes the buffer and shows it from byte 0,
+# lines 1 to 28.
+key : Semicolon shift
+commit e @FILE@
+key <Enter> Enter -
+join
+scene
+
+# `2dw` deletes two words, `def v1 `: line 1 is `: Nat := 1`, and the text
+# is 7 bytes shorter.
+key 2 Digit2 -
+key d KeyD -
+key w KeyW -
+scene
+
+# `.` repeats it: `: ` and `Nat ` go, and line 1 is `:= 1`.
+key . Period -
+scene
+
+# `u` takes the repeat back: line 1 is `: Nat := 1` again.
+key u KeyU -
+scene
+
+# `j` moves to line 2, which starts at byte 11 now, and `cw` changes its
+# first word, `def`, to the committed text `edited`: line 2 is
+# `edited v2 : Nat := 2`, and the view is in insert state with the bar after
+# the text, at byte 17.
+key j KeyJ -
+key c KeyC -
+key w KeyW -
+commit edited
+scene
+
+# `<Escape>` returns to normal state, the cursor one cell back, at byte 16.
+key <Escape> Escape -
+scene
+
+# `$` goes to the line's last character, the `2` at byte 30, and `p` puts
+# what `cw` took, `def`, after it: line 2 is `edited v2 : Nat := 2def`, and
+# the cursor is on the last character put, at byte 33.
+key $ Digit4 shift
+key p KeyP -
+scene
+
+# `u` takes the put back, with the cursor at byte 30, and `C-r` puts it
+# again, with the cursor at byte 33.
+key u KeyU -
+scene
+key r KeyR control
+scene
+
+# `C-f` scrolls a view down: 28 rows. Line 1 is 11 bytes now and line 2 is
+# 24, so line 3 starts at byte 35, one before it did, and line 29 at 541:
+# the anchor. The cursor moves 28 rows too, to line 30, which starts at 561
+# and is 19 bytes long, so it rests on its last character, at 579. Each
+# publish asks the display for the rows the view shows from its anchor, at
+# its height less its status row, 448 pixels: 28 rows. `agree` takes the
+# last such query, at the anchor the view was published with, and compares
+# its rows with the ones the frame drawn of that scene shows.
+key f KeyF control
+scene
+agree
+
+# `:w` saves. The save is a job: `join` waits for its result. The file now
+# holds the buffer's text, 1182 - 7 + 3 + 3 = 1181 bytes
+# (`source-expected`), the scene says where it wrote it, and the modified
+# mark is gone. The view is where `C-f` left it, and still agrees.
+key : Semicolon shift
+commit w
+key <Enter> Enter -
+join
+scene
+agree
+
+# Once everything has settled and the render loop is at rest, a second
+# passes in which nothing asks for a frame: none is drawn and none is
+# submitted.
+idle 1000

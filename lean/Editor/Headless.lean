@@ -286,7 +286,29 @@ view <id> <x>,<y> <w>x<h>: <quoted text>, scroll <offset>, selections <anchor>..
 status <view id>: <face> <quoted text>, …   (or "-" for no field)
 scene: none               (no scene has been published)
 loop: refused: <error>    (a program of the editor loop was refused)
+agree view <id>: <n> rows asked from <anchor>, <m> in the frame: agrees
+                          (or "…: disagrees: asked <rows>, frame <rows>",
+                           "agree view <id>: no rows query from <anchor>",
+                           or "agree: no frame" with no display that lays
+                           out frames)
+idle <ms>: <d> frames drawn, <s> frames submitted
+                          (or "idle <ms>: no render loop")
+journal: <n> frames presented, present - input median <a> us, p99 <b> us, max <c> us
+                          (or "journal: no render loop")
 ```
+
+`agree` answers `agree`: the last rows query the display answered since the
+publish before the last one that names the last scene's focused view's
+snapshot, at its width and the anchor it was published with, and whether
+its rows are those of the frame the display laid out of that scene
+(`Host.Display.frameRows`). The queries are the loop's own, made as it
+follows the cursor before each publish, and a scroll command's. `idle` and
+`journal` are the driver's: once the editor thread has settled, each waits
+until the render loop is at rest (`Render.resting`). Then `idle` counts the
+journal's new entries and the counters' frames submitted over the period,
+and `journal` the entries since the last `journal` line, with their
+`present − input` (nearest rank). `journal`'s numbers vary between runs, so
+it is for measuring, never for a fixture.
 
 The `scene`, `view` and `status` lines answer `scene`: the last scene
 published, with how many scenes have been, then each view in drawing order,
@@ -330,8 +352,9 @@ handled in the order they were sent, and a request sent while a reload runs
 is handled before that reload is installed: settle first to see its effect.
 
 `run` drives a host through a script, one directive a line: `reload`,
-`run <name>`, `spawn <name>`, `show` and `scene` are requests, and `settle`,
-`join`, `key <logical> <physical> <modifiers>`, `commit <text>` and
+`run <name>`, `spawn <name>`, `show`, `scene` and `agree` are requests, and
+`settle`, `join`, `idle <milliseconds>`, `journal`,
+`key <logical> <physical> <modifiers>`, `commit <text>` and
 `resize <width> <height>` are the driver's own. A `key` is sent with
 `Host.press`: a press with no text,
 posted through the library's window input as a window would report it
@@ -383,7 +406,8 @@ cancels the jobs that are left, and prints nothing more.
   nothing.
 
 `main` is the executable's headless mode,
-`editor headless <sysroot> <olean dir> <config dir> <script file>`: `run`
+`editor headless [--render] <sysroot> <olean dir> <config dir> <script file>`,
+handed the command line after `headless`: `run`
 with the real elaborator, a directory as the source, stdout as the output,
 the library's timer service and file service for the jobs, and the file
 commands with their jobs, the minibuffer's commands with its mode, evil's
@@ -395,7 +419,16 @@ a command quit the editor before it, and
 1 when it could not, and then it says why on stderr: the script cannot be
 read, a wait ran out (after 30 seconds) with a reload or a job still
 running, or the editor thread did not answer. A rejected reload is something
-to print, not a failure, and so is a job that fails.
+to print, not a failure, and so is a job that fails. A command line it does
+not take is status 2, with its usage on stderr.
+
+With `--render` the host draws: `main` starts the library's headless render
+session, a render loop over the CPU renderer that follows each published
+scene's size at a scale of 1, and hands the host the real display binding
+over a display of the library's in `cells`, bound to the library's
+presenter (`drawnDisplay`), and the session as its `render`. It stops the
+session before it quits. Without it, the display is the recorder and
+nothing draws.
 
 ## Tests
 
@@ -464,6 +497,13 @@ with `wq` (`tests/headless/ex/wq-script`), each checked by the exit status,
 the file's bytes and the absence of a `commands:` line. They are shell and
 not Lean because Lean spawns no child process
 (`docs/design/overview.md`).
+One more runs the executable with `--render` on milestone 1's fixture
+(`tests/headless/milestone`), in a temporary directory in the same way: an
+evil session on a source file ending in `:w`, checked by the file's bytes,
+`agree` after `C-f` and after the save, and `idle 1000`, which must find
+nothing drawn and nothing submitted over the second after the session
+settled. `ConfigTest.scriptChecks` check that `agree`, `idle` and `journal`
+are read, and what is refused.
 -/
 
 namespace Editor.Headless
@@ -480,7 +520,26 @@ inductive Request where
   | spawn (name : String)
   /-- Print the last scene the editor loop published. -/
   | scene
+  /-- Print whether the last rows query about the focused view, at what it
+  was published with, matches the frame the display laid out. -/
+  | agree
   deriving DecidableEq, Repr
+
+/-- The render loop a host's frames are drawn by, as its driver reads it:
+the latest render session's (`Ffi.renderResting`, `Ffi.renderJournal`,
+`Ffi.renderCounters`). Each answers `none` when no session has started. -/
+structure Render where
+  /-- Whether the loop is at rest. -/
+  resting : IO (Option Bool)
+  /-- The journal's entries after a serial, oldest first. -/
+  journal : UInt64 → IO (Option (Array Ffi.JournalEntry))
+  /-- The loop's counters. -/
+  counters : IO (Option Ffi.RenderCounters)
+
+/-- The library's render session: the one `editor headless --render`
+starts. -/
+def Render.library : Render :=
+  { resting := Ffi.renderResting, journal := Ffi.renderJournal, counters := Ffi.renderCounters }
 
 /-- The cells the headless host's display lays text out in: 8 pixels across
 and 16 down, as the display contract's larger size. -/
@@ -638,6 +697,10 @@ structure Collaborators (σ : Type) (scheme : InputScheme) where
   host with a window system is handed the system's. -/
   clipboard : IO ClipboardHandler := do
     return (← Clipboard.InProcess.new).handle
+  /-- The render loop the host's display draws through, for the driver's
+  `idle` and `journal`; none when nothing draws, as in the headless mode
+  without `--render`. -/
+  render : Option Render := none
 
 /-- What the driver posts to the editor queue: a request, a marker to wait
 for, or the end of the loop. -/
@@ -659,6 +722,7 @@ def Signal.encode : Signal → UInt64 × String
   | .stop => (4, "")
   | .request (.spawn name) => (5, name)
   | .request .scene => (6, "")
+  | .request .agree => (7, "")
 
 /-- The signal an event's code and text stand for, if they stand for one. -/
 def Signal.decode? (code : UInt64) (text : String) : Option Signal :=
@@ -670,6 +734,7 @@ def Signal.decode? (code : UInt64) (text : String) : Option Signal :=
   | 4 => some .stop
   | 5 => some (.request (.spawn text))
   | 6 => some (.request .scene)
+  | 7 => some (.request .agree)
   | _ => none
 
 mutual
@@ -1111,6 +1176,62 @@ def scene (collaborators : Collaborators σ scheme) (running : Running σ scheme
     collaborators.emit s!"scene: refused: {refusal.describe}"
   return { running with texts }
 
+/-- Rows as `agree` prints them: each `<start>..<stop>`, joined by spaces. -/
+def rowsText (rows : Array Display.Row) : String :=
+  " ".intercalate (rows.map fun row => s!"{row.start}..{row.stop}").toList
+
+/-- What `agree` says of the focused view of `scene`, the last scene
+published, given `asked`, the rows queries answered since the publish before
+it, and `shown`, the rows of the frame the display laid out of it: the last
+query that names the view's snapshot, at its width and the anchor it was
+published with (`anchor`), and whether its rows are the frame's. The
+query's height is not matched: it is what the loop asked with, and a height
+other than the frame's text area is what `agree` is there to catch. -/
+def agreement (scene : Scene) (anchor : Nat) (asked : Array Asked)
+    (shown : Option (Array Display.Row)) : String :=
+  match scene.focused.bind fun id => scene.views.find? (·.id == id) with
+  | none => "agree: no focused view"
+  | some view =>
+    let matches_ (asked : Asked) : Bool :=
+      asked.query.snapshot == view.snapshot && asked.query.width == view.rect.width &&
+        asked.query.anchor == anchor
+    match (asked.filter matches_).back?, shown with
+    | none, _ => s!"agree view {view.id.index}: no rows query from {anchor}"
+    | some _, none => s!"agree view {view.id.index}: the frame has no such view"
+    | some query, some shown =>
+      let said :=
+        s!"agree view {view.id.index}: {query.rows.size} rows asked from {anchor}, {shown.size} in the frame"
+      if query.rows == shown then s!"{said}: agrees"
+      else s!"{said}: disagrees: asked {rowsText query.rows}, frame {rowsText shown}"
+
+/-- Prints whether the latest rows query about the focused view matches the
+frame the display laid out of the last scene (`agreement`): the query that
+names the view's snapshot, at the anchor it was published with. A display
+that lays out no frame, the recorder, says `agree: no frame`. -/
+def agree (collaborators : Collaborators σ scheme) (running : Running σ scheme) :
+    IO (Running σ scheme) := do
+  let some frameRows := running.display.frameRows |
+    collaborators.emit "agree: no frame"
+    return running
+  let some scene ← running.display.last? |
+    collaborators.emit "agree: no frame"
+    return running
+  let some view := scene.focused.bind fun id => scene.views.find? (·.id == id) |
+    collaborators.emit "agree: no focused view"
+    return running
+  let anchorOf : TextM Nat := do
+    let .anchor anchor ← view.scroll.text.marker view.scroll | throw .noSuchMarker
+    return anchor.offset
+  let (anchor, texts) ← anchorOf.runReal running.texts
+  let running := { running with texts }
+  match anchor with
+  | .error refusal =>
+    collaborators.emit s!"agree: refused: {refusal.describe}"
+  | .ok anchor =>
+    let (before, since) ← running.display.asked.get
+    collaborators.emit (agreement scene anchor (before ++ since) (← frameRows view.id))
+  return running
+
 /-- Prints the commands, the texts and the stores. -/
 def «show» (collaborators : Collaborators σ scheme) (running : Running σ scheme) : IO Unit := do
   collaborators.emit (" ".intercalate ("commands:" :: running.config.registry.names.toList))
@@ -1149,6 +1270,8 @@ def other (collaborators : Collaborators σ scheme) (running : Running σ scheme
       return running
     | some (.request .scene) =>
       running.scene collaborators
+    | some (.request .agree) =>
+      running.agree collaborators
     | some .marker =>
       return { running with markers := running.markers + 1 }
     | some .stop =>
@@ -1420,6 +1543,14 @@ inductive Directive where
   /-- Send a resize of the frame to this many physical pixels across and
   down, as the window would. -/
   | resize (width height : Nat)
+  /-- Settle, wait until the render loop is at rest, and print how many
+  frames it drew and how many were submitted over this many milliseconds
+  after. The driver's own. -/
+  | idle (milliseconds : Nat)
+  /-- Settle, wait until the render loop is at rest, and print how many
+  frames it presented since the last `journal`, with their latencies. The
+  driver's own. -/
+  | journal
   deriving DecidableEq, Repr
 
 /-- The name a directive gives after its keyword, which is the first
@@ -1515,8 +1646,19 @@ def directive? (line : String) : Except String (Option Directive) :=
                       if line == "resize" || line.startsWith "resize " then
                         some <$> resizeDirective? line
                       else
-                        .error
-                          s!"`{line}` is not a directive: expected reload, run <name>, spawn <name>, show, scene, settle, join, key <logical> <physical> <modifiers>, commit <text> or resize <width> <height>"
+                        if line == "agree" then .ok (some (.request .agree))
+                        else
+                          if line == "journal" then .ok (some .journal)
+                          else
+                            if line == "idle" || line.startsWith "idle " then
+                              match (named line 4).bind String.toNat? with
+                              | some milliseconds => .ok (some (.idle milliseconds))
+                              | none =>
+                                .error
+                                  s!"`{line}` is not an idle: expected idle <milliseconds>, one number"
+                            else
+                              .error
+                                s!"`{line}` is not a directive: expected reload, run <name>, spawn <name>, show, scene, agree, settle, join, idle <milliseconds>, journal, key <logical> <physical> <modifiers>, commit <text> or resize <width> <height>"
 
 /-- A directive of a script, and the line it is on. -/
 structure Line where
@@ -1580,6 +1722,59 @@ def Wait.failure (line : Option Nat) : Wait → Option Failure
   | .unanswered => some (.unanswered line)
   | .ended => none
 
+/-- Waits until `render`'s loop is at rest, for at most `patience`
+milliseconds; `false` if it is not by then. -/
+def rested (render : Render) (patience : Nat) : IO Bool :=
+  within patience do
+    return (← render.resting) == some true
+
+/-- The serial of the newest entry of `render`'s journal, 0 for none. -/
+def newestSerial (render : Render) : IO UInt64 := do
+  return (((← render.journal 0).getD #[]).back?.map (·.serial)).getD 0
+
+/-- What `idle <milliseconds>` prints, once the editor thread has settled:
+it waits until the render loop is at rest, then counts what the loop drew
+(journal entries) and what was submitted to it (its counters) over
+`milliseconds` milliseconds. With no render loop it says so. -/
+def idled (render : Option Render) (patience milliseconds : Nat) : IO String := do
+  let some render := render | return s!"idle {milliseconds}: no render loop"
+  unless ← rested render patience do
+    return s!"idle {milliseconds}: the render loop did not come to rest within {patience} ms"
+  let some before ← render.counters | return s!"idle {milliseconds}: no render loop"
+  let last ← newestSerial render
+  IO.sleep milliseconds.toUInt32
+  let drawn := ((← render.journal last).getD #[]).size
+  let submitted :=
+    match ← render.counters with
+    | some after => after.framesSubmitted - before.framesSubmitted
+    | none => 0
+  return s!"idle {milliseconds}: {drawn} frames drawn, {submitted} frames submitted"
+
+/-- The nearest-rank `rank`th percentile of `sorted`, which is in ascending
+order: the value at rank ⌈rank × n / 100⌉ of the n values; 0 for none. -/
+def nearestRank (sorted : Array Nat) (rank : Nat) : Nat :=
+  sorted.getD (((rank * sorted.size + 99) / 100) - 1) 0
+
+/-- What `journal` prints of `entries`, the frames presented since the last
+`journal` line: how many, and the median, the 99th percentile (nearest
+rank) and the largest of their `present − input`, in microseconds. -/
+def journalLine (entries : Array Ffi.JournalEntry) : String :=
+  let latencies :=
+    (entries.map fun entry => (entry.presentNs - entry.inputNs).toNat / 1000).qsort (· < ·)
+  s!"journal: {entries.size} frames presented, present - input median {nearestRank latencies 50} us, p99 {nearestRank latencies 99} us, max {latencies.back?.getD 0} us"
+
+/-- What `journal` prints, once the editor thread has settled: it waits
+until the render loop is at rest, then reads the journal's entries after
+`after`, the serial the last `journal` line counted to (`journalLine`). With
+it the serial it counted to now. With no render loop it says so. -/
+def journalSince (render : Option Render) (patience : Nat) (after : UInt64) :
+    IO (String × UInt64) := do
+  let some render := render | return ("journal: no render loop", after)
+  unless ← rested render patience do
+    return (s!"journal: the render loop did not come to rest within {patience} ms", after)
+  let entries := (← render.journal after).getD #[]
+  return (journalLine entries, (entries.back?.map (·.serial)).getD after)
+
 /-- Runs `script` against a host of its own, as its driver, and stops the
 host: sends each request in order and waits at each `settle` and each
 `join`. `none` when the script ran to its end, or a command quit the editor
@@ -1599,6 +1794,8 @@ cancelled when the loop ends. -/
 def run {σ : Type} {scheme : InputScheme} (collaborators : Collaborators σ scheme)
     (script : Array Line) (patience : Nat) : IO (Option Failure) := do
   let host ← start collaborators
+  -- The serial of the last journal entry a `journal` line counted.
+  let mut journaled : UInt64 := 0
   for line in script do
     -- A command quit the editor: the lines after it are not run.
     if ← IO.hasFinished host.thread then
@@ -1621,6 +1818,18 @@ def run {σ : Type} {scheme : InputScheme} (collaborators : Collaborators σ sch
         host.await patience
       | .join =>
         host.join patience
+      | .idle milliseconds =>
+        let wait ← host.await patience
+        if wait == .settled then
+          collaborators.emit (← idled collaborators.render patience milliseconds)
+        pure wait
+      | .journal =>
+        let wait ← host.await patience
+        if wait == .settled then
+          let (said, last) ← journalSince collaborators.render patience journaled
+          journaled := last
+          collaborators.emit said
+        pure wait
     if wait == .ended then
       break
     if let some failure := wait.failure (some line.number) then
@@ -1644,30 +1853,69 @@ is smaller than the machine, because `LEAN_NUM_THREADS` says so. -/
 def warmPatience : Nat :=
   200
 
-/-- The headless mode of the executable:
-`editor headless <sysroot> <olean dir> <config dir> <script file>`. Loads the
-config in `configDir` with the real elaborator, runs the script as `run`
-does, with the output on stdout, then quits the queues and exits explicitly:
-with status 0 when the script ran to its end or a command quit the editor
-before it, and with 1 when it could not,
-after saying why on stderr (the script cannot be read, a wait ran out with a
-reload or a job still running, or the editor thread did not answer).
+/-- The headless mode's command line, after `headless`. -/
+def usage : String :=
+  "headless [--render] <sysroot> <olean dir> <config dir> <script file>"
+
+/-- What the headless mode's command line, after `headless`, asks for:
+whether to draw (`--render`), and the four paths. `none` for any other
+command line. -/
+def arguments? : List String → Option (Bool × String × String × String × String)
+  | ["--render", sysroot, oleanDir, configDir, script] =>
+    some (true, sysroot, oleanDir, configDir, script)
+  | [sysroot, oleanDir, configDir, script] =>
+    if sysroot.startsWith "--" then none else some (false, sysroot, oleanDir, configDir, script)
+  | _ => none
+
+/-- The display the headless mode draws with under `--render`: the real
+binding over a display of the library's in `cells`, bound to the library's
+presenter (`Ffi.Display.present`), so every scene it publishes reaches the
+render session, over the snapshots `snapshots` reads. -/
+def drawnDisplay (snapshots : SnapshotReader) : IO Host.Display := do
+  let display ← Ffi.Display.newCells cells.advance.toUInt64 cells.lineHeight.toUInt64
+  display.present
+  Host.Display.real (← RealDisplay.over display snapshots Theme.builtin)
+
+/-- The headless mode of the executable, handed the command line after
+`headless`: `editor headless [--render] <sysroot> <olean dir> <config dir>
+<script file>`. Loads the config in `configDir` with the real elaborator,
+runs the script as `run` does, with the output on stdout, then quits the
+queues and exits explicitly: with status 0 when the script ran to its end or
+a command quit the editor before it, and with 1 when it could not, after
+saying why on stderr (the script cannot be read, a wait ran out with a
+reload or a job still running, or the editor thread did not answer). Any
+other command line is the usage on stderr and status 2.
 
 Before the loop starts it warms the pool, so the first burst of jobs finds
 every thread made, and starts the completion pump on a dedicated task. The
 host's jobs wait on the library's timer service and its file service, which
 reads the snapshots the loop publishes.
 
+**`--render`** draws what the host publishes: the library's headless
+render session is started (`Ffi.renderHeadless`), a render loop over the
+CPU renderer at each scene's size and a scale of 1, and the host's display
+is the real binding over a display of the library's in `cells`, bound to
+it (`drawnDisplay`), in place of the recorder. The script's `agree`, `idle`
+and `journal` read that display's frame and that loop. The session is
+stopped before the queues are quit.
+
 `sysroot` is the Lean toolchain's directory and `oleanDir` the directory
 holding the editor package's `.olean` files. Every path is an argument:
 nothing is read from the environment or the working directory. -/
-def main (sysroot oleanDir configDir scriptPath : String) : IO UInt32 := do
+def main (arguments : List String) : IO UInt32 := do
+  let some (drawn, sysroot, oleanDir, configDir, scriptPath) := arguments? arguments |
+    IO.eprintln s!"usage: editor {usage}"
+    return 2
   let directives ←
     try
       let text ← IO.FS.readFile scriptPath
       IO.ofExcept ((script text).mapError IO.userError)
     catch error =>
       IO.eprintln s!"editor: cannot run the script {scriptPath}: {error}"
+      return 1
+  if drawn then
+    unless ← Ffi.renderHeadless do
+      IO.eprintln "editor: the headless render session could not be started"
       return 1
   discard <| Job.Pool.warm Job.Pool.size warmPatience
   let completions ← Job.Completions.new
@@ -1686,11 +1934,15 @@ def main (sysroot oleanDir configDir scriptPath : String) : IO UInt32 := do
           published, held, requests := 1, wakeups := 2, jobs := 3
           commands := Files.commands ++ Minibuffer.commands ++ Evil.commands ++ Ex.commands
           compiledJobs := Files.jobs
-          modes := Minibuffer.modes, ex := Ex.bindings, log := IO.eprintln } directives
-        settlePatience
+          modes := Minibuffer.modes, ex := Ex.bindings, log := IO.eprintln
+          display :=
+            if drawn then drawnDisplay else fun snapshots => Host.Display.recorder cells snapshots
+          render := if drawn then some Render.library else none } directives settlePatience
   (← IO.getStdout).flush
   if let some failure := failure then
     IO.eprintln s!"editor: {failure.describe settlePatience}"
+  if drawn then
+    discard Ffi.renderStop
   -- Shutdown: quit lets every task parked in a pull return, the pump among
   -- them, and the exit is explicit, because a task may still be blocked in
   -- the library.

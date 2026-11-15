@@ -9,9 +9,12 @@ Lean owns the process. With no arguments `main` only shows the build works:
 it calls the Rust library and prints what comes back, and it runs one command
 against the library through the text port's real binding.
 
-`editor headless <sysroot> <olean dir> <config dir> <script file>` is the
-headless mode (`Editor/Headless.lean`): it loads the config in a directory,
-runs a script against it and prints what happened, for integration tests.
+`editor headless [--render] <sysroot> <olean dir> <config dir> <script file>`
+is the headless mode (`Editor/Headless.lean`): it loads the config in a
+directory, runs a script against it and prints what happened, for
+integration tests; with `--render` what it publishes is drawn by the
+library's headless render session. `Main` hands it the rest of the command
+line after `headless`, and the headless mode reads that itself.
 
 `editor window-check [--seconds <n>] [--no-ime]` is the keyboard check
 (`Editor/WindowCheck.lean`): it opens a window and reports what of the
@@ -48,20 +51,21 @@ def demo : IO UInt32 := do
       pure false
   return if sum == 5 && !leanOnMain && serviceOnMain && appended then 0 else 1
 
-/-- With no arguments, the demonstration. With `headless` and four paths, the
-headless mode, which exits with its own status: 0 when the script ran to its
-end and 1 when it could not. With `window-check`, the keyboard check, which
-opens a window and exits with its own status: 0 when the window ran and 1
-when it could not be opened. Anything else is bad usage, with status 2. -/
+/-- With no arguments, the demonstration. With `headless`, the headless
+mode, handed the rest of the command line, which exits with its own status:
+0 when the script ran to its end, 1 when it could not, and 2 for a command
+line it does not take. With `window-check`, the keyboard check, which opens
+a window and exits with its own status: 0 when the window ran and 1 when it
+could not be opened. Anything else is bad usage, with status 2. -/
 def main (args : List String) : IO UInt32 := do
   match args with
   | [] =>
     demo
-  | ["headless", sysroot, oleanDir, configDir, script] =>
-    Editor.Headless.main sysroot oleanDir configDir script
+  | "headless" :: rest =>
+    Editor.Headless.main rest
   | "window-check" :: options =>
     Editor.WindowCheck.main options
   | _ =>
     IO.eprintln
-        "usage: editor [headless <sysroot> <olean dir> <config dir> <script file> | window-check [--seconds <n>] [--no-ime]]"
+        s!"usage: editor [{Editor.Headless.usage} | window-check [--seconds <n>] [--no-ime]]"
     return 2
