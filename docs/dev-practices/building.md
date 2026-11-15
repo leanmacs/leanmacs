@@ -25,8 +25,15 @@ A command appended to a text held by Rust: héllo wörld
 The last line is a command, `Editor.append`, run against the Rust library.
 The model tests run the same source against a pure Lean model.
 
-The executable is about 180 MB on macOS and 265 MB on Linux: it can
-elaborate config, so Lean's elaborator is linked into it.
+The executable is about 206 MB on macOS: it can elaborate config, so
+Lean's elaborator is linked into it, and since milestone 1 the static
+library holds the wgpu renderer, Parley and arboard too, which took it
+from about 184 MB. Every executable that links the library (`editor`,
+`ffi-test`, `contract-test`, `config-test`) holds them. On macOS the link
+names the frameworks they need beside the window's: Metal, QuartzCore and
+CoreText (`lean/lakefile.lean`, `linkArgs`); a framework missing shows as
+`Undefined symbols for architecture arm64` from `mise run lean`. On Linux
+the size was 265 MB before milestone 1 and has not been measured since.
 
 ### The headless mode
 

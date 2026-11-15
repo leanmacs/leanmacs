@@ -1,7 +1,7 @@
 # The headless mode
 
 ```sh
-editor headless <sysroot> <olean dir> <config dir> <script file>
+editor headless [--render] <sysroot> <olean dir> <config dir> <script file>
 ```
 
 This is the editor with no window. It loads the config in a directory, runs
@@ -10,6 +10,43 @@ a script against it and prints what happened. Every path is an argument:
 `<olean dir>` the directory of the editor package's `.olean` files
 (`lean/.lake/build/lib/lean`). Nothing is read from the environment or the
 working directory.
+
+## Drawing it: `--render`
+
+Without `--render` the display is a recorder: it keeps the scenes and
+answers layout's questions with the display model's rule, and nothing is
+drawn. With it, the display is the real binding over the library's layout
+in cells of 8 by 16 pixels, bound to the library's headless render session:
+a render loop on the CPU renderer, at each scene's size and a scale of 1,
+which draws every frame published and keeps the frame journal. It is the
+same editor loop the window mode runs; only the display and its drawing
+differ. The scenes a script prints are the same either way. Three
+directives read the drawing:
+
+- **`agree`** asks the editor thread whether the last rows query about the
+  focused view, at the anchor it was published with, answered the rows of
+  the frame laid out of that scene: `agree view <id>: <n> rows asked from
+  <anchor>, <m> in the frame: agrees`, or `…: disagrees: asked <rows>,
+  frame <rows>`. The queries are the loop's own, made as it follows the
+  cursor before each publish, and a scroll command's. Without `--render`:
+  `agree: no frame`.
+- **`idle <ms>`** settles, waits until the render loop is at rest, then
+  counts what it draws and what it is handed over `<ms>` milliseconds:
+  `idle <ms>: <d> frames drawn, <s> frames submitted`. Nothing should ask
+  for a frame while nobody types, so both are 0. `idle 0` paces a key: the
+  key's frame is drawn before the next is sent. Without `--render`:
+  `idle <ms>: no render loop`.
+- **`journal`** settles, waits for the loop to rest, and prints how many
+  frames were presented since the last `journal` line, their
+  `present - input` median, 99th percentile (nearest rank) and largest in
+  microseconds, and the rows they rebuilt. Its numbers vary between runs,
+  so it is for measuring (`mise run milestone-bench`), never for a
+  fixture.
+
+`tests/headless/milestone/` is milestone 1's fixture over the whole program:
+`:e` on a 60-line source file, an evil session ending in `:w`, `agree`
+after `C-f` and after the save, and `idle 1000`; `ffi-test` compares its
+output and the saved file's bytes ([the-gate.md](the-gate.md)).
 
 A config is the `.lean` files directly in the config directory, elaborated in
 the byte order of their names, each on top of the one before. They have no

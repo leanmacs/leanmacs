@@ -699,7 +699,7 @@ held to the clipboard port's. Run it after a change to
 `crates/editor-platform-winit`, to `crates/editor-platform-arboard`, to a
 contract in `crates/editor-platform`, to the surface code of
 `crates/editor-render-wgpu`, or to `render` in `crates/editor-ffi`. It uses
-the image, the cache and the volume of `linux-ci`, and runs six things
+the image, the cache and the volume of `linux-ci`, and runs seven things
 under Xvfb, a display that needs no screen and no person, failing if any
 fails:
 
@@ -804,7 +804,21 @@ fails:
    process;
 6. a text written to the clipboard by one process and read by another,
    while the first is still alive. One process cannot show this: on X11
-   the text is served by the process that wrote it.
+   the text is served by the process that wrote it;
+7. the editor on a file (since milestone 1): `editor --report` on a copy
+   of `tests/window/session.txt`, with no toolchain, so no config, and
+   xdotool typing `ihello `, `<Escape>`, `:w`, `<Return>`, `:q` and
+   `<Return>`. The editor must exit 0 within 60 seconds, the copy must
+   hold the bytes of `tests/window/session-expected`, and the report must
+   count at least one frame. The report is printed; its figures are Xvfb's
+   and llvmpipe's, not milestone figures. First run 2026-11-15 (Apple M5
+   Max host, aarch64 container): all seven passed; the surface offered
+   `immediate`, `mailbox`, `fifo` and `fifo-relaxed` and was configured
+   with `fifo` at a frame latency of 1; 16 frames, `present - input`
+   median 3704 µs, p99 51462 µs. The counters said no glyph was
+   rasterised: why (whether the container's fonts give the editor's
+   `monospace` anything) was not looked into, and the check does not ask
+   for glyphs.
 
 Its input is synthetic. It goes through the X server and the real window
 library, so it shows the path a key and the pointer take on Linux, but
@@ -1074,11 +1088,115 @@ Run it on a new major version of macOS, or when the fixture font changes.
 what to do with a new one: look at it, enlarged, before committing it, and
 fit the weight again if it no longer matches.
 
+## The editor on a file, by hand
+
+`mise run edit -- <file>` (`lean/Editor/Window/Real.lean`): the editor on a
+file, in a window. The gate runs the same wiring on the library's scripted
+platform (`ffi-test window-host`), and `mise run linux-window` runs it on
+a real window under Xvfb with xdotool typing (its seventh part); neither
+is a person at a window. This is the owner's procedure, for milestone 1's
+fourth criterion. Record in the phase body, for each run: the date, the
+commit, the machine, the macOS version, the display or displays with their
+scale and refresh rate, the command, and what was seen at each step marked
+**Record**.
+
+On macOS, in a terminal at the checkout, at the reviewed commit:
+
+1. `mise install`, then `mise run lean`.
+2. `cp lean/Editor/Loop.lean /tmp/dp6-session.lean`, so that no tracked
+   file is edited, then `mkdir -p /tmp/dp6-config` and
+   `cp tests/headless/config/*.lean /tmp/dp6-config/`.
+3. `mise run edit -- --report --config /tmp/dp6-config /tmp/dp6-session.lean`.
+   **Record**: that the window shows the file's first rows in a monospace
+   font at the size of other apps' text, with a status line reading
+   `normal` and `dp6-session.lean`, and that the bottom row below it is
+   empty.
+4. An evil edit, with what is seen after each: `j j j` (the cursor moves
+   down), `dw` (a word goes, and the status line shows the modified mark),
+   `i`, type `hello `, `<Escape>` (the text appears as typed, once per key
+   and not twice, with the bar cursor in insert state and the block after
+   `<Escape>`), `u` then `C-r` (the edit goes and comes back), `C-f` then
+   `C-b` (the view scrolls a page and back), and `"+yw` (yank a word to the
+   clipboard). Then paste into TextEdit. **Record** that the word arrives.
+5. `:w` and `<Enter>`. **Record**: that while `:w` is typed it shows in the
+   input row above the bottom row, with the prompt in the bottom row; and
+   that after `<Enter>` the input row is gone, the modified mark goes, and
+   the bottom row says the file was written. In a second terminal,
+   `diff lean/Editor/Loop.lean /tmp/dp6-session.lean`. **Record** that the
+   diff is the edit.
+6. A broken config: `printf 'def broken : Nat := "x"\n' > /tmp/dp6-config/30-broken.lean`,
+   then `:reload` and `<Enter>`. **Record**: that the bottom row shows
+   `reload: 30-broken.lean:1:…: error: …`, and that `j` and `dw` still
+   work. Then `rm /tmp/dp6-config/30-broken.lean`.
+7. Idle: note the time and leave the window untouched for 60 s, with no
+   pointer over it. In the second terminal, run
+   `ps -o time=,rss= -p $(pgrep -n editor)` at the start and at the end.
+8. The external change, which no phase builds (task
+   `display-pipeline-open-file-reload`): optionally
+   `echo '-- external' >> /tmp/dp6-session.lean`. **Record** what the
+   window shows. The expected answer is nothing new.
+9. `:q` and `<Enter>`. The window closes and the report prints on
+   stderr. **Record**: the report's frame count, its `present - input`
+   figures, and the longest stretch with no frame, which must cover step
+   7's 60 s. That stretch and the CPU time from step 7 are "the journal
+   shows no work while idle".
+
+On Linux, on a desktop and not under Xvfb, if there is one: steps 3 to 5
+and 9, with a text editor of the desktop in place of TextEdit. If there is
+none, record "not measured on Linux: no desktop".
+
+## Milestone 1, measured
+
+Milestone 1's figures: key press to frame submitted (median and 99th
+percentile), idle CPU, memory at startup, memory after opening a 10 MiB
+file, and scrolling through it. Each figure goes in the phase body with
+the command or procedure that gave it, and with what it is: headless
+(below) or a window's (the owner's, after it).
+
+**Headless, by an agent or anyone: `mise run milestone-bench`**
+(`tools/milestone-bench.sh`), on a quiet machine, twice. It runs five
+scripts of `editor headless --render` under `/usr/bin/time -l`, and prints
+the machine first. Every figure it gives is labelled "headless: cell
+shaper, CPU renderer, no glyphs": what Lean, layout and the loop cost, and
+not what a window costs.
+
+| Figure | Script | Line it prints |
+|---|---|---|
+| Memory at startup | `start`: a frame of 1280 by 800, no file | `start: maximum resident set …`, `start: peak memory footprint …` |
+| Memory after opening a 10 MiB file | `open`: `:e` on a generated file of 201,650 lines of 52 bytes (10,485,800 bytes), then `join` | `open: maximum resident set …`, `open: peak memory footprint …` |
+| Scrolling through it | `scroll`: 300 `C-f`, each paced by `idle 0`, then `G` | its second `journal` line (the 300 frames' `present - input` and rows rebuilt) and its third (`G`); `scroll: real …` |
+| Key press to frame submitted | `type`: 200 `l` and `h` in a 640 by 480 view of a small file, each paced by `idle 0` | its second `journal` line |
+| Idle CPU | `idle-30000` against `idle-0`: the same session with `idle 30000` and `idle 0` | the difference of their `user` + `sys`, and `idle 30000: 0 frames drawn, 0 frames submitted` |
+
+`idle 0` paces a key: it waits until the render loop has drawn what the key
+asked for and is at rest, so that no key's frame is replaced in the
+mailbox before it is drawn.
+
+**In a window, by the owner.** Two sessions, each started with
+`mise run edit -- --report <file>`:
+
+- Typing, on a one-line file, `printf 'x\n' > /tmp/dp6-one.txt`:
+  1. Memory at startup: once the window shows,
+     `ps -o rss= -p $(pgrep -n editor)` and
+     `footprint $(pgrep -n editor) | tail -1`.
+  2. `A`, then type `the quick brown fox jumps over the lazy dog` three
+     times at an even pace, then `<Escape>`, `:w` and `:q`. Record the
+     report's median and 99th percentile.
+  3. Idle CPU: in another run on the same file, `ps -o time=` 60 s apart,
+     untouched.
+- The 10 MiB file, written with
+  `awk 'BEGIN{for(i=0;i<201650;i++) printf "%07d the quick brown fox jumps over the lazy dog\n", i}' > /tmp/dp6-ten.txt`:
+  1. `mise run edit -- --report /tmp/dp6-ten.txt`, and note how long the
+     window takes to show the text, by eye or by stopwatch.
+  2. Memory once shown: `ps` and `footprint` as above.
+  3. Hold `C-f` for 10 s, then `G`, then `gg`.
+  4. `:q`. Record the report's figures and the counters' rows rebuilt.
+
 ## The present mode, measured on a window
 
-**Nothing in this section has been run, and no figure exists yet.** These
-are the steps by which the display pipeline's phase 6 measures the present
-mode on a window. They are written down now because the decision was
+**No figure exists yet: these are the owner's steps, at a real window.**
+These are the steps by which the display pipeline's phase 6 measures the
+present mode on a window. They are written down now because the decision was
 taken first, by reading: `Fifo` at a frame latency of 1 on every platform
 ([`rendering-prior-art.md`](../design/rendering-prior-art.md), "Present
 mode and pacing"). A measurement needs a window on a display. A window
@@ -1104,34 +1222,38 @@ build first:
 - the frame journal, read through the loop's handle at the end of a run,
   in Rust (`crates/editor-ffi/examples/window.rs` reads it so).
 
-What phase 6 must still build first:
+What phase 6 built for it:
 
-- a way to ask for another present mode and another frame latency for
-  one run, which the editor does not otherwise offer: a flag of the
-  measuring command, not a setting;
-- frames published from Lean reaching the window, so that a key typed
-  draws a frame; and a way to read the journal from the measuring
-  command.
+- `--present-mode fifo|fifo-relaxed|immediate|mailbox` and
+  `--frame-latency <n>`, flags of the window mode for one run, not
+  settings: the renderer gives the mode asked when the surface offers it,
+  and the decision's otherwise, and the latency held to the range offered;
+- frames published from Lean reaching the window, stamped with the key
+  they answer, so that a key typed draws a frame;
+- `--report`, which prints to stderr once the window has closed what the
+  surface offered, what was asked and what was configured, the counters,
+  each journal entry's present time with its `present - input`, their
+  median, 99th percentile (nearest rank) and largest, and the longest
+  stretch with no frame.
 
-The steps, for each platform:
+The steps, for each platform (O3; on Linux, O4, on a desktop and not under
+Xvfb):
 
-1. Note what the surface reports: its formats and its present modes.
-   Compare them with the table in `rendering-prior-art.md`, of which the
-   Vulkan row has been seen on a surface (llvmpipe, under Xvfb) and the
-   others only read in wgpu's source, and correct the table where they
-   differ.
-2. For each of these that the surface offers, one run each: `Fifo` at a
-   frame latency of 1; `Fifo` at 2; `Immediate`; `Mailbox`;
-   `FifoRelaxed`.
-3. In each run, open a fixture file checked in for the purpose, and type
-   a fixed run of keys: the same keys, at the same pace, every run (typed
-   by a script where the platform allows one, and by hand otherwise, with
-   which it was written down).
-4. Read the frame journal. Over the entries of the run, take
-   `present_ns − input_ns`, the time from a key's arrival to its frame's
-   presentation, as a median and a 99th percentile; and count the
-   entries, to see that each key drew a frame and that nothing drew while
-   idle.
+1. Run `mise run edit -- --report /tmp/dp6-one.txt` once (the one-line
+   file of "Milestone 1, measured"), and record the modes the report's
+   `presentation:` line says the surface offered. Compare them with the
+   table in `rendering-prior-art.md`, of which the Vulkan row has been
+   seen on a surface (llvmpipe, under Xvfb) and the others only read in
+   wgpu's source, and correct the table where they differ.
+2. For each of these that the surface offers, one run each:
+   `mise run edit -- --report --present-mode fifo --frame-latency 1 /tmp/dp6-one.txt`,
+   then `--present-mode fifo --frame-latency 2`, `--present-mode immediate`,
+   `--present-mode mailbox` and `--present-mode fifo-relaxed`.
+3. In each run, type the same sentence three times at the same pace, then
+   resize the window by dragging its corner, then `:w` and `:q`.
+4. Record, from each report: the median and the 99th percentile of
+   `present - input`, the entry count, and the longest stretch with no
+   frame.
 5. Look at the window while it is resized, and write down what is seen:
    whether the content lags the window's edge. That is what presenting
    with the transaction would change on macOS, and it cannot be asked for

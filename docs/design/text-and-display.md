@@ -1413,8 +1413,9 @@ meaning "as last given". The layout of the words is the table in
 
 After a reload that installs, the runtime that owns a display hands the
 binding the new theme (`Config.retheme`, `lean/Editor/Config/Display.lean`).
-No runtime does yet: the headless loop has no display, and the loop over
-the real display is the display pipeline's last phase.
+The headless host does, through its display's `setTheme`: the real
+binding's in the window mode and under `--render`, and nothing for the
+recorder.
 
 Lean publishes the scene and asks layout's two questions through the
 display interface (`lean/Editor/Display.lean`): the rows a view shows from
@@ -1951,9 +1952,21 @@ section gave both, with the real clock, to phase 6. Phase 5 built all
 three, because a window that draws needs them ("The window, as built",
 below): `editor-ffi` starts the render thread and lends the loop the
 clock that stamps input, and the wgpu adapter presents to a window's
-surface. What is still phase 6's is anything from Lean reaching them:
-frames published from Lean, the real shaper behind the display handle,
-and the journal read from Lean.
+surface. Phase 6 joined Lean to them, inside the library: a display bound
+to the process's presenter (`render::Presenter`, `Display::present_to`)
+submits each frame it lays out to the render loop the presenter targets,
+stamped with the oldest window input taken off the editor queue since the
+last publish (`events::take`), so the journal measures `present − input`
+from a key's arrival in Rust. The window's session puts its handle in the
+presenter at `Opened` and takes it out at `Closing`; the headless mode's
+`--render` session (`render::headless`, over `HeadlessRenderer`) does the
+same at start and stop; the latest session's handle stays readable after
+it ends, for the journal, the counters and whether its loop is at rest
+(`RenderHandle::resting`). The window's display lays out over Parley on
+the system's fonts (`editor_ffi_display_new_system`). The presenter is a
+value every user is handed; the one process-wide instance is reached only
+by the C functions, so no Rust test shares it. A display that is not
+bound submits nothing.
 
 - **The `Renderer` port is `editor-render`'s.** It is a crate of its own,
   which depends on `editor-layout` alone, for the reasons the window port
@@ -2467,11 +2480,8 @@ frame journal and the renderer's counters.
   shape. A field of its own is the cleaner contract, and needs the same
   field in the Rust scene and its binding: whether to make that change,
   and when, is for the display pipeline's work on the minibuffer.
-- **The minibuffer's height.** The strip the minibuffer's place takes is
-  32 physical pixels ("Views as built"), a placeholder with no font behind
-  it, which ignores the frame's scale. A height the host supplies, or a
-  layout query for the height of a row, are the alternatives; the second
-  is a change to the display contract.
+- **The minibuffer's height** (answered): the display's `heights` answer
+  sizes it ("The height of a view's text area", below).
 - **A summarised tree for the display layers.** The rope is a library's
   ("Text", as built). Display layers, excerpt buffers and decoration
   interval trees favour a sum tree in the style of Zed's; whether they get
@@ -2616,50 +2626,53 @@ frame journal and the renderer's counters.
   phase 16), and the next frame asks at the view's width, so the rows both
   touch are broken again each time, not shaped again. What that costs is
   not measured.
-- **Where the echo area, the pending prefix and the preedit are drawn.**
-  The scene carries them and layout lays out none of them; no phase of
-  the display pipeline owns drawing them yet. The faces `echo-area` and
-  `minibuffer-prompt` are defined for them and nothing draws in either.
-- **The height of a view's text area, for the rows query.** A view's
-  status row takes its height from the bottom of the view, and the frame
-  shows the text rows that fit above it. The rows query takes an explicit
-  height, and Lean has no way to learn the status row's height, so a
-  caller of `Display.rowsShown` cannot yet ask for exactly the text area:
-  with a status row, the frame shows fewer rows than the query answers for
-  the view's whole height. Nothing was added to the display contract for
-  it. The command loop's view commands are the first caller that needs it;
-  a query for a view's text area, or the status row's height in an
-  answer, would settle it. It has to be a query's answer: since a
-  theme's lengths are points, Lean could not work the height out from
-  the theme without multiplying by the window's scale, and Lean
-  multiplies nothing and knows no scale for faces.
+- **Where the echo area, the pending prefix and the preedit are drawn**
+  (the echo answered, as built): messages share the minibuffer's bottom
+  row, as in Vim and Emacs (the owner's decision, 2026-11-15). With no
+  prompt open, the minibuffer's place is one `message` row at the frame's
+  bottom and holds no view, and layout ends the frame with one more view
+  frame there when the scene's echo is not empty and no view's rectangle
+  overlaps that row: id `u64::MAX`, which the wire never sends, no text
+  rows and no cursor, and one status row of the echo in face `echo-area`.
+  With a prompt open, the minibuffer's view covers the row and its status
+  row, the prompt, is drawn there. Opening a prompt clears the echo, as
+  Vim does (`EditorState.openPrompt`), so the row is empty when the prompt
+  closes until a command says something; a key's command clears it too
+  before it runs, so what a job's command said while the prompt was open
+  shows only if the prompt is closed by something other than a key. The
+  pending prefix and the preedit are still drawn nowhere: tasks
+  `show-pending-key-prefix` and `draw-input-method-preedit`.
+- **The height of a view's text area, for the rows query** (answered, as
+  built): the display answers one more question, `heights` (text, status
+  and message, each a whole number of physical pixels rounded up, at the
+  display's scale), and layout makes a view's status row exactly `status`
+  tall, or `message` tall for a view with status fields whose rectangle
+  reaches the frame's bottom edge, the minibuffer's while a prompt is open;
+  a taller glyph is clipped to the row. Lean asks about a view with its
+  height less its bottom row (`EditorState.bottomRow`,
+  `Scroll.Area.ofRect`), so the rows a query answers are the rows the frame
+  shows (`editor-layout`'s `tests/heights.rs`; the milestone fixture's
+  `agree`). The minibuffer's place takes `message`, and `text + message`
+  while a prompt is open, in place of the 32-pixel placeholder. The rule
+  that names the minibuffer's view by its reaching the bottom edge holds
+  while the minibuffer is the bottom leaf of the split tree; a layout that
+  put a window there would need a field of the scene.
 - **Sizes and the window's scale factor** (answered): a theme states its
   lengths in logical points, and layout multiplies them by the scale
   factor of the target it lays out for, before shaping ("Decorations", as
   built, "A length a face states is in logical points"; "Layout and
   rendering", as built, "The scale"). The real shaper still takes sizes
   as physical pixels, and hints nothing.
-- **A scene published from Lean at its window's scale.** Layout can lay
-  out at a scale, and the display handle Lean publishes to is never told
-  one: it has no window behind it, and lays out at 1. So until a window
-  draws what Lean publishes (the display pipeline's phase 6), the
-  editor's own text is not laid out at its window's scale, and on a
-  display at scale 2 it would be half the size it should be. Two ways
-  are open, and `Layout::set_scale` serves both. Inside the library:
-  `editor-ffi` keeps the scale the window last said where the display
-  can read it, written as the resize is pushed on the queue, and the
-  display sets it under layout's lock before each publish and each
-  query. Lean's scene, the wire, the display interface and its model do
-  not change, and Lean never handles a scale; a scene whose rectangles
-  Lean computed for one size may then be laid out at the scale of a
-  later one, for the one publish before Lean reads the newer resize.
-  Through Lean: the scene gains a scale beside its size, or the display
-  interface a call, and Lean passes on the number it got with the
-  resize; the rectangles and the scale then always belong together, and
-  Lean's scene, which is the command loop's contract, and the wire
-  change. The plan of the display pipeline's phase 5 recommends the
-  first. It awaits the owner, and phase 6's description does not name
-  it yet.
+- **A scene published from Lean at its window's scale** (answered, as
+  built; the owner's decision, 2026-11-15): inside the library. The
+  process's presenter keeps the scale the window last said (`Opened`,
+  `Resized`), and a display bound to it sets that scale on its layout,
+  under layout's lock, before each publish, each query and each heights
+  answer. Lean's scene, the wire, the display interface and its model do
+  not change, and Lean never handles a scale. The cost: for the one
+  publish before Lean reads a newer resize, a scene whose rectangles were
+  computed for one size may be laid out at the scale of the next. The
+  other way, a scale in the scene that Lean passes on, was set aside.
 - **A kept row's height in the estimate, after a change of font or of
   scale.** `Layout::height_estimate` counts a kept row at the height it
   was last laid out at, without asking whether it would be laid out the
@@ -2708,7 +2721,12 @@ frame journal and the renderer's counters.
   was chosen by reading wgpu's source. A surface exists now, and one has
   reported what it offers: llvmpipe's, on an X11 window under Xvfb, where
   the choice was configured and frames were presented. What Metal's
-  offers is still what was read. The measurements are phase 6's
+  offers is still what was read. The editor can now be measured on a
+  window: `--present-mode`, `--frame-latency` and `--report` ask for
+  another presentation for one run and print what the surface offered and
+  the journal's figures. The owner's run on a real window
+  (`docs/dev-practices/on-demand-checks.md`, "The present mode, measured
+  on a window") is still to be made
   ([rendering-prior-art.md](rendering-prior-art.md), "Present mode and
   pacing").
 - **Where the window has drawn, and where it has not.** The surface, the

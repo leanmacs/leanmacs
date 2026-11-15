@@ -209,12 +209,19 @@ That the render thread draws, and not the main thread from the window's
 own redraw event, **awaits the owner**. The other way needs no second
 thread and no join, and blocks the window on every present.
 
-Not built: anything from Lean reaching the session. The process's window
-is run with nothing drawing in it, and frames published from Lean reach
-no renderer until the display pipeline's phase 6. The session has run
-with a real renderer in a real window only in an example, on demand
-(`crates/editor-ffi/examples/window.rs`), where a second thread stands in
-for the editor.
+Since the display pipeline's last phase, frames published from Lean reach
+the session inside the library: a display bound to the process's presenter
+submits each frame it lays out to the loop the presenter targets, from
+the editor thread, which is the one thread that publishes. So the editor
+thread never waits on the render thread: a submit only leaves word in the
+mailbox. The window mode runs the window on Lean's main thread
+(`Ffi.windowRun`) and the editor loop on a dedicated task, which asks the
+window to close when it ends; the headless mode's `--render` runs a render
+session on a thread of the library's with no window. In a real window the
+session has run with the wgpu renderer under Xvfb (`mise run
+linux-window`); at a person's desktop it is the owner's to run
+(`docs/dev-practices/on-demand-checks.md`, "The editor on a file, by
+hand").
 
 ## Foreground: commands
 

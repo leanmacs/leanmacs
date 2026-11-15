@@ -1914,9 +1914,12 @@ between commands is the loop's
 ([text-and-display.md](text-and-display.md), "Views as built").
 
 Everything here is tested on the display model, which lays text out in
-cells of one size. Nothing has run over real layout, where rows have
-different heights and a view's status row takes one of them: that is the
-display pipeline's phase 6.
+cells of one size, and, since the display pipeline's last phase, once over
+real layout: the milestone fixture (`tests/headless/milestone`) runs `C-f`
+over the library's layout in cells and checks that the rows the loop asked
+for are the rows of the frame drawn (`agree`). A view is asked about with
+its height less its bottom row, as tall as the display answers
+(`EditorState.bottomRow`).
 
 - **`C-d` and `C-u`** (`Evil.scroll .half`) move the view's scroll anchor
   and its cursor by the same number of visual rows.
@@ -2333,6 +2336,15 @@ As built, with nothing new for it:
   port.
 
 ### The minibuffer
+
+**Where it is drawn** (since the display pipeline's last phase). The
+minibuffer's place is the bottom leaf of the split tree, and always takes
+the frame's bottom row, as tall as the display's `message` height: with no
+prompt open the scene's echo is drawn there, and while a prompt is open
+the place takes the input row above it too (`text + message`), the
+minibuffer's view fills both, and the prompt replaces the message in the
+bottom row. Opening a prompt clears the echo, as Vim does, so once the
+prompt closes the row is empty until a command says something.
 
 Status: decided 2026-11-14 and built, by the command loop's phase 10
 (`lean/Editor/Minibuffer.lean` and `lean/Editor/Minibuffer/Compiled.lean`

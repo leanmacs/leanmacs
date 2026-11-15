@@ -91,6 +91,37 @@ and the compiler and entry-point workarounds above.
 Shutdown posts a quit event, unblocks every dedicated task, and calls exit.
 Returning from `main` while a task is blocked in Rust hangs.
 
+**`editor <file>`, as built** (the display pipeline's last phase;
+`lean/Editor/Window.lean`, `lean/Editor/Window/Real.lean`). The window mode
+is the headless host's editor loop handed real collaborators: the real
+display binding over a display on the system's fonts, bound to the
+process's presenter, and the system clipboard, or `Clipboard.unavailable`
+when it cannot be opened, which the echo area says once. Before the first
+event `main` posts the open command with the file, what the echo area has
+to say, and a reload when config is loaded at start; the editor is usable
+before the reload installs, as above. Then it runs the window on its own
+thread (`Ffi.windowRun`) with the editor loop on a dedicated task; when the
+loop ends, on `:q` or a close request, a task waits briefly for the last
+frame to be drawn and asks the window to close. Then `main` quits the
+queues and exits.
+
+- **The toolchain.** Lean cannot run `lean --print-prefix`, which would
+  spawn a process, so the toolchain's directory is an argument
+  (`--sysroot`). With none, no config is loaded, and the echo area says
+  `config: not loaded: no Lean toolchain given (--sysroot)`. `mise run
+  edit` always gives the pinned one.
+- **The editor's `.olean` files** are `<directory of the executable>/../lib/lean`
+  unless `--oleans` says otherwise: where Lake puts them in the build tree.
+  Where an installed editor keeps them is still not decided.
+- **The config directory** is `--config`, or `leanmacs` under
+  `$XDG_CONFIG_HOME`, or under `$HOME/.config` when that is unset. A
+  default directory that does not exist loads nothing and says nothing; a
+  given one that does not exist is a rejected reload, said in the echo
+  area. Reloading again is `:reload` (`reload-config`); nothing is watched.
+- `main` reads the working directory, those two variables and the
+  executable's path at the edge; what they mean is a pure function,
+  pinned in `model-test` (`ModelTest.windowOptionChecks`).
+
 **Quit from a command, as built.** A command cannot end the process. It
 asks (`quit`, `lean/Editor/Api.lean`), which sets a flag of the editor
 state; the loop's step says stop once the editor can leave, when no buffer
@@ -337,8 +368,10 @@ elaborator.
   nothing ([text-and-display.md](text-and-display.md), "Decorations", as
   built). A face is not a command and the reload report does not count it.
   The runtime that owns a display hands it the theme after a reload that
-  installs (`Config.retheme`); the headless loop has no display, so
-  nothing calls it from a loop yet.
+  installs (`Config.retheme`): the host does, with its display's
+  `setTheme`, which the recorder ignores. A rejected reload's first error
+  is said in the echo area (`Config.Report.echo`), and its whole report is
+  printed: on stdout in the headless mode, on stderr in the window mode.
 - **The session runs no `IO` action from config.** A chunk is elaborated,
   `setup` is a program, a command is a program: every call from compiled
   Lean into config is a plain call of pure code.

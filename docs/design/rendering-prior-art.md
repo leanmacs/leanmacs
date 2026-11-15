@@ -301,7 +301,15 @@ surface, and says so. Seeing what a surface offers is not measuring a
 mode: the measurements are the display pipeline's phase 6's, by the steps
 written down in
 [on-demand-checks.md](../dev-practices/on-demand-checks.md), "The present
-mode, measured on a window". They may overturn the choice.
+mode, measured on a window". They may overturn the choice. Since that
+phase the editor has what the steps need: `editor --present-mode <mode>
+--frame-latency <n> --report <file>` asks for another presentation for
+one run, and its report says what the surface offered and was configured
+with, and the journal's `present − input` figures. Under Xvfb on llvmpipe
+the surface offered `immediate`, `mailbox`, `fifo` and `fifo-relaxed`,
+and `fifo` at a frame latency of 1 was configured (`mise run
+linux-window`, 2026-11-15); that is a software driver, not a measurement.
+The runs on a real window are the owner's.
 
 **The reasons.**
 

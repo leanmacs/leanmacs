@@ -732,7 +732,44 @@ prints a `scene` after each step:
 
 The editor must exit with status 0, its output, with the temporary
 directory's path written `@DIR@`, must be exactly `expected`, and the copy
-must still hold the bytes of `lines.txt`. The display is the recorder. The
+must still hold the bytes of `lines.txt`. The display is the recorder.
+
+`ffi-test` runs **milestone 1 over the whole program**, as a process, the
+same way (`tests/headless/milestone/`), with `editor headless --render`:
+the display is the real binding over the library's layout in cells of 8 by
+16, bound to the headless render session, which draws every frame on the
+CPU renderer. The script opens a copy of `source.txt`, 60 lines of Lean,
+with `:e`, runs `2dw`, `.`, `u`, `j`, `cw` with a committed `edited`,
+`<Escape>`, `$ p`, `u` and `C-r`, scrolls with `C-f`, saves with `:w`, and
+ends with `idle 1000`. The editor must exit 0, its output must be exactly
+`expected` (each `agree` line reads `agrees`: the rows the loop asked for
+are the frame's, and `idle 1000: 0 frames drawn, 0 frames submitted`), and
+the copy must hold the bytes of `source-expected`. The idle second is the
+one real-time wait of the gate's checks of drawing: it starts once the
+render loop is at rest, so a slow machine cannot fail it, and it fails only
+if something asks for a frame while nobody types. The render loop's own
+rules (an equal frame is no demand; a loop at rest draws nothing) are
+`editor-render`'s, pinned on a fake clock.
+
+`ffi-test window-host <file>` runs **the window mode's wiring**
+(`lean/Editor/Window/Real.lean`), as a process of its own, on the
+library's scripted platform: a cells display bound to the presenter, a
+clipboard of its own, the host opening a copy of `ex/note.txt`, and the
+scripted sample window opening, sending its input and asking to close.
+It must exit 0, which it does only when the window ran and closed and the
+render session's counters show a frame drawn, and the copy must be
+unchanged. `editor --bogus` and `editor a b` must each be status 2: any
+command line that is not `headless` or `window-check` is the window
+mode's, so a word is a file.
+
+What the gate checks of drawing, then: frames a bound display publishes
+reach a render loop with the input they answer (`editor-ffi`'s tests,
+`FfiTest.renderChecks`), the scripted window's session draws them, and the
+whole program drawn by the CPU renderer agrees with its queries and rests.
+What it does not: a real window, the system's fonts, a GPU, the desktop's
+clipboard, and anything a person sees. Those are on demand
+([on-demand-checks.md](on-demand-checks.md): `linux-window`, "The editor
+on a file, by hand", "Milestone 1, measured"). The
 three offsets were worked out by hand before the editor was run with the
 change: before it the run printed bytes 6, 2 and 5.
 
