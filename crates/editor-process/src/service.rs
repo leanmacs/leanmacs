@@ -788,6 +788,34 @@ mod tests {
         assert!(!fake.alive(child) && !fake.alive(child + 1));
     }
 
+    // Seen to bite once by hand, on 2026-11-15: with the `child.kill()` in
+    // `read`'s `Err` arm taken out, the child held until it is killed is
+    // never ended, and the test fails waiting for the completion. With it
+    // put back it passes.
+    #[test]
+    fn a_read_that_fails_kills_the_group_and_its_refusal_is_the_result_completed_once() {
+        let refusal = Refusal::new(RefusalKind::Failed, "cannot read a child's stream: EIO");
+        let fake = FakeProcesses::scripted([(
+            command("x"),
+            Ok(Script::ends(Exit::Code(0))
+                .stdout("out")
+                .hold(Hold::UntilKilled)
+                .members(1)
+                .read_fails(Stream::Err, refusal.clone())),
+        )]);
+        let (service, completed) = service(&fake);
+
+        assert!(service.start(1, command("x"), ROOMY));
+
+        assert_eq!(completed.recv_timeout(DEADLINE), Ok(1));
+        assert_eq!(service.take(1), Some(RunResult::Refused(refusal)));
+        let child = fake.record().spawned[0].0;
+        assert_eq!(fake.record().killed, [child]);
+        assert!(!fake.alive(child) && !fake.alive(child + 1));
+        assert!(completed.recv_timeout(Duration::from_millis(50)).is_err());
+        assert_eq!(service.pending(), 0);
+    }
+
     #[test]
     fn output_at_the_limit_is_kept_whole() {
         let fake = FakeProcesses::scripted([(

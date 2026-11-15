@@ -24,7 +24,8 @@
 //! instead of sleeping, hold a child in its run until it lets go
 //! ([`Hold::UntilLetGo`], [`FakeProcesses::let_go`]), and hold every read
 //! of a stream ([`FakeProcesses::hold_reads`]), so it can act while a run
-//! is in flight.
+//! is in flight. A script can make a stream's read fail
+//! ([`Script::read_fails`]), as a broken pipe would.
 //!
 //! [`Flaws`] makes a fake that breaks a rule, for the contract's own tests:
 //! that is how they show the contract bites.
@@ -74,6 +75,9 @@ pub struct Script {
     pub members: usize,
     /// The files it writes an id to, and whose id each holds.
     pub writes: Vec<(PathBuf, Writer)>,
+    /// The streams whose read fails, each with its refusal, once the
+    /// stream's bytes have been read.
+    pub read_fails: Vec<(Stream, Refusal)>,
 }
 
 impl Script {
@@ -87,6 +91,7 @@ impl Script {
             hold: Hold::Ends,
             members: 0,
             writes: Vec::new(),
+            read_fails: Vec::new(),
         }
     }
 
@@ -122,6 +127,14 @@ impl Script {
     #[must_use]
     pub fn writes(mut self, file: impl Into<PathBuf>, writer: Writer) -> Self {
         self.writes.push((file.into(), writer));
+        self
+    }
+
+    /// The same child, whose `stream` gives its bytes and then fails to be
+    /// read, with `refusal`, instead of waiting to close.
+    #[must_use]
+    pub fn read_fails(mut self, stream: Stream, refusal: Refusal) -> Self {
+        self.read_fails.push((stream, refusal));
         self
     }
 }
@@ -433,8 +446,15 @@ impl FakeProcesses {
 
     /// The port's read, of the stream `stream` of the child `id`, from
     /// `at`: the next bytes, or 0 once they have all been read and the
-    /// stream has closed.
-    fn read(&self, id: u32, stream: Stream, at: usize, buffer: &mut [u8]) -> usize {
+    /// stream has closed, or the refusal the script gives once they have
+    /// all been read.
+    fn read(
+        &self,
+        id: u32,
+        stream: Stream,
+        at: usize,
+        buffer: &mut [u8],
+    ) -> Result<usize, Refusal> {
         let mut state = self.shared.state();
         if state.reads_held {
             state.record.reads_parked += 1;
@@ -442,21 +462,29 @@ impl FakeProcesses {
             state = self.shared.wait_until(state, |state| !state.reads_held);
             state.record.reads_parked -= 1;
         }
-        let Some(bytes) = state.groups.get(&id).map(|group| match stream {
-            Stream::Out => group.script.stdout.clone(),
-            Stream::Err => group.script.stderr.clone(),
-        }) else {
-            return 0;
+        let Some(script) = state.groups.get(&id).map(|group| &group.script) else {
+            return Ok(0);
+        };
+        let bytes = match stream {
+            Stream::Out => &script.stdout,
+            Stream::Err => &script.stderr,
         };
         if at < bytes.len() {
             let count = buffer.len().min(bytes.len() - at);
             buffer[..count].copy_from_slice(&bytes[at..at + count]);
-            return count;
+            return Ok(count);
+        }
+        if let Some((_, refusal)) = script
+            .read_fails
+            .iter()
+            .find(|(failing, _)| *failing == stream)
+        {
+            return Err(refusal.clone());
         }
         drop(self.shared.wait_until(state, |state| {
             state.groups.get(&id).is_none_or(Group::closed)
         }));
-        0
+        Ok(0)
     }
 }
 
@@ -572,7 +600,7 @@ pub struct FakeOutput {
 
 impl Output for FakeOutput {
     fn read(&mut self, buffer: &mut [u8]) -> Result<usize, Refusal> {
-        let count = self.fake.read(self.id, self.stream, self.at, buffer);
+        let count = self.fake.read(self.id, self.stream, self.at, buffer)?;
         self.at += count;
         Ok(count)
     }
@@ -763,6 +791,27 @@ mod tests {
         });
 
         assert_eq!(exit, Exit::Code(4));
+    }
+
+    #[test]
+    fn a_stream_scripted_to_fail_gives_its_bytes_then_the_refusal_while_the_child_runs() {
+        let refusal = Refusal::new(RefusalKind::Failed, "cannot read a child's stream: EIO");
+        let fake = FakeProcesses::scripted([(
+            command("x"),
+            Ok(Script::ends(Exit::Code(0))
+                .stderr("e")
+                .hold(Hold::UntilKilled)
+                .read_fails(Stream::Err, refusal.clone())),
+        )]);
+        let mut child = fake.spawn(&command("x")).expect("spawned");
+        let mut err = child.take_output(Stream::Err).expect("err");
+        let mut buffer = [0; 3];
+
+        assert_eq!(err.read(&mut buffer), Ok(1));
+        assert_eq!(err.read(&mut buffer), Err(refusal));
+        assert!(fake.alive(child.id()), "the failure ends nothing");
+        child.kill();
+        child.wait();
     }
 
     #[test]
