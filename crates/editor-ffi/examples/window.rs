@@ -145,7 +145,7 @@ use std::time::{Duration, Instant};
 
 use editor_ffi::events::{Event, EventKind, Queue};
 use editor_ffi::interrupt::Interrupt;
-use editor_ffi::render::{Session, target};
+use editor_ffi::render::{Presenter, Session, target};
 use editor_ffi::window::{self, Monotonic};
 use editor_layout::Layout;
 use editor_layout::face::{Color, Face, FaceDef};
@@ -1773,15 +1773,21 @@ fn main() -> ExitCode {
     let queue = Arc::new(Queue::new());
     let session = {
         let (shared, read) = (Arc::clone(&shared), options.read_picture);
-        Session::new(clock.clone(), move |window, _| {
-            let inner = renderer(window, &shared, read)?;
-            let ledger = Arc::clone(&shared.ledger);
-            Ok(Entered {
-                inner,
-                ledger,
-                masks: Checked::masks,
-            })
-        })
+        // A presenter of its own: the example submits its frames to the
+        // session's handle itself, and binds no display.
+        Session::new(
+            clock.clone(),
+            move |window, _| {
+                let inner = renderer(window, &shared, read)?;
+                let ledger = Arc::clone(&shared.ledger);
+                Ok(Entered {
+                    inner,
+                    ledger,
+                    masks: Checked::masks,
+                })
+            },
+            Presenter::new(),
+        )
     };
 
     let editor = {

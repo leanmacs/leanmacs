@@ -881,6 +881,7 @@ typedef struct {
   size_t reason_len;
 } editor_ffi_raw_refusal;
 bool editor_ffi_window_run(uint8_t platform, bool composition,
+                           uint8_t present_mode, uint32_t frame_latency,
                            editor_ffi_raw_refusal *out);
 bool editor_ffi_window_close(uint8_t platform);
 uint64_t editor_ffi_input_clock_now(void);
@@ -890,10 +891,11 @@ bool editor_ffi_window_post_input(uint8_t kind, uint64_t code,
 
 // `Editor.Ffi.windowRunRaw : Platform → Bool → IO (Option String)`. Blocks in
 // Rust until the window has closed. `none` when the window ran, and `some` of
-// the reason when it did not.
+// the reason when it did not. It asks for no present mode and no frame
+// latency (0 and 0): the renderer's decision.
 lean_obj_res editor_glue_window_run(uint8_t platform, uint8_t composition) {
   editor_ffi_raw_refusal refusal;
-  if (editor_ffi_window_run(platform, composition, &refusal)) {
+  if (editor_ffi_window_run(platform, composition, 0, 0, &refusal)) {
     return lean_io_result_mk_ok(lean_box(0)); // `none`
   }
   lean_object *reason = lean_mk_string_from_bytes((const char *)refusal.reason,

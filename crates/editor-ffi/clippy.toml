@@ -33,15 +33,22 @@
 # A third place is marked, for another thing no test may do: make a
 # renderer on a window. `editor_render_wgpu::WgpuRenderer::on_window` is on
 # the list, since it needs a window and a real adapter and the gate has
-# neither, and its one caller is the example `examples/window.rs`, under
-# its own `expect`: the window that draws, run on demand (`mise run
-# linux-window`, `mise run window-contract`). The crate's tests of the
-# render session run on `editor-render`'s recording renderer. Seen to bite
-# once by hand, on 2026-11-14: with the `expect` taken off, `mise run lint`
-# fails with "use of a disallowed method
-# `editor_render_wgpu::WgpuRenderer::on_window`"; and with the entry not yet
-# on the list, it failed on the `expect` itself ("this lint expectation is
-# unfulfilled").
+# neither. It has two callers, each under its own `expect`:
+#
+# - `window_renderer` in `src/window.rs`, the factory of the process's
+#   window, which Lean's window mode runs on the winit platform;
+# - the example `examples/window.rs`: the window that draws, run on demand
+#   (`mise run linux-window`, `mise run window-contract`).
+#
+# No test runs the winit platform: the crate's tests of the session and of
+# the window run on `editor-render`'s recording renderer, on the scripted
+# platforms. Seen to bite once by hand, on 2026-11-14: with the example's
+# `expect` taken off, `mise run lint` fails with "use of a disallowed
+# method `editor_render_wgpu::WgpuRenderer::on_window`"; and with the entry
+# not yet on the list, it failed on the `expect` itself ("this lint
+# expectation is unfulfilled"). And again on 2026-11-15, for the window's:
+# with its `expect` taken off, `mise run lint` fails with "use of a
+# disallowed method `editor_render_wgpu::WgpuRenderer::on_window`".
 #
 # A fourth place is marked, for the fonts of the machine:
 # `editor_shape_parley::FontSet::system` is on the list, as it is on that
@@ -73,7 +80,7 @@ disallowed-methods = [
   # The file port's real adapter.
   { path = "editor_fs_std::StdFs::system", reason = "the real file system is made in one place, the process's file service; everything else here takes an `Fs`, and a test hands it `FakeFs`" },
   # A renderer on a window: it needs a window, and a real adapter.
-  { path = "editor_render_wgpu::WgpuRenderer::on_window", reason = "no test makes a renderer on a window: the gate opens none, and the example `window` is the one place it is done" },
+  { path = "editor_render_wgpu::WgpuRenderer::on_window", reason = "no test makes a renderer on a window: the gate opens none; it is done for the process's window, which Lean's window mode runs (`window_renderer`), and in the example `window`" },
   # The fonts of the machine: they differ from machine to machine.
   { path = "editor_shape_parley::FontSet::system", reason = "no test reads the machine's fonts: the process's display, made for Lean's window mode, does in one place (`editor_ffi_display_new_system`), and the example `window` in one place, when a person asks for a family of them (`--family`); every test is on the fixture fonts or the fake shaper" },
   # Every free function of `std::fs`.

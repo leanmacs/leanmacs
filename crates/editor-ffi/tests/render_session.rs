@@ -29,7 +29,7 @@ use std::time::Duration;
 
 use editor_ffi::events::{EventKind, Queue};
 use editor_ffi::interrupt::Interrupt;
-use editor_ffi::render::{Session, target};
+use editor_ffi::render::{Presenter, Session, target};
 use editor_ffi::window::{self, CountingClock};
 use editor_layout::Layout;
 use editor_layout::frame::Frame;
@@ -131,18 +131,22 @@ fn rig() -> (Rig, Receiver<()>) {
         // The factory is shared between threads, so what it hands each
         // renderer is behind a lock.
         let senders = Mutex::new((says, drew));
-        Session::new(Arc::new(clock.clone()), move |window, target| {
-            asked
-                .lock()
-                .expect("nothing panics holding it")
-                .push((window.is_some(), target));
-            let (says, drew) = senders.lock().expect("nothing panics holding it").clone();
-            Ok(Watched {
-                inner: RecordingRenderer::new(),
-                says,
-                drew,
-            })
-        })
+        Session::new(
+            Arc::new(clock.clone()),
+            move |window, target| {
+                asked
+                    .lock()
+                    .expect("nothing panics holding it")
+                    .push((window.is_some(), target));
+                let (says, drew) = senders.lock().expect("nothing panics holding it").clone();
+                Ok(Watched {
+                    inner: RecordingRenderer::new(),
+                    says,
+                    drew,
+                })
+            },
+            Presenter::new(),
+        )
     };
     let rig = Rig {
         session,
@@ -383,11 +387,15 @@ impl Renderer for Broken {
 fn a_render_thread_that_panicked_is_a_reason_and_the_window_still_closes() {
     let (asked, draws) = channel();
     let asked = Mutex::new(asked);
-    let session: Session<Broken> = Session::new(Arc::new(FakeClock::new()), move |_, _| {
-        Ok(Broken {
-            asked: asked.lock().expect("nothing panics holding it").clone(),
-        })
-    });
+    let session: Session<Broken> = Session::new(
+        Arc::new(FakeClock::new()),
+        move |_, _| {
+            Ok(Broken {
+                asked: asked.lock().expect("nothing panics holding it").clone(),
+            })
+        },
+        Presenter::new(),
+    );
     let drawer = session.drawer();
     drawer(opened());
     let handle = session.handle().expect("an open window has a loop");
@@ -406,9 +414,11 @@ fn a_render_thread_that_panicked_is_a_reason_and_the_window_still_closes() {
 
 #[test]
 fn a_factory_that_fails_leaves_a_window_that_runs_and_a_reason() {
-    let session: Session<Watched> = Session::new(Arc::new(FakeClock::new()), |_, _| {
-        Err("no adapter: pas de carte".to_owned())
-    });
+    let session: Session<Watched> = Session::new(
+        Arc::new(FakeClock::new()),
+        |_, _| Err("no adapter: pas de carte".to_owned()),
+        Presenter::new(),
+    );
     let script = vec![Input::Focus(true), Input::Resized(RESIZED)];
     let platform = Arc::new(ScriptedPlatform::new(script));
     let queue = Arc::new(Queue::new());

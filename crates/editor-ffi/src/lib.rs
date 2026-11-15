@@ -260,8 +260,13 @@
 //!   dedicated task, never from the pool. While it runs, the main-thread
 //!   service answers nothing else.
 //! - **How the window is opened goes in as scalars**, one for each field of
-//!   the window port's options. A failure to open comes back as a `bool` and
-//!   a reason in a record ([`window::RawRefusal`]).
+//!   the window port's options, and the present mode and frame latency a
+//!   run asks for as a tag and a number, each 0 for none. A failure to open
+//!   comes back as a `bool` and a reason in a record
+//!   ([`window::RawRefusal`]).
+//! - **What Lean publishes is drawn in the window** by a render session
+//!   over the process's presenter: a display bound to it
+//!   ([`display::editor_ffi_display_present`]) is drawn there.
 //! - **What the window reports is events** on the editor queue, from the
 //!   window source, of the kinds from
 //!   [`events::EventKind::WindowOpened`] on.

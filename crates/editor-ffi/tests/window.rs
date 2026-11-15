@@ -101,8 +101,9 @@ fn next_event() -> Seen {
 /// the buffer handed back.
 fn run_blocking(platform: u8, composition: bool) -> Result<(), String> {
     let mut refusal = MaybeUninit::<RawRefusal>::uninit();
-    // SAFETY: `refusal` is writable for one record.
-    if unsafe { editor_ffi_window_run(platform, composition, refusal.as_mut_ptr()) } {
+    // SAFETY: `refusal` is writable for one record. No present mode or
+    // frame latency is asked for (0 and 0).
+    if unsafe { editor_ffi_window_run(platform, composition, 0, 0, refusal.as_mut_ptr()) } {
         return Ok(());
     }
     // SAFETY: the call returned false, so it filled the record.

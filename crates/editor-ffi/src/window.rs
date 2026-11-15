@@ -55,6 +55,16 @@
 //! asked to close reports `CloseRequested` and stays open until Lean calls
 //! [`editor_ffi_window_close`].
 //!
+//! What draws in the process's window is a render session over the
+//! process's presenter ([`run_on_this_thread`], [`crate::render`]): while
+//! the window is open the session's loop is the presenter's target, so a
+//! display Lean bound to it is drawn in the window, at the scale the window
+//! last said. On the real platform the renderer is the wgpu renderer on
+//! the window, presenting as the run asked ([`asked_presentation`]); on the
+//! scripted platforms, which open nothing, it is the recording fake.
+//! [`run_with`] is the same run with any session, for tests, which make
+//! their own presenter.
+//!
 //! The process has one window, number [`WINDOW`], whose events go to the
 //! editor queue stamped from one process-wide clock, which Lean reads with
 //! [`editor_ffi_input_clock_now`]: the time from an event's stamp to Lean
@@ -67,15 +77,20 @@ use std::sync::{Arc, LazyLock, OnceLock};
 use std::time::Instant;
 
 use editor_platform::{
-    Button, CannotOpen, Composition, Drawer, Input, Key, LogicalKey, Modifiers, PhysicalKey,
-    Platform, Pointer, PointerAction, Report, Resize, ScriptedPlatform, WheelDelta, WindowOptions,
-    no_drawer,
+    Button, CannotOpen, Composition, Drawer, Input, Key, LogicalKey, Modifiers, NativeWindow,
+    PhysicalKey, Platform, Pointer, PointerAction, Report, Resize, ScriptedPlatform, WheelDelta,
+    WindowOptions,
 };
 use editor_platform_winit::WinitPlatform;
+use editor_render::fake::RecordingRenderer;
+use editor_render::port::{DrawRequest, Drawn, Renderer};
+use editor_render_wgpu::present::{self, Mode, Presentation};
+use editor_render_wgpu::{Settings, WgpuRenderer};
 
 use crate::events::{Event, EventKind, Queue, QueueId, Source, SourceKind};
 use crate::interrupt::{INTERRUPT, Interrupt};
 use crate::main_thread::{self, Reply, Request};
+use crate::render::{PRESENTER, Session};
 use crate::words::Reader;
 use crate::{text, words};
 
@@ -670,23 +685,130 @@ static SCRIPTED_FAILING: LazyLock<ScriptedPlatform> =
 /// The process's real platform. It opens nothing until it is run.
 static WINIT: WinitPlatform = WinitPlatform::new(main_thread::is_main_thread);
 
+/// [`run`], with `session` drawing in the window: the session is told
+/// everything the window tells whatever draws in it, so its loop is its
+/// presenter's target while the window is open (`crate::render::Session`).
+pub fn run_with<P, C, Q, I, R>(
+    platform: &P,
+    options: WindowOptions,
+    clock: C,
+    queue: Q,
+    interrupt: I,
+    session: &Session<R>,
+) -> Result<(), CannotOpen>
+where
+    P: Platform + ?Sized,
+    C: InputClock + 'static,
+    Q: Deref<Target = Queue> + Send + Sync + 'static,
+    I: Deref<Target = Interrupt> + Send + Sync + 'static,
+    R: Renderer + Send + 'static,
+{
+    run(platform, options, clock, queue, interrupt, session.drawer())
+}
+
+/// What draws in the process's window: the recording fake on the scripted
+/// platforms, which open no window, and the wgpu renderer in a real one.
+enum WindowRenderer {
+    /// The fake.
+    Recording(RecordingRenderer),
+    /// The real renderer, on the window.
+    Wgpu(Box<WgpuRenderer>),
+}
+
+impl Renderer for WindowRenderer {
+    fn draw(&mut self, request: &DrawRequest<'_>) -> Drawn {
+        match self {
+            Self::Recording(renderer) => renderer.draw(request),
+            Self::Wgpu(renderer) => renderer.draw(request),
+        }
+    }
+}
+
+/// The renderer for the process's window on `platform`, presenting as
+/// `presentation` asks: the recording fake for a scripted platform, and
+/// the wgpu renderer on the native window for the real one, in the
+/// platform's weight of text (Core Text's on macOS).
+fn window_renderer(
+    platform: PlatformId,
+    window: Option<&NativeWindow>,
+    presentation: Option<Presentation>,
+) -> Result<WindowRenderer, String> {
+    match platform {
+        PlatformId::Scripted | PlatformId::ScriptedFailing => {
+            Ok(WindowRenderer::Recording(RecordingRenderer::new()))
+        }
+        PlatformId::Winit => {
+            let window = window.ok_or("the platform named no native window to draw in")?;
+            let base = if cfg!(target_os = "macos") {
+                Settings::core_text()
+            } else {
+                Settings::default()
+            };
+            let settings = Settings {
+                presentation,
+                ..base
+            };
+            // SAFETY: the window port tells of `window` when it opens, on
+            // this thread, and it stays live until the drawer returns from
+            // being told the window is closing. The session drops this
+            // renderer, on this thread, while it is being told so.
+            #[expect(
+                clippy::disallowed_methods,
+                reason = "the process's window draws with the wgpu renderer; no test runs the winit platform"
+            )]
+            let made = unsafe { WgpuRenderer::on_window(window, settings) };
+            made.map(|renderer| WindowRenderer::Wgpu(Box::new(renderer)))
+                .map_err(|error| error.to_string())
+        }
+    }
+}
+
 /// Runs the process's window on the calling thread, on the platform
-/// `platform`, onto the editor queue. This is what the main-thread service
-/// does for [`Request::RunWindow`].
+/// `platform`, onto the editor queue, with a session over the process's
+/// presenter drawing in it what bound displays publish. This is what the
+/// main-thread service does for [`Request::RunWindow`].
 pub(crate) fn run_on_this_thread(
     platform: PlatformId,
     options: WindowOptions,
+    presentation: Option<Presentation>,
 ) -> Result<(), CannotOpen> {
-    // Nothing draws in the process's window yet: what Lean publishes has no
-    // way to a renderer until the display pipeline's phase 6.
-    run(
+    let session = Session::new(
+        Arc::new(ProcessClock),
+        move |window, _| window_renderer(platform, window, presentation),
+        Arc::clone(&PRESENTER),
+    );
+    run_with(
         platform.platform(),
         options,
         &CLOCK,
         QueueId::Editor.queue(),
         &INTERRUPT,
-        no_drawer(),
+        &session,
     )
+}
+
+/// The presentation a run asks for, from its tags as they cross the
+/// boundary: `mode` 0 for none, then `fifo`, `fifo-relaxed`, `immediate`
+/// and `mailbox` from 1; and `frame_latency` 0 for none. With neither
+/// asked it is `None`, the renderer's decision; with one asked, the other
+/// is the decision's. `None` too for a mode tag that names no mode.
+pub fn asked_presentation(mode: u8, frame_latency: u32) -> Option<Presentation> {
+    let mode = match mode {
+        0 => None,
+        1 => Some(Mode::Fifo),
+        2 => Some(Mode::FifoRelaxed),
+        3 => Some(Mode::Immediate),
+        4 => Some(Mode::Mailbox),
+        _ => return None,
+    };
+    let frame_latency = (frame_latency != 0).then_some(frame_latency);
+    if mode.is_none() && frame_latency.is_none() {
+        return None;
+    }
+    Some(Presentation {
+        mode: mode.unwrap_or(present::PREFERRED[0]),
+        frame_latency: frame_latency.unwrap_or(present::FRAME_LATENCY),
+    })
 }
 
 /// Why a window did not run, as it crosses the boundary: one record, filled
@@ -718,13 +840,21 @@ pub struct RawRefusal {
 pub unsafe extern "C" fn editor_ffi_window_run(
     platform: u8,
     composition: bool,
+    present_mode: u8,
+    frame_latency: u32,
     out: *mut RawRefusal,
 ) -> bool {
     let outcome = match PlatformId::from_tag(platform) {
         None => Err("the Rust library knows no such platform".to_owned()),
         Some(platform) => {
             let options = WindowOptions { composition };
-            match main_thread::request(Request::RunWindow { platform, options }) {
+            let presentation = asked_presentation(present_mode, frame_latency);
+            let request = Request::RunWindow {
+                platform,
+                options,
+                presentation,
+            };
+            match main_thread::request(request) {
                 Reply::WindowClosed(Ok(())) => Ok(()),
                 Reply::WindowClosed(Err(cannot_open)) => Err(cannot_open.reason),
                 Reply::OnMainThread(_) => {
@@ -810,7 +940,10 @@ pub extern "C" fn editor_ffi_input_clock_now() -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::display::Display;
     use crate::interrupt::InterruptKey;
+    use crate::render::{Presenter, Session};
+    use editor_platform::no_drawer;
     use editor_platform::{
         Button, Canvas, Key, LogicalKey, Modifiers, PhysicalKey, Pointer, PointerAction, Resize,
         WheelDelta,
@@ -1743,6 +1876,179 @@ mod tests {
         assert_eq!(PlatformId::ScriptedFailing.tag(), 2);
         assert_eq!(PlatformId::from_tag(3), None);
         assert_eq!(PlatformId::from_tag(u8::MAX), None);
+    }
+
+    /// The recording renderer, which also says on a channel the target of
+    /// each draw.
+    struct Watched {
+        /// The fake.
+        inner: editor_render::fake::RecordingRenderer,
+        /// Where it says it drew.
+        drew: mpsc::Sender<editor_render::port::Target>,
+    }
+
+    impl editor_render::port::Renderer for Watched {
+        fn draw(
+            &mut self,
+            request: &editor_render::port::DrawRequest<'_>,
+        ) -> editor_render::port::Drawn {
+            let drawn = self.inner.draw(request);
+            let _ = self.drew.send(request.target);
+            drawn
+        }
+    }
+
+    /// A session over `presenter` whose renderers are watched, on the fake
+    /// clock, and where their draws are said.
+    fn watched_session(
+        presenter: &Arc<Presenter>,
+    ) -> (Session<Watched>, Receiver<editor_render::port::Target>) {
+        let (drew, draws) = mpsc::channel();
+        let drew = std::sync::Mutex::new(drew);
+        let session = Session::new(
+            Arc::new(editor_render::clock::FakeClock::new()),
+            move |_, _| {
+                let drew = drew.lock().expect("nothing panics holding it").clone();
+                Ok(Watched {
+                    inner: editor_render::fake::RecordingRenderer::new(),
+                    drew,
+                })
+            },
+            Arc::clone(presenter),
+        );
+        (session, draws)
+    }
+
+    /// Runs `platform` onto `queue` with `session` drawing in its window,
+    /// on a thread of its own: where the run's result arrives.
+    fn start_drawn(
+        platform: &Arc<ScriptedPlatform>,
+        queue: &Arc<Queue>,
+        session: &Session<Watched>,
+    ) -> Receiver<Result<(), CannotOpen>> {
+        let (finished, done) = mpsc::channel();
+        let (platform, queue, session) = (Arc::clone(platform), Arc::clone(queue), session.clone());
+        thread::spawn(move || {
+            let interrupt = Arc::new(Interrupt::new());
+            let _ = finished.send(run_with(
+                &*platform,
+                WindowOptions::default(),
+                CountingClock::new(),
+                queue,
+                interrupt,
+                &session,
+            ));
+        });
+        done
+    }
+
+    /// Publishes to `display` a scene of one view of `snapshot`.
+    fn publish_to(display: &Display, snapshot: &crate::snapshot::Snapshot) {
+        let wire = crate::display::WireScene {
+            size: [80, 32],
+            views: vec![crate::display::WireView {
+                id: 1,
+                rect: [0, 0, 80, 32],
+                snapshot: Some(0),
+                ..crate::display::WireView::default()
+            }],
+            ..crate::display::WireScene::default()
+        };
+        let (words, strings) = wire.encode();
+        assert!(display.publish(&words, &strings, &[snapshot]));
+    }
+
+    #[test]
+    fn a_display_bound_to_the_windows_presenter_is_drawn_in_the_window_at_its_scale() {
+        let presenter = Presenter::new();
+        let (session, draws) = watched_session(&presenter);
+        // Not the scripted window's scale, so that its being said shows.
+        presenter.set_scale(3.0);
+        let platform = Arc::new(ScriptedPlatform::new(Vec::new()));
+        let queue = Arc::new(Queue::new());
+        let done = start_drawn(&platform, &queue, &session);
+        // The window has opened, and has told the drawer so first.
+        assert_eq!(pull(&queue, 1)[0].kind, EventKind::WindowOpened);
+        assert_eq!(presenter.scale(), ScriptedPlatform::SIZE.scale as f32);
+        let handle = session.handle().expect("an open window has a loop");
+        assert!(
+            presenter
+                .target()
+                .is_some_and(|target| target.same(&handle))
+        );
+        // A display bound to the presenter is drawn in the window.
+        let display = Display::cells(8, 16);
+        display.present_to(Arc::clone(&presenter));
+        let document = crate::document::Document::new("ab");
+        let snapshot = crate::snapshot::Snapshot::of(&document);
+        publish_to(&display, &snapshot);
+        draws.recv_timeout(DEADLINE).expect("the frame is drawn");
+        platform.close();
+        assert_eq!(done.recv_timeout(DEADLINE), Ok(Ok(())));
+        // Closed: nothing takes submits, and the run's handle is the last.
+        assert!(presenter.target().is_none());
+        let last = presenter.last().expect("the run's handle");
+        assert!(last.same(&handle));
+        let counters = last.counters();
+        assert_eq!(counters.frames_submitted, 1);
+        assert!(counters.draws >= 1);
+        publish_to(&display, &snapshot);
+        assert_eq!(last.counters().frames_submitted, 1);
+    }
+
+    #[test]
+    fn a_presentation_asked_for_crosses_as_a_mode_tag_and_a_latency_each_0_for_none() {
+        assert_eq!(asked_presentation(0, 0), None);
+        let asked = |mode, frame_latency| {
+            Some(Presentation {
+                mode,
+                frame_latency,
+            })
+        };
+        assert_eq!(asked_presentation(1, 0), asked(Mode::Fifo, 1));
+        assert_eq!(asked_presentation(2, 0), asked(Mode::FifoRelaxed, 1));
+        assert_eq!(asked_presentation(3, 2), asked(Mode::Immediate, 2));
+        assert_eq!(asked_presentation(4, 0), asked(Mode::Mailbox, 1));
+        // A latency alone is the decision's mode at it.
+        assert_eq!(asked_presentation(0, 3), asked(Mode::Fifo, 3));
+        // A tag that names no mode asks for nothing.
+        assert_eq!(asked_presentation(5, 2), None);
+    }
+
+    #[test]
+    fn the_scale_a_window_is_resized_to_is_its_presenters() {
+        let presenter = Presenter::new();
+        let (session, _draws) = watched_session(&presenter);
+        let resized = Resize {
+            width: 800,
+            height: 600,
+            scale: 2.0,
+        };
+        let platform = Arc::new(ScriptedPlatform::new(vec![Input::Resized(resized)]));
+        let queue = Arc::new(Queue::new());
+        let done = start_drawn(&platform, &queue, &session);
+        let kinds: Vec<EventKind> = pull(&queue, 2).iter().map(|event| event.kind).collect();
+        assert_eq!(kinds, [EventKind::WindowOpened, EventKind::Resize]);
+        // The drawer is told before the queue, so the resize has been said.
+        assert_eq!(presenter.scale(), 2.0);
+        platform.close();
+        assert_eq!(done.recv_timeout(DEADLINE), Ok(Ok(())));
+    }
+
+    #[test]
+    fn a_window_that_cannot_open_gives_its_presenter_no_target() {
+        let presenter = Presenter::new();
+        let (session, _draws) = watched_session(&presenter);
+        let result = run_with(
+            PlatformId::ScriptedFailing.platform(),
+            WindowOptions::default(),
+            CountingClock::new(),
+            Arc::new(Queue::new()),
+            Arc::new(Interrupt::new()),
+            &session,
+        );
+        assert!(result.is_err());
+        assert!(presenter.target().is_none() && presenter.last().is_none());
     }
 
     #[test]

@@ -31,6 +31,7 @@ use std::sync::mpsc::{self, SyncSender};
 use std::sync::{Condvar, Mutex, MutexGuard, PoisonError};
 
 use editor_platform::{CannotOpen, WindowOptions};
+use editor_render_wgpu::present::Presentation;
 
 use crate::window::{self, PlatformId};
 
@@ -86,6 +87,9 @@ pub enum Request {
         platform: PlatformId,
         /// How the window is opened.
         options: WindowOptions,
+        /// The present mode and frame latency the run asks for, to measure
+        /// them; `None` is the renderer's decision.
+        presentation: Option<Presentation>,
     },
 }
 
@@ -103,9 +107,11 @@ pub enum Reply {
 fn answer(request: Request) -> Reply {
     match request {
         Request::Probe => Reply::OnMainThread(is_main_thread()),
-        Request::RunWindow { platform, options } => {
-            Reply::WindowClosed(window::run_on_this_thread(platform, options))
-        }
+        Request::RunWindow {
+            platform,
+            options,
+            presentation,
+        } => Reply::WindowClosed(window::run_on_this_thread(platform, options, presentation)),
     }
 }
 
@@ -266,6 +272,7 @@ pub extern "C" fn editor_ffi_main_thread_probe() -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use editor_render_wgpu::present::Mode;
     use std::sync::Mutex;
     use std::thread::{self, ThreadId};
 
@@ -287,6 +294,10 @@ mod tests {
         let asked = Request::RunWindow {
             platform: PlatformId::Scripted,
             options: WindowOptions { composition: false },
+            presentation: Some(Presentation {
+                mode: Mode::Mailbox,
+                frame_latency: 2,
+            }),
         };
         let outcome = Reply::WindowClosed(Err(CannotOpen {
             reason: "no display".into(),

@@ -550,6 +550,8 @@ struct Shared<R> {
     make: Box<Factory<R>>,
     /// The clock the loop tells the time by.
     clock: Arc<dyn Clock>,
+    /// Where bound displays' frames go while the window is open.
+    presenter: Arc<Presenter>,
     /// What the session has made.
     state: Mutex<State<R>>,
 }
@@ -568,15 +570,20 @@ struct State<R> {
 impl<R: Renderer + Send + 'static> Session<R> {
     /// A session that has made nothing yet. `make` is asked for a renderer
     /// when the window opens, on the thread that tells so, and the loop
-    /// tells the time by `clock`.
+    /// tells the time by `clock`. The session's loop is `presenter`'s
+    /// target from when the window opens until it closes, and its last
+    /// session's from then on; and the presenter holds the scale the window
+    /// last said.
     pub fn new(
         clock: Arc<dyn Clock>,
         make: impl Fn(Option<&NativeWindow>, Target) -> Result<R, String> + Send + Sync + 'static,
+        presenter: Arc<Presenter>,
     ) -> Self {
         Self {
             shared: Arc::new(Shared {
                 make: Box::new(make),
                 clock,
+                presenter,
                 state: Mutex::new(State {
                     handle: None,
                     thread: None,
@@ -608,10 +615,21 @@ impl<R: Renderer + Send + 'static> Session<R> {
         self.state().failure.clone()
     }
 
-    /// Takes one thing the window tells: the table in the module docs.
+    /// Takes one thing the window tells: the table in the module docs, and
+    /// the presenter's part of it.
     fn tell(&self, canvas: &Canvas) {
-        if let Canvas::Opened { window, size, .. } = canvas {
-            self.open(window.as_ref(), target(*size));
+        let presenter = &self.shared.presenter;
+        match canvas {
+            Canvas::Opened { window, size, .. } => {
+                presenter.set_scale(size.scale as f32);
+                if let Some(handle) = self.open(window.as_ref(), target(*size)) {
+                    presenter.start(handle, Follows::Window);
+                }
+            }
+            Canvas::Resized(size) => presenter.set_scale(size.scale as f32),
+            // Nothing takes submits from here on, before the loop stops.
+            Canvas::Closing => presenter.end(),
+            _ => {}
         }
         // Before the window has opened, and when no renderer could be
         // made, there is no loop to leave word with.
@@ -625,11 +643,12 @@ impl<R: Renderer + Send + 'static> Session<R> {
 
     /// Makes the renderer for `window`, on the calling thread, and the loop
     /// over it, drawing on `target`; and starts the render thread, which
-    /// runs the loop until it is stopped and gives the renderer back. A
-    /// session whose thread runs is left as it is.
-    fn open(&self, window: Option<&NativeWindow>, target: Target) {
+    /// runs the loop until it is stopped and gives the renderer back. It
+    /// answers the new loop's handle. A session whose thread runs is left
+    /// as it is, and answers none.
+    fn open(&self, window: Option<&NativeWindow>, target: Target) -> Option<RenderHandle> {
         if self.state().thread.is_some() {
-            return;
+            return None;
         }
         let made = (self.shared.make)(window, target).and_then(|renderer| {
             let clock = Arc::clone(&self.shared.clock);
@@ -644,11 +663,15 @@ impl<R: Renderer + Send + 'static> Session<R> {
         let mut state = self.state();
         match made {
             Ok((handle, thread)) => {
-                state.handle = Some(handle);
+                state.handle = Some(handle.clone());
                 state.thread = Some(thread);
                 state.failure = None;
+                Some(handle)
             }
-            Err(reason) => state.failure = Some(reason),
+            Err(reason) => {
+                state.failure = Some(reason);
+                None
+            }
         }
     }
 
