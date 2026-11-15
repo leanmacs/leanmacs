@@ -57,14 +57,15 @@ def decode (event : Ffi.Event) : Input :=
       | _, _ => .other
 
 /-- The check's window on `platform`: the real one, or the library's
-scripted one. `emit` prints a line of the report. -/
+scripted one. `emit` prints a line of the report. The check draws
+nothing, so whether anything drew in the window is not its to say. -/
 def real (platform : Ffi.Platform) (emit : String → IO Unit) : Window :=
   { next := do
       let event ← Ffi.nextEvent .editor
       return (decode event, event.stamp.toNat)
     clock := return (← Ffi.inputClock).toNat
     serviceOnMain := Ffi.mainThreadProbe
-    run := Ffi.windowRun platform
+    run := fun composition => return (← Ffi.windowRun platform composition).map fun _ => ()
     close := Ffi.windowClose platform
     stop := discard <| Ffi.postEvent .editor stopSource 0 ""
     emit }

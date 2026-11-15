@@ -121,6 +121,18 @@ queues and exits.
 - `main` reads the working directory, those two variables and the
   executable's path at the edge; what they mean is a pure function,
   pinned in `model-test` (`ModelTest.windowOptionChecks`).
+- **Failures are said, and are status 1.** A window that cannot be opened
+  is `editor: the window could not be opened: <reason>` on stderr. A
+  window whose renderer cannot be made (no adapter, no device, no
+  surface), or whose render thread panics, still runs, with every input
+  reaching the loop and nothing drawing in it. The library knows why
+  (`Session::failure`) but Lean learns it only from the run's reply, once
+  the window has closed (`Ffi.WindowRan.nothingDrew`): the window mode
+  then prints `editor: nothing could draw in the window: <reason>` to
+  stderr, says it in the echo area if the loop is still running, and
+  exits 1. While the window is open the person sees a window that never
+  draws; saying so sooner would need the library to tell Lean while the
+  window runs, which nothing does yet.
 
 **Quit from a command, as built.** A command cannot end the process. It
 asks (`quit`, `lean/Editor/Api.lean`), which sets a flag of the editor

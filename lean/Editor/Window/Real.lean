@@ -28,6 +28,14 @@ There is one editor loop; this module only wires it to a window:
   whether the default config directory exists.
 - **What is printed.** The host's output and its log go to stderr: the
   reload's report among them, whose first error the echo area says too.
+- **Failures.** A window that cannot be opened is
+  `editor: the window could not be opened: <reason>` on stderr and status
+  1. A window that ran with nothing drawing in it, because its renderer
+  could not be made (no adapter, no device, no surface) or its render
+  thread did not end well, is known once the window has closed
+  (`Ffi.WindowRan.nothingDrew`): it is
+  `editor: nothing could draw in the window: <reason>` on stderr, said in
+  the echo area too when the loop still runs, and status 1.
 - **`--report`** prints, to stderr once the window has closed
   (`reportLines`): what the surface offered, what the run asked for and
   what it was configured with (`Ffi.windowPresentation`), the counters,
@@ -43,9 +51,10 @@ There is one editor loop; this module only wires it to a window:
 
 `host` is the wiring with the platform, the display and the clipboard
 handed in, so that `ffi-test` runs it on the library's scripted platform
-with a cells display and a clipboard of its own (`FfiTest`, the scenario
-`window-host`): nothing in the gate opens a window, reads the machine's
-fonts or touches the desktop's clipboard.
+with a cells display and a clipboard of its own (`FfiTest`, the scenarios
+`window-host`, and `window-host-undrawn` on the scripted platform whose
+renderer cannot be made): nothing in the gate opens a window, reads the
+machine's fonts or touches the desktop's clipboard.
 
 It is imported by `Main` and `FfiTest` only: it links the Rust library.
 -/
@@ -104,8 +113,10 @@ def reportLines (opened closed : Nat) : IO (Array String) := do
 has closed: the host is started, the file is opened, each of `said` is said
 in the echo area and config is reloaded when `plan` says so, all before the
 first event; the window is run; and it is closed when the host's loop ends.
-The exit status: 0 when the window ran, 1 when it could not be opened or the
-loop ended with an error. -/
+The exit status: 0 when the window ran with something drawing in it; 1 when
+it could not be opened, when nothing could draw in it (`nothingDrew`, said
+on stderr, and in the echo area while the loop still runs), or when the loop
+ended with an error. -/
 def host (platform : Ffi.Platform) (options : Options) (plan : ConfigPlan) (display : Ffi.Display)
     (clipboard : ClipboardHandler) (said : Array String) : IO UInt32 := do
   let shipped ←
@@ -136,6 +147,11 @@ def host (platform : Ffi.Platform) (options : Options) (plan : ConfigPlan) (disp
     Ffi.windowRun platform options.composition (options.presentMode.map PresentMode.library)
         options.frameLatency
   let closed ← Ffi.inputClock
+  -- Nothing drew in the window: a loop still running says why in the echo
+  -- area before it ends.
+  if let .ok { nothingDrew := some reason } := ran then
+    unless ← IO.hasFinished host.thread do
+      host.send (.say (nothingDrew reason))
   -- The window has closed, or never opened: a loop still running is ended.
   let ended ←
     try
@@ -145,11 +161,13 @@ def host (platform : Ffi.Platform) (options : Options) (plan : ConfigPlan) (disp
       pure false
   discard <| IO.wait closer
   match ran with
-  | .ok () =>
+  | .ok ran =>
+    if let some reason := ran.nothingDrew then
+      IO.eprintln s!"editor: {nothingDrew reason}"
     if options.report then
       for line in ← reportLines opened.toNat closed.toNat do
         IO.eprintln line
-    return if ended then 0 else 1
+    return if ended && ran.nothingDrew.isNone then 0 else 1
   | .error reason =>
     IO.eprintln s!"editor: the window could not be opened: {reason}"
     return 1

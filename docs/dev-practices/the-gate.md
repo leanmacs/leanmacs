@@ -758,7 +758,12 @@ clipboard of its own, the host opening a copy of `ex/note.txt`, and the
 scripted sample window opening, sending its input and asking to close.
 It must exit 0, which it does only when the window ran and closed and the
 render session's counters show a frame drawn, and the copy must be
-unchanged. `editor --bogus` and `editor a b` must each be status 2: any
+unchanged. `ffi-test window-host-undrawn <file>` runs the same wiring on
+the scripted platform whose renderer cannot be made, as a machine with no
+usable GPU gives: it must exit 0, which it does only when the window mode
+ended with status 1 and no render session was started, stderr must hold
+`editor: nothing could draw in the window: ` and the platform's reason,
+and the copy must be unchanged. `editor --bogus` and `editor a b` must each be status 2: any
 command line that is not `headless` or `window-check` is the window
 mode's, so a word is a file.
 
@@ -829,7 +834,9 @@ platform's inputs arrive on the editor queue, each stamped with the instant
 it was reported, and the keyboard check's loop
 ([`on-demand-checks.md`](on-demand-checks.md)) reports them; a
 scripted platform that cannot open a window gives its reason, which the
-keyboard check reports with status 1; and each event of a window is decoded
+keyboard check reports with status 1; a scripted platform whose renderer
+cannot be made runs its window and then says why nothing drew in it; and
+each event of a window is decoded
 to the input the keyboard check counts. Three scenarios need a process each:
 
 | Command | Shows |

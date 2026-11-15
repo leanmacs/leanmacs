@@ -261,12 +261,16 @@
 //!   service answers nothing else.
 //! - **How the window is opened goes in as scalars**, one for each field of
 //!   the window port's options, and the present mode and frame latency a
-//!   run asks for as a tag and a number, each 0 for none. A failure to open
-//!   comes back as a `bool` and a reason in a record
-//!   ([`window::RawRefusal`]).
+//!   run asks for as a tag and a number, each 0 for none. How the run went
+//!   comes back as a status and, but for a window that ran and was drawn
+//!   in, a reason in a record ([`window::RawRefusal`]): a failure to open,
+//!   or why nothing drew in a window that ran ([`window::WINDOW_UNDRAWN`]).
 //! - **What Lean publishes is drawn in the window** by a render session
 //!   over the process's presenter: a display bound to it
-//!   ([`display::editor_ffi_display_present`]) is drawn there.
+//!   ([`display::editor_ffi_display_present`]) is drawn there. A renderer
+//!   that cannot be made, or a render thread that panics, leaves the window
+//!   running with nothing drawing in it, and the run says why once the
+//!   window has closed ([`window::Ran`]).
 //! - **What the window reports is events** on the editor queue, from the
 //!   window source, of the kinds from
 //!   [`events::EventKind::WindowOpened`] on.

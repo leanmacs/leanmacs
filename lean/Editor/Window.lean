@@ -101,6 +101,11 @@ structure Options where
 def usage : String :=
   "[--config <dir>] [--sysroot <dir>] [--oleans <dir>] [--no-ime] [--report] [--present-mode fifo|fifo-relaxed|immediate|mailbox] [--frame-latency <n>] <file>"
 
+/-- What the window mode says, on stderr after `editor: ` and in the echo
+area, when nothing could draw in the window, for `reason`. -/
+def nothingDrew (reason : String) : String :=
+  s!"nothing could draw in the window: {reason}"
+
 /-- What the echo area says when no config is loaded because no toolchain
 was given. -/
 def noToolchain : String :=

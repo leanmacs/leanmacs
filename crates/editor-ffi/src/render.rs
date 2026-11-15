@@ -75,7 +75,9 @@
 //!
 //! The factory may fail: no adapter, no device. The window then runs as it
 //! would with nothing drawing in it, every input still reaches the queue,
-//! and [`Session::failure`] says why. Nothing is retried.
+//! and [`Session::failure`] says why. Nothing is retried. The run of the
+//! window reads it once the window has closed and hands it to its caller
+//! (`crate::window::Ran`), so Lean can say why nothing drew.
 //!
 //! # Where a test goes
 //!

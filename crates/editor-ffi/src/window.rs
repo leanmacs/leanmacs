@@ -61,9 +61,14 @@
 //! display Lean bound to it is drawn in the window, at the scale the window
 //! last said. On the real platform the renderer is the wgpu renderer on
 //! the window, presenting as the run asked ([`asked_presentation`]); on the
-//! scripted platforms, which open nothing, it is the recording fake.
+//! scripted platforms, which open nothing, it is the recording fake, but for
+//! [`PlatformId::ScriptedUndrawn`], whose renderer cannot be made.
 //! [`run_with`] is the same run with any session, for tests, which make
-//! their own presenter.
+//! their own presenter. A window whose renderer could not be made, or whose
+//! render thread did not end well, runs all the same, with nothing drawing
+//! in it; once it has closed, the run says why ([`Ran::nothing_drew`], the
+//! session's failure), and [`editor_ffi_window_run`] hands that reason to
+//! Lean with its own status ([`WINDOW_UNDRAWN`]).
 //!
 //! The process has one window, number [`WINDOW`], whose events go to the
 //! editor queue stamped from one process-wide clock, which Lean reads with
@@ -626,6 +631,13 @@ pub enum PlatformId {
     /// boundary, which the real platform gives only on a machine with no
     /// display.
     ScriptedFailing = 2,
+    /// [`ScriptedPlatform::sample`] again, run on its own, whose window
+    /// nothing can draw in: its renderer cannot be made, for
+    /// [`SCRIPTED_NO_RENDERER`]. It is reachable from Lean so that the Lean
+    /// test executable sees a window that ran with nothing drawing in it
+    /// ([`Ran::nothing_drew`]), which the real platform gives on a machine
+    /// with no usable GPU.
+    ScriptedUndrawn = 3,
 }
 
 impl PlatformId {
@@ -640,6 +652,7 @@ impl PlatformId {
             0 => Some(Self::Scripted),
             1 => Some(Self::Winit),
             2 => Some(Self::ScriptedFailing),
+            3 => Some(Self::ScriptedUndrawn),
             _ => None,
         }
     }
@@ -650,9 +663,13 @@ impl PlatformId {
             Self::Scripted => &*SCRIPTED,
             Self::Winit => &WINIT,
             Self::ScriptedFailing => &*SCRIPTED_FAILING,
+            Self::ScriptedUndrawn => &*SCRIPTED_UNDRAWN,
         }
     }
 }
+
+/// Why nothing can draw in the window of [`PlatformId::ScriptedUndrawn`].
+pub const SCRIPTED_NO_RENDERER: &str = "the scripted platform's window has no renderer: pas de GPU";
 
 /// Why [`PlatformId::ScriptedFailing`] cannot open a window. "é" is two
 /// bytes, so a caller that took the reason's length in characters would get
@@ -682,12 +699,29 @@ static SCRIPTED: LazyLock<ScriptedPlatform> = LazyLock::new(ScriptedPlatform::sa
 static SCRIPTED_FAILING: LazyLock<ScriptedPlatform> =
     LazyLock::new(|| ScriptedPlatform::failing(SCRIPTED_FAILURE));
 
+/// The process's scripted platform whose window nothing can draw in, made
+/// the first time it is asked for. It is a platform of its own, so that a
+/// close of it is not a close of [`SCRIPTED`]'s window.
+static SCRIPTED_UNDRAWN: LazyLock<ScriptedPlatform> = LazyLock::new(ScriptedPlatform::sample);
+
 /// The process's real platform. It opens nothing until it is run.
 static WINIT: WinitPlatform = WinitPlatform::new(main_thread::is_main_thread);
+
+/// How a window that opened ran, once it has closed.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Ran {
+    /// Why nothing drew in the window, when nothing did: the renderer could
+    /// not be made, or the render thread could not be started or did not
+    /// end well ([`Session::failure`]). The window ran all the same, and
+    /// what it reported reached the queue.
+    pub nothing_drew: Option<String>,
+}
 
 /// [`run`], with `session` drawing in the window: the session is told
 /// everything the window tells whatever draws in it, so its loop is its
 /// presenter's target while the window is open (`crate::render::Session`).
+/// A window that ran says, once it has closed, why nothing drew in it when
+/// nothing did ([`Ran`]).
 pub fn run_with<P, C, Q, I, R>(
     platform: &P,
     options: WindowOptions,
@@ -695,7 +729,7 @@ pub fn run_with<P, C, Q, I, R>(
     queue: Q,
     interrupt: I,
     session: &Session<R>,
-) -> Result<(), CannotOpen>
+) -> Result<Ran, CannotOpen>
 where
     P: Platform + ?Sized,
     C: InputClock + 'static,
@@ -703,7 +737,10 @@ where
     I: Deref<Target = Interrupt> + Send + Sync + 'static,
     R: Renderer + Send + 'static,
 {
-    run(platform, options, clock, queue, interrupt, session.drawer())
+    run(platform, options, clock, queue, interrupt, session.drawer())?;
+    Ok(Ran {
+        nothing_drew: session.failure(),
+    })
 }
 
 /// Where a window's renderer leaves what its surface offered, what the run
@@ -819,9 +856,10 @@ impl Renderer for WindowRenderer<'_> {
 }
 
 /// The renderer for the process's window on `platform`, presenting as
-/// `presentation` asks: the recording fake for a scripted platform, and
-/// the wgpu renderer on the native window for the real one, in the
-/// platform's weight of text (Core Text's on macOS).
+/// `presentation` asks: the recording fake for a scripted platform, none
+/// for the one whose window nothing can draw in, and the wgpu renderer on
+/// the native window for the real one, in the platform's weight of text
+/// (Core Text's on macOS).
 fn window_renderer<'a>(
     platform: PlatformId,
     window: Option<&NativeWindow>,
@@ -832,6 +870,7 @@ fn window_renderer<'a>(
         PlatformId::Scripted | PlatformId::ScriptedFailing => {
             Ok(WindowRenderer::Recording(RecordingRenderer::new()))
         }
+        PlatformId::ScriptedUndrawn => Err(SCRIPTED_NO_RENDERER.to_owned()),
         PlatformId::Winit => {
             let window = window.ok_or("the platform named no native window to draw in")?;
             let base = if cfg!(target_os = "macos") {
@@ -860,13 +899,14 @@ fn window_renderer<'a>(
 
 /// Runs the process's window on the calling thread, on the platform
 /// `platform`, onto the editor queue, with a session over the process's
-/// presenter drawing in it what bound displays publish. This is what the
-/// main-thread service does for [`Request::RunWindow`].
+/// presenter drawing in it what bound displays publish, and says once it
+/// has closed why nothing drew in it, when nothing did ([`run_with`]). This
+/// is what the main-thread service does for [`Request::RunWindow`].
 pub(crate) fn run_on_this_thread(
     platform: PlatformId,
     options: WindowOptions,
     presentation: Option<Presentation>,
-) -> Result<(), CannotOpen> {
+) -> Result<Ran, CannotOpen> {
     let session = Session::new(
         Arc::new(ProcessClock),
         move |window, _| window_renderer(platform, window, presentation, &PRESENTATION),
@@ -906,8 +946,8 @@ pub fn asked_presentation(mode: u8, frame_latency: u32) -> Option<Presentation> 
     })
 }
 
-/// Why a window did not run, as it crosses the boundary: one record, filled
-/// in one call.
+/// Why a window did not run, or why nothing drew in one that did, as it
+/// crosses the boundary: one record, filled in one call.
 #[repr(C)]
 pub struct RawRefusal {
     /// The reason: a buffer of `reason_len` bytes of UTF-8, owned by the
@@ -918,13 +958,28 @@ pub struct RawRefusal {
     pub reason_len: usize,
 }
 
+/// What [`editor_ffi_window_run`] returns when the window ran and something
+/// drew in it.
+pub const WINDOW_RAN: u8 = 0;
+
+/// What [`editor_ffi_window_run`] returns when no window ran.
+pub const WINDOW_REFUSED: u8 = 1;
+
+/// What [`editor_ffi_window_run`] returns when the window ran but nothing
+/// drew in it ([`Ran::nothing_drew`]).
+pub const WINDOW_UNDRAWN: u8 = 2;
+
 /// Runs the process's window on the platform `platform`, with composition
 /// allowed or not, and blocks the calling thread until the window has
-/// closed: the main-thread service runs it. Returns whether it ran.
+/// closed: the main-thread service runs it. Returns how it went:
 ///
-/// Returns false, and fills `out` with the reason, if `platform` names no
-/// platform or the platform could not open a window. `out` is left alone
-/// when the window ran.
+/// - [`WINDOW_RAN`] when the window ran and something drew in it. `out` is
+///   left alone.
+/// - [`WINDOW_REFUSED`], with `out` filled with the reason, when `platform`
+///   names no platform or the platform could not open a window.
+/// - [`WINDOW_UNDRAWN`], with `out` filled with the reason, when the window
+///   ran but nothing drew in it: its renderer could not be made, or the
+///   render thread did not end well.
 ///
 /// While the window runs the main-thread service answers nothing else.
 ///
@@ -938,9 +993,12 @@ pub unsafe extern "C" fn editor_ffi_window_run(
     present_mode: u8,
     frame_latency: u32,
     out: *mut RawRefusal,
-) -> bool {
-    let outcome = match PlatformId::from_tag(platform) {
-        None => Err("the Rust library knows no such platform".to_owned()),
+) -> u8 {
+    let (status, reason) = match PlatformId::from_tag(platform) {
+        None => (
+            WINDOW_REFUSED,
+            "the Rust library knows no such platform".to_owned(),
+        ),
         Some(platform) => {
             let options = WindowOptions { composition };
             let presentation = asked_presentation(present_mode, frame_latency);
@@ -950,23 +1008,22 @@ pub unsafe extern "C" fn editor_ffi_window_run(
                 presentation,
             };
             match main_thread::request(request) {
-                Reply::WindowClosed(Ok(())) => Ok(()),
-                Reply::WindowClosed(Err(cannot_open)) => Err(cannot_open.reason),
-                Reply::OnMainThread(_) => {
-                    Err("the main-thread service answered another request".to_owned())
-                }
+                Reply::WindowClosed(Ok(Ran { nothing_drew: None })) => return WINDOW_RAN,
+                Reply::WindowClosed(Ok(Ran {
+                    nothing_drew: Some(reason),
+                })) => (WINDOW_UNDRAWN, reason),
+                Reply::WindowClosed(Err(cannot_open)) => (WINDOW_REFUSED, cannot_open.reason),
+                Reply::OnMainThread(_) => (
+                    WINDOW_REFUSED,
+                    "the main-thread service answered another request".to_owned(),
+                ),
             }
         }
     };
-    match outcome {
-        Ok(()) => true,
-        Err(reason) => {
-            let (reason, reason_len) = text::lend(reason);
-            // SAFETY: the caller guarantees `out` is writable.
-            unsafe { out.write(RawRefusal { reason, reason_len }) };
-            false
-        }
-    }
+    let (reason, reason_len) = text::lend(reason);
+    // SAFETY: the caller guarantees `out` is writable.
+    unsafe { out.write(RawRefusal { reason, reason_len }) };
+    status
 }
 
 /// Asks the window the platform `platform` is running to close, from any
@@ -1966,10 +2023,12 @@ mod tests {
         assert_eq!(PlatformId::from_tag(0), Some(PlatformId::Scripted));
         assert_eq!(PlatformId::from_tag(1), Some(PlatformId::Winit));
         assert_eq!(PlatformId::from_tag(2), Some(PlatformId::ScriptedFailing));
+        assert_eq!(PlatformId::from_tag(3), Some(PlatformId::ScriptedUndrawn));
         assert_eq!(PlatformId::Scripted.tag(), 0);
         assert_eq!(PlatformId::Winit.tag(), 1);
         assert_eq!(PlatformId::ScriptedFailing.tag(), 2);
-        assert_eq!(PlatformId::from_tag(3), None);
+        assert_eq!(PlatformId::ScriptedUndrawn.tag(), 3);
+        assert_eq!(PlatformId::from_tag(4), None);
         assert_eq!(PlatformId::from_tag(u8::MAX), None);
     }
 
@@ -2016,11 +2075,11 @@ mod tests {
 
     /// Runs `platform` onto `queue` with `session` drawing in its window,
     /// on a thread of its own: where the run's result arrives.
-    fn start_drawn(
+    fn start_drawn<R: editor_render::port::Renderer + Send + 'static>(
         platform: &Arc<ScriptedPlatform>,
         queue: &Arc<Queue>,
-        session: &Session<Watched>,
-    ) -> Receiver<Result<(), CannotOpen>> {
+        session: &Session<R>,
+    ) -> Receiver<Result<Ran, CannotOpen>> {
         let (finished, done) = mpsc::channel();
         let (platform, queue, session) = (Arc::clone(platform), Arc::clone(queue), session.clone());
         thread::spawn(move || {
@@ -2079,7 +2138,11 @@ mod tests {
         publish_to(&display, &snapshot);
         draws.recv_timeout(DEADLINE).expect("the frame is drawn");
         platform.close();
-        assert_eq!(done.recv_timeout(DEADLINE), Ok(Ok(())));
+        // Something drew in the window, so the run has no reason to give.
+        assert_eq!(
+            done.recv_timeout(DEADLINE),
+            Ok(Ok(Ran { nothing_drew: None }))
+        );
         // Closed: nothing takes submits, and the run's handle is the last.
         assert!(presenter.target().is_none());
         let last = presenter.last().expect("the run's handle");
@@ -2183,7 +2246,34 @@ mod tests {
         // The drawer is told before the queue, so the resize has been said.
         assert_eq!(presenter.scale(), 2.0);
         platform.close();
-        assert_eq!(done.recv_timeout(DEADLINE), Ok(Ok(())));
+        assert!(done.recv_timeout(DEADLINE).is_ok_and(|ran| ran.is_ok()));
+    }
+
+    /// Why the renderer of [`a_window_whose_renderer_cannot_be_made_runs_and_its_run_says_why_nothing_drew`]
+    /// cannot be made.
+    const NO_ADAPTER: &str = "no adapter: the machine offers no GPU";
+
+    #[test]
+    fn a_window_whose_renderer_cannot_be_made_runs_and_its_run_says_why_nothing_drew() {
+        let presenter = Presenter::new();
+        let session: Session<editor_render::fake::RecordingRenderer> = Session::new(
+            Arc::new(editor_render::clock::FakeClock::new()),
+            |_, _| Err(NO_ADAPTER.to_owned()),
+            Arc::clone(&presenter),
+        );
+        let platform = Arc::new(ScriptedPlatform::new(Vec::new()));
+        let queue = Arc::new(Queue::new());
+        let done = start_drawn(&platform, &queue, &session);
+        // The window opens and reports all the same.
+        assert_eq!(pull(&queue, 1)[0].kind, EventKind::WindowOpened);
+        assert!(presenter.target().is_none());
+        platform.close();
+        assert_eq!(
+            done.recv_timeout(DEADLINE),
+            Ok(Ok(Ran {
+                nothing_drew: Some(NO_ADAPTER.to_owned())
+            }))
+        );
     }
 
     #[test]

@@ -33,7 +33,7 @@ use std::sync::{Condvar, Mutex, MutexGuard, PoisonError};
 use editor_platform::{CannotOpen, WindowOptions};
 use editor_render_wgpu::present::Presentation;
 
-use crate::window::{self, PlatformId};
+use crate::window::{self, PlatformId, Ran};
 
 #[cfg(not(any(target_os = "macos", target_os = "linux")))]
 compile_error!(
@@ -99,8 +99,9 @@ pub enum Reply {
     /// The answer to [`Request::Probe`].
     OnMainThread(bool),
     /// The outcome of [`Request::RunWindow`]: the window ran and has closed,
-    /// or it could not be opened.
-    WindowClosed(Result<(), CannotOpen>),
+    /// saying why nothing drew in it when nothing did, or it could not be
+    /// opened.
+    WindowClosed(Result<Ran, CannotOpen>),
 }
 
 /// Does the work a [`Request`] names, on the calling thread.
@@ -283,7 +284,7 @@ mod tests {
             answered_on.lock().unwrap().push(thread::current().id());
             match request {
                 Request::Probe => Reply::OnMainThread(true),
-                Request::RunWindow { .. } => Reply::WindowClosed(Ok(())),
+                Request::RunWindow { .. } => Reply::WindowClosed(Ok(Ran::default())),
             }
         })
     }

@@ -20,8 +20,9 @@ use std::time::Duration;
 use editor_ffi::events::{Event, EventKind, QueueId, RawEvent, editor_ffi_events_next};
 use editor_ffi::text::editor_ffi_text_free;
 use editor_ffi::window::{
-    self, PlatformId, RawRefusal, SCRIPTED_FAILURE, editor_ffi_input_clock_now,
-    editor_ffi_window_close, editor_ffi_window_post_input, editor_ffi_window_run,
+    self, PlatformId, RawRefusal, SCRIPTED_FAILURE, SCRIPTED_NO_RENDERER, WINDOW_RAN,
+    WINDOW_REFUSED, WINDOW_UNDRAWN, editor_ffi_input_clock_now, editor_ffi_window_close,
+    editor_ffi_window_post_input, editor_ffi_window_run,
 };
 use editor_platform::{Input, Key, LogicalKey, Modifiers, PhysicalKey, ScriptedPlatform};
 
@@ -40,6 +41,9 @@ const SCRIPTED: u8 = PlatformId::Scripted.tag();
 
 /// The tag of the scripted platform that cannot open a window.
 const SCRIPTED_FAILING: u8 = PlatformId::ScriptedFailing.tag();
+
+/// The tag of the scripted platform whose window nothing can draw in.
+const SCRIPTED_UNDRAWN: u8 = PlatformId::ScriptedUndrawn.tag();
 
 /// A tag that names no platform.
 const NO_PLATFORM: u8 = u8::MAX;
@@ -97,16 +101,23 @@ fn next_event() -> Seen {
 }
 
 /// Runs the window on the platform `platform` as the glue does: `Ok` when it
-/// ran and closed, and otherwise the reason, copied out of the record and
-/// the buffer handed back.
-fn run_blocking(platform: u8, composition: bool) -> Result<(), String> {
+/// ran and closed, with why nothing drew in it when nothing did, and `Err`
+/// with the reason when it did not run; each reason copied out of the
+/// record and the buffer handed back.
+fn run_blocking(platform: u8, composition: bool) -> Result<Option<String>, String> {
     let mut refusal = MaybeUninit::<RawRefusal>::uninit();
     // SAFETY: `refusal` is writable for one record. No present mode or
     // frame latency is asked for (0 and 0).
-    if unsafe { editor_ffi_window_run(platform, composition, 0, 0, refusal.as_mut_ptr()) } {
-        return Ok(());
+    let status =
+        unsafe { editor_ffi_window_run(platform, composition, 0, 0, refusal.as_mut_ptr()) };
+    if status == WINDOW_RAN {
+        return Ok(None);
     }
-    // SAFETY: the call returned false, so it filled the record.
+    assert!(
+        status == WINDOW_REFUSED || status == WINDOW_UNDRAWN,
+        "{status} is no status of a run"
+    );
+    // SAFETY: the call did not return `WINDOW_RAN`, so it filled the record.
     let refusal = unsafe { refusal.assume_init() };
     // SAFETY: the record's buffer is `reason_len` bytes, owned by this caller
     // until it is handed back.
@@ -114,12 +125,17 @@ fn run_blocking(platform: u8, composition: bool) -> Result<(), String> {
     // SAFETY: the buffer came from the library in this record, and is handed
     // back once.
     unsafe { editor_ffi_text_free(refusal.reason, refusal.reason_len) };
-    Err(String::from_utf8(reason).expect("a reason is UTF-8"))
+    let reason = String::from_utf8(reason).expect("a reason is UTF-8");
+    if status == WINDOW_UNDRAWN {
+        Ok(Some(reason))
+    } else {
+        Err(reason)
+    }
 }
 
 /// Starts [`run_blocking`] on a detached thread and returns where its result
 /// arrives.
-fn run(platform: u8, composition: bool) -> Receiver<Result<(), String>> {
+fn run(platform: u8, composition: bool) -> Receiver<Result<Option<String>, String>> {
     let (finished, done) = mpsc::channel();
     thread::spawn(move || {
         let _ = finished.send(run_blocking(platform, composition));
@@ -200,7 +216,8 @@ fn the_process_wide_window_reports_on_the_editor_queue_until_it_is_closed() {
         "the run goes on until the window is closed"
     );
     assert!(editor_ffi_window_close(SCRIPTED));
-    assert_eq!(done.recv_timeout(DEADLINE), Ok(Ok(())));
+    // The recording renderer drew in it: there is no reason to give.
+    assert_eq!(done.recv_timeout(DEADLINE), Ok(Ok(None)));
 
     // Run with composition not allowed, no composition event arrives: the
     // flag reaches the platform.
@@ -209,7 +226,18 @@ fn the_process_wide_window_reports_on_the_editor_queue_until_it_is_closed() {
     assert!(without.len() < sample(true).len());
     assert_arrives(without);
     assert!(editor_ffi_window_close(SCRIPTED));
-    assert_eq!(done.recv_timeout(DEADLINE), Ok(Ok(())));
+    assert_eq!(done.recv_timeout(DEADLINE), Ok(Ok(None)));
+
+    // The scripted platform whose window nothing can draw in runs, reports
+    // its sample and waits for its close all the same, and then says why
+    // nothing drew.
+    let done = run(SCRIPTED_UNDRAWN, true);
+    assert_arrives(sample(true));
+    assert!(editor_ffi_window_close(SCRIPTED_UNDRAWN));
+    assert_eq!(
+        done.recv_timeout(DEADLINE),
+        Ok(Ok(Some(SCRIPTED_NO_RENDERER.to_owned())))
+    );
 
     // The scripted platform that cannot open a window is refused with its
     // reason, at once and on every run, and a close of it does nothing.
@@ -226,7 +254,7 @@ fn the_process_wide_window_reports_on_the_editor_queue_until_it_is_closed() {
     let done = run(SCRIPTED, true);
     assert_arrives(sample(true));
     assert!(editor_ffi_window_close(SCRIPTED));
-    assert_eq!(done.recv_timeout(DEADLINE), Ok(Ok(())));
+    assert_eq!(done.recv_timeout(DEADLINE), Ok(Ok(None)));
 
     // An input posted as a window would report it arrives on the editor
     // queue as the window's event, stamped on the input clock; malformed

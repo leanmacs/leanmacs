@@ -193,7 +193,10 @@ arrives on the editor queue.
 - How the window is opened goes in as scalars, one for each option:
   whether an input method may compose, and the present mode and frame
   latency a run asks for, each none for the renderer's decision. A failure
-  to open comes back as a reason, in an `Except`.
+  to open comes back as a reason, in an `Except`; a window that ran with
+  nothing drawing in it, because its renderer could not be made or its
+  render thread did not end well, comes back as `.ok` with that reason
+  (`WindowRan.nothingDrew`).
 - What draws in the window is the library's: a display bound to the
   library's presenter (`Display.present`) is drawn there while the window
   is open, at the scale the window says, stamped with the window input its
@@ -1672,6 +1675,11 @@ inductive Platform where
   /-- The library's scripted platform that cannot open a window, a fake for
   tests: every run fails at once, with one fixed reason. -/
   | scriptedFailing
+  /-- The library's scripted platform whose window nothing can draw in, a
+  fake for tests: it opens and reports as `scripted` does, but its renderer
+  cannot be made, with one fixed reason, as a machine with no usable GPU
+  gives. -/
+  | scriptedUndrawn
   deriving DecidableEq, Repr
 
 /-- A way a frame reaches the display, by wgpu's names
@@ -1696,16 +1704,36 @@ def PresentMode.tag : Option PresentMode → UInt8
   | some .immediate => 3
   | some .mailbox => 4
 
-/-- `windowRun` as it crosses: the glue builds `none` when the window ran and
-`some` of the reason when it did not. The present mode is its tag and the
-frame latency a number, each 0 for none asked. -/
+/-- What a run of the window answers, as the glue builds it: a reason, then
+how the run ended (0 it ran and something drew in it, with no reason; 1 no
+window ran; 2 it ran and nothing drew in it). Object fields first, so the
+order here is the layout the glue writes. -/
+private structure RawWindowRun where
+  /-- Why no window ran, or why nothing drew in it; empty when it ran and
+  something drew. -/
+  reason : String
+  /-- How the run ended. -/
+  status : UInt64
+
+/-- `windowRun` as it crosses. The present mode is its tag and the frame
+latency a number, each 0 for none asked. -/
 @[extern "editor_glue_window_run"]
 private opaque windowRunRaw (platform : Platform) (composition : Bool) (presentMode : UInt8)
-    (frameLatency : UInt32) : IO (Option String)
+    (frameLatency : UInt32) : IO RawWindowRun
+
+/-- How a window that opened ran, once it has closed. -/
+structure WindowRan where
+  /-- Why nothing drew in the window, when nothing did: its renderer could
+  not be made (no adapter, no device, no surface), or the render thread did
+  not end well. The window ran all the same, and what it reported
+  arrived. -/
+  nothingDrew : Option String := none
+  deriving DecidableEq, Repr
 
 /-- Runs the window on `platform`, with an input method allowed to compose
-or not, and returns once the window has closed: `.ok ()` when it ran, and
-`.error` with the reason when no window could be opened.
+or not, and returns once the window has closed: `.ok` when it ran, saying
+why nothing drew in it when nothing did, and `.error` with the reason when
+no window could be opened.
 
 The library's main-thread service runs the window's loop, and this blocks
 until the loop has ended, so call it from Lean's main thread or a dedicated
@@ -1723,13 +1751,13 @@ While the window is open, what a display bound to the presenter publishes
 ask for a present mode and a frame latency in place of the renderer's
 decision, to measure them; `none` is the decision. -/
 def windowRun (platform : Platform) (composition : Bool) (presentMode : Option PresentMode := none)
-    (frameLatency : Option Nat := none) : IO (Except String Unit) := do
+    (frameLatency : Option Nat := none) : IO (Except String WindowRan) := do
   let latency := (frameLatency.getD 0).toUInt32
-  match ← windowRunRaw platform composition (PresentMode.tag presentMode) latency with
-  | none =>
-    return .ok ()
-  | some reason =>
-    return .error reason
+  let raw ← windowRunRaw platform composition (PresentMode.tag presentMode) latency
+  return match raw.status with
+    | 0 => .ok {}
+    | 2 => .ok { nothingDrew := some raw.reason }
+    | _ => .error raw.reason
 
 /-- Asks the window `platform` is running to close, so that `windowRun`
 returns. Any thread may call it, and it does nothing when that platform runs

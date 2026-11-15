@@ -880,33 +880,39 @@ typedef struct {
   uint8_t *reason;
   size_t reason_len;
 } editor_ffi_raw_refusal;
-bool editor_ffi_window_run(uint8_t platform, bool composition,
-                           uint8_t present_mode, uint32_t frame_latency,
-                           editor_ffi_raw_refusal *out);
+uint8_t editor_ffi_window_run(uint8_t platform, bool composition,
+                              uint8_t present_mode, uint32_t frame_latency,
+                              editor_ffi_raw_refusal *out);
 bool editor_ffi_window_close(uint8_t platform);
 uint64_t editor_ffi_input_clock_now(void);
 bool editor_ffi_window_post_input(uint8_t kind, uint64_t code,
                                   const uint8_t *text, size_t text_len,
                                   const uint8_t *words, size_t words_len);
 
-// `Editor.Ffi.windowRunRaw : Platform → Bool → UInt8 → UInt32 → IO (Option
-// String)`. Blocks in Rust until the window has closed. `none` when the
-// window ran, and `some` of the reason when it did not. The present mode's
-// tag and the frame latency are each 0 for none asked.
+// `Editor.Ffi.windowRunRaw : Platform → Bool → UInt8 → UInt32 → IO
+// RawWindowRun`. Blocks in Rust until the window has closed. The status is
+// the library's: 0 when the window ran and something drew in it, with an
+// empty reason; 1 when no window ran and 2 when nothing drew in the window,
+// each with the reason. The present mode's tag and the frame latency are
+// each 0 for none asked.
 lean_obj_res editor_glue_window_run(uint8_t platform, uint8_t composition,
                                     uint8_t present_mode,
                                     uint32_t frame_latency) {
   editor_ffi_raw_refusal refusal;
-  if (editor_ffi_window_run(platform, composition, present_mode, frame_latency,
-                            &refusal)) {
-    return lean_io_result_mk_ok(lean_box(0)); // `none`
+  uint8_t status = editor_ffi_window_run(platform, composition, present_mode,
+                                         frame_latency, &refusal);
+  lean_object *reason;
+  if (status == 0) {
+    reason = lean_mk_string("");
+  } else {
+    reason = lean_mk_string_from_bytes((const char *)refusal.reason,
+                                       refusal.reason_len);
+    editor_ffi_text_free(refusal.reason, refusal.reason_len);
   }
-  lean_object *reason = lean_mk_string_from_bytes((const char *)refusal.reason,
-                                                  refusal.reason_len);
-  editor_ffi_text_free(refusal.reason, refusal.reason_len);
-  lean_object *some = lean_alloc_ctor(1, 1, 0);
-  lean_ctor_set(some, 0, reason);
-  return lean_io_result_mk_ok(some);
+  lean_object *run = lean_alloc_ctor(0, 1, sizeof(uint64_t));
+  lean_ctor_set(run, 0, reason);
+  lean_ctor_set_uint64(run, uint64_field(1, 0), status);
+  return lean_io_result_mk_ok(run);
 }
 
 // `Editor.Ffi.windowClose : Platform → IO Unit`. The library returns whether

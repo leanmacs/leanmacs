@@ -1150,14 +1150,15 @@ structure WindowRun where
   waited : Bool
   /-- What `windowRun` returned after the close; `none` if it did not return
   in time. -/
-  result : Option (Except String Unit)
+  result : Option (Except String Editor.Ffi.WindowRan)
 
-/-- Runs the scripted platform's window on a dedicated task, pulls as many
-events from the editor queue as its sample has, closes the window and waits
-for the run. It always closes the window, so a check that fails leaves no run
-behind to hold the main-thread service. -/
-def runScripted (composition : Bool) : IO WindowRun := do
-  let run ← IO.asTask (prio := .dedicated) (Editor.Ffi.windowRun .scripted composition)
+/-- Runs the window of `platform`, a scripted one that opens, on a dedicated
+task, pulls as many events from the editor queue as its sample has, closes
+the window and waits for the run. It always closes the window, so a check
+that fails leaves no run behind to hold the main-thread service. -/
+def runScripted (composition : Bool) (platform : Editor.Ffi.Platform := .scripted) : IO WindowRun :=
+  do
+  let run ← IO.asTask (prio := .dedicated) (Editor.Ffi.windowRun platform composition)
   let mut events := #[]
   let mut stamped := true
   let mut last : UInt64 := 0
@@ -1169,7 +1170,7 @@ def runScripted (composition : Bool) : IO WindowRun := do
     events := events.push event
   IO.sleep 20
   let waited := !(← IO.hasFinished run)
-  Editor.Ffi.windowClose .scripted
+  Editor.Ffi.windowClose platform
   let result ←
     if ← eventually (IO.hasFinished run) then
       some <$> IO.ofExcept run.get
@@ -1212,9 +1213,16 @@ cut. -/
 def scriptedFailure : String :=
   "the scripted platform opens no window: pas d'écran"
 
+/-- Why nothing can draw in the window of the library's scripted platform
+whose renderer cannot be made (`SCRIPTED_NO_RENDERER` in
+`crates/editor-ffi/src/window.rs`). -/
+def scriptedNoRenderer : String :=
+  "the scripted platform's window has no renderer: pas de GPU"
+
 /-- What `windowRun` returns on `platform`; `none` if it does not return in
 time, in which case the window is closed so that no run is left behind. -/
-def runUntilReturn (platform : Editor.Ffi.Platform) : IO (Option (Except String Unit)) := do
+def runUntilReturn (platform : Editor.Ffi.Platform) :
+    IO (Option (Except String Editor.Ffi.WindowRan)) := do
   let run ← IO.asTask (prio := .dedicated) (Editor.Ffi.windowRun platform true)
   unless ← eventually (IO.hasFinished run) do
     Editor.Ffi.windowClose platform
@@ -1222,7 +1230,7 @@ def runUntilReturn (platform : Editor.Ffi.Platform) : IO (Option (Except String 
   return some (← IO.ofExcept run.get)
 
 /-- Whether `result` is a run that returned and failed for exactly `reason`. -/
-def failedFor (reason : String) : Option (Except String Unit) → Bool
+def failedFor (reason : String) : Option (Except String Editor.Ffi.WindowRan) → Bool
   | some (.error actual) => actual == reason
   | _ => false
 
@@ -1232,9 +1240,12 @@ closed, so each runs on a dedicated task, and the events are pulled on
 dedicated tasks too. None of them quits the queues.
 
 Three run the keyboard check's own loop over the bindings: what
-`editor window-check` runs on the real window. The last three are on the
-scripted platform that cannot open a window: the glue's path for a failure,
-which the real platform takes only on a machine with no display. -/
+`editor window-check` runs on the real window. One is on the scripted
+platform whose renderer cannot be made: the glue's path for a window that
+ran with nothing drawing in it, which the real platform takes on a machine
+with no usable GPU. The last three are on the scripted platform that cannot
+open a window: the glue's path for a failure, which the real platform takes
+only on a machine with no display. -/
 def windowChecks (_ : Unit) : List Check :=
   [{
       name :=
@@ -1247,10 +1258,20 @@ def windowChecks (_ : Unit) : List Check :=
       run := do
         let ran ← runScripted true
         return ran.stamped && ran.events.length == (windowSample true).length },
-    { name := "running a window returns only after the window is closed, and says that it ran"
+    { name :=
+        "running a window returns only after the window is closed, and says that it ran with something drawing in it"
       run := do
         let ran ← runScripted true
-        return ran.waited && ran.result matches some (.ok ()) },
+        return ran.waited && ran.result matches some (.ok { nothingDrew := none }) },
+    { name :=
+        "a window whose renderer cannot be made runs, reports its inputs and waits for its close all the same, and then says why nothing drew in it, whole"
+      run := do
+        let ran ← runScripted true .scriptedUndrawn
+        let said :=
+          match ran.result with
+          | some (.ok { nothingDrew := some reason }) => reason == scriptedNoRenderer
+          | _ => false
+        return isWindowSample true ran.events && ran.waited && said },
     { name :=
         "an input posted as a window would report it arrives on the editor queue as the window's event, stamped, and words that do not read as an input are refused and queue nothing"
       run := do
@@ -2303,7 +2324,7 @@ def renderChecks (_ : Unit) : List Check :=
         Editor.Ffi.windowClose .scripted
         unless ← eventually (IO.hasFinished run) do
           return false
-        let ran := (← IO.ofExcept run.get) matches .ok ()
+        let ran := (← IO.ofExcept run.get) matches .ok { nothingDrew := none }
         let drawn ← framesSubmitted
         fixture.real.publish (fixture.scene (SceneFixture.own fixture.anchor) #[])
         let after ← framesSubmitted
@@ -2431,7 +2452,7 @@ def run (scenario : String) (checks : List Check) : IO UInt8 := do
 /-- Reports a command line `main` does not understand; the exit status is 2. -/
 def usage : IO UInt32 := do
   IO.eprintln
-      "usage: ffi-test [exit <code> | shutdown | exit-while-blocked | overflow <sysroot> <olean dir> | display <fixture> | window-host <file>]"
+      "usage: ffi-test [exit <code> | shutdown | exit-while-blocked | overflow <sysroot> <olean dir> | display <fixture> | window-host <file> | window-host-undrawn <file>]"
   return 2
 
 /-- The window mode's wiring (`Editor.Window.host`) on the library's
@@ -2465,6 +2486,30 @@ def windowHostScenario (file : String) : IO UInt8 := do
     IO.eprintln "ffi-test window-host: a scripted window said what a surface offered"
     return 1
   IO.println "ffi-test window-host: the window ran and closed, and frames were drawn in it"
+  return 0
+
+/-- The window mode's wiring (`Editor.Window.host`) on the library's
+scripted platform whose renderer cannot be made, on the absolute path
+`file`, as `windowHostScenario` sets it up but with no report. The sample
+window opens, reports its fixed input and asks to close, as it does there,
+and nothing draws in it. 0 when the window mode ended with status 1 and no
+render session was started; 1 otherwise, saying why on stderr. What the
+window mode prints of the failure is on stderr, for the gate to read. -/
+def windowHostUndrawnScenario (file : String) : IO UInt8 := do
+  let options : Editor.Window.Options :=
+    { file, config := none, configGiven := false, sysroot := none, oleans := ""
+      composition := true }
+  let status ←
+    Editor.Window.host .scriptedUndrawn options (.skip none) (← Editor.Ffi.Display.newCells 8 16)
+        (← Editor.Clipboard.InProcess.new).handle #[]
+  unless status == 1 do
+    IO.eprintln s!"ffi-test window-host-undrawn: the window mode ended with status {status}, not 1"
+    return 1
+  if (← Editor.Ffi.renderCounters).isSome then
+    IO.eprintln "ffi-test window-host-undrawn: a render session was started"
+    return 1
+  IO.println
+      "ffi-test window-host-undrawn: the window ran with nothing drawing in it, and the window mode said so"
   return 0
 
 end FfiTest
@@ -2504,6 +2549,10 @@ def main (args : List String) : IO UInt32 := do
     IO.Process.exit (← FfiTest.displayScenario fixture)
   | ["window-host", file] =>
     let status ← FfiTest.windowHostScenario file
+    Editor.Ffi.quit
+    IO.Process.exit status
+  | ["window-host-undrawn", file] =>
+    let status ← FfiTest.windowHostUndrawnScenario file
     Editor.Ffi.quit
     IO.Process.exit status
   | ["exit-while-blocked"] =>
