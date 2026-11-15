@@ -135,7 +135,8 @@ as before, so reload and job completion work as they did.
   begin an insert, and `self-insert`, which a key that prints runs in
   insert state and in the minibuffer; and the operate command, `x`, the
   two puts, the two commands that open a line, undo, redo and the repeat
-  command. So with no config the editor moves, edits, undoes and repeats.
+  command; and the commands that scroll a view. So with no config the
+  editor moves, edits, undoes, repeats and scrolls.
   And it is handed the ex line's commands and the ex names
   that ship (`Ex.commands`, `Ex.bindings`, `Editor/Ex/Compiled.lean`):
   `ex`, which opens the ex line and runs its answer, `quit`,

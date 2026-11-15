@@ -3,6 +3,7 @@ import Editor.Evil
 import Editor.Evil.Motions
 import Editor.Evil.Operators
 import Editor.Evil.Repeat
+import Editor.Evil.Scroll
 import Editor.Evil.Undo
 import Editor.InputScheme.Vim
 
@@ -30,6 +31,8 @@ they hold when config fails to load, and a reload does not replace them.
   | `open-below`, `open-above` | `Evil.openBelow`, `Evil.openAbove`: an empty line below and above the cursor's, and an insert on it |
   | `undo`, `redo` | `Evil.undo`, `Evil.redo`: steps of the buffer's history, with the cursor placed (`Editor/Evil/Undo.lean`) |
   | `repeat` (`Vim.repeatCommand`) | `Evil.repeat`: the last change again, by the command the registry holds for the name the change compiled to, with the text typed after it (`Editor/Evil/Repeat.lean`) |
+  | `scroll-down`, `scroll-up` | `Evil.scroll .half`, down and up: the view and its cursor by half the rows the view fits, or by the count (`Editor/Evil/Scroll.lean`) |
+  | `scroll-page-down`, `scroll-page-up` | `Evil.scroll .page`, down and up: the view and its cursor by the rows the view fits |
 
   The seven of the second and third rows enter a state only when a key
   that enters it runs them: the scheme enters the state, at the key, and
@@ -48,7 +51,8 @@ motions (`Editor/Evil/Motions.lean`), so that config can call them, and
 not this, which is the one module of evil's it leaves out.
 
 Pinned by `ModelTest.evilMotionChecks`, `ModelTest.evilStateChecks` and
-`ModelTest.evilInsertChecks`, on the models.
+`ModelTest.evilInsertChecks`, on the models, and the scroll commands by
+`ModelTest.viewChecks`.
 -/
 
 namespace Editor.Evil
@@ -69,6 +73,10 @@ def commands : Array Config.Registration :=
     { name := "open-below", action := .call openBelow },
     { name := "open-above", action := .call openAbove }, { name := "undo", action := .call undo },
     { name := "redo", action := .call redo },
-    { name := Vim.repeatCommand, action := .call «repeat» }]
+    { name := Vim.repeatCommand, action := .call «repeat» },
+    { name := "scroll-down", action := .call (scroll .half true) },
+    { name := "scroll-up", action := .call (scroll .half false) },
+    { name := "scroll-page-down", action := .call (scroll .page true) },
+    { name := "scroll-page-up", action := .call (scroll .page false) }]
 
 end Editor.Evil

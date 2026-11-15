@@ -32,15 +32,16 @@ The operators' entries are `Evil.operators`
 | `insertCommands` | Insert state's: the key that returns to normal state |
 | `visualCommands`, `visualLineCommands` | A visual state's: the keys that return to normal state, the key that enters the other visual state, and the register prefix |
 | `minibufferCommands` | The minibuffer state's: `RET`, which accepts the prompt, `<Escape>`, which cancels it, `TAB` and `C-n`, which move to the next of its candidates, and `S-TAB` and `C-p`, which move to the previous |
+| `scrollCommands` | The commands that scroll a view, of normal state and the two visual states: `C-d` and `C-u`, by half a view, and `C-f` and `C-b`, by a view (`Editor/Evil/Scroll.lean`). Each changes no text and enters no state, so none is the last change. They are commands and not motions, so an operator's key before one is dropped. Insert state and the minibuffer's do not have them: there `C-d` and `C-u` are Vim's editing keys |
 
 ## The states
 
 | State | Keymaps, in precedence order | Cursor | Selection | The grammar reads |
 |---|---|---|---|---|
-| `normal`, the initial state | `normalCommands`, `operators`, `motions` | Block | Inclusive | |
+| `normal`, the initial state | `normalCommands`, `scrollCommands`, `operators`, `motions` | Block | Inclusive | |
 | `insert` | `insertCommands` | Bar | Exclusive | Typing is text |
-| `visual` | `visualCommands`, `operators`, `motions` | Block | Inclusive | Operators act on the selection |
-| `visual-line` | `visualLineCommands`, `operators`, `motions` | Block | Line | Operators act on the selection |
+| `visual` | `visualCommands`, `scrollCommands`, `operators`, `motions` | Block | Inclusive | Operators act on the selection |
+| `visual-line` | `visualLineCommands`, `scrollCommands`, `operators`, `motions` | Block | Line | Operators act on the selection |
 | `minibuffer`, the state of the minibuffer's view | `minibufferCommands` | Bar | Exclusive | Typing is text |
 
 The selection's shape is the one the text store's shapes map a state onto
@@ -174,6 +175,12 @@ def minibufferCommands : List (String × Bound) :=
     ("TAB", running "minibuffer-next"), ("C-n", running "minibuffer-next"),
     ("S-TAB", running "minibuffer-previous"), ("C-p", running "minibuffer-previous")]
 
+/-- The commands that scroll a view, of normal state and the visual states:
+each changes no text and enters no state. -/
+def scrollCommands : List (String × Bound) :=
+  [("C-d", running "scroll-down"), ("C-u", running "scroll-up"),
+    ("C-f", running "scroll-page-down"), ("C-b", running "scroll-page-up")]
+
 /-- The keymap that binds each key string of `table` to what is beside it.
 A string `Key.parse` refuses binds nothing. -/
 def keymap (table : List (String × Bound)) : Keymap Bound :=
@@ -185,7 +192,9 @@ def keymap (table : List (String × Bound)) : Keymap Bound :=
 
 /-- The default registry of Vim states (the table in the module docs). -/
 def states : States :=
-  { initial := { name := "normal", keymaps := [normalCommands, operators, motions].map keymap }
+  { initial :=
+      { name := "normal"
+        keymaps := [normalCommands, scrollCommands, operators, motions].map keymap }
     others :=
       [{  name := "insert"
           keymaps := [keymap insertCommands]
@@ -193,10 +202,10 @@ def states : States :=
           insertsText := true
           shape := .exclusive },
         { name := "visual"
-          keymaps := [visualCommands, operators, motions].map keymap
+          keymaps := [visualCommands, scrollCommands, operators, motions].map keymap
           operatesOnSelection := true },
         { name := "visual-line"
-          keymaps := [visualLineCommands, operators, motions].map keymap
+          keymaps := [visualLineCommands, scrollCommands, operators, motions].map keymap
           operatesOnSelection := true
           shape := .line },
         { name := "minibuffer"

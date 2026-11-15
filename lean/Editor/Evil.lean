@@ -25,6 +25,7 @@ registers is moved in by the same commands.
 | `Editor/Evil/Motions.lean` | The motions, as vocabulary entries, and their table (`Evil.motions`) |
 | `Editor/Evil/Operators.lean` | The operators, as vocabulary entries, their table (`Evil.operators`), and the operate command |
 | `Editor/Evil/Registers.lean` | The registers a yank and a deletion set |
+| `Editor/Evil/Scroll.lean` | The commands that scroll a view, over the scroll policy of `Editor/Scroll.lean` |
 | `Editor/Evil/Compiled.lean` | The commands' registrations, under the names the Vim scheme's invocations carry |
 
 ## The move command
@@ -229,7 +230,7 @@ loop's driver under the Vim scheme that ships, the move command by
 | Addition | Where |
 |---|---|
 | A new motion | An entry in `Editor/Evil/Motions.lean`, and its row in `Evil.motions`; the key that names it is a row of the Vim scheme's default tables |
-| A new command a Vim key runs | A function of its call here, and its registration in `Editor/Evil/Compiled.lean` |
+| A new command a Vim key runs | A function of its call here, or in a module of its own beside this one, and its registration in `Editor/Evil/Compiled.lean` |
 | A new fact a command needs of the view's Vim state | A field of the scheme's report (`Editor/InputScheme.lean`), read from the call; nothing here matches on a state's name |
 -/
 

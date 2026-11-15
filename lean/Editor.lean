@@ -2,6 +2,7 @@ import Editor.Api.Theorems
 import Editor.Command.Append
 import Editor.Evil.Operators
 import Editor.Evil.Repeat
+import Editor.Evil.Scroll
 import Editor.Evil.Theorems
 import Editor.Evil.Undo
 import Editor.Ex
@@ -89,7 +90,13 @@ repeat, which replays the change the Vim scheme hands it with the command
 the registry holds for the change's name, in `Editor/Evil/Repeat.lean`:
 config's command of a name evil registers, such as `operate` registered
 again over a vocabulary with an operator of config's own, is what `.`
-replays. What is
+replays. The commands that scroll a view are in `Editor/Evil/Scroll.lean`
+(`Evil.scroll`), over the policy by which a view follows its cursor and a
+scroll places its anchor (`Editor/Scroll.lean`, which comes with the
+editor API): a command of config's reads and places its window's scroll
+anchor with `Target.anchor` and `Target.scrollTo`, asks the display about
+its view with `Target.onArea`, and sets the scroll margin with
+`setScrollMargin` (`Editor/Api.lean`, "Scrolling"). What is
 proved of evil on the text model is in `Editor/Evil/Theorems.lean`, with
 what it needs of the undo tree in `Editor/UndoTree/Theorems.lean`; they
 are imported so that the build checks the proofs.

@@ -32,3 +32,21 @@ key 0 Digit0 -
 key 0 Digit0 -
 key j KeyJ -
 scene
+
+# `C-u` scrolls half a view up: 15 rows, the anchor to line 56, byte 224,
+# and the cursor to line 85, byte 340.
+key u KeyU control
+scene
+
+# `C-f` scrolls a view down: 30 rows, the anchor to line 86, byte 344, and
+# the cursor to line 115, byte 460.
+key f KeyF control
+scene
+
+# `C-f` at the text's end. The file ends in a line feed, so the text's last
+# row is the empty one after line 119, and the anchor stops where that is
+# the last row shown: line 91, byte 364. The cursor's 30 rows stop in that
+# empty row, where a cursor of normal state does not rest, so it is on the
+# last line, 119, at byte 476.
+key f KeyF control
+scene

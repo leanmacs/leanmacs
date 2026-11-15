@@ -11217,9 +11217,37 @@ def vimDefaultChecks : List Check :=
         pure <|
           [Vim.Default.motions, Vim.Default.operators, Vim.Default.normalCommands,
                 Vim.Default.insertCommands, Vim.Default.visualCommands,
-                Vim.Default.visualLineCommands, Vim.Default.minibufferCommands].all
+                Vim.Default.visualLineCommands, Vim.Default.minibufferCommands,
+                Vim.Default.scrollCommands].all
             fun table =>
             !table.isEmpty && (Vim.Default.keymap table).bindings.length == table.length },
+    { name :=
+        "each of the default keys C-d C-u C-f C-b runs a command of its own that changes no text and enters no state, in the initial state and, the same command, in each visual state, which the view stays in; a count typed before one is that command's count; after an operator's key each yields nothing and drops the operator; and in the state i enters and in the minibuffer's state none runs a command"
+      run :=
+        let scrollKeys := ["C-d", "C-u", "C-f", "C-b"]
+        let told : Vim.State := Vim.Default.scheme.openMinibuffer ⟨5⟩ Vim.Default.scheme.init
+        let runsNone (parsed : List Vim.Parsed) : Bool :=
+          match parsed.getLast? with
+          | some (.edit _) => false
+          | _ => true
+        pure
+          (vimDefaultCommands scrollKeys &&
+            scrollKeys.all fun text =>
+              let command := vimDefaultCommand text
+              (vimDefault text).1.current == [] && (vimDefault text).1.lastChange == none &&
+                (["v", "V"].all fun state =>
+                  vimDefaultCommand s!"{state} {text}" == command &&
+                    (vimDefault s!"{state} {text}").1.current == (vimDefault state).1.current &&
+                    (vimDefault s!"{state} {text}").1.lastChange == none) &&
+                (match vimDefaultEdit s!"5 {text}" with
+                | some (.run counted (some 5) none) => some counted == command
+                | _ => false) &&
+                (vimDefault s!"d {text}").2.getLast? == some .nothing &&
+                vimDefaultEdit s!"d {text} w" == vimDefaultEdit "w" &&
+                (vimDefaultEdit "w").isSome &&
+                runsNone (vimDefault s!"i {text}").2 &&
+                runsNone
+                  (vimParsedFrom told text (view := ⟨5⟩) (states := Vim.Default.states)).2) },
     { name :=
         "each default motion key yields a move with no count, each by a motion of another name: h j k l w b e W B E 0 ^ $ gg G"
       run :=
@@ -17859,6 +17887,53 @@ def viewCost (size : Size) (typed : String)
   let after := (before.feed { event := press last, stamp := 0 }).1
   return after.model.watch.clock - before.model.watch.clock
 
+/-- Where a view is in its text, by the rows `rows` of the text as the
+display model answers them: the index of the first row the view shows, and
+of the cursor's row. -/
+def ViewSeen.place (seen : ViewSeen) (rows : Array Display.Row) : Option (Nat × Nat) := do
+  let top ← rows.findIdx? (some · == seen.shown[0]?)
+  let cursor ← rows.findIdx? (some · == seen.row)
+  return (top, cursor)
+
+/-- Where view 0 of `driver` is in its text once the keys `typed` are
+pressed (`ViewSeen.place`). -/
+def viewPlaced (driver : EvilDriver) (typed : String) (rows : Array Display.Row) :
+    Option (Nat × Nat) :=
+  (viewSeen (evilFed driver typed)).bind (·.place rows)
+
+/-- The key string that names `key` `count` times. -/
+def keyTimes (key : String) (count : Nat) : String :=
+  " ".intercalate (List.replicate count key)
+
+/-- The invocation the default key `key` yields in the Vim scheme's initial
+state: what the loop runs for it. -/
+def viewInvocation (key : String) : Option Invocation :=
+  (vimDefaultEdit key).map (·.compile)
+
+/-- The cases in which the cursor's row is not among the rows the next
+scene's view shows after the command of one of `keys`, run as the
+invocation its key yields, in a view of `contents` in a frame of `size`:
+from each of `anchors` as the scroll anchor and each of `heads` as the
+cursor. A key that yields no command is a case. -/
+def scrollFailures (keys : List String) (contents : String) (size : Size)
+    (anchors heads : List Nat) : List String :=
+  keys.flatMap fun key =>
+    match viewInvocation key with
+    | none => [s!"{key} runs no command"]
+    | some invocation =>
+      anchors.flatMap fun anchor =>
+        heads.filterMap fun head =>
+          let start : TextM EditorState := do
+            let state ← viewState contents size 0 head
+            let some target := state.focusedTarget? | throw .noSuchText
+            target.scrollTo anchor
+            return state
+          match viewInvoked start invocation with
+          | some seen =>
+            if seen.index.isSome then none
+            else some s!"{key} from anchor {anchor} and cursor {head} of {repr contents}"
+          | none => some s!"{key} from anchor {anchor} and cursor {head}: no scene"
+
 /-- The checks of a view that follows its cursor (`Editor/Loop.lean`,
 "Following the cursor"), on the loop's driver over the editor's models,
 under the Vim scheme that ships with evil's commands: keys are pressed, and
@@ -18091,7 +18166,182 @@ def viewChecks : List Check :=
             viewCost ⟨80, 8⟩ "l" cells with
           | some bare, some one, some flat, some short =>
             bare > 0 && one == bare + 4 && flat == bare && short == flat + 2
-          | _, _, _, _ => false }]
+          | _, _, _, _ => false },
+    { name :=
+        "C-d moves a view's anchor and its cursor down by half the rows the view fits, and C-u up by the same; C-f and C-b by the rows it fits: in a view of six rows over forty lines, three rows and six, with the cursor keeping its row of the view; a count before C-d is the rows of that one command, and the next C-d is half a view again; a count before C-f is so many views"
+      run :=
+        pure <|
+          let contents := numbered 40
+          let rows := allRows contents 10
+          match viewDriver contents ⟨10, 6⟩ with
+          | none => false
+          | some driver =>
+            let placed (typed : String) : Option (Nat × Nat) := viewPlaced driver typed rows
+            placed "l h" == some (0, 0) && placed "C-d" == some (3, 3) &&
+              placed "C-d C-u" == some (0, 0) &&
+              placed "2 j C-d" == some (3, 5) &&
+              placed "2 j C-d C-d C-u" == some (3, 5) &&
+              placed "C-f" == some (6, 6) &&
+              placed "C-f C-f C-b" == some (6, 6) &&
+              placed "2 j C-f" == some (6, 8) &&
+              placed "5 C-d" == some (5, 5) &&
+              placed "5 C-d C-d" == some (8, 8) &&
+              placed "2 C-f" == some (12, 12) &&
+              placed "2 C-f 2 C-b" == some (0, 0) &&
+              placed "1 0 C-d 4 C-u" == some (6, 6) },
+    { name :=
+        "at the text's end C-d and C-f, repeated, leave the text's last row as the last row shown, in a full view, with the cursor on the last line, and one more changes nothing and says nothing; and back at its start C-u and C-b leave the text's first row as the first row shown with the cursor on it, and one more changes nothing and says nothing"
+      run :=
+        pure <|
+          let contents := numbered 20
+          let rows := allRows contents 10
+          match viewDriver contents ⟨10, 5⟩ with
+          | none => false
+          | some driver =>
+            (["C-d", "C-f"].all fun key =>
+                let ended := evilFed driver (keyTimes key 12)
+                let again := evilFed ended key
+                match viewSeen ended, viewSeen again with
+                | some now, some more =>
+                  now.shown.size == 5 && now.shown.back? == rows.back? && now.row == rows.back? &&
+                    more == now &&
+                    ended.loop.state.echo == "" &&
+                    again.loop.state.echo == ""
+                | _, _ => false) &&
+              [("C-d", "C-u"), ("C-f", "C-b")].all fun (down, up) =>
+                let started := evilFed driver s!"{keyTimes down 12} {keyTimes up 12}"
+                let again := evilFed started up
+                match viewSeen started, viewSeen again with
+                | some now, some more =>
+                  now.anchor == 0 && now.head == 0 && now.row == rows[0]? && more == now &&
+                    again.loop.state.echo == ""
+                | _, _ => false },
+    { name :=
+        "in a text that ends in a line feed C-d and C-f, repeated, leave the empty row after the last line as the last row shown, and the cursor on the last line, in the column it was in, and not in the empty row; one more changes nothing"
+      run :=
+        pure <|
+          let contents := numbered 20 "\n"
+          let rows := allRows contents 10
+          match viewDriver contents ⟨10, 5⟩ with
+          | none => false
+          | some driver =>
+            -- The text's last row is the empty one after its last line feed.
+            (rows.back?.map fun row => row.start == row.stop) == some true &&
+              ["C-d", "C-f"].all fun key =>
+                let ended := evilFed driver s!"l {keyTimes key 12}"
+                match viewSeen ended, viewSeen (evilFed ended key) with
+                | some now, some more =>
+                  now.shown.size == 5 && now.shown.back? == rows.back? &&
+                    now.row == rows[rows.size - 2]? &&
+                    now.row.map (·.start + 1) == some now.head &&
+                    more == now &&
+                    ended.loop.state.echo == ""
+                | _, _ => false },
+    { name :=
+        "after each of C-d, C-u, C-f and C-b, from a spread of scroll anchors and of cursors, of forty short lines, of a text that ends in a line feed and of a text with wrapped lines, the cursor's row is among the rows the next scene's view shows"
+      run := do
+        let scrollKeys := ["C-d", "C-u", "C-f", "C-b"]
+        let every (contents : String) (step : Nat) : List Nat :=
+          (List.range (contents.utf8ByteSize + 1)).filter fun offset =>
+            offset % step == 0 && restsWell contents offset
+        let forty := numbered 40
+        let ended := numbered 12 "\n"
+        let wrong :=
+          scrollFailures scrollKeys forty ⟨10, 6⟩ (every forty 21) (every forty 13) ++
+            scrollFailures scrollKeys ended ⟨10, 5⟩ (every ended 9) (every ended 4) ++
+            scrollFailures scrollKeys ragged ⟨4, 3⟩ (every ragged 5) (every ragged 3)
+        unless wrong.isEmpty do
+          throw (IO.userError ("; ".intercalate (wrong.take 12)))
+        return (every forty 21).length > 3 && (every ragged 3).length > 8 },
+    { name :=
+        "C-d keeps the cursor's x across the row of a shorter line; in a visual state it moves the selection's head and leaves its other end; and the window keeps no wanted column after it"
+      run :=
+        pure <|
+          let contents := "abcdef\nab\nabcdef\nab\nabcdef\nabcdef\nabcdef\nabcdef"
+          let wanted (driver : EvilDriver) : Option (Option Window.Wanted) :=
+            (driver.loop.state.window? ⟨0⟩).map (·.wanted)
+          -- Where the display model moves the cursor from offset 4, two rows
+          -- down, aiming for its own x.
+          let moved :=
+            onDisplay contents
+              (Display.linesFrom
+                { snapshot := ⟨0⟩, width := 10, position := 4, lines := 2, goal := none })
+          match viewDriver contents ⟨10, 4⟩ (head := 4), moved with
+          | some driver, some moved =>
+            let down := evilFed driver "C-d"
+            let visual := evilFed driver "v C-d"
+            (rowAt contents 10 moved.position).map (·.start + 4) == some moved.position &&
+              (viewSeen down).map (·.head) == some moved.position &&
+              ((viewSeen visual).map fun seen => (seen.selection.ranges, seen.selection.shape)) ==
+                some (#[⟨4, moved.position⟩], .inclusive) &&
+              (wanted (evilFed driver "j k")).map (·.isSome) == some true &&
+              wanted (evilFed driver "j k C-d") == some none
+          | _, _ => false },
+    { name :=
+        "in a text with wrapped lines C-d moves the cursor by visual rows, into the middle of a line: one row down from the first row of a line wrapped over two is the line's second row"
+      run :=
+        pure <|
+          let rows := allRows wrapping 4
+          match viewDriver wrapping ⟨4, 2⟩ with
+          | none => false
+          | some driver =>
+            match viewSeen (evilFed driver "C-d") with
+            | some now =>
+              -- No line break is between the first row and the second.
+              (rows[0]?.map (·.stop)) == (rows[1]?.map (·.start)) && now.row == rows[1]? &&
+                some now.head == rows[1]?.map (·.start) &&
+                now.place rows == some (1, 1)
+            | none => false },
+    { name := "in a frame of no height C-d, C-u, C-f and C-b move nothing and say nothing"
+      run :=
+        pure <|
+          match viewDriver (numbered 20) ⟨10, 0⟩ (head := 9) with
+          | none => false
+          | some driver =>
+            ["C-d", "C-u", "C-f", "C-b"].all fun key =>
+              let after := evilFed driver key
+              match viewSeen after with
+              | some now => now.anchor == 0 && now.head == 9 && after.loop.state.echo == ""
+              | none => false },
+    { name :=
+        "C-d stopped by the interrupt before any one of its requests leaves the view's anchor and its selection as they were, and says it was interrupted; run to its end it moves both, and leaves the text model holding as many snapshots as it held"
+      run :=
+        pure <|
+          let contents := numbered 40
+          let rows := allRows contents 10
+          let held (driver : EvilDriver) : Nat :=
+            (driver.model.texts.snapshots.filter (·.isSome)).size
+          match viewDriver contents ⟨10, 6⟩, vimDefaultCommand "C-d" with
+          | some driver, some command =>
+            let before := evilFed driver "2 j"
+            -- `C-d` with an interrupt key that arrives once it has made `asks`
+            -- of its requests, or with none.
+            let ran (asks : Option Nat) : EvilDriver :=
+              evilFed
+                { before with
+                  model :=
+                    { before.model with
+                      watch := { before.model.watch with arrivesAfter := asks } } }
+                "C-d"
+            let left (driver : EvilDriver) : Option (Nat × Selection × String) :=
+              (viewSeen driver).map fun seen =>
+                (seen.anchor, seen.selection, driver.loop.state.echo)
+            let was := (viewSeen before).map fun seen => (seen.anchor, seen.selection)
+            let stopped :=
+              was.map fun (anchor, selection) =>
+                (anchor, selection, s!"{command.name}: interrupted")
+            let whole := left (ran none)
+            let runs := (List.range 40).map fun asks => left (ran (some asks))
+            viewPlaced before "" rows == some (0, 2) &&
+              (viewSeen (ran none)).bind (·.place rows) == some (3, 5) &&
+              whole.isSome &&
+              stopped.isSome &&
+              whole != stopped &&
+              runs.all (fun run => run == stopped || run == whole) &&
+              (runs.filter (· == stopped)).length > 5 &&
+              runs.getLast? == some whole &&
+              held (ran none) == held before
+          | _, _ => false }]
 
 /-- Every check, in the order they run.
 

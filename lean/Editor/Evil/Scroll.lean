@@ -1,0 +1,142 @@
+import Editor.Evil
+
+/-!
+# Evil's scroll commands
+
+The commands that scroll a view, Vim's `C-d`, `C-u`, `C-f` and `C-b`, each
+a function of its call (`Editor/Evil.lean`). Where a view's scroll anchor
+goes is the policy of `Editor/Scroll.lean`; a command here asks it, places
+the anchor (`Target.scrollTo`, `Editor/Api.lean`) and moves the cursor. It
+asks the display through its view's area (`Target.onArea`), so nothing of
+layout is kept here.
+
+They are evil's commands and not the loop's: the commands that move the
+cursor rest it by what the input scheme reports of the view and keep a
+visual selection's other end, which they read from their call's report, as
+the move command does.
+
+## Scrolling by rows
+
+`scroll amount down` is the command `C-d` and `C-u` run, with half a view,
+and `C-f` and `C-b`, with a view. The anchor and the cursor move by the
+same number of rows.
+
+- **How many rows** (`Scroll.Amount.rows`). Half a view is half the rows
+  the view fits and at least one, or the count when one was typed. A view
+  is the rows the view fits, times the count when one was typed. The count
+  is the call's first argument, 0 for none, as the Vim scheme lays a
+  command's call out.
+- **The anchor going down** moves that many rows, and no further than
+  where the text's last row is the last row shown; it never moves up. **The
+  anchor going up** moves that many rows and stops at the text's first row
+  (`Scroll.down`, `Scroll.up`).
+- **The cursor** moves that many visual rows (`Display.linesFrom` from the
+  head of the primary range, with no goal, so it keeps its x), stops at
+  the text's first and last row, and is then rested by the rule of the
+  call's report (`rested`, `restOf`), as a motion's target is. The
+  selection is one range of the report's shape. Its other end is kept
+  where the report says a motion extends the selection, so the command
+  extends a visual selection. The window then keeps no wanted column, as
+  after every motion but the vertical ones.
+- **A cursor the move leaves in the empty last row** of a text that ends
+  in a line break, in a state where no cursor rests there, goes one row
+  back up at the same x: a second move, with the goal the first passed
+  back. Without it the resting rule would put the cursor on the last
+  line's last character and lose the column, on every file that ends in a
+  line feed.
+- **After it the cursor is among the rows shown.** Where neither the
+  anchor nor the cursor stopped, both moved the same rows. Where one
+  stopped, the loop's follow holds it at the next scene
+  (`Editor/Loop.lean`, "Following the cursor"), with the scroll margin,
+  which a command here does not read.
+- **At the text's end** going down moves the anchor until the text's last
+  row is the last row shown, then the cursor alone, until it is on the
+  last line. There it changes nothing and says nothing. **At the start**
+  going up does the same, upwards.
+- **A view that shows no row**: nothing moves and nothing is said. So in a
+  frame of no height, which every headless run that does not resize has,
+  the commands do nothing.
+- **They are commands and not motions**, so an operator's key before one
+  is dropped, as in Vim. They change no text, so they are not the last
+  change and `.` does not replay one.
+- **A command that does not run to its end leaves the anchor and the
+  selection as they were**: the loop keeps and restores both markers. One
+  that is interrupted leaves the snapshot `Target.onArea` took
+  (`Editor/Api.lean`, "Scrolling").
+
+Where this departs from Vim, as its documentation says it (`scroll.txt`,
+`'scroll'`, `'startofline'`; no check runs Vim):
+
+| | Vim | Here |
+|---|---|---|
+| The unit | Lines of the buffer | Visual rows, so a wrapped line is scrolled through row by row |
+| A count before `C-d` | Sets the `scroll` option, which later `C-d` and `C-u` use | Is the rows of this one command |
+| The column | The first non-blank, under `startofline`, which Vim sets and Neovim does not | Kept, as Neovim's default |
+| On the last line, or the first | Beeps | Nothing |
+| A text shorter than its view | Moves the cursor half the window's height | Half the text's rows: how many rows fit a view that is not full is not asked (`Editor/Scroll.lean`) |
+| A text that ends in a line feed | No row after the last line | The empty row the display lays out after it is the last row shown |
+| `C-f` and `C-b` | Keep two lines of the page before in view and put the cursor on the new page's first line | The anchor moves a whole view and the cursor keeps its row of the view |
+
+Pinned by `ModelTest.viewChecks`, by key, on the loop's driver over the
+editor's models under the Vim scheme that ships, and the keys through the
+grammar by `ModelTest.vimDefaultChecks`.
+-/
+
+namespace Editor.Evil
+
+/-- The command that scrolls the call's view by rows, as it is called
+("Scrolling by rows", in the module docs): `amount` of the view, half of it
+or all of it, with the call's count, down when `down` and up otherwise. The
+view's scroll anchor and the head of the primary range of its selection
+move by that many visual rows, the anchor no further than where the text's
+last row is the last row shown, or its first row the first. The head is
+rested by the rule of the call's report, and the selection is one range of
+the report's shape, from the anchor it had where the report says a motion
+extends the selection. The window then keeps no wanted column. In a view
+that shows no row nothing moves. -/
+def scroll (amount : Scroll.Amount) (down : Bool) (call : Call) : EditorM Unit := do
+  discard <|
+      call.target.onArea fun area => do
+        let fits ← area.fits
+        if fits == 0 then
+          return
+        -- The count is the call's first argument, as a key's command is
+        -- called: 0 for none.
+        let count :=
+          match call.arguments with
+          | .nat count :: _ => count
+          | _ => 0
+        let rows := amount.rows count fits
+        let anchor ← call.target.anchor
+        let selection ← call.target.selection
+        let some range := selection.ranges[selection.primary]? | throw .badSelection
+        let placed ←
+          if down then
+            Scroll.down area anchor.offset rows fits
+          else
+            Scroll.up area anchor.offset rows fits
+        if let some offset := placed then
+          call.target.scrollTo offset
+        let move (position : Nat) (lines : Int) (goal : Option Nat) : EditorM Display.Moved :=
+          Display.linesFrom
+            { snapshot := area.snapshot, width := area.width, position, lines, goal }
+        let moved ← move range.head (if down then (rows : Int) else -(rows : Int)) none
+        let text := call.target.buffer.text
+        let rule := restOf call.report
+        let length ← text.byteLength
+        -- The empty last row of a text that ends in a line break is no line
+        -- for a cursor that cannot rest anywhere: one row back up, at the
+        -- same x.
+        let moved ←
+          if
+              rule != .anywhere && moved.position == length && length > 0 &&
+                (← text.motion .lineStart length) == length then
+            move length (-1) (some moved.goal)
+          else
+            pure moved
+        let head ← rested rule text moved.position
+        let start := if call.report.selecting then range.anchor else head
+        call.target.select { ranges := #[⟨start, head⟩], shape := call.report.shape }
+        discard <| call.target.window.id.setWanted none
+
+end Editor.Evil
