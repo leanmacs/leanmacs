@@ -6,9 +6,10 @@ import Editor.Text.Real
 /-!
 # The job runner's real services
 
-The clock port and the file port (`Job.Timers`, `Job.Files`,
-`Editor/Job/Runner.lean`) answered by the Rust library's timer service and
-its file service, and the completion pump. This is the only job module that
+The clock port, the file port and the process port (`Job.Timers`,
+`Job.Files`, `Job.Processes`, `Editor/Job/Runner.lean`) answered by the Rust
+library's timer service, its file service and its process service, and the
+completion pump. This is the only job module that
 imports `Editor.Ffi`, so only an executable linked with the library imports
 it: the editor, and `contract-test`, which runs the job port's contract
 against it.
@@ -58,6 +59,26 @@ reply is then taken from the library by the id, once.
   waiting is never worked, a save being worked does not replace its file,
   and a result already kept is dropped.
 
+## The processes
+
+`realProcesses` is a thin adapter over the bindings of the library's
+process service. A run goes to the library with its wait's id, as words and
+one string; the library queues a completion with that id when the run has
+come to something, and the reply is then taken from the library by the id,
+once.
+
+- **A run the library does not take is refused here, at once**, as
+  `failed`: its id is in use there, or the service could not start its
+  thread. The refusal is kept until it is taken (`RefusedRuns`), as
+  `realFiles` keeps its own.
+- **Numbers are machine words there.** A limit no 64-bit word holds is sent
+  as the largest, never wrapped.
+- **Cancelling** a wait cancels the run at the library, which kills the
+  child's process group if it is running and reaps the child: that is how a
+  cancelled job's child ends. A result already kept is dropped.
+- **A refusal as shut down** becomes `failed` with the library's words: the
+  editor shuts the service down only as it quits.
+
 `finishWith` is how a finished job's command is run: it hands the run what
 the job held, then settles the job. The program it is handed is the
 caller's: the headless host hands it the command loop's delivery of the
@@ -73,8 +94,8 @@ completion queue and, for each completion, ends the wait whose id it
 carries (`Completions.finish`). It blocks in the library, so it runs on a
 dedicated task, never one of the pool's, and there is one for the process's
 one table of waits. Quitting the queues ends it. A completion carries an id
-whichever service queued it, so the pump serves the timers and the files
-alike.
+whichever service queued it, so the pump serves the timers, the files and
+the processes alike.
 
 A completion for an id that is no longer waiting, because its job was
 cancelled meanwhile, is dropped by the table.
@@ -280,6 +301,89 @@ where
   refuse (id : UInt64) (refusal : FileError) : BaseIO Unit := do
     held.refused.modify (·.insert id refusal)
     completions.finish id .completed
+
+/-- The refusals of the process runs that never reached the library, which
+the process service's adapter completed itself, by the id of their wait,
+until their reply is fetched or their wait withdrawn. It is the runner's own
+state, like the table of waits. Every change is one atomic step. -/
+structure RefusedRuns where private mk ::
+  /-- The refusals, by the id of their wait. -/
+  private refused : IO.Ref (Std.HashMap UInt64 ProcessError)
+
+/-- A table that holds no refusal. -/
+def RefusedRuns.new : BaseIO RefusedRuns :=
+  return ⟨← IO.mkRef {}⟩
+
+/-- The port's form of how the library says a child ended. -/
+def exitOf : Ffi.ProcessExit → Process.Exit
+  | .code n => .code n.toNat
+  | .signal n => .signal n.toNat
+
+/-- The port's reply for a result of the library's process service. A
+refusal as shut down is `failed` with its words: a job sees it only if it
+runs a program while the editor is quitting. -/
+def runReplyOf : Ffi.ProcessResult → Except ProcessError Process.Ran
+  | .ran exit stdout stderr => .ok { exit := exitOf exit, stdout, stderr }
+  | .relativeDirectory _ => .error .relativeDirectory
+  | .relativeProgram _ => .error .relativeProgram
+  | .notFound detail => .error (.notFound detail)
+  | .denied detail => .error (.denied detail)
+  | .outputTooLarge .out limit => .error (.outputTooLarge .out limit.toNat)
+  | .outputTooLarge .err limit => .error (.outputTooLarge .err limit.toNat)
+  | .shutDown detail => .error (.failed detail)
+  | .failed detail => .error (.failed detail)
+
+/-- What a run is refused with when the library's service did not take it:
+its id is in use there, or the service could not start its thread. -/
+def runNotTaken : ProcessError :=
+  .failed "the process service did not take the request"
+
+/-- What a run is refused with when the library has no result for it, though
+its wait completed. -/
+def runNoResult : ProcessError :=
+  .failed "the process service kept no result for the request"
+
+/-- The reply to the run that was started as the wait `id`, which has
+completed: the refusal the adapter kept for a run that never reached the
+library, or else what the library hands over for it, once. A result the
+bindings cannot read is a failure that says so. -/
+def takenRun (refused : RefusedRuns) (id : UInt64) : BaseIO (Except ProcessError Process.Ran) := do
+  let refusal? ← refused.refused.modifyGet fun refused => (refused[id]?, refused.erase id)
+  if let some refusal := refusal? then
+    return .error refusal
+  let taken ←
+    (return .ok (← Ffi.processesTake id) :
+            IO (Except ProcessError (Option Ffi.ProcessResult))).catchExceptions
+        fun error => pure (.error (.failed (toString error)))
+  match taken with
+  | .error refusal =>
+    return .error refusal
+  | .ok (some result) =>
+    return runReplyOf result
+  | .ok none =>
+    return .error runNoResult
+
+/-- The process port answered by the library's process service. `completions`
+is the table its waits are registered in, and `refused` where it keeps the
+refusals of the runs that never reached the library. -/
+def realProcesses (completions : Completions) (refused : RefusedRuns) : Processes :=
+  { start := fun id request => do
+      match request with
+      | .run command limit =>
+        let environment := command.environment
+        let started ←
+          (Ffi.processesRun id command.program command.arguments environment.clear environment.set
+                  environment.unset command.directory.toString (word limit)).catchExceptions
+              fun _ => pure false
+        unless started do
+          refused.refused.modify (·.insert id runNotTaken)
+          completions.finish id .completed
+    take := fun id request =>
+      match request with
+      | .run .. => takenRun refused id
+    cancel := fun id => do
+      refused.refused.modify (·.erase id)
+      (discard <| Ffi.processesCancel id : IO Unit).catchExceptions fun _ => pure () }
 
 /-- Runs `command`, the command a finished job ended with or a program that
 runs it, against the Rust library on the editor thread, with `display`

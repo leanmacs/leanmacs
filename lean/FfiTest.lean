@@ -471,6 +471,116 @@ def fileChecks (_ : Unit) : List Check :=
               (Editor.Ffi.FileResult.decode status none (wordBytes values) "").toOption.isNone) &&
             (Editor.Ffi.FileResult.decode 0 none ⟨#[1, 2, 3]⟩ "").toOption.isNone) }]
 
+/-- The id of the process service as the source of its completions. -/
+def processService : UInt64 :=
+  3
+
+/-- Whether the next completion on the queue is the process service's, for
+the run `id`. -/
+def processCompleted (id : UInt64) : IO Bool := do
+  let some event ← pull .completion | return false
+  return event.source == { kind := .library, id := processService } && event.kind == .completion &&
+      event.code == id
+
+/-- Runs `/bin/sh -c script` in `directory` as the run `id`, waits for its
+completion and takes its result. `none` when the run was refused, was not
+completed in time, or left no result. -/
+def processResult (id : UInt64) (script : String) (directory : System.FilePath)
+    (limit : UInt64 := 1000000) (set : Array (String × String) := #[]) :
+    IO (Option Editor.Ffi.ProcessResult) := do
+  unless
+    ← Editor.Ffi.processesRun id "/bin/sh" #["-c", script] false set #[] directory.toString limit do
+    return none
+  unless ← processCompleted id do
+    return none
+  Editor.Ffi.processesTake id
+
+/-- What `Editor.Ffi.ProcessResult.decode` makes of a status, words and a
+detail, with empty streams; `none` when it is an error. -/
+def decodedProcess (status : UInt64) (values : List UInt64) (detail : String := "") :
+    Option Editor.Ffi.ProcessResult :=
+  (Editor.Ffi.ProcessResult.decode status (wordBytes values) detail .empty .empty).toOption
+
+/-- The checks of the process service's bindings. A run goes in with an id,
+its completion comes back on the completion queue, and its result is taken by
+the id. What a run does is the library's rule; these pin that a command, its
+arguments, its environment and its limit cross, and that every kind of result
+comes back. Each check runs its children in a directory of its own
+(`inOwnDirectory`), and each run has an id no other check uses. -/
+def processChecks (_ : Unit) : List Check :=
+  [{  name :=
+        "a command runs through the process service: its completion comes back on the completion queue with the run's id, and its result, taken once, is its status and both its streams, with the environment it was given"
+      run :=
+        inOwnDirectory fun directory => do
+          let result ←
+            processResult 1101 "printf %s \"$EDITOR_FFI_SET\"; printf 'e\\377' >&2; exit 3"
+                directory (set := #[("EDITOR_FFI_SET", "given")])
+          let again ← Editor.Ffi.processesTake 1101
+          return result == some (.ran (.code 3) "given".toUTF8 ("e".toUTF8.push 0xFF)) &&
+              again.isNone },
+    { name :=
+        "a refusal crosses with its words: a program that is not there is not found, naming it, and a directory that is not absolute is refused as itself"
+      run :=
+        inOwnDirectory fun directory => do
+          let missing := "/nonexistent/editor-ffi-test"
+          unless ← Editor.Ffi.processesRun 1110 missing #[] false #[] #[] directory.toString 10 do
+            return false
+          unless ← processCompleted 1110 do
+            return false
+          let notFound ←
+            match ← Editor.Ffi.processesTake 1110 with
+            | some (.notFound detail) =>
+              pure (decide ((detail.splitOn missing).length > 1))
+            | _ =>
+              pure false
+          let relative ← processResult 1111 "exit 0" "relative"
+          return notFound && relative matches some (.relativeDirectory _) },
+    { name := "a stream past the limit crosses as too large, with the stream and the limit"
+      run :=
+        inOwnDirectory fun directory => do
+          let out ← processResult 1120 "printf abc" directory 2
+          let err ← processResult 1121 "printf abc >&2" directory 2
+          return out == some (.outputTooLarge .out 2) && err == some (.outputTooLarge .err 2) },
+    { name :=
+        "a run cancelled while its child sleeps is never completed, its child is reaped, and a cancel says whether there was anything to cancel"
+      run :=
+        inOwnDirectory fun directory => do
+          let before ← Editor.Ffi.processesPending
+          unless
+            ←
+              Editor.Ffi.processesRun 1130 "/bin/sleep" #["600"] false #[] #[] directory.toString
+                  10 do
+            return false
+          let cancelled ← Editor.Ffi.processesCancel 1130
+          let reaped ← eventually (return (← Editor.Ffi.processesPending) == before)
+          let never ← Editor.Ffi.processesCancel 1131
+          -- The next completion is the marker's, started after the cancel.
+          let marker ← processResult 1132 "exit 0" directory
+          return cancelled && reaped && !never && marker == some (.ran (.code 0) .empty .empty) &&
+              (← Editor.Ffi.processesTake 1130).isNone },
+    { name :=
+        "a process result's words decode by its status: an exit by a status or a signal, each refusal with its detail, and a stream too large with its limit"
+      run :=
+        pure
+          (decodedProcess 0 [0, 3] == some (.ran (.code 3) .empty .empty) &&
+            decodedProcess 0 [1, 9] == some (.ran (.signal 9) .empty .empty) &&
+            decodedProcess 1 [] "d" == some (.relativeDirectory "d") &&
+            decodedProcess 2 [] "p" == some (.relativeProgram "p") &&
+            decodedProcess 3 [] "n" == some (.notFound "n") &&
+            decodedProcess 4 [] "no" == some (.denied "no") &&
+            decodedProcess 5 [0, 4] == some (.outputTooLarge .out 4) &&
+            decodedProcess 5 [1, 7] == some (.outputTooLarge .err 7) &&
+            decodedProcess 6 [] "shut" == some (.shutDown "shut") &&
+            decodedProcess 7 [] "f" == some (.failed "f")) },
+    { name :=
+        "a process result the bindings cannot read is an error: a status the table does not have, and words that are not the status's"
+      run :=
+        pure
+          (([(8, []), (0, []), (0, [2, 0]), (0, [0]), (1, [1]), (5, [2, 1]), (5, [0]), (7, [0])].all
+              fun ((status, values) : UInt64 × List UInt64) =>
+              (decodedProcess status values).isNone) &&
+            (Editor.Ffi.ProcessResult.decode 0 ⟨#[1, 2, 3]⟩ "" .empty .empty).toOption.isNone) }]
+
 /-- The checks of the two event queues: Rust threads push, Lean pulls. -/
 def queueChecks (_ : Unit) : List Check :=
   [{ name := "events posted to a queue are pulled from that queue, in order",
@@ -2357,6 +2467,7 @@ def renderChecks (_ : Unit) : List Check :=
 def checks (_ : Unit) : List Check :=
   entryChecks () ++ handleChecks () ++ dataChecks () ++ queueChecks () ++ timerChecks () ++
     fileChecks () ++
+    processChecks () ++
     documentChecks () ++
     snapshotChecks () ++
     transactionChecks () ++

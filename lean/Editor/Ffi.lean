@@ -168,6 +168,15 @@ decode. What a save expects on disk (`FileExpect`) crosses as a tag and a
 stamp's three numbers. A stamp's seconds are an `Int`, and cross as a 64-bit
 two's complement word in both directions.
 
+The process service is the third: `processesRun` starts a run of a command
+to its end, `processesTake` hands its result over once its completion has
+arrived, `processesCancel` cancels it, which kills the child's process
+group, `processesShutdown` kills every group and blocks until every child is
+reaped, and `processesPending` is a readout for tests. A command crosses as
+a list of strings does: words, and one string of every text end to end. A
+result is a status, words, a detail and the two streams' bytes
+(`ProcessResult`).
+
 The editor does not call these bindings. The job runner reaches the services
 through the ports it defines (`Job.Timers`, `Editor/Job/Runner.lean`), whose
 real implementations (`Editor/Job/Real.lean`) are the callers, with the
@@ -2327,5 +2336,168 @@ def fuzzyRank (pattern : String) (candidates : Array String) : IO (Array Nat) :=
     return ranking
   | none =>
     throw (IO.userError "the library's words do not spell a fuzzy ranking")
+
+/-- How a child the process service ran ended. -/
+inductive ProcessExit where
+  /-- It exited with this status. -/
+  | code (n : UInt64)
+  /-- It was ended by this signal. -/
+  | signal (n : UInt64)
+  deriving DecidableEq, Repr
+
+/-- One of a child's output streams. -/
+inductive ProcessStream where
+  /-- Its standard output. -/
+  | out
+  /-- Its standard error. -/
+  | err
+  deriving DecidableEq, Repr
+
+/-- What a run of the process service came to. Every refusal carries the
+platform's words, naming the program and the directory. -/
+inductive ProcessResult where
+  /-- The child ran to its end, with both its streams. -/
+  | ran (exit : ProcessExit) (stdout stderr : ByteArray)
+  /-- The directory is not absolute. -/
+  | relativeDirectory (detail : String)
+  /-- The program names a directory and is not absolute. -/
+  | relativeProgram (detail : String)
+  /-- The program, or the directory, is not there. -/
+  | notFound (detail : String)
+  /-- The platform does not allow it. -/
+  | denied (detail : String)
+  /-- `stream` had more than `limit` bytes, and the child's group was
+  killed. -/
+  | outputTooLarge (stream : ProcessStream) (limit : UInt64)
+  /-- The service has shut down. -/
+  | shutDown (detail : String)
+  /-- Anything else. -/
+  | failed (detail : String)
+  deriving DecidableEq
+
+/-- The result a status, words, a detail and the two streams spell, by the
+table in the module docs of `crates/editor-ffi/src/processes.rs`. An error,
+with what was wrong, for a status the table does not have and for words that
+are not the status's.
+
+It is public for `FfiTest`, which decodes literal words with it; the bindings
+call it from `processesTake` and nowhere else. -/
+def ProcessResult.decode (status : UInt64) (words : ByteArray) (detail : String)
+    (stdout stderr : ByteArray) : Except String ProcessResult := do
+  let some words := wordsOf? words | throw "its words are not whole words"
+  match status, words.toList with
+  | 0, [0, code] =>
+    return .ran (.code code) stdout stderr
+  | 0, [1, signal] =>
+    return .ran (.signal signal) stdout stderr
+  | 1, [] =>
+    return .relativeDirectory detail
+  | 2, [] =>
+    return .relativeProgram detail
+  | 3, [] =>
+    return .notFound detail
+  | 4, [] =>
+    return .denied detail
+  | 5, [0, limit] =>
+    return .outputTooLarge .out limit
+  | 5, [1, limit] =>
+    return .outputTooLarge .err limit
+  | 6, [] =>
+    return .shutDown detail
+  | 7, [] =>
+    return .failed detail
+  | status, words =>
+    throw s!"the status {status} with the words {words} is no process result"
+
+/-- `processesRun` as it crosses: the command as words and one string. -/
+@[extern "editor_glue_processes_run"]
+private opaque processesRunRaw (id : UInt64) (words : @& ByteArray) (strings : @& String) : IO Bool
+
+/-- Asks the library's process service to run `program` with `arguments` in
+`directory`, with the editor's environment emptied first if `clear` is set,
+then with `unset` removed and `set` applied, collecting each output stream
+unless it is longer than `limit` bytes, as the run `id`, and returns whether
+it was accepted. It returns at once. The completion is a `completion` event
+on the completion queue, from the library source 3, whose code is `id`;
+there is none if the run is cancelled first. The result is then taken with
+`processesTake`.
+
+The command crosses as words, the limit, whether to clear, and the count and
+byte lengths of each list of texts, and as one string of every text end to
+end, in the layout of the module docs of `crates/editor-ffi/src/processes.rs`.
+`false`, with nothing started, if `id` is in use or the service could not
+start the run's thread; the words this builds are always readable. -/
+def processesRun (id : UInt64) (program : String) (arguments : Array String) (clear : Bool)
+    (set : Array (String × String)) (unset : Array String) (directory : String) (limit : UInt64) :
+    IO Bool :=
+  let size (text : String) := text.utf8ByteSize.toUInt64
+  let words := pushWord (pushWord ByteArray.empty limit) (if clear then 1 else 0)
+  let words :=
+    arguments.foldl (fun words argument => pushWord words (size argument))
+      (pushWord words arguments.size.toUInt64)
+  let words :=
+    set.foldl (fun words (name, value) => pushWord (pushWord words (size name)) (size value))
+      (pushWord words set.size.toUInt64)
+  let words :=
+    unset.foldl (fun words name => pushWord words (size name)) (pushWord words unset.size.toUInt64)
+  let words := pushWord (pushWord words (size program)) (size directory)
+  let strings :=
+    arguments.foldl (· ++ ·) "" ++ set.foldl (fun all (name, value) => all ++ name ++ value) "" ++
+      unset.foldl (· ++ ·) "" ++
+      program ++
+      directory
+  processesRunRaw id words strings
+
+/-- A process result as the glue builds it, in one call: the object fields
+first and the `UInt64` field after them, so the order here is the layout the
+glue writes. -/
+private structure RawProcessResult where
+  /-- The words, copied from the library's buffer. -/
+  words : ByteArray
+  /-- The detail, copied from the library's buffer. -/
+  detail : String
+  /-- The standard output, copied from the library's buffer. -/
+  stdout : ByteArray
+  /-- The standard error, copied from the library's buffer. -/
+  stderr : ByteArray
+  /-- How the run ended: the library's status. -/
+  status : UInt64
+
+/-- `processesTake` before its result is decoded. -/
+@[extern "editor_glue_processes_take"]
+private opaque processesTakeRaw (id : UInt64) : IO (Option RawProcessResult)
+
+/-- Hands over the result of the run `id`, once. `none` when the service
+keeps no result for `id`: it has not ended, it was cancelled, its result was
+taken already, or it was another service's id. It throws if the library
+sends a result these bindings cannot read. -/
+def processesTake (id : UInt64) : IO (Option ProcessResult) := do
+  let some raw ← processesTakeRaw id | return none
+  match ProcessResult.decode raw.status raw.words raw.detail raw.stdout raw.stderr with
+  | .ok result =>
+    return some result
+  | .error reason =>
+    throw (IO.userError s!"the library's process result could not be read: {reason}")
+
+/-- Cancels the run `id`, killing its child's process group if the child is
+running, and returns whether there was anything to cancel: a run not over or
+a result not taken. It is safe for an id that is unknown. A cancelled run is
+never completed; a completion that was already queued still arrives, and
+its result is gone. -/
+@[extern "editor_glue_processes_cancel"]
+opaque processesCancel (id : UInt64) : IO Bool
+
+/-- How many runs have a child not yet reaped, and how many results have not
+been taken, together. A readout for tests, which use it to see that a
+cancelled run's child was reaped. -/
+@[extern "editor_glue_processes_pending"]
+opaque processesPending : IO UInt64
+
+/-- Shuts the library's process service down: kills every child's process
+group and returns once every child it started has been reaped. A run asked
+for later is refused as shut down. The editor's mains call it before they
+quit the queues; it is safe to call again. -/
+@[extern "editor_glue_processes_shutdown"]
+opaque processesShutdown : IO Unit
 
 end Editor.Ffi

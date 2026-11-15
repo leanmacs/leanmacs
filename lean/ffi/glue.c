@@ -867,6 +867,87 @@ lean_obj_res editor_glue_files_pending(void) {
   return lean_io_result_mk_ok(lean_box_uint64(editor_ffi_files_pending()));
 }
 
+// ---- The process service ----
+//
+// The third service behind the completion queue. A run goes in with an id,
+// the command as words and one string of every text it holds (borrowed for
+// the call), as a list of strings does. Its completion comes back as an event
+// on the completion queue, and its result is then taken by the id, as one
+// record: a status, words, a detail string and the two streams' bytes, each
+// a buffer the library lends and the glue hands back once copied.
+
+// The library's `RawProcessResult`. `stdout` and `stderr` are names the C
+// library takes, so the two streams' fields are named `out` and `err` here;
+// only the layout has to match.
+typedef struct {
+  uint64_t status;
+  uint8_t *words;
+  size_t words_len;
+  uint8_t *detail;
+  size_t detail_len;
+  uint8_t *out;
+  size_t out_len;
+  uint8_t *err;
+  size_t err_len;
+} editor_ffi_raw_process_result;
+bool editor_ffi_processes_run(uint64_t id, const uint8_t *words,
+                              size_t words_len, const uint8_t *strings,
+                              size_t strings_len);
+bool editor_ffi_processes_take(uint64_t id, editor_ffi_raw_process_result *out);
+bool editor_ffi_processes_cancel(uint64_t id);
+uint64_t editor_ffi_processes_pending(void);
+void editor_ffi_processes_shutdown(void);
+
+// `Editor.Ffi.processesRunRaw : UInt64 → @& ByteArray → @& String → IO Bool`
+lean_obj_res editor_glue_processes_run(uint64_t id, b_lean_obj_arg words,
+                                       b_lean_obj_arg strings) {
+  return lean_io_result_mk_ok(lean_box(editor_ffi_processes_run(
+      id, byte_array_bytes(words), byte_array_len(words), string_bytes(strings),
+      string_len(strings))));
+}
+
+// `Editor.Ffi.processesTakeRaw : UInt64 → IO (Option RawProcessResult)`.
+// `none` when the service keeps no result for the id.
+lean_obj_res editor_glue_processes_take(uint64_t id) {
+  editor_ffi_raw_process_result raw;
+  if (!editor_ffi_processes_take(id, &raw)) {
+    return lean_io_result_mk_ok(lean_box(0)); // `none`
+  }
+  lean_object *detail =
+      lean_mk_string_from_bytes((const char *)raw.detail, raw.detail_len);
+  // `RawProcessResult`: the object fields `words`, `detail`, `stdout` and
+  // `stderr`, then `status`.
+  lean_object *result = lean_alloc_ctor(0, 4, sizeof(uint64_t));
+  lean_ctor_set(result, 0, byte_array_copy(raw.words, raw.words_len));
+  lean_ctor_set(result, 1, detail);
+  lean_ctor_set(result, 2, byte_array_copy(raw.out, raw.out_len));
+  lean_ctor_set(result, 3, byte_array_copy(raw.err, raw.err_len));
+  lean_ctor_set_uint64(result, uint64_field(4, 0), raw.status);
+  editor_ffi_text_free(raw.words, raw.words_len);
+  editor_ffi_text_free(raw.detail, raw.detail_len);
+  editor_ffi_text_free(raw.out, raw.out_len);
+  editor_ffi_text_free(raw.err, raw.err_len);
+  return lean_io_result_mk_ok(option_some(result));
+}
+
+// `Editor.Ffi.processesCancel : UInt64 → IO Bool`. It kills the run's
+// process group in the library.
+lean_obj_res editor_glue_processes_cancel(uint64_t id) {
+  return lean_io_result_mk_ok(lean_box(editor_ffi_processes_cancel(id)));
+}
+
+// `Editor.Ffi.processesPending : IO UInt64`
+lean_obj_res editor_glue_processes_pending(void) {
+  return lean_io_result_mk_ok(lean_box_uint64(editor_ffi_processes_pending()));
+}
+
+// `Editor.Ffi.processesShutdown : IO Unit`. Blocks in Rust until every child
+// the service started has been reaped.
+lean_obj_res editor_glue_processes_shutdown(void) {
+  editor_ffi_processes_shutdown();
+  return lean_io_result_mk_ok(lean_box(0));
+}
+
 // ---- The window ----
 //
 // Running the window is one blocking call: the library's main-thread service

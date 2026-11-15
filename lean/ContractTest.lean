@@ -60,6 +60,16 @@ library.
   anywhere else. `model-test` runs the same list against the model of files
   and against the runner over the fake of the file service.
 
+- The job port's process properties (`JobContract.processProperties`)
+  against the runner over the library's process service, on real processes
+  (`runProcessesOnService`, `processFailures`), each in a temporary
+  directory of its own, made here and removed whatever happened; the
+  library's count of pending runs must be back where it was afterwards, so
+  every child was reaped. `processChecks` then shows that cancelling a job
+  whose child is running ends the job and has the child reaped.
+  `model-test` runs the same list against the model of processes and
+  against the runner over the fake of the process service.
+
 `jobChecks` then pins what only the real service can show: that a job in a
 real wait holds no thread, that cancelling a job takes its timer out of the
 library's schedule, that a deadline no machine word holds is not cut down,
@@ -413,6 +423,65 @@ structure Check where
   name : String
   /-- Observes the behaviour; `true` when it holds. -/
   run : IO Bool
+
+/-- Runs a process property's job on the runner over the library's process
+service, on real processes: how the job ended.
+
+Its commands run in a temporary directory made here for this one property,
+whose path the job is handed; the property's files are written into it, and
+it is removed, whatever happened. -/
+def runProcessesOnService (services : Job.Services) (property : JobContract.ProcessProperty) :
+    IO (Job.Outcome Bool) := do
+  let directory ← IO.FS.createTempDir
+  try
+    for (name, bytes) in property.files do
+      IO.FS.writeBinFile (directory / name) bytes
+    runOnTimers services (property.holds directory)
+  finally
+    IO.FS.removeDirAll directory
+
+/-- What must hold of the library's process service once the process
+properties have run: it is about the library's count, so the port cannot say
+it. -/
+def processLeakName : String :=
+  "every child the process properties ran is reaped, and the process service keeps no result"
+
+/-- The names of the job port's process properties that do not hold of the
+runner over the library's process service, on real processes.
+`processLeakName` is among them if the service then has a run or a result
+more than before. -/
+def processFailures (services : Job.Services) : IO (List String) := do
+  let before ← Ffi.processesPending
+  let failed ←
+    JobContract.processFailures (runProcessesOnService services) JobContract.processProperties
+  let reaped ← eventually (return (← Ffi.processesPending) == before)
+  let after ← Ffi.processesPending
+  return failed.map (s!"the job runner over the process service: {·}") ++
+      if reaped then [] else [s!"{processLeakName} ({before} before, {after} after)"]
+
+/-- What only the real process service can show: that cancelling a job
+whose child is running kills the child, which the service then reaps. -/
+def processChecks (services : Job.Services) : List Check :=
+  [{  name :=
+        "a job whose child sleeps for ten minutes is cancelled: it ends cancelled, and the process service reaps the child, so nothing is pending that was not before"
+      run := do
+        let directory ← IO.FS.createTempDir
+        try
+          let before ← Ffi.processesPending
+          let handle ←
+            Job.spawn services
+                (reporting fun _ => do
+                  discard <| Process.run (JobContract.sh directory "/bin/sleep 600") 10
+                  return true)
+                (pure ())
+          -- The run is in the library once the service counts it.
+          let started ← eventually (return (← Ffi.processesPending) == before + 1)
+          handle.cancel
+          let cancelled ← endedAs handle .cancelled
+          let reaped ← eventually (return (← Ffi.processesPending) == before)
+          return started && cancelled && reaped
+        finally
+          IO.FS.removeDirAll directory }]
 
 /-- `count` jobs that each sleep for an hour. -/
 def sleepers (services : Job.Services) (count : Nat) : IO (Array Job.Handle) := do
@@ -1177,7 +1246,8 @@ def main : IO UInt32 := do
   let held ← Editor.Job.HeldSnapshots.new
   let services : Editor.Job.Services :=
     { completions, timers := Editor.Job.realTimers completions
-      files := Editor.Job.realFiles completions published.reader held }
+      files := Editor.Job.realFiles completions published.reader held
+      processes := Editor.Job.realProcesses completions (← Editor.Job.RefusedRuns.new) }
   let pump ← IO.asTask (prio := .dedicated) (Editor.Job.pump completions)
   let properties := Editor.TextContract.properties
   -- The undo tree's cases run through the same binding, so the count of
@@ -1187,6 +1257,9 @@ def main : IO UInt32 := do
   let textFailed ← ContractTest.failures (properties ++ cases) adoptProperties
   let jobFailed ← ContractTest.jobFailures services
   let fileFailed ← ContractTest.fileFailures services held
+  let processFailed ← ContractTest.processFailures services
+  let processChecks := ContractTest.processChecks services
+  let processCheckFailed ← ContractTest.checkFailures processChecks
   -- The job checks first: the last of them measures the pool, which a later
   -- check must not have grown.
   let checks := ContractTest.jobChecks services pool
@@ -1212,7 +1285,9 @@ def main : IO UInt32 := do
   Editor.Ffi.quit
   let pumpEnded ← ContractTest.eventually (IO.hasFinished pump)
   let failed :=
-    textFailed.map (s!"the real text binding: {·}") ++ jobFailed ++ fileFailed ++ checkFailed ++
+    textFailed.map (s!"the real text binding: {·}") ++ jobFailed ++ fileFailed ++ processFailed ++
+      processCheckFailed ++
+      checkFailed ++
       fileCheckFailed ++
       caseFailed ++
       displayFailed ++
@@ -1232,6 +1307,6 @@ def main : IO UInt32 := do
   unless failed.isEmpty do
     IO.Process.exit 1
   IO.println
-      s!"contract-test: {properties.length + adoptProperties.length} properties hold of the real text binding, {cases.length} cases of the undo tree hold over it, and its documents and snapshots are freed when released and with its table; {Editor.JobContract.properties.length} properties hold of the job runner over the timer service, and {Editor.JobContract.fileProperties.length} file properties over the file service, on real files; {checks.length} checks of the timer service passed, {fileChecks.length} of the file service, {Editor.FileCases.cases.length} cases across the text port and the job port hold of the binding and the file service; {(Editor.DisplayContract.properties { advance := 1, lineHeight := 1 }).length} properties of the display interface hold of its real binding in cells of {ContractTest.displayCells.length} sizes, and of the recorder over real snapshots in cells of the same sizes, and {recorderChecks.length} checks of the recorder passed; {Editor.ClipboardContract.properties.length} properties of the clipboard interface hold of the in-process clipboard and of the real binding over the library's memory clipboard, and {clipboardChecks.length} checks of it passed; {Editor.FuzzyContract.properties.length} properties of the fuzzy matching interface hold of its real binding, and {fuzzyChecks.length} check of a command's ranking passed; {Editor.WatchContract.properties.length} properties of the watch port hold of its real binding, and {watchChecks.length} checks of it passed; {Editor.ApiCases.cases.length} cases of the editor API hold of the real text binding; and quit ended the pump"
+      s!"contract-test: {properties.length + adoptProperties.length} properties hold of the real text binding, {cases.length} cases of the undo tree hold over it, and its documents and snapshots are freed when released and with its table; {Editor.JobContract.properties.length} properties hold of the job runner over the timer service, and {Editor.JobContract.fileProperties.length} file properties over the file service, on real files, and {Editor.JobContract.processProperties.length} process properties over the process service, on real processes, with {processChecks.length} check of a cancelled job's child; {checks.length} checks of the timer service passed, {fileChecks.length} of the file service, {Editor.FileCases.cases.length} cases across the text port and the job port hold of the binding and the file service; {(Editor.DisplayContract.properties { advance := 1, lineHeight := 1 }).length} properties of the display interface hold of its real binding in cells of {ContractTest.displayCells.length} sizes, and of the recorder over real snapshots in cells of the same sizes, and {recorderChecks.length} checks of the recorder passed; {Editor.ClipboardContract.properties.length} properties of the clipboard interface hold of the in-process clipboard and of the real binding over the library's memory clipboard, and {clipboardChecks.length} checks of it passed; {Editor.FuzzyContract.properties.length} properties of the fuzzy matching interface hold of its real binding, and {fuzzyChecks.length} check of a command's ranking passed; {Editor.WatchContract.properties.length} properties of the watch port hold of its real binding, and {watchChecks.length} checks of it passed; {Editor.ApiCases.cases.length} cases of the editor API hold of the real text binding; and quit ended the pump"
   (← IO.getStdout).flush
   IO.Process.exit 0
