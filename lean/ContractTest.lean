@@ -102,7 +102,10 @@ model. `clipboardChecks` pins
 what the contract cannot: that a new one holds no text, and, with a command
 run against the library, that the command's clipboard requests go to the
 handler it was handed, and are each answered `unavailable` when it was
-handed none.
+handed none; and, over the library's failing clipboard, a fake of one that
+cannot be reached, that a failed read and a failed write cross the glue
+with the library's reason whole and that the real binding answers each
+`unavailable`.
 
 The fuzzy matching interface's contract (`Editor/Fuzzy/Contract.lean`) is
 run against its real binding (`Editor/Fuzzy/Real.lean`), so against the
@@ -919,6 +922,12 @@ def clipboardRound (text : String) :
   let written ← Clipboard.write text
   return (before, written, ← Clipboard.read)
 
+/-- The reason the library's failing clipboard is made with in
+`clipboardChecks`: not ASCII, so a reason cut or mis-decoded at the glue
+shows. -/
+def failingReason : String :=
+  "pas de presse-papiers: é"
+
 /-- What the contract cannot show of the clipboard a host with no window
 keeps, and where a command's clipboard requests go when it is run against
 the library. -/
@@ -955,7 +964,24 @@ def clipboardChecks : List Check :=
             | _ => false) &&
             match second with
             | .ok (.ok (some "kept")) => true
-            | _ => false }]
+            | _ => false },
+    { name :=
+        "a read and a write of the library's failing clipboard each cross the glue as a failure with the library's reason whole"
+      run := do
+        let clipboard ← Ffi.Clipboard.failing failingReason
+        let read ← clipboard.read
+        let written ← clipboard.write "lost"
+        return (match read with
+            | .error reason => reason == failingReason
+            | .ok _ => false) &&
+            written == some failingReason },
+    { name :=
+        "the real clipboard binding over the library's failing clipboard answers a read and a write unavailable"
+      run := do
+        let real ← Clipboard.Real.failing failingReason
+        let read ← real.handle .read
+        let written ← real.handle (.write "lost")
+        return read matches .error .unavailable && written matches .error .unavailable }]
 
 /-- The names of the fuzzy matching interface's contract properties that do
 not hold of its real binding. The binding keeps nothing, so each property

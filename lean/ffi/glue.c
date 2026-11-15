@@ -1213,6 +1213,8 @@ lean_obj_res editor_glue_window_presentation(void) {
 // The Rust library's clipboard.
 typedef struct editor_ffi_clipboard editor_ffi_clipboard;
 editor_ffi_clipboard *editor_ffi_clipboard_memory(void);
+editor_ffi_clipboard *editor_ffi_clipboard_failing(const uint8_t *reason,
+                                                   size_t reason_len);
 editor_ffi_clipboard *editor_ffi_clipboard_system(editor_ffi_raw_text *out);
 uint8_t editor_ffi_clipboard_read(const editor_ffi_clipboard *clipboard,
                                   editor_ffi_raw_text *out);
@@ -1254,6 +1256,14 @@ lean_obj_res editor_glue_clipboard_memory(void) {
   pthread_once(&clipboard_class_once, clipboard_class_register);
   return lean_io_result_mk_ok(
       lean_alloc_external(clipboard_class, editor_ffi_clipboard_memory()));
+}
+
+// `Editor.Ffi.Clipboard.failing : @& String → IO Clipboard`
+lean_obj_res editor_glue_clipboard_failing(b_lean_obj_arg reason) {
+  pthread_once(&clipboard_class_once, clipboard_class_register);
+  return lean_io_result_mk_ok(lean_alloc_external(
+      clipboard_class,
+      editor_ffi_clipboard_failing(string_bytes(reason), string_len(reason))));
 }
 
 // `Editor.Ffi.Clipboard.system : IO (Except String Clipboard)`. `Except`'s

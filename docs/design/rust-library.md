@@ -379,7 +379,10 @@ interface in Lean:
   asks for more (the primary selection, something that is not text), the
   port grows by an argument.
 - **The fake** is `MemoryClipboard`, text kept in memory, so that nothing
-  above the port touches a real clipboard in a test.
+  above the port touches a real clipboard in a test. A second fake,
+  `FailingClipboard`, fails every read and write with one reason: what
+  the code above the port does when a clipboard cannot be reached is
+  tested on it, across the C boundary and through Lean's real binding.
 - **The contract** (`clipboard::contract`): text written is the text read
   back; non-ASCII text, a line feed and a tab come back unchanged; a later
   write replaces an earlier one; a clipboard not yet written to reads as no

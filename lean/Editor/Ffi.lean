@@ -2188,13 +2188,14 @@ def windowPresentation : IO (Option WindowPresentation) := do
 /-! ## The clipboard -/
 
 /-- The type behind `Clipboard`. It is opaque, so the only ways to get a
-clipboard are `Clipboard.memory` and `Clipboard.system`. -/
+clipboard are `Clipboard.memory`, `Clipboard.failing` and
+`Clipboard.system`. -/
 opaque ClipboardPointed : NonemptyType
 
 /-- A clipboard held by the Rust library (`crates/editor-ffi/src/clipboard.rs`,
 over the clipboard port of `crates/editor-platform`): the library's memory
-clipboard, or the desktop's. The clipboard interface's real binding runs
-against it (`Editor/Clipboard/Real.lean`). -/
+clipboard, its failing one, or the desktop's. The clipboard interface's real
+binding runs against it (`Editor/Clipboard/Real.lean`). -/
 def Clipboard : Type :=
   ClipboardPointed.type
 
@@ -2205,6 +2206,13 @@ instance : Nonempty Clipboard :=
 fake, which no other program sees. Every test is on it. -/
 @[extern "editor_glue_clipboard_memory"]
 opaque Clipboard.memory : IO Clipboard
+
+/-- A new clipboard of the library's that cannot be reached: every read and
+write fails with `reason`, and changes nothing. It is the port's failing
+fake, for tests of the failure path (`ContractTest.clipboardChecks`); the
+editor never makes one. -/
+@[extern "editor_glue_clipboard_failing"]
+opaque Clipboard.failing (reason : @& String) : IO Clipboard
 
 /-- The desktop's clipboard, or the reason it cannot be reached. Only the
 window mode opens it: what it holds is the person's. -/

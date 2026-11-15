@@ -2,12 +2,17 @@
 //! writes through.
 //!
 //! A [`ClipboardHandle`] holds a clipboard of the port
-//! (`editor_platform::clipboard::Clipboard`), one of two:
+//! (`editor_platform::clipboard::Clipboard`), one of three:
 //!
 //! - the port's memory clipboard ([`editor_ffi_clipboard_memory`]), the
 //!   fake every test runs on: Lean's contract check of its real binding
 //!   (`lean/ContractTest.lean`) is run over it, so the gate reads and
 //!   writes no desktop's clipboard;
+//! - the port's failing clipboard ([`editor_ffi_clipboard_failing`]), the
+//!   fake of one that cannot be reached, made only by tests: the failure
+//!   path, a read's `Failed` and a write's `false` with the reason, is
+//!   pinned over it here (`tests/clipboard.rs`) and through the glue and
+//!   Lean's real binding (`ContractTest.clipboardChecks`);
 //! - the desktop's ([`editor_ffi_clipboard_system`]), through the arboard
 //!   adapter: made only by Lean's window mode, and refused, with the
 //!   reason, where there is none.
@@ -19,7 +24,7 @@
 
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use editor_platform::clipboard::{Clipboard, ClipboardError, MemoryClipboard};
+use editor_platform::clipboard::{Clipboard, ClipboardError, FailingClipboard, MemoryClipboard};
 use editor_platform_arboard::SystemClipboard;
 
 use crate::document::RawText;
@@ -70,6 +75,30 @@ unsafe fn lend_into(out: *mut RawText, text: String) {
 #[unsafe(no_mangle)]
 pub extern "C" fn editor_ffi_clipboard_memory() -> *mut ClipboardHandle {
     handed_out(MemoryClipboard::new())
+}
+
+/// A new handle over the port's failing clipboard, whose every read and
+/// write fails with the `reason_len` bytes at `reason` (read as UTF-8,
+/// U+FFFD for each invalid sequence), owned by the caller, who must hand it
+/// to [`editor_ffi_clipboard_free`] exactly once.
+///
+/// Test-only: it is how a test reaches the failure path across the
+/// boundary without a desktop (`tests/clipboard.rs`, and Lean's
+/// `ContractTest.clipboardChecks` through the glue). The editor never makes
+/// one.
+///
+/// # Safety
+///
+/// `reason` points to `reason_len` readable bytes.
+#[doc(hidden)]
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn editor_ffi_clipboard_failing(
+    reason: *const u8,
+    reason_len: usize,
+) -> *mut ClipboardHandle {
+    // SAFETY: the caller guarantees the pointer and the length.
+    let reason = unsafe { text::borrow(reason, reason_len) };
+    handed_out(FailingClipboard::new(reason))
 }
 
 /// A new handle over the desktop's clipboard, owned by the caller, who must

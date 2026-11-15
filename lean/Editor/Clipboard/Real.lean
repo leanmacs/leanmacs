@@ -22,7 +22,9 @@ reach.
 `contract-test` holds it to the interface's contract
 (`Editor/Clipboard/Contract.lean`) over the library's memory clipboard
 (`ContractTest.realClipboardFailures`), so the gate reads and writes no
-desktop's clipboard. The desktop's own is held to the Rust port's contract
+desktop's clipboard; and `ContractTest.clipboardChecks` holds it, over the
+library's failing clipboard (`Real.failing`), to answering a read and a
+write `unavailable`. The desktop's own is held to the Rust port's contract
 on demand (`mise run clipboard-contract`, `mise run linux-window`).
 -/
 
@@ -39,6 +41,11 @@ namespace Real
 nothing. -/
 def memory : IO Real :=
   return { clipboard := ← Ffi.Clipboard.memory }
+
+/-- A binding over a new clipboard of the library's whose every read and
+write fails with `reason`: the failure path's fake, for tests. -/
+def failing (reason : String) : IO Real :=
+  return { clipboard := ← Ffi.Clipboard.failing reason }
 
 /-- A binding over the desktop's clipboard, or the library's reason it
 cannot be reached. -/

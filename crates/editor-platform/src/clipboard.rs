@@ -18,7 +18,9 @@
 //! # Where the real adapter is held to the contract
 //!
 //! [`MemoryClipboard`] passes [`contract::check`] in this crate's tests, and
-//! everything above the port is tested on it. A real clipboard belongs to
+//! everything above the port is tested on it; what the code above the port
+//! does when a clipboard fails is tested on [`FailingClipboard`]. A real
+//! clipboard belongs to
 //! the desktop a test runs on, and the gate (`mise run ci`) reads and writes
 //! none. The adapter's run of the contract is an example binary of
 //! `editor-platform-arboard`, run on demand: `mise run linux-window`, in a
@@ -92,6 +94,46 @@ impl Clipboard for MemoryClipboard {
     }
 }
 
+/// The failing fake: a clipboard that cannot be reached, whose every read
+/// and write fails with the one reason it was made with, and changes
+/// nothing.
+///
+/// It is public, not `cfg(test)`, so a crate above the port tests what it
+/// does when the clipboard fails, as a desktop's can (no selection owner,
+/// a clipboard held by another program), without a desktop. It keeps none
+/// of [`contract::check`]'s properties: it is no clipboard that works.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FailingClipboard {
+    /// The reason every call fails with.
+    reason: String,
+}
+
+impl FailingClipboard {
+    /// A clipboard whose every call fails with `reason`.
+    pub fn new(reason: impl Into<String>) -> Self {
+        Self {
+            reason: reason.into(),
+        }
+    }
+
+    /// The failure every call answers.
+    fn failure(&self) -> ClipboardError {
+        ClipboardError {
+            reason: self.reason.clone(),
+        }
+    }
+}
+
+impl Clipboard for FailingClipboard {
+    fn read(&self) -> Result<Option<String>, ClipboardError> {
+        Err(self.failure())
+    }
+
+    fn write(&self, _text: &str) -> Result<(), ClipboardError> {
+        Err(self.failure())
+    }
+}
+
 pub mod contract {
     //! The contract of the clipboard port: the rules every [`Clipboard`]
     //! keeps, as a check that runs one.
@@ -148,7 +190,7 @@ pub mod contract {
 #[cfg(test)]
 mod tests {
     use super::contract::{self, PROPERTIES, REPLACED, ROUND_TRIP, UNCHANGED, UNWRITTEN};
-    use super::{Clipboard, ClipboardError, MemoryClipboard};
+    use super::{Clipboard, ClipboardError, FailingClipboard, MemoryClipboard};
     use std::sync::atomic::{AtomicBool, Ordering};
 
     #[test]
@@ -307,6 +349,21 @@ mod tests {
     #[test]
     fn a_clipboard_whose_read_fails_before_a_write_fails_unwritten_alone() {
         assert_eq!(contract::check(&FailsWhileEmpty::default()), [UNWRITTEN]);
+    }
+
+    #[test]
+    fn a_failing_clipboard_fails_every_read_and_write_with_its_reason_and_fails_unwritten() {
+        let clipboard = FailingClipboard::new("pas de presse-papiers");
+        let failed = ClipboardError {
+            reason: "pas de presse-papiers".into(),
+        };
+        assert_eq!(clipboard.read(), Err(failed.clone()));
+        assert_eq!(clipboard.write("text"), Err(failed.clone()));
+        // A write changes nothing: the read after it fails the same way.
+        assert_eq!(clipboard.read(), Err(failed));
+        // It keeps none of the contract's properties: it stands in for a
+        // clipboard that cannot be reached, never for one that works.
+        assert_eq!(contract::check(&clipboard), PROPERTIES);
     }
 
     #[test]
