@@ -17,9 +17,9 @@ use std::sync::{Mutex, MutexGuard, PoisonError};
 
 use editor_ffi::display::{
     DisplayStatus, WireFace, WireScene, WireView, editor_ffi_display_frame_rows,
-    editor_ffi_display_frame_text, editor_ffi_display_free, editor_ffi_display_live,
-    editor_ffi_display_move, editor_ffi_display_new_cells, editor_ffi_display_publish,
-    editor_ffi_display_rows, editor_ffi_display_scene,
+    editor_ffi_display_frame_text, editor_ffi_display_free, editor_ffi_display_heights,
+    editor_ffi_display_live, editor_ffi_display_move, editor_ffi_display_new_cells,
+    editor_ffi_display_publish, editor_ffi_display_rows, editor_ffi_display_scene,
 };
 use editor_ffi::document::{
     Document, RawText, editor_ffi_document_free, editor_ffi_document_new,
@@ -459,6 +459,90 @@ fn plain_scene_directly(text: &str, width: u32, height: u32) -> Scene {
             ..View::default()
         }],
         ..Scene::default()
+    }
+}
+
+/// The heights a display answers through C: text, status and message.
+fn heights(display: *const editor_ffi::display::Display) -> (u64, Vec<u64>) {
+    let mut raw = MaybeUninit::<RawWords>::uninit();
+    // SAFETY: the handle is live, and `raw` is writable.
+    unsafe {
+        editor_ffi_display_heights(display, raw.as_mut_ptr());
+        take(raw.assume_init())
+    }
+}
+
+#[test]
+fn a_display_answers_the_heights_of_its_rows_at_the_scale_it_was_told() {
+    let _alone = alone();
+    let display = editor_ffi_display_new_cells(8, 16);
+    let mut layout = Layout::new(CellShaper::new(8.0, 16.0));
+    let direct = layout.heights();
+    assert_eq!(
+        heights(display),
+        (
+            DisplayStatus::Done as u64,
+            vec![
+                u64::from(direct.text),
+                u64::from(direct.status),
+                u64::from(direct.message)
+            ]
+        )
+    );
+    // Told a scale of 2: the heights, a published scene's rows and a rows
+    // query are each at it, as layout's at that scale are.
+    // SAFETY: `display` is live.
+    unsafe { &*display }.set_scale(2.0);
+    layout.set_scale(2.0);
+    let direct = layout.heights();
+    assert_eq!(heights(display).1, vec![32, 32, 32]);
+    assert_eq!(
+        heights(display).1,
+        vec![
+            u64::from(direct.text),
+            u64::from(direct.status),
+            u64::from(direct.message)
+        ]
+    );
+    let text = "abc\ndef\nghi";
+    let document = document_new(text);
+    // SAFETY: `document` is live.
+    let snapshot = unsafe { editor_ffi_document_snapshot(document) };
+    let wire = WireScene {
+        views: vec![WireView {
+            id: 1,
+            rect: [0, 0, 160, 64],
+            snapshot: Some(0),
+            ..WireView::default()
+        }],
+        ..WireScene::default()
+    };
+    let (words, strings) = wire.encode();
+    assert!(publish(display, &words, &strings, &[snapshot]));
+    // SAFETY: `display` is live.
+    let frame = unsafe { &*display }.latest();
+    let tall: Vec<f32> = frame.views[0].rows.iter().map(|row| row.height).collect();
+    assert_eq!(tall, vec![32.0, 32.0]);
+    assert_eq!(
+        frame_text(display),
+        layout
+            .frame(&plain_scene_directly(text, 160, 64))
+            .describe()
+    );
+    let direct = TextRef::fixed(TextKey(0), Text::from(text).snapshot());
+    let expected: Vec<(usize, usize)> = layout
+        .rows_shown(&direct, 160.0, 64.0, 0)
+        .unwrap()
+        .into_iter()
+        .map(|row| (row.start, row.stop))
+        .collect();
+    assert_eq!(expected.len(), 2);
+    assert_eq!(rows(display, snapshot, 160, 64, 0), Ok(expected));
+    // SAFETY: each handle is live and freed once.
+    unsafe {
+        editor_ffi_snapshot_free(snapshot);
+        editor_ffi_document_free(document);
+        editor_ffi_display_free(display);
     }
 }
 

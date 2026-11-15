@@ -1,20 +1,29 @@
 //! The display: layout behind a handle, which Lean publishes scenes to and
 //! asks the layout queries of.
 //!
-//! A [`Display`] holds an [`editor_layout::Layout`] over the published fake
-//! shaper, [`CellShaper`], whose every glyph has one size: what the display
-//! interface's contract is run at (`lean/Editor/Display/Contract.lean`) and
-//! what the headless editor needs until a real shaper adapter exists (the
-//! display pipeline's phase 3). It is made by
-//! [`editor_ffi_display_new_cells`], counted live, and freed by
-//! [`editor_ffi_display_free`].
+//! A [`Display`] holds an [`editor_layout::Layout`] behind a private trait,
+//! so one handle serves either shaper:
 //!
-//! **A display lays out at scale 1.** It has no window behind it, and is
-//! never told a scale ([`Layout::set_scale`]): a point of a face's lengths
-//! is a physical pixel here, so every frame and every answer is what it
-//! was when a theme stated physical pixels. How a scene published from
-//! Lean comes to be laid out at its window's scale is not built
-//! (`docs/design/text-and-display.md`, open questions).
+//! - the published fake shaper, [`CellShaper`], whose every glyph has one
+//!   size: what the display interface's contract is run at
+//!   (`lean/Editor/Display/Contract.lean`), what the headless editor lays
+//!   out with, and what the gate draws; made by
+//!   [`editor_ffi_display_new_cells`];
+//! - the real shaper over the fonts of this machine, for Lean's window
+//!   mode; made by [`editor_ffi_display_new_system`], which no test calls.
+//!
+//! Each is counted live and freed by [`editor_ffi_display_free`].
+//!
+//! **The scale.** A display lays out at the scale it was last told
+//! ([`Display::set_scale`], which is [`Layout::set_scale`]), and at 1
+//! until it is told one. Every frame, every query and every heights answer
+//! is at it.
+//!
+//! **The heights** of a text row, a window's status row and the frame's
+//! bottom row ([`editor_ffi_display_heights`]) are layout's
+//! ([`Layout::heights`]): Lean sizes its views and the minibuffer's place
+//! by them, so that a view's rows asked at its height less its bottom row
+//! are the rows the frame shows.
 //!
 //! **A text crosses as a snapshot handle.** Each query names the snapshot it
 //! is about by its handle, and layout keeps what it laid out per key of the
@@ -61,10 +70,12 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 use editor_layout::Layout;
-use editor_layout::frame::Frame;
+use editor_layout::frame::{Frame, Heights};
 use editor_layout::query::{Moved, QueryError, RowRange};
-use editor_layout::scene::{Changes, TextKey, TextRef};
+use editor_layout::scene::{Changes, Scene, TextKey, TextRef};
+use editor_layout::shaper::Shaper;
 use editor_layout::shaper::fake::CellShaper;
+use editor_shape_parley::{FontSet, ParleyShaper};
 use editor_text::{Patch, Revision};
 
 use crate::document::RawText;
@@ -103,10 +114,77 @@ pub fn text_ref(snapshot: &Snapshot) -> TextRef {
     }
 }
 
+/// What a display asks of its layout, whatever shaper it measures with:
+/// [`Layout`] over any shaper, so that one handle serves the fake shaper
+/// and the real one.
+trait Lays: Send {
+    /// [`Layout::frame`].
+    fn frame(&mut self, scene: &Scene) -> Frame;
+    /// [`Layout::rows_shown`].
+    fn rows_shown(
+        &mut self,
+        text: &TextRef,
+        width: f32,
+        height: f32,
+        anchor: usize,
+    ) -> Result<Vec<RowRange>, QueryError>;
+    /// [`Layout::lines_from`].
+    fn lines_from(
+        &mut self,
+        text: &TextRef,
+        width: f32,
+        position: usize,
+        lines: i64,
+        goal: Option<f32>,
+    ) -> Result<Moved, QueryError>;
+    /// [`Layout::heights`].
+    fn heights(&mut self) -> Heights;
+    /// [`Layout::set_scale`].
+    fn set_scale(&mut self, scale: f32);
+}
+
+impl<S: Shaper> Lays for Layout<S>
+where
+    Layout<S>: Send,
+{
+    fn frame(&mut self, scene: &Scene) -> Frame {
+        Layout::frame(self, scene)
+    }
+
+    fn rows_shown(
+        &mut self,
+        text: &TextRef,
+        width: f32,
+        height: f32,
+        anchor: usize,
+    ) -> Result<Vec<RowRange>, QueryError> {
+        Layout::rows_shown(self, text, width, height, anchor)
+    }
+
+    fn lines_from(
+        &mut self,
+        text: &TextRef,
+        width: f32,
+        position: usize,
+        lines: i64,
+        goal: Option<f32>,
+    ) -> Result<Moved, QueryError> {
+        Layout::lines_from(self, text, width, position, lines, goal)
+    }
+
+    fn heights(&mut self) -> Heights {
+        Layout::heights(self)
+    }
+
+    fn set_scale(&mut self, scale: f32) {
+        Layout::set_scale(self, scale);
+    }
+}
+
 /// Layout behind a handle, with the last scene published and its frame.
 pub struct Display {
     /// The layout.
-    layout: Mutex<Layout<CellShaper>>,
+    layout: Mutex<Box<dyn Lays>>,
     /// The last scene published, as it crossed.
     scene: Mutex<Option<WireScene>>,
     /// The frame of the last scene published: an empty frame before the
@@ -119,14 +197,32 @@ impl Display {
     /// A display whose every glyph is `advance` pixels across and every
     /// line `line_height` down.
     pub fn cells(advance: u64, line_height: u64) -> Self {
+        Self::over(Layout::new(CellShaper::new(
+            advance as f32,
+            line_height as f32,
+        )))
+    }
+
+    /// A display that lays out with `layout`.
+    fn over(layout: impl Lays + 'static) -> Self {
         Self {
-            layout: Mutex::new(Layout::new(CellShaper::new(
-                advance as f32,
-                line_height as f32,
-            ))),
+            layout: Mutex::new(Box::new(layout)),
             scene: Mutex::new(None),
             frame: Mutex::new(Arc::new(Frame::default())),
         }
+    }
+
+    /// Tells the display the scale to lay out at from now on
+    /// ([`Layout::set_scale`]): every later frame, query and heights answer
+    /// is at it.
+    pub fn set_scale(&self, scale: f32) {
+        self.layout().set_scale(scale);
+    }
+
+    /// The heights of a text row, a status row and the frame's bottom row
+    /// ([`Layout::heights`]).
+    pub fn heights(&self) -> Heights {
+        self.layout().heights()
     }
 
     /// Publishes the scene `words` and `strings` spell ([`WireScene`]),
@@ -158,7 +254,7 @@ impl Display {
 
     /// The layout, locked. A poisoned lock is used as it is: what layout
     /// keeps is a cache, which a later call checks or lays out again.
-    fn layout(&self) -> MutexGuard<'_, Layout<CellShaper>> {
+    fn layout(&self) -> MutexGuard<'_, Box<dyn Lays>> {
         self.layout.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
@@ -221,6 +317,46 @@ static LIVE: AtomicU64 = AtomicU64::new(0);
 pub extern "C" fn editor_ffi_display_new_cells(advance: u64, line_height: u64) -> *mut Display {
     LIVE.fetch_add(1, Ordering::Relaxed);
     Box::into_raw(Box::new(Display::cells(advance, line_height)))
+}
+
+/// A new display over the real shaper and the fonts of this machine
+/// ([`FontSet::system`]), owned by the caller, who must hand it to
+/// [`editor_ffi_display_free`] exactly once. Lean's window mode makes it,
+/// to draw in the window; no test calls it, since what it lays out
+/// depends on the machine's fonts.
+#[unsafe(no_mangle)]
+pub extern "C" fn editor_ffi_display_new_system() -> *mut Display {
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "the process's display, made for Lean's window mode, is drawn in the machine's fonts"
+    )]
+    let fonts = FontSet::system();
+    LIVE.fetch_add(1, Ordering::Relaxed);
+    Box::into_raw(Box::new(Display::over(Layout::new(ParleyShaper::new(
+        fonts,
+    )))))
+}
+
+/// Fills `out` with the heights of a text row, a status row and the
+/// frame's bottom row, in whole pixels at the display's scale
+/// ([`Layout::heights`]): three words, with the status
+/// [`DisplayStatus::Done`].
+///
+/// # Safety
+///
+/// `display` is a display handle this library handed out and has not taken
+/// back, and `out` points to a writable [`RawWords`].
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn editor_ffi_display_heights(display: *const Display, out: *mut RawWords) {
+    // SAFETY: the caller guarantees the handle.
+    let heights = unsafe { &*display }.heights();
+    let mut writer = Writer::with_capacity(3);
+    for height in [heights.text, heights.status, heights.message] {
+        writer.word(u64::from(height));
+    }
+    let raw = RawWords::with_status(DisplayStatus::Done as u64, writer.finish());
+    // SAFETY: the caller guarantees `out` is writable.
+    unsafe { out.write(raw) };
 }
 
 /// Fills `out` with the rows of `snapshot` a view `width` pixels wide and
