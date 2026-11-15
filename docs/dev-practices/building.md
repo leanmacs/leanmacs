@@ -12,10 +12,11 @@ This one command builds everything. Lake compiles the Lean package, runs
 C glue (`lean/ffi/glue.c`) and links the executables. Every Lean linter is
 on, and a warning fails the build.
 
-The editor is `lean/.lake/build/bin/editor`:
+The editor is `lean/.lake/build/bin/editor`. `editor demo` shows the
+build works:
 
 ```console
-$ lean/.lake/build/bin/editor
+$ lean/.lake/build/bin/editor demo
 Rust says 2 + 3 = 5
 Lean's main is on the process's main thread: false
 The main-thread service is on the process's main thread: true
@@ -23,7 +24,9 @@ A command appended to a text held by Rust: héllo wörld
 ```
 
 The last line is a command, `Editor.append`, run against the Rust library.
-The model tests run the same source against a pure Lean model.
+The model tests run the same source against a pure Lean model. With no
+arguments at all the editor opens its window on an empty buffer, as Finder
+starts the app (`lean/Editor/Executable.lean` is the dispatch).
 
 The executable is about 206 MB on macOS: it can elaborate config, so
 Lean's elaborator is linked into it, and since milestone 1 the static

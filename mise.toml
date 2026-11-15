@@ -140,7 +140,9 @@ run = [
   # and the package's `.olean` directory are passed in, so it reads nothing
   # from the environment.
   ".lake/build/bin/config-test \"$(lean --print-prefix)\" .lake/build/lib/lean",
-  ".lake/build/bin/editor",
+  # The demonstration. With no arguments the editor is the window mode on
+  # an empty buffer, which opens a window, so the gate never runs that.
+  ".lake/build/bin/editor demo",
   # The headless mode, on the fixture checked in under tests/headless: it
   # loads the config directory, runs the script, and must print exactly
   # `expected`. Every path is an argument.
@@ -318,9 +320,11 @@ run = [
   "dir=$(mktemp -d) && trap 'rm -rf \"$dir\"' EXIT && cp ../tests/headless/ex/note.txt \"$dir/note.txt\" && err=$(.lake/build/bin/ffi-test window-host-undrawn \"$dir/note.txt\" 2>&1 >/dev/null) && printf '%s\\n' \"$err\" | grep -qxF \"editor: nothing could draw in the window: the scripted platform's window has no renderer: pas de GPU\" && cmp \"$dir/note.txt\" ../tests/headless/ex/note.txt",
   # The editor's failure statuses. A command line it does not understand is
   # status 2, with the usage on stderr: an option it does not know, and two
-  # files. (A word that is no mode is a file to open.)
+  # files, `demo x` among them. (A word that is no mode is a file to open,
+  # and `demo` is a mode only on its own.)
   "status=0; .lake/build/bin/editor --bogus || status=$?; test \"$status\" -eq 2",
   "status=0; .lake/build/bin/editor a b || status=$?; test \"$status\" -eq 2",
+  "status=0; .lake/build/bin/editor demo x || status=$?; test \"$status\" -eq 2",
   # The headless mode with only a config directory and a script, from the
   # build tree, outside a bundle: there is no toolchain to use, so it is
   # status 2 with a line on stderr saying so, before the usage

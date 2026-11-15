@@ -477,7 +477,7 @@ whatever `LEAN_NUM_THREADS` says: a bare `lake test` is enough.
 
 `mise run ffi-test` runs `lean/.lake/build/bin/ffi-test`, the test executable
 linked against the real library, then `contract-test`, `config-test`, and
-then the editor: once with no arguments, nine times in its headless
+then the editor: once as `editor demo`, the demonstration, nine times in its headless
 mode on the fixtures under `tests/headless`, and twice more on a real file
 in a temporary directory (below): with `script`, whose output must
 be exactly `expected`; with `keys-script`, which sends keys with their
@@ -768,9 +768,9 @@ the scripted platform whose renderer cannot be made, as a machine with no
 usable GPU gives: it must exit 0, which it does only when the window mode
 ended with status 1 and no render session was started, stderr must hold
 `editor: nothing could draw in the window: ` and the platform's reason,
-and the copy must be unchanged. `editor --bogus` and `editor a b` must each be status 2: any
-command line that is not `headless` or `window-check` is the window
-mode's, so a word is a file. `editor headless <config dir> <script file>`
+and the copy must be unchanged. `editor --bogus`, `editor a b` and `editor demo x` must each be status
+2: any command line that is not `demo` alone, `headless` or `window-check`
+is the window mode's, so a word is a file. `editor headless <config dir> <script file>`
 from the build tree, outside a bundle, must be status 2 with a line on
 stderr that starts `editor: no Lean toolchain`.
 
