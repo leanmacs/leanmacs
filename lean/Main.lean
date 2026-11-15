@@ -1,5 +1,6 @@
 import Editor.Command.Append
 import Editor.Headless
+import Editor.Window.Real
 import Editor.WindowCheck.Real
 
 /-!
@@ -20,7 +21,13 @@ line after `headless`, and the headless mode reads that itself.
 (`Editor/WindowCheck.lean`): it opens a window and reports what of the
 keyboard reached a Lean loop. A person runs it; nothing in the gate does.
 
-Any other command line is reported, with the exit status 2.
+Any other command line is the window mode's,
+`editor [--config <dir>] [--sysroot <dir>] [--oleans <dir>] [--no-ime] <file>`
+(`Editor/Window.lean`, `Editor/Window/Real.lean`): the editor on a file, in
+a window. So a file called `headless` or `window-check` is opened as
+`./headless`. A command line the window mode does not take, an option it
+does not know or two files, is reported with its usage, with the exit
+status 2.
 -/
 
 /-- The command the executable runs: it makes a text, appends to it and reads
@@ -56,7 +63,9 @@ mode, handed the rest of the command line, which exits with its own status:
 0 when the script ran to its end, 1 when it could not, and 2 for a command
 line it does not take. With `window-check`, the keyboard check, which opens
 a window and exits with its own status: 0 when the window ran and 1 when it
-could not be opened. Anything else is bad usage, with status 2. -/
+could not be opened. Any other command line is the window mode's, which
+opens a file in a window and exits 0 when the window ran, 1 when it could
+not be opened, and 2, with its usage, for a command line it does not take. -/
 def main (args : List String) : IO UInt32 := do
   match args with
   | [] =>
@@ -66,6 +75,4 @@ def main (args : List String) : IO UInt32 := do
   | "window-check" :: options =>
     Editor.WindowCheck.main options
   | _ =>
-    IO.eprintln
-        s!"usage: editor [{Editor.Headless.usage} | window-check [--seconds <n>] [--no-ime]]"
-    return 2
+    Editor.Window.main args

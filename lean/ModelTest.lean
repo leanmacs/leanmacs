@@ -37,6 +37,7 @@ import Editor.Text.Contract
 import Editor.UndoTree.Cases
 import Editor.Watch.Contract
 import Editor.Watch.Model
+import Editor.Window
 import Editor.WindowCheck
 
 /-!
@@ -3601,6 +3602,86 @@ def windowArgumentChecks : List Check :=
         let checked ← typed.withArguments []
         return checked.lines == typedReport && checked.calls[1]? == some "run true" &&
             checked.status == some 0 }]
+
+/-- What the window mode is told of the world by the checks of its command
+line: a working directory, both variables a config directory is found by,
+and where the executable is. -/
+def windowEnvironment : Window.Environment :=
+  { workingDirectory := "/work/project", xdgConfigHome := some "/xdg", home := some "/home/ada"
+    appPath := "/opt/leanmacs/bin/editor" }
+
+/-- The checks of the window mode's command line (`Editor/Window.lean`): the
+file, the options and their defaults, when config is loaded, and what is
+refused. -/
+def windowOptionChecks : List Check :=
+  let parsed (arguments : List String) (environment := windowEnvironment) : Option Window.Options :=
+    (Window.parse environment arguments).toOption
+  let refused (arguments : List String) : Bool :=
+    match Window.parse windowEnvironment arguments with
+    | .error message => message.endsWith Window.usage
+    | .ok _ => false
+  [{  name :=
+        "a relative file is resolved against the working directory, and an absolute one is kept as it is"
+      run :=
+        pure
+          ((parsed ["notes.txt"]).map (·.file) == some "/work/project/notes.txt" &&
+            (parsed ["src/a.lean"]).map (·.file) == some "/work/project/src/a.lean" &&
+            (parsed ["/tmp/b.txt"]).map (·.file) == some "/tmp/b.txt") },
+    { name :=
+        "with no option, config is looked for in the directory leanmacs under XDG_CONFIG_HOME, or under HOME's .config when that is unset; no toolchain is given; the editor's .olean files are beside the executable's directory; and an input method may compose"
+      run :=
+        let unset := { windowEnvironment with xdgConfigHome := none }
+        let empty := { windowEnvironment with xdgConfigHome := some "" }
+        let neither :=
+          { windowEnvironment with
+            xdgConfigHome := none, home := none }
+        pure
+          (parsed ["f"] ==
+              some
+                { file := "/work/project/f", config := some "/xdg/leanmacs", configGiven := false,
+                  sysroot := none, oleans := "/opt/leanmacs/bin/../lib/lean",
+                  composition := true } &&
+            (parsed ["f"] unset).bind (·.config) == some "/home/ada/.config/leanmacs" &&
+            (parsed ["f"] empty).bind (·.config) == some "/home/ada/.config/leanmacs" &&
+            (parsed ["f"] neither).map (·.config) == some none) },
+    { name :=
+        "--config, --sysroot, --oleans and --no-ime are read, in any order, before or after the file"
+      run :=
+        let given : Option Window.Options :=
+          some
+            { file := "/work/project/f", config := some "/c", configGiven := true,
+              sysroot := some "/s"
+              oleans := "/o", composition := false }
+        pure
+          (parsed ["--config", "/c", "--sysroot", "/s", "--oleans", "/o", "--no-ime", "f"] ==
+              given &&
+            parsed ["--no-ime", "f", "--oleans", "/o", "--sysroot", "/s", "--config", "/c"] ==
+              given) },
+    { name :=
+        "config is loaded from the default directory only when it exists, from a directory given with --config whether it exists or not, and never with no toolchain, which is said"
+      run :=
+        let plan (arguments : List String) (exists_ : Bool) : Option Window.ConfigPlan :=
+          (parsed arguments).map (·.configPlan exists_)
+        pure
+          (plan ["--sysroot", "/s", "f"] false == some (.skip none) &&
+            plan ["--sysroot", "/s", "f"] true == some (.load "/xdg/leanmacs") &&
+            plan ["--sysroot", "/s", "--config", "/c", "f"] false == some (.load "/c") &&
+            plan ["f"] true == some (.skip (some Window.noToolchain)) &&
+            plan ["--config", "/c", "f"] true == some (.skip (some Window.noToolchain)) &&
+            (parsed ["--sysroot", "/s", "f"]
+                    { windowEnvironment with
+                      xdgConfigHome := none, home := none }).map
+                (·.configPlan true) ==
+              some (.skip none)) },
+    { name :=
+        "no file, two files, an option it does not know and an option with no value are each refused with the usage"
+      run :=
+        pure
+          (refused [] && refused ["a", "b"] && refused ["--bogus", "f"] &&
+            refused ["f", "--bogus"] &&
+            refused ["f", "--config"] &&
+            refused ["--sysroot"] &&
+            refused ["--no-ime"]) }]
 
 /-- A scene of two views, with every field of a scene and of a view set: the
 first view focused, with two selections, a decoration and two status fields;
@@ -18926,6 +19007,7 @@ def checks : List Check :=
     windowTallyChecks ++
     windowLoopChecks ++
     windowArgumentChecks ++
+    windowOptionChecks ++
     undoTreeChecks ++
     textModelStepChecks ++
     fileModelChecks ++

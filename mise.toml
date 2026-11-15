@@ -298,9 +298,21 @@ run = [
   # tests/display/frame.expected; the scene must come back as sent; and a
   # move asked through the binding must land on the frame's next row.
   ".lake/build/bin/ffi-test display ../tests/display/frame.expected",
+  # The window mode's wiring, `editor <file>` (lean/Editor/Window/Real.lean),
+  # on the library's scripted platform, as a process of its own, so that its
+  # render session is the only one the process starts: a cells display bound
+  # to the presenter, the host opening a copy of `ex/note.txt`, the scripted
+  # sample window opening, sending its fixed input and asking to close. The
+  # scenario must exit 0, which it does only once the window has run and
+  # closed and the render session's counters show a frame drawn, and the
+  # copy must be unchanged. It opens no window and touches no clipboard of
+  # the desktop's.
+  "dir=$(mktemp -d) && trap 'rm -rf \"$dir\"' EXIT && cp ../tests/headless/ex/note.txt \"$dir/note.txt\" && .lake/build/bin/ffi-test window-host \"$dir/note.txt\" && cmp \"$dir/note.txt\" ../tests/headless/ex/note.txt",
   # The editor's failure statuses. A command line it does not understand is
-  # status 2, with the usage on stderr.
-  "status=0; .lake/build/bin/editor bogus || status=$?; test \"$status\" -eq 2",
+  # status 2, with the usage on stderr: an option it does not know, and two
+  # files. (A word that is no mode is a file to open.)
+  "status=0; .lake/build/bin/editor --bogus || status=$?; test \"$status\" -eq 2",
+  "status=0; .lake/build/bin/editor a b || status=$?; test \"$status\" -eq 2",
   # A script that cannot be read is status 1, with nothing on stdout and a
   # line on stderr that starts `editor: ` and says why. No file of that name
   # is checked in.

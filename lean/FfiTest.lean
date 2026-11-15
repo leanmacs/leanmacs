@@ -1,6 +1,7 @@
 import Editor.Display.Real
 import Editor.Event.Queue
 import Editor.Ffi
+import Editor.Window.Real
 import Editor.WindowCheck.Real
 import Lean.Environment
 import Lean.Util.Path
@@ -2430,8 +2431,35 @@ def run (scenario : String) (checks : List Check) : IO UInt8 := do
 /-- Reports a command line `main` does not understand; the exit status is 2. -/
 def usage : IO UInt32 := do
   IO.eprintln
-      "usage: ffi-test [exit <code> | shutdown | exit-while-blocked | overflow <sysroot> <olean dir>]"
+      "usage: ffi-test [exit <code> | shutdown | exit-while-blocked | overflow <sysroot> <olean dir> | display <fixture> | window-host <file>]"
   return 2
+
+/-- The window mode's wiring (`Editor.Window.host`) on the library's
+scripted platform, on the absolute path `file`: a cells display bound to the
+presenter, a clipboard of its own, no config. The sample window opens,
+reports its fixed input and asks to close, which ends the host's loop and
+closes the window. 0 when the window ran and the latest render session's
+counters, read once `windowRun` has returned (the presenter's last handle),
+show a frame drawn; 1 otherwise, saying why on stderr. The process starts no
+other render session, so the counters are this run's. -/
+def windowHostScenario (file : String) : IO UInt8 := do
+  let options : Editor.Window.Options :=
+    { file, config := none, configGiven := false, sysroot := none, oleans := ""
+      composition := true }
+  let status ←
+    Editor.Window.host .scripted options (.skip none) (← Editor.Ffi.Display.newCells 8 16)
+        (← Editor.Clipboard.InProcess.new).handle #[]
+  unless status == 0 do
+    IO.eprintln s!"ffi-test window-host: the window mode ended with status {status}"
+    return 1
+  let some counters ← Editor.Ffi.renderCounters |
+    IO.eprintln "ffi-test window-host: no render session was started"
+    return 1
+  unless counters.draws > 0 do
+    IO.eprintln "ffi-test window-host: no frame was drawn in the window"
+    return 1
+  IO.println "ffi-test window-host: the window ran and closed, and frames were drawn in it"
+  return 0
 
 end FfiTest
 
@@ -2468,6 +2496,10 @@ def main (args : List String) : IO UInt32 := do
     IO.Process.exit (← FfiTest.run "ffi-test shutdown" (FfiTest.shutdownChecks ()))
   | ["display", fixture] =>
     IO.Process.exit (← FfiTest.displayScenario fixture)
+  | ["window-host", file] =>
+    let status ← FfiTest.windowHostScenario file
+    Editor.Ffi.quit
+    IO.Process.exit status
   | ["exit-while-blocked"] =>
     IO.Process.exit (if ← FfiTest.blockForGood then 0 else 1)
   | ["overflow", sysroot, oleanDir] =>

@@ -351,6 +351,11 @@ way until no job is running, and `Host.stop` ends the loop. Requests are
 handled in the order they were sent, and a request sent while a reload runs
 is handled before that reload is installed: settle first to see its effect.
 
+Two requests are the window mode's (`Editor/Window/Real.lean`), which
+drives a host with no script: `open <path>` runs the open command with the
+path, printed as `run open-file: …`, and `say <text>` says the text in the
+echo area (`Running.said`). No script directive sends them.
+
 `run` drives a host through a script, one directive a line: `reload`,
 `run <name>`, `spawn <name>`, `show`, `scene` and `agree` are requests, and
 `settle`, `join`, `idle <milliseconds>`, `journal`,
@@ -523,6 +528,12 @@ inductive Request where
   /-- Print whether the last rows query about the focused view, at what it
   was published with, matches the frame the display laid out. -/
   | agree
+  /-- Run the open command (`Files.openName`) with the path `path`: the
+  window mode's first request. -/
+  | «open» (path : String)
+  /-- Say `text` in the echo area (`Running.said`): what the window mode has
+  to say before the first event. -/
+  | say (text : String)
   deriving DecidableEq, Repr
 
 /-- The render loop a host's frames are drawn by, as its driver reads it:
@@ -723,6 +734,8 @@ def Signal.encode : Signal → UInt64 × String
   | .request (.spawn name) => (5, name)
   | .request .scene => (6, "")
   | .request .agree => (7, "")
+  | .request (.open path) => (8, path)
+  | .request (.say text) => (9, text)
 
 /-- The signal an event's code and text stand for, if they stand for one. -/
 def Signal.decode? (code : UInt64) (text : String) : Option Signal :=
@@ -735,6 +748,8 @@ def Signal.decode? (code : UInt64) (text : String) : Option Signal :=
   | 5 => some (.request (.spawn text))
   | 6 => some (.request .scene)
   | 7 => some (.request .agree)
+  | 8 => some (.request (.open text))
+  | 9 => some (.request (.say text))
   | _ => none
 
 mutual
@@ -1069,20 +1084,23 @@ def input (collaborators : Collaborators σ scheme) (running : Running σ scheme
   | none =>
     return running
 
-/-- Runs the command called `name` through the loop (`Loop.runNamed`), as
-the driver asks, and prints how it went: the command is guarded, its state
-requests are answered, it is rolled back if it does not run to its end, and
-a scene is published after it. The frame is made if there is none. What the
-step handed back is taken in (`took`). With no frame made, which the refusal
-printed before it explains, it says `no frame` and runs nothing. -/
-def run (collaborators : Collaborators σ scheme) (running : Running σ scheme) (name : String) :
-    IO (Running σ scheme) := do
+/-- Runs `invocation` through the loop (`Loop.invoke`), as the driver asks,
+and prints how it went, under the command's name: the command is guarded,
+its state requests are answered, it is rolled back if it does not run to
+its end, and a scene is published after it. The frame is made if there is
+none. What the step handed back is taken in (`took`). With no frame made,
+which the refusal printed before it explains, it says `no frame` and runs
+nothing. The driver's `run <name>` is an invocation with no arguments, and
+`open <path>` one of the open command with the path. -/
+def run (collaborators : Collaborators σ scheme) (running : Running σ scheme)
+    (invocation : Invocation) : IO (Running σ scheme) := do
+  let name := invocation.command
   let (made, running) ← running.framed collaborators
   let some frame := made |
     collaborators.emit s!"run {name}: no frame"
     return running
   let (stepped, running) ←
-    running.attempt collaborators (frame.runNamed (running.keys collaborators) name)
+    running.attempt collaborators (frame.invoke (running.keys collaborators) invocation)
   let some stepped := stepped | return running
   collaborators.emit s!"run {name}: {describeEnding ((stepped.ended).getD .finished)}"
   running.took collaborators stepped
@@ -1262,7 +1280,11 @@ def other (collaborators : Collaborators σ scheme) (running : Running σ scheme
     | some (.request .reload) =>
       running.reduce collaborators .requested
     | some (.request (.run name)) =>
-      running.run collaborators name
+      running.run collaborators { command := name }
+    | some (.request (.open path)) =>
+      running.run collaborators { command := Files.openName, arguments := [.str path] }
+    | some (.request (.say text)) =>
+      return running.said text
     | some (.request (.spawn name)) =>
       running.spawn collaborators name
     | some (.request .show) =>
@@ -1876,6 +1898,39 @@ def drawnDisplay (snapshots : SnapshotReader) : IO Host.Display := do
   display.present
   Host.Display.real (← RealDisplay.over display snapshots Theme.builtin)
 
+/-- The collaborators the executable's hosts are made of, the headless
+mode's and the window mode's: the real elaborator over the toolchain in
+`sysroot` and the editor's `.olean` files in `oleanDir`, the config
+directory `configDir` as the source, `emit` as the output and stderr as the
+log, the library's timer service and file service for the jobs, and, as its
+compiled ones, the file commands with their jobs, the minibuffer's commands
+with its mode, evil's commands and the ex line's commands with the ex names
+that ship. Its display is the recorder and its clipboard its own, as a
+host's are by default.
+
+Making them warms the pool, so the first burst of jobs finds every thread
+made, and starts the completion pump on a dedicated task, which quitting the
+queues ends. -/
+def shipped (sysroot oleanDir configDir : String) (emit : String → IO Unit) :
+    IO (Collaborators Config.Elaborate.State Vim.Default.scheme) := do
+  discard <| Job.Pool.warm Job.Pool.size warmPatience
+  let completions ← Job.Completions.new
+  discard <| IO.asTask (prio := .dedicated) (Job.pump completions)
+  -- The published table and what jobs hold are made before the services:
+  -- the file service reads the one and keeps its loads in the other.
+  let published ← Snapshots.new
+  let held ← Job.HeldSnapshots.new
+  return {
+      elaborator := Config.Elaborate.elaborator { sysroot, oleanDir },
+      source := Config.Directory.source configDir, emit,
+      services :=
+        { completions, timers := Job.realTimers completions,
+          files := Job.realFiles completions published.reader held },
+      published, held, requests := 1, wakeups := 2, jobs := 3
+      commands := Files.commands ++ Minibuffer.commands ++ Evil.commands ++ Ex.commands
+      compiledJobs := Files.jobs
+      modes := Minibuffer.modes, ex := Ex.bindings, log := IO.eprintln }
+
 /-- The headless mode of the executable, handed the command line after
 `headless`: `editor headless [--render] <sysroot> <olean dir> <config dir>
 <script file>`. Loads the config in `configDir` with the real elaborator,
@@ -1917,27 +1972,14 @@ def main (arguments : List String) : IO UInt32 := do
     unless ← Ffi.renderHeadless do
       IO.eprintln "editor: the headless render session could not be started"
       return 1
-  discard <| Job.Pool.warm Job.Pool.size warmPatience
-  let completions ← Job.Completions.new
-  discard <| IO.asTask (prio := .dedicated) (Job.pump completions)
-  -- The published table and what jobs hold are made before the services:
-  -- the file service reads the one and keeps its loads in the other.
-  let published ← Snapshots.new
-  let held ← Job.HeldSnapshots.new
+  let shipped ← shipped sysroot oleanDir configDir IO.println
   let failure ←
-    run (scheme := Vim.Default.scheme)
-        { elaborator := Config.Elaborate.elaborator { sysroot, oleanDir },
-          source := Config.Directory.source configDir, emit := IO.println,
-          services :=
-            { completions, timers := Job.realTimers completions,
-              files := Job.realFiles completions published.reader held },
-          published, held, requests := 1, wakeups := 2, jobs := 3
-          commands := Files.commands ++ Minibuffer.commands ++ Evil.commands ++ Ex.commands
-          compiledJobs := Files.jobs
-          modes := Minibuffer.modes, ex := Ex.bindings, log := IO.eprintln
+    run
+        { shipped with
           display :=
             if drawn then drawnDisplay else fun snapshots => Host.Display.recorder cells snapshots
-          render := if drawn then some Render.library else none } directives settlePatience
+          render := if drawn then some Render.library else none }
+        directives settlePatience
   (← IO.getStdout).flush
   if let some failure := failure then
     IO.eprintln s!"editor: {failure.describe settlePatience}"

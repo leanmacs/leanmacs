@@ -2346,7 +2346,7 @@ def hostLoopChecks (context : Context) : List Check :=
             { collaborators with
               start := throw .noSuchText, commands := dispatchCompiled.commands })
           fun collaborators running stage => do
-          let running ← running.run collaborators "stamp"
+          let running ← running.run collaborators { command := "stamp" }
           return running.frame.isNone &&
               (← stage.output.get) == #["loop: refused: no such text", "run stamp: no frame"] },
     { name :=
