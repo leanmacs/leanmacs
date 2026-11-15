@@ -201,6 +201,18 @@ def properties (cells : Display.Cells) : List Property :=
           return moved.position
         return (← move 2 1) == 12 && (← move 8 (-1)) == 1 && (← move 11 (-1)) == 1 &&
             (← move 12 (-1)) == 2 },
+    { name := "each height of a row the display answers is at least one pixel"
+      texts := #[]
+      holds := fun _ => do
+        let heights ← Display.heights
+        return heights.text ≥ 1 && heights.status ≥ 1 && heights.message ≥ 1 },
+    { name :=
+        "in cells of a line height, a text row, a status row and the bottom row are each that tall"
+      texts := #[]
+      holds := fun _ => do
+        let heights ← Display.heights
+        return heights.text == cells.lineHeight && heights.status == cells.lineHeight &&
+            heights.message == cells.lineHeight },
     { name := "a query of a snapshot the display does not know is refused"
       texts := #["ab"]
       holds := fun snapshots => do

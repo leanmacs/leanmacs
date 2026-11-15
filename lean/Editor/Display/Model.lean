@@ -239,6 +239,7 @@ def handle : (request : DisplayRequest) → DisplayModel → request.Reply × Di
   | .publish scene, model => ((), { model with published := model.published.push scene })
   | .rows query, model => (model.rows query, model)
   | .move query, model => (model.move query, model)
+  | .heights, model => (model.cells.heights, model)
 
 end DisplayModel
 

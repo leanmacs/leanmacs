@@ -66,6 +66,7 @@ def handle (recorder : DisplayRecorder) : DisplayHandler
     return (← recorder.modelOf query.snapshot).rows query
   | .move query => do
     return (← recorder.modelOf query.snapshot).move query
+  | .heights => return recorder.cells.heights
 
 /-- The last scene published, if one has been. -/
 def last? (recorder : DisplayRecorder) : BaseIO (Option Scene) :=

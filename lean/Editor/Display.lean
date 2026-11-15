@@ -46,7 +46,7 @@ binding:
 
 | Addition | Where | Owner |
 |---|---|---|
-| Another question of layout (the position at a point) | A constructor of `DisplayRequest`, its reply in `DisplayRequest.Reply`, its operation here, and a property in the contract | The display pipeline adds it when something needs it |
+| Another question of layout (the position at a point) | A constructor of `DisplayRequest`, its reply in `DisplayRequest.Reply`, its operation here, its answer in the model, the recorder and the real binding, and a property in the contract | The display pipeline adds it when something needs it; `heights` came so, for sizing a view's text area and the minibuffer's place |
 | A field of what is published | A field of `Scene` (`Editor/Scene.lean`) | The command loop |
 | A request a command makes of the display | Nothing new: a command reaches this port through the editor's composite port (`Editor/Command.lean`), which lifts every operation here | The command loop |
 -/
@@ -73,6 +73,23 @@ structure Cells where
   /-- How far down a row is, in pixels. -/
   lineHeight : Nat
   deriving DecidableEq, Repr
+
+/-- The heights of the rows a frame is built of, in whole pixels, each at
+least 1 (`Display.heights`). -/
+structure Heights where
+  /-- One text row in the default face. -/
+  text : Nat
+  /-- A window's status row: the face `mode-line`. -/
+  status : Nat
+  /-- The frame's bottom row: the taller of the faces `echo-area` and
+  `mode-line`. -/
+  message : Nat
+  deriving DecidableEq, Repr, Inhabited
+
+/-- The heights in cells of `cells`: each a cell's height, and at least 1. -/
+def Cells.heights (cells : Cells) : Heights :=
+  let tall := max 1 cells.lineHeight
+  { text := tall, status := tall, message := tall }
 
 /-- One visual row of a text: the bytes from `start` up to `stop`, without
 its line break. -/
@@ -130,12 +147,16 @@ inductive DisplayRequest where
   | rows (query : Display.RowsQuery)
   /-- Where a position goes when it moves some visual lines. -/
   | move (query : Display.MoveQuery)
+  /-- How tall a text row, a window's status row and the frame's bottom row
+  are. -/
+  | heights
 
 /-- The type of the reply to each request. -/
 def DisplayRequest.Reply : DisplayRequest → Type
   | .publish _ => Unit
   | .rows _ => Except DisplayError (Array Display.Row)
   | .move _ => Except DisplayError Display.Moved
+  | .heights => Display.Heights
 
 /-- The display port: `DisplayRequest` and the reply to each request. -/
 abbrev displayPort : Port :=
@@ -178,6 +199,14 @@ next move. A move past the first or the last row stops there. Refused as
 `rowsShown` is. -/
 def linesFrom (query : MoveQuery) : DisplayM Moved :=
   ExceptT.mk (Program.request (port := displayPort) (.move query))
+
+/-- The heights of the rows a frame is built of, in whole pixels at the
+display's scale: a text row in the default face, a window's status row, and
+the frame's bottom row, where the echo or the prompt is drawn. A caller
+that sizes a view's text area as its height less its bottom row asks
+`rowsShown` for exactly the rows the frame shows. -/
+def heights : DisplayM Heights :=
+  ExceptT.lift (Program.request (port := displayPort) .heights)
 
 end Display
 

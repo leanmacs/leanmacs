@@ -279,11 +279,20 @@ def publish (real : RealDisplay) (scene : Scene) : IO Unit := do
   if unsent.isSome then
     real.theme.set none
 
+/-- The heights the library's layout answers, in the faces last sent and at
+its scale. -/
+def heights (real : RealDisplay) : IO Display.Heights := do
+  let heights ← real.display.heights
+  return {
+      text := heights.text.toNat, status := heights.status.toNat
+      message := heights.message.toNat }
+
 /-- Answers `request` from the library. -/
 def handle (real : RealDisplay) : (request : DisplayRequest) → IO request.Reply
   | .publish scene => real.publish scene
   | .rows query => real.rows query
   | .move query => real.move query
+  | .heights => real.heights
 
 end RealDisplay
 
