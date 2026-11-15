@@ -183,12 +183,15 @@ real implementations (`Editor/Job/Real.lean`) are the callers, with the
 completion pump that pulls the queue on a dedicated task.
 
 Tests: the three timer checks of `ffi-test` (`FfiTest.timerChecks`), its
-file checks (`FfiTest.fileChecks`), in directories they make and remove, and
+file checks (`FfiTest.fileChecks`), in directories they make and remove, its
+process checks (`FfiTest.processChecks`), whose children run in directories
+they make and remove, and
 its check that the completion tag is known (`FfiTest.dataChecks`);
 `contract-test`, which runs the job port's contract and the checks of the
 real service through the runner (`ContractTest.jobChecks`); the unit tests
-of `timers.rs` and `files.rs`, and `tests/timers.rs` and `tests/files.rs`,
-in `editor-ffi`, which need no Lean.
+of `timers.rs`, `files.rs` and `processes.rs`, and `tests/timers.rs`,
+`tests/files.rs`, `tests/processes.rs` and `tests/processes_shutdown.rs`, in
+`editor-ffi`, which need no Lean.
 
 ### The window
 

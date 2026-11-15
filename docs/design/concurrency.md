@@ -659,11 +659,12 @@ A job cannot change editor state. There is no `JobM` operation that does.
 Interpreted jobs run in parallel: in the experiments, 16 CPU-bound
 interpreted jobs finished in 2.3 s where one takes 1.2 s.
 
-As built (`lean/Editor/Job.lean`), a job reaches time and files:
+As built (`lean/Editor/Job.lean`), a job reaches time, files and processes:
 
 - **`JobM` is a program over the job port** that may fail with a message,
   so it has `throw`, `try` and `catch`. It is plain data and holds no `IO`.
-- **The port's requests are a clock, a wait and a file request**: `now`
+- **The port's requests are a clock, a wait, a file request and a process
+  request**: `now`
   reads the job clock, in milliseconds, and `waitUntil` returns once the
   clock reads a deadline or later. `sleep` is written with the two, and so
   is a `Timer`, which is plain data: the instant of its next tick and its
@@ -679,16 +680,24 @@ As built (`lean/Editor/Job.lean`), a job reaches time and files:
   on disk; one that finds another file is refused with what is there. A
   path is a Lean string and must be absolute: the editor has no working
   directory.
+- **Running a program is a request a job awaits**
+  (`lean/Editor/Process.lean`): `Process.run` runs a command to its end, a
+  wait completed by the library's process service, and replies with how the
+  child ended and both its streams as bytes, or a refusal as a value: a
+  relative directory or program, a program that is not there or not
+  allowed, or a stream past the run's limit, which has no default. A
+  cancelled job's child is killed with its process group.
 - **No request carries a promise.** A request is plain data; how a wait is
-  completed is the runner's business. A process or a snapshot of editor
-  state arrives as further requests of this port, each with a reply type, a
+  completed is the runner's business. A snapshot of editor state arrives as
+  a further request of this port, each with a reply type, a
   clause in the model, an answer in the runner and a property in the
   contract.
 - **Cancellation is not a reply.** No reply says "cancelled" and nothing is
   thrown into a job; see below.
 - **A wait is not a command**, checked when `lean/Editor/Job.lean` is
   compiled: a wait offered at `EditorM Unit` is a type error, alone and
-  after a text request in a `do` block, and so is a file request. So "a
+  after a text request in a `do` block, and so are a file request and a
+  process request. So "a
   command may not block" is pinned beyond `IO`.
 
 The port has a pure model (`lean/Editor/Job/Model.lean`: a clock, the
@@ -1236,7 +1245,7 @@ the job system, not options.
 | The pool does not grow for a burst: 16 tasks ran on 2 threads until it was warm | Warm and size the pool at startup. |
 | Pure work at the head of a job's `do` block runs on the spawning thread, before the task exists | The spawn function takes the job as a function and forces the task boundary first, so nothing runs on the editor thread. |
 | Deep recursion or a missing native symbol in interpreted code is a C++ exception that aborts the process, and Lean's `try`/`catch` does not see it | Nothing catches it, and the process aborts. A C++ `try`/`catch` could stop the exception but not restore what the Lean frames it skipped were holding, so there is no guard. See [lean-runtime.md](lean-runtime.md). |
-| Lean never kills or reaps a child process; children outlive the editor | Child processes belong to the Rust process service. See [rust-library.md](rust-library.md). |
+| Lean never kills or reaps a child process; children outlive the editor | Child processes belong to the Rust process service: each child leads a process group of its own, a cancelled job's run kills its group, and the editor's mains shut the service down before they quit, which kills every group and blocks until every child is reaped. Checked by `editor-process`'s contract on real processes, with a child that starts a grandchild (`crates/editor-process-std/tests/contract.rs`), by `crates/editor-ffi/tests/processes_shutdown.rs` through the C function, and by `contract-test`'s cancelled job. A descendant that leaves the group is not reached. See [rust-library.md](rust-library.md), "Processes, as built". |
 | Returning from `main` hangs while a dedicated task is still blocked | Shutdown posts a quit event, unblocks every dedicated task, and then exits explicitly. |
 | A thread hop costs 2.7 to 5.2 µs; a call into Rust costs 8 to 19 ns | Editor API calls are direct calls on the calling thread, not messages. |
 
@@ -1314,9 +1323,19 @@ of each runner, when the job system was planned, on Lean 4.35.0:
 - **A cancelled job runs no cleanup of its own.** There is no `finally`
   after a cancellation. What a job holds is the runner's to release: the
   wait it is in is withdrawn, and a handle to a library object is freed by
-  its finaliser when the continuation is dropped. The process service will
-  need its requests to register what they open with the job, so that the
-  runner releases it. That is not designed.
+  its finaliser when the continuation is dropped. A child a job's run
+  started needs no registering with the job: the run is the wait, and
+  withdrawing the wait kills it (below).
+- **A cancelled job's child is killed.** Cancelling a job in a process wait
+  withdraws the wait, and the process port's real implementation cancels
+  the run at the library: `Handle.cancel` → `Handle.withdraw` →
+  `Processes.cancel` → `Ffi.processesCancel` → the library's process
+  service, which kills the child's process group and reaps the child. A
+  run the job was still starting when it was cancelled is killed by the
+  run's own thread, which sees the cancel as it registers its child.
+  Removing an owner and ending the runtime cancel through `Handle.cancel`,
+  so they reach it the same way. `model-test` shows the withdrawal on the
+  fake, and `contract-test` that a real child is reaped.
 - **A cancelled job's file requests.** Cancelling a job in a file wait
   withdraws the request at the file service. A load or a save that was
   still waiting there is never worked. A save that was being worked does
@@ -1362,12 +1381,20 @@ As built:
   service, which works requests on one thread of its own, in order
   ([rust-library.md](rust-library.md), "Files and watching"). No Lean
   thread is parked for a load or a save.
+- **The process port** (`Job.Processes`) is beside them: start a process
+  request as a wait, take its reply once the wait has completed, and
+  withdraw a wait, which kills the run's child. Its fake is the pure model
+  of processes behind a reference (`Job.FakeProcesses`), and its real
+  implementation the library's process service, which runs each child on
+  threads of its own ([rust-library.md](rust-library.md), "Processes, as
+  built"). No Lean thread is parked for a run.
 - **The pump** (`Job.pump`) is one dedicated task for the process's one
   table: it pulls the completion queue and finishes the wait each
   completion names, until quit. A completion carries an id whichever
   service queued it.
 - **Cancelling a job cancels the request**: the timer leaves the library's
-  schedule, and a file request leaves the file service.
+  schedule, a file request leaves the file service, and a run's child is
+  killed with its process group.
 
 A job reaches time and files only through its port, and the runner does not
 use `Std.Async`. `Std.Async` works in this process with no extra setup, and

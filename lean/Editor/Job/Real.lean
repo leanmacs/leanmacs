@@ -104,7 +104,9 @@ cancelled meanwhile, is dropped by the table.
 
 `contract-test` (`ContractTest.lean`), in the gate: the job port's contract
 over these services, its file properties on real files in temporary
-directories, and what only the real services can show. `config-test`
+directories, its process properties on real processes in temporary
+directories, and what only the real services can show, a cancelled job's
+child reaped among them. `config-test`
 (`ConfigTest.fileChecks`): a job that loads a file through the headless
 host.
 -/

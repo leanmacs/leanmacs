@@ -186,6 +186,23 @@ adapter depends on the library. It checks no licence: the library's is
 MPL-2.0, and whether that is acceptable in this workspace is the owner's
 to confirm.
 
+Child processes are tested there too. The service that runs a command
+to its end, cancels it and shuts down (`crates/editor-process`) reaches
+processes only through the `Processes` port it defines, and its tests run
+on the port's published fake, which `mise run lint` holds them to
+(`crates/editor-process/clippy.toml`). The port's contract is tested
+there on the fake and on fakes written to break each rule. The port's
+real adapter (`crates/editor-process-std`) is held to the same contract
+on real processes, every one `/bin/sh` or another absolute path, in a
+temporary directory its test makes and removes: among them a child that
+starts a grandchild, which a kill, a cancel and shutdown must each end,
+and whose child must be reaped. `crates/editor-ffi/tests/processes.rs`
+runs a command through the C functions, and
+`crates/editor-ffi/tests/processes_shutdown.rs`, a test binary of its
+own, shuts the process-wide service down. No test changes the test
+process's environment or working directory; the environment a property
+sets goes to the child alone.
+
 Rendering is tested there too, on a machine with no GPU, and the gate
 needs none. What it checks:
 

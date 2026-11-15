@@ -87,6 +87,89 @@ children outlived the editor. So the library owns every child process.
 From Lean, a job awaits a short command as one call, and a long-lived
 process is a handle plus a stream of events.
 
+### Processes, as built
+
+The first use, "run to the end and collect the output", which git needs
+(the process service's phase 1). Streams read as they come, standard input
+and watching are not built.
+
+- **The port** is `editor-process`'s `Processes`, in the editor's terms: a
+  `Command` (a program, its arguments, an environment and an absolute
+  directory) is spawned as a `Child` in a process group of its own, with
+  its standard input closed and both output streams piped; the child's
+  streams are read with a pull (`Output::read`), it is waited for
+  (`Child::wait`) and killed (`Child::kill`). A program is a bare name,
+  looked up on the `PATH` the child gets, or an absolute path; the
+  environment is the editor's, emptied first if asked, then with variables
+  unset and then set. A spawn that fails is a `Refusal`, a kind (not
+  found, denied, failed, and the service's own: a relative directory, a
+  relative program, shut down) and the platform's words naming the program
+  and the directory. The port is pull-based and blocking, so phase 2's
+  backpressure is the core not reading, and its standard input one more
+  half to take.
+- **The rules of a child**: `wait` blocks until the child has ended, then
+  ends every process still in its group, then reaps the child, and answers
+  the same if asked again; `kill` ends the whole group, may be called from
+  any thread while `wait` blocks, and does nothing once the child has been
+  reaped.
+- **The fake** (`editor_process::fake::FakeProcesses`) is a table of
+  scripts by command: what the child writes, how and when it ends, how many
+  processes it starts in its group and which ids it writes to which file.
+  It records every spawn, kill and reap, answers whether an id is alive,
+  and holds a child or a read on a latch so a test acts while a run is in
+  flight without sleeping.
+- **The contract** (`editor_process::contract::check`) holds an
+  implementation to thirteen properties in a directory its caller owns,
+  with a ground that makes a file, reads the ids a child wrote and asks
+  whether a process is alive, a zombie counted as alive. Eight are the
+  port's: a run to its end, an exit by signal, the directory, the
+  environment, the refusals, a kill that ends a child and the grandchild it
+  started (`/bin/sleep 600 &`), the stragglers of a child that exits by
+  itself, and a kill after the reap. Five are the service's, run over the
+  given processes: a cancelled run's child and grandchild end and it is
+  never completed; after shutdown every child is reaped and every
+  grandchild ends; a start after shutdown is refused; a spawn refusal is a
+  result, completed once; and output past the limit kills the group. The
+  fake keeps it, fakes written to break one rule each (a group kill that
+  ends only the child, a wait that does not reap, one that leaves the group
+  alive, one that drops standard error, one that reports a signal as a
+  status, one whose second wait answers otherwise) are each reported, and
+  the real adapter keeps it on real processes in a temporary directory.
+- **The service** (`editor_process::service::Service`) is above the port
+  and beside it, not in `editor-ffi`, so that the contract can drive its
+  cancelling and its shutdown on the real adapter. A run is started with
+  the caller's id and returns at once; its thread refuses a relative
+  directory or program before any spawn, spawns, starts a reader thread for
+  each stream, waits, joins the readers, keeps the result and calls the
+  completion. Three threads for each running child. A stream past the
+  run's limit of bytes kills the group and the run is `OutputTooLarge`,
+  never output cut short. An id in use is refused. Cancelling kills the
+  group of a running child, drops its result and never completes it.
+  Shutdown refuses every later start (as shut down, completed at once),
+  cancels every run, kills every group and blocks until every child is
+  reaped.
+- **The adapter** (`editor-process-std`) starts a child with
+  `std::process` and `process_group(0)`. Its wait sees the exit with
+  `waitid(P_PID, pid, WEXITED | WNOWAIT)`, which leaves the child unreaped,
+  so its pid, which is also its group's id, cannot be given to another
+  process; it then kills the group and only then reaps. A kill takes the
+  same lock and does nothing once the child is reaped. So no signal ever
+  reaches a group id that may have been reused, and no straggler of a group
+  outlives its run. The system calls are rustix's, pinned exactly; std has
+  neither a wait that does not reap nor a group kill.
+- **The kill signal** is `SIGKILL`, with no `SIGTERM` and no grace period,
+  so neither a cancel nor shutdown can hang on a child that ignores a
+  polite signal.
+- **Across the boundary**, `editor-ffi`'s `processes.rs` holds the
+  process's one service, over the real adapter, behind five C functions: a
+  run (the command as words and one string, as a list of strings crosses),
+  a take (a status, words, a detail and both streams), a cancel, a
+  shutdown and a readout of what is pending. In Lean a run is a request of
+  the job port (`lean/Editor/Process.lean`, `Process.run`), with a pure
+  model that scripts commands; cancelling a job withdraws its wait, which
+  cancels the run in the library and so kills the child. The headless and
+  window mains call the shutdown before they quit the queues.
+
 ## Files and watching
 
 | Service | Where | Notes |
@@ -585,6 +668,22 @@ better generic primitive, not a feature-specific service.
   could move there, delivering plain values.
 - **HTTP.** A Lean client, or a small Rust one behind the same pattern.
 - **Backpressure** for a process that outpaces its consumer.
+- **A descendant that leaves its process group.** The group kill reaches a
+  child and every process still in its group. A descendant that calls
+  `setsid` or `setpgid`, or forks into a session of its own (git's
+  `fsmonitor--daemon`, ssh's ControlMaster), is not reached, and outlives
+  the editor. Reaching those would take Linux's
+  `PR_SET_CHILD_SUBREAPER` or a cgroup; macOS has neither. Whether such
+  descendants are in scope of "no process the editor started is left
+  running", and if so whether a Linux-only subreaper is acceptable, is the
+  owner's to decide; phase 1 builds the group kill only. A related limit:
+  such a descendant that keeps the child's standard output open holds the
+  run's reader until it closes it. A cancel still ends the job's wait and
+  reaps the child.
+- **A graceful signal before the kill.** Cancel and shutdown send
+  `SIGKILL` to the group at once. An agent or a language server may want
+  `SIGTERM` and a grace period first, to save what it holds; a grace period
+  must still end in `SIGKILL`, so that shutdown cannot hang.
 - **Sandboxing**: should the process service be able to run a command in a
   container or other sandbox? Worktrees are not a security boundary.
 - **Remote work**: editing over SSH or in a container changes files and
