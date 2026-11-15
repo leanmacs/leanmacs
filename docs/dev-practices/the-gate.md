@@ -744,7 +744,11 @@ with `:e`, runs `2dw`, `.`, `u`, `j`, `cw` with a committed `edited`,
 ends with `idle 1000`. The editor must exit 0, its output must be exactly
 `expected` (each `agree` line reads `agrees`: the rows the loop asked for
 are the frame's, and `idle 1000: 0 frames drawn, 0 frames submitted`), and
-the copy must hold the bytes of `source-expected`. The idle second is the
+the copy must hold the bytes of `source-expected`. That `agree` can say
+anything but `agrees` is pinned in `config-test`
+(`ConfigTest.agreementChecks`): on a scene and answers made there it says
+`agrees`, `disagrees` with both sets of rows, that there is no rows query,
+and that the frame has no such view. The idle second is the
 one real-time wait of the gate's checks of drawing: it starts once the
 render loop is at rest, so a slow machine cannot fail it, and it fails only
 if something asks for a frame while nobody types. The render loop's own

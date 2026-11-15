@@ -1354,6 +1354,64 @@ def statusOf (view : Nat := 0) (name : String := "scratch") (modified : Bool := 
   Headless.statusLine ⟨view⟩
     (Loop.status { name, text := ⟨0⟩, history := if modified then saved.record 1 else saved })
 
+/-- A scene of one focused view, number 2, of the snapshot 5, 64 pixels
+across and 48 down in a frame 64 down: what `Headless.Running.agreement` is asked
+of in `agreementChecks`. -/
+def agreementScene : Scene :=
+  { size := { width := 64, height := 64 }
+    views :=
+      #[{ id := ⟨2⟩, rect := { x := 0, y := 0, width := 64, height := 48 }, snapshot := ⟨5⟩
+          scroll := { text := ⟨0⟩, index := 0 }, selections := #[]
+          cursor := { shape := .block, face := ⟨"cursor.normal"⟩ }, decorations := #[]
+          status := #[] }]
+    focused := some ⟨2⟩, echo := "", pending := "", preedit := none }
+
+/-- The rows of `agreementScene`'s view in the frame: three, from the byte
+offset 10. -/
+def agreementRows : Array Display.Row :=
+  #[⟨10, 14⟩, ⟨15, 19⟩, ⟨20, 24⟩]
+
+/-- A rows query of `agreementScene`'s view as the loop would ask it, from the
+anchor 10 at the view's height, answered with `rows`. -/
+def agreementAsked (rows : Array Display.Row) (snapshot : Nat := 5) (width : Nat := 64)
+    (height : Nat := 48) (anchor : Nat := 10) : Headless.Asked :=
+  { query := { snapshot := ⟨snapshot⟩, width, height, anchor }, rows }
+
+/-- The checks of what `agree` says (`Headless.Running.agreement`), on scenes and
+answers made here: the four things it can say of a focused view. -/
+def agreementChecks (_ : Unit) : List Check :=
+  [{  name :=
+        "agree says agrees when the last rows query from the view's anchor, of its snapshot at its width, answered the frame's rows"
+      run :=
+        pure
+          (Headless.Running.agreement agreementScene 10 #[agreementAsked agreementRows]
+              (some agreementRows) ==
+            "agree view 2: 3 rows asked from 10, 3 in the frame: agrees") },
+    { name :=
+        "agree says disagrees, with both sets of rows, when the last such query was asked at the whole height and answered one row more than the frame, though an earlier one agreed"
+      run :=
+        pure
+          (Headless.Running.agreement agreementScene 10
+              #[agreementAsked agreementRows,
+                agreementAsked (agreementRows.push ⟨25, 29⟩) (height := 64)]
+              (some agreementRows) ==
+            "agree view 2: 4 rows asked from 10, 3 in the frame: disagrees: asked 10..14 15..19 20..24 25..29, frame 10..14 15..19 20..24") },
+    { name :=
+        "agree says there is no rows query when none names the view's snapshot, its width and its anchor, though each matches in the other two"
+      run :=
+        pure
+          (Headless.Running.agreement agreementScene 10
+              #[agreementAsked agreementRows (snapshot := 6),
+                agreementAsked agreementRows (width := 56),
+                agreementAsked agreementRows (anchor := 15)]
+              (some agreementRows) ==
+            "agree view 2: no rows query from 10") },
+    { name := "agree says the frame has no such view when the frame shows no rows of it"
+      run :=
+        pure
+          (Headless.Running.agreement agreementScene 10 #[agreementAsked agreementRows] none ==
+            "agree view 2: the frame has no such view") }]
+
 /-- The checks of the headless mode's script and its driver
 (`Headless.script`, `Headless.run`). The command line itself is covered by
 one run of the real executable on the fixture under `tests/headless`, in the
@@ -3555,6 +3613,7 @@ def faceChecks (context : Context) : List Check :=
 def checks (context : Context) : List Check :=
   elaboratorChecks context ++ directoryChecks () ++ hostChecks context ++ threadChecks context ++
     jobChecks context ++
+    agreementChecks () ++
     scriptChecks context ++
     dispatchChecks context ++
     hostLoopChecks context ++
