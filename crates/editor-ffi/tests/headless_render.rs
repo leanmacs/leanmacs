@@ -13,14 +13,15 @@
 //! scheduler is stated. That an equal frame draws nothing, and that a loop
 //! at rest draws nothing, are `editor-render`'s, pinned there.
 
-use std::sync::Arc;
+use std::io;
 use std::sync::mpsc::{Sender, channel};
-use std::thread;
+use std::sync::{Arc, Mutex};
+use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
 use editor_ffi::display::{Display, WireScene, WireView};
 use editor_ffi::document::Document;
-use editor_ffi::render::{Presenter, headless};
+use editor_ffi::render::{HeadlessRefusal, Presenter, headless, headless_with, start_into};
 use editor_ffi::snapshot::Snapshot;
 use editor_render::clock::FakeClock;
 use editor_render::fake::RecordingRenderer;
@@ -90,7 +91,8 @@ fn a_bound_displays_frame_is_drawn_at_the_scenes_size_with_its_stamp_and_the_loo
         },
         Arc::new(FakeClock::new()),
         Arc::clone(&presenter),
-    );
+    )
+    .expect("the render thread starts");
     let handle = session.handle();
     // The session is the presenter's target, and its last.
     assert!(
@@ -133,4 +135,79 @@ fn a_bound_displays_frame_is_drawn_at_the_scenes_size_with_its_stamp_and_the_loo
     assert_eq!(last.journal().len(), 1);
     assert_eq!(last.counters().draws, 1);
     assert!(draws.try_recv().is_err());
+}
+
+/// A spawner of the render thread that cannot start one, as a process out
+/// of threads gives: no hermetic test can make the real one fail.
+fn no_thread(
+    _: Box<dyn FnOnce() -> RecordingRenderer + Send>,
+) -> io::Result<JoinHandle<RecordingRenderer>> {
+    Err(io::Error::other("no more threads"))
+}
+
+/// What a session whose render thread cannot start says.
+const NO_THREAD: &str = "the render thread could not be started: no more threads";
+
+#[test]
+fn a_render_thread_that_cannot_be_started_is_a_reason_and_leaves_the_presenter_as_it_was() {
+    let presenter = Presenter::new();
+    let refused = headless_with(
+        RecordingRenderer::new,
+        Arc::new(FakeClock::new()),
+        Arc::clone(&presenter),
+        no_thread,
+    );
+    assert_eq!(refused.err().as_deref(), Some(NO_THREAD));
+    // Nothing is the presenter's target, nor its last session.
+    assert!(presenter.target().is_none());
+    assert!(presenter.last().is_none());
+}
+
+#[test]
+fn a_slot_starts_one_session_and_refuses_another_while_it_runs_or_one_whose_thread_cannot_start() {
+    let presenter = Presenter::new();
+    let clock = Arc::new(FakeClock::new());
+    let slot = Mutex::new(None);
+    // A thread that cannot start: refused with its reason, and the slot
+    // stays empty.
+    let failed = start_into(&slot, || {
+        headless_with(
+            RecordingRenderer::new,
+            clock.clone(),
+            Arc::clone(&presenter),
+            no_thread,
+        )
+    });
+    assert_eq!(failed, Err(HeadlessRefusal::NoThread(NO_THREAD.to_owned())));
+    assert!(slot.lock().unwrap().is_none());
+    // One that starts fills the slot.
+    let started = start_into(&slot, || {
+        headless(
+            RecordingRenderer::new,
+            clock.clone(),
+            Arc::clone(&presenter),
+        )
+    });
+    assert_eq!(started, Ok(()));
+    // While it runs another is refused, and is not made.
+    let mut made = false;
+    let again = start_into(&slot, || {
+        made = true;
+        headless(
+            RecordingRenderer::new,
+            clock.clone(),
+            Arc::clone(&presenter),
+        )
+    });
+    assert_eq!(again, Err(HeadlessRefusal::Running));
+    assert!(!made);
+    // Each refusal crosses as its tag, the started session being 0.
+    assert_eq!(
+        (
+            HeadlessRefusal::Running.tag(),
+            HeadlessRefusal::NoThread(String::new()).tag()
+        ),
+        (1, 2)
+    );
+    slot.lock().unwrap().take().expect("the session").stop();
 }

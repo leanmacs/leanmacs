@@ -1153,7 +1153,7 @@ editor_ffi_display *editor_ffi_display_new_system(void);
 void editor_ffi_display_present(const editor_ffi_display *display);
 void editor_ffi_display_heights(const editor_ffi_display *display,
                                 editor_ffi_raw_words *out);
-bool editor_ffi_render_headless_start(void);
+uint8_t editor_ffi_render_headless_start(editor_ffi_raw_text *out);
 bool editor_ffi_render_headless_stop(void);
 void editor_ffi_render_journal(uint64_t after, editor_ffi_raw_words *out);
 void editor_ffi_render_counters(editor_ffi_raw_words *out);
@@ -1179,10 +1179,18 @@ lean_obj_res editor_glue_display_heights(b_lean_obj_arg display) {
   return lean_io_result_mk_ok(raw_words_take(raw));
 }
 
-// `Editor.Ffi.renderHeadless : IO Bool`
+// `Editor.Ffi.renderHeadlessRaw : IO RawRenderStart`: the object field
+// `reason`, then `status`.
 lean_obj_res editor_glue_render_headless(void) {
-  return lean_io_result_mk_ok(
-      lean_box(editor_ffi_render_headless_start() ? 1 : 0));
+  editor_ffi_raw_text raw;
+  uint8_t status = editor_ffi_render_headless_start(&raw);
+  lean_object *reason =
+      lean_mk_string_from_bytes((const char *)raw.text, raw.text_len);
+  editor_ffi_text_free(raw.text, raw.text_len);
+  lean_object *started = lean_alloc_ctor(0, 1, sizeof(uint64_t));
+  lean_ctor_set(started, 0, reason);
+  lean_ctor_set_uint64(started, uint64_field(1, 0), status);
+  return lean_io_result_mk_ok(started);
 }
 
 // `Editor.Ffi.renderStop : IO Bool`

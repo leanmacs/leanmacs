@@ -71,6 +71,14 @@
 //! handle, which outlives the session ([`editor_ffi_render_journal`],
 //! [`editor_ffi_render_counters`], [`editor_ffi_render_resting`]).
 //!
+//! A render thread that cannot be started is a reason, as it is for a
+//! window ([`Session::failure`]): [`headless`] answers it and starts
+//! nothing, and [`editor_ffi_render_headless_start`] returns it with its
+//! refusal's tag ([`HeadlessRefusal`]). No C function here panics. The
+//! thread is started by a spawner the session is handed
+//! ([`headless_with`]), so a test hands one that fails: no hermetic test
+//! can make the system refuse a thread.
+//!
 //! # A renderer that cannot be made
 //!
 //! The factory may fail: no adapter, no device. The window then runs as it
@@ -91,6 +99,7 @@
 //! decision of the scheduler: what a call on the handle leads to is
 //! `editor-render`'s, and is read here only by doing the same to two loops.
 
+use std::io;
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, LazyLock, Mutex, MutexGuard, PoisonError};
 use std::thread::{self, JoinHandle};
@@ -103,7 +112,9 @@ use editor_render::port::{Renderer, Target};
 use editor_render::render_loop::{CondvarPark, RenderHandle, RenderLoop};
 use editor_render_wgpu::{HeadlessRenderer, Settings};
 
+use crate::document::RawText;
 use crate::log::RawWords;
+use crate::text;
 use crate::window::{CountingClock, InputClock, Monotonic, ProcessClock};
 use crate::words::Writer;
 
@@ -349,17 +360,29 @@ pub struct Headless<R> {
 
 /// Starts a headless render session: a loop over the renderer `make`
 /// makes, on the calling thread, telling the time by `clock`, run on a
-/// thread of its own; and makes it `presenter`'s target, following each
-/// scene's size, and its last session's.
-///
-/// # Panics
-///
-/// If the render thread cannot be started.
+/// thread of its own named `render`; and makes it `presenter`'s target,
+/// following each scene's size, and its last session's. When the thread
+/// cannot be started it answers why, and starts nothing: the renderer is
+/// dropped and the presenter is left as it was.
 pub fn headless<R: Renderer + Send + 'static>(
     make: impl FnOnce() -> R,
     clock: Arc<dyn Clock>,
     presenter: Arc<Presenter>,
-) -> Headless<R> {
+) -> Result<Headless<R>, String> {
+    headless_with(make, clock, presenter, |run| {
+        thread::Builder::new().name("render".into()).spawn(run)
+    })
+}
+
+/// [`headless`], with the render thread started by `spawn`, which is
+/// handed the loop's run and answers its thread, or the system's reason
+/// there is none: the decision a test reaches with a spawner that fails.
+pub fn headless_with<R: Renderer + Send + 'static>(
+    make: impl FnOnce() -> R,
+    clock: Arc<dyn Clock>,
+    presenter: Arc<Presenter>,
+    spawn: impl FnOnce(Box<dyn FnOnce() -> R + Send>) -> io::Result<JoinHandle<R>>,
+) -> Result<Headless<R>, String> {
     let park = Arc::new(CondvarPark::new(Arc::clone(&clock)));
     // A target of no size until the first scene says one.
     let begin = Target {
@@ -368,16 +391,59 @@ pub fn headless<R: Renderer + Send + 'static>(
         scale: 1.0,
     };
     let (render_loop, handle) = RenderLoop::new(make(), clock, park, begin);
-    let thread = thread::Builder::new()
-        .name("render".into())
-        .spawn(move || render_loop.run())
-        .expect("the render thread starts");
+    let thread = spawn(Box::new(move || render_loop.run()))
+        .map_err(|error| format!("the render thread could not be started: {error}"))?;
     presenter.start(handle.clone(), Follows::Scene);
-    Headless {
+    Ok(Headless {
         handle,
         thread: Some(thread),
         presenter,
+    })
+}
+
+/// Why a headless render session was not started into a slot
+/// ([`start_into`]).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum HeadlessRefusal {
+    /// The slot holds a session that runs.
+    Running,
+    /// The render thread could not be started: why ([`headless`]).
+    NoThread(String),
+}
+
+impl HeadlessRefusal {
+    /// Its tag as it crosses the boundary: 1 and 2, a session started
+    /// being 0 ([`editor_ffi_render_headless_start`]).
+    pub fn tag(&self) -> u8 {
+        match self {
+            Self::Running => 1,
+            Self::NoThread(_) => 2,
+        }
     }
+
+    /// What it says.
+    pub fn reason(&self) -> String {
+        match self {
+            Self::Running => "a headless render session runs already".to_owned(),
+            Self::NoThread(reason) => reason.clone(),
+        }
+    }
+}
+
+/// Starts a session with `start` into `slot` when it holds none, and
+/// keeps it there. Refused, with the slot as it was, when it holds one,
+/// and then `start` is not called; or when `start` answers that the
+/// session's render thread could not be started.
+pub fn start_into<R>(
+    slot: &Mutex<Option<Headless<R>>>,
+    start: impl FnOnce() -> Result<Headless<R>, String>,
+) -> Result<(), HeadlessRefusal> {
+    let mut running = locked(slot);
+    if running.is_some() {
+        return Err(HeadlessRefusal::Running);
+    }
+    *running = Some(start().map_err(HeadlessRefusal::NoThread)?);
+    Ok(())
 }
 
 impl<R> Headless<R> {
@@ -403,20 +469,38 @@ impl<R> Headless<R> {
 static HEADLESS: Mutex<Option<Headless<HeadlessRenderer>>> = Mutex::new(None);
 
 /// Starts the process's headless render session: the CPU renderer, on the
-/// process's clock, as the process's presenter's target. Returns false,
-/// starting nothing, when one runs already.
+/// process's clock, as the process's presenter's target. Returns how it
+/// went, and fills `out` with what it says ([`start_into`]):
+///
+/// - 0 when it started; `out` is empty.
+/// - 1 ([`HeadlessRefusal::Running`]) when one runs already, and nothing
+///   is started; `out` says so.
+/// - 2 ([`HeadlessRefusal::NoThread`]) when its render thread could not
+///   be started, and nothing is started; `out` says why, in the system's
+///   words.
+///
+/// It never panics: a thread the system refuses is the refusal 2.
+///
+/// # Safety
+///
+/// `out` points to a writable [`RawText`].
 #[unsafe(no_mangle)]
-pub extern "C" fn editor_ffi_render_headless_start() -> bool {
-    let mut running = locked(&HEADLESS);
-    if running.is_some() {
-        return false;
-    }
-    *running = Some(headless(
-        || HeadlessRenderer::new(Settings::default()),
-        Arc::new(ProcessClock),
-        Arc::clone(&PRESENTER),
-    ));
-    true
+pub unsafe extern "C" fn editor_ffi_render_headless_start(out: *mut RawText) -> u8 {
+    let started = start_into(&HEADLESS, || {
+        headless(
+            || HeadlessRenderer::new(Settings::default()),
+            Arc::new(ProcessClock),
+            Arc::clone(&PRESENTER),
+        )
+    });
+    let (tag, reason) = match started {
+        Ok(()) => (0, String::new()),
+        Err(refusal) => (refusal.tag(), refusal.reason()),
+    };
+    let (text, text_len) = text::lend(reason);
+    // SAFETY: the caller guarantees `out` is writable.
+    unsafe { out.write(RawText { text, text_len }) };
+    tag
 }
 
 /// Stops the process's headless render session and waits for its thread.

@@ -2286,7 +2286,7 @@ def renderChecks (_ : Unit) : List Check :=
         -- An earlier check's window input may still wait for a frame: a
         -- publish with no session running spends it.
         fixture.real.publish (fixture.scene (SceneFixture.own fixture.anchor) #[])
-        unless ← Editor.Ffi.renderHeadless do
+        unless (← Editor.Ffi.renderHeadless) matches .ok () do
           return false
         let before ← framesSubmitted
         let posted ← Editor.Ffi.postInput .resize 0 "" #[64, 48, (1.0 : Float).toBits]
@@ -2302,7 +2302,7 @@ def renderChecks (_ : Unit) : List Check :=
             stopped },
     { name := "a scene published by a display that is not bound reaches no render session"
       run := do
-        unless ← Editor.Ffi.renderHeadless do
+        unless (← Editor.Ffi.renderHeadless) matches .ok () do
           return false
         let fixture ← sceneFixture
         let before ← framesSubmitted
@@ -2311,6 +2311,19 @@ def renderChecks (_ : Unit) : List Check :=
         let stopped ← Editor.Ffi.renderStop
         let _ ← fixture.document.read
         return after == before && stopped },
+    { name :=
+        "a headless render session asked for while one runs is refused with the library's reason, starting nothing, and the one that runs is stopped once"
+      run := do
+        unless (← Editor.Ffi.renderHeadless) matches .ok () do
+          return false
+        let again ← Editor.Ffi.renderHeadless
+        let stopped ← Editor.Ffi.renderStop
+        let stoppedAgain ← Editor.Ffi.renderStop
+        return (match again with
+            | .error reason => !reason.isEmpty
+            | .ok () => false) &&
+            stopped &&
+            !stoppedAgain },
     { name :=
         "a display in cells answers its cell's height for a text row, a status row and the bottom row"
       run := do

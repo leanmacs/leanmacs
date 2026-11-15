@@ -822,7 +822,9 @@ prints its diagnostics and leaves the config that was loaded in place, with
 its jobs still running. The exit status is 0 when the script ran to its end
 or a command quit the editor before it,
 1 when it could not, and 2 for a command line it does not understand. With
-status 1 a line on stderr says why: the script cannot be read; a `settle`,
-named by its line, ran out with a reload still running (a chunk or `setup`
-is slow or does not end); a `join`, named by its line, ran out with a job
-still running; or the editor thread did not answer.
+status 1 a line on stderr says why: the script cannot be read; with
+`--render`, the render session could not be started, with the library's
+reason (the system refused its render thread); a `settle`, named by its
+line, ran out with a reload still running (a chunk or `setup` is slow or
+does not end); a `join`, named by its line, ran out with a job still
+running; or the editor thread did not answer.

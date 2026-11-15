@@ -2031,12 +2031,28 @@ def Display.scene (display : Display) : IO (Option (Array UInt64 × String)) := 
 
 /-! ## The render session -/
 
+/-- What starting the headless render session answers, as the glue builds
+it: what the library says, then how it went (0 started, 1 one runs
+already, 2 its render thread could not be started). Object fields first,
+so the order here is the layout the glue writes. -/
+private structure RawRenderStart where
+  /-- Why nothing started, in the library's words; empty when it started. -/
+  reason : String
+  /-- How it went. -/
+  status : UInt64
+
+/-- `renderHeadless` as it crosses. -/
+@[extern "editor_glue_render_headless"]
+private opaque renderHeadlessRaw : IO RawRenderStart
+
 /-- Starts the headless mode's render session: a render loop with no window,
 on a thread of the library's, over the CPU renderer, which draws what a
-bound display publishes at each scene's size. `false`, starting nothing,
-when one runs already. -/
-@[extern "editor_glue_render_headless"]
-opaque renderHeadless : IO Bool
+bound display publishes at each scene's size. Refused, starting nothing,
+with the library's reason: when one runs already, and when its render
+thread could not be started, in the system's words. -/
+def renderHeadless : IO (Except String Unit) := do
+  let raw ← renderHeadlessRaw
+  return if raw.status == 0 then .ok () else .error raw.reason
 
 /-- Stops the headless render session and waits for its thread. Its journal
 and counters stay readable. `false` when none runs. -/

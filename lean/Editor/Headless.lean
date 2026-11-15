@@ -1971,8 +1971,8 @@ def main (arguments : List String) : IO UInt32 := do
       IO.eprintln s!"editor: cannot run the script {scriptPath}: {error}"
       return 1
   if drawn then
-    unless ← Ffi.renderHeadless do
-      IO.eprintln "editor: the headless render session could not be started"
+    if let .error reason← Ffi.renderHeadless then
+      IO.eprintln s!"editor: the headless render session could not be started: {reason}"
       return 1
   let shipped ← shipped sysroot oleanDir configDir IO.println
   let failure ←

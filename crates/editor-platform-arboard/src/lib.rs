@@ -22,6 +22,12 @@
 //!   written here is on the clipboard until this adapter is dropped or
 //!   another program writes, and on X11 with no clipboard manager it is
 //!   gone when the process ends.
+//! - **An open that panics is a failure.** On Linux arboard's open starts
+//!   that thread with `std::thread::spawn`, which panics when the system
+//!   refuses a thread. The panic is caught and the open answered with a
+//!   failure that says what the panic said, so the C function that opens
+//!   the desktop's clipboard (`editor_ffi_clipboard_system`) keeps its
+//!   rule that it never panics. A read or a write starts no thread.
 //!
 //! # Tests
 //!
@@ -31,7 +37,9 @@
 //! in the tests. [`SystemClipboard::open`] is forbidden to tests by this
 //! crate's `clippy.toml`.
 
+use std::panic;
 use std::sync::{Mutex, MutexGuard, PoisonError};
+use std::thread;
 
 use editor_platform::clipboard::{Clipboard, ClipboardError};
 
@@ -47,18 +55,19 @@ impl SystemClipboard {
     ///
     /// What it finds is the desktop's own, so no test calls it: the crate's
     /// `clippy.toml` forbids it to them.
+    ///
+    /// It does not panic. arboard's open does, on Linux, when the system
+    /// refuses the thread that serves the clipboard; that is a failure
+    /// here (`open_answer`).
     pub fn open() -> Result<Self, ClipboardError> {
         #[expect(
             clippy::disallowed_methods,
             reason = "this is the one place the system clipboard is opened"
         )]
-        let opened = arboard::Clipboard::new();
-        match opened {
-            Ok(clipboard) => Ok(Self {
-                clipboard: Mutex::new(clipboard),
-            }),
-            Err(error) => Err(failure(&error)),
-        }
+        let opened = panic::catch_unwind(arboard::Clipboard::new);
+        open_answer(opened).map(|clipboard| Self {
+            clipboard: Mutex::new(clipboard),
+        })
     }
 
     /// Locks arboard's clipboard. A poisoned lock is used as it is: the
@@ -89,6 +98,28 @@ fn read_answer(answer: Result<String, arboard::Error>) -> Result<Option<String>,
     }
 }
 
+/// What the port answers an open with, from how arboard's open ended: its
+/// clipboard; its error, in its words; or a panic, which is a failure that
+/// says so and what the panic said, when it said it in text.
+fn open_answer<C>(opened: thread::Result<Result<C, arboard::Error>>) -> Result<C, ClipboardError> {
+    match opened {
+        Ok(answer) => answer.map_err(|error| failure(&error)),
+        Err(payload) => {
+            let said = payload
+                .downcast_ref::<String>()
+                .map(String::as_str)
+                .or_else(|| payload.downcast_ref::<&str>().copied());
+            let reason = match said {
+                Some(said) => {
+                    format!("the clipboard could not be opened: arboard panicked: {said}")
+                }
+                None => "the clipboard could not be opened: arboard panicked".to_owned(),
+            };
+            Err(ClipboardError { reason })
+        }
+    }
+}
+
 /// What the port answers a write with, from what arboard answered.
 fn write_answer(answer: Result<(), arboard::Error>) -> Result<(), ClipboardError> {
     answer.map_err(|error| failure(&error))
@@ -103,7 +134,9 @@ fn failure(error: &arboard::Error) -> ClipboardError {
 
 #[cfg(test)]
 mod tests {
-    use super::{failure, read_answer, write_answer};
+    use std::any::Any;
+
+    use super::{failure, open_answer, read_answer, write_answer};
     use editor_platform::clipboard::ClipboardError;
 
     /// The port's failure with `reason`.
@@ -170,6 +203,41 @@ mod tests {
         assert_eq!(
             write_answer(Err(arboard::Error::ContentNotAvailable)),
             Err(failed(&reason))
+        );
+    }
+
+    #[test]
+    fn an_open_that_panicked_is_a_failure_that_says_so_and_what_it_said() {
+        // On Linux arboard's open starts the thread that serves the
+        // clipboard, and panics when the system refuses it one. The payload
+        // of such a panic, a `String` or a `&str`, is built here: nothing
+        // panics in the test.
+        let said: Box<dyn Any + Send> = Box::new(String::from("failed to spawn thread"));
+        assert_eq!(
+            open_answer::<()>(Err(said)),
+            Err(failed(
+                "the clipboard could not be opened: arboard panicked: failed to spawn thread"
+            ))
+        );
+        let said: Box<dyn Any + Send> = Box::new("no more threads");
+        assert_eq!(
+            open_answer::<()>(Err(said)),
+            Err(failed(
+                "the clipboard could not be opened: arboard panicked: no more threads"
+            ))
+        );
+        let said: Box<dyn Any + Send> = Box::new(7_u8);
+        assert_eq!(
+            open_answer::<()>(Err(said)),
+            Err(failed(
+                "the clipboard could not be opened: arboard panicked"
+            ))
+        );
+        // An open that returned is answered as it returned.
+        assert_eq!(open_answer(Ok(Ok(()))), Ok(()));
+        assert_eq!(
+            open_answer::<()>(Ok(Err(arboard::Error::ClipboardOccupied))),
+            Err(failed(OCCUPIED))
         );
     }
 
