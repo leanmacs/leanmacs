@@ -7,9 +7,10 @@
 //! of it ([`fake::FakeProcesses`]) and the contract every implementation
 //! keeps ([`contract::check`]); the real adapter, over `std::process`, is
 //! another crate (`editor-process-std`). [`service::Service`] is what the
-//! editor asks, above the port: a run to its end, completed through a
-//! closure it is given, cancelled by killing the child's group, and every
-//! child killed and reaped at shutdown. The crate has no dependencies and
+//! editor asks, above the port: a run to its end, or a streaming child read
+//! and written a request at a time, framed and bounded ([`frame`]), each
+//! completed through a closure it is given, cancelled by killing the
+//! child's group, and every child killed and reaped at shutdown. The crate has no dependencies and
 //! knows nothing about Lean.
 //!
 //! # The rules of the port
@@ -65,7 +66,7 @@
 //!
 //! | Addition | Where | Pinned by |
 //! |---|---|---|
-//! | Something more a child is started with (its standard input) | A field of [`Command`], with a default that keeps today's behaviour | A property of [`contract`], and the fake's tests |
+//! | Something more a child is started with (as its standard input was, [`Command::input`]) | A field of [`Command`], with a default that keeps today's behaviour | A property of [`contract`], and the fake's tests |
 //! | Something more a running child is asked | A method of [`Child`], with its rule in the list above | Its property in [`contract::check`], with a fake written to break it in `tests/contract.rs` |
 //! | Another failure the editor decides on | A variant of [`RefusalKind`] | The property that asks for it |
 //! | A rule of the service (what a run comes to, what cancelling means) | [`service::Service`] | The service's unit tests, on the fake, and a service property of [`contract`] where a real process must show it |
