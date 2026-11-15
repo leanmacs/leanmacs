@@ -84,6 +84,7 @@ use std::fmt;
 use crate::atlas::{Atlas, PageView};
 use crate::cpu::CLEAR;
 use crate::glyphs::Kind;
+use crate::present::{Offered, Presentation};
 use crate::quads::{Quad, QuadKind};
 use crate::surface::{Answer, Calls, State};
 use crate::{Image, Weight};
@@ -173,9 +174,14 @@ struct Window {
 
 impl Window {
     /// The surface, with what `surface::State` decides from what it offers
-    /// `adapter`. The error says why nothing can be drawn on it.
-    fn new(surface: wgpu::Surface<'static>, adapter: &wgpu::Adapter) -> Result<Self, String> {
-        let state = State::new(&surface.get_capabilities(adapter))?;
+    /// `adapter` and what the run `asked` for. The error says why nothing
+    /// can be drawn on it.
+    fn new(
+        surface: wgpu::Surface<'static>,
+        adapter: &wgpu::Adapter,
+        asked: Option<Presentation>,
+    ) -> Result<Self, String> {
+        let state = State::new(&surface.get_capabilities(adapter), asked)?;
         Ok(Self {
             surface,
             state,
@@ -294,31 +300,34 @@ impl Device {
     }
 
     /// A device on an adapter of `instance` that can present to `surface`,
-    /// and draws on it. It is refused, with the reason, when no adapter
-    /// can, or when the surface offers nothing to configure it with.
+    /// and draws on it, presenting as `asked` when the run asked
+    /// (`present::choose`). It is refused, with the reason, when no
+    /// adapter can, or when the surface offers nothing to configure it
+    /// with.
     pub fn on_surface(
         instance: &wgpu::Instance,
         surface: wgpu::Surface<'static>,
+        asked: Option<Presentation>,
         allow_per_channel: bool,
     ) -> Result<Self, Unavailable> {
-        Self::build(instance, Some(surface), allow_per_channel)
+        Self::build(instance, Some((surface, asked)), allow_per_channel)
     }
 
     /// A device on an adapter of `instance`, drawing on `surface` when
     /// there is one and on a target of its own otherwise.
     fn build(
         instance: &wgpu::Instance,
-        surface: Option<wgpu::Surface<'static>>,
+        surface: Option<(wgpu::Surface<'static>, Option<Presentation>)>,
         allow_per_channel: bool,
     ) -> Result<Self, Unavailable> {
         let adapter = wait(instance.request_adapter(&wgpu::RequestAdapterOptions {
-            compatible_surface: surface.as_ref(),
+            compatible_surface: surface.as_ref().map(|(surface, _)| surface),
             ..Default::default()
         }))
         .map_err(|error| Unavailable(format!("no adapter: {error}")))?;
         let info = adapter.get_info();
         let window = surface
-            .map(|surface| Window::new(surface, &adapter))
+            .map(|(surface, asked)| Window::new(surface, &adapter, asked))
             .transpose()
             .map_err(|reason| Unavailable(format!("{reason} ({})", info.name)))?;
         let format = window
@@ -496,6 +505,13 @@ impl Device {
         self.window
             .as_ref()
             .is_some_and(|window| window.state.hidden())
+    }
+
+    /// What the window's surface offered and was configured with
+    /// (`surface::State::presentation`); `None` for a device that draws on
+    /// a target of its own, and before the surface is first configured.
+    pub fn presentation(&self) -> Option<Offered> {
+        self.window.as_ref()?.state.presentation()
     }
 
     /// Whether the device blends by a coverage for each channel, so that

@@ -21,6 +21,7 @@ fn a_kind_of_mask_says_itself_for_a_person() {
 
 #[test]
 fn the_default_settings_leave_antialiasing_to_the_display_and_hint() {
+    // And ask for no presentation: the decision's.
     assert_eq!(
         Settings::default(),
         Settings {
@@ -28,6 +29,7 @@ fn the_default_settings_leave_antialiasing_to_the_display_and_hint() {
             hinting: true,
             atlas_budget: DEFAULT_ATLAS_BUDGET,
             weight: Weight::LINEAR,
+            presentation: None,
         }
     );
     assert_eq!(Antialiasing::default(), Antialiasing::Auto);

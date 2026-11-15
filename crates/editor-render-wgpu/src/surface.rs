@@ -53,7 +53,10 @@
 //! [`present::choose`](crate::present::choose) decides, from the modes a
 //! surface offers. [`mode_of`] and [`wgpu_mode`] are that module's names
 //! for wgpu's modes and back. wgpu's own default is not taken: on a
-//! surface that offers a mode that tears, it is that mode.
+//! surface that offers a mode that tears, it is that mode. A run that asks
+//! for another mode and latency is given them as that function says, and
+//! [`State::presentation`] answers what the surface offered, what was
+//! asked and what it was configured with, once it has been configured.
 //!
 //! # What a surface answers when asked for a texture
 //!
@@ -91,7 +94,7 @@ use editor_platform::NativeWindow;
 use wgpu::rwh::{RawDisplayHandle, RawWindowHandle};
 
 use crate::Image;
-use crate::present::{self, Mode};
+use crate::present::{self, Mode, Offered, Presentation};
 
 /// The handles wgpu takes for `window`: its window's, and its display's.
 ///
@@ -267,6 +270,12 @@ pub(crate) struct State {
     /// Whether the surface, when it was last asked for a texture, gave
     /// none because its window is occluded.
     hidden: bool,
+    /// The modes it offered that this crate has a name for, in its order.
+    modes: Vec<Mode>,
+    /// What the run asked for, if it asked.
+    asked: Option<Presentation>,
+    /// Whether it has been configured once.
+    configured_once: bool,
 }
 
 /// The order a surface's texture holds the bytes of a pixel in.
@@ -305,8 +314,12 @@ pub(crate) fn order_of(format: wgpu::TextureFormat) -> Result<Order, String> {
 
 impl State {
     /// What is known of a surface that offers `offered`, before anything
-    /// is drawn on it. The error says why nothing can be.
-    pub(crate) fn new(offered: &wgpu::SurfaceCapabilities) -> Result<Self, String> {
+    /// is drawn on it, for a run that asked for the presentation `asked`
+    /// ([`present::choose`]). The error says why nothing can be.
+    pub(crate) fn new(
+        offered: &wgpu::SurfaceCapabilities,
+        asked: Option<Presentation>,
+    ) -> Result<Self, String> {
         let formats = choose_format(&offered.formats)
             .ok_or("the window's surface offers no format on this adapter")?;
         if offered.present_modes.is_empty() {
@@ -320,7 +333,7 @@ impl State {
             .collect();
         // A surface does not say what frame latencies it takes: wgpu holds
         // the one asked for to what the back end allows.
-        let presentation = present::choose(&modes, 0..=u32::MAX);
+        let presentation = present::choose(&modes, 0..=u32::MAX, asked);
         Ok(Self {
             config: wgpu::SurfaceConfiguration {
                 usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
@@ -340,6 +353,23 @@ impl State {
             copies: offered.usages.contains(wgpu::TextureUsages::COPY_SRC),
             keep: false,
             hidden: false,
+            modes,
+            asked,
+            configured_once: false,
+        })
+    }
+
+    /// What the surface offered, what the run asked for and what the
+    /// surface was configured with; `None` until it is first configured.
+    pub(crate) fn presentation(&self) -> Option<Offered> {
+        let mode = mode_of(self.config.present_mode)?;
+        self.configured_once.then(|| Offered {
+            modes: self.modes.clone(),
+            asked: self.asked,
+            configured: Presentation {
+                mode,
+                frame_latency: self.config.desired_maximum_frame_latency,
+            },
         })
     }
 
@@ -403,6 +433,7 @@ impl State {
             self.config.height = height;
             calls.configure(&self.config);
             self.configured = true;
+            self.configured_once = true;
         }
         let mut asked_again = false;
         loop {
@@ -442,7 +473,7 @@ mod tests {
         order_of, wgpu_mode,
     };
     use crate::Image;
-    use crate::present::{self, Mode};
+    use crate::present::{self, Mode, Offered, Presentation};
 
     /// A pointer to something of the test's own, never read through: a
     /// handle is only carried.
@@ -485,7 +516,7 @@ mod tests {
 
     /// What is known of a surface that offers `formats`, and `Fifo`.
     fn state_of(formats: &[wgpu::TextureFormat]) -> State {
-        State::new(&offer(formats, &[wgpu::PresentMode::Fifo], true))
+        State::new(&offer(formats, &[wgpu::PresentMode::Fifo], true), None)
             .expect("an offer with a format and a present mode")
     }
 
@@ -563,7 +594,7 @@ mod tests {
 
     #[test]
     fn the_first_draw_configures_the_surface_at_its_size_with_what_was_chosen_from_the_offer() {
-        let mut state = State::new(&llvmpipe()).expect("an offer with a format and a mode");
+        let mut state = State::new(&llvmpipe(), None).expect("an offer with a format and a mode");
         let mut surface = Scripted::answering(&[Answer::Success]);
         assert_eq!(state.acquire(&mut surface, 800, 600), Ok(1));
         assert_eq!(surface.calls, [Call::Configured(800, 600), Call::Asked]);
@@ -585,6 +616,56 @@ mod tests {
         );
         // The pipeline is made for the format the surface has.
         assert_eq!(state.target(), Bgra8UnormSrgb);
+    }
+
+    #[test]
+    fn a_mode_and_a_latency_asked_for_are_what_the_surface_is_configured_with_when_offered() {
+        let asked = Presentation {
+            mode: Mode::Immediate,
+            frame_latency: 2,
+        };
+        let mut state = State::new(&llvmpipe(), Some(asked)).expect("an offer with a format");
+        // Nothing is said of a surface not yet configured.
+        assert_eq!(state.presentation(), None);
+        let mut surface = Scripted::answering(&[Answer::Success]);
+        assert_eq!(state.acquire(&mut surface, 800, 600), Ok(1));
+        let [config] = surface.configs.as_slice() else {
+            panic!("configured once: {:?}", surface.calls);
+        };
+        assert_eq!(config.present_mode, wgpu::PresentMode::Immediate);
+        assert_eq!(config.desired_maximum_frame_latency, 2);
+        // What it offered, in its order, what was asked, and what it was
+        // configured with.
+        assert_eq!(
+            state.presentation(),
+            Some(Offered {
+                modes: vec![
+                    Mode::Immediate,
+                    Mode::Mailbox,
+                    Mode::Fifo,
+                    Mode::FifoRelaxed
+                ],
+                asked: Some(asked),
+                configured: asked,
+            })
+        );
+    }
+
+    #[test]
+    fn a_mode_asked_for_that_the_surface_does_not_offer_is_not_what_it_is_configured_with() {
+        let asked = Presentation {
+            mode: Mode::Mailbox,
+            frame_latency: 1,
+        };
+        let offered = offer(&[Bgra8UnormSrgb], &[wgpu::PresentMode::Fifo], false);
+        let mut state = State::new(&offered, Some(asked)).expect("an offer with a format");
+        let mut surface = Scripted::answering(&[Answer::Success]);
+        assert_eq!(state.acquire(&mut surface, 40, 30), Ok(1));
+        assert_eq!(surface.configs[0].present_mode, wgpu::PresentMode::Fifo);
+        let presentation = state.presentation().expect("configured");
+        assert_eq!(presentation.asked, Some(asked));
+        assert_eq!(presentation.configured.mode, Mode::Fifo);
+        assert_eq!(presentation.modes, vec![Mode::Fifo]);
     }
 
     #[test]
@@ -618,17 +699,17 @@ mod tests {
     fn a_surface_that_offers_no_format_or_no_present_mode_is_refused_and_says_which() {
         let fifo = [wgpu::PresentMode::Fifo];
         assert_eq!(
-            State::new(&offer(&[], &fifo, true)),
+            State::new(&offer(&[], &fifo, true), None),
             Err("the window's surface offers no format on this adapter".to_owned())
         );
         assert_eq!(
-            State::new(&offer(&[Bgra8UnormSrgb], &[], true)),
+            State::new(&offer(&[Bgra8UnormSrgb], &[], true), None),
             Err("the window's surface offers no present mode on this adapter".to_owned())
         );
         // What wgpu gives for a surface its adapter cannot present to:
         // nothing of either.
         assert_eq!(
-            State::new(&wgpu::SurfaceCapabilities::default()),
+            State::new(&wgpu::SurfaceCapabilities::default(), None),
             Err("the window's surface offers no format on this adapter".to_owned())
         );
     }
@@ -793,13 +874,13 @@ mod tests {
 
     #[test]
     fn no_picture_is_taken_of_a_surface_until_one_is_asked_for() {
-        let state = State::new(&llvmpipe()).expect("an offer with a format and a mode");
+        let state = State::new(&llvmpipe(), None).expect("an offer with a format and a mode");
         assert_eq!(state.picture(), None);
     }
 
     #[test]
     fn keeping_the_picture_configures_the_surface_again_so_that_its_texture_is_copied_from() {
-        let mut state = State::new(&llvmpipe()).expect("an offer with a format and a mode");
+        let mut state = State::new(&llvmpipe(), None).expect("an offer with a format and a mode");
         let mut surface = Scripted::answering(&[Answer::Success; 3]);
         assert_eq!(state.acquire(&mut surface, 800, 600), Ok(1));
         state.keep_picture();
@@ -831,7 +912,7 @@ mod tests {
     #[test]
     fn a_surface_whose_texture_cannot_be_copied_from_is_left_as_it_is_and_its_picture_says_so() {
         let offered = offer(&[Bgra8UnormSrgb], &[wgpu::PresentMode::Fifo], false);
-        let mut state = State::new(&offered).expect("an offer with a format and a mode");
+        let mut state = State::new(&offered, None).expect("an offer with a format and a mode");
         let mut surface = Scripted::answering(&[Answer::Success; 2]);
         assert_eq!(state.acquire(&mut surface, 800, 600), Ok(1));
         state.keep_picture();
@@ -851,10 +932,12 @@ mod tests {
 
     #[test]
     fn keeping_the_picture_says_whether_the_surface_lets_its_texture_be_copied_from() {
-        let mut copied_from = State::new(&llvmpipe()).expect("an offer with a format and a mode");
+        let mut copied_from =
+            State::new(&llvmpipe(), None).expect("an offer with a format and a mode");
         assert!(copied_from.keep_picture());
         let offered = offer(&[Bgra8UnormSrgb], &[wgpu::PresentMode::Fifo], false);
-        let mut not_copied_from = State::new(&offered).expect("an offer with a format and a mode");
+        let mut not_copied_from =
+            State::new(&offered, None).expect("an offer with a format and a mode");
         assert!(!not_copied_from.keep_picture());
         // Asked again, the same.
         assert!(copied_from.keep_picture());
@@ -1059,7 +1142,7 @@ mod tests {
         .filter_map(mode_of)
         .collect();
         assert_eq!(offered.len(), 4);
-        let chosen = present::choose(&offered, 0..=u32::MAX);
+        let chosen = present::choose(&offered, 0..=u32::MAX, None);
         assert_eq!(wgpu_mode(chosen.mode), wgpu::PresentMode::Fifo);
     }
 

@@ -53,6 +53,7 @@ use editor_platform::NativeWindow;
 use editor_render::port::{DrawRequest, Drawn, Renderer};
 
 use crate::painter::Painter;
+use crate::present::{Offered, Presentation};
 use crate::raster::SwashRasterizer;
 
 /// A picture: what a renderer drew, read back.
@@ -244,7 +245,7 @@ impl WgpuRenderer {
                 reason: format!("no surface on the window: {error}"),
             })?;
         Self::with(
-            gpu::Device::on_surface(instance, surface, allow_per_channel),
+            gpu::Device::on_surface(instance, surface, settings.presentation, allow_per_channel),
             settings,
         )
     }
@@ -278,6 +279,14 @@ impl WgpuRenderer {
             device,
             refused: None,
         })
+    }
+
+    /// What the window's surface offered, what the run asked for
+    /// ([`Settings::presentation`]) and what the surface was configured
+    /// with; `None` for a renderer with no window, and before its first
+    /// draw configures the surface.
+    pub fn presentation(&self) -> Option<Offered> {
+        self.device.presentation()
     }
 
     /// The adapter's name and back end, for a person.
@@ -405,6 +414,10 @@ pub struct Settings {
     pub atlas_budget: u64,
     /// How heavy text is drawn.
     pub weight: Weight,
+    /// The present mode and frame latency a run asks for in place of the
+    /// decision's, to measure another ([`present::choose`]); `None`, the
+    /// default, is the decision. Only a renderer on a window presents.
+    pub presentation: Option<Presentation>,
 }
 
 impl Default for Settings {
@@ -414,6 +427,7 @@ impl Default for Settings {
             hinting: true,
             atlas_budget: DEFAULT_ATLAS_BUDGET,
             weight: Weight::LINEAR,
+            presentation: None,
         }
     }
 }

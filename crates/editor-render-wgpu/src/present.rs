@@ -18,10 +18,16 @@
 //! latencies it takes, so the device asks for [`FRAME_LATENCY`] and wgpu
 //! holds it to what the back end allows.
 //!
-//! Nothing has been measured. The display pipeline's phase 6 takes the
-//! measurements that say whether the choice bears out
-//! (`docs/dev-practices/on-demand-checks.md`, "The present mode, measured
-//! on a window").
+//! To measure the choice against another, one run may ask for another
+//! mode and latency ([`Settings::presentation`](crate::Settings::presentation)):
+//! it is given the mode it asks for when the surface offers it, and its
+//! latency held to the range offered. It is not a setting of the editor:
+//! the decision stands until the measurements say otherwise, and then it
+//! changes here and in the record in one commit. A renderer on a window
+//! says what its surface offered and what it was configured with
+//! ([`Offered`]). The measurements are taken by the steps of
+//! `docs/dev-practices/on-demand-checks.md`, "The present mode, measured
+//! on a window".
 //!
 //! The types are this crate's own: no type of wgpu is public here. The
 //! module `surface` maps them to wgpu's and back.
@@ -59,19 +65,48 @@ pub struct Presentation {
     pub frame_latency: u32,
 }
 
+/// What a surface offered, what a run asked for, and what the surface was
+/// configured with ([`WgpuRenderer::presentation`](crate::WgpuRenderer::presentation)).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Offered {
+    /// The modes the surface offered, in its order: those this crate has a
+    /// name for.
+    pub modes: Vec<Mode>,
+    /// What the run asked for, if it asked.
+    pub asked: Option<Presentation>,
+    /// What the surface was configured with. A mode asked for that is not
+    /// this one was not offered.
+    pub configured: Presentation,
+}
+
 /// How to present, on a surface that offers the modes `offered` and a
-/// frame latency within `latency`: the first of [`PREFERRED`] that is
-/// offered, and `Fifo` when the offer names none of them, since every
-/// back end has it; and [`FRAME_LATENCY`], held to the range offered.
-pub fn choose(offered: &[Mode], latency: RangeInclusive<u32>) -> Presentation {
-    let mode = PREFERRED
+/// frame latency within `latency`.
+///
+/// With nothing `asked`, it is the decision: the first of [`PREFERRED`]
+/// that is offered, and `Fifo` when the offer names none of them, since
+/// every back end has it; and [`FRAME_LATENCY`], held to the range
+/// offered. A run that asks for a presentation, to measure another
+/// (`docs/dev-practices/on-demand-checks.md`), is given its mode when the
+/// surface offers it, and the decision's otherwise, and its latency held
+/// to the range offered.
+pub fn choose(
+    offered: &[Mode],
+    latency: RangeInclusive<u32>,
+    asked: Option<Presentation>,
+) -> Presentation {
+    let preferred = PREFERRED
         .into_iter()
         .find(|mode| offered.contains(mode))
         .unwrap_or(Mode::Fifo);
+    let mode = asked
+        .map(|asked| asked.mode)
+        .filter(|mode| offered.contains(mode))
+        .unwrap_or(preferred);
+    let wanted = asked.map_or(FRAME_LATENCY, |asked| asked.frame_latency);
     let (least, most) = (*latency.start(), *latency.end());
     Presentation {
         mode,
-        frame_latency: FRAME_LATENCY.max(least).min(most.max(least)),
+        frame_latency: wanted.max(least).min(most.max(least)),
     }
 }
 
@@ -102,17 +137,17 @@ mod tests {
             &[Mode::Immediate, Mode::Fifo],
         ];
         for offered in offers {
-            assert_eq!(choose(offered, 1..=3).mode, Mode::Fifo, "{offered:?}");
+            assert_eq!(choose(offered, 1..=3, None).mode, Mode::Fifo, "{offered:?}");
         }
         // An offer that does not name it, or names nothing: every back
         // end has it all the same.
-        assert_eq!(choose(&[Mode::Mailbox], 1..=3).mode, Mode::Fifo);
-        assert_eq!(choose(&[], 1..=3).mode, Mode::Fifo);
+        assert_eq!(choose(&[Mode::Mailbox], 1..=3, None).mode, Mode::Fifo);
+        assert_eq!(choose(&[], 1..=3, None).mode, Mode::Fifo);
     }
 
     #[test]
     fn the_frame_latency_is_one_clamped_into_the_range_offered() {
-        let latency = |range| choose(&[Mode::Fifo], range).frame_latency;
+        let latency = |range| choose(&[Mode::Fifo], range, None).frame_latency;
         assert_eq!(FRAME_LATENCY, 1);
         assert_eq!(latency(1..=3), 1);
         assert_eq!(latency(1..=1), 1);
@@ -124,9 +159,41 @@ mod tests {
     }
 
     #[test]
+    fn a_mode_asked_for_is_chosen_when_the_surface_offers_it() {
+        let immediate = Some(Presentation {
+            mode: Mode::Immediate,
+            frame_latency: 1,
+        });
+        assert_eq!(
+            choose(&[Mode::Fifo, Mode::Immediate], 1..=3, immediate),
+            Presentation {
+                mode: Mode::Immediate,
+                frame_latency: 1,
+            }
+        );
+        // Not offered: the decision's, as if no mode were asked.
+        assert_eq!(choose(&[Mode::Fifo], 1..=3, immediate).mode, Mode::Fifo);
+        assert_eq!(choose(&[Mode::Mailbox], 1..=3, immediate).mode, Mode::Fifo);
+    }
+
+    #[test]
+    fn a_frame_latency_asked_for_is_held_to_the_range_offered() {
+        let latency = |frame_latency, range| {
+            let asked = Presentation {
+                mode: Mode::Fifo,
+                frame_latency,
+            };
+            choose(&[Mode::Fifo], range, Some(asked)).frame_latency
+        };
+        assert_eq!(latency(2, 1..=3), 2);
+        assert_eq!(latency(5, 1..=3), 3);
+        assert_eq!(latency(0, 1..=3), 1);
+    }
+
+    #[test]
     fn the_choice_is_fifo_at_a_latency_of_one() {
         assert_eq!(
-            choose(&[Mode::Fifo, Mode::Immediate], 1..=3),
+            choose(&[Mode::Fifo, Mode::Immediate], 1..=3, None),
             Presentation {
                 mode: Mode::Fifo,
                 frame_latency: 1,
