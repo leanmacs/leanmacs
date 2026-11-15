@@ -35,6 +35,18 @@ editor-process = { path = "../editor-process" }
 # - `std::process` alone: `Child::wait` reaps before anything can be done
 #   with the group, and it has no group kill.
 rustix = { version = "=1.1.6", default-features = false, features = ["std", "process"] }
+# Two calls for writing to a child's standard input without `SIGPIPE`
+# ending the editor, which runs inside Lean's executable, where std's
+# start-up never sets `SIGPIPE` to be ignored: `fcntl(F_SETNOSIGPIPE)` on
+# the pipe's write end on macOS, and on Linux `pthread_sigmask` with
+# `sigtimedwait`, to block the signal in the writing thread around the
+# write and take a pending one. rustix 1.1.6 has neither: `SO_NOSIGPIPE`
+# for sockets only, and a signal mask only under its unstable `runtime`
+# feature. Pinned exactly: 0.2.191 was already in `Cargo.lock`, as a
+# dependency of rustix and others, on 2026-11-15. No port type names it,
+# and `deny.toml` has no entry for it, as the rustix entry above says.
+# `tests/sigpipe.rs` uses it too, to set `SIGPIPE` to its default.
+libc = "=0.2.191"
 
 [dev-dependencies]
 # The temporary directory the contract is checked in: one the test makes

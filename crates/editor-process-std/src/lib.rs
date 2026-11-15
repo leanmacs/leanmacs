@@ -12,8 +12,9 @@
 //! # How a group is ended without signalling a reused id
 //!
 //! - **The spawn** puts the child in a new group whose id is its pid
-//!   (`CommandExt::process_group(0)`), with standard input closed and both
-//!   output streams piped. The std `Child` is dropped once its pipes are
+//!   (`CommandExt::process_group(0)`), with both output streams piped and
+//!   standard input closed (`/dev/null`), or piped when the command asks
+//!   for it ([`Input::Pipe`]). The std `Child` is dropped once its pipes are
 //!   taken: dropping it neither waits nor kills, and this crate reaps the
 //!   pid itself.
 //! - **[`Child::wait`]** waits for the child's exit with
@@ -29,6 +30,30 @@
 //! A descendant that leaves the group is not reached: the port's crate docs
 //! have that limit.
 //!
+//! # Input and SIGPIPE
+//!
+//! A write to a pipe whose read end is closed raises `SIGPIPE`, which ends
+//! a process that has not set it aside. Rust's start-up ignores it, but
+//! the editor's library runs inside Lean's executable, where that start-up
+//! never runs. So a write to a child's input must never raise it:
+//!
+//! - **On macOS** the pipe's write end gets `fcntl(F_SETNOSIGPIPE, 1)` at
+//!   the spawn: a write to it then fails with `EPIPE` alone. A spawn whose
+//!   `fcntl` fails is refused, and its child killed and reaped.
+//! - **On Linux**, which has no such flag for a pipe, [`StdInput`]'s write
+//!   blocks `SIGPIPE` in the calling thread around the `write(2)`
+//!   (`pthread_sigmask`), takes the `SIGPIPE` the write made pending with a
+//!   `sigtimedwait` of no timeout, unless one was pending before, and
+//!   restores the thread's mask: the caller's mask is never left changed.
+//!
+//! `EPIPE` is then [`RefusalKind::InputClosed`], ``cannot write to the
+//! standard input of `<program>`: <the error>``; any other failure is
+//! [`RefusalKind::Failed`]; `EINTR` is retried. A child is unaffected:
+//! std's spawn resets `SIGPIPE` to its default in the child.
+//! `tests/sigpipe.rs`, a test binary of its own, pins this with `SIGPIPE`
+//! at its default. Seen to bite once by hand, on 2026-11-15, on macOS:
+//! with the `fcntl` not yet made, the test binary dies by signal 13.
+//!
 //! # The system's errors
 //!
 //! A spawn's `io::Error` of kind `NotFound` is [`RefusalKind::NotFound`] (a
@@ -37,12 +62,14 @@
 //! is [`RefusalKind::Failed`]. The detail is
 //! ``cannot start `<program>` in <directory>: <the error>``.
 
-use std::io::{ErrorKind, Read};
+use std::io::{ErrorKind, Read, Write};
 use std::os::unix::process::CommandExt;
-use std::process::{ChildStderr, ChildStdout, Stdio};
+use std::process::{ChildStderr, ChildStdin, ChildStdout, Stdio};
 use std::sync::{Mutex, MutexGuard, PoisonError};
 
-use editor_process::{Child, Command, Exit, Output, Processes, Refusal, RefusalKind, Stream};
+use editor_process::{
+    Child, ChildInput, Command, Exit, Input, Output, Processes, Refusal, RefusalKind, Stream,
+};
 use rustix::io::Errno;
 use rustix::process::{
     Pid, Signal, WaitId, WaitIdOptions, WaitOptions, kill_process_group, waitid, waitpid,
@@ -98,8 +125,12 @@ impl Processes for StdProcesses {
         for (name, value) in &environment.set {
             std_command.env(name, value);
         }
+        let stdin = match command.input {
+            Input::Closed => Stdio::null(),
+            Input::Pipe => Stdio::piped(),
+        };
         std_command
-            .stdin(Stdio::null())
+            .stdin(stdin)
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .process_group(0);
@@ -109,6 +140,22 @@ impl Processes for StdProcesses {
         let pid = child.id();
         let stdout = child.stdout.take();
         let stderr = child.stderr.take();
+        let stdin = child.stdin.take();
+        #[cfg(target_os = "macos")]
+        if let Some(stdin) = &stdin
+            && let Err(error) = no_sigpipe(stdin)
+        {
+            // Not reaped by this crate yet: std's own kill and wait end it.
+            child.kill().ok();
+            child.wait().ok();
+            return Err(Refusal::new(
+                RefusalKind::Failed,
+                format!(
+                    "cannot keep a write to the standard input of `{}` from raising SIGPIPE: {error}",
+                    command.program
+                ),
+            ));
+        }
         // Dropping the std child neither waits nor kills: the pid is reaped
         // here, by `wait`.
         drop(child);
@@ -123,6 +170,8 @@ impl Processes for StdProcesses {
             exit: Mutex::new(None),
             stdout,
             stderr,
+            stdin,
+            program: command.program.clone(),
         })
     }
 }
@@ -139,6 +188,10 @@ pub struct StdChild {
     stdout: Option<ChildStdout>,
     /// Its standard error, until taken.
     stderr: Option<ChildStderr>,
+    /// Its standard input, until taken: none when its command's is closed.
+    stdin: Option<ChildStdin>,
+    /// Its program, which a refusal to write to its input names.
+    program: String,
 }
 
 impl StdChild {
@@ -172,7 +225,11 @@ impl Child for StdChild {
     }
 
     fn take_input(&mut self) -> Option<StdInput> {
-        None
+        let stdin = self.stdin.take()?;
+        Some(StdInput {
+            stdin,
+            program: self.program.clone(),
+        })
     }
 
     fn wait(&self) -> Exit {
@@ -250,13 +307,97 @@ impl Output for StdOutput {
     }
 }
 
-/// A child's standard input. None is made yet: every child's input is
-/// closed.
+/// A child's standard input. Dropping it closes the pipe's write end.
 #[derive(Debug)]
-pub enum StdInput {}
+pub struct StdInput {
+    /// The pipe's write end.
+    stdin: ChildStdin,
+    /// The child's program, which a refusal names.
+    program: String,
+}
 
-impl editor_process::ChildInput for StdInput {
-    fn write(&mut self, _: &[u8]) -> Result<usize, Refusal> {
-        match *self {}
+impl ChildInput for StdInput {
+    fn write(&mut self, bytes: &[u8]) -> Result<usize, Refusal> {
+        loop {
+            #[cfg(target_os = "linux")]
+            let written = without_sigpipe(|| self.stdin.write(bytes));
+            #[cfg(not(target_os = "linux"))]
+            let written = self.stdin.write(bytes);
+            match written {
+                Err(error) if error.kind() == ErrorKind::Interrupted => {}
+                Ok(count) => return Ok(count),
+                Err(error) => {
+                    let kind = if error.kind() == ErrorKind::BrokenPipe {
+                        RefusalKind::InputClosed
+                    } else {
+                        RefusalKind::Failed
+                    };
+                    return Err(Refusal::new(
+                        kind,
+                        format!(
+                            "cannot write to the standard input of `{}`: {error}",
+                            self.program
+                        ),
+                    ));
+                }
+            }
+        }
+    }
+}
+
+/// Sets `F_SETNOSIGPIPE` on the write end of a child's standard input, so
+/// that a write to it once the child has closed its end fails with `EPIPE`
+/// and raises no `SIGPIPE`.
+#[cfg(target_os = "macos")]
+fn no_sigpipe(stdin: &ChildStdin) -> std::io::Result<()> {
+    use std::os::fd::AsRawFd;
+    // SAFETY: `fcntl` with `F_SETNOSIGPIPE` and an int argument on a file
+    // descriptor this child's `ChildStdin` owns and keeps open for the call.
+    let result = unsafe { libc::fcntl(stdin.as_raw_fd(), libc::F_SETNOSIGPIPE, 1) };
+    if result == -1 {
+        Err(std::io::Error::last_os_error())
+    } else {
+        Ok(())
+    }
+}
+
+/// Runs `write` with `SIGPIPE` blocked in this thread, takes the
+/// `SIGPIPE` a write to a closed pipe made pending, unless one was pending
+/// already, and restores the thread's mask: the caller's mask is never
+/// left changed, and no `SIGPIPE` of ours is left to be delivered.
+#[cfg(target_os = "linux")]
+fn without_sigpipe(write: impl FnOnce() -> std::io::Result<usize>) -> std::io::Result<usize> {
+    use std::mem::MaybeUninit;
+    // SAFETY: each `sigset_t` is initialised by `sigemptyset` or by the call
+    // that fills it before it is read; the calls are given valid pointers
+    // to them, and `sigtimedwait` a zero timeout, so it never blocks.
+    unsafe {
+        let mut pipe = MaybeUninit::<libc::sigset_t>::uninit();
+        libc::sigemptyset(pipe.as_mut_ptr());
+        libc::sigaddset(pipe.as_mut_ptr(), libc::SIGPIPE);
+        let pipe = pipe.assume_init();
+        let mut pending = MaybeUninit::<libc::sigset_t>::uninit();
+        libc::sigemptyset(pending.as_mut_ptr());
+        libc::sigpending(pending.as_mut_ptr());
+        let was_pending = libc::sigismember(pending.as_ptr(), libc::SIGPIPE) == 1;
+        let mut old = MaybeUninit::<libc::sigset_t>::uninit();
+        libc::sigemptyset(old.as_mut_ptr());
+        libc::pthread_sigmask(libc::SIG_BLOCK, &raw const pipe, old.as_mut_ptr());
+        let written = write();
+        if written
+            .as_ref()
+            .is_err_and(|error| error.kind() == ErrorKind::BrokenPipe)
+            && !was_pending
+        {
+            let zero = libc::timespec {
+                tv_sec: 0,
+                tv_nsec: 0,
+            };
+            while libc::sigtimedwait(&raw const pipe, std::ptr::null_mut(), &raw const zero) == -1
+                && std::io::Error::last_os_error().kind() == ErrorKind::Interrupted
+            {}
+        }
+        libc::pthread_sigmask(libc::SIG_SETMASK, old.as_ptr(), std::ptr::null_mut());
+        written
     }
 }

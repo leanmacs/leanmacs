@@ -527,6 +527,7 @@ name = "editor-process-std"
 version = "0.1.0"
 dependencies = [
  "editor-process",
+ "libc",
  "rustix 1.1.6",
  "tempfile",
 ]
