@@ -918,7 +918,7 @@ def processRoot : System.FilePath :=
 /-- The model of the processes a process property's commands are scripted
 as. -/
 def processModelOf (property : JobContract.ProcessProperty) : ProcessModel :=
-  { scripts := property.scripts processRoot }
+  { scripts := property.scripts processRoot, streams := property.streams processRoot }
 
 /-- Runs a process property's job against the job port's model, over the
 model of its processes: how the job ended. -/
@@ -1049,7 +1049,96 @@ def processChecks : List Check :=
               (reporting fun _ => do
                 let .error (.failed _) ← Process.run sleeper 10 | return false
                 return true)
-        spawned.endedAs (.finished #["true"]) }]
+        spawned.endedAs (.finished #["true"]) },
+    { name :=
+        "one read delivers every line a child wrote before it waits on its input, on the model and on the fake, where the read is one start and one take: one completion"
+      run := do
+        let script : Process.StreamScript :=
+          { command := sleeper, steps := #[.write .out (JobContract.counted 1000), .awaitClosed] }
+        let expected := (List.range 1000).toArray.map fun n => s!"{n}".toUTF8
+        let job : JobM Bool := do
+          let child ← JobContract.started sleeper (JobContract.lines 1000000 true)
+          let delivery ← JobContract.delivered child
+          return JobContract.linesOf #[delivery] .out == expected && delivery.ended.isNone
+        let (onModel, _) := job.runModel { processes := { streams := #[script] } }
+        let (rig, processes) ← Rig.withProcesses { streams := #[script] }
+        let onFake ← runOnFake job (some rig)
+        let reads :=
+          (← processes.started).filterMap fun (id, request) =>
+            match request with
+            | .read _ => some id
+            | _ => none
+        return onModel == .finished true && onFake == .finished true && reads.size == 1 &&
+            ((← processes.taken).filter reads.contains).size == 1 },
+    { name :=
+        "the process model holds a child at the bound in the middle of its write, with exactly the bound undelivered, and a read lets it go on"
+      run := do
+        let script : Process.StreamScript :=
+          { command := sleeper, steps := #[.write .out (ByteArray.mk (Array.replicate 25 120))] }
+        let model : ProcessModel := { streams := #[script] }
+        let streaming : Process.Streaming := { stdout := .bytes, stderr := .bytes, bound := 10 }
+        let heldAt (model : ProcessModel) :=
+          model.children[0]?.map fun child => (child.stdout.size, child.writing.map (·.2.2))
+        let (_, started, _) := model.handle 0 none (.start sleeper streaming)
+        let (_, afterRead, _) := started.handle 0 none (.read ⟨1⟩)
+        let (_, afterSecond, _) := afterRead.handle 0 none (.read ⟨1⟩)
+        return heldAt started == some (10, some 10) && heldAt afterRead == some (10, some 20) &&
+            heldAt afterSecond == some (5, none) },
+    -- Seen to bite once by hand, on 2026-11-15: with `Handle.endChildren`
+    -- taken out of `Handle.conclude`, this check and the next fail.
+    { name :=
+        "a job that ends with a streaming child running, finished, failed or cancelled, cancels the child: the fake withdraws its id, and the model, the fake's and the job model's, records it killed"
+      run := do
+        let script : Process.StreamScript := { command := sleeper, steps := #[.awaitClosed] }
+        let starts : JobM Unit := discard <| JobContract.started sleeper (JobContract.lines 64 true)
+        let jobs : List (JobM Bool × Bool) :=
+          [((do starts; return true), false), ((do starts; throw "it fails"), false),
+            ((do starts; sleep 1000; return true), true)]
+        let results ←
+          jobs.mapM fun (job, cancel) => do
+            let (rig, processes) ← Rig.withProcesses { streams := #[script] }
+            let spawned ← rig.spawn (reporting fun _ => job)
+            if cancel then
+              unless ← eventually (return (← rig.clock.waiting) == 1) do
+                return false
+              spawned.handle.cancel
+            unless ← eventually spawned.handle.ended do
+              return false
+            let child := ((← processes.started)[0]?.map (·.1)).getD 0
+            let model ← processes.model
+            return (← processes.withdrawn) == #[child] && model.killed == #[sleeper] &&
+                model.children.isEmpty
+        let (_, model) := (do starts; return true : JobM Bool).runModel
+            { processes := { streams := #[script] } }
+        return results.all id && model.processes.killed == #[sleeper] &&
+            model.processes.children.isEmpty },
+    { name := "cancelling a job in a pending read withdraws the read's wait and then its child"
+      run := do
+        let script : Process.StreamScript := { command := sleeper, steps := #[.awaitClosed] }
+        let (rig, processes) ← Rig.withProcesses { streams := #[script] }
+        let spawned ←
+          rig.spawn
+              (reporting fun _ => do
+                let child ← JobContract.started sleeper (JobContract.lines 64 true)
+                sleep 10
+                discard <| Process.read child
+                return true)
+        unless ← eventually (return (← rig.clock.waiting) == 1) do
+          return false
+        processes.holdCompletions
+        rig.clock.advance 10
+        try
+          unless ← eventually (return (← processes.waiting) == 1) do
+            return false
+          let started ← processes.started
+          let child := (started[0]?.map (·.1)).getD 0
+          let read := (started[1]?.map (·.1)).getD 0
+          spawned.handle.cancel
+          let cancelled ← spawned.endedAs .cancelled
+          return cancelled && (← processes.withdrawn) == #[read, child] &&
+              (← processes.model).killed == #[sleeper]
+        finally
+          processes.letGo }]
 
 /-- What a job's model holds, as what a run of the job's command is handed:
 each snapshot the job's loads made that was not released, under the job's

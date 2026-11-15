@@ -75,6 +75,14 @@ cancellation is built here.
   library's service, which kills the child's process group and reaps the
   child. `Jobs.removeOwner` and `Jobs.cancelAll` cancel through
   `Handle.cancel`, so they reach it the same way.
+- **A streaming child does not outlive its job.** The child a start names
+  is the job's (`Handle.children`), and `Handle.conclude` ends every one the
+  job still holds, through `Processes.cancel`, for every outcome, finished
+  included: a job's command has no request that could use one. A job
+  cancelled in a read or a write has that wait withdrawn first, then its
+  children ended. A child is named by the id of its start's wait, so a job
+  cancelled while its start is in flight has the start withdrawn, and the
+  library kills the child as it registers it.
 
 ## The ports its waits are made of
 
@@ -119,6 +127,11 @@ thread.
   are plain numbers.
 - **`Handle.settle` releases everything a job holds**, through
   `Files.release`, and leaves it holding nothing. It is safe to call again.
+- **A streaming child is named for the job that started it**, the same
+  way (`Handle.children`): a read, a write or a close of a child the job
+  does not hold is answered `noSuchProcess` at once, with nothing started.
+  A read whose delivery is the last forgets the child, as the library's
+  service does.
 - **Who settles.** The runner, on the job's own thread, when the job ends
   failed or cancelled, after its last request. For a job that finished,
   whoever runs its command, after the command, so that the command can
@@ -240,8 +253,8 @@ structure Processes where
 
 /-- The reply of a process service that is not there: every request is
 refused as failed. -/
-def Processes.absentReply : (request : ProcessRequest) → request.Reply
-  | .run .. => .error (.failed "this runner has no process service")
+def Processes.absentReply (request : ProcessRequest) : request.Reply :=
+  request.refused (.failed "this runner has no process service")
 
 /-- No process service: every request completes at once, refused as failed,
 through the table `completions`. It is what a runner has when it was given
@@ -284,6 +297,9 @@ structure Handle where
   /-- The snapshots the job holds: the ones its loads made, oldest first.
   Every change to it is one atomic step. -/
   held : IO.Ref (Array JobSnapshotId)
+  /-- The streaming children the job started and still holds, oldest first.
+  Every change to it is one atomic step. -/
+  children : IO.Ref (Array Process.Id)
 
 namespace Handle
 
@@ -333,7 +349,18 @@ def outcome? (handle : Handle) : BaseIO (Option (Outcome (EditorM Unit))) := do
   else
     return none
 
+/-- Ends every streaming child the job still holds, through the process
+service's cancel, which kills the child's group, and leaves it holding none.
+Safe to call again. -/
+def endChildren (handle : Handle) : BaseIO Unit := do
+  let children ← handle.children.modifyGet fun children => (children, #[])
+  for child in children do
+    handle.services.processes.cancel child.number.toUInt64
+
 /-- Leaves `outcome` in the handle, then calls `finished`: the job has ended.
+
+Every streaming child the job still holds is ended first, however the job
+ended: a job's command has no request that could use one.
 
 A job that failed or was cancelled has no command to take what it holds, so
 what it holds is released here first, on the job's own thread, after its
@@ -341,6 +368,7 @@ last request. A job that finished keeps what it holds for its command:
 whoever runs that command settles the job after it. -/
 def conclude (handle : Handle) (finished : BaseIO Unit) (outcome : Outcome (EditorM Unit)) :
     BaseIO Unit := do
+  handle.endChildren
   match outcome with
   | .finished _ =>
     pure ()
@@ -388,10 +416,43 @@ def answer (handle : Handle) : (request : JobRequest) → BaseIO (Answer request
     let (id, wait) ← handle.services.completions.register
     handle.services.files.start id (.save source path expect)
     return .later id wait (handle.services.files.take id (.save source path expect))
-  | .process request => do
+  | .process (.start command streaming) => do
     let (id, wait) ← handle.services.completions.register
-    handle.services.processes.start id request
-    return .later id wait (handle.services.processes.take id request)
+    handle.services.processes.start id (.start command streaming)
+    return .later id wait do
+        let reply ← handle.services.processes.take id (.start command streaming)
+        -- The child is the job's from here: the runner ends it with the job.
+        if let .ok child := reply then
+          handle.children.modify (·.push child)
+        return reply
+  | .process (.read child) => do
+    -- A child is named for the job that started it, and for no other.
+    unless (← handle.children.get).contains child do
+      return .now (.error .noSuchProcess)
+    let (id, wait) ← handle.services.completions.register
+    handle.services.processes.start id (.read child)
+    return .later id wait do
+        let reply ← handle.services.processes.take id (.read child)
+        -- After its last delivery the service forgets the child.
+        if let .ok { ended := some _, .. } := reply then
+          handle.children.modify (·.filter (· != child))
+        return reply
+  | .process (.write child bytes) => do
+    unless (← handle.children.get).contains child do
+      return .now (.error .noSuchProcess)
+    let (id, wait) ← handle.services.completions.register
+    handle.services.processes.start id (.write child bytes)
+    return .later id wait (handle.services.processes.take id (.write child bytes))
+  | .process (.closeInput child) => do
+    unless (← handle.children.get).contains child do
+      return .now (.error .noSuchProcess)
+    let (id, wait) ← handle.services.completions.register
+    handle.services.processes.start id (.closeInput child)
+    return .later id wait (handle.services.processes.take id (.closeInput child))
+  | .process (.run command limit) => do
+    let (id, wait) ← handle.services.completions.register
+    handle.services.processes.start id (.run command limit)
+    return .later id wait (handle.services.processes.take id (.run command limit))
 
 /-- Runs `program` to its end, a request at a time. A request that is
 answered at once is a direct call, and the loop goes on on the same thread.
@@ -457,7 +518,8 @@ the calling thread, its leading pure work included. `finished` is called once
 the job has ended and its outcome is in the handle. -/
 def spawn (services : Services) (work : Work) (finished : BaseIO Unit) : BaseIO Handle := do
   let handle : Handle :=
-    { services, flags := ← IO.mkRef {}, outcome := ← IO.Promise.new, held := ← IO.mkRef #[] }
+    { services, flags := ← IO.mkRef {}, outcome := ← IO.Promise.new, held := ← IO.mkRef #[]
+      children := ← IO.mkRef #[] }
   discard <| BaseIO.asTask (start handle finished work)
   return handle
 

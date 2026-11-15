@@ -423,7 +423,11 @@ requests run on the runner with no library and no process.
   records it as started then. So a request withdrawn before it was taken
   never ran, and `take` of it is refused as failed.
 - `cancel` withdraws a request that was started and not taken, as the
-  library's service kills a run's child, and is safe for any id.
+  library's service kills a run's child, and is safe for any id. Of the id
+  of a streaming child, it ends the child in the model, as the library's
+  service kills one, and records the id as withdrawn.
+- A streaming child is named by the id of its start's wait, as the
+  library's is: `take` of a start has the model give it that id.
 
 It records what was started, withdrawn and taken. -/
 structure FakeProcesses where
@@ -477,16 +481,18 @@ def take (processes : FakeProcesses) (id : UInt64) (request : ProcessRequest) :
     BaseIO request.Reply :=
   processes.state.modifyGet fun state =>
     if state.pending.any (·.1 == id) then
-      let (reply, model, _) := state.model.handle 0 none request
+      -- A child is named by the wait of its start, as the library's is.
+      let model := if let .start .. := request then { state.model with next := id.toNat } else state.model
+      let (reply, model, _) := model.handle 0 none request
       (reply,
         { state with
           model, pending := state.pending.filter (·.1 != id), taken := state.taken.push id })
-    else
-      match request with
-      | .run .. => (.error (.failed "the request is not pending"), state)
+    else (request.refused (.failed "the request is not pending"), state)
 
 /-- Withdraws the wait `id`, if its request is pending: it is never
-completed here and never runs. -/
+completed here and never runs. Or, if `id` names a streaming child of the
+model's, ends it as the library kills one: the model records it as killed
+and forgets it. -/
 def cancel (processes : FakeProcesses) (id : UInt64) : BaseIO Unit :=
   processes.state.modify fun state =>
     if state.pending.any (·.1 == id) then
@@ -494,7 +500,10 @@ def cancel (processes : FakeProcesses) (id : UInt64) : BaseIO Unit :=
         pending := state.pending.filter (·.1 != id)
         parked := state.parked.filter (· != id)
         withdrawn := state.withdrawn.push id }
-    else state
+    else
+      if state.model.children.any (·.id == id.toNat) then
+        { state with model := state.model.kill id.toNat, withdrawn := state.withdrawn.push id }
+      else state
 
 /-- The service as the port the runner is given. -/
 def processes (processes : FakeProcesses) : Processes :=

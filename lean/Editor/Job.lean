@@ -43,10 +43,15 @@ command has run, or when it fails or is cancelled.
 A job reaches processes through one request, `process`, which carries a
 `ProcessRequest` (`Editor/Process.lean`): `Process.run` runs a command to
 its end and replies with how it ended and both its output streams, or a
-refusal: an `Except ProcessError`, a value, which the job matches on. A
-cancelled job's child is killed, with its process group, by the library:
-the runner withdraws the wait, and withdrawing a process wait cancels the
-run (`Editor/Job/Runner.lean`, "Cancellation").
+refusal: an `Except ProcessError`, a value, which the job matches on.
+`Process.start` starts a streaming child, which the job then reads
+(`Process.read`, a delivery of lines or bytes at a time), writes to
+(`Process.write`, `Process.writeLine`) and closes the input of
+(`Process.closeInput`). A cancelled job's child is killed, with its process
+group, by the library: the runner withdraws the wait, and withdrawing a
+process wait cancels the run (`Editor/Job/Runner.lean`, "Cancellation"). A
+streaming child does not outlive its job: the runner cancels it when the job
+ends, however it ends.
 
 No request carries a promise or a handle: a request is plain data. How a wait
 is completed is the runner's business (`Editor/Job/Runner.lean`), not
@@ -195,6 +200,31 @@ cancelled job's child is killed, with its process group.
 def Process.run (command : Process.Command) (limit : Nat) :
     JobM (Except ProcessError Process.Ran) :=
   ExceptT.lift (Program.request (port := jobPort) (.process (.run command limit)))
+
+/-- Starts `command` as a streaming child, as `streaming` says, and waits for
+it to start: the child, named for this job, or why it was refused. The child
+does not outlive the job. `Editor/Process.lean` has the rules. -/
+def Process.start (command : Process.Command) (streaming : Process.Streaming) :
+    JobM (Except ProcessError Process.Id) :=
+  ExceptT.lift (Program.request (port := jobPort) (.process (.start command streaming)))
+
+/-- Waits for the next delivery of `process`'s output: every frame read and
+not yet taken, and in the last one how the child ended. -/
+def Process.read (process : Process.Id) : JobM (Except ProcessError Process.Delivery) :=
+  ExceptT.lift (Program.request (port := jobPort) (.process (.read process)))
+
+/-- Writes `bytes` to `process`'s standard input, and waits until they are in
+its pipe. -/
+def Process.write (process : Process.Id) (bytes : ByteArray) : JobM (Except ProcessError Unit) :=
+  ExceptT.lift (Program.request (port := jobPort) (.process (.write process bytes)))
+
+/-- Writes `line` and a line feed to `process`'s standard input. -/
+def Process.writeLine (process : Process.Id) (line : String) : JobM (Except ProcessError Unit) :=
+  Process.write process (line.toUTF8.push 10)
+
+/-- Closes `process`'s standard input: the child reads its end. -/
+def Process.closeInput (process : Process.Id) : JobM (Except ProcessError Unit) :=
+  ExceptT.lift (Program.request (port := jobPort) (.process (.closeInput process)))
 
 namespace Job
 
@@ -437,6 +467,46 @@ example : True := by
         (do
           (⟨0⟩ : TextId).insert 0 "x"
           discard <| Process.run { program := "/bin/sh", directory := "/" } 1)
+  trivial
+
+/-! A streaming child's requests are a job's, and none is a command: a command
+cannot start a child, read it or write to it. Seen to bite once by hand:
+offered at `JobM (Except ProcessError Process.Id)` inside the first
+`fail_if_success` check, the module stops building. -/
+
+example : True :=
+  (fun (_ : JobM (Except ProcessError Process.Id)) => True.intro)
+    (Process.start { program := "/bin/sh", directory := "/" } { bound := 1 })
+
+example : True := by
+  fail_if_success
+    exact
+      (fun (_ : TextM (Except ProcessError Process.Id)) => True.intro)
+        (Process.start { program := "/bin/sh", directory := "/" } { bound := 1 })
+  trivial
+
+example : True := by
+  fail_if_success
+    exact
+      (fun (_ : EditorM (Except ProcessError Process.Id)) => True.intro)
+        (Process.start { program := "/bin/sh", directory := "/" } { bound := 1 })
+  trivial
+
+example : True := by
+  fail_if_success
+    exact
+      (fun (_ : EditorM (Except ProcessError Process.Delivery)) => True.intro)
+        (Process.read ⟨1⟩)
+  trivial
+
+example : True := by
+  fail_if_success
+    exact (fun (_ : EditorM (Except ProcessError Unit)) => True.intro) (Process.writeLine ⟨1⟩ "x")
+  trivial
+
+example : True := by
+  fail_if_success
+    exact (fun (_ : TextM (Except ProcessError Unit)) => True.intro) (Process.closeInput ⟨1⟩)
   trivial
 
 /-! A wait is not a command: alone, and after a text request in a `do` block.

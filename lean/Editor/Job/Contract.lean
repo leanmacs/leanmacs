@@ -430,7 +430,10 @@ structure ProcessProperty where
   its bytes. -/
   files : Array (String × ByteArray) := #[]
   /-- What each command the property runs in the directory does. -/
-  scripts : System.FilePath → Array Process.Script
+  scripts : System.FilePath → Array Process.Script := fun _ => #[]
+  /-- What each command the property starts as a streaming child in the
+  directory does. -/
+  streams : System.FilePath → Array Process.StreamScript := fun _ => #[]
   /-- Observes the property, given the directory, an absolute path; `true`
   when it holds. A job that fails or is cancelled has not held. -/
   holds : System.FilePath → JobM Bool
@@ -493,6 +496,172 @@ def bareSh (directory : System.FilePath) (path : String) : Process.Command :=
 /-- A program that is not there. -/
 def missingProgram : String :=
   "/nonexistent/editor-process-contract"
+
+/-- Lines framing on both streams, with `bound`, and the input piped if
+`input`. -/
+def lines (bound : Nat) (input : Bool := false) : Process.Streaming :=
+  { input, bound }
+
+/-- Starts `command` as a streaming child; a refusal fails the job, saying
+which. -/
+def started (command : Process.Command) (streaming : Process.Streaming) : JobM Process.Id := do
+  match ← Process.start command streaming with
+  | .ok process =>
+    return process
+  | .error error =>
+    throw s!"the start of {command.program} was refused: {error.describe}"
+
+/-- The next delivery of `process`; a refusal fails the job. -/
+def delivered (process : Process.Id) : JobM Process.Delivery := do
+  match ← Process.read process with
+  | .ok delivery =>
+    return delivery
+  | .error error =>
+    throw s!"a read was refused: {error.describe}"
+
+/-- Every delivery of `process` to its last; a refusal fails the job, and
+so does a child that has not ended in `reads` reads. -/
+def toTheEnd (process : Process.Id) (reads : Nat := 1000000) : JobM (Array Process.Delivery) := do
+  let mut all := #[]
+  for _ in [0:reads] do
+    let delivery ← delivered process
+    all := all.push delivery
+    if delivery.ended.isSome then
+      return all
+  throw s!"the child did not end within {reads} reads"
+
+/-- The frames of `stream` in `delivery`. -/
+def framesOf (delivery : Process.Delivery) : Process.Stream → Process.Frames
+  | .out => delivery.stdout
+  | .err => delivery.stderr
+
+/-- Every line of `stream` in `deliveries`, in order. -/
+def linesOf (deliveries : Array Process.Delivery) (stream : Process.Stream) : Array ByteArray :=
+  deliveries.foldl (init := #[]) fun all delivery =>
+    match framesOf delivery stream with
+    | .lines lines => all ++ lines
+    | .bytes _ => all
+
+/-- How many bytes `frames` stand for, a line feed counted for each line. -/
+def frameBytes : Process.Frames → Nat
+  | .lines lines => lines.foldl (fun total line => total + line.size + 1) 0
+  | .bytes bytes => bytes.size
+
+/-- The bytes of `stream` in `deliveries`, end to end, a line feed after each
+line. -/
+def bytesOf (deliveries : Array Process.Delivery) (stream : Process.Stream) : ByteArray :=
+  deliveries.foldl (init := .empty) fun all delivery =>
+    match framesOf delivery stream with
+    | .bytes bytes => all ++ bytes
+    | .lines lines => lines.foldl (fun all line => (all ++ line).push 10) all
+
+/-- `text` as lines, for comparing with what a delivery holds. -/
+def linesFrom (text : List String) : Array ByteArray :=
+  text.toArray.map String.toUTF8
+
+/-- How the last of `deliveries` says the child ended. -/
+def endOf (deliveries : Array Process.Delivery) : Option Process.End :=
+  deliveries.back?.bind (·.ended)
+
+/-- The script that writes the numbers from 0 below `count`, a line each. -/
+def countingScript (count : Nat) : String :=
+  s!"i=0; while [ $i -lt {count} ]; do echo $i; i=$((i+1)); done"
+
+/-- What `countingScript count` writes. -/
+def counted (count : Nat) : ByteArray :=
+  (List.range count).foldl (fun all n => all ++ s!"{n}\n".toUTF8) .empty
+
+/-- The script of the streaming child whose lines arrive as it writes them:
+`one`, then the line it reads echoed, then `err` on its standard error, then
+it waits for its input to end and exits with the status 4. -/
+def linesScript : String :=
+  "echo one; read x; echo \"$x\"; echo err >&2; read y; exit 4"
+
+/-- What `linesScript` does, as the model's script. -/
+def linesStream (root : System.FilePath) : Process.StreamScript :=
+  { command := sh root linesScript
+    steps := #[.write .out "one\n".toUTF8, .echoLine .out, .write .err "err\n".toUTF8, .awaitClosed]
+    exit := .code 4 }
+
+/-- What a script that writes `bytes` and exits does, as the model's script. -/
+def writes (command : Process.Command) (bytes : ByteArray) : Process.StreamScript :=
+  { command, steps := #[.write .out bytes] }
+
+/-- The line `printf '%5000s' x` writes: 4999 spaces and `x`, with no line
+feed. -/
+def longLine : ByteArray :=
+  (String.ofList (List.replicate 4999 ' ')).toUTF8 ++ "x".toUTF8
+
+/-- The properties every implementation of the job port's streaming process
+requests has. -/
+def streamProperties : List ProcessProperty :=
+  [{  name := "a job that asked for lines receives each line as the child writes it"
+      streams := fun root => #[linesStream root]
+      holds := fun root => do
+        let child ← started (sh root linesScript) (lines roomyOutput true)
+        -- The child waits for its input here: `one` reaches the job first.
+        let first ← delivered child
+        return first.stdout == .lines (linesFrom ["one"]) && first.stderr == .lines #[] &&
+            first.ended.isNone },
+    { name :=
+        "a line a job writes reaches the child's standard input, a close ends its input, and a write after the close is refused as input closed"
+      streams := fun root => #[linesStream root]
+      holds := fun root => do
+        let child ← started (sh root linesScript) (lines roomyOutput true)
+        let first ← delivered child
+        let .ok () ← Process.writeLine child "two" | return false
+        let mut echoed := #[]
+        for _ in [0:10] do
+          echoed := echoed.push (← delivered child)
+          if linesOf echoed .out == linesFrom ["two"] && linesOf echoed .err == linesFrom ["err"] then
+            break
+        let .ok () ← Process.closeInput child | return false
+        let late ← Process.write child "late".toUTF8
+        let rest ← toTheEnd child
+        return first.stdout == .lines (linesFrom ["one"]) &&
+            linesOf echoed .out == linesFrom ["two"] &&
+            linesOf echoed .err == linesFrom ["err"] &&
+            (match late with
+            | .error (.inputClosed _) => true
+            | _ => false) &&
+            endOf rest == some (.exited (.code 4)) },
+    { name :=
+        "output from a child faster than the job drains it arrives complete and in order, no delivery over the bound"
+      streams := fun root => #[writes (sh root (countingScript 5000)) (counted 5000)]
+      holds := fun root => do
+        let child ← started (sh root (countingScript 5000)) (lines 64)
+        let all ← toTheEnd child
+        return bytesOf all .out == counted 5000 && all.all (frameBytes ·.stdout ≤ 64) &&
+            endOf all == some (.exited (.code 0)) },
+    { name := "a child at the bound is held and continues, with nothing of its output lost"
+      streams := fun root => #[writes (sh root (countingScript 20000)) (counted 20000)]
+      holds := fun root => do
+        let child ← started (sh root (countingScript 20000)) (lines 128)
+        let all ← toTheEnd child
+        return bytesOf all .out == counted 20000 && endOf all == some (.exited (.code 0)) },
+    { name := "bytes are delivered byte for byte, a byte that is not UTF-8 among them"
+      streams := fun root => #[writes (sh root "printf 'a\\377b'") ("a".toUTF8.push 0xFF |>.push 98)]
+      holds := fun root => do
+        let child ←
+          started (sh root "printf 'a\\377b'") { stdout := .bytes, stderr := .bytes, bound := 64 }
+        let all ← toTheEnd child
+        return bytesOf all .out == ("a".toUTF8.push 0xFF |>.push 98) &&
+            endOf all == some (.exited (.code 0)) },
+    { name := "a line longer than the bound ends the child as lineTooLong"
+      streams := fun root => #[writes (sh root "printf '%5000s' x") longLine]
+      holds := fun root => do
+        let child ← started (sh root "printf '%5000s' x") (lines 1024)
+        return endOf (← toTheEnd child) == some (.lineTooLong .out 1024) },
+    { name := "a process the job does not hold is noSuchProcess, answered without a request"
+      holds := fun _ => do
+        match ← Process.read ⟨999999⟩ with
+        | .error .noSuchProcess => return true
+        | _ => return false },
+    { name := "a job that ends with its child running leaves no child"
+      streams := fun root => #[{ command := sh root "/bin/sleep 600", steps := #[.awaitClosed] }]
+      holds := fun root => do
+        discard <| started (sh root "/bin/sleep 600") (lines 64 true)
+        return true }]
 
 /-- The properties every implementation of the job port's process requests
 has. -/
@@ -572,7 +741,8 @@ def processProperties : List ProcessProperty :=
         | .error (.outputTooLarge .out 4) =>
           return true
         | _ =>
-          return false }]
+          return false }] ++
+    streamProperties
 
 /-- Runs each of `properties` with `run`, which makes the property's files in a
 directory of its own and runs its job there, and returns the names of those
