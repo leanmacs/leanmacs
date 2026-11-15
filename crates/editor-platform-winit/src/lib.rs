@@ -53,7 +53,8 @@
 //! The gate (`mise run ci`) opens no window, so what it covers here is the
 //! translation from winit's values to [`Input`] and [`Canvas`], what the
 //! window asks of its input method (`ime_request`), that a close is asked
-//! before the loop is woken, and the refusal off the main thread. The event
+//! before the loop is woken, whether a loop that wakes ends
+//! (`Closing::ends_on_wake`), and the refusal off the main thread. The event
 //! loop itself needs a display, and so do the lines here that only a real
 //! window runs. They are few, and each is a reading of the window or a
 //! call with no decision in it:
@@ -72,7 +73,8 @@
 //!   and what is told of the answer, are the translation's, and tested;
 //! - handing what an event comes to on: each `Canvas` to the drawer, then
 //!   the `Input` to the report;
-//! - ending the loop when it is woken with a close asked;
+//! - ending the loop when it is woken and `Closing` says a wake-up ends it.
+//!   Whether it does is `Closing`'s, and tested;
 //! - telling the drawer the window is closing once the loop has ended.
 //!
 //! They are held to the port's contract by `examples/contract.rs`, which
@@ -234,6 +236,13 @@ impl Closing {
     fn asked(&self) -> bool {
         self.0.load(Ordering::SeqCst)
     }
+
+    /// Whether a loop woken now ends. winit may wake the loop when nobody
+    /// did, and merges wake-ups, so a wake-up ends it only once a close has
+    /// been asked.
+    fn ends_on_wake(&self) -> bool {
+        self.asked()
+    }
 }
 
 /// The window and its loop's handler: what [`WinitPlatform::run`] hands to
@@ -292,9 +301,7 @@ impl ApplicationHandler for App {
     }
 
     fn proxy_wake_up(&mut self, event_loop: &dyn ActiveEventLoop) {
-        // winit may wake the loop when nobody did, and merges wake-ups: the
-        // loop ends only once a close has been asked.
-        if self.closing.asked() {
+        if self.closing.ends_on_wake() {
             event_loop.exit();
         }
     }
@@ -465,12 +472,15 @@ mod tests {
 
     #[test]
     fn a_loop_woken_with_no_close_asked_goes_on() {
-        // winit may wake a loop nobody woke: the loop ends only when a
-        // close has been asked.
+        // winit may wake a loop nobody woke.
+        assert!(!Closing::default().ends_on_wake());
+    }
+
+    #[test]
+    fn a_loop_woken_with_a_close_asked_through_any_clone_ends() {
         let closing = Closing::default();
-        assert!(!closing.asked());
         closing.clone().ask();
-        assert!(closing.asked(), "a close asked through any clone is seen");
+        assert!(closing.ends_on_wake());
     }
 
     #[test]
