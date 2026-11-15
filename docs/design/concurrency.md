@@ -293,7 +293,16 @@ time, in order, on the editor thread.
     phase 8; before it the driver's run and a job's command were run bare.
   - **Only the command is checked.** The loop's own requests (keeping what
     it rolls back to, rolling back, publishing) are not, so a flag that is
-    up never stops a rollback or a scene.
+    up never stops a rollback or a scene. **The follow is one of them**
+    (the command loop's phase 15): before each scene the loop asks the
+    display which rows each view shows and places a scroll anchor where
+    the cursor is not among them (`lean/Editor/Loop.lean`, "Following the
+    cursor"). It is part of the publish, so it is not guarded, and a view
+    follows its cursor after a command that was interrupted too, from the
+    cursor the rollback put back. A scroll command is a command: it is
+    guarded, and one that is interrupted leaves its view's scroll anchor
+    and its selection as they were, since the loop keeps and restores
+    both markers.
   - **Consequences.** A command for a key queued ahead of the interrupt key
     finds the flag up at its first check and makes no request. An
     interrupt key that arrives while nothing runs interrupts nothing: the

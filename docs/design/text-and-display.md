@@ -1202,6 +1202,52 @@ echo area, the preedit, and the prompt that is open, if one is.
   nothing has to clear it. One state request sets it; showing another
   buffer in the window clears it, and a window a split makes has none
   ([keymaps-and-modes.md](keymaps-and-modes.md), "The wanted column").
+- **A view follows its cursor** (built by the command loop's phase 15;
+  `lean/Editor/Scroll.lean`, `lean/Editor/Loop.lean`, "Following the
+  cursor"). Before each scene, a view whose cursor's row is not among the
+  rows it shows has its scroll anchor moved so that it is. The cursor is
+  the head of the primary range of the window's selection, and its row is
+  the first row the display answers from it.
+  - **The policy is the least movement.** A view whose cursor's row is
+    shown keeps its anchor. Otherwise the anchor moves just far enough: a
+    cursor above the rows shown becomes the first row shown, and one below
+    them the last. So a motion of one row off an edge scrolls one row, and
+    a jump leaves the cursor at the edge it came in by. Set aside: centring
+    after a far jump, which Vim does, and scrolling by more than a row at
+    an edge (Vim's `scrolljump`).
+  - **The scroll margin** is how many rows are kept between the cursor's
+    row and the first and the last row shown. Vim's `scrolloff` is the
+    model. It is one number of the editor state
+    (`EditorState.scrollMargin`), 0 by default, set by a command
+    (`setScrollMargin`). The margin in force is at most half the rows the
+    view fits, so a margin of 99 centres the cursor's row, and it gives
+    way at the text's start and end. Config cannot set it when it loads:
+    `setup` registers and runs no command, and there are no settings yet.
+  - **Whether the cursor is shown is decided by comparing rows the display
+    answered**, never offsets: a position at a wrap is the start of the
+    later row, and only a line's last row holds the position at its end.
+  - **A view of no height is not asked about**, and a view less than a row
+    tall keeps its anchor. The headless host's frame is 0 by 0 until a
+    script resizes it, so there nothing follows until then.
+  - **The rows are asked with the view's whole height**
+    (`Scroll.Area.ofRect`). On the display model and in the headless host
+    that is exact. Over real layout a view's status row takes its height
+    from the bottom of the view, so the rows query answers one row more
+    than the frame shows, and a cursor on the last row answered would be
+    behind the status row. Lean cannot learn that row's height ("Open
+    questions", "The height of a view's text area"). Nothing here has run
+    over real layout: the model's cells are one size.
+  - **How many rows a view fits** is asked as the rows it shows from the
+    text's start, which are the text's rows when the text is shorter than
+    the view. It is right where rows are one height.
+- **A view is scrolled by commands** (the command loop's phase 15): by half
+  a view, by a view, and so that the cursor's row is at the top, in the
+  middle or at the bottom ([keymaps-and-modes.md](keymaps-and-modes.md),
+  "Scrolling as built"). A command reads and places its window's anchor
+  (`Target.anchor`, `Target.scrollTo`) and asks the display about its view
+  with a snapshot it takes and releases (`Target.onArea`). Placing an
+  anchor is no edit, and a command that scrolls and fails is rolled back:
+  the loop keeps and restores each window's scroll marker.
 - **The first window's selection has the shape the input scheme reports**
   of the first view before any key: inclusive under the Vim scheme, whose
   first state is normal state.
@@ -1351,6 +1397,13 @@ published and answers the two queries with the model's rule over the
 library's snapshot. The contract holds it too, over real snapshots. An
 editor with a window asks the real binding every time.
 
+**Who asks the two questions** (the command loop's phase 15). Until then
+nothing did. Now the loop asks them before each scene, to have each view
+follow its cursor, and evil's scroll commands ask them when they run
+("Views as built", above). Both ask through `lean/Editor/Scroll.lean`,
+which keeps nothing of an answer between two questions. No request and no
+property was added to the display interface for it.
+
 **Publishing**, as the command loop does it (`lean/Editor/Loop.lean`,
 decided 2026-11-13 by its phase 2):
 
@@ -1369,6 +1422,26 @@ decided 2026-11-13 by its phase 2):
 - A view whose buffer's text is at the revision it was last shown at keeps
   the same snapshot; otherwise a new one is taken, and views of one buffer
   share it.
+- **Then each view follows its cursor** (built by the command loop's phase
+  15; `Loop.followed`), after the views are made and before the scene is
+  published. After the views, because a question of layout names a
+  snapshot, and making the views is what takes one of a text that changed:
+  the follow asks with each view's own snapshot and rectangle, and takes
+  and releases nothing. Before the publish, so the anchor is in place when
+  a display resolves the scene's markers. The scene names the anchor's
+  marker and not its offset, so the scene's value does not change.
+  - It runs after every event, so a resize, a committed text and a job's
+    command are followed as a key's command is, and a command that failed
+    is followed from the cursor its rollback put back.
+  - Every view is followed, not the focused one alone: an edit through one
+    window moves the cursor of another window on the same buffer.
+  - It is the loop's own program and is not guarded: the interrupt flag
+    never stops a scene.
+  - **Its refusals are dropped.** A view whose marker was given up, or
+    whose snapshot was released, is not followed, and nothing is said: the
+    echo area keeps what the command that lost the marker was told.
+  - A view that keeps its anchor costs two text requests and two display
+    requests a scene; a view of no height costs none.
 - Once the scene is published, each snapshot the previous scene named that
   this one does not is released. So a scene's handles are alive while it is
   the last one published, and a real binding resolves them when it is

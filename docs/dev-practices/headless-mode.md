@@ -122,7 +122,7 @@ candidate the typed text matches, best first, in the face
 
 And it ships evil, compiled in (`lean/Editor/Evil.lean` and the modules
 beside it): the commands the Vim scheme's keys run, so the editor moves,
-edits, undoes and repeats with no config.
+edits, undoes, repeats and scrolls with no config.
 
 | Command | Keys | Does |
 |---|---|---|
@@ -137,6 +137,21 @@ edits, undoes and repeats with no config.
 | `open-below`, `open-above` | `o`, `O` | Opens an empty line below or above the cursor's line and begins an insert on it. |
 | `undo`, `redo` | `u`, `C-r` | Undoes or redoes one step of the buffer's history, or a count of them, and puts the cursor where it was before the change, or where the change left it. |
 | `repeat` | `.` | Makes the last change again at the cursor, with the text typed in it. A count before `.` replaces the change's count. It runs the command that is registered under the change's name when `.` is pressed, so config's command of that name is what it replays. Run by its name, which hands it no change, it gives up. |
+| `scroll-down`, `scroll-up` | `C-d`, `C-u`, in normal state and the visual states | Scrolls the view and moves the cursor by half the rows the view fits, or by a count of rows. The cursor keeps its column. At the text's end the last row stays the last row shown and the cursor goes on to the last line. |
+| `scroll-page-down`, `scroll-page-up` | `C-f`, `C-b` | The same, by the rows the view fits, or a count of that many. |
+| `scroll-line-to-top`, `scroll-line-to-center`, `scroll-line-to-bottom` | `z t`, `z z`, `z b` | Scrolls the view so that the cursor's row is the first row shown, the middle one or the last. The cursor does not move. |
+
+**Scrolling needs a frame with a height.** The headless frame is made 0 by
+0, and a view of no height shows no row: there no view follows its cursor,
+every scene prints `scroll 0`, and the seven scroll commands do nothing and
+say nothing. A script gives the frame a size with `resize` (below). The
+display is then a recorder that lays text out in cells 8 pixels across and
+16 down, so `resize 640 480` is a view of 80 columns and 30 rows. From
+then on, before each scene, a view whose cursor is not among the rows it
+shows has its scroll anchor moved just far enough to show it, and the
+`scroll` of its `view` line is the anchor's byte offset. A command sets
+how many rows are kept round the cursor with `setScrollMargin`
+(`lean/Editor/Api.lean`); no command that ships sets it, and it is 0.
 
 **Registers.** A yank and a deletion set the unnamed register. `"` and
 then `+` before an operator, `x`, `p` or `P` names the clipboard: the
@@ -255,6 +270,7 @@ are skipped.
 | `show` | Prints the commands, the texts and the stores. |
 | `key <logical> <physical> <modifiers>` | Sends a press of a key, with no text, as the window would report it: through the library's window input, in order with what was asked before. `<logical>` is one character (`a`) or a named key in angle brackets (`<Escape>`, a W3C UI Events `key` name); `<physical>` is a W3C UI Events `code` (`KeyA`) or `-`; `<modifiers>` is `shift`, `control`, `alt` and `super` joined with `+`, or `-`. The editor prints `key arrived:` with the three. The editor loop steps the key through its input scheme, and runs the command a completed sequence is bound to. |
 | `commit <text>` | Sends the rest of the line, trimmed, as an input method's composition would end with it, the same way as `key`. The editor loop inserts it at the focused window's cursors where the view takes typed text: under the Vim scheme, in insert state and in the minibuffer. In normal state it is dropped. A `commit` with no text is refused. |
+| `resize <width> <height>` | Sends a resize of the frame to that many physical pixels across and down, at a scale of 1, the same way as `key`. The next scene's frame has that size and its views are laid out in it. Anything but two numbers is refused. Until a script resizes, the frame is 0 by 0, no view shows a row, and nothing scrolls (above). |
 | `scene` | Prints the last scene the editor loop published: the frame, then each view and the text its snapshot holds, and after each view its status line: the name of the view's Vim state, its buffer's name, and a modified field while the buffer is modified. While a prompt is open the minibuffer's view is printed after the windows', with the prompt text as its status line. |
 
 With the fixture the gate uses (`tests/headless`):
@@ -265,12 +281,12 @@ $ .lake/build/bin/editor headless "$(lean --print-prefix)" .lake/build/lib/lean 
 reload 1: installed, 2 chunks, 1 commands
 run greet: ok
 run missing: no such command
-commands: open-file save-buffer minibuffer-accept minibuffer-cancel minibuffer-next minibuffer-previous move normal visual visual-line insert append insert-line-start append-line-end self-insert ex quit save-and-quit reload-config greet
+commands: open-file save-buffer minibuffer-accept minibuffer-cancel minibuffer-next minibuffer-previous move normal visual visual-line insert append insert-line-start append-line-end self-insert operate delete-char put-after put-before open-below open-above undo redo repeat scroll-down scroll-up scroll-page-down scroll-page-up scroll-line-to-top scroll-line-to-center scroll-line-to-bottom ex quit save-and-quit reload-config greet
 text 0: ""
 text 1: "hello, world"
 spawn count: job 1
 job 1 count: ok
-commands: open-file save-buffer minibuffer-accept minibuffer-cancel minibuffer-next minibuffer-previous move normal visual visual-line insert append insert-line-start append-line-end self-insert ex quit save-and-quit reload-config greet
+commands: open-file save-buffer minibuffer-accept minibuffer-cancel minibuffer-next minibuffer-previous move normal visual visual-line insert append insert-line-start append-line-end self-insert operate delete-char put-after put-before open-below open-above undo redo repeat scroll-down scroll-up scroll-page-down scroll-page-up scroll-line-to-top scroll-line-to-center scroll-line-to-bottom ex quit save-and-quit reload-config greet
 text 0: ""
 text 1: "hello, world"
 text 2: "counted 42"
@@ -279,8 +295,9 @@ text 2: "counted 42"
 Text 0 is the scratch buffer's: the editor loop makes its frame, and that
 buffer, for the first command it runs. `open-file`, `save-buffer`,
 `minibuffer-accept`, `minibuffer-cancel`, `minibuffer-next`,
-`minibuffer-previous`, evil's eighteen, from `move` to
-`repeat`, and the ex line's four, from `ex` to `reload-config`, are
+`minibuffer-previous`, evil's twenty-five, from `move` to
+`scroll-line-to-bottom`, and the ex line's four, from `ex` to
+`reload-config`, are
 the commands the editor ships, compiled in: `show` lists them before
 config's.
 
@@ -610,6 +627,21 @@ otherwise), the state's name in the status line (`normal`, `insert`,
 `visual`), and the echo, which is empty until the save says
 `wrote @DIR@/verse.txt`. And the copy must hold the bytes of
 `tests/headless/session/verse-expected`.
+
+**A view that follows its cursor** is a fourth process check of the same
+form (`tests/headless/view/`): the entry copies `lines.txt`, 120 lines
+`000` to `119`, into its temporary directory and writes the template
+`script` there. The script loads no config. It begins with
+`resize 640 480`, opens the file with the `:` key and `e`, and then, with
+a `scene` line after each step, runs `100j`, `C-u`, `C-f` twice, `z t`,
+`z b`, and `resize 640 160`. The run must exit with status 0, and its
+output, with the temporary directory's path written `@DIR@`, must be
+exactly `tests/headless/view/expected`. Each `view` line prints the scroll
+anchor's byte offset and the cursor's: line n of the file starts at byte
+4n, so `scroll 284, selections 400..400` after `100j` is a view whose
+first row is line 71 and whose cursor is on line 100, the last of its 30
+rows. The script's comments say what each step's numbers are and why
+([the gate](the-gate.md) has them in one table).
 
 **A script waits where a command starts a job.** A script's lines are
 posted to the editor without waiting, and a job's result is queued when

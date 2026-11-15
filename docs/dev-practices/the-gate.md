@@ -277,7 +277,10 @@ kept; what the loop does with a command's state requests, rollback to the
 state from before it and the markers and texts given up after it; and the
 cases of the API (`lean/Editor/Api/Cases.lean`), each a command played as
 the loop plays one, on the editor's models: buffers, edits at positions
-and at selections, undo and redo, and windows. A command that starts a job
+and at selections, undo and redo, windows, and scrolling: a window's
+scroll anchor read and placed, a command's question about its view with
+the snapshot it takes and releases, and the loop's follow of the next
+scene's views. A command that starts a job
 is checked there too, on the loop's driver over the models and the job
 model (`lean/Editor/Loop/Driver.lean`): the job is handed its argument,
 its result comes back as a command, and events fed meanwhile are handled
@@ -430,6 +433,34 @@ checks:
   `textModelStepChecks` hold a premise of the theorem about undo where it
   is not proved: every live text of the model is in step after each
   request of a sample sequence.
+- **Scrolling**, by two lists
+  (`docs/design/keymaps-and-modes.md`, "Scrolling as built").
+  `scrollChecks` run the scroll policy (`lean/Editor/Scroll.lean`) on the
+  display model alone, with a view's scroll anchor and its cursor as
+  offsets: a cursor among the rows shown keeps the anchor; one a row off
+  an edge moves it a row, and one far off leaves the cursor's row at that
+  edge; the last row of a wrapped line; the empty row after a final line
+  feed; a view that shows no row; the scroll margin, swept from every row
+  as the first row shown and every position as the cursor, with a margin
+  of two, with none and with one larger than the view; what the policy
+  costs in requests, on the counting model; and the anchors a scroll by
+  rows and a scroll to the cursor's row place, swept the same way.
+  `viewChecks` press keys on the loop's driver over the editor's models,
+  under the Vim scheme that ships with evil's commands, in frames a few
+  rows tall: a view follows its cursor after `j`, `k`, `g g` and `$` on a
+  wrapped line, after a resize, and after an edit through another window
+  on the same buffer; a motion that leaves the cursor shown leaves the
+  anchor; the margin holds after every motion of the vocabulary; a failed
+  command and a view whose selection marker was given up leave the
+  anchor; `C-d`, `C-u`, `C-f` and `C-b` move the anchor and the cursor by
+  half the rows and by the rows the view fits, with a count, at the
+  text's two ends, in a text that ends in a line feed, in a visual state,
+  and stopped by the interrupt before each of their requests; and `z t`,
+  `z z` and `z b` put the cursor's row first, in the middle and last and
+  change nothing else. **A check asks the display model which rows a view
+  shows and which row holds the cursor**, for the scene's own snapshot
+  and rectangle, so none says where a text wraps. **Nothing here runs
+  over real layout**: the model's cells are one size.
 
 The build checks the theorem that inserting at a
 position and deleting what was inserted leaves the text
@@ -655,6 +686,33 @@ after each step. The editor must exit with status 0; its output, with the
 temporary directory's path written `@DIR@`, must be exactly `expected`,
 which shows the text, the cursor, the selection, the state and the echo
 of every scene; and the copy must hold the bytes of `verse-expected`.
+
+`ffi-test` runs **a view that follows its cursor**, as a process, the same
+way (`tests/headless/view/`). The entry copies `lines.txt`, 120 lines
+`000` to `119`, each ended by a line feed, so that line n starts at byte
+4n, into a temporary directory, and writes the script there from the
+template `script`. The script has no `reload`. It sizes the frame with
+`resize 640 480`, which in the recorder's cells of 8 by 16 is 80 columns
+and 30 rows, opens the file with `:e`, and prints a `scene` after each
+step:
+
+| Step | The view's scroll anchor | Its cursor |
+|---|---|---|
+| The file is open | Byte 0 | Byte 0 |
+| `100j` | Byte 284: line 71, so that line 100 is the last of 30 rows | Byte 400: line 100 |
+| `C-u` | Byte 224: 15 rows up | Byte 340 |
+| `C-f` | Byte 344: 30 rows down | Byte 460 |
+| `C-f`, at the text's end | Byte 364: the empty row after line 119 is the last row shown | Byte 476: line 119, the last line |
+| `z t` | Byte 476 | Byte 476 |
+| `z b` | Byte 360: line 119 is the last of 30 rows | Byte 476 |
+| `resize 640 160`, which leaves 10 rows | Byte 440: line 119 is the last of 10 rows | Byte 476 |
+
+The editor must exit with status 0, its output, with the temporary
+directory's path written `@DIR@`, must be exactly `expected`, and the copy
+must still hold the bytes of `lines.txt`. The display is the recorder: the
+display model's rule over the library's snapshots. The numbers in
+`expected` were worked out by hand before the editor was run, and the run
+agreed with each.
 
 `config-test` also runs jobs through the headless host, on a fake clock it
 moves: a job's handler runs on the editor thread, a reload that installs

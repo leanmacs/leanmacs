@@ -827,6 +827,9 @@ made of state requests and text requests. Config sees it through
 | Read and write the system clipboard, each refused as a value | `Clipboard.read`, `Clipboard.write`, the clipboard port's own, lifted | No: the clipboard handler the host hands in |
 | Ask the editor to quit; refused, as a value, while a buffer that holds a file has unsaved changes | `quit` | For the revision of each buffer that holds a file |
 | Ask for the config to be reloaded | `reloadConfig` | No: the host asks its config session once the command has ended |
+| Read and place its window's scroll anchor | `Target.anchor`, `Target.scrollTo` | Yes: the marker requests. Placing a marker is no edit |
+| Ask the display about its view: which rows it shows, and where a position goes by visual rows | `Target.onArea run`, which hands `run` a snapshot of the buffer's text, taken there and released when `run` has ended, and the view's rectangle; then the display port's two queries, and the scroll policy over them (`lean/Editor/Scroll.lean`) | Yes: a snapshot and its release, and the display's queries |
+| Set the scroll margin, the rows every view keeps round its cursor's row, and read it | `setScrollMargin rows`; `EditorState.scrollMargin` on `editorState` | No |
 
 - **Edits go through `apply`**, as one transaction made by the user
   (`Origin.user`): one revision, one entry of the edit log, and one step
@@ -923,8 +926,29 @@ made of state requests and text requests. Config sees it through
   `lean/Editor/Api/Cases.lean`. The registrations and the ex names that
   ship (`lean/Editor/Ex/Compiled.lean`) name the registry and are not
   imported by `Editor.lean`.
-- **Out of the API still**: commands that ask layout a question (phase
-  15).
+- **A command asks layout a question through its view's area** (built by
+  the command loop's phase 15;
+  [text-and-display.md](text-and-display.md), "Views as built";
+  [keymaps-and-modes.md](keymaps-and-modes.md), "Scrolling as built").
+  - `Target.onArea` reads the view's rectangle from the state
+    (`EditorState.rect?`, the definition the scene's views are laid out
+    by), takes a snapshot of the buffer's text, runs the command's
+    program with both, and releases the snapshot, also when the program
+    was refused. A command that is interrupted, gives up or breaks off
+    inside it leaves the snapshot: the loop ends a command's program at
+    that request, and a snapshot a command took is not undone.
+  - The policy that says where a scroll anchor goes is
+    `lean/Editor/Scroll.lean`: programs over the display port alone,
+    which the API imports. It holds no state, and nothing of an answer of
+    layout is kept between two questions.
+  - `Target.anchor`, `Target.scrollTo` and `Target.onArea` each have a
+    case in `lean/Editor/Api/Cases.lean`, and so has the loop's follow,
+    which asks the display about the scene's own snapshots. No request
+    was added to a port: the display's two queries were there, and the
+    margin is one state request (`setScrollMargin`).
+  - Evil's scroll commands are in `lean/Editor/Evil/Scroll.lean`, which
+    `Editor.lean` imports, so a command of config's calls `Evil.scroll`
+    and `Evil.scrollLineTo`, or the API's operations.
 
 | Piece | Where |
 |---|---|
@@ -942,6 +966,8 @@ made of state requests and text requests. Config sees it through
 | Evil's registers, storing and fetching, and the two puts | `lean/Editor/Evil/Registers.lean` |
 | Evil's undo and redo, which place the selection a step hands back | `lean/Editor/Evil/Undo.lean` |
 | Evil's dot repeat: the repeat command | `lean/Editor/Evil/Repeat.lean` |
+| The scroll policy: how a view follows its cursor, the margin, and the anchors a scroll places | `lean/Editor/Scroll.lean` |
+| Evil's scroll commands: by half a view, by a view, and to the cursor's row | `lean/Editor/Evil/Scroll.lean` |
 | What is proved of evil on the text model, and of the undo tree | `lean/Editor/Evil/Theorems.lean`, `lean/Editor/UndoTree/Theorems.lean` |
 | Evil's commands as compiled code registers them | `lean/Editor/Evil/Compiled.lean` |
 | An ex line as data: its name and argument, and an ex binding | `lean/Editor/Ex/Line.lean` |
@@ -958,11 +984,14 @@ made of state requests and text requests. Config sees it through
 | The input scheme's state: the pending keys and what the scheme keeps for each view (the Vim scheme's states, its last change, and the text typed in the insert session that change began) | Compiled Lean, in the command loop, which runs one scheme for its life | Untouched | Lost |
 | The registers: a text and whether it is line-wise, by name. Evil keeps the unnamed one, which every yank and deletion sets | Compiled Lean, a field of the editor state (`EditorState.registers`, `lean/Editor/State.lean`), set by a command (`setRegister`), so it is rolled back with a command that does not run to its end | Untouched | Lost |
 | The system clipboard | Outside the editor: reached through the clipboard port. A host with no window keeps one of its own in the process (`lean/Editor/Clipboard/InProcess.lean`) | Untouched | The window system's is the system's; the in-process one is lost |
-| Compiled commands, jobs, key bindings, modes and ex bindings | Compiled Lean, in the registry, for the owner `compiled`. The executable ships the ex line's four commands, `ex`, `quit`, `save-and-quit` and `reload-config`, and the ex names `w`, `e`, `q`, `wq` and `reload` (`lean/Editor/Ex/Compiled.lean`), the file commands, `open-file` and `save-buffer`, and their jobs, `load-file` and `save-file` (`lean/Editor/Files/Compiled.lean`), the minibuffer's commands, `minibuffer-accept` and `minibuffer-cancel`, and its mode, `minibuffer` (`lean/Editor/Minibuffer/Compiled.lean`), and evil's eighteen commands, `move`, `normal`, `visual`, `visual-line`, `insert`, `append`, `insert-line-start`, `append-line-end`, `self-insert`, `operate`, `delete-char`, `put-after`, `put-before`, `open-below`, `open-above`, `undo`, `redo` and `repeat`, over its compiled tables of motions, operators and changes (`lean/Editor/Evil/Compiled.lean`) | Untouched: a reload replaces config's, and cancels config's jobs only, so a compiled job that is running goes on | Registered again when the host starts |
+| Compiled commands, jobs, key bindings, modes and ex bindings | Compiled Lean, in the registry, for the owner `compiled`. The executable ships the ex line's four commands, `ex`, `quit`, `save-and-quit` and `reload-config`, and the ex names `w`, `e`, `q`, `wq` and `reload` (`lean/Editor/Ex/Compiled.lean`), the file commands, `open-file` and `save-buffer`, and their jobs, `load-file` and `save-file` (`lean/Editor/Files/Compiled.lean`), the minibuffer's commands, `minibuffer-accept` and `minibuffer-cancel`, and its mode, `minibuffer` (`lean/Editor/Minibuffer/Compiled.lean`), and evil's twenty-five commands, `move`, `normal`, `visual`, `visual-line`, `insert`, `append`, `insert-line-start`, `append-line-end`, `self-insert`, `operate`, `delete-char`, `put-after`, `put-before`, `open-below`, `open-above`, `undo`, `redo` and `repeat`, over its compiled tables of motions, operators and changes, and the seven that scroll a view, `scroll-down`, `scroll-up`, `scroll-page-down`, `scroll-page-up`, `scroll-line-to-top`, `scroll-line-to-center` and `scroll-line-to-bottom` (`lean/Editor/Evil/Compiled.lean`) | Untouched: a reload replaces config's, and cancels config's jobs only, so a compiled job that is running goes on | Registered again when the host starts |
 | An open prompt: its label, the minibuffer's view, the asking view and the continuation, its candidates with what it has listed of them and the choice, all plain data, with the minibuffer's buffer and window | Compiled Lean, a field of the editor state (`EditorState.prompt`, `lean/Editor/State.lean`) and a buffer and a window of it, from the command that asks until the one that accepts or cancels | Untouched: the prompt stays open, and its continuation is a name, looked up in the registry as it is when the answer arrives | Lost |
 | A save in flight: the snapshot a save writes and the state its text was in | Compiled Lean, with the buffer's file in the editor state, from the save command until the save's result is delivered | Untouched | Lost with the buffer |
 | Asked to quit: whether a command asked the editor to quit | Compiled Lean, a field of the editor state (`EditorState.quitting`), from the command that asks until the step that says stop, or until the scene that withdraws it because a buffer has unsaved changes | Untouched: a quit that is waiting for a save still waits | Not kept: the process has ended |
 | A view's wanted column: the column its vertical motions aim for, with the offset the cursor was left at | Compiled Lean, a field of the view's window in the editor state (`Window.wanted`), set by a command (`ViewId.setWanted`) | Untouched | Lost |
+| A view's scroll position | An anchor marker of the buffer's text, in the text store, named by the view's window (`Window.scroll`). The loop places it before each scene so that the view shows its cursor, and a scroll command places it (`Target.scrollTo`). The loop keeps and restores it round a command, so a command that does not run to its end leaves it | Untouched | Lost |
+| The scroll margin: how many rows every view keeps between its cursor's row and the first and the last row it shows | Compiled Lean, a field of the editor state (`EditorState.scrollMargin`, 0 in a new state), set by a command (`setScrollMargin`), so it is rolled back with a command that does not run to its end. Config cannot set it when it loads: `setup` runs no command, and there are no settings yet | Untouched | Lost |
+| Layout: where a text wraps, how tall a row is, which rows a view shows | The display, in the Rust library. Lean keeps no copy: it asks the display's two queries each time, and keeps nothing of an answer | Untouched | Not kept |
 | A buffer's modes: its major mode and its minor modes, by name | Compiled Lean, a field of the buffer in the editor state | Untouched: a name whose mode a reload drops contributes nothing | Lost |
 | A mode's own state | A compiled mode's, a typed field where the editor state's table puts it (the one mode that ships, the minibuffer's, keeps none); a config mode's, a store its `setup` declares, whose commands fill its roles and suffixes, with per-buffer state in the buffer's local values, or inside the store's value | As for compiled state, and as for a store | As for compiled state, and as for a store |
 | Text, kept inverses, anchors | Rust, behind handles | Untouched | Files on disk; the kept inverses are lost |

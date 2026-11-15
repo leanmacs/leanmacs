@@ -42,6 +42,7 @@ registers, undo and dot repeat, on the editor API:
 | Evil's registers: the unnamed one and the clipboard's, storing, fetching, and `p` and `P` | `lean/Editor/Evil/Registers.lean` |
 | Evil's undo and redo | `lean/Editor/Evil/Undo.lean` |
 | Evil's dot repeat: the repeat command | `lean/Editor/Evil/Repeat.lean` |
+| Evil's scroll commands: by half a view, by a view, and to the cursor's row | `lean/Editor/Evil/Scroll.lean`, over the policy in `lean/Editor/Scroll.lean` |
 | What is proved of evil on the text model: `x` then `u` restores the text | `lean/Editor/Evil/Theorems.lean`, with `lean/Editor/UndoTree/Theorems.lean` |
 | The clipboard port, its model, its contract, and the clipboard of a host with no window | `lean/Editor/Clipboard.lean`, `lean/Editor/Clipboard/Model.lean`, `lean/Editor/Clipboard/Contract.lean`, `lean/Editor/Clipboard/InProcess.lean` |
 | Evil's commands as compiled code registers them | `lean/Editor/Evil/Compiled.lean` |
@@ -55,9 +56,10 @@ invocation it yields, as a command looked up by name in the registry. The
 Vim scheme ships, and so does every command a default key names,
 compiled into the executable: the motions, the operators `d c y` over a
 motion, over lines and over a visual selection, `x p P o O`, `u` and
-`C-r`, `.`, `i a I A`, `v V`, `<Escape>`, `:` and typed text. So with no
-config the editor moves, edits, undoes and repeats, and `:` opens the ex
-command line ("The ex command line"). No default key names a command
+`C-r`, `.`, `i a I A`, `v V`, `<Escape>`, `:`, typed text, and the scroll
+keys `C-d C-u C-f C-b` and `z t`, `z z`, `z b`. So with no
+config the editor moves, edits, undoes, repeats and scrolls, and `:` opens
+the ex command line ("The ex command line"). No default key names a command
 that is not registered ("Default bindings"). The system clipboard is
 reached through a port defined here, with a model and a contract; the
 adapter to a window system's clipboard is the display pipeline's, and a
@@ -1804,6 +1806,92 @@ operation by a case of `lean/Editor/Api/Cases.lean`).
 - **Proved on the text model**: `x` then `u` restores the text
   ("Theorems").
 
+### Scrolling as built
+
+Status: built, by the command loop's phase 15
+(`lean/Editor/Evil/Scroll.lean`, over the policy in
+`lean/Editor/Scroll.lean` and `Target.anchor`, `Target.scrollTo` and
+`Target.onArea` in `lean/Editor/Api.lean`; pinned by `viewChecks` and
+`scrollChecks`, by three cases of `lean/Editor/Api/Cases.lean`, and by the
+headless fixture `tests/headless/view`). How a view follows its cursor
+between commands is the loop's
+([text-and-display.md](text-and-display.md), "Views as built").
+
+Everything here is tested on the display model, which lays text out in
+cells of one size. Nothing has run over real layout, where rows have
+different heights and a view's status row takes one of them: that is the
+display pipeline's phase 6.
+
+- **`C-d` and `C-u`** (`Evil.scroll .half`) move the view's scroll anchor
+  and its cursor by the same number of visual rows.
+  - **How many**: the count, when one was typed; otherwise half the rows
+    the view fits, and at least one.
+  - **The anchor going down** moves that many rows, and no further than
+    where the text's last row is the last row shown; it never moves up.
+    **Going up** it stops at the text's first row.
+  - **The cursor** moves that many rows and keeps its x
+    (`Display.linesFrom` with no goal), stops at the text's first and last
+    row, and is rested by the rule of the view's state ("Where a cursor
+    rests"), as a motion's target is. In a visual state the selection's
+    other end stays, so the key extends the selection. The window then
+    keeps no wanted column.
+  - **In a text that ends in a line feed** the display lays out an empty
+    row after the last line. A cursor the move leaves there, in a state
+    where no cursor rests there, goes one row back up at the same x. So
+    the cursor ends on the last line in its column, and the empty row is
+    the last row shown.
+  - **At the text's end** `C-d` moves the anchor until the text's last row
+    is the last row shown, then the cursor alone, until it is on the last
+    line. There it changes nothing and says nothing. `C-u` at the start is
+    the same, upwards.
+- **`C-f` and `C-b`** (`Evil.scroll .page`) are the same command with the
+  rows the view fits, times the count when one was typed.
+- **`z t`, `z z` and `z b`** (`Evil.scrollLineTo`) place the anchor so that
+  the cursor's row is the first row shown, the middle one or the last, and
+  change nothing else: not the text, the selection or the wanted column.
+  - **The middle** is the middle row of those the view fits, the upper of
+    two when it fits an even number.
+  - They ignore their count and their register.
+  - **At the text's start** the anchor stops at the first row, so a cursor
+    near the start cannot be put in the middle or at the bottom. **At its
+    end** `z t` and `z z` show past the text's end.
+  - They work from the rows the view fits, not the rows it shows, so `G`,
+    `z t`, `z b` comes back to the view `G` left.
+- **After each the cursor is among the rows shown**: where the anchor and
+  the cursor did not move the same rows, the loop's follow holds it at the
+  next scene.
+- **None reads the scroll margin.** The follow at the next scene applies
+  it, so `z t` with a margin of two leaves two rows above the cursor's
+  row.
+- **A view that shows no row is left alone**: the seven change nothing and
+  say nothing. That is every headless run that does not resize its frame.
+- **They are commands and not motions**, so an operator's key before one
+  is dropped: `d C-d` deletes nothing. They change no text, so none is the
+  last change and `.` does not replay one.
+- **A command that does not run to its end leaves the anchor and the
+  selection as they were**: the loop keeps and restores both markers. One
+  that is interrupted leaves the snapshot it took of its text
+  (`Target.onArea`).
+
+Where this departs from Vim. The Vim column is its documentation
+(`scroll.txt`, `'scroll'`, `'scrolloff'`, `'startofline'`) as remembered:
+it was not read again for this, and no check runs Vim.
+
+| | Vim | Here |
+|---|---|---|
+| The unit of `C-d`, `C-u`, `C-f`, `C-b` | Lines of the buffer | Visual rows, so a wrapped line is scrolled through row by row |
+| A count before `C-d` | Sets the `scroll` option, which later `C-d` and `C-u` use | Is the rows of this one command |
+| The column after `C-d` | The first non-blank, under `startofline`, which Vim sets and Neovim does not | Kept, as Neovim's default |
+| `C-d` on the last line, `C-u` on the first | Beeps | Nothing |
+| A text shorter than its view | Moves the cursor half the window's height | Half the text's rows: how many rows fit a view that is not full is not asked |
+| A text that ends in a line feed | No row after the last line | The empty row the display lays out after it is the last row shown |
+| `C-f` and `C-b` | Keep two lines of the page before in view and put the cursor on the new page's first line | The anchor moves a whole view and the cursor keeps its row of the view |
+| A count before `z t`, `z z`, `z b` | A line number | Ignored |
+| After a far jump | Centres the cursor's line | The least movement: the cursor is at the edge it came in by |
+
+Not built: `C-e` and `C-y`; `z<CR>`, `z.` and `z-`; `H`, `M` and `L`; `gj`
+and `gk`; the mouse wheel; smooth scrolling; `scrolljump` and `sidescroll`.
+
 ### Default bindings
 
 `Vim.Default` holds the scheme's default keys as data: tables of key string
@@ -1829,6 +1917,7 @@ Which names have something behind them:
 | `repeat`, which no table names: the repeat key's invocation | Built and registered |
 | The register prefix's registers | The unnamed register and the clipboard's (`+`) are built; any other name gives the command up |
 | `ex` | Built and registered (`Ex.commands`): `:` opens the ex command line ("The ex command line"). The key hands the command a count and a register, which it does not read |
+| `scroll-down`, `scroll-up`, `scroll-page-down`, `scroll-page-up`; `scroll-line-to-top`, `scroll-line-to-center`, `scroll-line-to-bottom` | Built and registered (`Evil.commands`; "Scrolling as built"). The names are evil's own for these commands, without its prefix |
 
 | Table | Keys |
 |---|---|
@@ -1839,14 +1928,22 @@ Which names have something behind them:
 | `visualCommands` | `<Escape>` and `v` normal, `V` visual-line, `"` |
 | `visualLineCommands` | `<Escape>` and `V` normal, `v` visual, `"` |
 | `minibufferCommands` | `RET` minibuffer-accept, `<Escape>` minibuffer-cancel, `TAB` and `C-n` minibuffer-next, `S-TAB` and `C-p` minibuffer-previous (each changes no text and enters no state) |
+| `scrollCommands` | `C-d` scroll-down, `C-u` scroll-up, `C-f` scroll-page-down, `C-b` scroll-page-up, `z t` scroll-line-to-top, `z z` scroll-line-to-center, `z b` scroll-line-to-bottom (each changes no text and enters no state) |
 
 | State | Keymaps, in precedence order | Cursor | Selection | The grammar reads |
 |---|---|---|---|---|
-| `normal`, the initial state | `normalCommands`, `operators`, `motions` | Block | Inclusive | |
+| `normal`, the initial state | `normalCommands`, `scrollCommands`, `operators`, `motions` | Block | Inclusive | |
 | `insert` | `insertCommands` | Bar | Exclusive | Typing is text |
-| `visual` | `visualCommands`, `operators`, `motions` | Block | Inclusive | Operators act on the selection |
-| `visual-line` | `visualLineCommands`, `operators`, `motions` | Block | Line | Operators act on the selection |
+| `visual` | `visualCommands`, `scrollCommands`, `operators`, `motions` | Block | Inclusive | Operators act on the selection |
+| `visual-line` | `visualLineCommands`, `scrollCommands`, `operators`, `motions` | Block | Line | Operators act on the selection |
 | `minibuffer`, the state of the minibuffer's view | `minibufferCommands` | Bar | Exclusive | Typing is text |
+
+**The scroll keys are in normal state and the two visual states**, and not
+in `insert` or `minibuffer`: there `C-d` and `C-u` are Vim's editing keys,
+which are not built, and `z` is text. `z` begins three sequences and is
+bound to nothing itself, so in those three states it is a prefix: a `z`
+followed by a key that completes none of them runs nothing. None of the
+four control keys is the interrupt key, `C-g`.
 
 No key enters `minibuffer`: the registry names it as the state of the
 minibuffer's view (`states.minibuffer`), and the scheme puts a view in it
@@ -2577,6 +2674,34 @@ keys are pressed against a text:
   library (`tests/headless/evil-script`): with no config, `i`, typed
   text, `<Escape>` and `0`.
 
+Scrolling is checked by two lists, three cases and one fixture (built by
+the command loop's phase 15):
+
+| List | Checks |
+|---|---|
+| `scrollChecks` | On the display model alone, with a view's anchor and cursor as offsets: the follow policy (which anchors are kept, how far one moves, a wrapped line's last row, the margin, swept from every row and every position, and what it costs in requests), and the anchors a scroll by rows and a scroll to the cursor's row place |
+| `viewChecks` | On the loop's driver over the editor's models, under the Vim scheme that ships with evil's commands, in frames a few rows tall: a view follows its cursor after a motion, a resize and an edit through another window; the margin after every motion of the vocabulary; `C-d`, `C-u`, `C-f` and `C-b`, by key, at the text's two ends, with a count, in a visual state and stopped by the interrupt; and `z t`, `z z` and `z b` |
+
+- **A check asks the model and restates no layout.** What a view shows is
+  read by asking the display model for the rows of the scene's view from
+  its anchor, and the cursor's row the same way. The texts are lines
+  shorter than their view, and the one text the display contract's own
+  cases wrap.
+- **The keys through the grammar** are in `vimDefaultChecks`: each scroll
+  key runs a command of its own that changes no text and enters no state,
+  in normal state and the two visual states; an operator's key before one
+  is dropped; `z` is a prefix there, and text where typing is text.
+- **No request was added to a port.** The three operations of the API
+  that reach the library, and the loop's follow, have cases in
+  `lean/Editor/Api/Cases.lean`, played on the models and on the real text
+  binding with the recorder as the display.
+- **The wiring on the executable** is the fixture `tests/headless/view`,
+  a process check of the `ffi-test` task on a file of 120 lines in a
+  temporary directory: with no config, in a frame the script sizes,
+  `100j` is followed, and `C-u`, `C-f`, `z t`, `z b` and a resize each
+  print the scroll anchor and the selection worked out by hand in the
+  script's comments ([the gate](../dev-practices/the-gate.md)).
+
 Modes are checked on the test scheme, by four lists in the model tests and
 one in `config-test`. Each check reads the role's keys and the leader from
 the test scheme (`InputScheme.roleKey`, `InputScheme.leader`), so none
@@ -2885,6 +3010,34 @@ every build). The second is proved on the text model
 - **The status line's order and the face names**: the state's field
   first, in the face `status.state`; the cursor faces `cursor.` followed
   by the state's name.
+- **A view follows by the least movement** ("Scrolling as built";
+  [text-and-display.md](text-and-display.md), "Views as built"). Vim
+  centres the cursor's line after a far jump. Centring is another target
+  of the same policy (`Scroll.follow`), when wanted; it needs to know how
+  far off the cursor is, which is a third question of layout or a count of
+  moves.
+- **The scroll margin is editor state set by a command.** It could be a
+  setting config declares in `setup`, which is its home once there are
+  settings: today config cannot set it when it loads. It is one number
+  for every view, where Vim's `scrolloff` is global or a window's.
+- **`C-d`, `C-u`, `C-f` and `C-b` keep the cursor's column**, Neovim's
+  default, where Vim's goes to the first non-blank, as `G` and `g g` do
+  here.
+- **`C-f` and `C-b` move a whole view with no overlap**, and the cursor
+  keeps its row of the view. Vim keeps two lines of the page before and
+  puts the cursor on the new page's first line.
+- **A count before `C-d` is not remembered.** Vim's sets the `scroll`
+  option for later `C-d` and `C-u`; remembering it is one more number of
+  editor state.
+- **A follow that is refused says nothing**
+  ([text-and-display.md](text-and-display.md), "Publishing"). The
+  alternative puts a second line in the echo area for a marker a command
+  gave up, in place of what that command was told.
+- **Scrolling has not run over real layout.** With rows of several
+  heights, "half the rows the view fits" is not half the view, and with a
+  status row the last row the query answers is behind it
+  ([text-and-display.md](text-and-display.md), "Open questions", "The
+  height of a view's text area").
 - **The headless `scene` prints neither the cursor's shape nor the
   selection's shape.** The state's name is in the status line it prints;
   the shapes are checked on the models, where a scene is data. Adding
