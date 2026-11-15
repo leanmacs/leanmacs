@@ -288,6 +288,15 @@ report's rule: where a command that edits leaves its cursor. -/
 def settle (call : Call) (offset : Nat) : TextM Unit := do
   call.target.select (cursorAt call (← rested (restOf call.report) call.target.buffer.text offset))
 
+/-- The count a command's key compiles to (`Editor/InputScheme/Vim.lean`,
+"Edits"), 0 where the call has none: the call's first argument, as the Vim
+scheme lays out the call of a command that takes a count and nothing
+before it. -/
+def countOf (call : Call) : Nat :=
+  match call.arguments with
+  | .nat count :: _ => count
+  | _ => 0
+
 /-- What the move command says in the echo area for a name the vocabulary
 has no motion of. -/
 def noSuchMotion (name : String) : String :=

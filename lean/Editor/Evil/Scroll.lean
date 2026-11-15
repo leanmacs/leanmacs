@@ -138,13 +138,7 @@ def scroll (amount : Scroll.Amount) (down : Bool) (call : Call) : EditorM Unit :
         let fits ← area.fits
         if fits == 0 then
           return
-        -- The count is the call's first argument, as a key's command is
-        -- called: 0 for none.
-        let count :=
-          match call.arguments with
-          | .nat count :: _ => count
-          | _ => 0
-        let rows := amount.rows count fits
+        let rows := amount.rows (countOf call) fits
         let anchor ← call.target.anchor
         let selection ← call.target.selection
         let some range := selection.ranges[selection.primary]? | throw .badSelection

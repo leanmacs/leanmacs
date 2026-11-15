@@ -71,13 +71,6 @@ def moves (step : EditorM (Except BufferRefusal (Option Undone))) (count : Nat) 
       break
   return (made, handed)
 
-/-- The count a command's key compiles to (`Editor/InputScheme/Vim.lean`,
-"Edits"), 0 where the call has none. -/
-def countOf (call : Call) : Nat :=
-  match call.arguments with
-  | .nat count :: _ => count
-  | _ => 0
-
 /-- The head of the primary range of `handed`, the selection a move in the
 history handed back; the head of the window's own selection when it handed
 none. -/
