@@ -1,7 +1,7 @@
 //! The process service's shutdown, through the C function, on real
-//! processes: once it returns, the child it was running has been reaped,
-//! its grandchild ends, a later run is refused as shut down, and nothing is
-//! pending.
+//! processes: once it returns, the child it was running and a streaming
+//! child held at its bound have been reaped, the grandchild ends, a later
+//! run is refused as shut down, and nothing is pending.
 //!
 //! It is a test binary of its own because shutting the process-wide
 //! service down is for good. The child writes its own id and its
@@ -12,6 +12,8 @@
 
 #[path = "common/processes.rs"]
 mod common;
+#[path = "common/open.rs"]
+mod open;
 
 use std::path::Path;
 use std::thread;
@@ -19,6 +21,7 @@ use std::time::{Duration, Instant};
 
 use common::{DEADLINE, ROOMY, completion_of, next_completion, run, take};
 use editor_ffi::processes::{editor_ffi_processes_pending, editor_ffi_processes_shutdown};
+use open::{comes_to_be_held, open};
 use rustix::process::{Pid, test_kill_process};
 
 /// The id `echo` wrote to the file at `path`, once it is there whole.
@@ -68,12 +71,28 @@ fn after_shutdown_the_child_is_reaped_its_grandchild_ends_and_a_later_run_is_ref
     let child = written(&dir.join("child")).expect("the child wrote its id");
     let grandchild = written(&dir.join("grandchild")).expect("the child wrote its grandchild's id");
     assert!(alive(child) && alive(grandchild));
+    // A streaming child still writing, held at its bound, as the editor
+    // quits.
+    assert!(open(
+        3,
+        "echo $$ > streaming; while :; do echo y; done",
+        dir,
+        false,
+        64
+    ));
+    assert_eq!(next_completion(), completion_of(3));
+    let streaming = written(&dir.join("streaming")).expect("the streaming child wrote its id");
+    assert!(comes_to_be_held(3, DEADLINE));
 
     editor_ffi_processes_shutdown();
 
     assert!(
         !alive(child),
         "the child is reaped by the time shutdown returns"
+    );
+    assert!(
+        !alive(streaming),
+        "the held streaming child is reaped by then too"
     );
     let end = Instant::now() + DEADLINE;
     while alive(grandchild) && Instant::now() < end {

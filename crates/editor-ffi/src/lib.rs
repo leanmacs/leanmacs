@@ -261,17 +261,31 @@
 //! are [`processes::editor_ffi_processes_run`],
 //! [`processes::editor_ffi_processes_cancel`], which kills the run's
 //! process group, [`processes::editor_ffi_processes_shutdown`], and, as a
-//! readout for tests, [`processes::editor_ffi_processes_pending`].
+//! readout for tests, [`processes::editor_ffi_processes_pending`]. A
+//! streaming child is opened ([`processes::editor_ffi_processes_open`]),
+//! then read ([`processes::editor_ffi_processes_read`]), written to
+//! ([`processes::editor_ffi_processes_write`]) and closed
+//! ([`processes::editor_ffi_processes_close_input`]) a request at a time,
+//! each a wait completed once, whose reply is taken in the same record
+//! ([`processes::editor_ffi_processes_take_stream`]); a read is a pull, so
+//! however fast the child writes, it is one completion on the queue.
+//! [`processes::editor_ffi_processes_held`] says, for tests, whether a
+//! child is held at its bound.
 //!
 //! Tests: the unit tests of `processes.rs`, on the port's fake (a command's
 //! words and string read back, the refusals of words that spell none, and
-//! each result's layout); `tests/processes.rs`, the wiring test, which runs
+//! each result's layout, an open's words and each stream reply's layout);
+//! `tests/processes.rs`, the wiring test, which runs
 //! a real command in a temporary directory it owns through the C functions,
 //! sees its completion and takes its result once, and sees that a
-//! cancelled run is never completed and its child is reaped; and
-//! `tests/processes_shutdown.rs`, a binary of its own because shutdown is
-//! for good, which shows that after shutdown the child is reaped, its
-//! grandchild ends, a later run is refused as shut down and nothing is
+//! cancelled run is never completed and its child is reaped;
+//! `tests/processes_stream.rs`, the streaming wiring test, which reads a
+//! real child's lines as it writes them, writes and closes its input, sees
+//! one completion on the real queue for a read while 10,000 lines are
+//! written, and cancels a held child; and `tests/processes_shutdown.rs`, a
+//! binary of its own because shutdown is for good, which shows that after
+//! shutdown the child and a streaming child held at its bound are reaped,
+//! the grandchild ends, a later run is refused as shut down and nothing is
 //! pending. The rules of a run are `editor-process`'s, pinned there on the
 //! fake and by the contract on real processes (`editor-process-std`'s
 //! `tests/contract.rs`). On the Lean side: the process checks of `ffi-test`

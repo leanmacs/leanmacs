@@ -1,6 +1,10 @@
-//! What the two wiring tests of the process service share: a run asked
-//! for through the C function, a result taken through it, and a pull from
-//! the completion queue bounded by a deadline.
+//! What the wiring tests of the process service share: a run asked for
+//! through the C function, a result taken through it, and a pull from the
+//! completion queue bounded by a deadline.
+
+// Each test binary uses its own part of this module: the streaming test
+// pulls the queue and takes no run's result.
+#![allow(dead_code)]
 
 use std::mem::MaybeUninit;
 use std::path::Path;

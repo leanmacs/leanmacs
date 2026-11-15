@@ -1,5 +1,6 @@
-//! The process service: commands run to their end, completed through the
-//! completion queue.
+//! The process service: commands run to their end, and streaming children
+//! read and written a request at a time, completed through the completion
+//! queue.
 //!
 //! This is the third service behind the completion queue, in the shape of
 //! the timer and the file services (the crate docs, "Services and
@@ -23,6 +24,8 @@
 //!   string, trusting nothing.
 //! - [`encoded`] lays a [`RunResult`] out as a status, words, a detail and
 //!   the two streams.
+//! - [`open_of`] reads an open of a streaming child, and [`encoded_stream`]
+//!   lays a reply about one out in the same record.
 //! - The process has one service, over the machine's processes
 //!   (`editor_process_std::StdProcesses`), in a static made on its first
 //!   use. That static is the one place in this crate's sources that makes
@@ -71,20 +74,55 @@
 //! program and the directory. The streams are empty but for a run that
 //! ran.
 //!
+//! # How a streaming child crosses
+//!
+//! An open's words are three, then a run's words above, then its string:
+//!
+//! | Words | Then |
+//! |---|---|
+//! | the input: 0 closed, 1 a pipe | |
+//! | the framing of standard output: 0 lines, 1 bytes | |
+//! | the framing of standard error, the same | |
+//! | a run's words, whose limit is the bound | a run's string |
+//!
+//! Words that spell no open are refused: the child is not started and the
+//! call returns false. The child is named by the open's id from then on;
+//! each read, write and close is a wait with an id of its own, completed
+//! once on the completion queue. Every reply crosses as a
+//! [`RawStreamReply`], the record of a run's result:
+//!
+//! | Reply | Status | Words |
+//! |---|---|---|
+//! | A refusal | 1, 2, 3, 4, 6, 7, as a run's | |
+//! | Input closed | 8 | |
+//! | Opened | 10 | |
+//! | Delivered | 11 | for each stream, out then err: its framing (0 lines, 1 bytes), and for lines their count and each one's length; then the end: 0 not yet, 1 exited and the exit's kind and number, 2 a line too long and its stream (0 out, 1 err) and the bound, 3 a read that failed, whose words the detail is |
+//! | Written | 12 | |
+//!
+//! A delivery's two buffers are its streams' bytes, the lines end to end
+//! without their line feeds.
+//!
 //! # The C functions
 //!
 //! | Function | Does |
 //! |---|---|
 //! | [`editor_ffi_processes_run`] | Starts a run. False, starting nothing, for words that spell no command, an id in use, or when the system refuses the run its thread |
 //! | [`editor_ffi_processes_take`] | Fills a [`RawProcessResult`] and returns true, or returns false when the service keeps no result for the id |
-//! | [`editor_ffi_processes_cancel`] | Cancels, killing the run's group, and says whether there was anything to cancel |
-//! | [`editor_ffi_processes_pending`] | Runs whose child is not yet reaped, and results not taken |
+//! | [`editor_ffi_processes_open`] | Starts a streaming child. False, starting nothing, for words that spell no open, an id in use, or when the system refuses its thread |
+//! | [`editor_ffi_processes_read`] | Asks for a child's next delivery |
+//! | [`editor_ffi_processes_write`] | Copies the bytes and asks for them to be written to a child's input |
+//! | [`editor_ffi_processes_close_input`] | Closes a child's input |
+//! | [`editor_ffi_processes_take_stream`] | Fills a [`RawStreamReply`] and returns true, or returns false when the service keeps no reply for the wait |
+//! | [`editor_ffi_processes_held`] | Whether a child is held at its bound: 0 no, 1 yes, 2 no such child. A readout for tests |
+//! | [`editor_ffi_processes_cancel`] | Cancels a run, a streaming child or a wait on one, killing the child's group, and says whether there was anything to cancel |
+//! | [`editor_ffi_processes_pending`] | Runs and streaming children whose child is not yet reaped, results not taken, and waits not answered or not taken |
 //! | [`editor_ffi_processes_shutdown`] | Kills every group and returns once every child is reaped; a later run is refused as shut down |
 
 use std::path::PathBuf;
 use std::sync::LazyLock;
 
-use editor_process::service::{RunResult, Service};
+use editor_process::frame::{Frames, Framing};
+use editor_process::service::{End, RunResult, Service, StreamReply, Streaming};
 use editor_process::{Command, Environment, Exit, Input, RefusalKind, Stream};
 use editor_process_std::StdProcesses;
 
@@ -147,6 +185,37 @@ pub fn command_of(words: &[u8], strings: &[u8]) -> Option<(Command, u64)> {
             input: Input::Closed,
         },
         limit,
+    ))
+}
+
+/// The command and the streaming that the words and the string of an open
+/// spell: three words, the input (0 closed, 1 a pipe) and the framing of
+/// standard output and of standard error (0 lines, 1 bytes), then a run's
+/// words, whose limit is read as the bound. `None` when they spell none.
+pub fn open_of(words: &[u8], strings: &[u8]) -> Option<(Command, Streaming)> {
+    let mut reader = Reader::new(words.get(..24)?)?;
+    let input = match reader.word()? {
+        0 => Input::Closed,
+        1 => Input::Pipe,
+        _ => return None,
+    };
+    let framing = |word| match word {
+        0 => Some(Framing::Lines),
+        1 => Some(Framing::Bytes),
+        _ => None,
+    };
+    let out = framing(reader.word()?)?;
+    let err = framing(reader.word()?)?;
+    reader.finish()?;
+    let (command, bound) = command_of(&words[24..], strings)?;
+    Some((
+        command.with_input(input),
+        Streaming {
+            input,
+            out,
+            err,
+            bound,
+        },
     ))
 }
 
@@ -234,6 +303,70 @@ pub fn encoded(result: RunResult) -> Encoded {
                 Stream::Err => 1,
             };
             bare(5, vec![stream, limit], String::new())
+        }
+    }
+}
+
+/// The words of `frames`: its framing (0 lines, 1 bytes), and for lines
+/// their count and each one's length; and its bytes end to end.
+fn frames_words(frames: Frames, words: &mut Vec<u64>) -> Vec<u8> {
+    match frames {
+        Frames::Bytes(bytes) => {
+            words.push(1);
+            bytes
+        }
+        Frames::Lines(lines) => {
+            words.push(0);
+            words.push(lines.len() as u64);
+            words.extend(lines.iter().map(|line| line.len() as u64));
+            lines.concat()
+        }
+    }
+}
+
+/// A reply about a streaming child laid out as it crosses: the module
+/// docs' table.
+pub fn encoded_stream(reply: StreamReply) -> Encoded {
+    let bare = |status, detail: String| Encoded {
+        status,
+        words: Vec::new(),
+        detail,
+        stdout: Vec::new(),
+        stderr: Vec::new(),
+    };
+    match reply {
+        StreamReply::Opened => bare(10, String::new()),
+        StreamReply::Written => bare(12, String::new()),
+        StreamReply::Refused(refusal) => bare(refusal_status(refusal.kind), refusal.detail),
+        StreamReply::Delivered(delivery) => {
+            let mut words = Vec::new();
+            let stdout = frames_words(delivery.out, &mut words);
+            let stderr = frames_words(delivery.err, &mut words);
+            let mut detail = String::new();
+            match delivery.ended {
+                None => words.push(0),
+                Some(End::Exited(exit)) => {
+                    let (kind, number) = match exit {
+                        Exit::Code(code) => (0, code),
+                        Exit::Signal(signal) => (1, signal),
+                    };
+                    words.extend([1, kind, i64::from(number).cast_unsigned()]);
+                }
+                Some(End::LineTooLong { stream, bound }) => {
+                    words.extend([2, u64::from(stream == Stream::Err), bound]);
+                }
+                Some(End::Failed(refusal)) => {
+                    words.push(3);
+                    detail = refusal.detail;
+                }
+            }
+            Encoded {
+                status: 11,
+                words,
+                detail,
+                stdout,
+                stderr,
+            }
         }
     }
 }
@@ -367,6 +500,109 @@ pub extern "C" fn editor_ffi_processes_cancel(id: u64) -> bool {
 pub extern "C" fn editor_ffi_processes_pending() -> u64 {
     words::word(PROCESSES.pending())
 }
+
+/// Asks the process's service to start the streaming child that the
+/// `words_len` bytes at `words` and the `strings_len` bytes at `strings`
+/// spell ([`open_of`]), named `id`, and returns whether it was accepted. It
+/// returns at once. Its reply, opened (status 10) or a refusal, is taken
+/// with [`editor_ffi_processes_take_stream`] once `id` is completed.
+///
+/// # Safety
+///
+/// As for [`editor_ffi_processes_run`].
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn editor_ffi_processes_open(
+    id: u64,
+    words: *const u8,
+    words_len: usize,
+    strings: *const u8,
+    strings_len: usize,
+) -> bool {
+    // SAFETY: the caller guarantees each pointer and its length.
+    let (words, strings) = unsafe {
+        (
+            words::borrow(words, words_len),
+            words::borrow(strings, strings_len),
+        )
+    };
+    let Some((command, streaming)) = open_of(words, strings) else {
+        return false;
+    };
+    PROCESSES.open(id, command, streaming)
+}
+
+/// Asks for the next delivery of the child `child`, as the wait `wait`:
+/// completed once, with every frame read up to the take. False for a child
+/// the service does not hold, a wait id in use, or a read already pending.
+#[unsafe(no_mangle)]
+pub extern "C" fn editor_ffi_processes_read(child: u64, wait: u64) -> bool {
+    PROCESSES.read(child, wait)
+}
+
+/// Copies the `len` bytes at `bytes` and asks for them to be written to the
+/// standard input of the child `child`, as the wait `wait`: completed with
+/// written (status 12) once every byte is in the pipe, or as input closed
+/// (status 8). False as for [`editor_ffi_processes_read`].
+///
+/// # Safety
+///
+/// `bytes` points to `len` readable bytes, unchanged for the call (no
+/// bytes at all may be lent with any pointer).
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn editor_ffi_processes_write(
+    child: u64,
+    wait: u64,
+    bytes: *const u8,
+    len: usize,
+) -> bool {
+    // SAFETY: the caller guarantees the pointer and its length.
+    let bytes = unsafe { words::borrow(bytes, len) };
+    PROCESSES.write(child, wait, bytes.to_vec())
+}
+
+/// Closes the standard input of the child `child`, as the wait `wait`,
+/// completed at once with written (status 12).
+#[unsafe(no_mangle)]
+pub extern "C" fn editor_ffi_processes_close_input(child: u64, wait: u64) -> bool {
+    PROCESSES.close_input(child, wait)
+}
+
+/// Hands over the reply of the wait `wait` on a streaming child, once:
+/// fills `out` and returns true, or returns false, with `out` untouched,
+/// when the service keeps no reply for it. The module docs have the table
+/// of statuses and words.
+///
+/// # Safety
+///
+/// `out` points to a writable [`RawStreamReply`].
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn editor_ffi_processes_take_stream(
+    wait: u64,
+    out: *mut RawStreamReply,
+) -> bool {
+    let Some(reply) = PROCESSES.take_stream(wait) else {
+        return false;
+    };
+    // SAFETY: the caller guarantees `out` is writable.
+    unsafe { out.write(RawStreamReply::lending(encoded_stream(reply))) };
+    true
+}
+
+/// Whether the readers of the child `child` are parked on its bound: 0 not
+/// held, 1 held, 2 a child the service does not hold. A readout for tests.
+#[unsafe(no_mangle)]
+pub extern "C" fn editor_ffi_processes_held(child: u64) -> u64 {
+    match PROCESSES.held(child) {
+        Some(false) => 0,
+        Some(true) => 1,
+        None => 2,
+    }
+}
+
+/// The reply about a streaming child as it crosses: the same record as a
+/// run's result, a status, words, a detail and two buffers, here the
+/// delivery's standard output and standard error end to end.
+pub type RawStreamReply = RawProcessResult;
 
 /// Shuts the process's service down: kills every child's group, drops
 /// every result not taken, and returns once every child it started has
@@ -632,5 +868,195 @@ mod tests {
         assert!(detail.is_empty());
         assert_eq!(*stdout, *"é".as_bytes());
         assert_eq!(*stderr, *b"e");
+    }
+
+    use editor_process::frame::{Frames, Framing};
+    use editor_process::service::{Delivery, End, StreamReply, Streaming};
+
+    /// The words and the string of an open of `command` with `streaming`,
+    /// as Lean lays them out.
+    fn open_laid_out(command: &Command, streaming: Streaming) -> (Vec<u8>, String) {
+        let (run, strings) = laid_out(command, streaming.bound);
+        let framing = |framing| u64::from(framing == Framing::Bytes);
+        let mut words = buffer(&[
+            u64::from(streaming.input == Input::Pipe),
+            framing(streaming.out),
+            framing(streaming.err),
+        ]);
+        words.extend(run);
+        (words, strings)
+    }
+
+    #[test]
+    fn an_open_crosses_as_its_input_its_framings_and_a_runs_words_with_the_bound_for_the_limit() {
+        let streaming = Streaming {
+            input: Input::Pipe,
+            out: Framing::Lines,
+            err: Framing::Bytes,
+            bound: 4096,
+        };
+        let (words, strings) = open_laid_out(&full(), streaming);
+
+        assert_eq!(
+            open_of(&words, strings.as_bytes()),
+            Some((full().with_input(Input::Pipe), streaming))
+        );
+        let closed = Streaming {
+            input: Input::Closed,
+            out: Framing::Bytes,
+            err: Framing::Lines,
+            bound: 1,
+        };
+        let (words, strings) = open_laid_out(&full(), closed);
+        assert_eq!(open_of(&words, strings.as_bytes()), Some((full(), closed)));
+    }
+
+    #[test]
+    fn open_words_that_spell_no_open_are_refused() {
+        let streaming = Streaming {
+            input: Input::Pipe,
+            out: Framing::Lines,
+            err: Framing::Lines,
+            bound: 9,
+        };
+        let (words, strings) = open_laid_out(&full(), streaming);
+        for word in 0..3 {
+            let mut bad = words.clone();
+            bad[word * 8] = 2;
+            assert_eq!(open_of(&bad, strings.as_bytes()), None, "word {word}");
+        }
+        assert_eq!(open_of(&words[..16], b""), None, "no run after them");
+        assert_eq!(open_of(&[], b""), None);
+        let mut longer = strings.clone();
+        longer.push('x');
+        assert_eq!(open_of(&words, longer.as_bytes()), None);
+    }
+
+    fn delivered(out: Frames, err: Frames, ended: Option<End>) -> StreamReply {
+        StreamReply::Delivered(Delivery { out, err, ended })
+    }
+
+    fn lines(lines: &[&str]) -> Frames {
+        Frames::Lines(lines.iter().map(|line| line.as_bytes().to_vec()).collect())
+    }
+
+    #[test]
+    fn each_stream_reply_is_its_status_and_its_words() {
+        let bare = |status, words: Vec<u64>, detail: &str| Encoded {
+            status,
+            words,
+            detail: detail.into(),
+            stdout: Vec::new(),
+            stderr: Vec::new(),
+        };
+        assert_eq!(encoded_stream(StreamReply::Opened), bare(10, vec![], ""));
+        assert_eq!(encoded_stream(StreamReply::Written), bare(12, vec![], ""));
+        for (kind, status) in [
+            (RefusalKind::RelativeDirectory, 1),
+            (RefusalKind::RelativeProgram, 2),
+            (RefusalKind::NotFound, 3),
+            (RefusalKind::Denied, 4),
+            (RefusalKind::ShutDown, 6),
+            (RefusalKind::Failed, 7),
+            (RefusalKind::InputClosed, 8),
+        ] {
+            assert_eq!(
+                encoded_stream(StreamReply::Refused(Refusal::new(kind, "why"))),
+                bare(status, vec![], "why")
+            );
+        }
+    }
+
+    #[test]
+    fn a_deliverys_line_lengths_add_up_to_its_buffer_and_its_end_is_its_last_words() {
+        let reply = delivered(
+            lines(&["one", "", "é"]),
+            Frames::Bytes(b"\xffb".to_vec()),
+            Some(End::Exited(Exit::Code(-1))),
+        );
+
+        let encoded = encoded_stream(reply);
+
+        assert_eq!(encoded.status, 11);
+        assert_eq!(
+            encoded.words,
+            [0, 3, 3, 0, 2, 1, 1, 0, u64::MAX],
+            "lines, three of them and their lengths; bytes; exited with a status of -1"
+        );
+        assert_eq!(encoded.stdout, "oneé".as_bytes());
+        assert_eq!(encoded.stderr, b"\xffb");
+    }
+
+    #[test]
+    fn an_empty_delivery_and_each_end_cross() {
+        let empty = encoded_stream(delivered(lines(&[]), lines(&[]), None));
+        assert_eq!(empty.words, [0, 0, 0, 0, 0]);
+        assert!(empty.stdout.is_empty() && empty.stderr.is_empty());
+
+        let signal = encoded_stream(delivered(
+            lines(&[]),
+            lines(&[]),
+            Some(End::Exited(Exit::Signal(9))),
+        ));
+        assert_eq!(signal.words, [0, 0, 0, 0, 1, 1, 9]);
+        let too_long = encoded_stream(delivered(
+            lines(&[]),
+            lines(&[]),
+            Some(End::LineTooLong {
+                stream: Stream::Err,
+                bound: 64,
+            }),
+        ));
+        assert_eq!(too_long.words, [0, 0, 0, 0, 2, 1, 64]);
+        let failed = encoded_stream(delivered(
+            lines(&[]),
+            lines(&[]),
+            Some(End::Failed(Refusal::new(RefusalKind::Failed, "EIO"))),
+        ));
+        assert_eq!(failed.words, [0, 0, 0, 0, 3]);
+        assert_eq!(failed.detail, "EIO");
+    }
+
+    #[test]
+    fn a_streaming_childs_replies_cross_from_a_service_over_the_fake() {
+        let command = full().with_input(Input::Pipe);
+        let fake = FakeProcesses::scripted([(
+            command.clone(),
+            Ok(Script::ends(Exit::Code(2)).stdout("a\nb\n")),
+        )]);
+        let (sender, completed) = mpsc::channel();
+        let service = Service::new(fake, move |id| {
+            sender.send(id).ok();
+        });
+        let streaming = Streaming {
+            input: Input::Pipe,
+            out: Framing::Lines,
+            err: Framing::Lines,
+            bound: 64,
+        };
+        let (words, strings) = open_laid_out(&full(), streaming);
+        let (command, streaming) = open_of(&words, strings.as_bytes()).expect("an open");
+
+        assert!(service.open(5, command, streaming));
+        assert_eq!(completed.recv_timeout(Duration::from_secs(5)), Ok(5));
+        assert_eq!(
+            service.take_stream(5).map(encoded_stream).map(|e| e.status),
+            Some(10)
+        );
+        let mut words = Vec::new();
+        let mut stdout = Vec::new();
+        for wait in 6.. {
+            assert!(service.read(5, wait));
+            assert_eq!(completed.recv_timeout(Duration::from_secs(5)), Ok(wait));
+            let reply = encoded_stream(service.take_stream(wait).expect("a delivery"));
+            stdout.extend(reply.stdout);
+            let ended = *reply.words.last().expect("words") != 0;
+            words = reply.words;
+            if ended {
+                break;
+            }
+        }
+        assert_eq!(stdout, b"ab");
+        assert_eq!(words[words.len() - 3..], [1, 0, 2]);
     }
 }
