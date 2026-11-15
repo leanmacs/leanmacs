@@ -10,11 +10,13 @@ Lean owns the process. With no arguments `main` only shows the build works:
 it calls the Rust library and prints what comes back, and it runs one command
 against the library through the text port's real binding.
 
-`editor headless [--render] <sysroot> <olean dir> <config dir> <script file>`
+`editor headless [--render] [<sysroot> <olean dir>] <config dir> <script file>`
 is the headless mode (`Editor/Headless.lean`): it loads the config in a
 directory, runs a script against it and prints what happened, for
 integration tests; with `--render` what it publishes is drawn by the
-library's headless render session. `Main` hands it the rest of the command
+library's headless render session. The toolchain's directory and the
+editor's `.olean` directory may be left out in an app bundle, which holds
+both (`Editor/ModuleLookup.lean`). `Main` hands it the rest of the command
 line after `headless`, and the headless mode reads that itself.
 
 `editor window-check [--seconds <n>] [--no-ime]` is the keyboard check

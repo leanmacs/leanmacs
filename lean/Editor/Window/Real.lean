@@ -24,8 +24,9 @@ There is one editor loop; this module only wires it to a window:
   exits.
 - **The command line** is read by the pure core (`Editor/Window.lean`).
   `main` reads at the edge what it needs of the world: the working
-  directory, `XDG_CONFIG_HOME` and `HOME`, the executable's path, and
-  whether the default config directory exists.
+  directory, `XDG_CONFIG_HOME` and `HOME`, the executable's path, which
+  the module directories are resolved from (`Editor/ModuleLookup.lean`),
+  and whether the default config directory exists.
 - **What is printed.** The host's output and its log go to stderr: the
   reload's report among them, whose first error the echo area says too.
 - **Failures.** A window that cannot be opened is

@@ -1,3 +1,5 @@
+import Editor.ModuleLookup
+
 /-!
 # The window mode's command line
 
@@ -10,12 +12,15 @@ of the world (`Environment`), and whether config is loaded at start
 
 - **The file** is resolved against the working directory: the file port
   takes absolute paths only. Exactly one file is taken.
-- **`--sysroot`** is the Lean toolchain's directory. Lean cannot run
-  `lean --print-prefix` (that would spawn a process), so with none given no
-  config is loaded, and the echo area says so (`noToolchain`).
-- **`--oleans`** is the directory of the editor's `.olean` files, and is
-  `<directory of the executable>/../lib/lean` when not given, where Lake puts
-  them in the build tree.
+- **`--sysroot`** is the Lean toolchain's directory. When not given it is
+  the bundle's, `Contents/Resources/lean/toolchain`, for an executable in a
+  bundle (`Editor/ModuleLookup.lean`). Outside one there is no default: Lean
+  cannot run `lean --print-prefix` (that would spawn a process), so with
+  none given no config is loaded, and the echo area says so (`noToolchain`).
+- **`--oleans`** is the directory of the editor's `.olean` files. When not
+  given it is the bundle's, `Contents/Resources/lean/editor`, for an
+  executable in a bundle, and `<directory of the executable>/../lib/lean`
+  outside one, where Lake puts them in the build tree.
 - **`--config`** is the config directory. When not given it is `leanmacs`
   under `$XDG_CONFIG_HOME`, or under `$HOME/.config` when that is unset or
   empty. A default directory that does not exist loads nothing and says
@@ -186,13 +191,14 @@ def parse (environment : Environment) (arguments : List String) : Except String 
     match read.file with
     | none => refused "no file to open"
     | some file =>
-      let executable := (System.FilePath.mk environment.appPath).parent.getD "."
+      let directories :=
+        ModuleLookup.resolve environment.appPath { sysroot := read.sysroot, oleans := read.oleans }
       .ok {
           file := resolve environment file
           config := read.config <|> defaultConfig environment
           configGiven := read.config.isSome
-          sysroot := read.sysroot
-          oleans := read.oleans.getD (executable / ".." / "lib" / "lean").toString
+          sysroot := directories.sysroot
+          oleans := directories.oleans
           composition := read.composition
           report := read.report
           presentMode := read.presentMode

@@ -16,6 +16,7 @@ import Editor.File.Model
 import Editor.Files.Compiled
 import Editor.Fuzzy.Contract
 import Editor.Fuzzy.Model
+import Editor.Headless.CommandLine
 import Editor.InputScheme.Contract
 import Editor.InputScheme.Test
 import Editor.InputScheme.Vim.Default
@@ -28,6 +29,7 @@ import Editor.Key.Notation
 import Editor.Loop.Driver
 import Editor.Minibuffer.Compiled
 import Editor.Mode
+import Editor.ModuleLookup
 import Editor.Role
 import Editor.Scene
 import Editor.Scroll
@@ -3603,6 +3605,100 @@ def windowArgumentChecks : List Check :=
         return checked.lines == typedReport && checked.calls[1]? == some "run true" &&
             checked.status == some 0 }]
 
+/-- The checks of where the editor's Lean modules are
+(`Editor/ModuleLookup.lean`): the bundle's two directories from an executable
+in a bundle, no toolchain and `../lib/lean` outside one, and explicit
+directories over either. -/
+def moduleLookupChecks : List Check :=
+  let bundled (bundle : String) : ModuleLookup.Directories :=
+    { sysroot := some s!"{bundle}/Contents/Resources/lean/toolchain"
+      oleans := s!"{bundle}/Contents/Resources/lean/editor" }
+  let installed := "/Applications/Leanmacs.app/Contents/MacOS/editor"
+  [{  name :=
+        "an executable at <bundle>/Contents/MacOS/<name> finds the toolchain at Contents/Resources/lean/toolchain and its .olean files at Contents/Resources/lean/editor, in a renamed bundle and in one with no .app suffix too"
+      run :=
+        pure
+          (ModuleLookup.resolve installed {} == bundled "/Applications/Leanmacs.app" &&
+            ModuleLookup.resolve "/Users/ada/Apps/My Editor.app/Contents/MacOS/editor" {} ==
+              bundled "/Users/ada/Apps/My Editor.app" &&
+            ModuleLookup.resolve "/tmp/staged/Contents/MacOS/leanmacs" {} ==
+              bundled "/tmp/staged") },
+    { name :=
+        "an executable outside a bundle has no toolchain, and its .olean files are <directory of the executable>/../lib/lean"
+      run :=
+        let outside (appPath directory : String) : Bool :=
+          ModuleLookup.resolve appPath {} ==
+            { sysroot := none, oleans := s!"{directory}/../lib/lean" }
+        pure
+          (outside "/opt/leanmacs/bin/editor" "/opt/leanmacs/bin" &&
+            outside "/x/Contents/bin/editor" "/x/Contents/bin" &&
+            outside "/x/MacOS/editor" "/x/MacOS" &&
+            outside "/x/Contents/MacOS/sub/editor" "/x/Contents/MacOS/sub") },
+    { name :=
+        "directories given explicitly are used wherever the executable is, and each given alone overrides only its own"
+      run :=
+        let both : ModuleLookup.Given := { sysroot := some "/s", oleans := some "/o" }
+        let given : ModuleLookup.Directories := { sysroot := some "/s", oleans := "/o" }
+        pure
+          (ModuleLookup.resolve installed both == given &&
+            ModuleLookup.resolve "/opt/leanmacs/bin/editor" both == given &&
+            ModuleLookup.resolve installed { sysroot := some "/s" } ==
+              { bundled "/Applications/Leanmacs.app" with sysroot := some "/s" } &&
+            ModuleLookup.resolve installed { oleans := some "/o" } ==
+              { bundled "/Applications/Leanmacs.app" with oleans := "/o" } &&
+            ModuleLookup.resolve "/opt/leanmacs/bin/editor" { sysroot := some "/s" } ==
+              { sysroot := some "/s", oleans := "/opt/leanmacs/bin/../lib/lean" } &&
+            ModuleLookup.resolve "/opt/leanmacs/bin/editor" { oleans := some "/o" } ==
+              { sysroot := none, oleans := "/o" }) }]
+
+/-- The checks of the headless mode's command line
+(`Editor/Headless/CommandLine.lean`): four paths anywhere, two in a bundle,
+and what is refused. -/
+def headlessCommandLineChecks : List Check :=
+  let installed := "/Applications/Leanmacs.app/Contents/MacOS/editor"
+  let outside := "/opt/leanmacs/bin/editor"
+  let read (appPath : String) (arguments : List String) : Option Headless.Arguments :=
+    (Headless.read appPath arguments).toOption
+  let refused (appPath : String) (arguments : List String) : Bool :=
+    (Headless.read appPath arguments).toOption.isNone
+  let explicit (render : Bool) : Headless.Arguments :=
+    { render, sysroot := "/s", oleans := "/o", config := "/c", script := "/t" }
+  let bundled (render : Bool) : Headless.Arguments :=
+    { render, sysroot := "/Applications/Leanmacs.app/Contents/Resources/lean/toolchain"
+      oleans := "/Applications/Leanmacs.app/Contents/Resources/lean/editor", config := "/c"
+      script := "/t" }
+  [{  name :=
+        "four paths are the toolchain, the .olean directory, the config directory and the script, wherever the executable is"
+      run :=
+        pure
+          (read outside ["/s", "/o", "/c", "/t"] == some (explicit false) &&
+            read installed ["/s", "/o", "/c", "/t"] == some (explicit false)) },
+    { name :=
+        "two paths are the config directory and the script, and an executable in a bundle imports from the bundle's two directories"
+      run := pure (read installed ["/c", "/t"] == some (bundled false)) },
+    { name := "two paths outside a bundle are refused, because there is no toolchain, and say so"
+      run :=
+        pure
+          (match Headless.read outside ["/c", "/t"] with
+          | .error reason => reason == Headless.noToolchain
+          | .ok _ => false) },
+    { name := "--render is read before two paths and before four"
+      run :=
+        pure
+          (read installed ["--render", "/c", "/t"] == some (bundled true) &&
+            read outside ["--render", "/s", "/o", "/c", "/t"] == some (explicit true)) },
+    { name :=
+        "no path, one, three and five, and an option it does not know, are refused, inside a bundle and outside one"
+      run :=
+        pure
+          ([installed, outside].all fun appPath =>
+            refused appPath [] && refused appPath ["/c"] && refused appPath ["/o", "/c", "/t"] &&
+              refused appPath ["/x", "/s", "/o", "/c", "/t"] &&
+              refused appPath ["--render", "/o", "/c", "/t"] &&
+              refused appPath ["--bogus", "/c", "/t"] &&
+              refused appPath ["--bogus", "/s", "/o", "/c"] &&
+              refused appPath ["--render", "--bogus", "/c"]) }]
+
 /-- What the window mode is told of the world by the checks of its command
 line: a working directory, both variables a config directory is found by,
 and where the executable is. -/
@@ -3673,6 +3769,20 @@ def windowOptionChecks : List Check :=
                       xdgConfigHome := none, home := none }).map
                 (·.configPlan true) ==
               some (.skip none)) },
+    { name :=
+        "an executable in a bundle, with no --sysroot or --oleans, loads config from the bundle's toolchain and .olean directories, and --sysroot and --oleans still override them there"
+      run :=
+        let installed :=
+          { windowEnvironment with appPath := "/Applications/Leanmacs.app/Contents/MacOS/editor" }
+        let directories (arguments : List String) : Option (Option String × String) :=
+          (parsed arguments installed).map fun options => (options.sysroot, options.oleans)
+        pure
+          (directories ["f"] ==
+              some
+                (some "/Applications/Leanmacs.app/Contents/Resources/lean/toolchain",
+                  "/Applications/Leanmacs.app/Contents/Resources/lean/editor") &&
+            (parsed ["f"] installed).map (·.configPlan true) == some (.load "/xdg/leanmacs") &&
+            directories ["--sysroot", "/s", "--oleans", "/o", "f"] == some (some "/s", "/o")) },
     { name :=
         "no file, two files, an option it does not know and an option with no value are each refused with the usage"
       run :=
@@ -19140,6 +19250,8 @@ def checks : List Check :=
     windowTallyChecks ++
     windowLoopChecks ++
     windowArgumentChecks ++
+    moduleLookupChecks ++
+    headlessCommandLineChecks ++
     windowOptionChecks ++
     windowReportChecks ++
     undoTreeChecks ++

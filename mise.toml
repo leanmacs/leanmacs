@@ -321,11 +321,50 @@ run = [
   # files. (A word that is no mode is a file to open.)
   "status=0; .lake/build/bin/editor --bogus || status=$?; test \"$status\" -eq 2",
   "status=0; .lake/build/bin/editor a b || status=$?; test \"$status\" -eq 2",
+  # The headless mode with only a config directory and a script, from the
+  # build tree, outside a bundle: there is no toolchain to use, so it is
+  # status 2 with a line on stderr saying so, before the usage
+  # (lean/Editor/Headless/CommandLine.lean). `bundle-test` runs the same
+  # command line from a bundle.
+  "status=0; err=$(.lake/build/bin/editor headless ../tests/headless/config ../tests/headless/script 2>&1 >/dev/null) || status=$?; printf '%s\\n' \"$err\"; test \"$status\" -eq 2 && test \"${err#editor: no Lean toolchain}\" != \"$err\"",
   # A script that cannot be read is status 1, with nothing on stdout and a
   # line on stderr that starts `editor: ` and says why. No file of that name
   # is checked in.
   "status=0; err=$(.lake/build/bin/editor headless \"$(lean --print-prefix)\" .lake/build/lib/lean ../tests/headless/config ../tests/headless/no-such-script 2>&1 >/dev/null) || status=$?; printf '%s\\n' \"$err\"; test \"$status\" -eq 1 && test \"${err#editor: }\" != \"$err\"",
 ]
+
+# The headless mode run from a bundle, as the installed editor will be
+# (docs/dev-practices/headless-mode.md, "From an app bundle"). It runs the
+# built executables only, so it needs just `lean` before it, and has a time
+# limit of its own: copying the 180 MB executable and the module files must
+# not eat `ffi-test`'s.
+#
+# One shell, which makes a temporary directory and removes it by a trap when
+# the shell ends, whether the check passed or failed. In it,
+# tools/stage-bundle.sh lays out `Leanmacs.app` as the bundle will be: a
+# copy of `editor` (not a link) in `Contents/MacOS`, and the `.olean`,
+# `.olean.server` and `.olean.private` files of the modules `Editor`
+# imports, which `config-test bench-modules` lists, under
+# `Contents/Resources/lean/toolchain/lib/lean` and
+# `Contents/Resources/lean/editor`. Those three kinds and that closure are
+# what `mise run module-bench` measured the import to need
+# (docs/design/lean-runtime.md, "What config may import, measured").
+# `lean --print-prefix` runs on the staging side only. The fixture's config
+# and script (tests/headless/bundle) are copied into the temporary
+# directory, and the copy of the editor runs its headless mode on them from
+# a working directory outside the bundle, with no directory argument and an
+# empty environment (no `HOME`, `PATH`, `LEAN_PATH` or `XDG_*`): it must
+# exit 0 and print exactly `expected`. It passes only if the executable
+# found its modules from its own path: outside a bundle it would find no
+# toolchain and be refused, and the build tree's `.olean` directory is not
+# beside the copy. The fixture's commands only make texts, so nothing is
+# written outside the temporary directory.
+[tasks.bundle-test]
+description = "Stage the app bundle's layout in a temporary directory and run the headless mode of a copy of the editor there, with no directory argument, an empty environment and a working directory outside it (tools/stage-bundle.sh, tests/headless/bundle)"
+depends = ["lean"]
+dir = "lean"
+timeout = "120s"
+run = '''dir=$(mktemp -d) && trap 'rm -rf "$dir"' EXIT && sysroot=$(lean --print-prefix) && fixtures=$PWD/../tests/headless/bundle && .lake/build/bin/config-test bench-modules "$sysroot" .lake/build/lib/lean Editor >"$dir/closure" && ../tools/stage-bundle.sh --closure "$dir/closure" "$dir/Leanmacs.app" .lake/build/bin/editor "$sysroot" .lake/build/lib/lean olean olean.server olean.private && cp -R "$fixtures/config" "$dir/config" && cp "$fixtures/script" "$dir/script" && mkdir "$dir/elsewhere" && cd "$dir/elsewhere" && out=$(env -i "$dir/Leanmacs.app/Contents/MacOS/editor" headless "$dir/config" "$dir/script") && printf '%s\n' "$out" | diff "$fixtures/expected" -'''
 
 # Opt-in: run it by hand, and do not add it to `ci` or to hk.pkl. It ends in
 # an abort, and on macOS every abort makes the system write a crash report
@@ -388,6 +427,27 @@ run = [
   "/usr/bin/time -l env -u LEAN_STACK_SIZE_KB .lake/build/bin/config-test bench-soak \"$(lean --print-prefix)\" .lake/build/lib/lean 100",
   "/usr/bin/time -l env -u LEAN_STACK_SIZE_KB .lake/build/bin/config-test bench-soak \"$(lean --print-prefix)\" .lake/build/lib/lean 500",
 ]
+
+# Opt-in: run it by hand on a quiet machine, on macOS, and do not add it to
+# `ci` or to hk.pkl. It measures and asserts nothing: its numbers depend on
+# the machine, so none of them is a pass or a fail. The gate still builds
+# `config-test bench-modules`, under every linter (`lean`), and runs it in
+# `bundle-test`.
+#
+# What config may import, measured, for the import sets `Editor` and
+# `Editor` with `Lean` (tools/module-bench.sh): the modules each import
+# reads and the bytes of each file kind, of whole top-level directories and
+# of those modules alone; which file kinds the import needs, found by
+# staging the directories with tools/stage-bundle.sh in a temporary
+# directory with each kind set in turn and importing from them; and, staged
+# with the kinds it needs, the start-up time and resident memory of
+# `bench-start`, and of the staged bundle's headless mode for `Editor`. The
+# figures are in docs/design/lean-runtime.md, "What config may import,
+# measured". It takes a minute or two and needs a few GB of temporary disk.
+[tasks.module-bench]
+description = "Opt-in, never part of ci; macOS only: measure what each import set config may use needs to ship (file kinds, bytes) and costs at start-up (time, memory), from a staged bundle (tools/module-bench.sh). It asserts nothing"
+depends = ["lean"]
+run = "tools/module-bench.sh lean"
 
 # Opt-in: run it by hand on a quiet machine, and do not add it to `ci` or to
 # hk.pkl. It measures and asserts nothing: its numbers depend on the machine
@@ -701,4 +761,4 @@ run = "tools/linux/run.sh render"
 
 [tasks.ci]
 description = "The whole gate; `hk check` runs this, and it gates review and landing (rdm's dispatch.verify)"
-depends = ["fmt", "lint", "deny", "doc", "test", "lean-test", "lean", "lean-fmt", "ffi-test", "c-fmt"]
+depends = ["fmt", "lint", "deny", "doc", "test", "lean-test", "lean", "lean-fmt", "ffi-test", "bundle-test", "c-fmt"]

@@ -3863,6 +3863,17 @@ def reload (sysroot oleanDir : String) : IO UInt8 := do
     IO.println s!"bench-reload: {name}: {medianAndMaximum times}"
   return 0
 
+/-- `bench-modules`: imports the base with `modules` and prints the name of
+every module the import read, one a line and unescaped, so that
+`tools/stage-bundle.sh --closure` can map each to its files. -/
+def modules (sysroot oleanDir : String) (modules : List String) : IO UInt8 := do
+  let environment ←
+    Config.Elaborate.importBase
+        { sysroot, oleanDir, imports := (modules.map String.toName).toArray }
+  for name in environment.allImportedModuleNames do
+    IO.println (name.toString (escape := false))
+  return 0
+
 /-- `bench-soak`: `count` reloads of the fifty-definition config, each with
 the text changed, and prints the mean time of one. -/
 def soak (sysroot oleanDir : String) (count : Nat) : IO UInt8 := do
@@ -4103,7 +4114,7 @@ end Bench
 /-- Reports a command line `main` does not understand; the exit status is 2. -/
 def usage : IO UInt32 := do
   IO.eprintln
-      "usage: config-test <sysroot> <olean dir> | config-test bench-start <sysroot> <olean dir> <module>... | config-test bench-reload <sysroot> <olean dir> | config-test bench-soak <sysroot> <olean dir> <count> | config-test bench-jobs <sysroot> <olean dir> <samples>"
+      "usage: config-test <sysroot> <olean dir> | config-test bench-start <sysroot> <olean dir> <module>... | config-test bench-modules <sysroot> <olean dir> <module>... | config-test bench-reload <sysroot> <olean dir> | config-test bench-soak <sysroot> <olean dir> <count> | config-test bench-jobs <sysroot> <olean dir> <samples>"
   return 2
 
 end ConfigTest
@@ -4113,6 +4124,8 @@ hold, and 1 after naming the ones that do not.
 
 `bench-start`, `bench-reload` and `bench-soak` are the benchmark
 (`ConfigTest.Bench`; `mise run config-bench`), which the gate never runs.
+`bench-modules` lists the modules an import set reads, for
+`mise run module-bench` and the gate's `bundle-test`.
 `bench-jobs` is the job benchmark (`ConfigTest.Bench.jobs`;
 `mise run job-bench`), which the gate never runs either.
 
@@ -4127,6 +4140,8 @@ def main (args : List String) : IO UInt32 := do
     IO.Process.exit (← ConfigTest.run sysroot oleanDir)
   | "bench-start" :: sysroot :: oleanDir :: module :: modules =>
     IO.Process.exit (← ConfigTest.Bench.start sysroot oleanDir (module :: modules))
+  | "bench-modules" :: sysroot :: oleanDir :: module :: modules =>
+    IO.Process.exit (← ConfigTest.Bench.modules sysroot oleanDir (module :: modules))
   | ["bench-reload", sysroot, oleanDir] =>
     IO.Process.exit (← ConfigTest.Bench.reload sysroot oleanDir)
   | ["bench-soak", sysroot, oleanDir, count] =>

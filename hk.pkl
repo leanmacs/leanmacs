@@ -9,7 +9,7 @@ local rust_sources = List("**/*.rs", "**/Cargo.toml", "Cargo.lock")
 // The full gate, defined once in mise.toml's `ci` task.
 local ci = new Mapping<String, Step> {
     ["mise_ci"] {
-        glob = rust_sources + c_sources + List("mise.toml", "deny.toml", "**/clippy.toml", ".clang-format", "lean/**", "tests/**")
+        glob = rust_sources + c_sources + List("mise.toml", "deny.toml", "**/clippy.toml", ".clang-format", "lean/**", "tests/**", "tools/stage-bundle.sh")
         check = "mise run ci"
         exclusive = true
     }

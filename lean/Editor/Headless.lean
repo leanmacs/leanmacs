@@ -9,6 +9,7 @@ import Editor.Event.Queue
 import Editor.Evil.Compiled
 import Editor.Ex.Compiled
 import Editor.Files.Compiled
+import Editor.Headless.CommandLine
 import Editor.InputScheme.Vim.Default
 import Editor.Job.Jobs
 import Editor.Job.Pool
@@ -412,8 +413,11 @@ cancels the jobs that are left, and prints nothing more.
   nothing.
 
 `main` is the executable's headless mode,
-`editor headless [--render] <sysroot> <olean dir> <config dir> <script file>`,
-handed the command line after `headless`: `run`
+`editor headless [--render] [<sysroot> <olean dir>] <config dir> <script file>`,
+handed the command line after `headless`, which `Headless.read` reads
+(`Editor/Headless/CommandLine.lean`): the toolchain's directory and the
+editor's `.olean` directory are given, or, from an executable in an app
+bundle, are the bundle's (`Editor/ModuleLookup.lean`). It is `run`
 with the real elaborator, a directory as the source, stdout as the output,
 the library's timer service and file service for the jobs, and the file
 commands with their jobs, the minibuffer's commands with its mode, evil's
@@ -426,7 +430,8 @@ a command quit the editor before it, and
 read, a wait ran out (after 30 seconds) with a reload or a job still
 running, or the editor thread did not answer. A rejected reload is something
 to print, not a failure, and so is a job that fails. A command line it does
-not take is status 2, with its usage on stderr.
+not take is status 2, with its usage on stderr: two paths outside a bundle
+among them, which say first that there is no toolchain.
 
 With `--render` the host draws: `main` starts the library's headless render
 session, a render loop over the CPU renderer that follows each published
@@ -1877,20 +1882,6 @@ is smaller than the machine, because `LEAN_NUM_THREADS` says so. -/
 def warmPatience : Nat :=
   200
 
-/-- The headless mode's command line, after `headless`. -/
-def usage : String :=
-  "headless [--render] <sysroot> <olean dir> <config dir> <script file>"
-
-/-- What the headless mode's command line, after `headless`, asks for:
-whether to draw (`--render`), and the four paths. `none` for any other
-command line. -/
-def arguments? : List String → Option (Bool × String × String × String × String)
-  | ["--render", sysroot, oleanDir, configDir, script] =>
-    some (true, sysroot, oleanDir, configDir, script)
-  | [sysroot, oleanDir, configDir, script] =>
-    if sysroot.startsWith "--" then none else some (false, sysroot, oleanDir, configDir, script)
-  | _ => none
-
 /-- The display the headless mode draws with under `--render`: the real
 binding over a display of the library's in `cells`, bound to the library's
 presenter (`Ffi.Display.present`), so every scene it publishes reaches the
@@ -1934,14 +1925,17 @@ def shipped (sysroot oleanDir configDir : String) (emit : String → IO Unit) :
       modes := Minibuffer.modes, ex := Ex.bindings, log := IO.eprintln }
 
 /-- The headless mode of the executable, handed the command line after
-`headless`: `editor headless [--render] <sysroot> <olean dir> <config dir>
-<script file>`. Loads the config in `configDir` with the real elaborator,
+`headless`: `editor headless [--render] [<sysroot> <olean dir>] <config dir>
+<script file>`, read by `Headless.read` (`Editor/Headless/CommandLine.lean`).
+Loads the config in `configDir` with the real elaborator,
 runs the script as `run` does, with the output on stdout, then quits the
 queues and exits explicitly: with status 0 when the script ran to its end or
 a command quit the editor before it, and with 1 when it could not, after
 saying why on stderr (the script cannot be read, a wait ran out with a
 reload or a job still running, or the editor thread did not answer). Any
-other command line is the usage on stderr and status 2.
+other command line is status 2, with the usage on stderr after the reason,
+if there is one beyond the number of paths: two paths outside a bundle say
+there is no toolchain.
 
 Before the loop starts it warms the pool, so the first burst of jobs finds
 every thread made, and starts the completion pump on a dedicated task. The
@@ -1956,13 +1950,21 @@ it (`drawnDisplay`), in place of the recorder. The script's `agree`, `idle`
 and `journal` read that display's frame and that loop. The session is
 stopped before the queues are quit.
 
-`sysroot` is the Lean toolchain's directory and `oleanDir` the directory
-holding the editor package's `.olean` files. Every path is an argument:
-nothing is read from the environment or the working directory. -/
+The Lean toolchain's directory and the directory holding the editor
+package's `.olean` files are the first two of four paths, or, with two, the
+bundle's, resolved from the executable's path, which `main` reads at the
+edge (`IO.appPath`; `Editor/ModuleLookup.lean`). Nothing is read from the
+environment or the working directory. -/
 def main (arguments : List String) : IO UInt32 := do
-  let some (drawn, sysroot, oleanDir, configDir, scriptPath) := arguments? arguments |
-    IO.eprintln s!"usage: editor {usage}"
-    return 2
+  let { render := drawn, sysroot, oleans := oleanDir, config := configDir, script := scriptPath } ←
+    match read (← IO.appPath).toString arguments with
+    | .ok read =>
+      pure read
+    | .error reason =>
+      unless reason.isEmpty do
+        IO.eprintln s!"editor: {reason}"
+      IO.eprintln s!"usage: editor {usage}"
+      return 2
   let directives ←
     try
       let text ← IO.FS.readFile scriptPath

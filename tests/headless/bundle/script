@@ -1,0 +1,13 @@
+# The script `mise run bundle-test` has the headless mode of a copy of the
+# editor run inside a staged bundle, with no directory argument, an empty
+# environment and a working directory outside the bundle. The config in
+# `config/` is elaborated on the modules the bundle holds. What it prints
+# must be exactly `expected`.
+
+reload
+settle
+
+# `squares` is config's: it runs interpreted, calling compiled code of
+# `Init` and of `Editor`. Text 0 is the scratch buffer's.
+run squares
+show
