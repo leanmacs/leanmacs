@@ -261,20 +261,25 @@ built"):
   build on one, and the winit adapter produces all of it (the display
   pipeline's phase 5). The one option is whether composition is allowed.
 - **As the winit adapter maps it.** A key's names are winit's own, which
-  winit documents as the W3C values, with three exceptions written out:
-  the system key is the named key `Meta` and its codes `MetaLeft` and
-  `MetaRight`, and Space is the character it types. A release carries no
+  winit 0.31 takes from keyboard-types as the W3C values: the system key
+  is the named key `Meta` and its codes `MetaLeft` and `MetaRight`, and
+  Space is the character it types. keyboard-types' own `Unidentified` is
+  an unidentified key. A release carries no
   text, and neither does a key whose text winit gives as a control
   character (Escape, Enter, Tab, Backspace): they are known by their
   names. The modifiers are those winit last reported, so on X11 the press
-  of Control carries no `control`. A press and a release are where the
-  pointer last was; a move with a button held is a drag, carrying the
-  button held longest, a move with none is not reported, and being told
-  the pointer is where it already was is no move at all; a wheel
-  carries winit's delta, in lines or pixels, positive when the content
-  moves right and down. A resize is the new size at the scale last known,
-  a change of scale a resize at the size last known, and a window reports
-  its size straight after it reports that it opened. Touch is not mapped.
+  of Control carries no `control`. A press and a release are where winit
+  says, and the pointer is there after them; a move with a button held
+  is a drag, carrying the button held longest, a move with none is not
+  reported, and being told the pointer is where it already was is no move
+  at all; a wheel is where the pointer last was and carries winit's
+  delta, in lines or pixels, positive when the content moves right and
+  down. The five buttons winit names are the port's five, and every other
+  is another button by winit's number for it. A resize is the new size at
+  the scale last known, a change of scale a resize at the size last
+  known, and a window reports its size straight after it reports that it
+  opened. A touch and a tablet tool are not the pointer: they report
+  nothing and leave where the pointer is as it was.
 - **Fullscreen is the system's, and asks nothing of Lean.** The window
   is made with winit's default attributes, so on macOS it has the green
   button, which puts it into the system's fullscreen on a Space of its
@@ -333,12 +338,17 @@ built"):
   open window alone for a settling time, so a run that an earlier close
   ends returns with no close asked of it and is refused. It is shown to
   refuse platforms that break each rule.
-- **The adapter** is `editor-platform-winit`, over winit, pinned exactly.
+- **The adapter** is `editor-platform-winit`, over winit, pinned exactly
+  (`=0.31.0-beta.4`, the newest 0.31 on 2026-11-15; 0.31.0 was not out).
   The gate opens no window, so it covers the adapter's translation, on
   winit's own values, and its refusal to run off the main thread. winit's
-  key event and its event for a change of scale cannot be built outside
-  winit, so those two are translated from their parts, and the lines that
-  take them apart run only in a real window. The adapter is held to the
+  event for a change of scale cannot be built outside winit, so it is
+  translated from its scale; a key is translated from its parts too, by
+  choice, though 0.31's key event can be built. The lines that take the
+  two apart run only in a real window. A close asks the loop to end, with
+  a flag the loop shares, and then wakes it with winit's `wake_up`: winit
+  may wake a loop nobody woke, so the loop ends on a wake-up only when the
+  flag is set. The adapter is held to the
   contract by an example binary that `mise run linux-window` runs under
   Xvfb in a container and `mise run window-contract` on a desktop.
 - **Onto the queue**: `editor-ffi` runs a platform and pushes each input as

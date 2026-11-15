@@ -2251,14 +2251,22 @@ window is still run with nothing drawing in it. The threads are in
   X11 a modifier's own press arrives before the change that names it, so
   the press of Control carries no `control`. No command binds a bare
   modifier.
-- **The pointer.** A press and a release are where the pointer last was.
+- **The pointer.** A press and a release are where winit says, and the
+  pointer is there after them; winit 0.31 gives a button its position,
+  and on macOS says where the pointer is before every press as well.
   A move with a button held is a drag, carrying the button held longest;
   a move with none held is remembered and not reported. Being told the
   pointer is where it already was is no move and so no drag: winit on
   macOS says where the pointer is before every press and every release,
-  and a click there arrived as a press, a drag and a release. A wheel carries
+  and a click there arrived as a press, a drag and a release (seen on
+  winit 0.30). A wheel is where the pointer last was and carries
   winit's delta as it is, in lines or pixels, positive when the content
-  moves right and down. Touch is not mapped.
+  moves right and down. The five buttons winit names are the port's
+  five, and every other is another button by winit's number for it (on
+  X11, winit 0.31 numbers the buttons with codes 8 to 36 by code less 5,
+  where 0.30 gave the code). A touch and a tablet tool are not the
+  pointer: winit 0.31 sends them as the pointer's events, and they
+  report nothing and leave where the pointer is as it was.
 - **Size and scale.** A resize is the new size at the scale last known,
   and a change of scale a resize at the size last known. A window says
   its size as it opens, in a resize straight after `Opened`: the port has

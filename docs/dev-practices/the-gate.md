@@ -36,9 +36,10 @@ What the gate does check of the window, with none open:
   and text; the pointer's press, drag, release and wheel; a resize and a
   change of scale; the native handles; and what the drawer is told for
   each, damage and hiding among it, and after which events the display is
-  asked for its refresh rate. Two of winit's events cannot be built
-  outside winit, a key and a change of scale, so those are translated
-  from their parts.
+  asked for its refresh rate. winit's event for a change of scale cannot
+  be built outside winit, so it is translated from its scale, and a key
+  is translated from its parts, though winit 0.31's key event can be
+  built.
 - **The port's contract**, in `crates/editor-platform`, on the fake and on
   platforms written to break each rule, those about the drawer among
   them; and the clipboard port's, on its fake and on clipboards written to
@@ -95,8 +96,9 @@ lines of the adapter that only a real window runs (the two that take a key
 event and a change of scale apart, which `mise run linux-window` runs on
 winit's own events, keys typed by xdotool and a change of the display's
 settings while the window is open; the readings of the window's size, its
-handles and its display's refresh rate; and telling the drawer the window
-is closing); wgpu's own calls that configure a surface, take its texture,
+handles and its display's refresh rate; sending the window's request to
+its input method; ending the loop when it is woken with a close asked;
+and telling the drawer the window is closing); wgpu's own calls that configure a surface, take its texture,
 copy it out and present it, since the no-op back end hands out no surface
 texture, and the few lines that forward to them
 (`crates/editor-render-wgpu`, `gpu`, `OnSurface`); and anything a real
