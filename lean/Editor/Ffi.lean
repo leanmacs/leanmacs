@@ -190,9 +190,18 @@ arrives on the editor queue.
   closed. Call it from Lean's main thread or a dedicated task, never from the
   thread pool. While it runs, the main-thread service answers nothing else,
   so ask `mainThreadProbe` before, not during.
-- How the window is opened goes in as scalars, one for each option: today,
-  whether an input method may compose. A failure to open comes back as a
-  reason, in an `Except`.
+- How the window is opened goes in as scalars, one for each option:
+  whether an input method may compose, and the present mode and frame
+  latency a run asks for, each none for the renderer's decision. A failure
+  to open comes back as a reason, in an `Except`.
+- What draws in the window is the library's: a display bound to the
+  library's presenter (`Display.present`) is drawn there while the window
+  is open, at the scale the window says, stamped with the window input its
+  frame answers. With no window, `renderHeadless` runs a render session of
+  its own over the CPU renderer, for the headless mode. The latest
+  session's journal, counters and rest are read with `renderJournal`,
+  `renderCounters` and `renderResting`, after it has ended too. The process
+  has one presenter, so a check binds, starts and stops what it reads.
 - What the window reports is events from the window source, of the kinds
   from `windowOpened` on, pulled with `nextEvent` like any other. Each is
   stamped with the reading of the library's input clock when the window
@@ -1665,10 +1674,34 @@ inductive Platform where
   | scriptedFailing
   deriving DecidableEq, Repr
 
+/-- A way a frame reaches the display, by wgpu's names
+(`crates/editor-render-wgpu/src/present.rs`): what a run may ask for in
+place of the renderer's decision, to measure it. -/
+inductive PresentMode where
+  /-- Frames wait for the display's refresh: no tearing. -/
+  | fifo
+  /-- As `fifo`, but a late frame is shown at once, tearing. -/
+  | fifoRelaxed
+  /-- A frame is shown the moment it is presented, tearing. -/
+  | immediate
+  /-- The newest frame replaces one waiting, at the refresh. -/
+  | mailbox
+  deriving DecidableEq, Repr
+
+/-- The tag a present mode crosses as; 0 is none asked. -/
+def PresentMode.tag : Option PresentMode → UInt8
+  | none => 0
+  | some .fifo => 1
+  | some .fifoRelaxed => 2
+  | some .immediate => 3
+  | some .mailbox => 4
+
 /-- `windowRun` as it crosses: the glue builds `none` when the window ran and
-`some` of the reason when it did not. -/
+`some` of the reason when it did not. The present mode is its tag and the
+frame latency a number, each 0 for none asked. -/
 @[extern "editor_glue_window_run"]
-private opaque windowRunRaw (platform : Platform) (composition : Bool) : IO (Option String)
+private opaque windowRunRaw (platform : Platform) (composition : Bool) (presentMode : UInt8)
+    (frameLatency : UInt32) : IO (Option String)
 
 /-- Runs the window on `platform`, with an input method allowed to compose
 or not, and returns once the window has closed: `.ok ()` when it ran, and
@@ -1683,9 +1716,16 @@ What the window reports arrives on the editor queue, from the window source,
 each event stamped with the reading of `inputClock` when the window reported
 it. The window does not close by itself: when the user asks, a
 `closeRequested` event arrives, and the window stays open until
-`windowClose`. -/
-def windowRun (platform : Platform) (composition : Bool) : IO (Except String Unit) := do
-  match ← windowRunRaw platform composition with
+`windowClose`.
+
+While the window is open, what a display bound to the presenter publishes
+(`Display.present`) is drawn in it, at the scale the window says. A run may
+ask for a present mode and a frame latency in place of the renderer's
+decision, to measure them; `none` is the decision. -/
+def windowRun (platform : Platform) (composition : Bool) (presentMode : Option PresentMode := none)
+    (frameLatency : Option Nat := none) : IO (Except String Unit) := do
+  let latency := (frameLatency.getD 0).toUInt32
+  match ← windowRunRaw platform composition (PresentMode.tag presentMode) latency with
   | none =>
     return .ok ()
   | some reason =>
@@ -1775,12 +1815,51 @@ instance : Nonempty Display :=
 @[extern "editor_glue_display_new_cells"]
 opaque Display.newCells (advance lineHeight : UInt64) : IO Display
 
+/-- A new display over the library's real shaper and the fonts of this
+machine: the window mode's. What it lays out depends on the machine, so no
+check makes one. -/
+@[extern "editor_glue_display_new_system"]
+opaque Display.newSystem : IO Display
+
+/-- Binds `display` to the library's presenter: every scene it publishes
+from then on is laid out at the scale the process's window said, and its
+frame reaches the render session that runs, the window's or the headless
+mode's, stamped with the window input it answers. -/
+@[extern "editor_glue_display_present"]
+opaque Display.present (display : @& Display) : IO Unit
+
 /-- How many displays the Rust library holds that have not been freed.
 
 This exists for `FfiTest`, which uses it to see a display's finaliser
 run. -/
 @[extern "editor_glue_display_live"]
 opaque Display.live : IO UInt64
+
+/-- The heights of the rows a frame is built of, in whole pixels at the
+display's scale, as the library answers them: a text row, a window's status
+row, and the frame's bottom row, where the echo or the prompt is drawn. -/
+structure DisplayHeights where
+  /-- One text row in the default face. -/
+  text : UInt64
+  /-- A window's status row. -/
+  status : UInt64
+  /-- The bottom row. -/
+  message : UInt64
+  deriving DecidableEq, Repr
+
+/-- `Display.heights` as it crosses. -/
+@[extern "editor_glue_display_heights"]
+private opaque Display.heightsRaw (display : @& Display) : IO RawWords
+
+/-- The heights of a text row, a status row and the bottom row. Words that
+are not three are an error. -/
+def Display.heights (display : Display) : IO DisplayHeights := do
+  let raw ← display.heightsRaw
+  match wordsOf? raw.words with
+  | some #[text, status, message] =>
+    return { text, status, message }
+  | _ =>
+    throw (IO.userError "the library's heights are not three words")
 
 /-- One visual row, as the library answers it: the bytes from `start` up to
 `stop`, without its line break. -/
@@ -1908,6 +1987,121 @@ def Display.scene (display : Display) : IO (Option (Array UInt64 × String)) := 
   let some words := wordsOf? raw.words
     | throw (IO.userError "the library's scene is not whole words")
   return some (words, raw.strings)
+
+/-! ## The render session -/
+
+/-- Starts the headless mode's render session: a render loop with no window,
+on a thread of the library's, over the CPU renderer, which draws what a
+bound display publishes at each scene's size. `false`, starting nothing,
+when one runs already. -/
+@[extern "editor_glue_render_headless"]
+opaque renderHeadless : IO Bool
+
+/-- Stops the headless render session and waits for its thread. Its journal
+and counters stay readable. `false` when none runs. -/
+@[extern "editor_glue_render_stop"]
+opaque renderStop : IO Bool
+
+/-- One frame drawn and presented, as the render loop's journal records it,
+on the clock that stamps window input. -/
+structure JournalEntry where
+  /-- Its place in the journal, from 1. -/
+  serial : UInt64
+  /-- When the input it answers was stamped. -/
+  inputNs : UInt64
+  /-- When its draw began. -/
+  drawNs : UInt64
+  /-- When the renderer returned, having presented it. -/
+  presentNs : UInt64
+  /-- The rows it built. -/
+  rowsRebuilt : UInt64
+  /-- The rows it drew from what was kept. -/
+  rowsReused : UInt64
+  deriving DecidableEq, Repr
+
+/-- `renderJournal` as it crosses. -/
+@[extern "editor_glue_render_journal"]
+private opaque renderJournalRaw (after : UInt64) : IO RawWords
+
+/-- The journal entries of the latest render session, ended or not, whose
+serial is above `after`, oldest first; `none` when no session has started. -/
+def renderJournal (after : UInt64) : IO (Option (Array JournalEntry)) := do
+  let raw ← renderJournalRaw after
+  if raw.status != 0 then
+    return none
+  let some words := wordsOf? raw.words
+    | throw (IO.userError "the library's journal is not whole words")
+  let count := (words[0]?.getD 0).toNat
+  unless words.size == 1 + 6 * count do
+    throw (IO.userError "the library's journal does not spell its count")
+  return some <|
+      (Array.range count).map fun index =>
+        let at_ (field : Nat) := words[1 + 6 * index + field]!
+        { serial := at_ 0, inputNs := at_ 1, drawNs := at_ 2, presentNs := at_ 3
+          rowsRebuilt := at_ 4, rowsReused := at_ 5 }
+
+/-- What the latest render session has done, as its counters say. -/
+structure RenderCounters where
+  /-- The draws that presented a frame. -/
+  draws : UInt64
+  /-- The draws that did not. -/
+  drawsFailed : UInt64
+  /-- The frames submitted. -/
+  framesSubmitted : UInt64
+  /-- The frames a newer one replaced before they were drawn. -/
+  framesReplaced : UInt64
+  /-- The rows built, over every presented draw. -/
+  rowsRebuilt : UInt64
+  /-- The rows drawn from what was kept. -/
+  rowsReused : UInt64
+  /-- The glyph images rasterised. -/
+  glyphsRasterised : UInt64
+  /-- The glyph images asked for and already held. -/
+  glyphsReused : UInt64
+  /-- The glyph images dropped to make room. -/
+  glyphsEvicted : UInt64
+  /-- The glyphs that could not be drawn. -/
+  glyphsSkipped : UInt64
+  /-- The bytes the glyph images took up at the last draw. -/
+  atlasBytes : UInt64
+  /-- The journal entries let go to make room. -/
+  journalDropped : UInt64
+  deriving DecidableEq, Repr
+
+/-- `renderCounters` as it crosses. -/
+@[extern "editor_glue_render_counters"]
+private opaque renderCountersRaw : IO RawWords
+
+/-- The counters of the latest render session, ended or not; `none` when no
+session has started. -/
+def renderCounters : IO (Option RenderCounters) := do
+  let raw ← renderCountersRaw
+  if raw.status != 0 then
+    return none
+  match wordsOf? raw.words with
+  |
+  some
+      #[draws, drawsFailed, framesSubmitted, framesReplaced, rowsRebuilt, rowsReused,
+        glyphsRasterised, glyphsReused, glyphsEvicted, glyphsSkipped, atlasBytes, journalDropped] =>
+    return some
+        { draws, drawsFailed, framesSubmitted, framesReplaced, rowsRebuilt, rowsReused
+          glyphsRasterised, glyphsReused, glyphsEvicted, glyphsSkipped, atlasBytes
+          journalDropped }
+  | _ =>
+    throw (IO.userError "the library's counters are not twelve words")
+
+/-- `renderResting` as it crosses: 0 for no session, 1 busy, 2 at rest. -/
+@[extern "editor_glue_render_resting"]
+private opaque renderRestingRaw : IO UInt8
+
+/-- Whether the latest render session's loop is at rest: its last step found
+nothing asked and nothing to wait for, and nothing has been asked since;
+`none` when no session has started. -/
+def renderResting : IO (Option Bool) := do
+  return match ← renderRestingRaw with
+    | 0 => none
+    | 2 => some true
+    | _ => some false
 
 /-! ## The clipboard -/
 

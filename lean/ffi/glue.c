@@ -889,13 +889,16 @@ bool editor_ffi_window_post_input(uint8_t kind, uint64_t code,
                                   const uint8_t *text, size_t text_len,
                                   const uint8_t *words, size_t words_len);
 
-// `Editor.Ffi.windowRunRaw : Platform → Bool → IO (Option String)`. Blocks in
-// Rust until the window has closed. `none` when the window ran, and `some` of
-// the reason when it did not. It asks for no present mode and no frame
-// latency (0 and 0): the renderer's decision.
-lean_obj_res editor_glue_window_run(uint8_t platform, uint8_t composition) {
+// `Editor.Ffi.windowRunRaw : Platform → Bool → UInt8 → UInt32 → IO (Option
+// String)`. Blocks in Rust until the window has closed. `none` when the
+// window ran, and `some` of the reason when it did not. The present mode's
+// tag and the frame latency are each 0 for none asked.
+lean_obj_res editor_glue_window_run(uint8_t platform, uint8_t composition,
+                                    uint8_t present_mode,
+                                    uint32_t frame_latency) {
   editor_ffi_raw_refusal refusal;
-  if (editor_ffi_window_run(platform, composition, 0, 0, &refusal)) {
+  if (editor_ffi_window_run(platform, composition, present_mode, frame_latency,
+                            &refusal)) {
     return lean_io_result_mk_ok(lean_box(0)); // `none`
   }
   lean_object *reason = lean_mk_string_from_bytes((const char *)refusal.reason,
@@ -1117,6 +1120,74 @@ lean_obj_res editor_glue_display_scene(b_lean_obj_arg display) {
   editor_ffi_text_free(words.words, words.len);
   editor_ffi_text_free(strings.text, strings.text_len);
   return lean_io_result_mk_ok(scene);
+}
+
+// ---- The display's binding to the presenter, and the render session ----
+//
+// A display bound to the library's presenter has its frames drawn by the
+// render session that runs: the window's, or the headless mode's, which the
+// library runs on a thread of its own. The journal and the counters are the
+// latest session's, read after it has ended too.
+
+editor_ffi_display *editor_ffi_display_new_system(void);
+void editor_ffi_display_present(const editor_ffi_display *display);
+void editor_ffi_display_heights(const editor_ffi_display *display,
+                                editor_ffi_raw_words *out);
+bool editor_ffi_render_headless_start(void);
+bool editor_ffi_render_headless_stop(void);
+void editor_ffi_render_journal(uint64_t after, editor_ffi_raw_words *out);
+void editor_ffi_render_counters(editor_ffi_raw_words *out);
+uint8_t editor_ffi_render_resting(void);
+
+// `Editor.Ffi.Display.newSystem : IO Display`
+lean_obj_res editor_glue_display_new_system(void) {
+  pthread_once(&display_class_once, display_class_register);
+  return lean_io_result_mk_ok(
+      lean_alloc_external(display_class, editor_ffi_display_new_system()));
+}
+
+// `Editor.Ffi.Display.present : @& Display → IO Unit`
+lean_obj_res editor_glue_display_present(b_lean_obj_arg display) {
+  editor_ffi_display_present(lean_get_external_data(display));
+  return lean_io_result_mk_ok(lean_box(0));
+}
+
+// `Editor.Ffi.Display.heightsRaw : @& Display → IO RawWords`
+lean_obj_res editor_glue_display_heights(b_lean_obj_arg display) {
+  editor_ffi_raw_words raw;
+  editor_ffi_display_heights(lean_get_external_data(display), &raw);
+  return lean_io_result_mk_ok(raw_words_take(raw));
+}
+
+// `Editor.Ffi.renderHeadless : IO Bool`
+lean_obj_res editor_glue_render_headless(void) {
+  return lean_io_result_mk_ok(
+      lean_box(editor_ffi_render_headless_start() ? 1 : 0));
+}
+
+// `Editor.Ffi.renderStop : IO Bool`
+lean_obj_res editor_glue_render_stop(void) {
+  return lean_io_result_mk_ok(
+      lean_box(editor_ffi_render_headless_stop() ? 1 : 0));
+}
+
+// `Editor.Ffi.renderJournalRaw : UInt64 → IO RawWords`
+lean_obj_res editor_glue_render_journal(uint64_t after) {
+  editor_ffi_raw_words raw;
+  editor_ffi_render_journal(after, &raw);
+  return lean_io_result_mk_ok(raw_words_take(raw));
+}
+
+// `Editor.Ffi.renderCountersRaw : IO RawWords`
+lean_obj_res editor_glue_render_counters(void) {
+  editor_ffi_raw_words raw;
+  editor_ffi_render_counters(&raw);
+  return lean_io_result_mk_ok(raw_words_take(raw));
+}
+
+// `Editor.Ffi.renderRestingRaw : IO UInt8`
+lean_obj_res editor_glue_render_resting(void) {
+  return lean_io_result_mk_ok(lean_box(editor_ffi_render_resting()));
 }
 
 // ---- The clipboard ----
