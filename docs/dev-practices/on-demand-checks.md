@@ -94,8 +94,14 @@ directory, which must exit 0 and print exactly `expected`. Last, it builds
 `editorApp` again and checks that the bundle's executable, its
 `CodeResources` and the build's trace file keep their modification times
 and inodes: the second build copied and signed nothing. Lake's output is
-printed, and holds no `Built editorApp` line. It ends `app-check: ok` with
-the bundle's size, and takes seconds.
+printed, and holds no `Built editorApp` line. Then, in a clone of the Lean
+package in the temporary directory (`cp -c`, so it takes no space), with a
+`cargo` that does nothing first on the `PATH`, it swaps the stage script
+for one that stages and then fails, builds `editorApp`, which must fail,
+puts the script back so the inputs hash to the old trace again, and builds
+once more: the bundle must still verify and be the old one, so a failed or
+interrupted rebuild leaves no half-built bundle taken as up to date. It
+ends `app-check: ok` with the bundle's size, and takes seconds.
 
 It writes nothing outside its temporary directory but that second build,
 which is shown to write nothing, opens no window and needs no person. It is

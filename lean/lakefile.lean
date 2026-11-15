@@ -262,7 +262,11 @@ script's and this lakefile's traces with the toolchain's, the platform's,
 the property list's and the icon's, so the bundle is rebuilt, from nothing,
 only when one of them changed, or when the bundle is gone. The lakefile is
 in it because it is the recipe: without it, a change to how the bundle is
-made would leave the old bundle standing. -/
+made would leave the old bundle standing. A rebuild assembles and signs the
+bundle in `Leanmacs.app.staging` and only then renames it into place, since
+Lake keeps the old trace when a build fails: a rebuild that fails or is
+interrupted leaves the old bundle, never a half-built one the old trace
+would take as up to date (`mise run app-check`, step 7). -/
 target editorApp pkg : FilePath := do
   requireArm64Mac
   let exe ← editor.fetch
@@ -283,9 +287,16 @@ target editorApp pkg : FilePath := do
       let bundle := pkg.buildDir / s!"{appName}.app"
       let traceFile := pkg.buildDir / s!"{appName}.app.trace"
       buildUnlessUpToDate bundle (← getTrace) traceFile do
+          -- Assembled beside the bundle and moved into its place only once
+          -- signed. Lake writes the trace only when the build succeeds, so a
+          -- rebuild that fails or is interrupted must leave the old bundle,
+          -- which the old trace describes, never a half-built one under its name.
+          let staging := pkg.buildDir / s!"{appName}.app.staging"
+          let staged := staging / s!"{appName}.app"
+          let old := pkg.buildDir / s!"{appName}.app.old"
           -- A rebuild starts from nothing, so it never keeps a stale module.
-          if ← bundle.pathExists then
-            IO.FS.removeDirAll bundle
+          if ← staging.pathExists then
+            IO.FS.removeDirAll staging
           let sysroot ← getLeanSysroot
           let closure := pkg.buildDir / s!"{appName}.app.closure"
           let modules ←
@@ -296,16 +307,26 @@ target editorApp pkg : FilePath := do
           proc (quiet := true)
               { cmd := stager.toString
                 args :=
-                  #["--closure", closure.toString, bundle.toString, exe.toString, sysroot.toString,
+                  #["--closure", closure.toString, staged.toString, exe.toString, sysroot.toString,
                     pkg.leanLibDir.toString, "olean", "olean.server", "olean.private"] }
-          IO.FS.writeFile (bundle / "Contents" / "Info.plist") appInfoPlist
-          IO.FS.writeBinFile (bundle / "Contents" / "Resources" / s!"{appName}.icns") appIcon
+          IO.FS.writeFile (staged / "Contents" / "Info.plist") appInfoPlist
+          IO.FS.writeBinFile (staged / "Contents" / "Resources" / s!"{appName}.icns") appIcon
           -- The system's tools, by absolute path: mise's PATH may hold others of
           -- the same name (a Python package installs an `xattr` with no `-r`).
-          proc (quiet := true) { cmd := "/usr/bin/xattr", args := #["-cr", bundle.toString] }
+          proc (quiet := true) { cmd := "/usr/bin/xattr", args := #["-cr", staged.toString] }
           -- Last: nothing may be written into the bundle after this.
           proc (quiet := true)
-              { cmd := "/usr/bin/codesign", args := #["--force", "--sign", "-", bundle.toString] }
+              { cmd := "/usr/bin/codesign", args := #["--force", "--sign", "-", staged.toString] }
+          -- Moved into place by renames: an interruption between them leaves
+          -- the old bundle or none, and with none the next build rebuilds.
+          if ← old.pathExists then
+            IO.FS.removeDirAll old
+          if ← bundle.pathExists then
+            IO.FS.rename bundle old
+          IO.FS.rename staged bundle
+          IO.FS.removeDirAll staging
+          if ← old.pathExists then
+            IO.FS.removeDirAll old
       return bundle
 
 /-- The model tests (`ModelTest.lean`): `lake test` builds and runs this

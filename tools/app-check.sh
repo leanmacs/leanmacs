@@ -25,7 +25,17 @@
 # 6. builds `editorApp` again and checks that it copied and signed
 #    nothing: the bundle's executable, its `CodeResources` and the build's
 #    trace file keep their modification times and inodes. Lake's output is
-#    printed, and holds no `Built editorApp` line.
+#    printed, and holds no `Built editorApp` line;
+# 7. in a clone of the Lean package (`cp -c`: the files share their blocks,
+#    so it is quick and takes no space), with the stage script beside it and
+#    a `cargo` that does nothing first on the PATH, so nothing but
+#    `editorApp` builds: replaces the stage script with one that stages and
+#    then fails, as a failed or interrupted rebuild would, builds
+#    `editorApp`, which must fail, puts the script back, so the inputs hash
+#    to the old trace again, and builds once more. The bundle must still
+#    verify (`codesign --verify --strict --deep`) and be the old one: a
+#    rebuild that never finished leaves no half-built bundle that the old
+#    trace takes as up to date.
 #
 # It writes nothing outside the temporary directory but that second build,
 # which is shown to write nothing. It opens no window and needs no person.
@@ -122,5 +132,37 @@ before=$(marks)
 after=$(marks)
 [ "$before" = "$after" ] || fail "building editorApp again changed the bundle or its trace"
 step "building editorApp again copied and signed nothing"
+
+# 7. A rebuild that fails leaves the old bundle, never a half-built one.
+clone="$dir/clone"
+mkdir -p "$clone/tools" "$clone/target/release" "$clone/bin"
+cp -Rpc "$lean_dir" "$clone/lean"
+cp -p "$lean_dir/../tools/stage-bundle.sh" "$clone/tools/stage-bundle.real"
+cp -pc "$lean_dir/../target/release/libeditor_ffi.a" "$clone/target/release/libeditor_ffi.a"
+printf '#!/bin/sh\nexit 0\n' >"$clone/bin/cargo"
+printf '#!/usr/bin/env bash\n"$(dirname "$0")/stage-bundle.real" "$@"\nexit 1\n' >"$clone/tools/stage-bundle.sh"
+chmod +x "$clone/bin/cargo" "$clone/tools/stage-bundle.sh"
+cloned="$clone/lean/.lake/build/Leanmacs.app"
+clone_marks() {
+  stat -f '%m %i' "$cloned/Contents/MacOS/editor" "$cloned/Contents/_CodeSignature/CodeResources"
+}
+build_clone() {
+  (cd "$clone/lean" && PATH="$clone/bin:$PATH" LEAN_CC=/usr/bin/cc lake build --wfail editorApp)
+}
+before=$(clone_marks)
+if build_clone >"$dir/failed.log" 2>&1; then
+  cat "$dir/failed.log"
+  fail "building editorApp with a stage script that fails succeeded"
+fi
+grep -q "stage-bundle.sh' exited with code 1" "$dir/failed.log" || {
+  cat "$dir/failed.log"
+  fail "building editorApp with a stage script that fails failed, but not in the stage script"
+}
+mv "$clone/tools/stage-bundle.real" "$clone/tools/stage-bundle.sh"
+build_clone || fail "building editorApp in the clone with the stage script back failed"
+codesign --verify --strict --deep "$cloned" ||
+  fail "after a failed rebuild, the old trace took a half-built bundle as up to date"
+[ "$before" = "$(clone_marks)" ] || fail "after a failed rebuild, the bundle is not the old one"
+step "a failed rebuild left the old bundle, signed, and the next build took it as up to date"
 
 echo "app-check: ok, $(du -sh "$built" | awk '{ print $1 }') bundle"

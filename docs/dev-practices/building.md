@@ -104,7 +104,11 @@ Lake rebuilds the bundle only when an input changes: the executable, the
 stage script, the toolchain, the lakefile, the property list or the icon.
 A second `mise run app` with nothing changed copies and signs nothing, and
 Lake prints no `Built editorApp` line. A rebuild starts from an empty
-bundle, so it never keeps a module that is no longer imported.
+bundle, so it never keeps a module that is no longer imported. It assembles
+and signs the bundle beside the old one, in `Leanmacs.app.staging`, and
+renames it into place only then: Lake keeps the old trace when a build
+fails, so a rebuild that fails or is interrupted leaves the old bundle,
+never a half-built one that the old trace would take as up to date.
 
 **It is signed again after assembly.** The linker signs the executable
 ad-hoc, and that signature covers the Mach-O alone: with the bundle
