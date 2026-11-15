@@ -1,0 +1,44 @@
+# A template of a script: `mise run ffi-test` copies `lines.txt` into a
+# temporary directory, writes this file there with `@FILE@` replaced by the
+# copy's absolute path, and has the editor's headless mode run it against
+# the config in `../config/`, of which it loads nothing: there is no
+# `reload`, so every command its keys run is one the editor ships. The run
+# must exit with status 0 and print exactly `expected` once the temporary
+# directory's path is written `@DIR@`.
+#
+# It is `j` and `k` aiming for a display column, on the real library with
+# the recorder as the display. `lines.txt` is three lines, each ended by a
+# line feed: `a`, a tab and `b`, which start at bytes 0, 1 and 2; the ten
+# digits, at bytes 4 to 13; and `世`, which is three bytes and two columns
+# wide, at byte 15, with `b` at byte 18.
+#
+# There is no `resize`: the frame is 0 by 0 and no view is laid out. The
+# column is asked of the line unwrapped, so it does not need the view's
+# rectangle.
+
+# `:` opens the ex line and `e` opens the file. The open is a job: `join`
+# waits for its result, which makes the buffer and shows it.
+key : Semicolon shift
+commit e @FILE@
+key <Enter> Enter -
+join
+
+# `l` twice puts the cursor on `b`, after the tab: byte 2, the third
+# character and display column 8. `j` lands on the digit `8`, at byte 12,
+# and not on `2`, at byte 6.
+key l KeyL -
+key l KeyL -
+key j KeyJ -
+scene
+
+# `k` returns to `b`, at byte 2.
+key k KeyK -
+scene
+
+# `G` goes to the last line and `l` onto its `b`, at byte 18: the second
+# character, and display column 2 after the wide character. `k` lands on
+# the digit `2`, at byte 6, and not on `1`.
+key G KeyG shift
+key l KeyL -
+key k KeyK -
+scene

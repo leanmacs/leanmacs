@@ -4,7 +4,8 @@ import Editor.Vocabulary
 # Evil's motions
 
 Vim's motions as vocabulary entries (`Editor/Vocabulary.lean`), each
-composed from the text port's motion primitives (`Editor/Text.lean`), and
+composed from the text port's motion primitives (`Editor/Text.lean`), with
+the display's move query where a column is the display's (`down`, `up`), and
 the table the move command looks names up in (`motions`). The names are the
 ones the Vim scheme's default tables bind keys to
 (`Editor/InputScheme/Vim/Default.lean`): a name is changed in its row there
@@ -23,7 +24,7 @@ means, and what a motion does when it cannot go the whole way, is Vim's
 | Motion | Composed from | Count |
 |---|---|---|
 | `left`, `right` | `previousCell`, `nextCell`, stopped at the line's start and at where its content ends | Repeats. Goes as far as the line allows |
-| `down`, `up` | `rowsDown`, `rowsUp` with the wanted column | Rows. Stops at the last line and at the first |
+| `down`, `up` | `rowsDown`, `rowsUp` to the line's start, then the display's position at the wanted column of that line | Rows. Stops at the last line and at the first |
 | `word-forward`, `word-backward`, `word-end` and the three `bigword` names | `nextWordStart`, `previousWordStart`, `nextWordEnd` of a word or a WORD | Repeats. Stops when the position no longer changes |
 | `line-start` | `lineStart` | None is ever given: a `0` after a digit is part of the count. A count is ignored |
 | `line-first-non-blank` | `lineFirstNonBlank` | Ignored, as Vim documents |
@@ -51,14 +52,31 @@ What each says of itself for an operator (`Editor/Vocabulary.lean`,
 - **The wanted column** (`Editor/Vocabulary.lean`, "Motions"; where it is
   kept is `Editor/State.lean`, "The wanted column"):
   - `down` and `up` aim for the column they are handed, or for the
-    cursor's own column in cells when they are handed none, and keep it.
+    cursor's own when they are handed none, and keep it.
   - `line-end` keeps the line's end, also when it does not move.
   - `left` and `right` keep none when the cursor moves, and what was kept
     when it does not: Vim leaves the column alone when `h` or `l` fails.
   - Every other motion keeps none, also when the cursor does not move.
-  - It counts cells, where Vim's counts display columns: a recorded
-    departure, which shows with a tab or a wide character before the
-    cursor.
+  - **The column is a display column, as Vim's is, and it is the
+    display's.** `down` and `up` take the line they go to from the text
+    port and ask the display, with the move query (`Display.linesFrom`),
+    for the cursor's own x and for the position at an x of that line
+    (`inLine`). What they keep is the x the display passed back
+    (`WantedColumn.goal`), and nothing here computes with it: a tab's stop
+    and a character's width are layout's.
+  - **The display is asked about the line unwrapped** (`unwrapped`), so
+    the column is one of the line and not of a visual row, whatever the
+    view's width, and nothing of the view's rectangle is read: `j` and `k`
+    are the same in a view that is not laid out. Each takes a snapshot of
+    the text round its questions and releases it (`onSnapshot`).
+  - **What they ask**: nothing of the display when they are handed the
+    line's end; one question when they are handed a goal, which is every
+    `j` or `k` after the first, and none when they then cannot move; two
+    when they are handed none, and one when they then cannot move. A count
+    asks no more: the text port goes to the line in one request.
+  - **A cursor on a tab counts at the tab's first column**, where Vim's
+    counts at its last: the x the display answers for a position is where
+    its character starts. A recorded departure.
 - **What a word is is the text port's** (`Editor/Text.lean`): a run of word
   characters or of punctuation, or the line break of an empty line; a WORD
   is a run of characters that are not blank. It is Vim's on ASCII and not
@@ -255,30 +273,76 @@ def lineEnd : Vocabulary.Motion :=
       let below ← text.motion (.rowsDown (min (count - 1) (last - row)) 0) origin.head
       return { head := ← text.motion .lineEnd below, wanted := some .lineEnd } }
 
+/-- The width a text is laid out at when a column of a line is asked for: a
+width no line reaches, since it is wider than any machine word holds, which
+the display takes for wider than any view (`Editor/Display/Contract.lean`).
+At it a row of the display is a line of the text, and an x is counted from
+the line's start. -/
+def unwrapped : Nat :=
+  2 ^ 64
+
+/-- Runs `run` with a snapshot of `text`, taken here. The snapshot is
+released when `run` has ended, also when it was refused, and its refusal is
+then thrown. -/
+def onSnapshot {α : Type} (text : TextId) (run : SnapshotId → EditorM α) : EditorM α := do
+  let snapshot ← text.snapshot
+  let ended ← observing (run snapshot)
+  snapshot.release
+  match ended with
+  | .ok value =>
+    return value
+  | .error refusal =>
+    throw refusal
+
+/-- What the display answers of `position` in its line of `snapshot`, laid
+out unwrapped: with no goal, the position's own x, as the goal passed back;
+with one, the position at that x of the line, or the line's end past its
+last character. A move of no lines, so the line is the position's. -/
+def inLine (snapshot : SnapshotId) (position : Nat) (goal : Option Nat) : DisplayM Display.Moved :=
+  Display.linesFrom { snapshot, width := unwrapped, position, lines := 0, goal }
+
 /-- The motion called `name` by lines of the text, down when `down` and up
 otherwise: `count` lines, 1 with no count, and no further than the last
-line (`lastLine`) or the first. It aims for the wanted column it is handed,
-or for the cursor's own column, counted in cells, when it is handed none,
-and keeps the column it aimed for: on a row with fewer cells the raw
-target is where the row's content ends. An operator takes the whole lines
-of both ends. With no line to go to, on the last line going down and on the
-first going up, it has failed. -/
+line (`lastLine`) or the first. An operator takes the whole lines of both
+ends. With no line to go to, on the last line going down and on the first
+going up, it has failed.
+
+The line it goes to is the text port's. The column on that line is the
+display's ("The wanted column", in the module docs):
+
+- handed the line's end, it goes to where the line's content ends and asks
+  the display nothing;
+- handed a goal, it asks the display for the position at that x of the
+  line, and with no line to go to it asks nothing and stays;
+- handed none, it first asks the display for the cursor's own x, and aims
+  for that.
+
+It keeps the column it aimed for: on a line that does not reach it the raw
+target is where the line's content ends. -/
 def vertical (name : String) (down : Bool) : Vocabulary.Motion :=
   { name
     reach := .lines
     target := fun text origin => do
-      let point ← text.pointOf origin.head .cells
+      let head := origin.head
+      let row := (← text.pointOf head .cells).row
       let last ← lastLine text
-      let rows := min (origin.count.getD 1) (if down then last - point.row else point.row)
-      let column := origin.wanted.getD (.cells point.column)
-      let to (cells : Nat) : Motion := if down then .rowsDown rows cells else .rowsUp rows cells
-      let head ←
-        match column with
-        | .cells cells =>
-          text.motion (to cells) origin.head
-        | .lineEnd =>
-          text.motion .lineEnd (← text.motion (to 0) origin.head)
-      return { head, wanted := some column, failed := rows == 0 } }
+      let rows := min (origin.count.getD 1) (if down then last - row else row)
+      let line ← text.motion (if down then .rowsDown rows 0 else .rowsUp rows 0) head
+      match origin.wanted with
+      | some .lineEnd =>
+        return { head := ← text.motion .lineEnd line, wanted := some .lineEnd, failed := rows == 0 }
+      | some (.goal x) =>
+        if rows == 0 then
+          return { head, wanted := some (.goal x), failed := true }
+        let moved ← onSnapshot text fun snapshot => inLine snapshot line (some x)
+        return { head := moved.position, wanted := some (.goal x) }
+      | none =>
+        onSnapshot text fun snapshot => do
+            let own ← inLine snapshot head none
+            if rows == 0 then
+              return { head, wanted := some (.goal own.goal), failed := true }
+            let moved ← inLine snapshot line (some own.goal)
+            return { head := moved.position, wanted := some (.goal own.goal) } }
 
 /-- Down by lines of the text. -/
 def down : Vocabulary.Motion :=

@@ -255,6 +255,22 @@ run = [
   # directory's path written `@DIR@`, must be exactly `view/expected`. The
   # file is not written.
   "dir=$(mktemp -d) && trap 'rm -rf \"$dir\"' EXIT && cp ../tests/headless/view/lines.txt \"$dir/lines.txt\" && sed \"s|@FILE@|$dir/lines.txt|\" ../tests/headless/view/script > \"$dir/script\" && out=$(.lake/build/bin/editor headless \"$(lean --print-prefix)\" .lake/build/lib/lean ../tests/headless/config \"$dir/script\") && printf '%s\\n' \"$out\" | sed \"s|$dir|@DIR@|g\" | diff ../tests/headless/view/expected - && cmp \"$dir/lines.txt\" ../tests/headless/view/lines.txt",
+  # `j` and `k` aiming for a display column, as a process, with no config
+  # (tests/headless/column): the script opens a file of three lines, one
+  # with a tab and one with a wide character, with `:e`, and moves the
+  # cursor down from after the tab and up from after the wide character,
+  # with a scene printed after each step: the cursor lands at the display
+  # column it started in, the tab stop's and two past the wide character's.
+  # There is no `resize`, so the frame is 0 by 0: the column does not need
+  # the view's rectangle. The display is the recorder, the display model's
+  # rule over the library's snapshots. This entry is one shell, as the four
+  # above are: it makes a temporary directory and removes it by a trap,
+  # copies `column/lines.txt` there, and writes the script there from the
+  # template `column/script` with the copy's absolute path in place of
+  # `@FILE@`. The editor must exit with status 0, and its output, with the
+  # temporary directory's path written `@DIR@`, must be exactly
+  # `column/expected`. The file is not written.
+  "dir=$(mktemp -d) && trap 'rm -rf \"$dir\"' EXIT && cp ../tests/headless/column/lines.txt \"$dir/lines.txt\" && sed \"s|@FILE@|$dir/lines.txt|\" ../tests/headless/column/script > \"$dir/script\" && out=$(.lake/build/bin/editor headless \"$(lean --print-prefix)\" .lake/build/lib/lean ../tests/headless/config \"$dir/script\") && printf '%s\\n' \"$out\" | sed \"s|$dir|@DIR@|g\" | diff ../tests/headless/column/expected - && cmp \"$dir/lines.txt\" ../tests/headless/column/lines.txt",
   # The display fixture: the scene `editor-layout`'s own test lays out
   # (crates/editor-layout/tests/frame_fixture.rs), published from Lean
   # through the display's real binding, must give the frame checked in at

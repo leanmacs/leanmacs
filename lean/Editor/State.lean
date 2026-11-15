@@ -127,9 +127,13 @@ A window keeps the column its vertical motions aim for, which survives
 crossing a shorter line (`Window.wanted`, a `Window.Wanted`;
 `docs/design/keymaps-and-modes.md`, "The wanted column").
 
-- **The column** (`WantedColumn`) is a number of cells from the row's
-  start, counted as the text port counts a column in cells, or `lineEnd`,
-  the end of the row's content whatever its length.
+- **The column** (`WantedColumn`) is a goal of the display's (`goal`), or
+  `lineEnd`, the end of the row's content whatever its length. A goal is
+  the x a move of the display aimed for, as the display passed it back
+  (`Display.Moved.goal`): pixels from the start of the cursor's line laid
+  out unwrapped. It is the display's number: the state keeps it and hands
+  it back, and nothing here or above computes with it. A tab's stop and a
+  character's width are layout's, and Lean keeps no copy of layout.
 - **It is kept with the offset the cursor was left at** (`Wanted.head`),
   and holds only while the cursor is still there. So nothing has to clear
   it: whatever else moves the cursor makes it stale. Whether it holds is
@@ -507,9 +511,11 @@ def Buffer.unsaved (buffer : Buffer) : Bool :=
 
 /-- The column a view's vertical motions aim for. -/
 inductive WantedColumn where
-  /-- This many cells from the row's start, counted as the text port counts
-  a column in cells (`ColumnUnit.cells`). -/
-  | cells (count : Nat)
+  /-- The x a move of the display aimed for, as the display passed it back
+  (`Display.Moved.goal`): pixels from the start of the cursor's line laid
+  out unwrapped. It is passed back to the display and never computed
+  with. -/
+  | goal (x : Nat)
   /-- Where the row's content ends, whatever its length: what a motion to
   the line's end leaves, so that the vertical motions after it stay at line
   ends. -/

@@ -35,7 +35,7 @@ A motion (`Motion`) is a name and a function from where a cursor is
   entry that asks only the text is written over the text port and lifts.
 - **The wanted column goes in and comes out as data** (`From.wanted`,
   `To.wanted`, a `WantedColumn` of the editor state, `Editor/State.lean`,
-  "The wanted column"). A motion cannot read the window, so its caller
+  "The wanted column"). A motion is not handed the window, so its caller
   hands it the column the view keeps, when that column still holds, and
   keeps for the view what the motion hands back, with the position the
   cursor comes to rest at. A vertical motion aims for the column it is

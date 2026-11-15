@@ -5410,7 +5410,7 @@ def stateChecks : List Check :=
           match onTextModel threeWindows with
           | none => false
           | some state =>
-            let kept : Window.Wanted := { column := .cells 3, head := 7 }
+            let kept : Window.Wanted := { column := .goal 3, head := 7 }
             let wanted (state : EditorState) (index : Nat) : Option (Option Window.Wanted) :=
               (state.window? ⟨index⟩).map (·.wanted)
             match state.setWanted ⟨1⟩ (some kept) with
@@ -5437,7 +5437,7 @@ def stateChecks : List Check :=
           match onTextModel threeWindows with
           | none => false
           | some state =>
-            match state.setWanted ⟨7⟩ (some { column := .cells 3, head := 7 }) with
+            match state.setWanted ⟨7⟩ (some { column := .goal 3, head := 7 }) with
             | (.error (.noSuchWindow id), after) => id == ⟨7⟩ && after == state
             | _ => false },
     { name :=
@@ -5447,7 +5447,7 @@ def stateChecks : List Check :=
           match onTextModel twoBuffers with
           | none => false
           | some state =>
-            let kept : Window.Wanted := { column := .cells 3, head := 4 }
+            let kept : Window.Wanted := { column := .goal 3, head := 4 }
             let marker (text index : Nat) : MarkerId := ⟨⟨text⟩, index⟩
             let (_, keeping) := state.setWanted ⟨0⟩ (some kept)
             let wanted (state : EditorState) (index : Nat) : Option (Option Window.Wanted) :=
@@ -5956,7 +5956,7 @@ def stateRequests : List StateRequest :=
     .openPrompt "Name: " asked ⟨8⟩ (UndoTree.new ⟨8⟩ 0) (marker 0 0) (marker 8 1),
     .closePrompt none, .closePrompt (some "typed"), .setCandidates #["one", "two"],
     .chooseCandidate .next, .chooseCandidate .previous,
-    .setWanted ⟨0⟩ (some { column := .cells 3, head := 7 }), .setWanted ⟨1⟩ none,
+    .setWanted ⟨0⟩ (some { column := .goal 3, head := 7 }), .setWanted ⟨1⟩ none,
     .setWanted ⟨9⟩ (some { column := .lineEnd, head := 0 }), .ex "w", .exNames, .invoke asked,
     .quit, .reload, .giveUp "no", .breakOff "far enough",
     .setRegister "a" { text := "a line\n", linewise := true }, .setScrollMargin 2]
@@ -6196,7 +6196,7 @@ def stateRequestChecks : List Check :=
           match onTextModel twoBuffers with
           | none => false
           | some state =>
-            let kept : Window.Wanted := { column := .cells 3, head := 7 }
+            let kept : Window.Wanted := { column := .goal 3, head := 7 }
             let (set, after) := state.handle (.setWanted ⟨1⟩ (some kept))
             let (cleared, bare) := after.handle (.setWanted ⟨1⟩ none)
             let (absent, same) := state.handle (.setWanted ⟨9⟩ (some kept))
@@ -12113,7 +12113,7 @@ def apiStateChecks : List Check :=
         "a wanted column set from a command is the window's, with its head, and setting none clears it; a view with no window is refused with noSuchWindow; none of it makes a request of the library"
       run :=
         pure <|
-          let kept : Window.Wanted := { column := .cells 3, head := 7 }
+          let kept : Window.Wanted := { column := .goal 3, head := 7 }
           let view : ViewId := ⟨1⟩
           let program : EditorM _ := do
             let start ← twoBuffers
@@ -15654,6 +15654,31 @@ def wantedRows : List (String × String × String) :=
     ("$ j j", "|abc\nde\nabcdef", "abc\nde\nabcde|f"),
     ("$ j j k", "|abc\nde\nabcdef", "abc\nd|e\nabcdef"), ("2 $ k", "abc\n|def", "ab|c\ndef")]
 
+/-- The rows of the oracle table for the display column `j` and `k` aim
+for, each Vim 9.1's result with a tab stop of 8: the cursor after a tab and
+after one and two wide characters, going down and going up; a column that
+falls inside a tab and inside a wide character, and one just past each;
+`j` then `k` across a line with a tab, and across a shorter line with a tab
+and with a wide character before the cursor; a count; the head of a visual
+selection; and `$` before, onto a line with a tab. -/
+def displayColumnRows : List (String × String × String) :=
+  [("j", "a\t|b\n0123456789", "a\tb\n01234567|89"), ("k", "0123456789\na\t|b", "01234567|89\na\tb"),
+    ("j", "世|b\n0123456789", "世b\n01|23456789"), ("k", "0123456789\n世|b", "01|23456789\n世b"),
+    ("j", "世界|b\n0123456789", "世界b\n0123|456789"), ("k", "0123456789\n世界|b", "0123|456789\n世界b"),
+    ("j", "0123|456789\na\tb", "0123456789\na|\tb"),
+    ("j", "01234567|89\na\tb", "0123456789\na\t|b"), ("j", "0|123456789\na世b", "0123456789\na|世b"),
+    ("j", "01|23456789\na世b", "0123456789\na|世b"), ("j", "012|3456789\na世b", "0123456789\na世|b"),
+    ("j k", "0123|456789\na\tb", "0123|456789\na\tb"),
+    ("j k", "a\t|b\nxy\n0123456789", "a\t|b\nxy\n0123456789"),
+    ("j j", "a\t|b\nxy\n0123456789", "a\tb\nxy\n01234567|89"),
+    ("j j k k", "a\t|b\nxy\n0123456789", "a\t|b\nxy\n0123456789"),
+    ("j k", "a世|b\nx\n0123456789", "a世|b\nx\n0123456789"),
+    ("j j", "a世|b\nx\n0123456789", "a世b\nx\n012|3456789"),
+    ("j j k k", "a世|b\nx\n0123456789", "a世|b\nx\n0123456789"),
+    ("2 j", "a\t|b\nxy\n0123456789", "a\tb\nxy\n01234567|89"),
+    ("v j", "a\t|b\n0123456789", "a\tb\n01234567|89"),
+    ("$ j j", "|abc\nde\nc\td", "abc\nde\nc\t|d")]
+
 /-- The rows of the oracle table for `g g` and `G`: no count, a count as
 the line's number, from 1, a number past the last line, a text that ends
 in a line feed, whose last line is the line before its end, leading
@@ -15706,6 +15731,17 @@ def evilMoved (fixture : String) (arguments : List Argument) : Option (String ×
     let (moved, _) :=
       driver.stepped (driver.loop.invoke driver.handed { command := Vim.moveCommand, arguments })
     (evilShown moved, moved.loop.state.echo)
+
+/-- What a window keeps after `j` or `k` from the cursor `fixture` says,
+with the cursor come to rest at `head`: the goal the display model of the
+evil checks passes back for the cursor's start, asked here of the text laid
+out unwrapped, so that a check of what is kept restates no number of the
+display's. `none` if the display refused. -/
+def keptFrom (fixture : String) (head : Nat) : Option Window.Wanted :=
+  let (contents, start) := barred fixture
+  match movedBy [contents] Evil.unwrapped start 0 none editorModel.display.cells with
+  | .inr moved => some { column := .goal moved.goal, head }
+  | .inl _ => none
 
 /-- The checks of evil's motions (`Editor/Evil.lean`, `Editor/Evil/Motions.lean`)
 on the loop's driver over the editor's models, under the Vim scheme that
@@ -15764,8 +15800,7 @@ def evilMotionChecks : List Check :=
               (driver.loop.state.window? ⟨0⟩).map (·.wanted)
             let down := evilFed driver "j"
             let ended := evilFed down "j $"
-            wanted driver == some none &&
-              wanted down == some (some { column := .cells 3, head := 5 }) &&
+            wanted driver == some none && wanted down == (keptFrom "abc|d\nx\nabcd" 5).map some &&
               evilShown down == "abcd\n|x\nabcd" &&
               wanted ended == some (some { column := .lineEnd, head := 10 }) &&
               evilShown ended == "abcd\nx\nabc|d" &&
@@ -15786,7 +15821,7 @@ def evilMotionChecks : List Check :=
               evilShown (evilFed down "j") == "abcd\nxyz\nabc|d" &&
               evilShown placed == "abcd\n|xyz\nabcd" &&
               (placed.loop.state.window? ⟨0⟩).map (·.wanted) ==
-                some (some { column := .cells 3, head := 7 }) &&
+                (keptFrom "abc|d\nxyz\nabcd" 7).map some &&
               evilShown (evilFed placed "j") == "abcd\nxyz\n|abcd" },
     { name :=
         "the move command reads the column the window keeps when it is called, not the one the window kept when its command was called, so a command written here that calls it twice with one call moves as two keys do: down and then down across a shorter line lands in the column it started in, and the window then keeps what it keeps after j and j; down and then up returns to where it started; and neither says anything"
@@ -15813,12 +15848,67 @@ def evilMotionChecks : List Check :=
               (IO.userError
                 s!"down and down left {repr (evilShown twice)}, down and up {repr (evilShown back)}")
         return evilShown keyed == evilShown twice && wanted twice == wanted keyed &&
-            wanted twice == some (some { column := .cells 3, head := 10 }) &&
+            wanted twice == (keptFrom fixture 10).map some &&
             twice.loop.state.echo.isEmpty &&
             back.loop.state.echo.isEmpty },
     { name :=
-        "a departure from Vim, recorded in keymaps-and-modes.md under The wanted column: the column j and k aim for counts cells, and Vim's counts display columns, so from the character after a tab j lands two cells in, where Vim's lands at the tab stop's column"
-      run := evilRows [("j", "a\t|b\n0123456789", "a\tb\n01|23456789")] },
+        "j and k aim for a display column, where Vim's do: from the character after a tab they land at the tab stop's column, and from the character after a wide character two columns further in; where the column is inside a tab or a wide character they land on that character; j then k returns across a shorter line and across a line with a tab, a count aims for the same column, the head of a visual selection goes there, and after $ they rest on a line's last character past a tab"
+      run := evilRows displayColumnRows },
+    { name :=
+        "a departure from Vim, recorded in keymaps-and-modes.md under The wanted column: a cursor on a tab counts at the tab's first display column, and Vim's at its last, so from the tab j lands one column in, where Vim's lands seven in"
+      run := evilRows [("j", "a|\tb\n0123456789", "a\tb\n0|123456789")] },
+    { name :=
+        "j aims for the display column in a frame of no width and no height, where no view is laid out: from the character after a tab it lands at the tab stop's column"
+      run := do
+        let (contents, head) := barred "a\t|b\n0123456789"
+        let unsized : TextM EditorState := do
+          let state ← evilState contents head
+          return { state with frame := { state.frame with size := ⟨0, 0⟩ } }
+        let .ok driver :=
+          Loop.Driver.over evilHanded (fun _ => none) unsized
+            editorModel | throw (IO.userError "no driver")
+        let down := evilFed driver "j"
+        unless evilShown down == "a\tb\n01234567|89" do
+          throw (IO.userError s!"j left {repr (evilShown down)}")
+        return down.loop.state.frame.size == ⟨0, 0⟩ },
+    { name :=
+        "what j asks: handed a goal it makes one request fewer than handed no column, since it does not ask the display for the cursor's own x; where it cannot move, handed a goal, it asks the display nothing and makes no more requests than handed the line's end; and j and k leave no snapshot held"
+      run := do
+        let asked (fixture : String) (wanted : Option WantedColumn) : Option Nat :=
+          let (contents, head) := barred fixture
+          let program : EditorM Nat := do
+            let text ← createText contents
+            let before ← Watch.now
+            discard <| Evil.down.target text { head, wanted }
+            return (← Watch.now) - before
+          (program.runModel countingModel).1.toOption
+        -- How many snapshots the motion took: a released one keeps its slot.
+        let taken (fixture : String) (wanted : Option WantedColumn) : Option Nat :=
+          let (contents, head) := barred fixture
+          let program : EditorM Unit := do
+            discard <| Evil.down.target (← createText contents) { head, wanted }
+          let (ended, model) := program.runModel editorModel
+          ended.toOption.map fun _ => model.texts.snapshots.size
+        let some driver := evilDriver "a\t|b\nxy\n0123456789" | throw (IO.userError "no driver")
+        let moving := "a|b\ncd"
+        let stuck := "ab\nc|d"
+        let (some kept, some bare) :=
+          (asked moving (some (.goal 1)),
+            asked moving none) | throw (IO.userError "a motion was refused")
+        let (some stopped, some ended) :=
+          (asked stuck (some (.goal 1)),
+            asked stuck
+              (some .lineEnd)) | throw (IO.userError "a motion that cannot move was refused")
+        unless kept + 1 == bare && stopped ≤ ended do
+          throw
+              (IO.userError
+                s!"{kept} requests with a goal, {bare} with none; {stopped} stuck with a goal, {ended} with the line's end")
+        -- The snapshots still held: the loop holds those of the scene it
+        -- published, as it does after a motion that asks the display nothing.
+        let held (typed : String) : Nat :=
+          ((evilFed driver typed).model.texts.snapshots.filterMap id).size
+        return taken stuck (some (.goal 1)) == some 0 && taken moving (some (.goal 1)) == some 1 &&
+            held "j j k" == held "0 0 0" },
     { name :=
         "a motion may ask the display: one written here, whose target is where the display puts the head one row down, moves the cursor there when the move command runs it over the vocabulary with it added, and says nothing"
       run := do

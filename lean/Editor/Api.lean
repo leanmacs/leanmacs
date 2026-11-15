@@ -250,7 +250,9 @@ has a case on the real binding. They are pinned once, on the models
 - `ViewId.setWanted view wanted` has the view's window keep a wanted
   column, the column its vertical motions aim for, with the offset the
   cursor was left at, or none (`Editor/State.lean`, "The wanted column").
-  A command reads it from the state (`EditorState.window?` on
+  The column is a goal the display passed back, or the line's end: a
+  command gets a goal from the display (`Display.linesFrom`) and does not
+  make one up from a count of characters. A command reads it from the state (`EditorState.window?` on
   `editorState`), which has what the command's own requests have left. Its
   target's window (`Target.window.wanted`) has the column kept when the
   command was called.

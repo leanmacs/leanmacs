@@ -92,8 +92,9 @@ the models and against the library alike (`Editor/Command/Dispatch.lean`).
   hands it to its host, as `starts` holds the jobs a command asked for
   (`Editor/Loop.lean`, "Reload from a command").
 - **A window's wanted column is set by one request**, `setWanted`, with
-  the column and the offset it is kept at, or with none
-  (`Editor/State.lean`, "The wanted column"). It is refused with a
+  the column, a goal of the display's or the line's end, and the offset it
+  is kept at, or with none (`Editor/State.lean`, "The wanted column"). The
+  handler stores the column as it is given. It is refused with a
   `LayoutRefusal`, `noSuchWindow`, for a view with no window.
 - **A file is attached by one request, and a save is two.** `attachFile`
   has a buffer hold a file a load answered. `beginSave` records a save in

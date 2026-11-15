@@ -57,7 +57,10 @@ looks the motion's name up in, so the caller supplies the vocabulary.
   kept. It then has the window keep what the motion hands back, with the
   new head (`ViewId.setWanted`): the motion's `wanted`, or its `unmoved`
   when the head came to rest where it started. Only here is it known
-  whether the cursor moved, since the resting rule is applied here.
+  whether the cursor moved, since the resting rule is applied here. What
+  the column is is the motion's: `j` and `k` keep a display column, which
+  they ask the display for (`Editor/Evil/Motions.lean`, "The wanted
+  column"), and the move command passes it on unread.
 - **It reads that column from the editor state when it is called**
   (`editorState`), as it reads the selection from its marker, and not from
   its call's window, which is the window as it was when the command was
