@@ -294,7 +294,7 @@ agree view <id>: <n> rows asked from <anchor>, <m> in the frame: agrees
                            out frames)
 idle <ms>: <d> frames drawn, <s> frames submitted
                           (or "idle <ms>: no render loop")
-journal: <n> frames presented, present - input median <a> us, p99 <b> us, max <c> us
+journal: <n> frames presented, present - input median <a> us, p99 <b> us, max <c> us, <r> rows rebuilt
                           (or "journal: no render loop")
 ```
 
@@ -1776,14 +1776,16 @@ def idled (render : Option Render) (patience milliseconds : Nat) : IO String := 
 /-- What `journal` prints of `entries`, the frames presented since the last
 `journal` line: how many, and the median, the 99th percentile (nearest
 rank) and the largest of their `present − input`, in microseconds, by the
-window report's rule (`Window.Report.summary`). -/
-def journalLine (entries : Array Ffi.JournalEntry) : String :=
+window report's rule (`Window.Report.summary`), and how many rows they
+built. -/
+def journalLine (journal : Array Ffi.JournalEntry) : String :=
+  let rebuilt := journal.foldl (fun sum entry => sum + entry.rowsRebuilt.toNat) 0
   let entries :=
-    entries.map fun entry =>
+    journal.map fun entry =>
       ({ inputNs := entry.inputNs.toNat, presentNs := entry.presentNs.toNat } : Window.Report.Entry)
   let first := (entries[0]?.map (·.presentNs)).getD 0
   let summary := Window.Report.summary first ((entries.back?.map (·.presentNs)).getD first) entries
-  s!"journal: {summary.frames} frames presented, present - input median {summary.median} us, p99 {summary.p99} us, max {summary.max} us"
+  s!"journal: {summary.frames} frames presented, present - input median {summary.median} us, p99 {summary.p99} us, max {summary.max} us, {rebuilt} rows rebuilt"
 
 /-- What `journal` prints, once the editor thread has settled: it waits
 until the render loop is at rest, then reads the journal's entries after

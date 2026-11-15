@@ -12,7 +12,7 @@
 #
 # It builds the image from the Dockerfile beside it and copies the checkout
 # into a work directory. `ci` runs `mise run ci` there, and its exit status is
-# the gate's. `window` builds the editor there and runs six things under
+# the gate's. `window` builds the editor there and runs seven things under
 # Xvfb, a display that needs no screen and no person, failing if any fails:
 # the winit adapter's example, which holds the real window to the window
 # port's contract; `editor window-check`, with xdotool giving the window the
@@ -23,8 +23,10 @@
 # own scale of 1, ending with a change of scale to 2, and once at scale 2
 # from the start; the arboard adapter's
 # example, which holds that display's clipboard to the clipboard port's
-# contract; and text written to it by one process, read by another. Its
-# input is synthetic, and its output says so. The clipboard is the
+# contract; text written to it by one process, read by another; and the
+# editor on a file, `editor --report <file>`, with xdotool typing an edit,
+# `:w` and `:q`, after which the file must hold the edit. Its input is
+# synthetic, and its output says so. The clipboard is the
 # container's own: nothing of the host's is read or written. `render` runs
 # the renderer's example there (`crates/editor-render-wgpu/examples/gpu.rs`):
 # the wgpu
@@ -154,6 +156,53 @@ inside_typed_check() {
   fi
 }
 
+# The editor on a file under the display (`editor <file>`,
+# lean/Editor/Window/Real.lean): a copy of `tests/window/session.txt` in a
+# temporary directory, opened with `--report` and no toolchain, so no config
+# is loaded. xdotool gives the window the focus and types `ihello `,
+# `<Escape>`, `:w` and `<Return>`, then `:q` and `<Return>`. The editor must
+# exit 0 within 60 seconds, the copy must hold the bytes of
+# `tests/window/session-expected`, and the report, on stderr once the window
+# has closed, must count at least one frame. The report is printed: its
+# figures are Xvfb's and llvmpipe's, not milestone figures.
+inside_editor_session() {
+  local dir log=/tmp/editor-session.log pid status=0 waited=0
+  dir=$(mktemp -d)
+  cp /work/tests/window/session.txt "$dir/session.txt"
+  : >"$log"
+  /work/lean/.lake/build/bin/editor --report "$dir/session.txt" 2>"$log" &
+  pid=$!
+  (
+    window=$(timeout 10 xdotool search --sync --name 'editor: window check' | head -n 1)
+    timeout 5 xdotool windowfocus --sync "$window"
+    sleep 1
+    xdotool type --delay 50 'ihello '
+    xdotool key Escape
+    sleep 0.5
+    xdotool type --delay 50 ':w'
+    xdotool key Return
+    sleep 1
+    xdotool type --delay 50 ':q'
+    xdotool key Return
+  ) || die "xdotool could not type into the editor's window: $(cat "$log")"
+  while kill -0 "$pid" 2>/dev/null; do
+    waited=$((waited + 1))
+    if [ "$waited" -ge 600 ]; then
+      kill "$pid" 2>/dev/null || true
+      cat "$log"
+      die "the editor did not quit within 60 seconds"
+    fi
+    sleep 0.1
+  done
+  wait "$pid" || status=$?
+  cat "$log"
+  [ "$status" -eq 0 ] || die "the editor exited $status"
+  cmp "$dir/session.txt" /work/tests/window/session-expected ||
+    die "the file the editor saved is not tests/window/session-expected"
+  grep -q '^frames: [1-9]' "$log" || die "the editor's report counts no frame"
+  rm -rf "$dir"
+}
+
 # Text written to the clipboard by one process and read by another, which
 # one process cannot show: on X11 the text is served by the process that
 # wrote it, so the writer stays alive while the reader reads. Fails if the
@@ -225,7 +274,7 @@ inside_drawing_window() {
   local settings=/tmp/xsettings.conf serving=/tmp/xsettingsd.log daemon=
   local -a told=()
   [ "$scale" = 1 ] || told=("WINIT_X11_SCALE_FACTOR=$scale")
-  echo "linux-window: 4 of 6, the window at scale $scale"
+  echo "linux-window: 4 of 7, the window at scale $scale"
   if [ "$scale" = 1 ]; then
     # The display's settings, served before the window opens: winit asks
     # who owns them once, as it connects. `Xft/DPI` is in 1024ths of a
@@ -358,24 +407,27 @@ inside_window() {
     sleep 0.1
   done
 
-  echo "linux-window: 1 of 6: the winit platform against the window port's contract, under Xvfb"
+  echo "linux-window: 1 of 7: the winit platform against the window port's contract, under Xvfb"
   /work/target/debug/examples/contract
 
-  inside_typed_check "2 of 6: the keyboard check"
-  inside_typed_check "3 of 6: the keyboard check with composition not allowed" --no-ime
+  inside_typed_check "2 of 7: the keyboard check"
+  inside_typed_check "3 of 7: the keyboard check with composition not allowed" --no-ime
 
-  echo "linux-window: 4 of 6: the window that draws a fixture frame, at scale 1 and then at scale 2, with input given by xdotool: synthetic, nobody at a keyboard"
+  echo "linux-window: 4 of 7: the window that draws a fixture frame, at scale 1 and then at scale 2, with input given by xdotool: synthetic, nobody at a keyboard"
   inside_drawing_window 1
   inside_drawing_window 2
 
-  echo "linux-window: 5 of 6: the system clipboard against the clipboard port's contract, in one process, under Xvfb"
+  echo "linux-window: 5 of 7: the system clipboard against the clipboard port's contract, in one process, under Xvfb"
   /work/target/debug/examples/clipboard contract
 
-  echo "linux-window: 6 of 6: text written to the clipboard by one process, read by another"
+  echo "linux-window: 6 of 7: text written to the clipboard by one process, read by another"
   inside_clipboard_across
 
+  echo "linux-window: 7 of 7: the editor on a file, with an edit, :w and :q typed by xdotool: synthetic, nobody at a keyboard; its report's figures are Xvfb's and llvmpipe's"
+  inside_editor_session
+
   kill "$display"
-  echo "linux-window: all six passed"
+  echo "linux-window: all seven passed"
 }
 
 # The wgpu renderer on a real adapter with no GPU: Mesa's software Vulkan
