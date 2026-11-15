@@ -177,7 +177,9 @@ editor's models and the job model (`Editor/Loop/Driver.lean`):
 - `candidateChecks`: a prompt's candidates on that driver, with commands
   written here: the listing the loop makes before each scene, for the
   initial text and for the text typed so far, what a command that fails
-  is rolled back to, and what the listing costs in requests. What is
+  is rolled back to, what the listing costs in requests, and that a
+  refusal of the listing's read refuses no step, leaves the listing and
+  the choice and is in the scene's echo. What is
   listed is compared with what the fuzzy model answers
   (`FuzzyModel.rank`), never with an order written out;
 - `fileCommandChecks`: the file commands (`Editor/Files.lean`) on that
@@ -12784,11 +12786,21 @@ def pickFields (pattern : String) (chosen : Option Nat := none) : Array StatusFi
       { text := candidate
         face := if chosen == some index then Loop.chosenFace else Loop.candidateFace }
 
+/-- The editor's models, but that every read of a whole text is refused
+with `noSuchText` and changes nothing: a fake written for the one check
+that needs the listing's read refused where no history and no view is. A
+released text refuses all three, so its check cannot tell whose refusal the
+echo holds. -/
+def refusingReads : (request : EditorRequest) → EditorModel → request.Reply × EditorModel
+  | .text (.read _), model => (.error .noSuchText, model)
+  | request, model => EditorModel.handle request model
+
 /-- The checks of a prompt's candidates through the loop
 (`Editor/Loop.lean`, "Prompts"), on the loop's driver over the editor's
 models and the test scheme, with commands written here: the listing the
-loop makes before each scene, and the scene's fields for it. What is listed is compared with what the
-fuzzy model answers for the same pattern and candidates. -/
+loop makes before each scene, and the scene's fields for it, and what the
+loop does when the listing's read is refused. What is listed is compared
+with what the fuzzy model answers for the same pattern and candidates. -/
 def candidateChecks : List Check :=
   [{  name :=
         "after the step that asked for a prompt with candidates the listing is for the initial text, the empty one or one given, and nothing is chosen"
@@ -13040,7 +13052,54 @@ def candidateChecks : List Check :=
             !Minibuffer.notOpen.isEmpty && promptEcho next == Minibuffer.notOpen &&
               promptEcho previous == Minibuffer.notOpen &&
               next.loop.state.prompt == none &&
-              { next.loop.state with echo := "" } == driver.loop.state }]
+              { next.loop.state with echo := "" } == driver.loop.state },
+    { name :=
+        "an event once the minibuffer's text was released behind a prompt with candidates is not refused: a scene is published with the refusal in its echo, the loop keeps that echo, and the prompt's listing and choice are as they were"
+      run :=
+        pure <|
+          match candidateDriver with
+          | none => false
+          | some driver =>
+            let (typed, _) := fedTo driver (presses "C-c a w")
+            let chosen := chose typed [.next, .next]
+            match minibufferTextId chosen with
+            | none => false
+            | some text =>
+              let (released, texts) := text.release.runModel chosen.model.texts
+              let (after, steps) :=
+                fedTo { chosen with model := { chosen.model with texts } } [pressF5]
+              released.toOption.isSome && promptEcho chosen == "" && steps.size == 1 &&
+                steps.all (·.isSome) &&
+                promptEcho after == "refused: no such text" &&
+                after.model.display.scenes.size == chosen.model.display.scenes.size + 1 &&
+                after.model.display.scenes.back?.map (·.echo) == some "refused: no such text" &&
+                candidatesOf chosen == some (pickListed "w" (some 1)) &&
+                candidatesOf after == candidatesOf chosen &&
+                after.loop.state.wellFormed },
+    { name :=
+        "a refusal of the listing's read alone, on models that refuse every read of a text and nothing else: the step is not refused, the scene has the refusal in its echo with every view and the minibuffer's status line as it was, and the listing and the choice are as they were"
+      run :=
+        pure <|
+          match candidateDriver with
+          | none => false
+          | some driver =>
+            let (typed, _) := fedTo driver (presses "C-c a w")
+            let (chosen, _) := fedTo (chose typed [.next, .next]) (presses "C-c s")
+            let step := chosen.loop.take chosen.handed { event := pressF5, stamp := 0 }
+            match Program.run (port := editorPort) refusingReads step.run chosen.model with
+            | (.error _, _) => false
+            | (.ok stepped, model) =>
+              let after := chosen.took stepped model
+              promptEcho chosen == "" && stepped.next == .continue &&
+                promptEcho after == "refused: no such text" &&
+                model.display.scenes.size == chosen.model.display.scenes.size + 1 &&
+                model.display.scenes.back?.map (·.echo) == some "refused: no such text" &&
+                (model.display.scenes.back?.map fun scene => scene.views.map (·.id)) ==
+                  (chosen.model.display.scenes.back?.map fun scene => scene.views.map (·.id)) &&
+                pickStatus chosen == some (pickFields "w" (some 1)) &&
+                pickStatus after == pickStatus chosen &&
+                candidatesOf after == some (pickListed "w" (some 1)) &&
+                after.loop.state.wellFormed }]
 
 /-- A file of three lines of which two end in CRLF and one in a line
 feed. -/
