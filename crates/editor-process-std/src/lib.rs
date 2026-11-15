@@ -158,6 +158,7 @@ impl StdChild {
 
 impl Child for StdChild {
     type Output = StdOutput;
+    type Input = StdInput;
 
     fn id(&self) -> u32 {
         self.pid.as_raw_nonzero().get().unsigned_abs()
@@ -168,6 +169,10 @@ impl Child for StdChild {
             Stream::Out => self.stdout.take().map(StdOutput::Out),
             Stream::Err => self.stderr.take().map(StdOutput::Err),
         }
+    }
+
+    fn take_input(&mut self) -> Option<StdInput> {
+        None
     }
 
     fn wait(&self) -> Exit {
@@ -242,5 +247,16 @@ impl Output for StdOutput {
                 }
             }
         }
+    }
+}
+
+/// A child's standard input. None is made yet: every child's input is
+/// closed.
+#[derive(Debug)]
+pub enum StdInput {}
+
+impl editor_process::ChildInput for StdInput {
+    fn write(&mut self, _: &[u8]) -> Result<usize, Refusal> {
+        match *self {}
     }
 }

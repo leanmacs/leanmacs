@@ -72,6 +72,11 @@ pub trait Ground {
     /// written by then.
     fn written(&self, path: &Path) -> Option<u32>;
 
+    /// Whether a file is at `path` now, empty or not: a marker a child
+    /// made (`: > name`). It does not wait; the check asks again until a
+    /// deadline when it waits for one.
+    fn exists(&self, path: &Path) -> bool;
+
     /// Whether a process with the id `id` exists, a zombie counted as
     /// alive.
     fn alive(&self, id: u32) -> bool;

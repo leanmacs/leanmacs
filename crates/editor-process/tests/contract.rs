@@ -10,7 +10,7 @@ use std::path::Path;
 use editor_process::contract::{
     self, AFTER_REAP, CANCEL, ESCAPED, KILL, RUN, SHUTDOWN, SIGNAL, STRAGGLERS, TOO_LARGE,
 };
-use editor_process::fake::{FakeChild, FakeOutput, FakeProcesses, Flaws};
+use editor_process::fake::{FakeChild, FakeInput, FakeOutput, FakeProcesses, Flaws};
 use editor_process::{Child, Command, Exit, Output, Processes, Refusal, Stream};
 
 /// The made-up directory the contract runs in.
@@ -116,6 +116,7 @@ impl Output for BentOutput {
 
 impl Child for Bent {
     type Output = BentOutput;
+    type Input = FakeInput;
 
     fn id(&self) -> u32 {
         self.child.id()
@@ -128,6 +129,10 @@ impl Child for Bent {
         } else {
             BentOutput::Fake(output)
         })
+    }
+
+    fn take_input(&mut self) -> Option<FakeInput> {
+        None
     }
 
     fn wait(&self) -> Exit {
@@ -197,11 +202,15 @@ fn a_wait_asked_again_and_a_kill_after_the_reap_are_part_of_the_contract() {
     struct Once(FakeChild, std::sync::atomic::AtomicBool);
     impl Child for Once {
         type Output = FakeOutput;
+        type Input = FakeInput;
         fn id(&self) -> u32 {
             self.0.id()
         }
         fn take_output(&mut self, stream: Stream) -> Option<FakeOutput> {
             self.0.take_output(stream)
+        }
+        fn take_input(&mut self) -> Option<FakeInput> {
+            None
         }
         fn wait(&self) -> Exit {
             let exit = self.0.wait();

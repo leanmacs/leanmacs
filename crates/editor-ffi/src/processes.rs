@@ -85,7 +85,7 @@ use std::path::PathBuf;
 use std::sync::LazyLock;
 
 use editor_process::service::{RunResult, Service};
-use editor_process::{Command, Environment, Exit, RefusalKind, Stream};
+use editor_process::{Command, Environment, Exit, Input, RefusalKind, Stream};
 use editor_process_std::StdProcesses;
 
 use crate::events;
@@ -144,6 +144,7 @@ pub fn command_of(words: &[u8], strings: &[u8]) -> Option<(Command, u64)> {
             arguments,
             environment: Environment { clear, set, unset },
             directory,
+            input: Input::Closed,
         },
         limit,
     ))
@@ -192,6 +193,7 @@ const fn refusal_status(kind: RefusalKind) -> u64 {
         RefusalKind::Denied => 4,
         RefusalKind::ShutDown => 6,
         RefusalKind::Failed => 7,
+        RefusalKind::InputClosed => 8,
     }
 }
 
@@ -590,6 +592,10 @@ mod tests {
         assert_eq!(
             encoded(refused(RefusalKind::Failed)),
             bare(7, vec![], "why")
+        );
+        assert_eq!(
+            encoded(refused(RefusalKind::InputClosed)),
+            bare(8, vec![], "why")
         );
     }
 

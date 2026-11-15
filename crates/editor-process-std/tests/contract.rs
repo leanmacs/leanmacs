@@ -73,6 +73,10 @@ impl Ground for System {
         }
     }
 
+    fn exists(&self, path: &Path) -> bool {
+        fs::symlink_metadata(path).is_ok()
+    }
+
     fn alive(&self, id: u32) -> bool {
         let Some(pid) = i32::try_from(id).ok().and_then(Pid::from_raw) else {
             return false;

@@ -25,8 +25,9 @@
 //!   first if `clear` is set, then with `unset` removed, then with `set`
 //!   applied.
 //! - **[`Processes::spawn`]** starts the child in a new process group whose
-//!   id is the child's, with its standard input closed and its standard
-//!   output and error piped. A program that cannot be started is a
+//!   id is the child's, with its standard output and error piped, and its
+//!   standard input closed, or a pipe when the command asks for one
+//!   ([`Command::input`]). A program that cannot be started is a
 //!   [`Refusal`], a value: its kind is what the editor decides on, and its
 //!   detail the platform's words, naming the program and the directory.
 //! - **[`Child::wait`]** blocks until the child has ended; then ends every
@@ -39,10 +40,18 @@
 //! - **[`Output::read`]** reads a stream of the child's, blocking until
 //!   there is something to read; 0 means the stream has closed, which it
 //!   does once every process that held it has ended.
+//! - **[`Child::take_input`]** gives the child's standard input once, when
+//!   the command asked for a pipe ([`Input::Pipe`]), and `None` otherwise.
+//! - **[`ChildInput::write`]** writes to it, blocking while the pipe is
+//!   full, and says how many bytes it took, which may be fewer than it was
+//!   given. A write after the child has closed its end, or has ended, is
+//!   [`RefusalKind::InputClosed`]: a value, never a signal that ends the
+//!   editor. Dropping the input closes it, and the child reads its end.
 //!
 //! The port is pull-based and blocking on purpose: a reader that stops
-//! reading is backpressure, and the child's standard input, when it comes,
-//! is one more half to take ([`Child::take_output`] has its pair to come).
+//! reading is backpressure, and a writer is held by the pipe it writes
+//! to. The child's standard input is one more half to take, beside its
+//! outputs.
 //!
 //! What the group kill does not reach: a descendant that leaves the group
 //! (`setsid`, `setpgid`) or forks into a session of its own. No portable
@@ -82,11 +91,23 @@ pub struct Command {
     pub environment: Environment,
     /// The directory the child runs in: an absolute path.
     pub directory: PathBuf,
+    /// The child's standard input: closed, or a pipe the editor writes to.
+    pub input: Input,
+}
+
+/// What a child's standard input is.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
+pub enum Input {
+    /// Closed: the child reads end of file at once.
+    #[default]
+    Closed,
+    /// A pipe, taken with [`Child::take_input`].
+    Pipe,
 }
 
 impl Command {
     /// The command that runs `program` with `arguments` in `directory`, with
-    /// the editor's environment as it is.
+    /// the editor's environment as it is and its standard input closed.
     pub fn new(
         program: impl Into<String>,
         arguments: impl IntoIterator<Item = impl Into<String>>,
@@ -97,7 +118,15 @@ impl Command {
             arguments: arguments.into_iter().map(Into::into).collect(),
             environment: Environment::default(),
             directory: directory.into(),
+            input: Input::Closed,
         }
+    }
+
+    /// The same command with `input` as its standard input.
+    #[must_use]
+    pub const fn with_input(mut self, input: Input) -> Self {
+        self.input = input;
+        self
     }
 
     /// The same command with `environment`.
@@ -176,6 +205,9 @@ pub enum RefusalKind {
     Denied,
     /// The service has shut down, and starts nothing more.
     ShutDown,
+    /// The child's standard input is closed: none was asked for, the job
+    /// closed it, or the child closed it or ended.
+    InputClosed,
     /// Anything else; the detail says what.
     Failed,
 }
@@ -189,23 +221,31 @@ pub trait Processes: Send + Sync {
     type Child: Child;
 
     /// Starts `command` as a child in a new process group of its own, with
-    /// its standard input closed and its standard output and error piped.
-    /// A program that cannot be started is a refusal, never a panic.
+    /// its standard output and error piped and its standard input as the
+    /// command says. A program that cannot be started is a refusal, never
+    /// a panic.
     fn spawn(&self, command: &Command) -> Result<Self::Child, Refusal>;
 }
 
 /// A child a [`Processes`] started. It is shared between the thread that
 /// waits for it and whoever kills it, so its methods but
-/// [`Child::take_output`] take `&self`.
+/// [`Child::take_output`] and [`Child::take_input`] take `&self`.
 pub trait Child: Send + Sync + 'static {
     /// One of its output streams, taken from it.
     type Output: Output;
+
+    /// Its standard input, taken from it.
+    type Input: ChildInput;
 
     /// The child's process id, which is also its group's.
     fn id(&self) -> u32;
 
     /// The stream `stream`, once: `None` when it was taken already.
     fn take_output(&mut self, stream: Stream) -> Option<Self::Output>;
+
+    /// Its standard input, once: `None` when the command's input is
+    /// [`Input::Closed`], or when it was taken already.
+    fn take_input(&mut self) -> Option<Self::Input>;
 
     /// Blocks until the child has ended, ends every process still in its
     /// group, reaps the child and returns how it ended. Asked again, it
@@ -223,6 +263,15 @@ pub trait Output: Send + 'static {
     /// Reads into `buffer`, blocking until there is something to read, and
     /// says how many bytes it read: 0 once the stream has closed.
     fn read(&mut self, buffer: &mut [u8]) -> Result<usize, Refusal>;
+}
+
+/// A child's standard input. Dropping it closes it.
+pub trait ChildInput: Send + 'static {
+    /// Writes from `bytes`, blocking while the pipe is full, and says how
+    /// many it wrote: at least one, and maybe fewer than all. A child that
+    /// has closed its end, or ended, is [`RefusalKind::InputClosed`], and
+    /// never a signal.
+    fn write(&mut self, bytes: &[u8]) -> Result<usize, Refusal>;
 }
 
 /// Why `command` may not be started at all, if it may not: a directory
