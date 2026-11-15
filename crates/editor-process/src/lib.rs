@@ -66,6 +66,7 @@ use std::path::PathBuf;
 
 pub mod contract;
 pub mod fake;
+pub mod frame;
 pub mod service;
 
 /// What to start: a program, its arguments, its environment and the
