@@ -1904,7 +1904,8 @@ def drawnDisplay (snapshots : SnapshotReader) : IO Host.Display := do
 mode's and the window mode's: the real elaborator over the toolchain in
 `sysroot` and the editor's `.olean` files in `oleanDir`, the config
 directory `configDir` as the source, `emit` as the output and stderr as the
-log, the library's timer service and file service for the jobs, and, as its
+log, the library's timer service, file service and process service for the
+jobs, and, as its
 compiled ones, the file commands with their jobs, the minibuffer's commands
 with its mode, evil's commands and the ex line's commands with the ex names
 that ship. Its display is the recorder and its clipboard its own, as a
@@ -1922,12 +1923,14 @@ def shipped (sysroot oleanDir configDir : String) (emit : String → IO Unit) :
   -- the file service reads the one and keeps its loads in the other.
   let published ← Snapshots.new
   let held ← Job.HeldSnapshots.new
+  let refused ← Job.RefusedRuns.new
   return {
       elaborator := Config.Elaborate.elaborator { sysroot, oleanDir },
       source := Config.Directory.source configDir, emit,
       services :=
         { completions, timers := Job.realTimers completions,
-          files := Job.realFiles completions published.reader held },
+          files := Job.realFiles completions published.reader held
+          processes := Job.realProcesses completions refused },
       published, held, requests := 1, wakeups := 2, jobs := 3
       commands := Files.commands ++ Minibuffer.commands ++ Evil.commands ++ Ex.commands
       compiledJobs := Files.jobs
@@ -1936,8 +1939,9 @@ def shipped (sysroot oleanDir configDir : String) (emit : String → IO Unit) :
 /-- The headless mode of the executable, handed the command line after
 `headless`: `editor headless [--render] <sysroot> <olean dir> <config dir>
 <script file>`. Loads the config in `configDir` with the real elaborator,
-runs the script as `run` does, with the output on stdout, then quits the
-queues and exits explicitly: with status 0 when the script ran to its end or
+runs the script as `run` does, with the output on stdout, then shuts the
+library's process service down, which kills and reaps every child it
+started, quits the queues and exits explicitly: with status 0 when the script ran to its end or
 a command quit the editor before it, and with 1 when it could not, after
 saying why on stderr (the script cannot be read, a wait ran out with a
 reload or a job still running, or the editor thread did not answer). Any
@@ -1987,6 +1991,9 @@ def main (arguments : List String) : IO UInt32 := do
     IO.eprintln s!"editor: {failure.describe settlePatience}"
   if drawn then
     discard Ffi.renderStop
+  -- Every child the library started is killed and reaped before the queues
+  -- are quit: `run` has returned, so the loop has cancelled every job.
+  Ffi.processesShutdown
   -- Shutdown: quit lets every task parked in a pull return, the pump among
   -- them, and the exit is explicit, because a task may still be blocked in
   -- the library.
