@@ -43,6 +43,34 @@
 //! implemented for it here): the journal's time from an input to its frame
 //! is then a subtraction on one clock.
 //!
+//! # What reaches the loop: the presenter
+//!
+//! Lean publishes scenes to a display handle and never sees a render loop.
+//! A display bound to a [`Presenter`] (`Display::present_to`) presents
+//! each frame it lays out: the frame is submitted to the presenter's
+//! target, the handle of the session that runs now, stamped with the
+//! oldest window input taken off the editor queue since the last frame
+//! (`events::take` notes it; [`Answering`]). So the journal measures from
+//! a key's arrival in Rust to the frame that answers it. A display that is
+//! not bound presents nothing, and a presenter with no target lets the
+//! frame go and spends the stamp.
+//!
+//! The presenter is a value, handed explicitly to whatever uses it, and
+//! every test makes its own. The process has one, [`PRESENTER`], reached
+//! only from the C functions and from the run of the process's window.
+//!
+//! # The headless session
+//!
+//! [`headless`] runs a loop with no window on a thread of its own, as the
+//! presenter's target: before each frame is submitted the target is
+//! resized to the frame's scene's size, at scale 1 ([`Follows::Scene`]).
+//! The headless mode runs it over the CPU renderer
+//! ([`editor_ffi_render_headless_start`]), which needs no GPU, so the
+//! gate draws what Lean publishes. The journal, the counters and whether
+//! the loop is at rest are read through the presenter's last session's
+//! handle, which outlives the session ([`editor_ffi_render_journal`],
+//! [`editor_ffi_render_counters`], [`editor_ffi_render_resting`]).
+//!
 //! # A renderer that cannot be made
 //!
 //! The factory may fail: no adapter, no device. The window then runs as it
@@ -52,21 +80,30 @@
 //! # Where a test goes
 //!
 //! Which call each thing told becomes, and the two conversions, are pinned
-//! here on a loop stepped by hand over `editor-render`'s published fakes.
-//! That the thread starts, draws and ends is wiring, in
-//! `tests/render_session.rs`, over the scripted platform. Neither states a
+//! here on a loop stepped by hand over `editor-render`'s published fakes;
+//! so are the presenter's rules: the stamp answered, where a frame goes
+//! with and without a target, and the headless target following the
+//! scene. That the thread starts, draws and ends is wiring, in
+//! `tests/render_session.rs`, over the scripted platform, and in
+//! `tests/headless_render.rs` for the headless session. None states a
 //! decision of the scheduler: what a call on the handle leads to is
 //! `editor-render`'s, and is read here only by doing the same to two loops.
 
-use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
+use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
+use std::sync::{Arc, LazyLock, Mutex, MutexGuard, PoisonError};
 use std::thread::{self, JoinHandle};
 
+use editor_layout::frame::Frame;
 use editor_platform::{Canvas, Drawer, NativeWindow, Resize};
 use editor_render::clock::Clock;
+use editor_render::journal::Entry;
 use editor_render::port::{Renderer, Target};
 use editor_render::render_loop::{CondvarPark, RenderHandle, RenderLoop};
+use editor_render_wgpu::{HeadlessRenderer, Settings};
 
-use crate::window::{CountingClock, InputClock, Monotonic};
+use crate::log::RawWords;
+use crate::window::{CountingClock, InputClock, Monotonic, ProcessClock};
+use crate::words::Writer;
 
 impl Clock for Monotonic {
     fn now_ns(&self) -> u64 {
@@ -75,6 +112,12 @@ impl Clock for Monotonic {
 }
 
 impl Clock for CountingClock {
+    fn now_ns(&self) -> u64 {
+        InputClock::now_ns(self)
+    }
+}
+
+impl Clock for ProcessClock {
     fn now_ns(&self) -> u64 {
         InputClock::now_ns(self)
     }
@@ -133,6 +176,349 @@ pub fn leave_word(handle: &RenderHandle, canvas: &Canvas) {
         Canvas::Damaged => handle.mark_dirty(),
         Canvas::Hidden(hidden) => handle.set_hidden(*hidden),
         Canvas::Closing => handle.stop(),
+    }
+}
+
+/// The oldest stamp of an input taken off the editor queue and not yet
+/// answered by a frame: what the next frame presented answers.
+///
+/// It is one word, 0 for none: [`Answering::note`] keeps the older of the
+/// stamp held and the one noted, and [`Answering::take`] answers it and
+/// leaves none. A stamp of 0 is no stamp.
+#[derive(Debug, Default)]
+pub struct Answering(AtomicU64);
+
+impl Answering {
+    /// Notes that an input stamped `stamp` waits for a frame.
+    pub fn note(&self, stamp: u64) {
+        if stamp == 0 {
+            return;
+        }
+        // The closure always gives a value, so the update cannot fail.
+        let _ = self
+            .0
+            .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |held| {
+                Some(if held == 0 { stamp } else { held.min(stamp) })
+            });
+    }
+
+    /// The oldest stamp noted since the last take, leaving none.
+    pub fn take(&self) -> Option<u64> {
+        Some(self.0.swap(0, Ordering::SeqCst)).filter(|stamp| *stamp != 0)
+    }
+}
+
+/// Whose size a render target follows.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Follows {
+    /// A window's: the window says its size and scale ([`leave_word`]),
+    /// and a frame presented is submitted as it is.
+    Window,
+    /// Each scene's: a headless target has no window, so before each frame
+    /// is submitted the target is resized to its scene's size, at scale 1.
+    Scene,
+}
+
+/// Where the frames bound displays publish go, and what the window said
+/// of its scale: one value, handed explicitly to everything that uses it.
+///
+/// - **The target**: the handle that takes submits now. A session puts
+///   its handle here when its loop is made ([`Presenter::start`]) and takes
+///   it out when it ends ([`Presenter::end`]). With no target, a frame
+///   presented reaches nothing.
+/// - **The last**: the handle of the latest session to start. It is not
+///   cleared when the session ends, so the journal and the counters of a
+///   window that has closed can still be read; a later session replaces
+///   it.
+/// - **The scale** the window last said, which a bound display lays out
+///   at ([`crate::display::Display::present_to`]); 1 until told.
+/// - **The stamp answered** ([`Answering`]): the oldest window input taken
+///   off the editor queue since the last frame presented.
+///
+/// Each part is behind its own lock or atomic. The process has one, at the
+/// C edge only ([`PRESENTER`]); every test makes its own.
+pub struct Presenter {
+    /// The handle that takes submits, and whose size it follows.
+    target: Mutex<Option<(RenderHandle, Follows)>>,
+    /// The handle of the latest session to start.
+    last: Mutex<Option<RenderHandle>>,
+    /// The bits of the scale, an `f32`.
+    scale: AtomicU32,
+    /// The stamp the next frame answers.
+    answering: Answering,
+}
+
+impl Presenter {
+    /// A presenter with no target, no last session, at scale 1 and with no
+    /// stamp to answer.
+    pub fn new() -> Arc<Self> {
+        Arc::new(Self {
+            target: Mutex::new(None),
+            last: Mutex::new(None),
+            scale: AtomicU32::new(1.0_f32.to_bits()),
+            answering: Answering::default(),
+        })
+    }
+
+    /// Makes `handle` the target, whose size follows `follows`, and the
+    /// last session's.
+    pub fn start(&self, handle: RenderHandle, follows: Follows) {
+        *locked(&self.last) = Some(handle.clone());
+        *locked(&self.target) = Some((handle, follows));
+    }
+
+    /// Takes the target out: frames presented from now on reach nothing.
+    /// The last session's handle stays.
+    pub fn end(&self) {
+        *locked(&self.target) = None;
+    }
+
+    /// The handle that takes submits, if there is one.
+    pub fn target(&self) -> Option<RenderHandle> {
+        locked(&self.target)
+            .as_ref()
+            .map(|(handle, _)| handle.clone())
+    }
+
+    /// The handle of the latest session to start, ended or not.
+    pub fn last(&self) -> Option<RenderHandle> {
+        locked(&self.last).clone()
+    }
+
+    /// The scale the window last said; 1 until told.
+    pub fn scale(&self) -> f32 {
+        f32::from_bits(self.scale.load(Ordering::SeqCst))
+    }
+
+    /// Holds `scale` as the scale the window says.
+    pub fn set_scale(&self, scale: f32) {
+        self.scale.store(scale.to_bits(), Ordering::SeqCst);
+    }
+
+    /// The stamp the next frame presented answers.
+    pub fn answering(&self) -> &Answering {
+        &self.answering
+    }
+
+    /// Presents `frame`, laid out from a scene `size` across and down: the
+    /// stamp answered is taken, and the frame is submitted to the target
+    /// with it, after the target is resized to `size` at scale 1 when it
+    /// follows the scene. With no target the stamp is spent all the same,
+    /// so an input that led to no frame shown is never counted against a
+    /// later one.
+    pub fn present(&self, frame: Arc<Frame>, size: (u32, u32)) {
+        let stamp = self.answering.take();
+        let Some((handle, follows)) = locked(&self.target).clone() else {
+            return;
+        };
+        if follows == Follows::Scene {
+            handle.resize(Target {
+                width: size.0,
+                height: size.1,
+                scale: 1.0,
+            });
+        }
+        handle.submit(frame, stamp);
+    }
+}
+
+/// `mutex`, locked. A poisoned lock is used as it is: what these locks
+/// guard is replaced whole.
+fn locked<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
+    mutex.lock().unwrap_or_else(PoisonError::into_inner)
+}
+
+/// The process's presenter. It is reached only from the C functions and
+/// from the main-thread service's run of the process's window
+/// (`crate::window::run_on_this_thread`); every test makes its own.
+pub static PRESENTER: LazyLock<Arc<Presenter>> = LazyLock::new(Presenter::new);
+
+/// A render loop with no window, on a thread of its own, drawing what bound
+/// displays publish on a target the size of each scene, at scale 1: the
+/// headless mode's renderer ([`headless`]).
+pub struct Headless<R> {
+    /// The way to the loop.
+    handle: RenderHandle,
+    /// The render thread, which gives the renderer back.
+    thread: Option<JoinHandle<R>>,
+    /// The presenter it is the target of.
+    presenter: Arc<Presenter>,
+}
+
+/// Starts a headless render session: a loop over the renderer `make`
+/// makes, on the calling thread, telling the time by `clock`, run on a
+/// thread of its own; and makes it `presenter`'s target, following each
+/// scene's size, and its last session's.
+///
+/// # Panics
+///
+/// If the render thread cannot be started.
+pub fn headless<R: Renderer + Send + 'static>(
+    make: impl FnOnce() -> R,
+    clock: Arc<dyn Clock>,
+    presenter: Arc<Presenter>,
+) -> Headless<R> {
+    let park = Arc::new(CondvarPark::new(Arc::clone(&clock)));
+    // A target of no size until the first scene says one.
+    let begin = Target {
+        width: 1,
+        height: 1,
+        scale: 1.0,
+    };
+    let (render_loop, handle) = RenderLoop::new(make(), clock, park, begin);
+    let thread = thread::Builder::new()
+        .name("render".into())
+        .spawn(move || render_loop.run())
+        .expect("the render thread starts");
+    presenter.start(handle.clone(), Follows::Scene);
+    Headless {
+        handle,
+        thread: Some(thread),
+        presenter,
+    }
+}
+
+impl<R> Headless<R> {
+    /// The way to the loop.
+    pub fn handle(&self) -> RenderHandle {
+        self.handle.clone()
+    }
+
+    /// Takes the session out of its presenter's target, stops the loop and
+    /// waits for its thread to end. The presenter's last session's handle
+    /// stays, for the journal and the counters.
+    pub fn stop(mut self) {
+        self.presenter.end();
+        self.handle.stop();
+        if let Some(thread) = self.thread.take() {
+            // A thread that panicked has nothing to give back.
+            let _ = thread.join();
+        }
+    }
+}
+
+/// The process's headless render session, while one runs.
+static HEADLESS: Mutex<Option<Headless<HeadlessRenderer>>> = Mutex::new(None);
+
+/// Starts the process's headless render session: the CPU renderer, on the
+/// process's clock, as the process's presenter's target. Returns false,
+/// starting nothing, when one runs already.
+#[unsafe(no_mangle)]
+pub extern "C" fn editor_ffi_render_headless_start() -> bool {
+    let mut running = locked(&HEADLESS);
+    if running.is_some() {
+        return false;
+    }
+    *running = Some(headless(
+        || HeadlessRenderer::new(Settings::default()),
+        Arc::new(ProcessClock),
+        Arc::clone(&PRESENTER),
+    ));
+    true
+}
+
+/// Stops the process's headless render session and waits for its thread.
+/// Returns false when none runs.
+#[unsafe(no_mangle)]
+pub extern "C" fn editor_ffi_render_headless_stop() -> bool {
+    let session = locked(&HEADLESS).take();
+    session.map(Headless::stop).is_some()
+}
+
+/// The handle of the process's latest render session, ended or not.
+fn last_session() -> Option<RenderHandle> {
+    PRESENTER.last()
+}
+
+/// Fills `out` with the journal entries of the process's latest render
+/// session whose serial is above `after`: their count, then six words for
+/// each, oldest first: its serial, `input_ns`, `draw_ns`, `present_ns`,
+/// the rows rebuilt and the rows reused. The status is 1, with no words,
+/// when no session has started.
+///
+/// # Safety
+///
+/// `out` points to a writable [`RawWords`].
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn editor_ffi_render_journal(after: u64, out: *mut RawWords) {
+    let raw = match last_session() {
+        None => RawWords::with_status(1, Vec::new()),
+        Some(handle) => {
+            let entries: Vec<Entry> = handle
+                .journal()
+                .into_iter()
+                .filter(|entry| entry.serial > after)
+                .collect();
+            let mut writer = Writer::with_capacity(1 + 6 * entries.len());
+            writer.size(entries.len());
+            for entry in entries {
+                for word in [
+                    entry.serial,
+                    entry.input_ns,
+                    entry.draw_ns,
+                    entry.present_ns,
+                    entry.rows_rebuilt,
+                    entry.rows_reused,
+                ] {
+                    writer.word(word);
+                }
+            }
+            RawWords::with_status(0, writer.finish())
+        }
+    };
+    // SAFETY: the caller guarantees `out` is writable.
+    unsafe { out.write(raw) };
+}
+
+/// Fills `out` with the counters of the process's latest render session,
+/// twelve words in the order of `editor_render::journal::Counters`' fields:
+/// draws, draws failed, frames submitted, frames replaced, rows rebuilt,
+/// rows reused, glyphs rasterised, reused, evicted and skipped, atlas
+/// bytes, journal entries dropped. The status is 1, with no words, when no
+/// session has started.
+///
+/// # Safety
+///
+/// `out` points to a writable [`RawWords`].
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn editor_ffi_render_counters(out: *mut RawWords) {
+    let raw = match last_session() {
+        None => RawWords::with_status(1, Vec::new()),
+        Some(handle) => {
+            let counters = handle.counters();
+            let mut writer = Writer::with_capacity(12);
+            for word in [
+                counters.draws,
+                counters.draws_failed,
+                counters.frames_submitted,
+                counters.frames_replaced,
+                counters.rows_rebuilt,
+                counters.rows_reused,
+                counters.glyphs_rasterised,
+                counters.glyphs_reused,
+                counters.glyphs_evicted,
+                counters.glyphs_skipped,
+                counters.atlas_bytes,
+                counters.journal_dropped,
+            ] {
+                writer.word(word);
+            }
+            RawWords::with_status(0, writer.finish())
+        }
+    };
+    // SAFETY: the caller guarantees `out` is writable.
+    unsafe { out.write(raw) };
+}
+
+/// Whether the process's latest render session's loop is at rest
+/// (`RenderHandle::resting`): 2 when it is, 1 when it is not, and 0 when
+/// no session has started.
+#[unsafe(no_mangle)]
+pub extern "C" fn editor_ffi_render_resting() -> u8 {
+    match last_session() {
+        None => 0,
+        Some(handle) if handle.resting() => 2,
+        Some(_) => 1,
     }
 }
 
@@ -308,7 +694,7 @@ mod tests {
     use editor_render::port::Target;
     use editor_render::render_loop::{RecordingPark, RenderHandle, RenderLoop, Step};
 
-    use super::{leave_word, refresh_ns, target};
+    use super::{Answering, Follows, Presenter, leave_word, refresh_ns, target};
     use crate::window::{CountingClock, InputClock, Monotonic};
 
     /// The size the loops begin at, and the target it is.
@@ -537,6 +923,105 @@ mod tests {
         }
         assert_eq!(render.renderer().requests().len(), 1);
         assert_eq!(handle.counters().draws, 1);
+    }
+
+    #[test]
+    fn the_stamp_answered_is_the_oldest_noted_and_taking_it_leaves_none() {
+        let answering = Answering::default();
+        assert_eq!(answering.take(), None);
+        answering.note(30);
+        answering.note(10);
+        answering.note(20);
+        assert_eq!(answering.take(), Some(10));
+        assert_eq!(answering.take(), None);
+        // A stamp of 0 is no stamp.
+        answering.note(0);
+        assert_eq!(answering.take(), None);
+    }
+
+    /// A loop stepped by hand over the recording renderer on `clock`,
+    /// beginning on `begin`.
+    fn stepped(clock: &FakeClock, begin: Target) -> (RenderLoop<RecordingRenderer>, RenderHandle) {
+        RenderLoop::new(
+            RecordingRenderer::new(),
+            Arc::new(clock.clone()),
+            Arc::new(RecordingPark::new()),
+            begin,
+        )
+    }
+
+    #[test]
+    fn a_frame_presented_reaches_the_target_with_the_stamp_it_answers() {
+        let clock = FakeClock::new();
+        let (mut render, handle) = stepped(&clock, target(SIZE));
+        let presenter = Presenter::new();
+        presenter.start(handle.clone(), Follows::Window);
+        assert!(presenter.target().is_some());
+        assert!(presenter.last().is_some());
+        presenter.answering().note(77);
+        presenter.present(frame_of("one"), (400, 300));
+        assert_eq!(handle.counters().frames_submitted, 1);
+        assert_eq!(presenter.answering().take(), None);
+        let Step::Drew(entry) = render.step() else {
+            panic!("the frame is drawn");
+        };
+        assert_eq!(entry.input_ns, 77);
+        // A window's target is the window's: a frame does not resize it.
+        assert_eq!(render.renderer().requests()[0].target, target(SIZE));
+    }
+
+    #[test]
+    fn with_no_target_a_frame_presented_reaches_nothing_and_the_stamp_is_spent() {
+        let clock = FakeClock::new();
+        let (_render, handle) = stepped(&clock, target(SIZE));
+        let presenter = Presenter::new();
+        assert!(presenter.target().is_none() && presenter.last().is_none());
+        presenter.answering().note(5);
+        presenter.present(frame_of("one"), (400, 300));
+        assert_eq!(presenter.answering().take(), None);
+        // Ended: the target is gone, and the last session's handle stays.
+        presenter.start(handle.clone(), Follows::Window);
+        presenter.end();
+        assert!(presenter.target().is_none());
+        presenter.present(frame_of("two"), (400, 300));
+        assert_eq!(handle.counters().frames_submitted, 0);
+        let last = presenter.last().expect("the last session's handle");
+        assert_eq!(last.counters(), handle.counters());
+    }
+
+    #[test]
+    fn a_headless_target_is_resized_to_the_scene_at_scale_one_before_the_frame_is_submitted() {
+        let clock = FakeClock::new();
+        let (mut render, handle) = stepped(
+            &clock,
+            Target {
+                width: 1,
+                height: 1,
+                scale: 1.0,
+            },
+        );
+        let presenter = Presenter::new();
+        presenter.start(handle, Follows::Scene);
+        presenter.present(frame_of("one"), (640, 480));
+        assert!(matches!(render.step(), Step::Drew(_)));
+        assert_eq!(
+            render.renderer().requests()[0].target,
+            Target {
+                width: 640,
+                height: 480,
+                scale: 1.0,
+            }
+        );
+    }
+
+    #[test]
+    fn a_presenter_holds_the_scale_last_said_and_is_at_one_until_told() {
+        let presenter = Presenter::new();
+        assert_eq!(presenter.scale(), 1.0);
+        presenter.set_scale(2.0);
+        assert_eq!(presenter.scale(), 2.0);
+        presenter.set_scale(1.25);
+        assert_eq!(presenter.scale(), 1.25);
     }
 
     #[test]

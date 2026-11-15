@@ -342,6 +342,11 @@ impl RenderHandle {
         rested_at != NOT_AT_REST && rested_at == shared.words.load(Ordering::SeqCst)
     }
 
+    /// Whether `other` is a handle of the same loop as this one.
+    pub fn same(&self, other: &RenderHandle) -> bool {
+        Arc::ptr_eq(&self.shared, &other.shared)
+    }
+
     /// Counts a word left, which ends any rest, and wakes the render
     /// thread.
     fn wake(&self) {
@@ -1587,6 +1592,14 @@ mod tests {
             word(&rig.handle);
             assert!(!rig.handle.resting(), "word {index}: at rest after it");
         }
+    }
+
+    #[test]
+    fn a_handle_is_the_same_as_its_clones_and_not_another_loops() {
+        let rig = rig();
+        let other = rig_on(FakeClock::new());
+        assert!(rig.handle.same(&rig.handle.clone()));
+        assert!(!rig.handle.same(&other.handle));
     }
 
     #[test]

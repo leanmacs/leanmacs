@@ -108,18 +108,24 @@ adds the toolchain's own library directory to the link.
 
 The system libraries the Rust archive needs come from
 `cargo rustc -p editor-ffi --release --lib --crate-type staticlib -- --print native-static-libs`.
-On macOS that is the frameworks and the two libraries listed here, which the
-window library (winit, in `editor-platform-winit`) brings, beside
-`-lSystem -lc -lm`, which the system compiler links anyway. On Linux it is
+On macOS that is the frameworks and the two libraries listed here, beside
+`-lSystem -lc -lm`, which the system compiler links anyway: the window
+library (winit, in `editor-platform-winit`) brings the first seven and the
+two libraries; the renderer (wgpu, in `editor-render-wgpu`) brings `Metal`
+and `QuartzCore`; and the shaper's font library (fontique, in
+`editor-shape-parley`) brings `CoreText` (the display pipeline's phase 6,
+which linked both into the archive). On Linux it is
 `-lgcc_s -lutil -lrt -lpthread -lm -ldl -lc`, all of which the link has
 already, so nothing is listed: winit loads the display's libraries when it
-runs. Run that command again when a crate with system dependencies is added. -/
+runs, and wgpu its graphics driver. Run that command again when a crate
+with system dependencies is added. -/
 def linkArgs : Array String :=
   #["-L", leanSystemLibDir.toString] ++
     if Platform.isOSX then
       #["-Wl,-e,_editor_entry", "-framework", "ApplicationServices", "-framework", "CoreGraphics",
         "-framework", "CoreVideo", "-framework", "Carbon", "-framework", "CoreFoundation",
-        "-framework", "AppKit", "-framework", "Foundation", "-liconv", "-lobjc"]
+        "-framework", "AppKit", "-framework", "Foundation", "-framework", "Metal", "-framework",
+        "QuartzCore", "-framework", "CoreText", "-liconv", "-lobjc"]
     else #["-Wl,--wrap=main"]
 
 /-- The editor. `supportInterpreter` exports the executable's symbols, so

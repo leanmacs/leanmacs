@@ -647,6 +647,18 @@ pub const SCRIPTED_FAILURE: &str = "the scripted platform opens no window: pas d
 /// The process's input clock.
 static CLOCK: Monotonic = Monotonic::new();
 
+/// The process's input clock as a value: what the process's render loops
+/// tell the time by, so that a journal entry's time from an input to its
+/// frame is a subtraction on the clock that stamped the input.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct ProcessClock;
+
+impl InputClock for ProcessClock {
+    fn now_ns(&self) -> u64 {
+        CLOCK.now_ns()
+    }
+}
+
 /// The process's scripted platform, made the first time it is asked for.
 static SCRIPTED: LazyLock<ScriptedPlatform> = LazyLock::new(ScriptedPlatform::sample);
 

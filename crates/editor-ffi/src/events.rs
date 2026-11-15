@@ -42,6 +42,7 @@ use std::ops::Deref;
 use std::sync::{Condvar, Mutex, MutexGuard, PoisonError};
 use std::thread::{self, JoinHandle};
 
+use crate::render::{PRESENTER, Presenter};
 use crate::text;
 use crate::words::{self, Writer};
 
@@ -411,6 +412,18 @@ fn queue(queue: u8) -> Option<&'static Queue> {
     QueueId::from_tag(queue).map(QueueId::queue)
 }
 
+/// The oldest event of `queue`, parking the calling thread until there is
+/// one ([`Queue::next`]), handed back as it was; when it came from a
+/// window, its stamp is noted with `presenter` as one the next frame
+/// presented answers ([`Presenter::answering`]).
+pub fn take(queue: &Queue, presenter: &Presenter) -> Event {
+    let event = queue.next();
+    if event.source.kind == SourceKind::Window {
+        presenter.answering().note(event.stamp);
+    }
+    event
+}
+
 /// Queues the completion of the request `request` on the process's
 /// completion queue, from the library's service `service`, and returns
 /// whether it was accepted: a queue that has been quit drops it.
@@ -516,10 +529,17 @@ pub unsafe extern "C" fn editor_ffi_events_post(
 /// `out` points to a writable [`RawEvent`].
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn editor_ffi_events_next(queue: u8, out: *mut RawEvent) -> bool {
-    let Some(queue) = self::queue(queue) else {
+    let Some(taken) = self::queue(queue) else {
         return false;
     };
-    let raw = RawEvent::lend(queue.next());
+    // An input taken off the editor queue waits for the frame that answers
+    // it; the completion queue's events are no input.
+    let event = if QueueId::from_tag(queue) == Some(QueueId::Editor) {
+        take(taken, &PRESENTER)
+    } else {
+        taken.next()
+    };
+    let raw = RawEvent::lend(event);
     // SAFETY: the caller guarantees `out` is writable.
     unsafe { out.write(raw) };
     true
@@ -912,6 +932,29 @@ mod tests {
                 stamp: 77,
             }
         );
+    }
+
+    #[test]
+    fn taking_an_event_from_a_window_notes_its_stamp_as_one_a_frame_answers() {
+        let queue = Queue::new();
+        let presenter = crate::render::Presenter::new();
+        let window = Source {
+            kind: SourceKind::Window,
+            id: 1,
+        };
+        let lean = Source {
+            kind: SourceKind::Lean,
+            id: 1,
+        };
+        let from_lean = Event::message(lean, 1, "posted").stamped(5);
+        let from_window = Event::message(window, 2, "typed").stamped(9);
+        assert!(queue.push(from_lean.clone()));
+        assert!(queue.push(from_window.clone()));
+        // Each is handed back as it was; only the window's is noted.
+        assert_eq!(take(&queue, &presenter), from_lean);
+        assert_eq!(presenter.answering().take(), None);
+        assert_eq!(take(&queue, &presenter), from_window);
+        assert_eq!(presenter.answering().take(), Some(9));
     }
 
     #[test]

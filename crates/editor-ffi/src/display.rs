@@ -80,6 +80,7 @@ use editor_text::{Patch, Revision};
 
 use crate::document::RawText;
 use crate::log::RawWords;
+use crate::render::{PRESENTER, Presenter};
 use crate::snapshot::{Snapshot, Source};
 use crate::text;
 use crate::words::Writer;
@@ -191,6 +192,9 @@ pub struct Display {
     /// first. It is behind a lock of its own, held only to swap or clone
     /// the `Arc`, so whoever takes it never waits for layout.
     frame: Mutex<Arc<Frame>>,
+    /// Where its frames are presented, once it is bound
+    /// ([`Display::present_to`]).
+    presenter: Mutex<Option<Arc<Presenter>>>,
 }
 
 impl Display {
@@ -209,7 +213,28 @@ impl Display {
             layout: Mutex::new(Box::new(layout)),
             scene: Mutex::new(None),
             frame: Mutex::new(Arc::new(Frame::default())),
+            presenter: Mutex::new(None),
         }
+    }
+
+    /// Binds the display to `presenter`: from now on every scene it
+    /// publishes is laid out at the presenter's scale and its frame
+    /// presented ([`Presenter::present`]), and every query and heights
+    /// answer is at that scale too. A display never bound presents
+    /// nothing and lays out at the scale it was told.
+    pub fn present_to(&self, presenter: Arc<Presenter>) {
+        *self
+            .presenter
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner) = Some(presenter);
+    }
+
+    /// The presenter the display is bound to, if it is.
+    fn presenter(&self) -> Option<Arc<Presenter>> {
+        self.presenter
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone()
     }
 
     /// Tells the display the scale to lay out at from now on
@@ -233,9 +258,13 @@ impl Display {
         let Some(wire) = WireScene::decode(words, strings) else {
             return false;
         };
-        let frame = Arc::new(self.layout().frame(&wire.resolve(snapshots)));
-        *self.frame.lock().unwrap_or_else(PoisonError::into_inner) = frame;
+        let scene = wire.resolve(snapshots);
+        let frame = Arc::new(self.layout().frame(&scene));
+        *self.frame.lock().unwrap_or_else(PoisonError::into_inner) = Arc::clone(&frame);
         *self.scene.lock().unwrap_or_else(PoisonError::into_inner) = Some(wire);
+        if let Some(presenter) = self.presenter() {
+            presenter.present(frame, (scene.size.width, scene.size.height));
+        }
         true
     }
 
@@ -252,10 +281,16 @@ impl Display {
             .clone()
     }
 
-    /// The layout, locked. A poisoned lock is used as it is: what layout
+    /// The layout, locked, at the scale of the presenter the display is
+    /// bound to when it is. A poisoned lock is used as it is: what layout
     /// keeps is a cache, which a later call checks or lays out again.
     fn layout(&self) -> MutexGuard<'_, Box<dyn Lays>> {
-        self.layout.lock().unwrap_or_else(PoisonError::into_inner)
+        let scale = self.presenter().map(|presenter| presenter.scale());
+        let mut layout = self.layout.lock().unwrap_or_else(PoisonError::into_inner);
+        if let Some(scale) = scale {
+            layout.set_scale(scale);
+        }
+        layout
     }
 
     /// The rows of `snapshot` a view `width` pixels wide and `height` tall
@@ -335,6 +370,21 @@ pub extern "C" fn editor_ffi_display_new_system() -> *mut Display {
     Box::into_raw(Box::new(Display::over(Layout::new(ParleyShaper::new(
         fonts,
     )))))
+}
+
+/// Binds `display` to the process's presenter ([`Display::present_to`]):
+/// every scene it publishes from now on is laid out at the scale the
+/// process's window said and its frame reaches the process's render
+/// session, when one runs.
+///
+/// # Safety
+///
+/// `display` is a display handle this library handed out and has not taken
+/// back.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn editor_ffi_display_present(display: *const Display) {
+    // SAFETY: the caller guarantees the handle.
+    unsafe { &*display }.present_to(Arc::clone(&PRESENTER));
 }
 
 /// Fills `out` with the heights of a text row, a status row and the
@@ -565,9 +615,108 @@ pub extern "C" fn editor_ffi_display_live() -> u64 {
 
 #[cfg(test)]
 mod tests {
-    use super::text_ref;
+    use std::sync::Arc;
+
+    use editor_render::clock::FakeClock;
+    use editor_render::fake::RecordingRenderer;
+    use editor_render::port::Target;
+    use editor_render::render_loop::{RecordingPark, RenderHandle, RenderLoop, Step};
+
+    use super::{Display, WireScene, WireView, text_ref};
     use crate::document::Document;
+    use crate::render::{Follows, Presenter};
     use crate::snapshot::Snapshot;
+
+    /// A loop stepped by hand over the recording renderer, and its handle.
+    fn stepped() -> (RenderLoop<RecordingRenderer>, RenderHandle) {
+        RenderLoop::new(
+            RecordingRenderer::new(),
+            Arc::new(FakeClock::new()),
+            Arc::new(RecordingPark::new()),
+            Target {
+                width: 80,
+                height: 32,
+                scale: 1.0,
+            },
+        )
+    }
+
+    /// Publishes to `display` a scene of one view, 80 by 32, of `snapshot`.
+    fn publish_one(display: &Display, snapshot: &Snapshot) {
+        let wire = WireScene {
+            size: [80, 32],
+            views: vec![WireView {
+                id: 1,
+                rect: [0, 0, 80, 32],
+                snapshot: Some(0),
+                ..WireView::default()
+            }],
+            ..WireScene::default()
+        };
+        let (words, strings) = wire.encode();
+        assert!(display.publish(&words, &strings, &[snapshot]));
+    }
+
+    #[test]
+    fn a_bound_display_presents_each_frame_it_publishes_with_the_stamp_it_answers() {
+        let (mut render, handle) = stepped();
+        let presenter = Presenter::new();
+        presenter.start(handle.clone(), Follows::Window);
+        let display = Display::cells(8, 16);
+        display.present_to(Arc::clone(&presenter));
+        let snapshot = Snapshot::of(&Document::new("ab\ncd"));
+        presenter.answering().note(42);
+        publish_one(&display, &snapshot);
+        assert_eq!(handle.counters().frames_submitted, 1);
+        assert_eq!(presenter.answering().take(), None);
+        let Step::Drew(entry) = render.step() else {
+            panic!("the frame is drawn");
+        };
+        assert_eq!(entry.input_ns, 42);
+        // The frame drawn is the display's latest.
+        let requests = render.renderer().requests();
+        assert!(Arc::ptr_eq(&requests[0].frame, &display.latest()));
+    }
+
+    #[test]
+    fn a_display_that_was_never_bound_presents_nothing() {
+        let (_render, handle) = stepped();
+        let presenter = Presenter::new();
+        presenter.start(handle.clone(), Follows::Window);
+        let display = Display::cells(8, 16);
+        presenter.answering().note(42);
+        publish_one(&display, &Snapshot::of(&Document::new("ab")));
+        assert_eq!(handle.counters().frames_submitted, 0);
+        // The stamp is still the next bound frame's to answer.
+        assert_eq!(presenter.answering().take(), Some(42));
+    }
+
+    #[test]
+    fn a_bound_display_with_no_target_lays_its_frame_out_and_spends_the_stamp() {
+        let presenter = Presenter::new();
+        let display = Display::cells(8, 16);
+        display.present_to(Arc::clone(&presenter));
+        presenter.answering().note(42);
+        publish_one(&display, &Snapshot::of(&Document::new("ab\ncd")));
+        assert_eq!(display.latest().views[0].rows.len(), 2);
+        assert_eq!(presenter.answering().take(), None);
+    }
+
+    #[test]
+    fn a_bound_display_lays_out_at_the_presenters_scale() {
+        let presenter = Presenter::new();
+        let display = Display::cells(8, 16);
+        display.present_to(Arc::clone(&presenter));
+        assert_eq!(display.heights().text, 16);
+        presenter.set_scale(2.0);
+        let heights = display.heights();
+        assert_eq!(
+            (heights.text, heights.status, heights.message),
+            (32, 32, 32)
+        );
+        // A display that is not bound is at its own scale.
+        assert_eq!(Display::cells(8, 16).heights().text, 16);
+    }
 
     #[test]
     fn a_documents_snapshot_is_a_text_whose_changes_are_its_documents() {

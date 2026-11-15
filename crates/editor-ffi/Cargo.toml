@@ -35,6 +35,14 @@ editor-shape-parley = { path = "../editor-shape-parley" }
 # and lends the loop the clock that stamps input (`src/render.rs`). It
 # brings the `Renderer` port and its fakes, and no drawing library.
 editor-render = { path = "../editor-render" }
+# The renderer's real adapters: the CPU renderer the headless mode's render
+# session draws with (`editor_ffi_render_headless_start`), which needs no
+# GPU and runs in the gate, and the wgpu renderer a window draws with.
+# Through it the static library Lean links holds wgpu. No test here makes
+# a renderer on a window; `clippy.toml` forbids its window constructor to
+# them. It is also the example `window`'s. `deny.toml` lists this crate
+# among its wrappers.
+editor-render-wgpu = { path = "../editor-render-wgpu" }
 # The real file system, for the process's file service. This is the crate
 # that wires the library together, so it is the one that links the adapter;
 # `clippy.toml` here keeps the adapter out of everything but that one static
@@ -55,12 +63,6 @@ editor-fuzzy-nucleo = { path = "../editor-fuzzy-nucleo" }
 # whose manifest says why this library and no other; `deny.toml` lists the
 # two crates that may depend on it.
 tempfile = { version = "=3.27.0", default-features = false }
-# The real renderer, for one thing: the example `window`, which draws a
-# fixture frame in a real window on demand (`examples/window.rs`). It is a
-# dev-dependency, so the static library Lean links holds no wgpu yet. No
-# test here names it; `clippy.toml` forbids the renderer's window
-# constructor to them. `deny.toml` lists this crate among its wrappers.
-editor-render-wgpu = { path = "../editor-render-wgpu" }
 
 # The window that draws is an example, run on demand. What it makes of
 # what it saw is tested in the gate all the same: `cargo test` runs the
