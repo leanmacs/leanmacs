@@ -1,5 +1,6 @@
 import Editor.Clipboard.InProcess
 import Editor.Config.Directory
+import Editor.Config.Display
 import Editor.Config.Elaborate
 import Editor.Config.Reload
 import Editor.Display.Real
@@ -94,8 +95,17 @@ as before, so reload and job completion work as they did.
   `Editor/Api.lean`): the host feeds the reload reducer a request, which is
   what its driver's `reload` does, so the reducer's rules hold unchanged:
   one job at a time, and a request made while one runs makes one
-  follow-up. The reload's report is printed as the driver's is. Nothing
-  puts it in the echo area.
+  follow-up. The reload's report is printed as the driver's is.
+- **A reload's error is said in the echo area** (`Config.Report.echo`,
+  `Running.said`), whoever asked for the reload: a rejected one's first
+  error, with its place and the first line of its message, and how many
+  more there are. The old config keeps running: a rejected reload installs
+  nothing. A reload that installs says nothing there, so what a command
+  said stays, and it hands the display the new theme (`Config.retheme`),
+  which the next scene is drawn in. With no frame made yet, the error is
+  kept and said when the frame is made (`Running.unsaid`); a command that
+  makes the frame clears the echo before it runs, as any command does, so
+  it shows when the frame is made for a window event that runs none.
 - **A window event goes to the loop** (`Running.input`): `Loop.take`, run
   against the library with the recorder as the display, handles it and
   publishes a scene. A key press is still printed with its identity, as the
@@ -737,10 +747,22 @@ structure Running (σ : Type) (scheme : InputScheme) where
   markers : Nat := 0
   /-- Whether the driver has ended the loop. -/
   stopped : Bool := false
+  /-- What the host has to say in the echo area once the frame is made: a
+  reload's error said before there was a frame (`said`). -/
+  unsaid : Option String := none
 
 namespace Running
 
 variable {σ : Type} {scheme : InputScheme}
+
+/-- Says `text` in the echo area of the frame's state, which the next scene
+shows; with no frame made yet, keeps it to say once the frame is made
+(`framed`). -/
+def said (running : Running σ scheme) (text : String) : Running σ scheme :=
+  match running.frame with
+  | some frame =>
+    { running with frame := some { frame with state := { frame.state with echo := text } } }
+  | none => { running with unsaid := some text }
 
 /-- The reload job, on a thread of its own: builds the config, hands the
 outcome over through `promise`, and wakes the editor thread with an event.
@@ -755,16 +777,22 @@ def reloadJob (collaborators : Collaborators σ scheme) (base : Option σ)
 
 /-- Feeds `event` to the reload reducer and performs its effects. A reload
 job is started on a dedicated task, never run here: it reads files and
-elaborates, and the editor thread goes on to its next event. -/
+elaborates, and the editor thread goes on to its next event. A reload's
+report is printed, and a rejected one's error is said in the echo area
+(`Config.Report.echo`, `said`); one that installs says nothing there, and
+hands the display the new theme (`Config.retheme`). -/
 def reduce (collaborators : Collaborators σ scheme) (running : Running σ scheme)
     (event : Config.Event σ) : IO (Running σ scheme) := do
   let (config, effects) := Config.step running.config event
+  Config.retheme running.display.setTheme config effects
   let mut running := { running with config }
   for effect in effects do
     match effect with
     | .report report =>
       for line in reportLines report do
         collaborators.emit line
+      if let some text := report.echo then
+        running := running.said text
     | .cancelJobs owner =>
       -- The owner's jobs leave the table here, so a wake-up one of them had
       -- already posted finds nothing, and its handler never runs.
@@ -880,7 +908,13 @@ def framed (collaborators : Collaborators σ scheme) (running : Running σ schem
   if let some frame := running.frame then
     return (some frame, running)
   let (made, running) ← running.attempt collaborators collaborators.start
-  return (made, { running with frame := made })
+  let running := { running with frame := made }
+  -- What was said before there was a frame is said now.
+  let running :=
+    match made, running.unsaid with
+    | some _, some text => { running.said text with unsaid := none }
+    | _, _ => running
+  return (running.frame, running)
 
 /-- How a command the loop ran ended, as the host prints it after
 `run <name>: ` or `job <id> <name>: `. The host prints a line for every

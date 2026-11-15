@@ -1,6 +1,5 @@
 import ConfigFixture
 import Editor.Config.Directory
-import Editor.Config.Display
 import Editor.Config.Elaborate
 import Editor.Evil.Compiled
 import Editor.Ex.Compiled
@@ -98,12 +97,14 @@ fakes. The checks here pin what only real collaborators can show:
   ships (`Evil.motions`) and hands it to evil's move command, as it is and
   with a motion of config's own added. It shows what `Editor.lean` lets
   config name; where a motion of the editor's leads is not said here;
-- `faceChecks`: a face set in a config file reaches the next frame. It runs
-  a reload as the headless loop does, with the real elaborator over a
-  config directory and the reload reducer, hands the display's real binding
-  what the reducer gave (`Config.retheme`), publishes one scene and reads
-  the frame the library made. It skips the loop's queue, its promise and
-  its wake-up, which carry no face: the headless host has no display yet;
+- `reloadEchoChecks`: a rejected reload's first error is said in the echo
+  area, while the old config runs; a reload that installs says nothing;
+  and one rejected before the frame is made is said once it is;
+- `faceChecks`: a face set in a config file reaches the next frame,
+  through a host handed the display's real binding over the library's
+  layout: the host's reload re-themes its display (`Config.retheme`), and
+  the frame the library made of the next scene is compared with a second
+  display's frame of the same scene in a theme written here;
 - `fileChecks`: files through the host, over the library's file service.
   They are the checks whose hosts are over a real service, so they share
   one table of waits and the one completion pump, which the first of them
@@ -593,6 +594,16 @@ def setupChunk : String :=
 `setup` that registers it. -/
 def greetConfig : List (String × String) :=
   [("10-greet.lean", greetChunk "v1"), ("20-setup.lean", setupChunk)]
+
+/-- A chunk that defines the command `greet`, which says `hello` in the echo
+area. -/
+def helloChunk : String :=
+  "def greet : EditorM Unit := message \"hello\"\n"
+
+/-- A config of two chunks: `greet`, which says `hello`, and the `setup`
+that registers it. -/
+def helloConfig : List (String × String) :=
+  [("10-greet.lean", helloChunk), ("20-setup.lean", setupChunk)]
 
 /-- A chunk with a store of one number at version 1, and a `setup` that
 declares it and registers `bump`, which adds `step` to it. -/
@@ -3357,89 +3368,68 @@ def exScriptChecks (context : Context) : List Check :=
           discard <| host.halt patience
           throw error }]
 
-/-- A display with something to show: the binding over the library's layout
-in cells 8 pixels across and 16 down, and a scene of one view of a document
-of the library, with a selection, a decoration and one status field. -/
-structure FaceRig where
-  /-- The binding. -/
-  real : RealDisplay
-  /-- The scene: every publish of a check is this one. -/
-  scene : Scene
-  /-- The view's document. The library reads the view's markers in it, and
-  a snapshot holds it weakly, so whoever publishes keeps it alive. -/
-  document : Ffi.Document
+/-- A chunk whose `greet` does not elaborate: a number where `message` takes
+a string, on its first line. -/
+def brokenGreetChunk : String :=
+  "def greet : EditorM Unit := message 7\n"
 
-namespace FaceRig
+/-- Whether `echo`, quoted as a scene line has it, is a rejected reload's
+error about the first line of `10-greet.lean`. The column and the message
+are Lean's, so only their places are checked. -/
+def isGreetError (echo : String) : Bool :=
+  echo.startsWith "\"reload: 10-greet.lean:1:" && (echo.splitOn ": error: ").length == 2
 
-/-- Makes a rig whose binding has `theme` to send. -/
-def new (theme : Theme) : IO FaceRig := do
-  let document ← Ffi.Document.new "let x = 1\nlet y = 2\n"
-  let marked (marker : Ffi.Marker) : IO MarkerId := do
-    match ← document.mark marker with
-    | .ok number =>
-      return { text := ⟨0⟩, index := number.toNat }
-    | .error refusal =>
-      throw (IO.userError s!"the rig's marker was refused: {repr refusal}")
-  let scroll ← marked (.anchor { offset := 0, bias := .before })
-  let selection ← marked (.selection { ranges := #[{ anchor := 4, head := 9 }] })
-  let table ← Snapshots.new
-  let snapshot ← table.add (← document.snapshot)
-  let display ← Ffi.Display.newCells 8 16
-  let scene : Scene :=
-    { size := { width := 160, height := 96 }
-      views :=
-        #[{ id := ⟨1⟩, rect := { x := 0, y := 0, width := 160, height := 96 }, snapshot, scroll
-            selections := #[selection], cursor := { shape := .block, face := ⟨"cursor"⟩ }
-            decorations := #[{ start := 0, stop := 3, face := ⟨"keyword"⟩ }]
-            status := #[{ text := "a.txt", face := ⟨"mode-line"⟩ }] }]
-      focused := some ⟨1⟩, echo := "", pending := "", preedit := none }
-  return { real := ← RealDisplay.over display table.reader theme, scene, document }
-
-/-- Publishes the rig's scene and returns the frame the library made of it,
-as the library's text of it. -/
-def frame (rig : FaceRig) : IO String := do
-  rig.real.publish rig.scene
-  let text ← rig.real.display.frameText
-  -- The document is held until here, past the publish.
-  discard <| rig.document.read
-  return text
-
-/-- The frame of the rig's scene in `theme`. -/
-def frameIn (rig : FaceRig) (theme : Theme) : IO String := do
-  rig.real.setTheme theme
-  rig.frame
-
-end FaceRig
+/-- The checks of a reload's errors in the echo area (`Config.Report.echo`,
+`Editor/Headless.lean`), through the host with the real elaborator over a
+config directory. -/
+def reloadEchoChecks (context : Context) : List Check :=
+  [{  name :=
+        "a rejected reload says its first error in the echo area and the old config's command still runs, what that command says replaces the error, and a reload that installs clears nothing"
+      run :=
+        withHost context helloConfig fun session => do
+          session.ask [.reload]
+          session.ask [.run "greet"]
+          let said ← session.echo
+          session.write "10-greet.lean" brokenGreetChunk
+          session.ask [.reload]
+          let rejected ← session.echo
+          session.ask [.run "greet"]
+          let replaced ← session.echo
+          session.ask [.reload]
+          let again ← session.echo
+          session.write "10-greet.lean" helloChunk
+          session.ask [.reload]
+          let kept ← session.echo
+          session.ask [.run "greet"]
+          let after ← session.echo
+          let lines ← session.lines
+          return said == "\"hello\"" && isGreetError rejected && replaced == "\"hello\"" &&
+              again == rejected &&
+              kept == rejected &&
+              after == "\"hello\"" &&
+              lines.contains "reload 2: rejected" &&
+              lines.contains "diagnostic: 10-greet.lean: error" &&
+              lines.contains "reload 4: installed, 2 chunks, 1 commands" &&
+              (lines.filter (· == "run greet: ok")).size == 3 },
+    { name :=
+        "a reload rejected before the frame is made is said in the echo area once the frame is made"
+      run :=
+        withHost context [("10-greet.lean", brokenGreetChunk)] fun session => do
+          session.ask [.reload]
+          let before ← session.scene
+          session.host.resize 80 64
+          session.ask []
+          let made ← session.echo
+          return before == ("", #[]) && isGreetError made }]
 
 /-- A config of one chunk whose `setup` is `body`, a line of Lean. -/
 def faceChunk (body : String) : String :=
   s!"def setup : SetupM Unit := do\n  {body}\n"
 
-/-- One reload of the config in `directory`, made as the headless loop makes
-one but for its queue and its promise: the request, which must start a job;
-the job's one call, `Config.build`, with the real elaborator over the
-directory; and the editor thread's one call, `Config.step` with the
-outcome. The display is then handed what the reducer gave (`Config.retheme`),
-as the runtime that owns a display does. Returns the state, and whether the
-reload installed. -/
-def reloadInto (context : Context) (directory : System.FilePath) (real : RealDisplay)
-    (state : Config.State Config.Elaborate.State) :
-    IO (Config.State Config.Elaborate.State × Bool) := do
-  let (state, effects) := Config.step state .requested
-  let started :=
-    effects.findSome? fun
-      | .start base chunks => some (base, chunks)
-      | _ => none
-  let some (base, chunks) := started
-    | throw (IO.userError "a request for a reload with none running started no job")
-  let outcome ← Config.build context.elaborator (Config.Directory.source directory) base chunks
-  let (state, effects) := Config.step state (.finished outcome)
-  Config.retheme real state effects
-  return (state, Config.installed effects)
-
 /-- The checks that a face set in config reaches the frame: a config
-directory of real files, the real elaborator, the reload reducer, the
-display's real binding and the library's layout. What a face looks like in
+directory of real files, the real elaborator, a host whose reloads re-theme
+its display, the display's real binding and the library's layout. What a
+face looks like in
 a frame is layout's rule, so a frame is compared with another frame: the
 one a second display, which the check makes itself, lays out of the same
 scene in a theme written here. That display is handed the same themes in
@@ -3455,61 +3445,97 @@ def faceChecks (context : Context) : List Check :=
             writeFiles directory [("10-faces.lean", faceChunk body)]
           let over (attributes : Face) : Theme :=
             Theme.builtin ++ #[{ name := ⟨"default"⟩, face := attributes }]
-          let rig ← FaceRig.new ({} : Config.State Config.Elaborate.State).theme
-          let mirror ← FaceRig.new Theme.builtin
-          let mut state : Config.State Config.Elaborate.State := { base := some context.base }
-          -- Names the first of `parts` that does not hold.
-          let holds (parts : List (String × Bool)) : IO Unit := do
-            if let some (part, _) := parts.find? (!·.2) then
-              throw (IO.userError part)
-          -- (a) A face set in config is in the first frame after the reload.
-          write "face \"default\" { foreground := some (Color.rgb 200 0 0) }"
-          let (loaded, first) ← reloadInto context directory rig.real state
-          state := loaded
-          let red ← rig.frame
-          let redMirror ← mirror.frameIn (over { foreground := some (Color.rgb 200 0 0) })
-          holds
-              [("(a) the first reload installed", first),
-                ("(a) the frame after it is the one config's face gives", red == redMirror)]
-          -- (b), (c) Changed in the file and reloaded, it changes the frame,
-          -- to the one the changed face gives.
-          write "face \"default\" { foreground := some (Color.rgb 0 200 0) }"
-          let (loaded, second) ← reloadInto context directory rig.real state
-          state := loaded
-          let green ← rig.frame
-          let greenMirror ← mirror.frameIn (over { foreground := some (Color.rgb 0 200 0) })
-          holds
-              [("(b) the second reload installed", second),
-                ("(b) the frame after a changed colour differs", green != red),
-                ("(c) and is the one the changed face gives", green == greenMirror)]
-          -- (d) An attribute that changes shaping.
-          write "face \"default\" { size := some 32 }"
-          let (loaded, third) ← reloadInto context directory rig.real state
-          state := loaded
-          let large ← rig.frame
-          let largeMirror ← mirror.frameIn (over { size := some 32 })
-          holds
-              [("(d) the reload of a size installed", third),
-                ("(d) the frame after a changed size differs", large != green),
-                ("(d) and is the one the size gives", large == largeMirror)]
-          -- (e) A chunk that does not elaborate: rejected, and no face moved.
-          write "face \"default\" { size := some 8 }\n\ndef broken : Nat := \"not a number\""
-          let (loaded, fourth) ← reloadInto context directory rig.real state
-          state := loaded
-          let kept ← rig.frame
-          holds
-              [("(e) a chunk that does not elaborate is rejected", !fourth),
-                ("(e) and the frame is the one before", kept == large)]
-          -- (f) A config that sets no face: the built-in theme again.
-          write "pure ()"
-          let (_, fifth) ← reloadInto context directory rig.real state
-          let plain ← rig.frame
-          let plainMirror ← mirror.frameIn Theme.builtin
-          holds
-              [("(f) the reload of a config with no face installed", fifth),
-                ("(f) its frame is the built-in theme's", plain == plainMirror),
-                ("(f) which is not the frame before", plain != large)]
-          return true }]
+          let stage ← Stage.new context context.elaborator (Config.Directory.source directory)
+          -- The host's display: the real binding over the library's layout
+          -- in cells 8 by 16, which the check keeps to read its frame and the
+          -- scene the host last published.
+          let library ← Ffi.Display.newCells 8 16
+          let made ← IO.mkRef (none : Option Headless.Host.Display)
+          let collaborators :=
+            { stage.collaborators with
+              display := fun snapshots => do
+                let display ←
+                  Headless.Host.Display.real (← RealDisplay.over library snapshots Theme.builtin)
+                made.set (some display)
+                return display }
+          -- The second display, over the same table of snapshots, handed the
+          -- themes the host's is handed, in the same order.
+          let mirror ←
+            RealDisplay.over (← Ffi.Display.newCells 8 16) collaborators.published.reader
+                Theme.builtin
+          onStage { stage with collaborators } fun host _ => do
+              -- Names the first of `parts` that does not hold.
+              let holds (parts : List (String × Bool)) : IO Unit := do
+                if let some (part, _) := parts.find? (!·.2) then
+                  throw (IO.userError part)
+              let settled : IO Unit := do
+                unless ← host.settle patience do
+                  throw (IO.userError "the editor thread did not settle")
+              -- The host's frame of the last scene it published, and the
+              -- second display's frame of that scene, in `theme` when it is
+              -- given and in the theme it last had otherwise.
+              let frames (theme : Option Theme) : IO (String × String) := do
+                let some display ← made.get | throw (IO.userError "the host made no display")
+                let some scene ← display.last? | throw (IO.userError "the host published no scene")
+                if let some theme := theme then
+                  mirror.setTheme theme
+                mirror.publish scene
+                return (← library.frameText, ← mirror.display.frameText)
+              let reload : IO Unit := do
+                host.send .reload
+                settled
+              -- The frame is made, with a view of some size and a text in
+              -- it, in the built-in theme.
+              host.resize 160 96
+              unless ← Event.post (.commit "let x = 1") do
+                return false
+              settled
+              let (plain, plainMirror) ← frames none
+              holds [("the first frame is the built-in theme's", plain == plainMirror)]
+              -- (a) A face set in config is in the first frame after the reload.
+              write "face \"default\" { foreground := some (Color.rgb 200 0 0) }"
+              reload
+              let (red, redMirror) ← frames (over { foreground := some (Color.rgb 200 0 0) })
+              holds
+                  [("(a) the frame after the reload differs", red != plain),
+                    ("(a) and is the one config's face gives", red == redMirror)]
+              -- (b), (c) Changed in the file and reloaded, it changes the frame,
+              -- to the one the changed face gives.
+              write "face \"default\" { foreground := some (Color.rgb 0 200 0) }"
+              reload
+              let (green, greenMirror) ← frames (over { foreground := some (Color.rgb 0 200 0) })
+              holds
+                  [("(b) the frame after a changed colour differs", green != red),
+                    ("(c) and is the one the changed face gives", green == greenMirror)]
+              -- (d) An attribute that changes shaping.
+              write "face \"default\" { size := some 32 }"
+              reload
+              let (large, largeMirror) ← frames (over { size := some 32 })
+              holds
+                  [("(d) the frame after a changed size differs", large != green),
+                    ("(d) and is the one the size gives", large == largeMirror)]
+              -- (e) A chunk that does not elaborate: rejected, and no face moved.
+              write "face \"default\" { size := some 8 }\n\ndef broken : Nat := \"not a number\""
+              reload
+              -- Its error is in the echo area now, so the scene is not the one
+              -- before; its frame is the one that scene gives in the faces
+              -- before.
+              let (kept, keptMirror) ← frames none
+              holds
+                  [("(e) after a rejected reload the frame is the one the faces before give",
+                      kept == keptMirror)]
+              -- (f) A config that sets no face: the built-in theme again.
+              write "pure ()"
+              reload
+              let (unset, unsetMirror) ← frames Theme.builtin
+              let lines ← stage.output.get
+              holds
+                  [("(f) its frame is the built-in theme's", unset == unsetMirror),
+                    ("(f) which is not the frame before", unset != large),
+                    ("every reload but (e) installed and (e) was rejected",
+                      (lines.filter (·.startsWith "reload ")).map (·.endsWith "rejected") ==
+                        #[false, false, false, true, false])]
+              return true }]
 
 /-- Every check, in the order they run. -/
 def checks (context : Context) : List Check :=
@@ -3522,6 +3548,7 @@ def checks (context : Context) : List Check :=
     promptChecks context ++
     exChecks context ++
     evilChecks context ++
+    reloadEchoChecks context ++
     faceChecks context ++
     fileChecks context ++
     exScriptChecks context

@@ -179,6 +179,8 @@ editor's models and the job model (`Editor/Loop/Driver.lean`):
   before the next event, with the asking view as its target; a
   continuation with no command, one that is refused and one that asks
   again; and rollback and the interrupt around an open prompt.
+  `echoPromptChecks`: a command that says something and then asks leaves
+  no echo, and what a job's command says while the prompt is open is kept.
   `promptModeChecks`, with the minibuffer's commands and its mode
   (`Editor/Minibuffer/Compiled.lean`) in a registry whose active keymaps
   the loop is handed: the phase's acceptance criteria, with the accept key
@@ -3018,7 +3020,26 @@ def reloadChecks : List Check :=
             runs reloaded "q" == some "kept" &&
             reloaded.registry.ex.size == 3 &&
             effects == #[.start (some #[]) #["a"], .cancelJobs "config", .report 2 true #[] 1 0] &&
-            kept.registry.ex == loaded.registry.ex) }]
+            kept.registry.ex == loaded.registry.ex) },
+    { name :=
+        "a rejected reload's echo is its first error with its place and the first line of its message, and says how many more errors there are"
+      run :=
+        let error (source : String) (line column : Nat) (message : String) : Config.Diagnostic :=
+          { source, line, column, severity := .error, message }
+        let warning : Config.Diagnostic :=
+          { source := "a.lean", line := 1, severity := .warning, message := "unused" }
+        let report (installed : Bool) (diagnostics : Array Config.Diagnostic) : Config.Report :=
+          { number := 2, installed, diagnostics, chunks := 1, commands := 1 }
+        let one := report false #[warning, error "30-broken.lean" 1 20 "type mismatch\n  \"x\""]
+        let three :=
+          report false
+            #[error "b.lean" 3 4 "unknown identifier 'x'", warning, error "b.lean" 5 0 "second",
+              error "setup" 0 0 "third"]
+        pure
+          (one.echo == some "reload: 30-broken.lean:1:20: error: type mismatch" &&
+            three.echo == some "reload: b.lean:3:4: error: unknown identifier 'x' (and 2 more)" &&
+            (report true #[warning]).echo == none &&
+            (report true #[]).echo == none) }]
 
 /-- A key press that produced `text`. -/
 def pressed (text : String) : WindowCheck.Input :=
@@ -12944,6 +12965,76 @@ def promptLoopChecks : List Check :=
               closed accepted &&
               driverText finished == some "[42]" }]
 
+/-- The keys of the echo checks: `C-c b` runs `say-then-ask`, which says
+`before` and then asks as `ask` does, and `C-c n` cancels. -/
+def echoKeys : Loop.Keys TestScheme.scheme :=
+  dispatchKeys [("C-c b", invoke "say-then-ask"), ("C-c n", invoke "cancel")]
+    (promptCommands ++
+      [("say-then-ask", fun _ => do
+          message "before"
+          discard <| prompt "Name: " asked
+          return none)])
+
+/-- A driver over the initial state with `echoKeys`, after `C-c b`: the
+prompt `say-then-ask` asked for is open. `none` if making the state was
+refused. -/
+def echoAsking : Option TestDriver :=
+  (Loop.Driver.over echoKeys driverJobs (EditorState.initial ⟨640, 480⟩) editorModel).toOption.map
+    fun driver => (fedTo driver (presses "C-c b")).1
+
+/-- `driver` after the loop has delivered `command` as a finished job's
+(`Loop.deliver`), which clears no echo. -/
+def echoDelivered (driver : TestDriver) (command : EditorM Unit) : TestDriver :=
+  (driver.stepped (driver.loop.deliver driver.handed "job 1 test" command)).1
+
+/-- The checks that opening a prompt clears the echo area (`EditorState.openPrompt`,
+D7 of the display pipeline's last phase), through the loop: a command that
+says something and then asks leaves no echo, and what a job's command says
+while the prompt is open is kept. A key's command clears the echo before it
+runs (`Loop.run`), so the checks close the prompt from a delivered job's
+command too, which clears nothing: only then does the echo the prompt was
+opened over show whether the open cleared it. -/
+def echoPromptChecks : List Check :=
+  let asking := echoAsking
+  let delivered := echoDelivered
+  let sceneEcho (driver : TestDriver) : Option String :=
+    driver.model.display.scenes.back?.map (·.echo)
+  let cancels : EditorM Unit := discard cancelPrompt
+  [{  name :=
+        "a command that says something and then asks for a prompt leaves the echo empty: in the state and in the scene after its key, and once the prompt is closed by the cancel key or by a job's command"
+      run :=
+        pure <|
+          match asking with
+          | none => false
+          | some driver =>
+            let (cancelled, _) := fedTo driver (presses "C-c n")
+            let closedByJob := delivered driver cancels
+            driver.loop.state.prompt.isSome && promptEcho driver == "" &&
+              sceneEcho driver == some "" &&
+              cancelled.loop.state.prompt.isNone &&
+              promptEcho cancelled == "" &&
+              closedByJob.loop.state.prompt.isNone &&
+              promptEcho closedByJob == "" &&
+              sceneEcho closedByJob == some "" },
+    { name :=
+        "a job's command that says something while the prompt is open leaves it in the echo, and it is still there once that command has closed the prompt: it was said after the prompt opened"
+      run :=
+        pure <|
+          match asking with
+          | none => false
+          | some driver =>
+            let loaded := delivered driver (message "loaded")
+            let closed :=
+              delivered driver
+                (do
+                  message "loaded";
+                  cancels)
+            loaded.loop.state.prompt.isSome && promptEcho loaded == "loaded" &&
+              sceneEcho loaded == some "loaded" &&
+              closed.loop.state.prompt.isNone &&
+              promptEcho closed == "loaded" &&
+              sceneEcho closed == some "loaded" }]
+
 /-- The commands of the minibuffer checks that `promptCommands` does not
 have, by name: `ask-ada` asks as `ask` does, with the initial value `Ada`;
 `to-window` focuses view 0, and `to-minibuffer` the minibuffer's view;
@@ -13204,10 +13295,11 @@ def promptModeChecks : List Check :=
             Minibuffer.modes.all fun mode => mode.check TestScheme.scheme == []) }]
 
 /-- The checks of prompts on the loop's driver: the loop's part and its
-host's (`promptLoopChecks`), then the minibuffer's commands and its mode
+host's (`promptLoopChecks`), the echo an open prompt clears
+(`echoPromptChecks`), then the minibuffer's commands and its mode
 (`promptModeChecks`). -/
 def promptChecks : List Check :=
-  promptLoopChecks ++ promptModeChecks
+  promptLoopChecks ++ echoPromptChecks ++ promptModeChecks
 
 /-- The candidates the prompts of the candidate checks are asked with. The
 one a check types whole, `w`, is last, and two before it hold a `w`. -/

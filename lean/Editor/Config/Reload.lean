@@ -70,6 +70,23 @@ structure Report where
   /-- How many commands the config that is now installed registers. -/
   commands : Nat
 
+/-- What a reload says in the echo area: for a rejected one, its first
+error, `reload: <source>:<line>:<column>: error: ` and the first line of its
+message, then ` (and <n> more)` when it has more errors; for one rejected
+with no error to name, `reload: rejected`. A reload that installs says
+nothing, so a working config does not cover what a command said. The whole
+report is the host's to print. -/
+def Report.echo (report : Report) : Option String :=
+  if report.installed then none
+  else
+    let errors := report.diagnostics.filter (·.severity == .error)
+    match errors[0]? with
+    | none => some "reload: rejected"
+    | some first =>
+      let line := (first.message.splitOn "\n").headD ""
+      let more := if errors.size > 1 then s!" (and {errors.size - 1} more)" else ""
+      some s!"reload: {first.source}:{first.line}:{first.column}: error: {line}{more}"
+
 /-- The config half of the editor's state. -/
 structure State (σ : Type) where
   /-- The base, once a reload has imported it. -/
