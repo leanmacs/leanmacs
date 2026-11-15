@@ -33,6 +33,17 @@ A text in a property that wraps has no space in it, so it wraps at the same
 place whether lines break at characters or at words: the wrapping policy
 stays the display pipeline's. A line is laid out in characters one cell
 wide; a carriage return before a line feed is part of the break.
+
+## What a caller that wants a column of a line relies on
+
+Two properties are for a caller that asks about a line and not about a view
+(evil's `j` and `k`):
+
+- a move of no lines that is given a goal goes to that x of its row, so the
+  move query also answers "which position is at this x of this row", and
+  the goal a move with no goal passes back is the x of its position;
+- a width no machine word holds wraps no line, so at that width a row is a
+  line of the text and an x is counted from the line's start.
 -/
 
 namespace Editor.DisplayContract
@@ -144,6 +155,31 @@ def properties (cells : Display.Cells) : List Property :=
           return moved.position
         return (← move 9 (-5)) == 2 && (← move 1 (-1)) == 1 && (← move 12 9) == 23 &&
             (← move 22 1) == 22 },
+    { name :=
+        "a move of no lines that is given a goal goes to that x of its row, and to the row's end past its last character; the goal a move with no goal passes back is its position's own x"
+      texts := #["abcdef\nab"]
+      holds := fun snapshots => do
+        let move (position : Nat) (goal : Option Nat) : DisplayM Display.Moved :=
+          Display.linesFrom
+            { snapshot := nth snapshots 0, width := 10 * cells.advance, position, lines := 0, goal }
+        let own ← move 4 none
+        return (← move 0 (some (3 * cells.advance))).position == 3 &&
+            (← move 7 (some (5 * cells.advance))).position == 9 &&
+            own.position == 4 &&
+            (← move 0 (some own.goal)).position == 4 },
+    { name :=
+        "at a width wider than any machine word holds no line wraps: a row is a line of the text, and a move goes from line to line"
+      texts := #["abcdefgh\nij"]
+      holds := fun snapshots => do
+        let shown ←
+          Display.rowsShown
+              { snapshot := nth snapshots 0, width := 2 ^ 64, height := 2 * cells.lineHeight
+                anchor := 0 }
+        let moved ←
+          Display.linesFrom
+              { snapshot := nth snapshots 0, width := 2 ^ 64, position := 6, lines := 1
+                goal := none }
+        return shown == #[⟨0, 8⟩, ⟨9, 11⟩] && moved.position == 11 },
     { name := "a query of a snapshot the display does not know is refused"
       texts := #["ab"]
       holds := fun snapshots => do
