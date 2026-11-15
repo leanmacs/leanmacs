@@ -3659,8 +3659,13 @@ def headlessCommandLineChecks : List Check :=
   let outside := "/opt/leanmacs/bin/editor"
   let read (appPath : String) (arguments : List String) : Option Headless.Arguments :=
     (Headless.read appPath arguments).toOption
+  let refusal (appPath : String) (arguments : List String) : Option String :=
+    match Headless.read appPath arguments with
+    | .error reason => some reason
+    | .ok _ => none
+  -- Refused with the empty reason: the usage line alone says why.
   let refused (appPath : String) (arguments : List String) : Bool :=
-    (Headless.read appPath arguments).toOption.isNone
+    refusal appPath arguments == some ""
   let explicit (render : Bool) : Headless.Arguments :=
     { render, sysroot := "/s", oleans := "/o", config := "/c", script := "/t" }
   let bundled (render : Bool) : Headless.Arguments :=
@@ -3679,16 +3684,15 @@ def headlessCommandLineChecks : List Check :=
     { name := "two paths outside a bundle are refused, because there is no toolchain, and say so"
       run :=
         pure
-          (match Headless.read outside ["/c", "/t"] with
-          | .error reason => reason == Headless.noToolchain
-          | .ok _ => false) },
+          (refusal outside ["/c", "/t"] == some Headless.noToolchain &&
+            refusal outside ["--render", "/c", "/t"] == some Headless.noToolchain) },
     { name := "--render is read before two paths and before four"
       run :=
         pure
           (read installed ["--render", "/c", "/t"] == some (bundled true) &&
             read outside ["--render", "/s", "/o", "/c", "/t"] == some (explicit true)) },
     { name :=
-        "no path, one, three and five, and an option it does not know, are refused, inside a bundle and outside one"
+        "no path, one, three and five, and an option it does not know, are refused with no reason beyond the usage line, inside a bundle and outside one"
       run :=
         pure
           ([installed, outside].all fun appPath =>
