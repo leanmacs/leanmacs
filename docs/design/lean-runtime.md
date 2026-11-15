@@ -91,13 +91,14 @@ and the compiler and entry-point workarounds above.
 Shutdown posts a quit event, unblocks every dedicated task, and calls exit.
 Returning from `main` while a task is blocked in Rust hangs.
 
-**`editor <file>`, as built** (the display pipeline's last phase;
+**`editor [<file>]`, as built** (the display pipeline's last phase;
 `lean/Editor/Window.lean`, `lean/Editor/Window/Real.lean`). The window mode
 is the headless host's editor loop handed real collaborators: the real
 display binding over a display on the system's fonts, bound to the
 process's presenter, and the system clipboard, or `Clipboard.unavailable`
 when it cannot be opened, which the echo area says once. Before the first
-event `main` posts the open command with the file, what the echo area has
+event `main` posts the open command with the file, when one was given
+(with none the editor shows its one empty buffer), what the echo area has
 to say, and a reload when config is loaded at start; the editor is usable
 before the reload installs, as above. Then it runs the window on its own
 thread (`Ffi.windowRun`) with the editor loop on a dedicated task; when the

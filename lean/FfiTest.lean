@@ -2474,11 +2474,12 @@ def run (scenario : String) (checks : List Check) : IO UInt8 := do
 /-- Reports a command line `main` does not understand; the exit status is 2. -/
 def usage : IO UInt32 := do
   IO.eprintln
-      "usage: ffi-test [exit <code> | shutdown | exit-while-blocked | overflow <sysroot> <olean dir> | display <fixture> | window-host <file> | window-host-undrawn <file>]"
+      "usage: ffi-test [exit <code> | shutdown | exit-while-blocked | overflow <sysroot> <olean dir> | display <fixture> | window-host [<file>] | window-host-undrawn <file>]"
   return 2
 
 /-- The window mode's wiring (`Editor.Window.host`) on the library's
-scripted platform, on the absolute path `file`: a cells display bound to the
+scripted platform, on the absolute path `file`, or with no file, on the
+editor's one empty buffer, when it is `none`: a cells display bound to the
 presenter, a clipboard of its own, no config, and the report asked for. The
 sample window opens, reports its fixed input and asks to close, which ends
 the host's loop and closes the window, and the report is printed to stderr.
@@ -2486,7 +2487,7 @@ the host's loop and closes the window, and the report is printed to stderr.
 `windowRun` has returned (the presenter's last handle), show a frame drawn,
 and no surface said what it offered; 1 otherwise, saying why on stderr. The
 process starts no other render session, so the counters are this run's. -/
-def windowHostScenario (file : String) : IO UInt8 := do
+def windowHostScenario (file : Option String) : IO UInt8 := do
   let options : Editor.Window.Options :=
     { file, config := none, configGiven := false, sysroot := none, oleans := ""
       composition := true, report := true }
@@ -2519,7 +2520,7 @@ render session was started; 1 otherwise, saying why on stderr. What the
 window mode prints of the failure is on stderr, for the gate to read. -/
 def windowHostUndrawnScenario (file : String) : IO UInt8 := do
   let options : Editor.Window.Options :=
-    { file, config := none, configGiven := false, sysroot := none, oleans := ""
+    { file := some file, config := none, configGiven := false, sysroot := none, oleans := ""
       composition := true }
   let status ←
     Editor.Window.host .scriptedUndrawn options (.skip none) (← Editor.Ffi.Display.newCells 8 16)
@@ -2570,7 +2571,11 @@ def main (args : List String) : IO UInt32 := do
   | ["display", fixture] =>
     IO.Process.exit (← FfiTest.displayScenario fixture)
   | ["window-host", file] =>
-    let status ← FfiTest.windowHostScenario file
+    let status ← FfiTest.windowHostScenario (some file)
+    Editor.Ffi.quit
+    IO.Process.exit status
+  | ["window-host"] =>
+    let status ← FfiTest.windowHostScenario none
     Editor.Ffi.quit
     IO.Process.exit status
   | ["window-host-undrawn", file] =>

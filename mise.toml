@@ -310,6 +310,10 @@ run = [
   # copy must be unchanged. It opens no window and touches no clipboard of
   # the desktop's.
   "dir=$(mktemp -d) && trap 'rm -rf \"$dir\"' EXIT && cp ../tests/headless/ex/note.txt \"$dir/note.txt\" && .lake/build/bin/ffi-test window-host \"$dir/note.txt\" && cmp \"$dir/note.txt\" ../tests/headless/ex/note.txt",
+  # The same wiring with no file, as Finder starts the app: the host posts
+  # no open, and the window runs on the editor's one empty buffer. It must
+  # exit 0 as the scenario with a file does. It touches no file.
+  ".lake/build/bin/ffi-test window-host",
   # The same wiring on the library's scripted platform whose renderer cannot
   # be made, as a machine with no usable GPU gives: the window runs with
   # nothing drawing in it. The scenario must exit 0, which it does only when
@@ -505,7 +509,8 @@ run = ".lake/build/bin/editor window-check"
 # Run it by hand, and do not add it to `ci` or to hk.pkl: it opens a window
 # and waits for a person. `mise run edit -- <file>` opens the file, resolved
 # against the directory the task was run from (mise hands that directory
-# over as MISE_ORIGINAL_CWD); the options go before the file, as
+# over as MISE_ORIGINAL_CWD), and `mise run edit` with no file opens the
+# editor on its one empty buffer; the options go before the file, as
 # `mise run edit -- --report --config <dir> <file>`. The task always gives
 # the toolchain `lean/lean-toolchain` pins (`--sysroot`), so config is
 # loaded at start: from `--config`, or from `leanmacs` under
@@ -513,7 +518,7 @@ run = ".lake/build/bin/editor window-check"
 # again on `:reload`. It runs in lean/, so mise picks that toolchain, and
 # hands the editor the build tree's `.olean` files.
 [tasks.edit]
-description = "Opt-in, never part of ci: open a file in the editor's window (lean/Editor/Window/Real.lean); `mise run edit -- [options] <file>`. Needs a display and a person"
+description = "Opt-in, never part of ci: open a file, or an empty buffer, in the editor's window (lean/Editor/Window/Real.lean); `mise run edit -- [options] [<file>]`. Needs a display and a person"
 depends = ["lean"]
 dir = "lean"
 run = 'lean_dir=$PWD && sysroot=$(lean --print-prefix) && cd "$MISE_ORIGINAL_CWD" && "$lean_dir/.lake/build/bin/editor" --sysroot "$sysroot" --oleans "$lean_dir/.lake/build/lib/lean"'

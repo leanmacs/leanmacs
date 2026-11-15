@@ -57,12 +57,13 @@ Use it in place of a bare `lake build`
 `lean/.lake/build/bin/editor`.
 
 ```sh
-mise run edit -- <file>
+mise run edit -- [<file>]
 ```
 
 This opens `<file>`, relative to the directory you ran it from, in the
-editor's window, with the pinned Lean toolchain given so that config can
-load. Options go before the file:
+editor's window, or the editor on an empty buffer when no file is given,
+with the pinned Lean toolchain given so that config can load. Options go
+before the file:
 
 - `--config <dir>`: the config directory, one `.lean` chunk per file, read
   in byte order of the names. By default `leanmacs` under

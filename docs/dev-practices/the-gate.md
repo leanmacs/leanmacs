@@ -763,7 +763,10 @@ clipboard of its own, the host opening a copy of `ex/note.txt`, and the
 scripted sample window opening, sending its input and asking to close.
 It must exit 0, which it does only when the window ran and closed and the
 render session's counters show a frame drawn, and the copy must be
-unchanged. `ffi-test window-host-undrawn <file>` runs the same wiring on
+unchanged. `ffi-test window-host` with no file runs the same wiring as
+Finder starts the app: the host posts no open, the window runs on the
+editor's one empty buffer, and it must exit 0 the same way.
+`ffi-test window-host-undrawn <file>` runs the same wiring on
 the scripted platform whose renderer cannot be made, as a machine with no
 usable GPU gives: it must exit 0, which it does only when the window mode
 ended with status 1 and no render session was started, stderr must hold

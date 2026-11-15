@@ -535,7 +535,7 @@ inductive Request where
   was published with, matches the frame the display laid out. -/
   | agree
   /-- Run the open command (`Files.openName`) with the path `path`: the
-  window mode's first request. -/
+  window mode's first request when it was given a file. -/
   | «open» (path : String)
   /-- Say `text` in the echo area (`Running.said`): what the window mode has
   to say before the first event. -/

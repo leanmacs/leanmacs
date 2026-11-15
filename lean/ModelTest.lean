@@ -3742,9 +3742,33 @@ def windowOptionChecks : List Check :=
         "a relative file is resolved against the working directory, and an absolute one is kept as it is"
       run :=
         pure
-          ((parsed ["notes.txt"]).map (·.file) == some "/work/project/notes.txt" &&
-            (parsed ["src/a.lean"]).map (·.file) == some "/work/project/src/a.lean" &&
-            (parsed ["/tmp/b.txt"]).map (·.file) == some "/tmp/b.txt") },
+          ((parsed ["notes.txt"]).map (·.file) == some (some "/work/project/notes.txt") &&
+            (parsed ["src/a.lean"]).map (·.file) == some (some "/work/project/src/a.lean") &&
+            (parsed ["/tmp/b.txt"]).map (·.file) == some (some "/tmp/b.txt")) },
+    { name := "no file parses to options with no file, with every default as with one"
+      run :=
+        pure
+          (parsed [] ==
+              some
+                { file := none, config := some "/xdg/leanmacs", configGiven := false,
+                  sysroot := none, oleans := "/opt/leanmacs/bin/../lib/lean",
+                  composition := true } &&
+            (parsed ["--no-ime"]).map (·.file) == some none) },
+    { name :=
+        "a Finder start: no arguments, / as the working directory, HOME set and XDG_CONFIG_HOME unset, in a bundle: no file, config from ~/.config/leanmacs, and the bundle's toolchain and .olean files"
+      run :=
+        let finder : Window.Environment :=
+          { workingDirectory := "/", xdgConfigHome := none, home := some "/Users/ada"
+            appPath := "/Applications/Leanmacs.app/Contents/MacOS/editor" }
+        pure <|
+          match parsed [] finder with
+          | none => false
+          | some options =>
+            options.file == none && options.config == some "/Users/ada/.config/leanmacs" &&
+              options.sysroot ==
+                some "/Applications/Leanmacs.app/Contents/Resources/lean/toolchain" &&
+              options.oleans == "/Applications/Leanmacs.app/Contents/Resources/lean/editor" &&
+              options.configPlan true == .load "/Users/ada/.config/leanmacs" },
     { name :=
         "with no option, config is looked for in the directory leanmacs under XDG_CONFIG_HOME, or under HOME's .config when that is unset; no toolchain is given; the editor's .olean files are beside the executable's directory; and an input method may compose"
       run :=
@@ -3756,8 +3780,8 @@ def windowOptionChecks : List Check :=
         pure
           (parsed ["f"] ==
               some
-                { file := "/work/project/f", config := some "/xdg/leanmacs", configGiven := false,
-                  sysroot := none, oleans := "/opt/leanmacs/bin/../lib/lean",
+                { file := some "/work/project/f", config := some "/xdg/leanmacs",
+                  configGiven := false, sysroot := none, oleans := "/opt/leanmacs/bin/../lib/lean",
                   composition := true } &&
             (parsed ["f"] unset).bind (·.config) == some "/home/ada/.config/leanmacs" &&
             (parsed ["f"] empty).bind (·.config) == some "/home/ada/.config/leanmacs" &&
@@ -3767,7 +3791,7 @@ def windowOptionChecks : List Check :=
       run :=
         let given : Option Window.Options :=
           some
-            { file := "/work/project/f", config := some "/c", configGiven := true,
+            { file := some "/work/project/f", config := some "/c", configGiven := true,
               sysroot := some "/s"
               oleans := "/o", composition := false }
         pure
@@ -3806,14 +3830,12 @@ def windowOptionChecks : List Check :=
             (parsed ["f"] installed).map (·.configPlan true) == some (.load "/xdg/leanmacs") &&
             directories ["--sysroot", "/s", "--oleans", "/o", "f"] == some (some "/s", "/o")) },
     { name :=
-        "no file, two files, an option it does not know and an option with no value are each refused with the usage"
+        "two files, an option it does not know and an option with no value are each refused with the usage"
       run :=
         pure
-          (refused [] && refused ["a", "b"] && refused ["--bogus", "f"] &&
-            refused ["f", "--bogus"] &&
+          (refused ["a", "b"] && refused ["--bogus", "f"] && refused ["f", "--bogus"] &&
             refused ["f", "--config"] &&
-            refused ["--sysroot"] &&
-            refused ["--no-ime"]) },
+            refused ["--sysroot"]) },
     { name :=
         "--present-mode with each of wgpu's names, --frame-latency with a number and --report are read; with none of them the renderer decides and nothing is reported"
       run :=
@@ -14273,6 +14295,44 @@ finished. The load is job 1. -/
 def noteOpen (files : FileModel := commandFiles) : Option TestDriver :=
   (filesDriver (files := files)).map fun driver => ((fedTo driver (presses "C-o n")).1.finish 1).1
 
+/-- The checks of what the window mode posts to the editor loop before the
+first event (`Window.Options.starts`), and of the loop it starts, on the
+driver whose commands and jobs are the compiled ones (`compiledDriver`):
+each open of the starts is run as the host's open request runs it. -/
+def windowStartChecks : List Check :=
+  let parsed (arguments : List String) : Option Window.Options :=
+    (Window.parse windowEnvironment arguments).toOption
+  let started (starts : Array Window.Start) : Option TestDriver :=
+    compiledDriver.map fun driver =>
+      starts.foldl
+        (fun driver start =>
+          match start with
+          | .open path =>
+            (driver.stepped
+                (driver.loop.invoke driver.handed
+                  { command := Files.openName, arguments := [.str path] })).1
+          | _ => driver)
+        driver
+  [{  name :=
+        "the window mode started with no file opens nothing: it posts what it has to say and the reload, and no open; and the editor loop it starts holds one buffer, scratch, empty, with one window on it"
+      run :=
+        let empty := (parsed []).map (·.starts (.load "/xdg/leanmacs") #["hi"])
+        let withFile := (parsed [(inFiles "note.txt").toString]).map (·.starts (.skip none) #[])
+        pure <|
+          empty == some #[.say "hi", .reload] &&
+            (parsed ["f"]).map (·.starts (.skip none) #[]) == some #[.open "/work/project/f"] &&
+            (parsed ["f"]).map (·.starts (.load "/c") #["a", "b"]) ==
+              some #[.open "/work/project/f", .say "a", .say "b", .reload] &&
+            match empty.bind started, withFile.bind started with
+            | some opened, some loading =>
+              opened.loop.state.buffers.size == 1 &&
+                (opened.loop.state.buffers[0]?).join.map (·.name) == some "scratch" &&
+                (showing opened).bind (·.text) == some "" &&
+                opened.loop.state.windows.size == 1 &&
+                opened.pending.isEmpty &&
+                loading.pending.map (·.name) == #[Files.loadJob]
+            | _, _ => false }]
+
 /-- The checks of the file commands (`Editor/Files.lean`), on the loop's
 driver over the editor's models and the model of files: opening a file into
 a buffer, and saving a buffer to its file. No file is touched. -/
@@ -19276,6 +19336,7 @@ def checks : List Check :=
     headlessCommandLineChecks ++
     executableModeChecks ++
     windowOptionChecks ++
+    windowStartChecks ++
     windowReportChecks ++
     undoTreeChecks ++
     textModelStepChecks ++

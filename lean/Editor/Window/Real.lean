@@ -5,15 +5,16 @@ import Editor.Window
 /-!
 # The editor on a file, in a window
 
-`editor <file>`: the headless host's editor loop (`Editor/Headless.lean`)
+`editor [<file>]`: the headless host's editor loop (`Editor/Headless.lean`)
 handed real collaborators, with the window on the process's main thread.
+With no file the loop shows its one empty buffer, `scratch`.
 There is one editor loop; this module only wires it to a window:
 
 | Collaborator | The headless mode | The window mode |
 |---|---|---|
 | Display | the recorder, in cells of 8 by 16 | the real binding over a display on the system's fonts, bound to the window (`Ffi.Display.newSystem`, `Ffi.Display.present`) |
 | Clipboard | the host's own | the system's (`Clipboard.Real.system`), or `Clipboard.unavailable` when it cannot be opened, which the echo area says once |
-| Driver | the script | none: the open command with the file, what the echo area has to say, and a reload when config is loaded at start, are posted before the first event, and the window's events are the input |
+| Driver | the script | none: the open command with the file, when one was given, what the echo area has to say, and a reload when config is loaded at start, are posted before the first event (`Options.starts`), and the window's events are the input |
 
 - **The main thread.** `main` calls `Ffi.windowRun`, which blocks until the
   window has closed. The host's thread is a dedicated task, as the keyboard
@@ -53,7 +54,7 @@ There is one editor loop; this module only wires it to a window:
 `host` is the wiring with the platform, the display and the clipboard
 handed in, so that `ffi-test` runs it on the library's scripted platform
 with a cells display and a clipboard of its own (`FfiTest`, the scenarios
-`window-host`, and `window-host-undrawn` on the scripted platform whose
+`window-host`, with a file and with none, and `window-host-undrawn` on the scripted platform whose
 renderer cannot be made): nothing in the gate opens a window, reads the
 machine's fonts or touches the desktop's clipboard.
 
@@ -116,11 +117,20 @@ def reportLines (opened closed : Nat) : IO (Array String) := do
       ({ inputNs := entry.inputNs.toNat, presentNs := entry.presentNs.toNat } : Report.Entry)
   return #[presentation, counters] ++ Report.lines opened closed entries
 
-/-- Runs the editor on `options.file` in a window of `platform`, drawn from
-`display` and with `clipboard` as its clipboard, and returns once the window
-has closed: the host is started, the file is opened, each of `said` is said
-in the echo area and config is reloaded when `plan` says so, all before the
-first event; the window is run; and it is closed when the host's loop ends.
+/-- The host's request for what the window mode posts before the first
+event. -/
+def Start.request : Start → Headless.Request
+  | .open path => .open path
+  | .say text => .say text
+  | .reload => .reload
+
+/-- Runs the editor in a window of `platform`, on `options.file` when one
+was given, drawn from `display` and with `clipboard` as its clipboard, and
+returns once the window has closed: the host is started, and what
+`options.starts` gives is posted before the first event (the file opened
+when one was given, each of `said` said in the echo area, and config
+reloaded when `plan` says so); the window is run; and it is closed when the
+host's loop ends.
 The exit status: 0 when the window ran with something drawing in it; 1 when
 it could not be opened, when nothing could draw in it (`nothingDrew`, said
 on stderr, and in the echo area while the loop still runs), or when the loop
@@ -136,11 +146,8 @@ def host (platform : Ffi.Platform) (options : Options) (plan : ConfigPlan) (disp
       clipboard := pure clipboard }
   display.present
   let host ← Headless.start collaborators
-  host.send (.open options.file)
-  for text in said do
-    host.send (.say text)
-  if let .load _ := plan then
-    host.send .reload
+  for start in options.starts plan said do
+    host.send start.request
   -- The loop ends by itself, on `:q` or a close request: the window is then
   -- closed, once what was published last is drawn.
   let closer ←
@@ -180,7 +187,7 @@ def host (platform : Ffi.Platform) (options : Options) (plan : ConfigPlan) (disp
     IO.eprintln s!"editor: the window could not be opened: {reason}"
     return 1
 
-/-- `editor <file>`, with the command line's `arguments`: reads the world at
+/-- `editor [<file>]`, with the command line's `arguments`: reads the world at
 the edge, opens the system's display and clipboard, and runs `host` on the
 real window. A command line it does not take is the reason and the usage on
 stderr, and status 2. It quits the queues and exits explicitly, as the

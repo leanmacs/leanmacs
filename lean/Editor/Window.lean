@@ -3,15 +3,19 @@ import Editor.ModuleLookup
 /-!
 # The window mode's command line
 
-`editor [--config <dir>] [--sysroot <dir>] [--oleans <dir>] [--no-ime] <file>`
-opens `<file>` in a window (`Editor/Window/Real.lean`). This module is the
-pure part of that: what the command line asks for, given what the edge read
-of the world (`Environment`), and whether config is loaded at start
-(`Options.configPlan`). It reads nothing itself, so `model-test` pins it
-(`ModelTest.windowOptionChecks`).
+`editor [--config <dir>] [--sysroot <dir>] [--oleans <dir>] [--no-ime] [<file>]`
+opens a window (`Editor/Window/Real.lean`), on `<file>` when one is given.
+This module is the pure part of that: what the command line asks for, given
+what the edge read of the world (`Environment`), whether config is loaded
+at start (`Options.configPlan`), and what is posted to the editor loop
+before the first event (`Options.starts`). It reads nothing itself, so
+`model-test` pins it (`ModelTest.windowOptionChecks`, and
+`ModelTest.windowStartChecks` for what the loop then holds).
 
 - **The file** is resolved against the working directory: the file port
-  takes absolute paths only. Exactly one file is taken.
+  takes absolute paths only. At most one file is taken; with none the
+  editor starts on its one empty buffer, which is how Finder starts the
+  app.
 - **`--sysroot`** is the Lean toolchain's directory. When not given it is
   the bundle's, `Contents/Resources/lean/toolchain`, for an executable in a
   bundle (`Editor/ModuleLookup.lean`). Outside one there is no default: Lean
@@ -28,8 +32,8 @@ of the world (`Environment`), and whether config is loaded at start
   directory that does not exist is a rejected reload, said in the echo area.
 - **`--no-ime`** runs the window with no input method composing.
 
-No file, two files, an option it does not know, and an option with no value
-are refused, with the usage (`usage`).
+Two files, an option it does not know, and an option with no value are
+refused, with the usage (`usage`).
 -/
 
 namespace Editor.Window
@@ -78,8 +82,9 @@ def PresentMode.name : PresentMode → String
 
 /-- What the window mode's command line asks for. -/
 structure Options where
-  /-- The file to open, absolute. -/
-  file : String
+  /-- The file to open, absolute; none when no file was given, and the
+  editor starts on its one empty buffer. -/
+  file : Option String
   /-- The config directory: given, or the default; none when there is no
   default, because neither variable it is found by is set. -/
   config : Option String
@@ -104,7 +109,7 @@ structure Options where
 
 /-- The window mode's command line, as the usage says it. -/
 def usage : String :=
-  "[--config <dir>] [--sysroot <dir>] [--oleans <dir>] [--no-ime] [--report] [--present-mode fifo|fifo-relaxed|immediate|mailbox] [--frame-latency <n>] <file>"
+  "[--config <dir>] [--sysroot <dir>] [--oleans <dir>] [--no-ime] [--report] [--present-mode fifo|fifo-relaxed|immediate|mailbox] [--frame-latency <n>] [<file>]"
 
 /-- What the window mode says, on stderr after `editor: ` and in the echo
 area, when nothing could draw in the window, for `reason`. -/
@@ -188,21 +193,18 @@ def parse (environment : Environment) (arguments : List String) : Except String 
   match readAll {} arguments with
   | .error reason => refused reason
   | .ok read =>
-    match read.file with
-    | none => refused "no file to open"
-    | some file =>
-      let directories :=
-        ModuleLookup.resolve environment.appPath { sysroot := read.sysroot, oleans := read.oleans }
-      .ok {
-          file := resolve environment file
-          config := read.config <|> defaultConfig environment
-          configGiven := read.config.isSome
-          sysroot := directories.sysroot
-          oleans := directories.oleans
-          composition := read.composition
-          report := read.report
-          presentMode := read.presentMode
-          frameLatency := read.frameLatency }
+    let directories :=
+      ModuleLookup.resolve environment.appPath { sysroot := read.sysroot, oleans := read.oleans }
+    .ok {
+        file := read.file.map (resolve environment)
+        config := read.config <|> defaultConfig environment
+        configGiven := read.config.isSome
+        sysroot := directories.sysroot
+        oleans := directories.oleans
+        composition := read.composition
+        report := read.report
+        presentMode := read.presentMode
+        frameLatency := read.frameLatency }
 
 /-- Whether config is loaded at start, and what the echo area says if it
 is not. -/
@@ -223,6 +225,31 @@ def Options.configPlan (options : Options) (defaultExists : Bool) : ConfigPlan :
   | some _, none => .skip none
   | some _, some directory =>
     if options.configGiven || defaultExists then .load directory else .skip none
+
+/-- What the window mode posts to the editor loop before the first event. -/
+inductive Start where
+  /-- Open the file at `path`, which is absolute. -/
+  | «open» (path : String)
+  /-- Say `text` in the echo area. -/
+  | say (text : String)
+  /-- Reload config. -/
+  | reload
+  deriving DecidableEq, Repr
+
+/-- What the window mode posts before the first event, in order: the open
+of the file, if one was given; then each of `said`; then a reload when
+`plan` loads config. With no file nothing is opened, and the loop shows its
+one empty buffer. -/
+def Options.starts (options : Options) (plan : ConfigPlan) (said : Array String) : Array Start :=
+  let opens :=
+    match options.file with
+    | some path => #[Start.open path]
+    | none => #[]
+  let reloads :=
+    match plan with
+    | .load _ => #[Start.reload]
+    | .skip _ => #[]
+  opens ++ said.map .say ++ reloads
 
 namespace Report
 
