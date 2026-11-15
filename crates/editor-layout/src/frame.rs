@@ -40,6 +40,18 @@
 //! less [`Heights::status`], or less [`Heights::message`] for a view at
 //! the bottom edge, is answered with exactly the rows its frame shows.
 //!
+//! The scene's echo is drawn in the bottom row when nothing else is: when
+//! the echo is not empty and no view's rectangle has a pixel in common
+//! with the frame's bottom [`Heights::message`] pixels (the frame's height
+//! when it is less), the frame ends with one more view frame, of the id
+//! [`ECHO_VIEW`]. Its rectangle is that row across the scene's width, it
+//! has no text rows, no cursor and no selection, and its one status row is
+//! the echo, shaped as a status row is, in the face `echo-area` over the
+//! default face, not `mode-line`. An empty echo, a frame of no width or no
+//! height, and a bottom row any view covers any of, give no such view: the
+//! row then shows what the views there draw, or the target's clear
+//! colour.
+//!
 //! **Every value is resolved.** A frame names no face: a run carries the
 //! [`Paint`] its faces come to ([`face`](crate::face), "The precedence":
 //! lowest first, the view's decorations in the scene's order and then the
@@ -108,7 +120,7 @@ use crate::face::{
     Color, ECHO_AREA_FACE, FaceId, MODE_LINE_FACE, Paint, SELECTION_FACE, UnderlineStyle,
 };
 use crate::query::{Visual, Walker};
-use crate::scene::{CursorShape, Rect, Scene, TextKey, View, ViewId};
+use crate::scene::{CursorShape, Rect, Scene, Size, StatusField, TextKey, View, ViewId};
 use crate::shaper::{
     FontRun, ResolvedFont, ResolvedFontId, ShapeInput, ShapedLine, Shaper, VisualLine,
 };
@@ -374,6 +386,10 @@ fn described(paint: &Paint) -> String {
 /// dropped, and laid out again if they are reached.
 pub const KEPT_VIEW_HEIGHTS: usize = 4;
 
+/// The id of the view frame that holds the echo in the frame's bottom row
+/// (module docs, "The bottom row"): an id the wire never sends for a view.
+pub const ECHO_VIEW: ViewId = ViewId(u64::MAX);
+
 /// The heights of the rows a frame is built of, in whole physical pixels
 /// at the layout's scale, each its line height rounded up and at least 1
 /// ([`Layout::heights`]).
@@ -387,6 +403,13 @@ pub struct Heights {
     /// the taller of the face `echo-area` and the face `mode-line`, each
     /// over the default face.
     pub message: u32,
+}
+
+/// Whether `a` and `b` have a pixel in common.
+fn overlap(a: Rect, b: Rect) -> bool {
+    let (a_right, a_foot) = (a.x.saturating_add(a.width), a.y.saturating_add(a.height));
+    let (b_right, b_foot) = (b.x.saturating_add(b.width), b.y.saturating_add(b.height));
+    a.x < b_right && b.x < a_right && a.y < b_foot && b.y < a_foot
 }
 
 /// `line_height` rounded up to a whole pixel, and at least 1.
@@ -424,7 +447,7 @@ impl<S: Shaper> Layout<S> {
         if let Some(definitions) = &scene.faces {
             self.define(definitions);
         }
-        let views = scene
+        let mut views: Vec<ViewFrame> = scene
             .views
             .iter()
             .map(|view| {
@@ -432,6 +455,9 @@ impl<S: Shaper> Layout<S> {
                 self.view_frame(view, bottom_edge, &[])
             })
             .collect();
+        let echo = self.echo_frame(scene);
+        let echoed = echo.is_some();
+        views.extend(echo);
         // Read once the views are laid out, so the table holds every font
         // a glyph of theirs names.
         let frame = Frame {
@@ -462,10 +488,61 @@ impl<S: Shaper> Layout<S> {
                 .wrap
                 .retain_rows(|row| near.iter().any(|rows| rows.contains(&row)));
         }
-        // The status row of every view the scene does not name is dropped.
-        self.status
-            .retain(|id, _| scene.views.iter().any(|view| view.id == *id));
+        // The status row of every view the scene does not name is dropped,
+        // and the echo's when it was not laid out.
+        self.status.retain(|id, _| {
+            (*id == ECHO_VIEW && echoed) || scene.views.iter().any(|view| view.id == *id)
+        });
         frame
+    }
+
+    /// The echo's view frame (module docs, "The bottom row"): when the
+    /// scene's echo is not empty and no view of it covers any pixel of the
+    /// frame's bottom row, a view frame [`ECHO_VIEW`] that is that row
+    /// across the frame, with no text and one status row of the echo in
+    /// the face `echo-area` over the default face. The row is
+    /// [`Heights::message`] tall, or the frame's height when that is less;
+    /// a frame of no width or no height has none.
+    fn echo_frame(&mut self, scene: &Scene) -> Option<ViewFrame> {
+        if scene.echo.is_empty() {
+            return None;
+        }
+        let Size { width, height } = scene.size;
+        let tall = self.heights().message.min(height);
+        let row = Rect {
+            x: 0,
+            y: height - tall,
+            width,
+            height: tall,
+        };
+        if row.width == 0
+            || row.height == 0
+            || scene.views.iter().any(|view| overlap(view.rect, row))
+        {
+            return None;
+        }
+        let view = View {
+            id: ECHO_VIEW,
+            rect: row,
+            status: vec![StatusField {
+                text: scene.echo.clone(),
+                face: ECHO_AREA_FACE.to_owned(),
+            }],
+            ..View::default()
+        };
+        let status = self.status_row(&view, ECHO_AREA_FACE, tall);
+        let selection = self.styles.intern(SELECTION_FACE);
+        let paint_of = |stack: &[FaceId]| self.styles.style(&self.shaper, stack).paint;
+        Some(ViewFrame {
+            id: ECHO_VIEW,
+            rect: row,
+            background: paint_of(&[]).background,
+            rows: Vec::new(),
+            status,
+            cursors: Vec::new(),
+            selections: Vec::new(),
+            selection: paint_of(&[selection]).background,
+        })
     }
 
     /// The status row of `view`, when it has a status field: its fields'
@@ -479,13 +556,15 @@ impl<S: Shaper> Layout<S> {
     /// shapes nothing.
     ///
     /// The row is exactly as tall as `height`, whatever height its line was
-    /// shaped at, and sits at the view's bottom.
-    fn status_row(&mut self, view: &View, height: u32) -> Option<StatusRow> {
+    /// shaped at, and sits at the view's bottom. Its fields are over the
+    /// face `base`: the mode line for a view's status row, and the echo
+    /// area for the echo's.
+    fn status_row(&mut self, view: &View, base: &str, height: u32) -> Option<StatusRow> {
         if view.status.is_empty() {
             self.status.remove(&view.id);
             return None;
         }
-        let mode_line = self.styles.intern(MODE_LINE_FACE);
+        let mode_line = self.styles.intern(base);
         let mut text = String::new();
         let mut fonts: Vec<FontRun> = Vec::new();
         let mut runs: Vec<(Range<usize>, Paint)> = Vec::new();
@@ -578,7 +657,7 @@ impl<S: Shaper> Layout<S> {
         } else {
             heights.status
         };
-        let status = self.status_row(view, bottom);
+        let status = self.status_row(view, MODE_LINE_FACE, bottom);
         // What is left for the text above the status row, in whole pixels.
         let text_height = match status {
             Some(_) => view.rect.height.saturating_sub(bottom),
