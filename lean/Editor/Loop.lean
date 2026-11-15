@@ -514,7 +514,7 @@ is queued, and marks that event. What the loop does with the flag is here
 | `commit text` | Where the scheme reports that the focused view takes text (`InputScheme.Report.takesText`): replaces what each range of the focused window's selection covers with `text`, as one transaction with the user's origin. Elsewhere the text is dropped. Either way it clears the preedit |
 | `preedit text` | Sets the preedit to `text`; an empty one clears it |
 | `compositionDisabled` | Clears the preedit |
-| `resize` | Sets the frame's size; the views are laid out in it when the scene is made. Its scale is not kept: the scene has no field for it |
+| `resize` | Sets the frame's size; the views are laid out in it when the scene is made, and each then follows its cursor ("Following the cursor"). Its scale is not kept: the scene has no field for it |
 | `focus gained` | Sets whether the frame has the keyboard focus |
 | `closeRequested`, `quit` | Nothing: the step says stop, and publishes nothing |
 | a key press | It is stepped through the scheme, whose state the loop keeps ("The scheme"), and the invocation it yields, if it yields one, is run ("Running an invocation") |
@@ -591,12 +591,79 @@ changed the state or not (`Loop.publish`):
    store has no read-only range to keep a label in. The focused view is named only while the frame has
    the keyboard focus. The pending prefix is the scheme's pending keys
    (`Loop.pending`).
-3. **Publish** it through the display port.
-4. **Release** each snapshot the previous scene named that this one does
+3. **The follow** (`Loop.followed`). Each view's scroll anchor is placed
+   so that the view shows its cursor ("Following the cursor", below). The
+   scene names the anchor's marker, not its offset, so placing it changes
+   no value of the scene.
+4. **Publish** it through the display port.
+5. **Release** each snapshot the previous scene named that this one does
    not. So a scene's handles are alive while it is the last one published,
    and a real binding resolves them when it is published.
 
 Every edit the loop makes for an input event carries `Origin.user`.
+
+## Following the cursor
+
+A view follows its cursor: before each scene, a view whose cursor's row is
+not among the rows it shows has its scroll anchor moved so that it is
+(`Loop.follow`). The policy is `Scroll.follow` (`Editor/Scroll.lean`): the
+least movement, with the state's scroll margin
+(`EditorState.scrollMargin`, `Editor/State.lean`, "The scroll margin").
+Layout is asked through the display port's two queries and nothing of it
+is kept here.
+
+- **It runs in the publish, after the views are made and before the scene
+  is published.** After the views, because a question of layout names a
+  snapshot and `Loop.views` is what takes one of a text that changed: the
+  follow asks with each view's own snapshot and rectangle, so it takes
+  nothing and releases nothing. Before the publish, so that the anchor is
+  in place when a display resolves the scene's markers.
+- **So it comes after everything a step did**: after the command, after
+  its rollback if it did not run to its end, and after what it gave up was
+  given up. A command that moved the cursor and failed is followed from
+  the cursor that was put back.
+- **And after every event, not only a command.** A resize, a committed
+  text, a job's command, an answered prompt and a host's own publish all
+  end in `Loop.publish`. A resize runs no command, and a view it left with
+  fewer rows than its cursor's row shows the cursor in the next scene.
+- **Every view is followed**, the minibuffer's among them, not the focused
+  one alone: an edit made through one window moves the cursor of another
+  window on the same buffer.
+- **The cursor is the head of the primary range** of the window's
+  selection.
+- **The anchor keeps its bias**: the marker is placed with the bias it was
+  read with.
+- **A view of no height is not asked about**: no request is made for it.
+  No pixels hold no row under any layout. So a host whose frame is 0 by 0,
+  as the headless host's is until a script resizes it, makes the requests
+  it made before views followed.
+- **A view that shows no row**, because it is less than a row tall, keeps
+  its anchor: there is no row to show the cursor in.
+- **It is the loop's own program**, not a command's: it is not guarded, so
+  the interrupt flag never stops a scene.
+- **It is not refused, and its refusals are not said.** A view whose
+  marker was given up, or whose snapshot was released, is not followed
+  (`Loop.followed`). The marker stays gone, and every command that touches
+  it says so; a second line from here would replace the echo of the
+  command that could not be rolled back for want of the same marker.
+- **What it costs**, in requests, for each view at each scene:
+
+  | The view | Text requests | Display requests |
+  |---|---|---|
+  | No height | 0 | 0 |
+  | Shows no row | 1: the anchor | 1: the rows shown |
+  | Keeps its anchor, the margin as set holding | 2: and the selection | 2: and the rows from the cursor |
+  | Is moved | 3: and the place | 2 to 4 (`Editor/Scroll.lean`, "What it costs") |
+
+- Not done: following inside the dispatch of a command, since a resize
+  and a committed text run none; and following inside each motion, since
+  the typing command, an undo, a put and a job's command move the cursor
+  too, and a motion has no snapshot.
+
+Pinned by `ModelTest.viewChecks`, on the loop's driver over the editor's
+models; by a case of `Editor/Api/Cases.lean`, on the models and on the
+real text binding with the recorder; and by the fixture
+`tests/headless/view`, on the executable.
 
 ## Insert sessions
 
@@ -684,9 +751,6 @@ pinned by a check in `ModelTest.loopChecks`, on the models.
 What a key does is not a handler's: keys, the commands they run and
 rollback are pinned by `ModelTest.dispatchChecks`, on the models and the
 test scheme.
-
-The known gap: no view scrolls to follow its cursor in this phase (phase
-15).
 -/
 
 namespace Editor
@@ -1005,10 +1069,46 @@ def listed (state : EditorState) : EditorM (EditorState × Option TextError) := 
     let ranked ← Fuzzy.rank pattern asked.candidates.all
     return ((state.listCandidates pattern ranked).2, none)
 
+/-- Has `view`, a view of the scene about to be published, follow its cursor
+("Following the cursor", in the module docs): where the row of the cursor,
+the head of the primary range of the view's selection, is not among the
+rows the display answers from the view's scroll anchor, or is nearer an
+edge of them than `margin` rows, the anchor's marker is placed where the
+follow policy says (`Scroll.follow`, `Editor/Scroll.lean`), with the bias
+it had. The display is asked with the view's own snapshot and rectangle.
+
+A view of no height is not asked about: no request is made for it. A view
+that shows no row keeps its anchor. Refused, with nothing placed, when a
+marker of the view was given up or its snapshot released. -/
+def follow (margin : Nat) (view : View) : EditorM Unit := do
+  -- No pixels hold no row under any layout.
+  if view.rect.height == 0 then
+    return
+  let text := view.scroll.text
+  let .anchor anchor ← text.marker view.scroll | throw .noSuchMarker
+  let area := Scroll.Area.ofRect view.snapshot view.rect
+  let shown ← area.rows anchor.offset
+  if shown.isEmpty then
+    return
+  let some marker := view.selections[0]? | return
+  let .selection selection ← text.marker marker | throw .noSuchMarker
+  let some range := selection.ranges[selection.primary]? | return
+  if let some offset← Scroll.follow area margin shown range.head then
+    text.place view.scroll (.anchor { anchor with offset })
+
+/-- Has each of `views` follow its cursor (`follow`), with the scroll margin
+`margin`. It is not refused: a view whose follow is refused, because one of
+its markers was given up or its snapshot released, is not followed, and the
+refusal is dropped ("Following the cursor", in the module docs). -/
+def followed (margin : Nat) (views : Array View) : EditorM Unit := do
+  for view in views do
+    discard <| observing (follow margin view)
+
 /-- Records the histories, leaving open the group of each buffer in an insert
 session (`sessions`), withdraws a quit that cannot go ahead
 (`EditorState.settleQuit`), brings an open prompt's listing up to date
-(`listed`), publishes a scene of the state, and releases each
+(`listed`), has each view follow its cursor (`followed`), publishes a scene
+of the state, and releases each
 snapshot the last scene named that this one does not. It is not refused
 ("When publishing is refused", in the module docs): a refusal of a buffer's
 text is in the echo area of the scene it publishes, and one of a release in
@@ -1019,6 +1119,9 @@ def publish (loop : Loop scheme) : EditorM (Loop scheme) := do
   let state := state.settleQuit
   let (state, unlisted) ← listed state
   let (views, shown, unshown) ← ({ loop with state } : Loop scheme).views
+  -- Each view follows its cursor before the scene names its anchor: the
+  -- snapshots the questions of layout need were taken just above.
+  followed state.scrollMargin views
   let state := state.refusedBy (unrecorded <|> unlisted <|> unshown)
   Display.publish (scene state views loop.pending)
   let mut unreleased := none

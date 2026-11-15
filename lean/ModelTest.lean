@@ -397,6 +397,16 @@ check runs Vim. The word rule outside ASCII is the text port's and is not
 restated here: the word motions' rows are ASCII, and one text with letters
 Vim and the editor agree on.
 
+A view that follows its cursor (`Editor/Loop.lean`, "Following the
+cursor") is checked on the same driver, under the same scheme and commands
+(`viewChecks`), in frames a few rows tall (`viewDriver`): keys are pressed,
+the frame is resized, and what the next scene shows of a view is asked of
+the driver's models (`viewSeen`): where its scroll anchor is, the rows the
+display model answers from it for the scene's view, and the row it answers
+for the cursor. So no check says where a text wraps. They are the phase's
+acceptance criteria for following, the scroll margin among them, and what
+following costs in requests, as a difference between two frames.
+
 Modes are checked on the test scheme, by the roles and the leader it reports
 (`InputScheme.roleKey`, `InputScheme.leader`), so that no check of a mode
 names a scheme's key:
@@ -17706,6 +17716,383 @@ def evilRepeatChecks : List Check :=
             replayed "|a b c d" "\" + d w" {} ==
               some (⟨"|c d", charwise "b ", false, ""⟩, some "b ") }]
 
+/-- `count` lines of two digits each, `00`, `01` and so on, joined by line
+feeds, and then `ending`. -/
+def numbered (count : Nat) (ending : String := "") : String :=
+  "\n".intercalate ((List.range count).map fun line => s!"{line / 10}{line % 10}") ++ ending
+
+/-- A state of the view checks: `evilState` over `contents` with the cursor
+at `head`, in a frame of `size`, with the scroll margin `margin`. The one
+window has the whole frame, and its scroll anchor is at the text's
+start. -/
+def viewState (contents : String) (size : Size) (margin : Nat := 0) (head : Nat := 0) :
+    TextM EditorState := do
+  let state ← evilState contents head
+  return { (state.setScrollMargin margin) with frame := { state.frame with size } }
+
+/-- A driver of the view checks over `viewState`, under the Vim scheme that
+ships, each step handed `handed`, on `model`; `none` if making the state was
+refused. -/
+def viewDriver (contents : String) (size : Size) (margin : Nat := 0) (head : Nat := 0)
+    (handed : Loop.Keys Vim.Default.scheme := evilHanded) (model : EditorModel := editorModel) :
+    Option EvilDriver :=
+  (Loop.Driver.over handed (fun _ => none) (viewState contents size margin head) model).toOption
+
+/-- What a scene shows of one view, as the view checks read it: where its
+markers are, and what the display model answers for it. -/
+structure ViewSeen where
+  /-- The marker the scene names as the view's scroll anchor. -/
+  scroll : MarkerId
+  /-- Where that anchor is. -/
+  anchor : Nat
+  /-- The view's selection. -/
+  selection : Selection
+  /-- The head of its primary range: the cursor. -/
+  head : Nat
+  /-- The rows the display model answers for the scene's view, from its
+  anchor. -/
+  shown : Array Display.Row
+  /-- The cursor's row: the first row the display model answers for the
+  scene's view from the cursor; none in a view that shows no row. -/
+  row : Option Display.Row
+  deriving DecidableEq, Repr
+
+/-- Where the cursor's row is among the rows the view shows, if it is one
+of them. -/
+def ViewSeen.index (seen : ViewSeen) : Option Nat :=
+  seen.row.bind fun row => seen.shown.findIdx? (· == row)
+
+/-- What the last scene `model`'s display recorded shows of the view `view`
+(`ViewSeen`), asked of `model`: its markers of the text model, and the rows
+of the display model for the scene's snapshot and rectangle. `none` when no
+scene has the view, or a marker of it refuses. -/
+def seenIn (model : EditorModel) (view : ViewId := ⟨0⟩) : Option ViewSeen := do
+  let scene ← model.display.scenes.back?
+  let shown ← scene.views.find? (·.id == view)
+  let #[marker] := shown.selections | none
+  let program : EditorM ViewSeen := do
+    let .anchor anchor ← shown.scroll.text.marker shown.scroll | throw .noSuchMarker
+    let .selection selection ← marker.text.marker marker | throw .noSuchMarker
+    let some range := selection.ranges[selection.primary]? | throw .badSelection
+    let area := Scroll.Area.ofRect shown.snapshot shown.rect
+    return {
+        scroll := shown.scroll, anchor := anchor.offset, selection, head := range.head
+        shown := ← area.rows anchor.offset, row := (← area.rows range.head)[0]? }
+  (program.runModel model).1.toOption
+
+/-- What the last scene of `driver` shows of the view `view` (`seenIn`). -/
+def viewSeen (driver : EvilDriver) (view : ViewId := ⟨0⟩) : Option ViewSeen :=
+  seenIn driver.model view
+
+/-- `driver` fed a resize of the frame to `size`. -/
+def viewResized (driver : EvilDriver) (size : Size) : EvilDriver :=
+  (driver.feed
+      { event := .resize { width := size.width, height := size.height, scale := 1.0 }
+        stamp := 0 }).1
+
+/-- `driver` after the command called `name` has run as an invocation no key
+yielded, with no arguments. -/
+def viewRan (driver : EvilDriver) (name : String) : EvilDriver :=
+  (driver.stepped (driver.loop.invoke driver.handed { command := name })).1
+
+/-- What the scene shows of view 0 after `invocation` has run, as a step no
+key yielded, from the state `start` makes, under the Vim scheme that ships
+with evil's commands, on models of their own. -/
+def viewInvoked (start : TextM EditorState) (invocation : Invocation) : Option ViewSeen :=
+  let program : EditorM Unit := do
+    let loop : EvilLoop := { state := ← start }
+    discard <| loop.invoke evilHanded invocation
+  match program.runModel editorModel with
+  | (.ok (), model) => seenIn model
+  | (.error _, _) => none
+
+/-- The cases in which the scroll margin `margin` does not hold after a
+motion, in a view of `contents` in a frame of `size`: each motion of evil's
+vocabulary, with no count and with a count of 3, from each of `heads` as
+the cursor, with the anchor at the text's start. The margin holds when the
+cursor's row is among the rows the display model answers for the next
+scene's view, `margin` rows from the first and from the last, except where
+the first is the text's first row or the last its last (`marginHolds`). -/
+def marginFailures (contents : String) (size : Size) (margin : Nat) (heads : List Nat) :
+    List String :=
+  let rows := allRows contents size.width
+  heads.flatMap fun head =>
+    Evil.motions.toList.flatMap fun motion =>
+      [0, 3].filterMap fun count =>
+        let seen :=
+          viewInvoked (viewState contents size margin head)
+            { command := Vim.moveCommand, arguments := [.str motion.name, .nat count] }
+        let held :=
+          match seen with
+          | some seen => seen.row.any fun row => marginHolds rows seen.shown row margin
+          | none => false
+        if held then none else some s!"{motion.name} with {count} from {head} of {repr contents}"
+
+/-- `viewState` with a second window on the same buffer, view 1, below view
+0, with markers of its own: its scroll anchor at the text's start and its
+cursor at `second`. View 0 is focused. -/
+def splitViews (contents : String) (size : Size) (second : Nat) : TextM EditorState := do
+  let state ← viewState contents size
+  let some target := state.focusedTarget? | throw .noSuchText
+  let text := target.buffer.text
+  let scroll ← text.mark (.anchor { offset := 0, bias := .before })
+  let shape := (← target.selection).shape
+  let selection ← text.mark (.selection { ranges := #[⟨second, second⟩], shape })
+  return {
+      state with
+      windows := state.windows.push { id := ⟨1⟩, buffer := ⟨0⟩, scroll, selection }
+      nextView := 2
+      frame :=
+        { state.frame with
+          tree := .split .rows (.split .rows (.window ⟨0⟩) (.window ⟨1⟩)) .minibuffer } }
+
+/-- How many requests the last key of `typed` took, on the counting model,
+in a view of twenty short lines in a frame of `size`, in `cells`. -/
+def viewCost (size : Size) (typed : String)
+    (cells : Display.Cells := { advance := 1, lineHeight := 1 }) : Option Nat := do
+  let driver ← viewDriver (numbered 20) size (model := { countingModel with display := { cells } })
+  let pressed := keys typed
+  let before :=
+    (pressed.dropLast).foldl (fun driver key => (driver.feed { event := press key, stamp := 0 }).1)
+      driver
+  let last ← pressed.getLast?
+  let after := (before.feed { event := press last, stamp := 0 }).1
+  return after.model.watch.clock - before.model.watch.clock
+
+/-- The checks of a view that follows its cursor (`Editor/Loop.lean`,
+"Following the cursor"), on the loop's driver over the editor's models,
+under the Vim scheme that ships with evil's commands: keys are pressed, and
+what the next scene shows of a view is asked of the driver's models
+(`viewSeen`): where its scroll anchor is, the rows the display model
+answers from it for the scene's view, and the row it answers for the
+cursor. No check says where a text wraps: the texts are lines shorter than
+their view, and the text the display contract's own cases wrap. -/
+def viewChecks : List Check :=
+  [{  name :=
+        "a motion that puts the cursor below the last row a view shows moves the view's anchor in the next scene, and the rows the display answers from it include the cursor's row: j from the last row shown scrolls one row, with the cursor's row the last row shown"
+      run :=
+        pure <|
+          match viewDriver (numbered 20) ⟨10, 5⟩ with
+          | none => false
+          | some driver =>
+            let onLast := evilFed driver "4 j"
+            match viewSeen onLast, viewSeen (evilFed onLast "j") with
+            | some was, some now =>
+              was.anchor == 0 && was.shown.size == 5 && was.index == some 4 &&
+                now.head != was.head &&
+                now.anchor != was.anchor &&
+                now.index == some 4 &&
+                now.shown[0]? == was.shown[1]?
+            | _, _ => false },
+    { name :=
+        "a motion that puts the cursor above the first row a view shows moves the view's anchor in the next scene, and the rows the display answers from it include the cursor's row: k from the first row shown scrolls one row, and g g from far below shows the text's start, each with the cursor's row the first row shown"
+      run :=
+        pure <|
+          match viewDriver (numbered 20) ⟨10, 5⟩ with
+          | none => false
+          | some driver =>
+            let far := evilFed driver "G"
+            let onFirst := evilFed far "4 k"
+            match viewSeen far, viewSeen onFirst, viewSeen (evilFed onFirst "k"),
+              viewSeen (evilFed far "g g") with
+            | some low, some was, some now, some start =>
+              low.anchor != 0 && low.index == some 4 && was.anchor == low.anchor &&
+                was.index == some 0 &&
+                now.head != was.head &&
+                now.anchor != was.anchor &&
+                now.index == some 0 &&
+                now.shown[1]? == was.shown[0]? &&
+                start.anchor == 0 &&
+                start.head == 0 &&
+                start.index == some 0
+            | _, _, _, _ => false },
+    { name :=
+        "a motion that leaves the cursor among the rows a view shows leaves the view's anchor where it was: j, k, l, w, b and $, in a view that has scrolled"
+      run :=
+        pure <|
+          match viewDriver (numbered 20) ⟨10, 5⟩ with
+          | none => false
+          | some driver =>
+            let inside := evilFed driver "9 j k k"
+            match viewSeen inside with
+            | none => false
+            | some was =>
+              was.anchor != 0 && was.index == some 2 &&
+                ["j", "k", "l", "w", "b", "$"].all fun key =>
+                  match viewSeen (evilFed inside key) with
+                  | some now =>
+                    now.head != was.head && now.anchor == was.anchor && now.index.isSome &&
+                      now.shown == was.shown
+                  | none => false },
+    { name :=
+        "a cursor that moves onto the last visual row of a line wrapped over three rows, below the view, has that row among the rows shown in the next scene: $ from the line's first row, which was the last row shown"
+      run :=
+        pure <|
+          match viewDriver wrapping ⟨4, 4⟩ with
+          | none => false
+          | some driver =>
+            let onLine := evilFed driver "2 j"
+            let rows := allRows wrapping 4
+            match viewSeen onLine, viewSeen (evilFed onLine "$") with
+            | some was, some now =>
+              -- The cursor's row was the first of three rows of one line,
+              -- and is now the last of them: no line break is between them,
+              -- and one is after the last.
+              was.anchor == 0 && was.index == some 3 && was.row == rows[3]? &&
+                (rows[3]?.map (·.stop)) == (rows[4]?.map (·.start)) &&
+                (rows[4]?.map (·.stop)) == (rows[5]?.map (·.start)) &&
+                (rows[5]?.map (·.stop + 1)) == (rows[6]?.map (·.start)) &&
+                now.row == rows[5]? &&
+                now.anchor != 0 &&
+                now.index == some 3
+            | _, _ => false },
+    { name :=
+        "a resize that leaves a view with fewer rows than the cursor's row is followed by a scene whose view shows the cursor's row, and a resize that grows the view keeps its anchor"
+      run :=
+        pure <|
+          match viewDriver (numbered 20) ⟨10, 8⟩ with
+          | none => false
+          | some driver =>
+            let low := evilFed driver "7 j"
+            let shrunk := viewResized low ⟨10, 3⟩
+            match viewSeen low, viewSeen shrunk, viewSeen (viewResized shrunk ⟨10, 12⟩) with
+            | some was, some now, some grown =>
+              was.anchor == 0 && was.index == some 7 && now.head == was.head &&
+                now.shown.size == 3 &&
+                now.anchor != 0 &&
+                now.index == some 2 &&
+                grown.anchor == now.anchor &&
+                grown.shown.size == 12 &&
+                grown.index == some 2
+            | _, _, _ => false },
+    { name :=
+        "with the scroll margin set to two, after every motion of the vocabulary, with no count and with a count of 3, from a spread of cursors of forty short lines and of a text with wrapped lines, in a view of seven rows, the cursor's row is at least two rows from the first and from the last row the next scene's view shows, except where the first is the text's first row or the last its last"
+      run := do
+        let resting (contents : String) (every : Nat) : List Nat :=
+          (List.range (contents.utf8ByteSize + 1)).filter fun head =>
+            head % every == 0 && restsWell contents head
+        let forty := numbered 40
+        let wrong :=
+          marginFailures forty ⟨10, 7⟩ 2 (resting forty 7) ++
+            marginFailures ragged ⟨4, 7⟩ 2 (resting ragged 1)
+        unless wrong.isEmpty do
+          throw (IO.userError ("; ".intercalate (wrong.take 12)))
+        return !Evil.motions.isEmpty && (resting forty 7).length > 10 &&
+            (resting ragged 1).length > 20 },
+    { name :=
+        "with no margin set the same sweep finds the cursor's row among the rows the next scene's view shows after every motion"
+      run := do
+        let forty := numbered 40
+        let heads :=
+          (List.range (forty.utf8ByteSize + 1)).filter fun head =>
+            head % 11 == 0 && restsWell forty head
+        let wrong := marginFailures forty ⟨10, 7⟩ 0 heads
+        unless wrong.isEmpty do
+          throw (IO.userError ("; ".intercalate (wrong.take 12)))
+        return heads.length > 5 },
+    { name :=
+        "every view is followed, not the focused one alone: an edit made through one window that moves the cursor of another window on the same buffer out of the rows that window shows moves that window's anchor, and leaves the anchor of the window it was made through"
+      run :=
+        pure <|
+          let contents := numbered 20
+          let rows := allRows contents 10
+          let grow : Dispatched := fun call => do
+            call.target.buffer.text.insert 0 "x\nx\nx\n"
+            return none
+          let idle : Dispatched := fun _ => pure none
+          let handed := evilHanded (commands := [("grow", grow), ("idle", idle)])
+          match
+            (Loop.Driver.over handed (fun _ => none) (splitViews contents ⟨10, 10⟩ (startOf rows 3))
+                editorModel).toOption with
+          | none => false
+          | some driver =>
+            let still := viewRan driver "idle"
+            let grown := viewRan driver "grow"
+            match viewSeen still ⟨1⟩, viewSeen grown ⟨1⟩, viewSeen grown ⟨0⟩ with
+            | some was, some other, some own =>
+              was.anchor == 0 && was.shown.size == 5 && was.index == some 3 &&
+                other.head != was.head &&
+                other.anchor != 0 &&
+                other.index == some 4 &&
+                own.anchor == 0 &&
+                own.index.isSome
+            | _, _, _ => false },
+    { name :=
+        "a command that moves the cursor below the rows its view shows and then fails leaves the view's anchor where it was: the view follows the cursor that was put back"
+      run :=
+        pure <|
+          let contents := numbered 20
+          let fall : Dispatched :=
+            failingAfter fun call => do
+              let selection ← call.target.selection
+              let last := contents.utf8ByteSize - 1
+              call.target.select { selection with ranges := #[⟨last, last⟩] }
+          match
+            viewDriver contents ⟨10, 5⟩ (handed := evilHanded (commands := [("fall", fall)])) with
+          | none => false
+          | some driver =>
+            let moved := evilFed driver "2 j"
+            let failed := viewRan moved "fall"
+            match viewSeen moved, viewSeen failed with
+            | some was, some now =>
+              now.anchor == was.anchor && now.head == was.head && now.index == was.index &&
+                was.index == some 2 &&
+                failed.loop.state.echo.startsWith "fall: refused: "
+            | _, _ => false },
+    { name :=
+        "a view whose selection marker was given up is not followed: its anchor stays, the step is not refused, and the echo area says nothing of it, in that scene or the next"
+      run :=
+        pure <|
+          let contents := numbered 20
+          let drop : Dispatched := fun call => do
+            let selection ← call.target.selection
+            let last := contents.utf8ByteSize - 1
+            call.target.select { selection with ranges := #[⟨last, last⟩] }
+            call.target.buffer.text.unmark call.target.window.selection
+            return none
+          let anchorOf (driver : EvilDriver) : Option Nat := do
+            let target ← driver.loop.state.target? ⟨0⟩
+            return (← (target.anchor.runModel driver.model.texts).1.toOption).offset
+          match
+            viewDriver contents ⟨10, 5⟩ (handed := evilHanded (commands := [("drop", drop)])) with
+          | none => false
+          | some driver =>
+            let dropped := viewRan driver "drop"
+            let next := viewResized dropped ⟨10, 4⟩
+            anchorOf dropped == some 0 && anchorOf next == some 0 &&
+              dropped.model.display.scenes.size == 1 &&
+              next.model.display.scenes.map (·.echo) == #["", ""] },
+    { name := "a view of no height keeps its anchor wherever its cursor goes"
+      run :=
+        pure <|
+          match viewDriver (numbered 20) ⟨10, 0⟩ with
+          | none => false
+          | some driver =>
+            match viewSeen (evilFed driver "G") with
+            | some now => now.anchor == 0 && now.head != 0 && now.shown.isEmpty
+            | none => false },
+    { name :=
+        "the scene of a step that moved a view's anchor names the scroll marker the scene before it named: where the marker is is all that changed"
+      run :=
+        pure <|
+          match viewDriver (numbered 20) ⟨10, 5⟩ with
+          | none => false
+          | some driver =>
+            let onLast := evilFed driver "4 j"
+            match viewSeen onLast, viewSeen (evilFed onLast "j") with
+            | some was, some now => now.scroll == was.scroll && now.anchor != was.anchor
+            | _, _ => false },
+    { name :=
+        "what following costs, as differences on the watch model's clock, for the same key: a frame of one row, whose one view keeps its anchor, costs four requests more than a frame of no height, where nothing is asked; and in cells of 8 by 16 a frame 8 pixels tall, whose view shows no row, costs two more than one of no height"
+      run :=
+        pure <|
+          let cells : Display.Cells := { advance := 8, lineHeight := 16 }
+          match viewCost ⟨10, 0⟩ "l", viewCost ⟨10, 1⟩ "l", viewCost ⟨80, 0⟩ "l" cells,
+            viewCost ⟨80, 8⟩ "l" cells with
+          | some bare, some one, some flat, some short =>
+            bare > 0 && one == bare + 4 && flat == bare && short == flat + 2
+          | _, _, _, _ => false }]
+
 /-- Every check, in the order they run.
 
 The order matters where the process's one pool is measured. `poolChecks` run
@@ -17775,7 +18162,8 @@ def checks : List Check :=
     evilRegisterChecks ++
     evilOpenChecks ++
     evilUndoChecks ++
-    evilRepeatChecks
+    evilRepeatChecks ++
+    viewChecks
 
 /-- Runs `checks` and returns the names of those that failed. A check that
 throws has failed, and its error is reported with its name. -/

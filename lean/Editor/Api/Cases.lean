@@ -22,8 +22,11 @@ implementation, the state requests' handler, and is pinned once, on the
 models (`ModelTest.stateRequestChecks`, `ModelTest.apiStateChecks`).
 
 This module imports the loop, which brings the API and the dispatch, and
-the test scheme, for the one case that asks the loop what the next scene's
-views are (`Loop.views`). It imports no model and no real binding. The list
+the test scheme, for the cases that ask the loop what the next scene's
+views are (`Loop.views`). One of them is the loop's own: its follow of
+those views (`Loop.followed`), which asks the display about real
+snapshots, so it is held here on the models and on the binding like an
+operation of the API. It imports no model and no real binding. The list
 is plain data, programs that have not run.
 
 Offsets are byte offsets. "é" and "ö" are two bytes each: `"héllo"` is 6
@@ -767,6 +770,29 @@ def scrollCases : List Case :=
             refused &&
             last.index == inside.index + 1 &&
             (← refusedWith .noSuchSnapshot inside.read) &&
+            (← editorState) == state },
+    { name :=
+        "the loop's follow, over the views of the next scene, places the scroll anchor of a view whose cursor is below the rows it shows: from twenty lines in a frame of five rows with the cursor on the tenth, the rows the display answers from the anchor did not include the cursor's row and then do, the anchor keeps its bias, and the editor state is as it was"
+      start := do
+        let lines := (List.range 20).map fun line => s!"{line / 10}{line % 10}"
+        -- Each line is two digits and a line feed, so the tenth starts at
+        -- byte 27.
+        let state ← holding ("\n".intercalate lines) (selection #[(27, 27)])
+        return { state with frame := { state.frame with size := ⟨10, 5⟩ } }
+      run := do
+        let state ← editorState
+        let some target := state.focusedTarget? | return false
+        let (views, _, unshown) ← ({ state } : Loop TestScheme.scheme).views
+        let some view := views[0]? | return false
+        let area := Scroll.Area.ofRect view.snapshot view.rect
+        let some row := (← area.rows 27)[0]? | return false
+        let before ← target.anchor
+        let hidden := !(← area.rows before.offset).contains row
+        Loop.followed state.scrollMargin views
+        let after ← target.anchor
+        return unshown.isNone && views.size == 1 && hidden && after.offset != before.offset &&
+            after.bias == before.bias &&
+            (← area.rows after.offset).contains row &&
             (← editorState) == state }]
 
 /-- Every case of the editor API, in the order they run. -/
