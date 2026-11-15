@@ -1119,6 +1119,106 @@ lean_obj_res editor_glue_display_scene(b_lean_obj_arg display) {
   return lean_io_result_mk_ok(scene);
 }
 
+// ---- The clipboard ----
+//
+// A clipboard handle is the library's, held by Lean as an external object
+// freed by its finaliser, as a display is.
+
+// The Rust library's clipboard.
+typedef struct editor_ffi_clipboard editor_ffi_clipboard;
+editor_ffi_clipboard *editor_ffi_clipboard_memory(void);
+editor_ffi_clipboard *editor_ffi_clipboard_system(editor_ffi_raw_text *out);
+uint8_t editor_ffi_clipboard_read(const editor_ffi_clipboard *clipboard,
+                                  editor_ffi_raw_text *out);
+bool editor_ffi_clipboard_write(const editor_ffi_clipboard *clipboard,
+                                const uint8_t *text, size_t text_len,
+                                editor_ffi_raw_text *out);
+void editor_ffi_clipboard_free(editor_ffi_clipboard *clipboard);
+uint64_t editor_ffi_clipboard_live(void);
+
+static lean_external_class *clipboard_class;
+static pthread_once_t clipboard_class_once = PTHREAD_ONCE_INIT;
+
+// Runs when Lean drops the last reference to a clipboard.
+static void clipboard_finalize(void *clipboard) {
+  editor_ffi_clipboard_free(clipboard);
+}
+
+// A clipboard holds no Lean objects, so there is nothing to visit.
+static void clipboard_foreach(void *clipboard, b_lean_obj_arg visitor) {
+  (void)clipboard;
+  (void)visitor;
+}
+
+static void clipboard_class_register(void) {
+  clipboard_class =
+      lean_register_external_class(clipboard_finalize, clipboard_foreach);
+}
+
+// A Lean string of the text `raw` lends, its buffer handed back.
+static lean_object *text_take(editor_ffi_raw_text raw) {
+  lean_object *text =
+      lean_mk_string_from_bytes((const char *)raw.text, raw.text_len);
+  editor_ffi_text_free(raw.text, raw.text_len);
+  return text;
+}
+
+// `Editor.Ffi.Clipboard.memory : IO Clipboard`
+lean_obj_res editor_glue_clipboard_memory(void) {
+  pthread_once(&clipboard_class_once, clipboard_class_register);
+  return lean_io_result_mk_ok(
+      lean_alloc_external(clipboard_class, editor_ffi_clipboard_memory()));
+}
+
+// `Editor.Ffi.Clipboard.system : IO (Except String Clipboard)`. `Except`'s
+// `error` is constructor 0 and `ok` constructor 1.
+lean_obj_res editor_glue_clipboard_system(void) {
+  pthread_once(&clipboard_class_once, clipboard_class_register);
+  editor_ffi_raw_text reason;
+  editor_ffi_clipboard *clipboard = editor_ffi_clipboard_system(&reason);
+  lean_object *result;
+  if (clipboard == NULL) {
+    result = lean_alloc_ctor(0, 1, 0);
+    lean_ctor_set(result, 0, text_take(reason));
+  } else {
+    result = lean_alloc_ctor(1, 1, 0);
+    lean_ctor_set(result, 0, lean_alloc_external(clipboard_class, clipboard));
+  }
+  return lean_io_result_mk_ok(result);
+}
+
+// `Editor.Ffi.Clipboard.readRaw : @& Clipboard → IO RawClipboardRead`:
+// the object field `text`, then `status`.
+lean_obj_res editor_glue_clipboard_read(b_lean_obj_arg clipboard) {
+  editor_ffi_raw_text raw;
+  uint8_t status =
+      editor_ffi_clipboard_read(lean_get_external_data(clipboard), &raw);
+  lean_object *read = lean_alloc_ctor(0, 1, sizeof(uint64_t));
+  lean_ctor_set(read, 0, text_take(raw));
+  lean_ctor_set_uint64(read, uint64_field(1, 0), status);
+  return lean_io_result_mk_ok(read);
+}
+
+// `Editor.Ffi.Clipboard.write : @& Clipboard → @& String → IO (Option
+// String)`: `none` when written, and `some` of the reason otherwise.
+lean_obj_res editor_glue_clipboard_write(b_lean_obj_arg clipboard,
+                                         b_lean_obj_arg text) {
+  editor_ffi_raw_text reason;
+  if (editor_ffi_clipboard_write(lean_get_external_data(clipboard),
+                                 string_bytes(text), string_len(text),
+                                 &reason)) {
+    return lean_io_result_mk_ok(lean_box(0)); // `none`
+  }
+  lean_object *some = lean_alloc_ctor(1, 1, 0);
+  lean_ctor_set(some, 0, text_take(reason));
+  return lean_io_result_mk_ok(some);
+}
+
+// `Editor.Ffi.Clipboard.live : IO UInt64`
+lean_obj_res editor_glue_clipboard_live(void) {
+  return lean_io_result_mk_ok(lean_box_uint64(editor_ffi_clipboard_live()));
+}
+
 // ---- The process entry point ----
 //
 // Lean's generated `main` runs the Lean `main` on a thread Lean creates, so

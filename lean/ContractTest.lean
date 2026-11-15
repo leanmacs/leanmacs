@@ -1,6 +1,7 @@
 import Editor.Api.Cases
 import Editor.Clipboard.Contract
 import Editor.Clipboard.InProcess
+import Editor.Clipboard.Real
 import Editor.Command.Model
 import Editor.Command.Real
 import Editor.Display.Contract
@@ -93,8 +94,11 @@ that it reads the table of snapshots as it is when asked.
 The clipboard interface's contract (`Editor/Clipboard/Contract.lean`) is run
 against the clipboard a host with no window keeps
 (`Editor/Clipboard/InProcess.lean`), one clipboard for the whole list, so
-each property finds what the one before it left (`clipboardFailures`).
-`model-test` runs the same list against the model. `clipboardChecks` pins
+each property finds what the one before it left (`clipboardFailures`), and
+against the real binding (`Editor/Clipboard/Real.lean`) over the library's
+memory clipboard, so that no run reads or writes the desktop's
+(`realClipboardFailures`). `model-test` runs the same list against the
+model. `clipboardChecks` pins
 what the contract cannot: that a new one holds no text, and, with a command
 run against the library, that the command's clipboard requests go to the
 handler it was handed, and are each answered `unavailable` when it was
@@ -893,6 +897,17 @@ def clipboardFailures : IO (List String) := do
         ClipboardContract.properties
   return failed.map (s!"the in-process clipboard: {·}")
 
+/-- The names of the clipboard interface's contract properties that do not
+hold of its real binding, over the library's memory clipboard: one
+clipboard for the whole list. The desktop's clipboard is never reached. -/
+def realClipboardFailures : IO (List String) := do
+  let clipboard ← Clipboard.Real.memory
+  let failed ←
+    ClipboardContract.failures
+        (fun property => Program.runM (port := clipboardPort) clipboard.handle property.holds)
+        ClipboardContract.properties
+  return failed.map (s!"the real clipboard binding over the library's memory clipboard: {·}")
+
 /-- A command that reads the clipboard, writes `text` to it and reads it
 again: the three replies. -/
 def clipboardRound (text : String) :
@@ -1158,6 +1173,7 @@ def main : IO UInt32 := do
   let recorderChecks := ContractTest.recorderChecks
   let recorderFailed ← ContractTest.checkFailures recorderChecks
   let clipboardFailed ← ContractTest.clipboardFailures
+  let realClipboardFailed ← ContractTest.realClipboardFailures
   let clipboardChecks := ContractTest.clipboardChecks
   let clipboardCheckFailed ← ContractTest.checkFailures clipboardChecks
   let fuzzyFailed ← ContractTest.fuzzyFailures
@@ -1177,6 +1193,7 @@ def main : IO UInt32 := do
       recorderContractFailed ++
       recorderFailed ++
       clipboardFailed ++
+      realClipboardFailed ++
       clipboardCheckFailed ++
       fuzzyFailed ++
       fuzzyCheckFailed ++
@@ -1189,6 +1206,6 @@ def main : IO UInt32 := do
   unless failed.isEmpty do
     IO.Process.exit 1
   IO.println
-      s!"contract-test: {properties.length + adoptProperties.length} properties hold of the real text binding, {cases.length} cases of the undo tree hold over it, and its documents and snapshots are freed when released and with its table; {Editor.JobContract.properties.length} properties hold of the job runner over the timer service, and {Editor.JobContract.fileProperties.length} file properties over the file service, on real files; {checks.length} checks of the timer service passed, {fileChecks.length} of the file service, {Editor.FileCases.cases.length} cases across the text port and the job port hold of the binding and the file service; {(Editor.DisplayContract.properties { advance := 1, lineHeight := 1 }).length} properties of the display interface hold of its real binding in cells of {ContractTest.displayCells.length} sizes, and of the recorder over real snapshots in cells of the same sizes, and {recorderChecks.length} checks of the recorder passed; {Editor.ClipboardContract.properties.length} properties of the clipboard interface hold of the in-process clipboard, and {clipboardChecks.length} checks of it passed; {Editor.FuzzyContract.properties.length} properties of the fuzzy matching interface hold of its real binding, and {fuzzyChecks.length} check of a command's ranking passed; {Editor.WatchContract.properties.length} properties of the watch port hold of its real binding, and {watchChecks.length} checks of it passed; {Editor.ApiCases.cases.length} cases of the editor API hold of the real text binding; and quit ended the pump"
+      s!"contract-test: {properties.length + adoptProperties.length} properties hold of the real text binding, {cases.length} cases of the undo tree hold over it, and its documents and snapshots are freed when released and with its table; {Editor.JobContract.properties.length} properties hold of the job runner over the timer service, and {Editor.JobContract.fileProperties.length} file properties over the file service, on real files; {checks.length} checks of the timer service passed, {fileChecks.length} of the file service, {Editor.FileCases.cases.length} cases across the text port and the job port hold of the binding and the file service; {(Editor.DisplayContract.properties { advance := 1, lineHeight := 1 }).length} properties of the display interface hold of its real binding in cells of {ContractTest.displayCells.length} sizes, and of the recorder over real snapshots in cells of the same sizes, and {recorderChecks.length} checks of the recorder passed; {Editor.ClipboardContract.properties.length} properties of the clipboard interface hold of the in-process clipboard and of the real binding over the library's memory clipboard, and {clipboardChecks.length} checks of it passed; {Editor.FuzzyContract.properties.length} properties of the fuzzy matching interface hold of its real binding, and {fuzzyChecks.length} check of a command's ranking passed; {Editor.WatchContract.properties.length} properties of the watch port hold of its real binding, and {watchChecks.length} checks of it passed; {Editor.ApiCases.cases.length} cases of the editor API hold of the real text binding; and quit ended the pump"
   (← IO.getStdout).flush
   IO.Process.exit 0

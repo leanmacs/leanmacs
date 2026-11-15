@@ -42,7 +42,7 @@ default, `Editor/Command/Real.lean`).
 |---|---|
 | Something else asked of the clipboard | A constructor of `ClipboardRequest`, its case in `ClipboardRequest.Reply`, an operation here, its case in the model, and a property of the contract |
 | Another way a request is refused | A constructor of `ClipboardError` |
-| A binding to a system's clipboard | A handler of these requests, in the crate and the module of whoever owns the window system, which runs the contract; nothing here |
+| A binding to a system's clipboard | A handler of these requests over a clipboard of the Rust library's (`Editor/Clipboard/Real.lean`, `crates/editor-ffi/src/clipboard.rs`), held to the contract by `contract-test`; nothing here |
 | What a command does with the clipboard | The command; nothing here |
 
 Pinned by the contract, which `model-test` runs against the model, and by
