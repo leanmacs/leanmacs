@@ -24,11 +24,11 @@ import Editor.Job.Fake
 import Editor.Job.Jobs
 import Editor.Job.Model
 import Editor.Job.Pool
-import Editor.Process.Model
 import Editor.Key.Notation
 import Editor.Loop.Driver
 import Editor.Minibuffer.Compiled
 import Editor.Mode
+import Editor.Process.Model
 import Editor.Role
 import Editor.Scene
 import Editor.Scroll
@@ -930,7 +930,8 @@ service. -/
 def Rig.withProcesses (model : ProcessModel) : BaseIO (Rig × Job.FakeProcesses) := do
   let rig ← Rig.new
   let processes ← Job.FakeProcesses.new rig.services.completions model
-  return ({ rig with services := { rig.services with processes := processes.processes } }, processes)
+  return ({ rig with services := { rig.services with processes := processes.processes } },
+      processes)
 
 /-- Runs a process property's job on the runner over a fake clock and the
 fake of the process service, over the model of its processes: how the job
@@ -955,7 +956,8 @@ def sleeper : Process.Command :=
 
 /-- The script of `sleeper`, which takes `takes` milliseconds. -/
 def sleeperScript (takes : Nat) : Process.Script :=
-  { command := sleeper, reply := .ok { exit := .code 0, stdout := .empty, stderr := .empty }, takes }
+  { command := sleeper, reply := .ok { exit := .code 0, stdout := .empty, stderr := .empty },
+    takes }
 
 /-- What the process model answers a run of `command` under `limit` made at
 `now` by a job cancelled at `cancelAt`, with the reply's type spelled out. -/
@@ -968,30 +970,39 @@ record of what was killed, and the runner's process waits on the fake of the
 process service, where cancelling a job withdraws its wait, which is how the
 library comes to kill the job's child. -/
 def processChecks : List Check :=
-  [{ name :=
+  [{  name :=
         "the process model refuses a relative directory, then a relative program, then an unscripted command as not found, and starts none of them"
-     run := do
-       let model : ProcessModel := { scripts := #[sleeperScript 0] }
-       let ask (command : Process.Command) := modelRun model 0 none command 10
-       let (directory, afterDirectory, _) := ask { program := "bin/sh", directory := "relative" }
-       let (program, afterProgram, _) := ask { program := "bin/sh", directory := processRoot }
-       let (unscripted, afterUnscripted, _) := ask { program := "/bin/sh", directory := processRoot }
-       let isNotFound := match unscripted with | .error (.notFound _) => true | _ => false
-       return directory == .error .relativeDirectory && program == .error .relativeProgram &&
-           isNotFound &&
-           [afterDirectory, afterProgram, afterUnscripted].all (·.started.isEmpty) },
+      run := do
+        let model : ProcessModel := { scripts := #[sleeperScript 0] }
+        let ask (command : Process.Command) := modelRun model 0 none command 10
+        let (directory, afterDirectory, _) := ask { program := "bin/sh", directory := "relative" }
+        let (program, afterProgram, _) := ask { program := "bin/sh", directory := processRoot }
+        let (unscripted, afterUnscripted, _) :=
+          ask { program := "/bin/sh", directory := processRoot }
+        let isNotFound :=
+          match unscripted with
+          | .error (.notFound _) => true
+          | _ => false
+        return directory == .error .relativeDirectory && program == .error .relativeProgram &&
+            isNotFound &&
+            [afterDirectory, afterProgram, afterUnscripted].all (·.started.isEmpty) },
     { name :=
         "the process model records a scripted run as started, moves the clock by its time, and answers too large past the limit, standard output first"
       run := do
-        let ran : Process.Ran := { exit := .code 0, stdout := "123456".toUTF8, stderr := "123456".toUTF8 }
-        let model : ProcessModel := { scripts := #[{ command := sleeper, reply := .ok ran, takes := 7 }] }
+        let ran : Process.Ran :=
+          { exit := .code 0, stdout := "123456".toUTF8, stderr := "123456".toUTF8 }
+        let model : ProcessModel :=
+          { scripts := #[{ command := sleeper, reply := .ok ran, takes := 7 }] }
         let (within, after, now) := modelRun model 3 none sleeper 6
         let (over, _, _) := modelRun model 3 none sleeper 5
         let quiet : ProcessModel :=
-          { scripts := #[{ command := sleeper, reply := .ok { ran with stdout := .empty }, takes := 7 }] }
+          {
+            scripts :=
+              #[{ command := sleeper, reply := .ok { ran with stdout := .empty }, takes := 7 }] }
         let (err, _, _) := modelRun quiet 3 none sleeper 5
         return within == .ok ran && after.started == #[sleeper] && now == 10 &&
-            over == .error (.outputTooLarge .out 5) && err == .error (.outputTooLarge .err 5) &&
+            over == .error (.outputTooLarge .out 5) &&
+            err == .error (.outputTooLarge .err 5) &&
             after.killed.isEmpty },
     { name :=
         "a job model cancelled inside a scripted run is cancelled at that instant, and the process model records the command as killed"
@@ -999,10 +1010,13 @@ def processChecks : List Check :=
         let job : JobM Bool := do
           discard <| Process.run sleeper 10
           return true
-        let (outcome, model) := job.runModel { cancelAt := some 50, processes := { scripts := #[sleeperScript 100] } }
-        let (finished, untouched) := job.runModel { cancelAt := some 500, processes := { scripts := #[sleeperScript 100] } }
+        let (outcome, model) :=
+          job.runModel { cancelAt := some 50, processes := { scripts := #[sleeperScript 100] } }
+        let (finished, untouched) :=
+          job.runModel { cancelAt := some 500, processes := { scripts := #[sleeperScript 100] } }
         return outcome == .cancelled && model.now == 50 && model.processes.killed == #[sleeper] &&
-            finished == .finished true && untouched.processes.killed.isEmpty },
+            finished == .finished true &&
+            untouched.processes.killed.isEmpty },
     { name :=
         "cancelling a job in a process wait withdraws the wait from the process service with the wait's id, the job ends cancelled, and it makes no further request"
       run := do
@@ -1022,7 +1036,8 @@ def processChecks : List Check :=
           let cancelled ← spawned.endedAs .cancelled
           processes.letGo
           return cancelled && (← processes.withdrawn) == #[id] && (← processes.started).size == 1 &&
-              (← processes.taken).isEmpty && (← processes.waiting) == 0
+              (← processes.taken).isEmpty &&
+              (← processes.waiting) == 0
         finally
           processes.letGo },
     { name :=

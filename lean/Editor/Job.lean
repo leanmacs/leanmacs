@@ -192,7 +192,8 @@ unless it is longer than `limit` bytes: how the child ended and both its
 streams, or why it was refused. The refusal is a value: the job goes on. A
 cancelled job's child is killed, with its process group.
 `Editor/Process.lean` has the rules. -/
-def Process.run (command : Process.Command) (limit : Nat) : JobM (Except ProcessError Process.Ran) :=
+def Process.run (command : Process.Command) (limit : Nat) :
+    JobM (Except ProcessError Process.Ran) :=
   ExceptT.lift (Program.request (port := jobPort) (.process (.run command limit)))
 
 namespace Job

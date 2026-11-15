@@ -64,7 +64,9 @@ def handle : (request : JobRequest) → JobModel → request.Reply × JobModel
     (reply, { model with files })
   | .process request, model =>
     let (reply, processes, now) := model.processes.handle model.now model.cancelAt request
-    (reply, { model with processes, now })
+    (reply,
+      { model with
+        processes, now })
 
 /-- Whether the job is cancelled by now. -/
 def cancelled (model : JobModel) : Bool :=

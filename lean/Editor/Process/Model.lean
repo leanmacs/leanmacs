@@ -42,8 +42,7 @@ instance : DecidableEq (Except ProcessError Process.Ran)
   | .ok a, .ok b =>
     if h : a = b then isTrue (congrArg Except.ok h) else isFalse fun e => h (Except.ok.inj e)
   | .error a, .error b =>
-    if h : a = b then isTrue (congrArg Except.error h)
-    else isFalse fun e => h (Except.error.inj e)
+    if h : a = b then isTrue (congrArg Except.error h) else isFalse fun e => h (Except.error.inj e)
   | .ok _, .error _ => isFalse fun e => by cases e
   | .error _, .ok _ => isFalse fun e => by cases e
 
@@ -80,8 +79,7 @@ is too large. -/
 def limited (limit : Nat) : Except ProcessError Process.Ran → Except ProcessError Process.Ran
   | .ok ran =>
     if ran.stdout.size > limit then .error (.outputTooLarge .out limit)
-    else if ran.stderr.size > limit then .error (.outputTooLarge .err limit)
-    else .ok ran
+    else if ran.stderr.size > limit then .error (.outputTooLarge .err limit) else .ok ran
   | .error error => .error error
 
 /-- The model's answer to `request` made at `now` on the job clock, by a job
@@ -91,20 +89,22 @@ def handle (model : ProcessModel) (now : Nat) (cancelAt : Option Nat) :
     (request : ProcessRequest) → request.Reply × ProcessModel × Nat
   | .run command limit =>
     if !command.directory.isAbsolute then (.error .relativeDirectory, model, now)
-    else if relativeProgram command.program then (.error .relativeProgram, model, now)
     else
-      match model.scripts.find? (·.command == command) with
-      | none =>
-        (.error
-            (.notFound
-              s!"cannot start `{command.program}` in {command.directory}: the model has no script for it"),
-          model, now)
-      | some script =>
-        let after := now + script.takes
-        let started := { model with started := model.started.push command }
-        let killed := cancelAt.any fun instant => now < instant && instant ≤ after
-        (limited limit script.reply,
-          if killed then { started with killed := started.killed.push command } else started, after)
+      if relativeProgram command.program then (.error .relativeProgram, model, now)
+      else
+        match model.scripts.find? (·.command == command) with
+        | none =>
+          (.error
+              (.notFound
+                s!"cannot start `{command.program}` in {command.directory}: the model has no script for it"),
+            model, now)
+        | some script =>
+          let after := now + script.takes
+          let started := { model with started := model.started.push command }
+          let killed := cancelAt.any fun instant => now < instant && instant ≤ after
+          (limited limit script.reply,
+            if killed then { started with killed := started.killed.push command } else started,
+            after)
 
 end ProcessModel
 

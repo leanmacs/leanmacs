@@ -497,14 +497,14 @@ def missingProgram : String :=
 /-- The properties every implementation of the job port's process requests
 has. -/
 def processProperties : List ProcessProperty :=
-  [{ name :=
+  [{  name :=
         "a run to its end replies with its exit status 3 and both streams byte for byte, a byte that is not UTF-8 among them"
-     scripts := fun root =>
-       #[{ command := sh root runScript
-           reply := .ok { exit := .code 3, stdout := "out\n".toUTF8, stderr := errBytes } }]
-     holds := fun root => do
-       let ran ← ranOk (sh root runScript)
-       return ran.exit == .code 3 && ran.stdout == "out\n".toUTF8 && ran.stderr == errBytes },
+      scripts := fun root =>
+        #[{ command := sh root runScript
+            reply := .ok { exit := .code 3, stdout := "out\n".toUTF8, stderr := errBytes } }]
+      holds := fun root => do
+        let ran ← ranOk (sh root runScript)
+        return ran.exit == .code 3 && ran.stdout == "out\n".toUTF8 && ran.stderr == errBytes },
     { name := "a child ended by a signal replies with the signal"
       scripts := fun root =>
         #[{ command := sh root "kill -9 $$"
@@ -513,7 +513,8 @@ def processProperties : List ProcessProperty :=
         return (← ranOk (sh root "kill -9 $$")).exit == .signal 9 },
     { name := "the child runs in the command's directory: `ls` there lists the property's file"
       files := #[("listed", .empty)]
-      scripts := fun root => #[{ command := { program := "/bin/ls", directory := root }, reply := wrote "listed\n" }]
+      scripts := fun root =>
+        #[{ command := { program := "/bin/ls", directory := root }, reply := wrote "listed\n" }]
       holds := fun root => do
         return (← ranOk { program := "/bin/ls", directory := root }).stdout == "listed\n".toUTF8 },
     { name :=
@@ -539,8 +540,8 @@ def processProperties : List ProcessProperty :=
         #[{ command := sh root "exit 0"
             reply := .ok { exit := .code 0, stdout := .empty, stderr := .empty } }]
       holds := fun root => do
-        let .error (.notFound _) ← Process.run { program := missingProgram, directory := root } roomyOutput
-          | return false
+        let .error (.notFound _) ←
+          Process.run { program := missingProgram, directory := root } roomyOutput | return false
         return (← ranOk (sh root "exit 0")).exit == .code 0 },
     { name :=
         "a directory that is not absolute and a program that names a directory without being absolute are refused before anything is started, and the job goes on"
@@ -555,8 +556,12 @@ def processProperties : List ProcessProperty :=
         let directory ← Process.run (sh "relative" "exit 0") roomyOutput
         let program ← Process.run { program := "bin/sh", directory := root } roomyOutput
         let after ← ranOk (sh root "exit 0")
-        return (match directory with | .error .relativeDirectory => true | _ => false) &&
-            (match program with | .error .relativeProgram => true | _ => false) &&
+        return (match directory with
+            | .error .relativeDirectory => true
+            | _ => false) &&
+            (match program with
+            | .error .relativeProgram => true
+            | _ => false) &&
             after.exit == .code 0 },
     { name := "output past the limit is refused as too large, with the stream and the limit"
       scripts := fun root =>
@@ -572,8 +577,8 @@ def processProperties : List ProcessProperty :=
 /-- Runs each of `properties` with `run`, which makes the property's files in a
 directory of its own and runs its job there, and returns the names of those
 that did not hold, each with how its job ended if it did not finish. -/
-def processFailures (run : ProcessProperty → IO (Job.Outcome Bool)) (properties : List ProcessProperty) :
-    IO (List String) :=
+def processFailures (run : ProcessProperty → IO (Job.Outcome Bool))
+    (properties : List ProcessProperty) : IO (List String) :=
   properties.filterMapM fun property => do
     match ← run property with
     | .finished true =>
