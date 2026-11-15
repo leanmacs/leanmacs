@@ -9,7 +9,8 @@ formatting, clippy, cargo-deny, rustdoc and the Rust tests; the Lean model
 tests (`mise run lean-test`); the Lean build, lean-fmt's format and lint
 checks; the checks of the Lean/Rust boundary, the contract checks against
 the real bindings and the checks of the config session against the real
-elaborator (`mise run ffi-test`); and the C format check. `hk check` runs the
+elaborator (`mise run ffi-test`); the headless mode run from a staged app
+bundle (`mise run bundle-test`); and the C format check. `hk check` runs the
 same task.
 
 The gate opens no window, makes no surface on one, reads and writes no
@@ -769,7 +770,27 @@ ended with status 1 and no render session was started, stderr must hold
 `editor: nothing could draw in the window: ` and the platform's reason,
 and the copy must be unchanged. `editor --bogus` and `editor a b` must each be status 2: any
 command line that is not `headless` or `window-check` is the window
-mode's, so a word is a file.
+mode's, so a word is a file. `editor headless <config dir> <script file>`
+from the build tree, outside a bundle, must be status 2 with a line on
+stderr that starts `editor: no Lean toolchain`.
+
+`mise run bundle-test` runs **the headless mode from an app bundle**, as the
+installed editor will find its modules. In a temporary directory removed by
+a trap, `tools/stage-bundle.sh` lays out `Leanmacs.app`: a copy of `editor`
+in `Contents/MacOS`, and the `.olean`, `.olean.server` and `.olean.private`
+files of the modules `Editor` imports (`config-test bench-modules`) under
+`Contents/Resources/lean/toolchain/lib/lean` and
+`Contents/Resources/lean/editor`. The copy then runs
+`editor headless <config dir> <script file>` on `tests/headless/bundle`
+with no directory argument, an empty environment (`env -i`: no `HOME`,
+`PATH` or `LEAN_PATH`) and a working directory outside the bundle; it must
+exit 0 and print exactly `expected`, whose command calls compiled code of
+`Init` and of `Editor`. So the executable found the toolchain and its own
+`.olean` files from its own path, and those three file kinds are enough to
+import and run config: outside a bundle the same command line is refused,
+and the build tree's `.olean` directory is not beside the copy. It has a
+time limit of its own, 120 seconds, for copying the executable and the
+module files.
 
 What the gate checks of drawing, then: frames a bound display publishes
 reach a render loop with the input they answer (`editor-ffi`'s tests,

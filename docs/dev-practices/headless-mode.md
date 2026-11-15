@@ -1,15 +1,59 @@
 # The headless mode
 
 ```sh
-editor headless [--render] <sysroot> <olean dir> <config dir> <script file>
+editor headless [--render] [<sysroot> <olean dir>] <config dir> <script file>
 ```
 
 This is the editor with no window. It loads the config in a directory, runs
-a script against it and prints what happened. Every path is an argument:
-`<sysroot>` is the Lean toolchain's directory (`lean --print-prefix`) and
-`<olean dir>` the directory of the editor package's `.olean` files
-(`lean/.lake/build/lib/lean`). Nothing is read from the environment or the
-working directory.
+a script against it and prints what happened. `<sysroot>` is the Lean
+toolchain's directory (`lean --print-prefix`) and `<olean dir>` the
+directory of the editor package's `.olean` files
+(`lean/.lake/build/lib/lean`). They are given both or neither, so three or
+five paths are refused; from the build tree they are always given, and
+every check of the gate but `bundle-test` gives them. Nothing is read from
+the environment or the working directory.
+
+## From an app bundle
+
+An executable at `<bundle>/Contents/MacOS/<name>` is in a bundle, whatever
+the bundle is called, and finds its modules there when the two directories
+are left out:
+
+```
+Leanmacs.app/Contents/MacOS/editor
+Leanmacs.app/Contents/Resources/lean/toolchain/lib/lean/   the toolchain's modules
+Leanmacs.app/Contents/Resources/lean/editor/               the editor's .olean files
+```
+
+`Contents/Resources/lean/toolchain` is a sysroot: its modules are under its
+`lib/lean`, as a toolchain's are. Two directories given on the command line
+are used in place of the bundle's. Outside a bundle there is no toolchain to
+fall back on, so two paths are refused, status 2, with
+`editor: no Lean toolchain: give <sysroot> <olean dir> before the config directory, or run the executable from an app bundle`
+before the usage. The resolution is a pure function of the executable's
+path (`lean/Editor/ModuleLookup.lean`, pinned by
+`ModelTest.moduleLookupChecks` and `ModelTest.headlessCommandLineChecks`),
+and the executable's path is read from `IO.appPath`.
+
+`mise run bundle-test`, part of the gate, lays out that bundle in a
+temporary directory with `tools/stage-bundle.sh` and runs the headless
+mode of a copy of `editor` there on `tests/headless/bundle`, with no
+directory argument, an empty environment and a working directory outside
+the bundle ([`the-gate.md`](the-gate.md)). To stage one by hand, from
+`lean/`, into a directory of your own:
+
+```sh
+sysroot=$(lean --print-prefix)
+.lake/build/bin/config-test bench-modules "$sysroot" .lake/build/lib/lean Editor > <dir>/closure
+../tools/stage-bundle.sh --closure <dir>/closure <dir>/Leanmacs.app .lake/build/bin/editor \
+  "$sysroot" .lake/build/lib/lean olean olean.server olean.private
+```
+
+Those are the modules `Editor` imports and the three file kinds importing
+them reads ([`lean-runtime.md`](../design/lean-runtime.md), "What config
+may import, measured"). Without `--closure` the script stages whole
+top-level directories: `--roots` names the toolchain's (`Init,Std` by
+default), and the package's `Editor` is always staged.
 
 ## Drawing it: `--render`
 

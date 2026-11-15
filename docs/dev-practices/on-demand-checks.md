@@ -49,6 +49,29 @@ which adds the process's real time and its maximum resident set size:
 A time is from the request for a reload to its report. The config is held in
 memory, so the benchmark touches no files. Run it on a quiet machine.
 
+## What config may import, measured on demand
+
+```sh
+mise run module-bench
+```
+
+This measures, on macOS, what each import set config may use costs an app
+bundle (`tools/module-bench.sh`), and asserts nothing, so it is not part of
+the gate. For `Editor` and for `Editor Lean` it prints the modules the
+import reads (`config-test bench-modules <sysroot> <olean dir> <module>…`)
+and the bytes of each file kind, of whole top-level directories and of those
+modules alone; which file kinds the import needs, by staging the whole
+directories in a temporary directory with `tools/stage-bundle.sh` with
+`olean`, then `olean olean.server`, then `olean olean.server
+olean.private`, then that with `ir ir.sig`, and importing from each; and,
+with the closure staged with the kinds it needs, five runs of `bench-start`
+under `/usr/bin/time -l` and, for `Editor`, five runs of the staged
+bundle's headless mode with an empty environment. Every temporary
+directory is removed by a trap. It takes about two minutes and a few GB of
+temporary disk. The figures, and what they decided, are in
+[`lean-runtime.md`](../design/lean-runtime.md), "What config may import,
+measured". Run it again when the Lean toolchain's pin moves.
+
 ## The job benchmark, on demand
 
 ```sh

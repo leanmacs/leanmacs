@@ -105,14 +105,27 @@ loop ends, on `:q` or a close request, a task waits briefly for the last
 frame to be drawn and asks the window to close. Then `main` quits the
 queues and exits.
 
-- **The toolchain.** Lean cannot run `lean --print-prefix`, which would
-  spawn a process, so the toolchain's directory is an argument
-  (`--sysroot`). With none, no config is loaded, and the echo area says
+- **The toolchain.** In an app bundle, an executable at
+  `<bundle>/Contents/MacOS/<name>`, it is `Contents/Resources/lean/toolchain`,
+  a sysroot whose modules are under its `lib/lean`. Outside a bundle Lean
+  cannot run `lean --print-prefix`, which would spawn a process, so the
+  toolchain's directory is an argument (`--sysroot`). With none, no config
+  is loaded, and the echo area says
   `config: not loaded: no Lean toolchain given (--sysroot)`. `mise run
   edit` always gives the pinned one.
-- **The editor's `.olean` files** are `<directory of the executable>/../lib/lean`
-  unless `--oleans` says otherwise: where Lake puts them in the build tree.
-  Where an installed editor keeps them is still not decided.
+- **The editor's `.olean` files** are, in a bundle,
+  `Contents/Resources/lean/editor`, and outside one
+  `<directory of the executable>/../lib/lean`, where Lake puts them in the
+  build tree, unless `--oleans` says otherwise.
+- **Where both are found** is a pure function of the executable's path,
+  read from `IO.appPath` at the edge, and of the directories the command
+  line gave, each of which overrides its own default wherever the
+  executable is (`lean/Editor/ModuleLookup.lean`). The bundle is known by
+  its layout alone, not by a `.app` suffix. Nothing is read from the
+  environment: `LEAN_PATH` is ignored, as the elaborator ignores it. It is
+  pinned in `model-test` (`ModelTest.moduleLookupChecks`,
+  `windowOptionChecks`, `headlessCommandLineChecks`) and run from a staged
+  bundle by the gate's `bundle-test`.
 - **The config directory** is `--config`, or `leanmacs` under
   `$XDG_CONFIG_HOME`, or under `$HOME/.config` when that is unset. A
   default directory that does not exist loads nothing and says nothing; a
@@ -167,7 +180,7 @@ The one thing that runs a window today is the keyboard check
 to see that keys reach a Lean loop, and how fast.
 
 What is built of this is the headless mode (`lean/Editor/Headless.lean`;
-`editor headless <sysroot> <olean dir> <config dir> <script file>`): an
+`editor headless [<sysroot> <olean dir>] <config dir> <script file>`): an
 editor loop on a dedicated task with no window and no keymaps, which loads a
 config directory in the background, runs its commands against the library,
 starts its jobs and prints what happened. It exists for integration tests.
@@ -179,9 +192,13 @@ scene is published too. With no window, the display is a recorder of the
 scenes (`lean/Editor/Display/Recorder.lean`), and the frame is made, 0 by 0,
 at the first event from the window input, so that the texts commands make
 before it keep their indices. The first load is an ordinary reload: the
-loop answers events before and while it runs. Where an installed
-editor finds the toolchain's `.olean` files and its own is not decided: the
-headless mode takes both directories as arguments.
+loop answers events before and while it runs. The toolchain's directory
+and the editor's `.olean` directory are its first two paths; from an
+executable in an app bundle they may be left out, and are then the
+bundle's, resolved as the window mode's are (above). Outside a bundle two
+paths are refused, status 2, because there is no toolchain to use: the
+headless mode never falls back to the environment or the working
+directory (`lean/Editor/Headless/CommandLine.lean`).
 
 Before its loop starts, the headless mode does what the command loop's
 start-up will:
@@ -1171,6 +1188,64 @@ The window library added 2.3 MB to `editor` on macOS.
 import sets `Editor`, `Editor` with `Std`, and `Editor` with `Lean`, in the
 executable as built.
 
+### What config may import, measured
+
+Config is elaborated on `Editor`, and an app bundle carries the module files
+that import reads, since it can rely on no toolchain on the machine. Which
+files those are, and what the set with `Lean` would cost instead, was
+measured from staged bundles (`tools/stage-bundle.sh`), on 2026-11-15, on an
+Apple M5 Max, macOS 27.2, Lean 4.35.0, with
+
+```sh
+mise run module-bench
+```
+
+(`tools/module-bench.sh`; [on-demand-checks.md](../dev-practices/on-demand-checks.md)).
+MB are 10⁶ bytes of apparent size. "Whole directories" are the toolchain's
+top-level `Init` and `Std` (and `Lean` for the second set) with their root
+files, and the package's `Editor`; "closure" is the modules the import
+reads, which `config-test bench-modules` lists.
+
+| | `Editor` | `Editor` with `Lean` |
+|---|---|---|
+| Modules the import reads | 700: `Init` 653, `Editor` 47 | 2,421: `Init` 653, `Std` 494, `Lean` 1,227, `Editor` 47 |
+| File kinds the import reads | `.olean`, `.olean.server`, `.olean.private` | the same |
+| Bytes shipped, those kinds, whole directories | 734.6 MB | 1,728.1 MB |
+| Bytes shipped, those kinds, closure | 396.4 MB | 1,684.5 MB |
+| Of the closure: `.olean` / `.olean.server` / `.olean.private` | 126.5 / 11.6 / 258.4 MB | 360.0 / 30.6 / 1,293.9 MB |
+| Not shipped: `.ir` / `.ir.sig` of the closure | 18.4 / 0.1 MB | 354.4 / 0.4 MB |
+| `bench-start`: import, then first load of a 20-line config (median of 5) | 137.8 ms, 13.3 ms | 467.5 ms, 14.1 ms |
+| `bench-start`: real time (median of 5) | 0.17 s | 0.52 s |
+| `bench-start`: largest maximum resident set (of 5) | 406.3 MB | 1,205.5 MB |
+| The bundle's headless mode on `tests/headless/bundle`, `env -i`: real time (median of 5) | 0.18 s | not run |
+| The same: largest maximum resident set (of 5) | 406.1 MB | not run |
+
+What the figures show:
+
+- **The import reads three kinds of file.** With `.olean` alone it fails
+  on `Init.olean.server`, and with `.olean.server` added on
+  `Init.olean.private`; with both it imports and the config loads and runs.
+  `.ir` and `.ir.sig` are never needed: compiled code is linked into the
+  executable, and the fixture's command, which calls compiled code of
+  `Init` and of `Editor`, runs without them (`bundle-test`). The editor
+  package's own modules have only `.olean` files; the toolchain's use the
+  module system, which reads all three. `.olean.private` is two thirds of
+  the bytes.
+- **`Editor` imports nothing of `Std`.** Its closure is all of `Init` and
+  47 of the package's modules, so the closure is 46% smaller than the whole
+  directories (`Std`'s 494 modules and the package's modules that `Editor`
+  does not import, the bindings, the config session and the headless mode,
+  are left out). The bundle ships the closure, and `bundle-test` stages
+  exactly it.
+- **With `Lean`, config would cost four times the bytes, about three times
+  the start-up, and three times the memory.** The closure saves little
+  there: `Lean` reaches nearly all of `Std` and all of `Init`.
+
+Config imports what `Editor` imports, and the bundle ships that set's
+closure, in those three kinds, about 396 MB beside the executable. Whether
+config should be allowed `Lean` (for metaprogramming, say) is a later task,
+to be decided from these numbers.
+
 **A dynamically linked build saves disk and nothing else**, so there is none.
 Lake has no option for one outside Windows; it would be link arguments of
 our own. Measured once on macOS, by linking `editor` by hand both ways from
@@ -1207,9 +1282,6 @@ slower, and it would tie the executable to a toolchain directory.
 - **A header for config chunks.** A chunk has no `import` line, so Lean's
   tooling cannot check or format a config file by itself. Whether a chunk
   should carry a header the session checks and skips is not decided.
-- **Where an installed editor finds `.olean` files**: the toolchain's and
-  its own. The headless mode takes both directories as arguments, and
-  nothing else loads config yet.
 - **Overriding compiled features** beyond re-registration.
 - **Memory growth** with many packages loaded and with background jobs
   holding old environments.
