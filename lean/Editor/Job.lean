@@ -495,8 +495,7 @@ example : True := by
 example : True := by
   fail_if_success
     exact
-      (fun (_ : EditorM (Except ProcessError Process.Delivery)) => True.intro)
-        (Process.read ⟨1⟩)
+      (fun (_ : EditorM (Except ProcessError Process.Delivery)) => True.intro) (Process.read ⟨1⟩)
   trivial
 
 example : True := by

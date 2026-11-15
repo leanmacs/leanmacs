@@ -271,11 +271,9 @@ instance : Repr ProcessRequest where
   reprPrec request _ :=
     match request with
     | .run command limit => "ProcessRequest.run " ++ repr command ++ " " ++ repr limit
-    | .start command streaming =>
-      "ProcessRequest.start " ++ repr command ++ " " ++ repr streaming
+    | .start command streaming => "ProcessRequest.start " ++ repr command ++ " " ++ repr streaming
     | .read process => "ProcessRequest.read " ++ repr process
-    | .write process bytes =>
-      "ProcessRequest.write " ++ repr process ++ s!" ({bytes.size} bytes)"
+    | .write process bytes => "ProcessRequest.write " ++ repr process ++ s!" ({bytes.size} bytes)"
     | .closeInput process => "ProcessRequest.closeInput " ++ repr process
 
 /-- The type of the reply to each process request: a refusal or the result.

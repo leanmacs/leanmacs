@@ -897,6 +897,16 @@ bool editor_ffi_processes_take(uint64_t id, editor_ffi_raw_process_result *out);
 bool editor_ffi_processes_cancel(uint64_t id);
 uint64_t editor_ffi_processes_pending(void);
 void editor_ffi_processes_shutdown(void);
+bool editor_ffi_processes_open(uint64_t id, const uint8_t *words,
+                               size_t words_len, const uint8_t *strings,
+                               size_t strings_len);
+bool editor_ffi_processes_read(uint64_t child, uint64_t wait);
+bool editor_ffi_processes_write(uint64_t child, uint64_t wait,
+                                const uint8_t *bytes, size_t len);
+bool editor_ffi_processes_close_input(uint64_t child, uint64_t wait);
+bool editor_ffi_processes_take_stream(uint64_t wait,
+                                      editor_ffi_raw_process_result *out);
+uint64_t editor_ffi_processes_held(uint64_t child);
 
 // `Editor.Ffi.processesRunRaw : UInt64 → @& ByteArray → @& String → IO Bool`
 lean_obj_res editor_glue_processes_run(uint64_t id, b_lean_obj_arg words,
@@ -906,13 +916,9 @@ lean_obj_res editor_glue_processes_run(uint64_t id, b_lean_obj_arg words,
       string_len(strings))));
 }
 
-// `Editor.Ffi.processesTakeRaw : UInt64 → IO (Option RawProcessResult)`.
-// `none` when the service keeps no result for the id.
-lean_obj_res editor_glue_processes_take(uint64_t id) {
-  editor_ffi_raw_process_result raw;
-  if (!editor_ffi_processes_take(id, &raw)) {
-    return lean_io_result_mk_ok(lean_box(0)); // `none`
-  }
+// The Lean `RawProcessResult` of a record the library filled, as
+// `option_some`'s argument, with the library's buffers handed back.
+static lean_object *process_result_of(editor_ffi_raw_process_result raw) {
   lean_object *detail =
       lean_mk_string_from_bytes((const char *)raw.detail, raw.detail_len);
   // `RawProcessResult`: the object fields `words`, `detail`, `stdout` and
@@ -927,7 +933,63 @@ lean_obj_res editor_glue_processes_take(uint64_t id) {
   editor_ffi_text_free(raw.detail, raw.detail_len);
   editor_ffi_text_free(raw.out, raw.out_len);
   editor_ffi_text_free(raw.err, raw.err_len);
-  return lean_io_result_mk_ok(option_some(result));
+  return result;
+}
+
+// `Editor.Ffi.processesTakeRaw : UInt64 → IO (Option RawProcessResult)`.
+// `none` when the service keeps no result for the id.
+lean_obj_res editor_glue_processes_take(uint64_t id) {
+  editor_ffi_raw_process_result raw;
+  if (!editor_ffi_processes_take(id, &raw)) {
+    return lean_io_result_mk_ok(lean_box(0)); // `none`
+  }
+  return lean_io_result_mk_ok(option_some(process_result_of(raw)));
+}
+
+// `Editor.Ffi.processesOpenRaw : UInt64 → @& ByteArray → @& String → IO
+// Bool`: a streaming child's open, laid out as a run is with three words
+// before.
+lean_obj_res editor_glue_processes_open(uint64_t id, b_lean_obj_arg words,
+                                        b_lean_obj_arg strings) {
+  return lean_io_result_mk_ok(lean_box(editor_ffi_processes_open(
+      id, byte_array_bytes(words), byte_array_len(words), string_bytes(strings),
+      string_len(strings))));
+}
+
+// `Editor.Ffi.processesRead : UInt64 → UInt64 → IO Bool`
+lean_obj_res editor_glue_processes_read(uint64_t child, uint64_t wait) {
+  return lean_io_result_mk_ok(lean_box(editor_ffi_processes_read(child, wait)));
+}
+
+// `Editor.Ffi.processesWrite : UInt64 → UInt64 → @& ByteArray → IO Bool`.
+// The library copies the bytes, which are borrowed for the call.
+lean_obj_res editor_glue_processes_write(uint64_t child, uint64_t wait,
+                                         b_lean_obj_arg bytes) {
+  return lean_io_result_mk_ok(lean_box(editor_ffi_processes_write(
+      child, wait, byte_array_bytes(bytes), byte_array_len(bytes))));
+}
+
+// `Editor.Ffi.processesCloseInput : UInt64 → UInt64 → IO Bool`
+lean_obj_res editor_glue_processes_close_input(uint64_t child, uint64_t wait) {
+  return lean_io_result_mk_ok(
+      lean_box(editor_ffi_processes_close_input(child, wait)));
+}
+
+// `Editor.Ffi.processesTakeStreamRaw : UInt64 → IO (Option
+// RawProcessResult)`. A reply about a streaming child crosses in a run's
+// record; Lean reads its lines off the lengths in its words.
+lean_obj_res editor_glue_processes_take_stream(uint64_t wait) {
+  editor_ffi_raw_process_result raw;
+  if (!editor_ffi_processes_take_stream(wait, &raw)) {
+    return lean_io_result_mk_ok(lean_box(0)); // `none`
+  }
+  return lean_io_result_mk_ok(option_some(process_result_of(raw)));
+}
+
+// `Editor.Ffi.processesHeld : UInt64 → IO UInt64`
+lean_obj_res editor_glue_processes_held(uint64_t child) {
+  return lean_io_result_mk_ok(
+      lean_box_uint64(editor_ffi_processes_held(child)));
 }
 
 // `Editor.Ffi.processesCancel : UInt64 → IO Bool`. It kills the run's

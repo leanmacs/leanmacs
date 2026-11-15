@@ -78,6 +78,13 @@ once.
   cancelled job's child ends. A result already kept is dropped.
 - **A refusal as shut down** becomes `failed` with the library's words: the
   editor shuts the service down only as it quits.
+- **A streaming child** goes to the library as an open under its start's
+  wait's id, which names it from then on; a read, a write and a close each go
+  with their own wait's id, and each reply is taken once
+  (`Ffi.processesTakeStream`): a delivery's frames, written, or input closed.
+  A request the library does not take is refused at once as `failed`, as a
+  run is. Cancelling the child's id kills it; cancelling a read's or a
+  write's withdraws that wait alone.
 
 `finishWith` is how a finished job's command is run: it hands the run what
 the job held, then settles the job. The program it is handed is the
@@ -365,24 +372,104 @@ def takenRun (refused : RefusedRuns) (id : UInt64) : BaseIO (Except ProcessError
   | .ok none =>
     return .error runNoResult
 
+/-- The port's form of a stream's frames as the library delivered them. -/
+def framesOf : Ffi.StreamFrames → Process.Frames
+  | .lines lines => .lines lines
+  | .bytes bytes => .bytes bytes
+
+/-- The port's form of how the library says a streaming child ended. -/
+def endOf : Ffi.StreamEnd → Process.End
+  | .exited exit => .exited (exitOf exit)
+  | .lineTooLong .out bound => .lineTooLong .out bound.toNat
+  | .lineTooLong .err bound => .lineTooLong .err bound.toNat
+  | .failed detail => .failed detail
+
+/-- The refusal a reply about a streaming child is, if it is one: a refusal
+as a run's is, input closed, or a reply of another request's kind, which is
+a failure that says so. -/
+def streamRefusalOf : Ffi.StreamReply → ProcessError
+  | .refused result =>
+    match runReplyOf result with
+    | .error refusal => refusal
+    | .ok _ => .failed "the process service answered a streaming request with a run's result"
+  | .inputClosed detail => .inputClosed detail
+  | _ => .failed "the process service answered with a reply of another request's kind"
+
+/-- The reply about a streaming child that was asked for as the wait `id`,
+which has completed: the refusal the adapter kept for a request that never
+reached the library, or else what the library hands over, once. -/
+def takenStream (refused : RefusedRuns) (id : UInt64) :
+    BaseIO (Except ProcessError Ffi.StreamReply) := do
+  let refusal? ← refused.refused.modifyGet fun refused => (refused[id]?, refused.erase id)
+  if let some refusal := refusal? then
+    return .error refusal
+  let taken ←
+    (return .ok (← Ffi.processesTakeStream id) :
+            IO (Except ProcessError (Option Ffi.StreamReply))).catchExceptions
+        fun error => pure (.error (.failed (toString error)))
+  match taken with
+  | .error refusal =>
+    return .error refusal
+  | .ok (some reply) =>
+    return .ok reply
+  | .ok none =>
+    return .error runNoResult
+
 /-- The process port answered by the library's process service. `completions`
 is the table its waits are registered in, and `refused` where it keeps the
-refusals of the runs that never reached the library. -/
+refusals of the requests that never reached the library. A streaming child
+is named by its start's wait, and each read, write and close of it goes to
+the library with its own wait's id. -/
 def realProcesses (completions : Completions) (refused : RefusedRuns) : Processes :=
   { start := fun id request => do
-      match request with
-      | .run command limit =>
-        let environment := command.environment
-        let started ←
-          (Ffi.processesRun id command.program command.arguments environment.clear environment.set
-                  environment.unset command.directory.toString (word limit)).catchExceptions
-              fun _ => pure false
-        unless started do
-          refused.refused.modify (·.insert id runNotTaken)
-          completions.finish id .completed
+      let started ←
+        (match request with
+                | .run command limit =>
+                  let environment := command.environment
+                  Ffi.processesRun id command.program command.arguments environment.clear
+                    environment.set environment.unset command.directory.toString (word limit)
+                | .start command streaming =>
+                  let environment := command.environment
+                  Ffi.processesOpen id streaming.input (streaming.stdout == .bytes)
+                    (streaming.stderr == .bytes) command.program command.arguments environment.clear
+                    environment.set environment.unset command.directory.toString
+                    (word streaming.bound)
+                | .read child => Ffi.processesRead (word child.number) id
+                | .write child bytes => Ffi.processesWrite (word child.number) id bytes
+                | .closeInput child => Ffi.processesCloseInput (word child.number) id :
+                IO Bool).catchExceptions
+            fun _ => pure false
+      unless started do
+        refused.refused.modify (·.insert id runNotTaken)
+        completions.finish id .completed
     take := fun id request =>
       match request with
       | .run .. => takenRun refused id
+      | .start .. => do
+        match ← takenStream refused id with
+        | .ok .opened =>
+          return .ok ⟨id.toNat⟩
+        | .ok reply =>
+          return .error (streamRefusalOf reply)
+        | .error refusal =>
+          return .error refusal
+      | .read .. => do
+        match ← takenStream refused id with
+        | .ok (.delivered stdout stderr ended) =>
+          return .ok
+              { stdout := framesOf stdout, stderr := framesOf stderr, ended := ended.map endOf }
+        | .ok reply =>
+          return .error (streamRefusalOf reply)
+        | .error refusal =>
+          return .error refusal
+      | .write .. | .closeInput .. => do
+        match ← takenStream refused id with
+        | .ok .written =>
+          return .ok ()
+        | .ok reply =>
+          return .error (streamRefusalOf reply)
+        | .error refusal =>
+          return .error refusal
     cancel := fun id => do
       refused.refused.modify (·.erase id)
       (discard <| Ffi.processesCancel id : IO Unit).catchExceptions fun _ => pure () }

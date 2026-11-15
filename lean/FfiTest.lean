@@ -501,6 +501,19 @@ def decodedProcess (status : UInt64) (values : List UInt64) (detail : String := 
     Option Editor.Ffi.ProcessResult :=
   (Editor.Ffi.ProcessResult.decode status (wordBytes values) detail .empty .empty).toOption
 
+/-- What `Editor.Ffi.StreamReply.decode` makes of a status, words, a detail
+and the two buffers; `none` when it is an error. -/
+def decodedStream (status : UInt64) (values : List UInt64) (detail : String := "")
+    (out err : ByteArray := .empty) : Option Editor.Ffi.StreamReply :=
+  (Editor.Ffi.StreamReply.decode status (wordBytes values) detail out err).toOption
+
+/-- The reply of the wait `wait` on a streaming child, once its completion
+has come back; `none` when it did not come in time or left no reply. -/
+def streamReply (wait : UInt64) : IO (Option Editor.Ffi.StreamReply) := do
+  unless ← processCompleted wait do
+    return none
+  Editor.Ffi.processesTakeStream wait
+
 /-- The checks of the process service's bindings. A run goes in with an id,
 its completion comes back on the completion queue, and its result is taken by
 the id. What a run does is the library's rule; these pin that a command, its
@@ -579,7 +592,74 @@ def processChecks (_ : Unit) : List Check :=
           (([(8, []), (0, []), (0, [2, 0]), (0, [0]), (1, [1]), (5, [2, 1]), (5, [0]), (7, [0])].all
               fun ((status, values) : UInt64 × List UInt64) =>
               (decodedProcess status values).isNone) &&
-            (Editor.Ffi.ProcessResult.decode 0 ⟨#[1, 2, 3]⟩ "" .empty .empty).toOption.isNone) }]
+            (Editor.Ffi.ProcessResult.decode 0 ⟨#[1, 2, 3]⟩ "" .empty .empty).toOption.isNone) },
+    { name :=
+        "a streaming child crosses the bindings: it opens, its first line is read as it writes it, a line written reaches it, a close ends its input, and its last delivery is its exit"
+      run :=
+        inOwnDirectory fun directory => do
+          let script := "echo one; read x; echo \"$x\"; read y; exit 4"
+          unless
+            ←
+              Editor.Ffi.processesOpen 1140 true false false "/bin/sh" #["-c", script] false #[] #[]
+                  directory.toString 1000000 do
+            return false
+          let opened ← streamReply 1140
+          unless ← Editor.Ffi.processesRead 1140 1141 do
+            return false
+          let first ← streamReply 1141
+          unless ← Editor.Ffi.processesWrite 1140 1142 "two\n".toUTF8 do
+            return false
+          let written ← streamReply 1142
+          unless ← Editor.Ffi.processesRead 1140 1143 do
+            return false
+          let second ← streamReply 1143
+          unless ← Editor.Ffi.processesCloseInput 1140 1144 do
+            return false
+          let closed ← streamReply 1144
+          let mut last := none
+          for wait in [1145:1165] do
+            unless ← Editor.Ffi.processesRead 1140 wait.toUInt64 do
+              break
+            last ← streamReply wait.toUInt64
+            if let some (.delivered _ _ (some _)) := last then
+              break
+          return opened == some .opened &&
+              first == some (.delivered (.lines #["one".toUTF8]) (.lines #[]) none) &&
+              written == some .written &&
+              second == some (.delivered (.lines #["two".toUTF8]) (.lines #[]) none) &&
+              closed == some .written &&
+              (match last with
+              | some (.delivered _ _ (some (.exited (.code 4)))) => true
+              | _ => false) },
+    { name :=
+        "a stream reply's words decode by its status: opened, written, input closed, each refusal, and a delivery's lines by their lengths, its bytes and each end"
+      run :=
+        pure
+          (decodedStream 10 [] == some .opened && decodedStream 12 [] == some .written &&
+            decodedStream 8 [] "c" == some (.inputClosed "c") &&
+            decodedStream 3 [] "n" == some (.refused (.notFound "n")) &&
+            decodedStream 6 [] "s" == some (.refused (.shutDown "s")) &&
+            decodedStream 11 [0, 2, 3, 0, 1, 0] "" "one".toUTF8 ("x".toUTF8.push 0xFF) ==
+              some
+                (.delivered (.lines #["one".toUTF8, .empty]) (.bytes ("x".toUTF8.push 0xFF))
+                  none) &&
+            decodedStream 11 [0, 0, 0, 0, 1, 0, 4] ==
+              some (.delivered (.lines #[]) (.lines #[]) (some (.exited (.code 4)))) &&
+            decodedStream 11 [0, 0, 0, 0, 1, 1, 9] ==
+              some (.delivered (.lines #[]) (.lines #[]) (some (.exited (.signal 9)))) &&
+            decodedStream 11 [0, 0, 0, 0, 2, 1, 64] ==
+              some (.delivered (.lines #[]) (.lines #[]) (some (.lineTooLong .err 64))) &&
+            decodedStream 11 [1, 1, 3] "EIO" ==
+              some (.delivered (.bytes .empty) (.bytes .empty) (some (.failed "EIO")))) },
+    { name :=
+        "a stream reply the bindings cannot read is an error: a status the table does not have, line lengths that do not add up, words left over, and words a status has none of"
+      run :=
+        pure
+          ((decodedStream 9 []).isNone && (decodedStream 0 [0, 3]).isNone &&
+            (decodedStream 11 [0, 1, 4, 0, 0] "" "one".toUTF8).isNone &&
+            (decodedStream 11 [0, 0, 0, 0, 0, 7]).isNone &&
+            (decodedStream 11 [0, 0, 0, 0, 4]).isNone &&
+            (decodedStream 10 [1]).isNone) }]
 
 /-- The checks of the two event queues: Rust threads push, Lean pulls. -/
 def queueChecks (_ : Unit) : List Check :=

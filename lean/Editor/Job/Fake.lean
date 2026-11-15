@@ -482,7 +482,8 @@ def take (processes : FakeProcesses) (id : UInt64) (request : ProcessRequest) :
   processes.state.modifyGet fun state =>
     if state.pending.any (·.1 == id) then
       -- A child is named by the wait of its start, as the library's is.
-      let model := if let .start .. := request then { state.model with next := id.toNat } else state.model
+      let model :=
+        if let .start .. := request then { state.model with next := id.toNat } else state.model
       let (reply, model, _) := model.handle 0 none request
       (reply,
         { state with
@@ -502,7 +503,8 @@ def cancel (processes : FakeProcesses) (id : UInt64) : BaseIO Unit :=
         withdrawn := state.withdrawn.push id }
     else
       if state.model.children.any (·.id == id.toNat) then
-        { state with model := state.model.kill id.toNat, withdrawn := state.withdrawn.push id }
+        { state with
+          model := state.model.kill id.toNat, withdrawn := state.withdrawn.push id }
       else state
 
 /-- The service as the port the runner is given. -/

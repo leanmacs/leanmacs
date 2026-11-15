@@ -200,8 +200,7 @@ def advanceOnce (child : Child) : Option Child :=
             { child with
               consumed := child.received.size
               writing := some (stream, unread, 0) }
-        else if child.inputEnded then some next
-        else none
+        else if child.inputEnded then some next else none
       | .awaitClosed =>
         if child.inputEnded then some { next with consumed := child.received.size } else none
       | .closesInput => some { next with closedItsInput := true }
@@ -280,7 +279,8 @@ def limited (limit : Nat) : Except ProcessError Process.Ran → Except ProcessEr
 
 /-- `model` with `child` in place of its child of the same id. -/
 def put (model : ProcessModel) (child : Child) : ProcessModel :=
-  { model with children := model.children.map fun held => if held.id == child.id then child else held }
+  { model with
+    children := model.children.map fun held => if held.id == child.id then child else held }
 
 /-- The model's answer to `request` made at `now` on the job clock, by a job
 cancelled at `cancelAt` if it ever is: the reply, the model after it, and
@@ -338,23 +338,24 @@ def handle (model : ProcessModel) (now : Nat) (cancelAt : Option Nat) :
       if child.deliverable .out || child.deliverable .err then
         let (stdout, outRest) := child.take .out
         let (stderr, errRest) := child.take .err
-        let child := { child with stdout := outRest, stderr := errRest }
+        let child :=
+          { child with
+            stdout := outRest, stderr := errRest }
         if child.done && outRest.size == 0 && errRest.size == 0 then
           (.ok { stdout, stderr, ended := some (.exited child.script.exit) }, forget model, now)
         else (.ok { stdout, stderr }, put child.advance, now)
       else
         match [Process.Stream.out, .err].find? child.tooLong with
         | some stream =>
-          (.ok
-              { stdout := child.none .out, stderr := child.none .err
+          (.ok {
+                stdout := child.none .out, stderr := child.none .err
                 ended := some (.lineTooLong stream child.streaming.bound) },
             { forget model with killed := model.killed.push child.script.command }, now)
         | none =>
           if child.done then
-            (.ok
-                { stdout := child.none .out, stderr := child.none .err
-                  ended := some (.exited child.script.exit) },
-              forget model, now)
+            (.ok {
+                  stdout := child.none .out, stderr := child.none .err
+                  ended := some (.exited child.script.exit) }, forget model, now)
           else
             -- Nothing can ever answer this read: only a cancel ends it.
             match cancelAt with

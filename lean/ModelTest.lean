@@ -1092,23 +1092,37 @@ def processChecks : List Check :=
         let script : Process.StreamScript := { command := sleeper, steps := #[.awaitClosed] }
         let starts : JobM Unit := discard <| JobContract.started sleeper (JobContract.lines 64 true)
         let jobs : List (JobM Bool × Bool) :=
-          [((do starts; return true), false), ((do starts; throw "it fails"), false),
-            ((do starts; sleep 1000; return true), true)]
+          [((do
+                starts;
+                return true),
+              false),
+            ((do
+                starts;
+                throw "it fails"),
+              false),
+            ((do
+                starts;
+                sleep 1000;
+                return true),
+              true)]
         let results ←
           jobs.mapM fun (job, cancel) => do
-            let (rig, processes) ← Rig.withProcesses { streams := #[script] }
-            let spawned ← rig.spawn (reporting fun _ => job)
-            if cancel then
-              unless ← eventually (return (← rig.clock.waiting) == 1) do
+              let (rig, processes) ← Rig.withProcesses { streams := #[script] }
+              let spawned ← rig.spawn (reporting fun _ => job)
+              if cancel then
+                unless ← eventually (return (← rig.clock.waiting) == 1) do
+                  return false
+                spawned.handle.cancel
+              unless ← eventually spawned.handle.ended do
                 return false
-              spawned.handle.cancel
-            unless ← eventually spawned.handle.ended do
-              return false
-            let child := ((← processes.started)[0]?.map (·.1)).getD 0
-            let model ← processes.model
-            return (← processes.withdrawn) == #[child] && model.killed == #[sleeper] &&
-                model.children.isEmpty
-        let (_, model) := (do starts; return true : JobM Bool).runModel
+              let child := ((← processes.started)[0]?.map (·.1)).getD 0
+              let model ← processes.model
+              return (← processes.withdrawn) == #[child] && model.killed == #[sleeper] &&
+                  model.children.isEmpty
+        let (_, model) :=
+          (do
+                starts;
+                return true : JobM Bool).runModel
             { processes := { streams := #[script] } }
         return results.all id && model.processes.killed == #[sleeper] &&
             model.processes.children.isEmpty },

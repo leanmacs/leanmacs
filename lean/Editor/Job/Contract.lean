@@ -613,7 +613,9 @@ def streamProperties : List ProcessProperty :=
         let mut echoed := #[]
         for _ in [0:10] do
           echoed := echoed.push (← delivered child)
-          if linesOf echoed .out == linesFrom ["two"] && linesOf echoed .err == linesFrom ["err"] then
+          if
+              linesOf echoed .out == linesFrom ["two"] &&
+                linesOf echoed .err == linesFrom ["err"] then
             break
         let .ok () ← Process.closeInput child | return false
         let late ← Process.write child "late".toUTF8
@@ -640,7 +642,8 @@ def streamProperties : List ProcessProperty :=
         let all ← toTheEnd child
         return bytesOf all .out == counted 20000 && endOf all == some (.exited (.code 0)) },
     { name := "bytes are delivered byte for byte, a byte that is not UTF-8 among them"
-      streams := fun root => #[writes (sh root "printf 'a\\377b'") ("a".toUTF8.push 0xFF |>.push 98)]
+      streams := fun root =>
+        #[writes (sh root "printf 'a\\377b'") ("a".toUTF8.push 0xFF |>.push 98)]
       holds := fun root => do
         let child ←
           started (sh root "printf 'a\\377b'") { stdout := .bytes, stderr := .bytes, bound := 64 }
@@ -655,8 +658,10 @@ def streamProperties : List ProcessProperty :=
     { name := "a process the job does not hold is noSuchProcess, answered without a request"
       holds := fun _ => do
         match ← Process.read ⟨999999⟩ with
-        | .error .noSuchProcess => return true
-        | _ => return false },
+        | .error .noSuchProcess =>
+          return true
+        | _ =>
+          return false },
     { name := "a job that ends with its child running leaves no child"
       streams := fun root => #[{ command := sh root "/bin/sleep 600", steps := #[.awaitClosed] }]
       holds := fun root => do
@@ -666,82 +671,84 @@ def streamProperties : List ProcessProperty :=
 /-- The properties every implementation of the job port's process requests
 has. -/
 def processProperties : List ProcessProperty :=
-  [{  name :=
-        "a run to its end replies with its exit status 3 and both streams byte for byte, a byte that is not UTF-8 among them"
-      scripts := fun root =>
-        #[{ command := sh root runScript
-            reply := .ok { exit := .code 3, stdout := "out\n".toUTF8, stderr := errBytes } }]
-      holds := fun root => do
-        let ran ← ranOk (sh root runScript)
-        return ran.exit == .code 3 && ran.stdout == "out\n".toUTF8 && ran.stderr == errBytes },
-    { name := "a child ended by a signal replies with the signal"
-      scripts := fun root =>
-        #[{ command := sh root "kill -9 $$"
-            reply := .ok { exit := .signal 9, stdout := .empty, stderr := .empty } }]
-      holds := fun root => do
-        return (← ranOk (sh root "kill -9 $$")).exit == .signal 9 },
-    { name := "the child runs in the command's directory: `ls` there lists the property's file"
-      files := #[("listed", .empty)]
-      scripts := fun root =>
-        #[{ command := { program := "/bin/ls", directory := root }, reply := wrote "listed\n" }]
-      holds := fun root => do
-        return (← ranOk { program := "/bin/ls", directory := root }).stdout == "listed\n".toUTF8 },
-    { name :=
-        "the environment is the editor's with a variable set, emptied and then set, or with a variable unset"
-      scripts := fun root =>
-        #[{ command := sh root "printf %s \"$EDITOR_PROCESS_SET\"" setOne, reply := wrote "given" },
-          { command := env root onlyOne, reply := wrote "ONLY=x\n" },
-          { command := env root noPath, reply := wrote "" }]
-      holds := fun root => do
-        let set ← ranOk (sh root "printf %s \"$EDITOR_PROCESS_SET\"" setOne)
-        let only ← ranOk (env root onlyOne)
-        let unset ← ranOk (env root noPath)
-        let lines := (String.fromUTF8? unset.stdout).getD "PATH=" |>.splitOn "\n"
-        return set.stdout == "given".toUTF8 && only.stdout == "ONLY=x\n".toUTF8 &&
-            !lines.any (·.startsWith "PATH=") },
-    { name := "a bare program name is found on the PATH the child is given"
-      scripts := fun root => #[{ command := bareSh root "/bin:/usr/bin", reply := wrote "found" }]
-      holds := fun root => do
-        return (← ranOk (bareSh root "/bin:/usr/bin")).stdout == "found".toUTF8 },
-    { name :=
-        "a program that is not there is refused as not found, as a value, and the job goes on to a run that ends"
-      scripts := fun root =>
-        #[{ command := sh root "exit 0"
-            reply := .ok { exit := .code 0, stdout := .empty, stderr := .empty } }]
-      holds := fun root => do
-        let .error (.notFound _) ←
-          Process.run { program := missingProgram, directory := root } roomyOutput | return false
-        return (← ranOk (sh root "exit 0")).exit == .code 0 },
-    { name :=
-        "a directory that is not absolute and a program that names a directory without being absolute are refused before anything is started, and the job goes on"
-      scripts := fun root =>
-        #[{ command := sh "relative" "exit 0"
-            reply := .ok { exit := .code 0, stdout := .empty, stderr := .empty } },
-          { command := { program := "bin/sh", directory := root }
-            reply := .ok { exit := .code 0, stdout := .empty, stderr := .empty } },
-          { command := sh root "exit 0"
-            reply := .ok { exit := .code 0, stdout := .empty, stderr := .empty } }]
-      holds := fun root => do
-        let directory ← Process.run (sh "relative" "exit 0") roomyOutput
-        let program ← Process.run { program := "bin/sh", directory := root } roomyOutput
-        let after ← ranOk (sh root "exit 0")
-        return (match directory with
-            | .error .relativeDirectory => true
-            | _ => false) &&
-            (match program with
-            | .error .relativeProgram => true
-            | _ => false) &&
-            after.exit == .code 0 },
-    { name := "output past the limit is refused as too large, with the stream and the limit"
-      scripts := fun root =>
-        #[{ command := sh root "printf 0123456789"
-            reply := wrote "0123456789" }]
-      holds := fun root => do
-        match ← Process.run (sh root "printf 0123456789") 4 with
-        | .error (.outputTooLarge .out 4) =>
-          return true
-        | _ =>
-          return false }] ++
+  [{    name :=
+          "a run to its end replies with its exit status 3 and both streams byte for byte, a byte that is not UTF-8 among them"
+        scripts := fun root =>
+          #[{ command := sh root runScript
+              reply := .ok { exit := .code 3, stdout := "out\n".toUTF8, stderr := errBytes } }]
+        holds := fun root => do
+          let ran ← ranOk (sh root runScript)
+          return ran.exit == .code 3 && ran.stdout == "out\n".toUTF8 && ran.stderr == errBytes },
+      { name := "a child ended by a signal replies with the signal"
+        scripts := fun root =>
+          #[{ command := sh root "kill -9 $$"
+              reply := .ok { exit := .signal 9, stdout := .empty, stderr := .empty } }]
+        holds := fun root => do
+          return (← ranOk (sh root "kill -9 $$")).exit == .signal 9 },
+      { name := "the child runs in the command's directory: `ls` there lists the property's file"
+        files := #[("listed", .empty)]
+        scripts := fun root =>
+          #[{ command := { program := "/bin/ls", directory := root }, reply := wrote "listed\n" }]
+        holds := fun root => do
+          return (← ranOk { program := "/bin/ls", directory := root }).stdout ==
+              "listed\n".toUTF8 },
+      { name :=
+          "the environment is the editor's with a variable set, emptied and then set, or with a variable unset"
+        scripts := fun root =>
+          #[{ command := sh root "printf %s \"$EDITOR_PROCESS_SET\"" setOne,
+              reply := wrote "given" },
+            { command := env root onlyOne, reply := wrote "ONLY=x\n" },
+            { command := env root noPath, reply := wrote "" }]
+        holds := fun root => do
+          let set ← ranOk (sh root "printf %s \"$EDITOR_PROCESS_SET\"" setOne)
+          let only ← ranOk (env root onlyOne)
+          let unset ← ranOk (env root noPath)
+          let lines := (String.fromUTF8? unset.stdout).getD "PATH=" |>.splitOn "\n"
+          return set.stdout == "given".toUTF8 && only.stdout == "ONLY=x\n".toUTF8 &&
+              !lines.any (·.startsWith "PATH=") },
+      { name := "a bare program name is found on the PATH the child is given"
+        scripts := fun root => #[{ command := bareSh root "/bin:/usr/bin", reply := wrote "found" }]
+        holds := fun root => do
+          return (← ranOk (bareSh root "/bin:/usr/bin")).stdout == "found".toUTF8 },
+      { name :=
+          "a program that is not there is refused as not found, as a value, and the job goes on to a run that ends"
+        scripts := fun root =>
+          #[{ command := sh root "exit 0"
+              reply := .ok { exit := .code 0, stdout := .empty, stderr := .empty } }]
+        holds := fun root => do
+          let .error (.notFound _) ←
+            Process.run { program := missingProgram, directory := root } roomyOutput | return false
+          return (← ranOk (sh root "exit 0")).exit == .code 0 },
+      { name :=
+          "a directory that is not absolute and a program that names a directory without being absolute are refused before anything is started, and the job goes on"
+        scripts := fun root =>
+          #[{ command := sh "relative" "exit 0"
+              reply := .ok { exit := .code 0, stdout := .empty, stderr := .empty } },
+            { command := { program := "bin/sh", directory := root }
+              reply := .ok { exit := .code 0, stdout := .empty, stderr := .empty } },
+            { command := sh root "exit 0"
+              reply := .ok { exit := .code 0, stdout := .empty, stderr := .empty } }]
+        holds := fun root => do
+          let directory ← Process.run (sh "relative" "exit 0") roomyOutput
+          let program ← Process.run { program := "bin/sh", directory := root } roomyOutput
+          let after ← ranOk (sh root "exit 0")
+          return (match directory with
+              | .error .relativeDirectory => true
+              | _ => false) &&
+              (match program with
+              | .error .relativeProgram => true
+              | _ => false) &&
+              after.exit == .code 0 },
+      { name := "output past the limit is refused as too large, with the stream and the limit"
+        scripts := fun root =>
+          #[{ command := sh root "printf 0123456789"
+              reply := wrote "0123456789" }]
+        holds := fun root => do
+          match ← Process.run (sh root "printf 0123456789") 4 with
+          | .error (.outputTooLarge .out 4) =>
+            return true
+          | _ =>
+            return false }] ++
     streamProperties
 
 /-- Runs each of `properties` with `run`, which makes the property's files in a
