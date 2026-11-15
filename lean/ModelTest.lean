@@ -11249,6 +11249,25 @@ def vimDefaultChecks : List Check :=
                 runsNone
                   (vimParsedFrom told text (view := ⟨5⟩) (states := Vim.Default.states)).2) },
     { name :=
+        "each of the default key sequences z t, z z and z b runs a command of its own that changes no text and enters no state, in the initial state and, the same command, in each visual state, which the view stays in; z alone yields nothing and is pending; and in the state i enters and in the minibuffer's state z is typed text"
+      run :=
+        let sequences := ["z t", "z z", "z b"]
+        let told : Vim.State := Vim.Default.scheme.openMinibuffer ⟨5⟩ Vim.Default.scheme.init
+        pure
+          (vimDefaultCommands sequences &&
+            (sequences.all fun text =>
+              (vimDefault text).1.current == [] && (vimDefault text).1.lastChange == none &&
+                (Vim.Default.scheme.pending (vimDefault text).1).isEmpty &&
+                ["v", "V"].all fun state =>
+                  vimDefaultCommand s!"{state} {text}" == vimDefaultCommand text &&
+                    (vimDefault s!"{state} {text}").1.current == (vimDefault state).1.current &&
+                    (vimDefault s!"{state} {text}").1.lastChange == none) &&
+            (vimDefault "z").2 == [.nothing] &&
+            Vim.Default.scheme.pending (vimDefault "z").1 == keys "z" &&
+            (vimDefault "i z").2.getLast? == some (.text "z") &&
+            (vimParsedFrom told "z" (view := ⟨5⟩) (states := Vim.Default.states)).2 ==
+              [.text "z"]) },
+    { name :=
         "each default motion key yields a move with no count, each by a motion of another name: h j k l w b e W B E 0 ^ $ gg G"
       run :=
         let motionKeys :=
@@ -18341,7 +18360,82 @@ def viewChecks : List Check :=
               (runs.filter (· == stopped)).length > 5 &&
               runs.getLast? == some whole &&
               held (ran none) == held before
-          | _, _ => false }]
+          | _, _ => false },
+    { name :=
+        "after z t, z z and z b the cursor's row is the first, the middle and the last of the rows the next scene's view shows, the third of five rows and the third of six for the middle; and the text, the selection and the wanted column the window keeps are what they were; a count before one changes nothing of it, and in a visual state the selection stays as it is"
+      run :=
+        pure <|
+          let contents := numbered 40
+          [5, 6].all fun height =>
+            match viewDriver contents ⟨10, height⟩ with
+            | none => false
+            | some driver =>
+              let before := evilFed driver "2 0 j l j k"
+              let kept (driver : EvilDriver) :=
+                (evilText driver, (viewSeen driver).map (·.selection),
+                  (driver.loop.state.window? ⟨0⟩).map (·.wanted), evilHistory driver)
+              let index (typed : String) : Option Nat :=
+                (viewSeen (evilFed before typed)).bind (·.index)
+              let unchanged (typed : String) : Bool :=
+                kept (evilFed before typed) == kept before &&
+                  (evilFed before typed).loop.state.echo == ""
+              evilText before == some contents &&
+                ((driver.loop.state.window? ⟨0⟩).map (·.wanted)) == some none &&
+                ((before.loop.state.window? ⟨0⟩).map (·.wanted.isSome)) == some true &&
+                index "z t" == some 0 &&
+                index "z z" == some 2 &&
+                index "z b" == some (height - 1) &&
+                index "7 z t" == some 0 &&
+                ["z t", "z z", "z b", "7 z t"].all unchanged &&
+                (["z t", "z z", "z b"].all fun typed =>
+                  let visual := evilFed before "v j"
+                  (viewSeen (evilFed visual typed)).map (·.selection) ==
+                      (viewSeen visual).map (·.selection) &&
+                    ((viewSeen visual).map
+                        (·.selection.ranges.all fun range => range.anchor != range.head)) ==
+                      some true) },
+    { name :=
+        "on the text's last line z t leaves the view showing one row, and z b from there shows the rows G showed; and near the text's start z z and z b leave the text's first row as the first row shown"
+      run :=
+        pure <|
+          match viewDriver (numbered 20) ⟨10, 5⟩ with
+          | none => false
+          | some driver =>
+            let last := evilFed driver "G"
+            let top := evilFed last "z t"
+            match viewSeen last, viewSeen top, viewSeen (evilFed top "z b"),
+              viewSeen (evilFed driver "j z z"), viewSeen (evilFed driver "j z b") with
+            | some was, some one, some back, some middle, some bottom =>
+              was.shown.size == 5 && one.shown.size == 1 && one.index == some 0 &&
+                back.shown == was.shown &&
+                back.index == some 4 &&
+                middle.anchor == 0 &&
+                middle.index == some 1 &&
+                bottom.anchor == 0 &&
+                bottom.index == some 1
+            | _, _, _, _, _ => false },
+    { name :=
+        "with the scroll margin set to two, after z t two rows are above the cursor's row, and after z b two rows are below it: the scroll puts the row at the edge, and the view then follows with the margin"
+      run :=
+        pure <|
+          match viewDriver (numbered 40) ⟨10, 7⟩ (margin := 2) with
+          | none => false
+          | some driver =>
+            let before := evilFed driver "2 0 j"
+            let index (typed : String) : Option Nat :=
+              (viewSeen (evilFed before typed)).bind (·.index)
+            index "z t" == some 2 && index "z b" == some 4 && index "z z" == some 3 },
+    { name := "in a frame of no height z t, z z and z b move nothing and say nothing"
+      run :=
+        pure <|
+          match viewDriver (numbered 20) ⟨10, 0⟩ (head := 9) with
+          | none => false
+          | some driver =>
+            ["z t", "z z", "z b"].all fun typed =>
+              let after := evilFed driver typed
+              match viewSeen after with
+              | some now => now.anchor == 0 && now.head == 9 && after.loop.state.echo == ""
+              | none => false }]
 
 /-- Every check, in the order they run.
 

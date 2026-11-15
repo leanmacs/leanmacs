@@ -33,6 +33,7 @@ they hold when config fails to load, and a reload does not replace them.
   | `repeat` (`Vim.repeatCommand`) | `Evil.repeat`: the last change again, by the command the registry holds for the name the change compiled to, with the text typed after it (`Editor/Evil/Repeat.lean`) |
   | `scroll-down`, `scroll-up` | `Evil.scroll .half`, down and up: the view and its cursor by half the rows the view fits, or by the count (`Editor/Evil/Scroll.lean`) |
   | `scroll-page-down`, `scroll-page-up` | `Evil.scroll .page`, down and up: the view and its cursor by the rows the view fits |
+  | `scroll-line-to-top`, `scroll-line-to-center`, `scroll-line-to-bottom` | `Evil.scrollLineTo`, with `.top`, `.middle` and `.bottom`: the view placed so that the cursor's row is the first row shown, the middle one or the last, with nothing else changed |
 
   The seven of the second and third rows enter a state only when a key
   that enters it runs them: the scheme enters the state, at the key, and
@@ -77,6 +78,9 @@ def commands : Array Config.Registration :=
     { name := "scroll-down", action := .call (scroll .half true) },
     { name := "scroll-up", action := .call (scroll .half false) },
     { name := "scroll-page-down", action := .call (scroll .page true) },
-    { name := "scroll-page-up", action := .call (scroll .page false) }]
+    { name := "scroll-page-up", action := .call (scroll .page false) },
+    { name := "scroll-line-to-top", action := .call (scrollLineTo .top) },
+    { name := "scroll-line-to-center", action := .call (scrollLineTo .middle) },
+    { name := "scroll-line-to-bottom", action := .call (scrollLineTo .bottom) }]
 
 end Editor.Evil

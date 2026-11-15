@@ -3,17 +3,19 @@ import Editor.Evil
 /-!
 # Evil's scroll commands
 
-The commands that scroll a view, Vim's `C-d`, `C-u`, `C-f` and `C-b`, each
-a function of its call (`Editor/Evil.lean`). Where a view's scroll anchor
-goes is the policy of `Editor/Scroll.lean`; a command here asks it, places
-the anchor (`Target.scrollTo`, `Editor/Api.lean`) and moves the cursor. It
-asks the display through its view's area (`Target.onArea`), so nothing of
-layout is kept here.
+The commands that scroll a view, each a function of its call
+(`Editor/Evil.lean`): Vim's `C-d`, `C-u`, `C-f` and `C-b`, which move the
+view and its cursor by rows, and `z t`, `z z` and `z b`, which put the
+cursor's row at the top, in the middle and at the bottom of the view. Where
+a view's scroll anchor goes is the policy of `Editor/Scroll.lean`; a
+command here asks it and places the anchor (`Target.scrollTo`,
+`Editor/Api.lean`). It asks the display through its view's area
+(`Target.onArea`), so nothing of layout is kept here.
 
-They are evil's commands and not the loop's: the commands that move the
-cursor rest it by what the input scheme reports of the view and keep a
-visual selection's other end, which they read from their call's report, as
-the move command does.
+They are evil's commands and not the loop's: the four that move the cursor
+rest it by what the input scheme reports of the view and keep a visual
+selection's other end, which they read from their call's report, as the
+move command does.
 
 ## Scrolling by rows
 
@@ -64,8 +66,9 @@ same number of rows.
   that is interrupted leaves the snapshot `Target.onArea` took
   (`Editor/Api.lean`, "Scrolling").
 
-Where this departs from Vim, as its documentation says it (`scroll.txt`,
-`'scroll'`, `'startofline'`; no check runs Vim):
+Where this departs from Vim. Vim's column is its documentation
+(`scroll.txt`, `'scroll'`, `'startofline'`) as remembered: it was not read
+again for this, and no check runs Vim.
 
 | | Vim | Here |
 |---|---|---|
@@ -76,6 +79,32 @@ Where this departs from Vim, as its documentation says it (`scroll.txt`,
 | A text shorter than its view | Moves the cursor half the window's height | Half the text's rows: how many rows fit a view that is not full is not asked (`Editor/Scroll.lean`) |
 | A text that ends in a line feed | No row after the last line | The empty row the display lays out after it is the last row shown |
 | `C-f` and `C-b` | Keep two lines of the page before in view and put the cursor on the new page's first line | The anchor moves a whole view and the cursor keeps its row of the view |
+
+## Scrolling to the cursor's row
+
+`scrollLineTo place` is the command `z t`, `z z` and `z b` run: it places
+the anchor so that the cursor's row is the first row shown, the middle one
+or the last (`Scroll.lineTo`), and does nothing else.
+
+- **The middle** is the middle row of those the view fits, the upper of
+  the two when it fits an even number: the third of five, and the third of
+  six.
+- **The text, the selection and the wanted column are not touched.** It
+  ignores its count and its register: Vim's count is a line number, which
+  is not built.
+- **At the text's start** the anchor stops at the first row, so `z z` and
+  `z b` cannot put a cursor near the start in the middle or at the bottom,
+  as in Vim. **At its end** `z t` and `z z` show past the text's end, as
+  Vim does.
+- **It works from the rows the view fits, not the rows it shows.** After
+  `z t` on the last line the view shows one row; with that as the view's
+  rows `z b` would do nothing. So `G`, `z t`, `z b` comes back to the view
+  `G` left.
+- **With a scroll margin set** the follow before the next scene moves the
+  anchor again to hold it (`Editor/Loop.lean`, "Following the cursor"), so
+  `z t` with a margin of two leaves two rows above the cursor's row, as
+  Vim's does with `scrolloff`.
+- **A view that shows no row**: nothing moves and nothing is said.
 
 Pinned by `ModelTest.viewChecks`, by key, on the loop's driver over the
 editor's models under the Vim scheme that ships, and the keys through the
@@ -138,5 +167,20 @@ def scroll (amount : Scroll.Amount) (down : Bool) (call : Call) : EditorM Unit :
         let start := if call.report.selecting then range.anchor else head
         call.target.select { ranges := #[⟨start, head⟩], shape := call.report.shape }
         discard <| call.target.window.id.setWanted none
+
+/-- The command that scrolls the call's view to its cursor's row, as it is
+called ("Scrolling to the cursor's row", in the module docs): the view's
+scroll anchor is placed so that the row of the head of the primary range of
+its selection is at `place`, the first row shown, the middle one or the
+last. The text, the selection and the wanted column are left as they are,
+and it ignores its count and its register. In a view that shows no row
+nothing moves. -/
+def scrollLineTo (place : Scroll.Place) (call : Call) : EditorM Unit := do
+  discard <|
+      call.target.onArea fun area => do
+        let selection ← call.target.selection
+        let some range := selection.ranges[selection.primary]? | throw .badSelection
+        if let some offset← Scroll.lineTo place area range.head then
+          call.target.scrollTo offset
 
 end Editor.Evil

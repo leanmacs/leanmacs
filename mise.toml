@@ -243,7 +243,9 @@ run = [
   # (tests/headless/view): the script sizes the frame, opens a file of 120
   # lines with `:e`, and moves the cursor 100 lines down, with a scene
   # printed after each step: the second scene's view has its scroll anchor
-  # moved so that the cursor's line is among the rows it shows. The display
+  # moved so that the cursor's line is among the rows it shows. Then `C-u`,
+  # `C-f` twice, the second at the text's end, `zt` and `zb` scroll the
+  # view, and a resize to a third of the height is followed. The display
   # is the recorder, the display model's rule over the library's snapshots,
   # in cells of 8 by 16. This entry is one shell, as the three above are: it
   # makes a temporary directory and removes it by a trap, copies

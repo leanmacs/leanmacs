@@ -50,3 +50,21 @@ scene
 # last line, 119, at byte 476.
 key f KeyF control
 scene
+
+# `zt` puts the cursor's line at the top: the anchor is at line 119, byte
+# 476, and the view shows past the text's end. The cursor does not move.
+key z KeyZ -
+key t KeyT -
+scene
+
+# `zb` puts it at the bottom: line 119 is the last of 30 rows, so the anchor
+# is at line 90, byte 360. The cursor does not move.
+key z KeyZ -
+key b KeyB -
+scene
+
+# A resize to 160 pixels of height leaves the view 10 rows, fewer than the
+# cursor's row, which was its thirtieth. The view follows: line 119 is the
+# last of 10 rows, so the anchor is at line 110, byte 440.
+resize 640 160
+scene

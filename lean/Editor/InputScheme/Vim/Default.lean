@@ -32,7 +32,7 @@ The operators' entries are `Evil.operators`
 | `insertCommands` | Insert state's: the key that returns to normal state |
 | `visualCommands`, `visualLineCommands` | A visual state's: the keys that return to normal state, the key that enters the other visual state, and the register prefix |
 | `minibufferCommands` | The minibuffer state's: `RET`, which accepts the prompt, `<Escape>`, which cancels it, `TAB` and `C-n`, which move to the next of its candidates, and `S-TAB` and `C-p`, which move to the previous |
-| `scrollCommands` | The commands that scroll a view, of normal state and the two visual states: `C-d` and `C-u`, by half a view, and `C-f` and `C-b`, by a view (`Editor/Evil/Scroll.lean`). Each changes no text and enters no state, so none is the last change. They are commands and not motions, so an operator's key before one is dropped. Insert state and the minibuffer's do not have them: there `C-d` and `C-u` are Vim's editing keys |
+| `scrollCommands` | The commands that scroll a view, of normal state and the two visual states: `C-d` and `C-u`, by half a view, `C-f` and `C-b`, by a view, and `z t`, `z z` and `z b`, which put the cursor's row at the top, in the middle and at the bottom of the view (`Editor/Evil/Scroll.lean`). Each changes no text and enters no state, so none is the last change. They are commands and not motions, so an operator's key before one is dropped. `z` begins the three sequences and is bound to nothing itself, so it is a prefix in those states. Insert state and the minibuffer's do not have the table: there `C-d` and `C-u` are Vim's editing keys, and `z` is text |
 
 ## The states
 
@@ -179,7 +179,9 @@ def minibufferCommands : List (String × Bound) :=
 each changes no text and enters no state. -/
 def scrollCommands : List (String × Bound) :=
   [("C-d", running "scroll-down"), ("C-u", running "scroll-up"),
-    ("C-f", running "scroll-page-down"), ("C-b", running "scroll-page-up")]
+    ("C-f", running "scroll-page-down"), ("C-b", running "scroll-page-up"),
+    ("z t", running "scroll-line-to-top"), ("z z", running "scroll-line-to-center"),
+    ("z b", running "scroll-line-to-bottom")]
 
 /-- The keymap that binds each key string of `table` to what is beside it.
 A string `Key.parse` refuses binds nothing. -/
