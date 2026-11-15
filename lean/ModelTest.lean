@@ -3796,11 +3796,13 @@ pinned in `crates/editor-layout`; these pin what Lean itself defines. -/
 def faceChecks : List Check :=
   [{
       name :=
-        "the built-in theme defines default, cursor, selection, echo-area, minibuffer-prompt and mode-line, each once",
+        "the built-in theme defines default, cursor, a cursor face for each state of the shipped Vim scheme, selection, echo-area, minibuffer-prompt and mode-line, each once",
       run :=
         pure
           (Theme.builtin.map (·.name.name) ==
-            #["default", "cursor", "selection", "echo-area", "minibuffer-prompt", "mode-line"]) },
+            #["default", "cursor", "cursor.normal", "cursor.insert", "cursor.visual",
+              "cursor.visual-line", "cursor.minibuffer", "selection", "echo-area",
+              "minibuffer-prompt", "mode-line"]) },
     { name := "the built-in default face sets every attribute, and no other built-in face does"
       run :=
         let complete (face : Face) : Bool :=
@@ -3811,6 +3813,36 @@ def faceChecks : List Check :=
             face.strikeThrough.isSome &&
             face.lineHeight.isSome
         pure ((Theme.builtin.filter (complete ·.face)).map (·.name.name) == #["default"]) },
+    { name :=
+        "the built-in theme gives the cursor the shipped Vim scheme reports in each of its states, normal's block and insert's bar among them, a background that is not the default face's and a foreground that is not that background"
+      run :=
+        let scheme := Vim.Default.scheme
+        let fed (text : String) : Vim.State :=
+          (scheme.feed (fun _ => []) ⟨0⟩ scheme.init (keys text)).1
+        let told : Vim.State := scheme.openMinibuffer ⟨0⟩ scheme.init
+        -- Each attribute as the theme defines it: a later definition of a
+        -- name over an earlier one.
+        let defined (pick : Face → Option Color) (name : FaceName) : Option Color :=
+          Theme.builtin.foldl
+            (fun found definition =>
+              if definition.name == name then pick definition.face <|> found else found)
+            none
+        let paper := defined (·.background) ⟨"default"⟩
+        let ink := defined (·.foreground) ⟨"default"⟩
+        -- Drawn over the default face, as a cursor's face is.
+        let visible (cursor : Cursor) : Bool :=
+          match defined (·.background) cursor.face with
+          | some background =>
+            some background != paper &&
+              (defined (·.foreground) cursor.face <|> ink) != some background
+          | none => false
+        let reports := [scheme.init, fed "i", fed "v", fed "V", told].map (scheme.report · ⟨0⟩)
+        let states := Vim.Default.states.initial :: Vim.Default.states.others
+        pure
+          ((reports.map (·.cursor.shape)).take 2 == [.block, .bar] &&
+            reports.all (visible ·.cursor) &&
+            states.all fun record =>
+              visible { shape := record.cursor, face := Vim.cursorFace record.name }) },
     { name := "a colour is its four bytes, red first, and one made of three is opaque"
       run :=
         pure

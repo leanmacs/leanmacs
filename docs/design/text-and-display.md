@@ -1050,13 +1050,18 @@ pt" font in another app is 14 × 96/72 pixels at scale 1.
   physical pixels. Their documentation says which unit each is in.
 
 **Themes and config.** `Theme.builtin` defines `default`, which sets every
-attribute, and `cursor`, `selection`, `echo-area`, `minibuffer-prompt` and
-`mode-line`; its colours are placeholders. Layout reads three names by
-itself: `default`, `selection` and `mode-line`. `echo-area` and
-`minibuffer-prompt` are defined and nothing draws them. Any other name is
-one a scene names and a theme or config defines, so a cursor face for each
-evil state is a definition added by the command loop, with no change to
-layout. Config sets a face in `setup`, `face "name" { … }`; a name is set
+attribute, and `cursor`, a cursor face for each state of the shipped Vim
+scheme (`cursor.normal`, `cursor.insert`, `cursor.visual`,
+`cursor.visual-line`, `cursor.minibuffer`), `selection`, `echo-area`,
+`minibuffer-prompt` and `mode-line`; its colours are placeholders. Layout
+reads three names by itself: `default`, `selection` and `mode-line`.
+`echo-area` and `minibuffer-prompt` are defined and nothing draws them. Any
+other name is one a scene names and a theme or config defines, with no
+change to layout. A cursor face nothing defines has the default face's
+paint, the paper's colour on the paper, and is not seen: so each state the
+shipped scheme has gets its cursor face in the built-in theme (the default
+face's colours the other way round), and a state config registers needs
+config to define its own. Config sets a face in `setup`, `face "name" { … }`; a name is set
 once in a `setup`. The theme a display is sent is the built-in one followed
 by the installed config's definitions, so a face config sets takes
 config's attributes over the theme's, and one it stops setting is the

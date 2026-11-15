@@ -46,15 +46,22 @@ call, and only when the theme changed (`Editor/Display/Real.lean`).
 
 ## The built-in faces
 
-`Theme.builtin` defines `default` (every attribute set), `cursor`,
-`selection`, `echo-area`, `minibuffer-prompt` and `mode-line`. Layout reads
-three names by itself: `default`, under every other face; `selection`,
-which the selections are drawn in; and `mode-line`, under each field of a
-view's status line. `echo-area` and `minibuffer-prompt` are defined and
-nothing draws them yet. Any other name is whatever a scene names and a
-theme or config defines: a name nothing defines sets nothing, so a cursor
-face per editing state is a definition, with no change here. Its colours
-are placeholders.
+`Theme.builtin` defines `default` (every attribute set), `cursor`, a
+cursor face for each editing state of the shipped Vim scheme
+(`cursor.normal`, `cursor.insert`, `cursor.visual`, `cursor.visual-line`
+and `cursor.minibuffer`, `Theme.cursorStates`), `selection`, `echo-area`,
+`minibuffer-prompt` and `mode-line`. Layout reads three names by itself:
+`default`, under every other face; `selection`, which the selections are
+drawn in; and `mode-line`, under each field of a view's status line.
+`echo-area` and `minibuffer-prompt` are defined and nothing draws them yet.
+Any other name is whatever a scene names and a theme or config defines: a
+name nothing defines sets nothing. So a cursor in a face nothing defines
+has the default face's paint, and is drawn in the paper's colour on the
+paper: it cannot be seen. That is why each state the shipped scheme has
+gets its cursor face here, each the default face's colours the other way
+round (`Face.cursor`), and why a state added to the shipped scheme is added
+to `Theme.cursorStates`; a state config registers needs config to define
+its face. Its colours are placeholders.
 
 ## Where an addition goes
 
@@ -183,25 +190,37 @@ one's. -/
 abbrev Theme :=
   Array FaceDefinition
 
+/-- What the built-in cursor faces set: the default face's colours the other
+way round, so that a block is the text's colour with the glyph under it in
+the paper's, and a bar, an underline or a hollow box is the text's colour. -/
+def Face.cursor : Face :=
+  { foreground := some (Color.rgb 46 52 64), background := some (Color.rgb 216 222 233) }
+
+/-- The editing states of the shipped Vim scheme
+(`Editor/InputScheme/Vim/Default.lean`), whose cursors are drawn in the face
+`cursor.` followed by the state's name (`Vim.cursorFace`). -/
+def Theme.cursorStates : Array String :=
+  #["normal", "insert", "visual", "visual-line", "minibuffer"]
+
 /-- The built-in theme: `default`, which sets every attribute, then
-`cursor`, `selection`, `echo-area`, `minibuffer-prompt` and `mode-line`,
-each of which sets only what it changes. Its colours are placeholders. -/
+`cursor` and a cursor face for each of `Theme.cursorStates`, `selection`,
+`echo-area`, `minibuffer-prompt` and `mode-line`, each of which sets only
+what it changes. Its colours are placeholders. -/
 def Theme.builtin : Theme :=
-  #[{ name := ⟨"default"⟩
-      face :=
-        { family := some "monospace", size := some 16, weight := some 400, slant := some .upright
-          foreground := some (Color.rgb 216 222 233), background := some (Color.rgb 46 52 64)
-          underline := some { style := .none }, strikeThrough := some false
-          lineHeight := some (.multiple 64) } },
-    { name := ⟨"cursor"⟩
-      face :=
-        { foreground := some (Color.rgb 46 52 64), background := some (Color.rgb 216 222 233) } },
-    { name := ⟨"selection"⟩, face := { background := some (Color.rgb 67 76 94) } },
-    { name := ⟨"echo-area"⟩, face := { foreground := some (Color.rgb 229 233 240) } },
-    { name := ⟨"minibuffer-prompt"⟩
-      face := { foreground := some (Color.rgb 136 192 208), weight := some 700 } },
-    { name := ⟨"mode-line"⟩
-      face :=
-        { foreground := some (Color.rgb 236 239 244), background := some (Color.rgb 59 66 82) } }]
+  #[{   name := ⟨"default"⟩
+        face :=
+          { family := some "monospace", size := some 16, weight := some 400, slant := some .upright
+            foreground := some (Color.rgb 216 222 233), background := some (Color.rgb 46 52 64)
+            underline := some { style := .none }, strikeThrough := some false
+            lineHeight := some (.multiple 64) } },
+      { name := ⟨"cursor"⟩, face := Face.cursor }] ++
+    Theme.cursorStates.map (fun state => { name := ⟨s!"cursor.{state}"⟩, face := Face.cursor }) ++
+    #[{ name := ⟨"selection"⟩, face := { background := some (Color.rgb 67 76 94) } },
+      { name := ⟨"echo-area"⟩, face := { foreground := some (Color.rgb 229 233 240) } },
+      { name := ⟨"minibuffer-prompt"⟩
+        face := { foreground := some (Color.rgb 136 192 208), weight := some 700 } },
+      { name := ⟨"mode-line"⟩
+        face :=
+          { foreground := some (Color.rgb 236 239 244), background := some (Color.rgb 59 66 82) } }]
 
 end Editor
