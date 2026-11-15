@@ -687,6 +687,14 @@ As built (`lean/Editor/Job.lean`), a job reaches time, files and processes:
   relative directory or program, a program that is not there or not
   allowed, or a stream past the run's limit, which has no default. A
   cancelled job's child is killed with its process group.
+- **A streaming child is requests a job awaits, one at a time**:
+  `Process.start` starts it with its input, how each output stream is
+  framed (lines or bytes) and its bound, and names it for the job;
+  `Process.read` waits for the next delivery, every frame read and not yet
+  taken, the last saying how the child ended; `Process.write` waits until
+  its bytes are in the child's input, or is `inputClosed`; and
+  `Process.closeInput` closes the input. A read, a write or a close of a
+  child the job does not hold is `noSuchProcess`, answered at once.
 - **No request carries a promise.** A request is plain data; how a wait is
   completed is the runner's business. A snapshot of editor state arrives as
   a further request of this port, each with a reply type, a
@@ -1349,6 +1357,15 @@ of each runner, when the job system was planned, on Lean 4.35.0:
   finished, by the editor thread once the job's command has run; and when
   an owner is removed or the runtime ends, for a finished job whose command
   will never run.
+- **A streaming child does not outlive its job.** The runner keeps the
+  children a job started (`Handle.children`) and, when the job ends,
+  finished, failed or cancelled, cancels every one it still holds, which
+  kills the child's group in the library: a job's command has no request
+  that could use one. A job cancelled in a read or a write has that wait
+  withdrawn first, which drops it at the library uncompleted, then its
+  children ended. A child is named by its start's wait, so a job cancelled
+  while its start is in flight has the start withdrawn, and the library's
+  own thread kills the child as it registers it.
 
 ### Completing awaits without Rust calling Lean
 
@@ -1395,6 +1412,14 @@ As built:
 - **Cancelling a job cancels the request**: the timer leaves the library's
   schedule, a file request leaves the file service, and a run's child is
   killed with its process group.
+- **A completion-queue turn** is one iteration of the pump: one pull, one
+  completion, and the one wait it names finished, whose job's continuation
+  then takes its reply on the pool. So a turn ends at most one wait, and a
+  job, which is in at most one wait at a time, gets at most one reply a
+  turn. The process service queues one completion for each read of a
+  streaming child, never one for each chunk the child writes: however fast
+  the child writes, the completions of its output equal the reads its job
+  made, and each delivery holds everything read up to its take.
 
 A job reaches time and files only through its port, and the runner does not
 use `Std.Async`. `Std.Async` works in this process with no extra setup, and
@@ -1435,7 +1460,9 @@ same editor queue.
   work to do.
 - High-rate streams never reach the editor thread per item: terminal output
   goes to the grid inside Rust, and process output is framed and batched in
-  Rust before it is queued.
+  Rust and reaches the job that reads it by pull, one completion a read on
+  the completion queue, never the editor queue. The editor thread sees
+  only the job's result when the job ends.
 
 Subscriptions are registered by name and owner, and replaced by owner on
 reload. See [lean-runtime.md](lean-runtime.md).
@@ -1737,8 +1764,11 @@ handler never runs.
 
 - **Rebasing proposed edits.** When does the foreground rebase and when
   does it reject? A rule per kind of edit, or one conservative rule?
-- **Backpressure.** What happens when jobs or events pile up faster than
-  the foreground drains them?
+- **Backpressure.** Answered for process output: a streaming child whose
+  undelivered output reaches its bound is held, by not being read, until its
+  job reads ([rust-library.md](rust-library.md), "Processes, as built").
+  Still open for jobs' results and events: what happens when they pile up
+  faster than the foreground drains them?
 - **Prompts** ("Prompts"). Each of these was decided one way, and the
   other is still possible:
   - the answer is the continuation's first argument, and not its last;

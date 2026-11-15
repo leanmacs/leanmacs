@@ -196,12 +196,18 @@ real adapter (`crates/editor-process-std`) is held to the same contract
 on real processes, every one `/bin/sh` or another absolute path, in a
 temporary directory its test makes and removes: among them a child that
 starts a grandchild, which a kill, a cancel and shutdown must each end,
-and whose child must be reaped. `crates/editor-ffi/tests/processes.rs`
-runs a command through the C functions, and
-`crates/editor-ffi/tests/processes_shutdown.rs`, a test binary of its
-own, shuts the process-wide service down. No test changes the test
-process's environment or working directory; the environment a property
-sets goes to the child alone.
+and whose child must be reaped; and streaming children, read as they
+write, written to, held at their bound and cancelled, every wait on a
+marker file a child makes or on the service's readout of a held child,
+never a fixed sleep. `crates/editor-process-std/tests/sigpipe.rs`, a test
+binary of its own, sets `SIGPIPE` to its default, as a Lean executable has
+it, and writes to an input its child closed. `crates/editor-ffi/tests/processes.rs`
+runs a command through the C functions, `tests/processes_stream.rs`
+streams a child through them and pulls one completion for a read from the
+real completion queue, and `crates/editor-ffi/tests/processes_shutdown.rs`,
+a test binary of its own, shuts the process-wide service down. No test
+changes the test process's environment or working directory; the
+environment a property sets goes to the child alone.
 
 Rendering is tested there too, on a machine with no GPU, and the gate
 needs none. What it checks:

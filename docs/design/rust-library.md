@@ -90,13 +90,15 @@ process is a handle plus a stream of events.
 ### Processes, as built
 
 The first use, "run to the end and collect the output", which git needs
-(the process service's phase 1). Streams read as they come, standard input
-and watching are not built.
+(the process service's phase 1), and streaming children, whose output a
+job reads as it comes and whose standard input it writes to (phase 2;
+"Streams and input", below). Watching is not built.
 
 - **The port** is `editor-process`'s `Processes`, in the editor's terms: a
   `Command` (a program, its arguments, an environment and an absolute
   directory) is spawned as a `Child` in a process group of its own, with
-  its standard input closed and both output streams piped; the child's
+  both output streams piped and its standard input closed or, when the
+  command asks (`Input::Pipe`), piped and taken as a `ChildInput`; the child's
   streams are read with a pull (`Output::read`), it is waited for
   (`Child::wait`) and killed (`Child::kill`). A program is a bare name,
   looked up on the `PATH` the child gets, or an absolute path; the
@@ -104,9 +106,8 @@ and watching are not built.
   unset and then set. A spawn that fails is a `Refusal`, a kind (not
   found, denied, failed, and the service's own: a relative directory, a
   relative program, shut down) and the platform's words naming the program
-  and the directory. The port is pull-based and blocking, so phase 2's
-  backpressure is the core not reading, and its standard input one more
-  half to take.
+  and the directory. The port is pull-based and blocking, so backpressure is the core not
+  reading, and a write is held by the pipe it writes to.
 - **The rules of a child**: `wait` blocks until the child has ended, then
   ends every process still in its group, then reaps the child, and answers
   the same if asked again; `kill` ends the whole group, may be called from
@@ -166,6 +167,56 @@ and watching are not built.
   reaches a group id that may have been reused, and no straggler of a group
   outlives its run. The system calls are rustix's, pinned exactly; std has
   neither a wait that does not reap nor a group kill.
+- **Streams and input.** A streaming child (`Service::open`) is opened
+  with its input (closed or a pipe), how each output stream is framed and
+  its bound; then each read, write and close is a wait of the caller's,
+  completed once, whose reply is taken once (`Service::take_stream`).
+  Framing is plain data (`editor_process::frame`): lines split on `\n`, a
+  line without its `\n` and keeping a `\r`, the bytes after the last `\n`
+  a last line at the stream's end; or raw bytes, whose deliveries end to
+  end are the stream. **Coalescing is the reads being pulls**: a read is
+  completed once, by the first reader that makes something deliverable,
+  never once a chunk, and its delivery is drained when it is taken, so it
+  holds everything read up to then. A completion-queue turn ends one wait,
+  so a job gets at most one delivery a turn however fast its child writes,
+  and nothing of a child's output reaches the editor queue. **The bound**
+  is how many bytes of each stream may have been read and not taken, a line
+  in progress among them. It counts each stream on its own: a bound across
+  both streams, with room reserved before each read, would let a reader
+  blocked on a stream the child does not write hold the other stream's room
+  for ever, and the child would never be read again. A reader reads at most
+  the room left, and at none it parks, so the pipe fills and the child
+  blocks in `write(2)`: it is **held** until a take makes room. Nothing is
+  dropped and no delivery says so. A line longer than the bound ends the
+  child as `LineTooLong`, its group killed. The last delivery carries the
+  exit, once both streams have ended and the child is reaped, and the child
+  is then forgotten. A write is handed to a writer thread, which writes
+  every byte and then completes; a child that closed its input, or ended,
+  is `InputClosed`, and one with no input or a closed one is refused at
+  once; nothing is buffered beyond the pipe. **`SIGPIPE`**: the library runs
+  inside Lean's executable, where std's start-up never ignores the signal,
+  so a write to a closed pipe must not raise it. The adapter sets
+  `F_SETNOSIGPIPE` on the write end on macOS, and on Linux blocks `SIGPIPE`
+  in the writing thread around the write, takes the pending signal and
+  restores the mask (`libc`, pinned exactly: rustix has neither call outside
+  its unstable `runtime` feature); `tests/sigpipe.rs`, with the signal at
+  its default, pins it. **Threads**: four for each streaming child, its
+  waiter, two readers and a writer when its input is piped; the editor's
+  expected streaming children are a handful (agent sessions, language
+  servers). Cancel kills the group, wakes parked readers and the writer,
+  and drops the child's waits uncompleted; shutdown cancels every child as
+  it does every run. The contract holds the port's input to three more
+  properties (a write reaches `/bin/cat` byte for byte, a write to an input
+  the child closed is `InputClosed`, a command with no input has none to
+  take) and the service to eight more, 25 in all, on real processes: lines
+  as they are written and a line written echoed back, bytes, 20,000 lines
+  in order at a bound of 256, one completion for 10,000 lines, a child held
+  at a bound of 4,096 that cannot finish until it is read, a line too long,
+  a cancel of a held child and its grandchild, and shutdown of a held child
+  and one waiting for input. In Lean, `Process.start`, `read`, `write`,
+  `writeLine` and `closeInput` are requests of the job port; a child is
+  named for the job that started it, and the runner cancels every child a
+  job still holds when the job ends.
 - **The kill signal** is `SIGKILL`, with no `SIGTERM` and no grace period,
   so neither a cancel nor shutdown can hang on a child that ignores a
   polite signal.
@@ -676,7 +727,17 @@ better generic primitive, not a feature-specific service.
   Lean. If that proves slow, framing already happens in Rust and parsing
   could move there, delivering plain values.
 - **HTTP.** A Lean client, or a small Rust one behind the same pattern.
-- **Backpressure** for a process that outpaces its consumer.
+- **Backpressure** for a process that outpaces its consumer: answered for
+  process output, which is held at its bound by not being read. Still open
+  for what else a job is handed, its results and events.
+- **A write while the child is held.** A job that writes to a child that is
+  not reading its standard input, while the child is held at its bound
+  because the job is not reading, waits in that write until it is
+  cancelled: the write's reply is the truth about delivery, and nothing is
+  buffered beyond the pipe. Only that job is stuck, holding no thread, and
+  cancelling it kills the child. ACP agents and language servers read their
+  input continuously, so the editor's own uses do not meet it; whether a
+  write should time out, or be buffered up to a bound of its own, is open.
 - **A descendant that leaves its process group.** The group kill reaches a
   child and every process still in its group. A descendant that calls
   `setsid` or `setpgid`, or forks into a session of its own (git's
@@ -695,7 +756,9 @@ better generic primitive, not a feature-specific service.
   outlives the editor; each of the run's readers stays, detached, holding
   the stream's read end until that process closes it; and a run that is
   not cancelled waits for it, so its output is whole, for as long as it
-  holds the stream.
+  holds the stream. Such a descendant that holds a streaming child's
+  standard input and does not read it leaves the child's writer blocked in
+  `write(2)`, detached, holding the input's write end.
 - **A graceful signal before the kill.** Cancel and shutdown send
   `SIGKILL` to the group at once. An agent or a language server may want
   `SIGTERM` and a grace period first, to save what it holds; a grace period

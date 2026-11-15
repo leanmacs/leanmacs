@@ -175,7 +175,12 @@ group, `processesShutdown` kills every group and blocks until every child is
 reaped, and `processesPending` is a readout for tests. A command crosses as
 a list of strings does: words, and one string of every text end to end. A
 result is a status, words, a detail and the two streams' bytes
-(`ProcessResult`).
+(`ProcessResult`). A streaming child is opened (`processesOpen`, three words
+before a run's), read (`processesRead`), written to (`processesWrite`) and
+closed (`processesCloseInput`), each with a wait's id; its replies come back
+in a run's record (`processesTakeStream`), a delivery's lines as lengths in
+its words, decoded by `StreamReply.decode`. `processesHeld` says, for tests,
+whether a child is held at its bound.
 
 The editor does not call these bindings. The job runner reaches the services
 through the ports it defines (`Job.Timers`, `Editor/Job/Runner.lean`), whose
@@ -190,8 +195,8 @@ its check that the completion tag is known (`FfiTest.dataChecks`);
 `contract-test`, which runs the job port's contract and the checks of the
 real service through the runner (`ContractTest.jobChecks`); the unit tests
 of `timers.rs`, `files.rs` and `processes.rs`, and `tests/timers.rs`,
-`tests/files.rs`, `tests/processes.rs` and `tests/processes_shutdown.rs`, in
-`editor-ffi`, which need no Lean.
+`tests/files.rs`, `tests/processes.rs`, `tests/processes_stream.rs` and
+`tests/processes_shutdown.rs`, in `editor-ffi`, which need no Lean.
 
 ### The window
 
