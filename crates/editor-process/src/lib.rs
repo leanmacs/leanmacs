@@ -10,8 +10,8 @@
 //! editor asks, above the port: a run to its end, or a streaming child read
 //! and written a request at a time, framed and bounded ([`frame`]), each
 //! completed through a closure it is given, cancelled by killing the
-//! child's group, and every child killed and reaped at shutdown. The crate has no dependencies and
-//! knows nothing about Lean.
+//! child's group, and every child killed and reaped at shutdown. The crate
+//! has no dependencies and knows nothing about Lean.
 //!
 //! # The rules of the port
 //!
