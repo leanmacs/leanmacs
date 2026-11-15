@@ -30,6 +30,7 @@ import Editor.Minibuffer.Compiled
 import Editor.Mode
 import Editor.Role
 import Editor.Scene
+import Editor.Scroll
 import Editor.State
 import Editor.State.Request
 import Editor.Text.Contract
@@ -59,6 +60,13 @@ binding's run of it is the display pipeline's. `sceneChecks` and
 `displayChecks` are what only the model shows: the scenes published to it,
 and its exact layout rule. `faceChecks` are the checks of faces as data and
 of the built-in theme (`Editor/Face.lean`).
+
+The policy by which a view follows its cursor (`Editor/Scroll.lean`) is
+programs over the display port, and is checked on the display model alone
+(`scrollChecks`), with a view's scroll anchor and its cursor as offsets:
+which anchors are kept, how far one moves, the margin, and what the policy
+costs in requests. Each row a check names is one the model answered, so no
+check says where a text wraps.
 
 A command is tested the same way: as a property, a command that returns
 whether it held, run against the model (`commandProperties`). The `editor`
@@ -4504,6 +4512,239 @@ def guardChecks : List Check :=
         return resulted ended == .inr .interrupted && model.watch.clock == 0 &&
             resulted finished == .inr (.finished (FuzzyModel.rank "w" candidates)) &&
             asked.watch.clock == 1 }]
+
+/-- A view of the first text of a display model, `width` pixels wide and
+`height` tall. -/
+def areaOf (width height : Nat) : Scroll.Area :=
+  { snapshot := ⟨0⟩, width, height }
+
+/-- What a display program answers on the display model over `text`, or none
+where it was refused. -/
+def onDisplay {α : Type} (text : String) (program : DisplayM α)
+    (cells : Display.Cells := { advance := 1, lineHeight := 1 }) : Option α :=
+  (program.runModel (displayOver [text] cells)).1.toOption
+
+/-- The rows a view of `text`, `width` by `height` pixels, shows from
+`anchor`, as the display model answers them; none where it refuses. -/
+def rowsFrom (text : String) (width height anchor : Nat)
+    (cells : Display.Cells := { advance := 1, lineHeight := 1 }) : Array Display.Row :=
+  (onDisplay text ((areaOf width height).rows anchor) cells).getD #[]
+
+/-- Every row of `text` in a view `width` pixels wide, as the display model
+answers them: what a view taller than the text shows from its start. -/
+def allRows (text : String) (width : Nat)
+    (cells : Display.Cells := { advance := 1, lineHeight := 1 }) : Array Display.Row :=
+  rowsFrom text width (cells.lineHeight * (text.utf8ByteSize + 1)) 0 cells
+
+/-- The row that holds `position`, as the display model answers it. -/
+def rowAt (text : String) (width position : Nat)
+    (cells : Display.Cells := { advance := 1, lineHeight := 1 }) : Option Display.Row :=
+  (rowsFrom text width cells.lineHeight position cells)[0]?
+
+/-- Where row `index` of `rows` starts; past the last of them, an offset no
+row starts at. -/
+def startOf (rows : Array Display.Row) (index : Nat) : Nat :=
+  (rows[index]?.map (·.start)).getD (rows.size + (rows.back?.map (·.stop)).getD 0 + 1)
+
+/-- What the follow policy answers for a view of `text` whose scroll anchor
+is at `anchor` and whose cursor is at `head`: the offset to place the anchor
+at, or none inside to keep it; none outside where the display refused. -/
+def followFrom (text : String) (width height margin anchor head : Nat)
+    (cells : Display.Cells := { advance := 1, lineHeight := 1 }) : Option (Option Nat) :=
+  onDisplay text (cells := cells) do
+    let area := areaOf width height
+    Scroll.follow area margin (← area.rows anchor) head
+
+/-- A view after the follow policy. -/
+structure Followed where
+  /-- Whether the policy placed an anchor. -/
+  moved : Bool
+  /-- The rows the view shows afterwards. -/
+  shown : Array Display.Row
+  /-- Where the cursor's row is among them, if it is one of them. -/
+  index : Option Nat
+  deriving DecidableEq, Repr
+
+/-- The view of `followFrom` after the policy: the rows the display model
+answers from the anchor placed, or from `anchor` where it was kept, and
+where the cursor's row is among them. -/
+def followedFrom (text : String) (width height margin anchor head : Nat)
+    (cells : Display.Cells := { advance := 1, lineHeight := 1 }) : Option Followed := do
+  let moved ← followFrom text width height margin anchor head cells
+  let row ← rowAt text width head cells
+  let shown := rowsFrom text width height (moved.getD anchor) cells
+  return { moved := moved.isSome, shown, index := shown.findIdx? (· == row) }
+
+/-- Whether `row` is among `shown` at least `margin` rows from the first and
+from the last of them, except where the first is the first of `rows`, the
+text's rows, or the last their last. -/
+def marginHolds (rows shown : Array Display.Row) (row : Display.Row) (margin : Nat) : Bool :=
+  match shown.findIdx? (· == row) with
+  | none => false
+  | some index =>
+    (index ≥ margin || shown[0]? == rows[0]?) &&
+      (shown.size - 1 - index ≥ margin || shown.back? == rows.back?)
+
+/-- Whether the follow policy, handed `margin`, holds a margin of `held`
+rows, from every row of `text` as the first row shown and every offset of it
+as the cursor (the text is ASCII): afterwards the margin holds of the
+cursor's row, an anchor is kept when it held already, and a second follow
+keeps the anchor. -/
+def marginSweep (text : String) (width height margin : Nat) (held : Nat := margin) : Bool :=
+  let rows := allRows text width
+  !rows.isEmpty &&
+    rows.all fun top =>
+      (List.range (text.utf8ByteSize + 1)).all fun head =>
+        match rowAt text width head, followFrom text width height margin top.start head with
+        | some row, some moved =>
+          let anchor := moved.getD top.start
+          marginHolds rows (rowsFrom text width height anchor) row held &&
+            (!marginHolds rows (rowsFrom text width height top.start) row held || moved.isNone) &&
+            followFrom text width height margin anchor head == some none
+        | _, _ => false
+
+/-- Sixteen lines of one letter each, `a` to `p`, with no line feed after the
+last. -/
+def sixteen : String :=
+  "\n".intercalate ("abcdefghijklmnop".toList.map (·.toString))
+
+/-- Lines of 10, 2, 0, 7, 1, 1, 1, 17 and 1 characters, and a line feed after
+the last: four characters wide, the first, the fourth and the eighth wrap. -/
+def ragged : String :=
+  "abcdefghij\nab\n\nabcdefg\nx\ny\nz\nabcdefghijklmnopq\nq\n"
+
+/-- What the follow policy costs on the counting model, for a view of
+`sixteen` ten characters wide and `height` rows tall whose first row shown is
+row `top` and whose cursor is on row `cursor`: whether it placed an anchor,
+and how many requests it made after the rows shown, which its caller
+asked. -/
+def followCost (height margin top cursor : Nat) : Option (Bool × Nat) :=
+  let rows := allRows sixteen 10
+  let program : EditorM (Bool × Nat) := do
+    let text ← createText sixteen
+    let area : Scroll.Area := { snapshot := ← text.snapshot, width := 10, height }
+    let shown ← area.rows (startOf rows top)
+    let before ← Watch.now
+    let moved ← Scroll.follow area margin shown (startOf rows cursor)
+    return (moved.isSome, (← Watch.now) - before)
+  (program.runModel countingModel).1.toOption
+
+/-- The checks of the policy by which a view follows its cursor
+(`Editor/Scroll.lean`), on the display model alone, with the scroll anchor
+and the cursor as offsets. A row is one the display model answers
+(`allRows`, `rowsFrom`, `rowAt`): no check says where a text wraps. -/
+def scrollChecks : List Check :=
+  [{  name :=
+        "the area of a view asks with the snapshot of its text, its rectangle's width and its rectangle's whole height"
+      run :=
+        pure
+          (Scroll.Area.ofRect ⟨3⟩ { x := 7, y := 9, width := 40, height := 30 } ==
+            { snapshot := ⟨3⟩, width := 40, height := 30 }) },
+    { name :=
+        "a cursor on the first row a view shows, on the last, and on one between them keeps the scroll anchor"
+      run :=
+        pure <|
+          let rows := allRows sixteen 10
+          rows.size == 16 &&
+            [3, 5, 7].all fun cursor =>
+              followFrom sixteen 10 5 0 (startOf rows 3) (startOf rows cursor) == some none },
+    { name :=
+        "a cursor one row below the rows shown moves the anchor one row, and one ten rows below them moves it so that the cursor's row is the last row shown"
+      run :=
+        pure <|
+          let rows := allRows sixteen 10
+          followFrom sixteen 10 5 0 (startOf rows 3) (startOf rows 8) ==
+              some (some (startOf rows 4)) &&
+            followedFrom sixteen 10 5 0 (startOf rows 0) (startOf rows 14) ==
+              some { moved := true, shown := rows.extract 10 15, index := some 4 } },
+    { name :=
+        "a cursor one row above the rows shown moves the anchor one row, and one ten rows above them moves it so that the cursor's row is the first row shown"
+      run :=
+        pure <|
+          let rows := allRows sixteen 10
+          followFrom sixteen 10 5 0 (startOf rows 8) (startOf rows 7) ==
+              some (some (startOf rows 7)) &&
+            followedFrom sixteen 10 5 0 (startOf rows 12) (startOf rows 2) ==
+              some { moved := true, shown := rows.extract 2 7, index := some 0 } },
+    { name :=
+        "a cursor on the last visual row of a line wrapped over three rows, below the view, has that row as the last row shown, and the anchor is not the line's first row"
+      run :=
+        pure <|
+          let rows := allRows wrapping 4
+          -- The third line is rows 3, 4 and 5: a line break is before the
+          -- first of them and after the last, and none is between them.
+          let last := startOf rows 5
+          (rows[2]?.map (·.stop + 1)) == some (startOf rows 3) &&
+            (rows[3]?.map (·.stop)) == some (startOf rows 4) &&
+            (rows[4]?.map (·.stop)) == some last &&
+            (rows[5]?.map (·.stop + 1)) == some (startOf rows 6) &&
+            (rowAt wrapping 4 (last + 1)).map (·.start) == some last &&
+            followedFrom wrapping 4 2 0 0 (last + 1) ==
+              some { moved := true, shown := rows.extract 4 6, index := some 1 } },
+    { name :=
+        "a cursor at the end of a text that ends in a line feed, in the empty row after it, is shown, as the last row"
+      run :=
+        pure <|
+          let text := "a\nb\nc\nd\n"
+          let rows := allRows text 10
+          followedFrom text 10 2 0 0 text.utf8ByteSize ==
+              some
+                { moved := true, shown := rows.extract (rows.size - 2) rows.size,
+                  index := some 1 } &&
+            (rows.back?.map fun row => row.start == row.stop) == some true },
+    { name := "a view that shows no row keeps its anchor, wherever its anchor and its cursor are"
+      run :=
+        pure <|
+          let rows := allRows sixteen 10
+          !rows.isEmpty &&
+            rows.all fun top =>
+              rows.all fun cursor =>
+                followFrom sixteen 10 0 0 top.start cursor.start == some none &&
+                  followFrom sixteen 10 0 2 top.start cursor.start == some none },
+    { name :=
+        "with a margin of two, from every row as the first row shown and every position as the cursor, of sixteen short lines and of a text with wrapped lines, in views of five and of seven rows: afterwards the cursor's row is among the rows shown, at least two rows from the first unless the first is the text's first row and at least two from the last unless the last is the text's last; an anchor is kept when that held already; and a second follow keeps the anchor"
+      run :=
+        pure
+          (marginSweep sixteen 10 5 2 && marginSweep sixteen 10 7 2 && marginSweep ragged 4 5 2 &&
+            marginSweep ragged 4 7 2) },
+    { name :=
+        "with no margin, the same sweep: the cursor's row is among the rows shown afterwards, an anchor that showed it is kept, and a second follow keeps the anchor"
+      run :=
+        pure
+          (marginSweep sixteen 10 5 0 && marginSweep ragged 4 3 0 && marginSweep ragged 4 1 0 &&
+            marginSweep "" 4 3 0) },
+    { name :=
+        "a margin larger than a view can keep is half the rows the view fits: with a margin of 99 a view of five rows keeps two rows each side of the cursor's row, and keeps its anchor while it does"
+      run :=
+        pure <|
+          let rows := allRows sixteen 10
+          followedFrom sixteen 10 5 99 (startOf rows 0) (startOf rows 10) ==
+              some { moved := true, shown := rows.extract 8 13, index := some 2 } &&
+            followedFrom sixteen 10 5 99 (startOf rows 8) (startOf rows 11) ==
+              some { moved := true, shown := rows.extract 9 14, index := some 2 } &&
+            followFrom sixteen 10 5 99 (startOf rows 8) (startOf rows 10) == some none &&
+            marginSweep sixteen 10 5 99 (held := 2) },
+    { name :=
+        "the policy counts no pixels: in cells of 8 by 16, in a view 48 pixels tall, a cursor below the rows shown becomes the last of three rows shown and one above them the first"
+      run :=
+        pure <|
+          let cells : Display.Cells := { advance := 8, lineHeight := 16 }
+          let rows := allRows sixteen 80 cells
+          rows.size == 16 &&
+            followedFrom sixteen 80 48 0 (startOf rows 0) (startOf rows 9) cells ==
+              some { moved := true, shown := rows.extract 7 10, index := some 2 } &&
+            followedFrom sixteen 80 48 0 (startOf rows 9) (startOf rows 4) cells ==
+              some { moved := true, shown := rows.extract 4 7, index := some 0 } },
+    { name :=
+        "what the policy costs, counted on the watch model's clock, after the rows shown, which its caller asked: one request where the anchor is kept and the margin as set holds, with a margin and with none; one for a cursor above with no margin; two for a cursor below with no margin, and one in a view of one row; with a margin that does not hold as set, two where the anchor is kept and three where it moves"
+      run :=
+        pure
+          (followCost 5 0 3 5 == some (false, 1) && followCost 5 2 3 5 == some (false, 1) &&
+            followCost 5 0 8 2 == some (true, 1) &&
+            followCost 5 0 0 10 == some (true, 2) &&
+            followCost 1 0 0 10 == some (true, 1) &&
+            followCost 5 2 0 1 == some (false, 2) &&
+            followCost 5 2 3 7 == some (true, 3)) }]
 
 /-- The checks of the user's origin (`Origin.user`) and of how a refusal is
 described to the user (`TextError.describe`). -/
@@ -17300,6 +17541,7 @@ def checks : List Check :=
     clipboardChecks ++
     fuzzyChecks ++
     guardChecks ++
+    scrollChecks ++
     originChecks ++
     stateChecks ++
     stateRequestChecks ++
