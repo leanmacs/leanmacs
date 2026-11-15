@@ -98,6 +98,9 @@ pub const SELECTION_FACE: &str = "selection";
 /// The name of the face a view's status row is drawn in, under each of its
 /// fields' faces.
 pub const MODE_LINE_FACE: &str = "mode-line";
+/// The name of the face the scene's echo text is drawn in, over the
+/// default face ([`frame`](crate::frame), "The bottom row").
+pub const ECHO_AREA_FACE: &str = "echo-area";
 
 /// A colour: `0xRRGGBBAA`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]

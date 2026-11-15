@@ -18,14 +18,27 @@
 //! separator, shaped through the `Shaper` port as one unbroken line, each
 //! field in its face over the face `mode-line` over the default face. A
 //! tab, a carriage return or a line feed in a field is shaped as a space.
-//! The row is at the bottom of the view's rectangle and as tall as its
-//! shaped line; the view's text rows are those that fit whole in the
-//! height that remains, and none when the status row is taller than the
-//! view. A view with no status field gives its whole height to its text.
-//! The layout queries take an explicit height and know no status row: a
-//! caller that wants the rows of a view's text area has no way yet to
-//! learn the status row's height (`docs/design/text-and-display.md`, open
-//! questions).
+//! The row is at the bottom of the view's rectangle and exactly
+//! [`Heights::status`] tall ([`Layout::heights`]: the mode line's line
+//! height, rounded up to a whole pixel), whatever height its line was
+//! shaped at. A glyph of a field whose face is taller runs past the row's
+//! foot, which is the view's, and the renderer draws nothing of a view
+//! outside its rectangle. The view's text rows are those that fit whole
+//! in the whole pixels that remain, and none when the status row is
+//! taller than the view. A view with no status field gives its whole
+//! height to its text.
+//!
+//! **The bottom row.** A view whose rectangle reaches the frame's bottom
+//! edge (its foot at or below the scene's height) and that has a status
+//! field has a status row [`Heights::message`] tall in place of
+//! [`Heights::status`]: that row is the frame's bottom row, the
+//! minibuffer's, where Lean puts the prompt while one is open. A view
+//! with no status field is not touched by this: it has no status row, at
+//! the bottom edge or not.
+//!
+//! So a caller that asks the rows query for a view's rows at its height
+//! less [`Heights::status`], or less [`Heights::message`] for a view at
+//! the bottom edge, is answered with exactly the rows its frame shows.
 //!
 //! **Every value is resolved.** A frame names no face: a run carries the
 //! [`Paint`] its faces come to ([`face`](crate::face), "The precedence":
@@ -91,7 +104,9 @@ use std::collections::HashMap;
 
 use crate::cache::{StatusKept, state};
 use crate::decoration::{DecorationSource, FaceSpanSource, SelectionSource, Span, fonts_of, merge};
-use crate::face::{Color, FaceId, MODE_LINE_FACE, Paint, SELECTION_FACE, UnderlineStyle};
+use crate::face::{
+    Color, ECHO_AREA_FACE, FaceId, MODE_LINE_FACE, Paint, SELECTION_FACE, UnderlineStyle,
+};
 use crate::query::{Visual, Walker};
 use crate::scene::{CursorShape, Rect, Scene, TextKey, View, ViewId};
 use crate::shaper::{
@@ -161,7 +176,8 @@ pub struct StatusRow {
     /// Its top, from the view's top: the view's height less its own, and
     /// the view's top when it is taller than the view.
     pub y: f32,
-    /// How far down it is: its shaped line's height.
+    /// How far down it is: [`Heights::status`], or [`Heights::message`]
+    /// at the frame's bottom edge (module docs, "The bottom row").
     pub height: f32,
     /// Its baseline, from its top.
     pub baseline: f32,
@@ -358,7 +374,47 @@ fn described(paint: &Paint) -> String {
 /// dropped, and laid out again if they are reached.
 pub const KEPT_VIEW_HEIGHTS: usize = 4;
 
+/// The heights of the rows a frame is built of, in whole physical pixels
+/// at the layout's scale, each its line height rounded up and at least 1
+/// ([`Layout::heights`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Heights {
+    /// One text row in the default face.
+    pub text: u32,
+    /// A window's status row: the face `mode-line` over the default face.
+    pub status: u32,
+    /// The frame's bottom row, where the echo text or a prompt is drawn:
+    /// the taller of the face `echo-area` and the face `mode-line`, each
+    /// over the default face.
+    pub message: u32,
+}
+
+/// `line_height` rounded up to a whole pixel, and at least 1.
+fn whole_pixels(line_height: f32) -> u32 {
+    // A height that is no number rounds to 0, and is then 1.
+    (line_height.ceil() as u32).max(1)
+}
+
 impl<S: Shaper> Layout<S> {
+    /// The heights of a text row, a status row and the frame's bottom row,
+    /// in the faces as last defined and at the scale last set: what the
+    /// frame lays those rows out at (module docs, "The mode line"). A
+    /// caller that sizes a view's text area by them asks the rows query
+    /// for exactly the rows the frame shows.
+    pub fn heights(&mut self) -> Heights {
+        let mode_line = self.styles.intern(MODE_LINE_FACE);
+        let echo_area = self.styles.intern(ECHO_AREA_FACE);
+        let line_of = |stack: &[FaceId]| {
+            let font = self.styles.style(&self.shaper, stack).font;
+            whole_pixels(self.shaper.metrics(font).line_height)
+        };
+        let status = line_of(&[mode_line]);
+        Heights {
+            text: line_of(&[]),
+            status,
+            message: status.max(line_of(&[echo_area])),
+        }
+    }
     /// Lays `scene` out into a frame, in the faces it carries, or in those
     /// of the last scene that carried any. What is kept of every text it
     /// does not name is dropped, and of each text it names, every row
@@ -371,7 +427,10 @@ impl<S: Shaper> Layout<S> {
         let views = scene
             .views
             .iter()
-            .map(|view| self.view_frame(view, &[]))
+            .map(|view| {
+                let bottom_edge = view.rect.y.saturating_add(view.rect.height) >= scene.size.height;
+                self.view_frame(view, bottom_edge, &[])
+            })
             .collect();
         // Read once the views are laid out, so the table holds every font
         // a glyph of theirs names.
@@ -418,7 +477,10 @@ impl<S: Shaper> Layout<S> {
     /// The line is kept per view, and shaped again only when its text, its
     /// font runs or the shaper's generation change: a change of paint
     /// shapes nothing.
-    fn status_row(&mut self, view: &View) -> Option<StatusRow> {
+    ///
+    /// The row is exactly as tall as `height`, whatever height its line was
+    /// shaped at, and sits at the view's bottom.
+    fn status_row(&mut self, view: &View, height: u32) -> Option<StatusRow> {
         if view.status.is_empty() {
             self.status.remove(&view.id);
             return None;
@@ -484,8 +546,8 @@ impl<S: Shaper> Layout<S> {
         };
         let background = mode.paint.background;
         Some(StatusRow {
-            y: (view.rect.height as f32 - line.height).max(0.0),
-            height: line.height,
+            y: view.rect.height.saturating_sub(height) as f32,
+            height: height as f32,
             baseline: line.baseline,
             hash: {
                 let mut hasher = DefaultHasher::new();
@@ -501,12 +563,27 @@ impl<S: Shaper> Layout<S> {
     /// The frame of `view`, with `extra` sources of spans under its
     /// decorations: the layers over a run are, lowest first, `extra` in
     /// order, the view's decorations in the order the scene lists them, and
-    /// the selections ([`face`](crate::face), "The precedence").
-    pub(crate) fn view_frame(&mut self, view: &View, extra: &[&dyn DecorationSource]) -> ViewFrame {
-        let status = self.status_row(view);
-        // What is left for the text above the status row.
-        let text_height =
-            view.rect.height as f32 - status.as_ref().map_or(0.0, |status| status.height);
+    /// the selections ([`face`](crate::face), "The precedence"). A view at
+    /// the frame's `bottom_edge` has a status row of the message height,
+    /// and any other one of the status height ([`Layout::heights`]).
+    pub(crate) fn view_frame(
+        &mut self,
+        view: &View,
+        bottom_edge: bool,
+        extra: &[&dyn DecorationSource],
+    ) -> ViewFrame {
+        let heights = self.heights();
+        let bottom = if bottom_edge {
+            heights.message
+        } else {
+            heights.status
+        };
+        let status = self.status_row(view, bottom);
+        // What is left for the text above the status row, in whole pixels.
+        let text_height = match status {
+            Some(_) => view.rect.height.saturating_sub(bottom),
+            None => view.rect.height,
+        } as f32;
         let cursor_face = self.styles.intern(&view.cursor.face);
         let selection_face = self.styles.intern(SELECTION_FACE);
         let paint_of = |stack: &[FaceId]| self.styles.style(&self.shaper, stack).paint;
@@ -1967,8 +2044,10 @@ mod tests {
             with_status(view("ab", 20, 80, 0, &[]), &fields),
         );
         let status = shown.status.expect("a status row");
-        // X is twice the size: 20 across, and the row is as tall as it,
-        // still ending at the view's bottom.
+        // X is twice the size: 20 across. The row is still the mode line's
+        // height, at the view's bottom: X's glyph, taller than the row, is
+        // shaped on the line's baseline and runs past the row's foot, and
+        // what runs past is outside the view and is not drawn.
         assert_eq!(
             glyphs_of(&status.line),
             vec![
@@ -1978,7 +2057,7 @@ mod tests {
                 (u32::from('c'), 40.0)
             ]
         );
-        assert_eq!((status.y, status.height), (48.0, 32.0));
+        assert_eq!((status.y, status.height), (64.0, 16.0));
         // The mode line's own font is every field's it sets none for.
         layout.define(&[def("mode-line", sized(32))]);
         let shown = frame(
@@ -2013,11 +2092,21 @@ mod tests {
             rows(&mut layout, 79, &[("x", "name")]),
             (3, Some((63.0, 16.0)))
         );
-        // A taller status row leaves less: 48 pixels hold three.
+        // A field in a taller face leaves the row as it was: the row is
+        // the mode line's height.
         assert_eq!(
             rows(&mut layout, 80, &[("x", "big")]),
+            (4, Some((64.0, 16.0)))
+        );
+        // A taller mode line leaves less: 48 pixels hold three.
+        let mut faces = status_faces();
+        faces.push(def("mode-line", sized(32)));
+        layout.define(&faces);
+        assert_eq!(
+            rows(&mut layout, 80, &[("x", "name")]),
             (3, Some((48.0, 32.0)))
         );
+        layout.define(&status_faces());
         // A cursor on a row the status row took the place of is not
         // drawn: the fifth row starts at byte 8.
         let hidden = frame(
@@ -2178,8 +2267,11 @@ mod tests {
         assert_eq!(
             layout.frame(&scene).describe(),
             "view 1 rect 0 0 40 40 background 808080ff selection 808080ff\n  \
-             status y 8 height 32 baseline 24 background 0000ccff glyphs 120@0 121@10#1 \
-             runs 0..1:cc0000ff/0000ccff 1..2:00cc00ff/0000ccff\n"
+             row y 0 height 16 baseline 12 bytes 0..2 glyphs 97@0 98@10 \
+             runs 0..2:000000ff/808080ff\n  \
+             status y 24 height 16 baseline 24 background 0000ccff glyphs 120@0 121@10#1 \
+             runs 0..1:cc0000ff/0000ccff 1..2:00cc00ff/0000ccff\n  \
+             cursor block paint 000000ff/808080ff at 10 0 10 16\n"
         );
     }
 
@@ -2455,7 +2547,7 @@ mod tests {
         let counting = Counting {
             asked: RefCell::new(vec![]),
         };
-        let frame = layout.view_frame(&shown, &[&counting]);
+        let frame = layout.view_frame(&shown, false, &[&counting]);
         assert_eq!(frame.rows.len(), 5);
         let asked = counting.asked.into_inner();
         assert!(!asked.is_empty());

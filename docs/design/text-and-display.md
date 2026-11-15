@@ -1909,9 +1909,17 @@ part are in the module docs; these are the decisions.
   face over `mode-line` over `default`, shaped as one unbroken line
   through the `Shaper` port, at the bottom of the view's rectangle. A tab,
   a carriage return or a line feed in a field is shaped as a space. The
-  row is as tall as its shaped line, and the view's text rows are those
-  that fit whole in the height that remains. A view with no status field
-  is laid out across its whole rectangle. The row is kept per view and
+  row is exactly the mode line's line height, rounded up to a whole
+  pixel, whatever height its line was shaped at, and the view's text rows
+  are those that fit whole in the whole pixels that remain (display
+  pipeline phase 6). A view whose rectangle reaches the frame's bottom
+  edge and that has a status field has a status row of the message
+  height instead, the taller of `echo-area` and `mode-line`: that row is
+  the minibuffer's bottom row. A view with no status field is laid out
+  across its whole rectangle, at the bottom edge or not. `Layout::heights`
+  answers the three heights, text, status and message, so a caller that
+  asks the rows query at a view's height less its bottom row is answered
+  with the rows the frame shows. The row is kept per view and
   shaped again only when its text or its font runs change. The
   alternatives were to draw it over the last text row, which hides rows,
   or outside the view's rectangle, for which the scene has no rectangle.

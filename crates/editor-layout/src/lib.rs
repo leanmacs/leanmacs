@@ -45,8 +45,10 @@
 //!   selection an area for each stretch of a row it covers), the paint
 //!   each run, cursor and view resolves to,
 //!   content hashes that cover paint and that a cursor move leaves alone,
-//!   the status row at a view's bottom and the text rows that fit above
-//!   it, decorations asked for the rows shown only, the shaper's
+//!   the status row at a view's bottom, exactly as tall as
+//!   [`Layout::heights`] says, and the text rows that fit above it, which
+//!   are the rows query's at the height that remains (`tests/heights.rs`),
+//!   decorations asked for the rows shown only, the shaper's
 //!   generation and its table of resolved fonts carried by the frame, with
 //!   every glyph naming an entry ([`frame`]), and the fixture frame
 //!   checked in at `tests/display/frame.expected`
