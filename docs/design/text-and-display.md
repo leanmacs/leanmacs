@@ -467,10 +467,16 @@ the text port: the undo tree (`lean/Editor/UndoTree.lean`, decided
     `10k` and `10j` do, and is not refused. The empty last row of a text
     that ends in a line feed is a row like any other.
   - Vim's `curswant` is a display column. Tab stops and wide characters are
-    the display pipeline's; the open question on a block's columns covers
-    both. Evil's wanted column counts cells, as built: a recorded
-    departure ([keymaps-and-modes.md](keymaps-and-modes.md), "The wanted
-    column").
+    the display pipeline's, so the text port's row motions do not answer
+    it: a column they take is in cells. Evil's `j` and `k`, since the
+    command loop's phase 16, use the row motions only to find the line
+    (column 0), and ask the display interface for the column: the move
+    query, with no lines to move and the text laid out unwrapped, answers
+    the x of the cursor and the position at an x of a line ("The scene",
+    as built). The wanted column they keep is that x, which Lean passes
+    back and does not compute with
+    ([keymaps-and-modes.md](keymaps-and-modes.md), "The wanted column").
+    The open question on a block's columns still covers a block.
 - At the ends of the text: where there is no such cell or word the answer
   is the end of the text going forward and 0 going back. An operator wants
   the end itself (`dw` on the last word); putting a normal-state cursor
@@ -515,7 +521,8 @@ the text port: the undo tree (`lean/Editor/UndoTree.lean`, decided
   [keymaps-and-modes.md](keymaps-and-modes.md), "Motions as built"):
   `left` and `right` are the previous and
   the next cell kept on the line by the line's start and end; `down` and
-  `up` the row motions with the wanted column from a point in cells;
+  `up` the row motions to the line's start, with the column on that line
+  asked of the display (the command loop's phase 16);
   `word-forward`, `word-backward` and `word-end` the next start, the
   previous start and the next end of a word, and the `bigword` names the
   same for a WORD; `line-start`, `line-first-non-blank` and `line-end` the
@@ -1196,9 +1203,12 @@ echo area, the preedit, and the prompt that is open, if one is.
   and its selections one selection marker of that text, whose ranges are its
   cursors.
 - **A window keeps its wanted column** (`Window.wanted`, built by the
-  command loop's phase 11): the column its vertical motions aim for,
-  counted in cells or the line's end, with the offset the cursor was left
-  at when it was kept. It holds only while the cursor is still there, so
+  command loop's phase 11): the column its vertical motions aim for, with
+  the offset the cursor was left at when it was kept. The column is the
+  line's end, or a goal of the display's: the x a move query passed back,
+  in pixels from the start of the cursor's line laid out unwrapped (the
+  command loop's phase 16). The state stores that x and nothing computes
+  with it. It holds only while the cursor is still there, so
   nothing has to clear it. One state request sets it; showing another
   buffer in the window clears it, and a window a split makes has none
   ([keymaps-and-modes.md](keymaps-and-modes.md), "The wanted column").
@@ -1421,6 +1431,36 @@ recorder (`lean/Editor/Display/Recorder.lean`) that keeps the last scene
 published and answers the two queries with the model's rule over the
 library's snapshot. The contract holds it too, over real snapshots. An
 editor with a window asks the real binding every time.
+
+**The model's layout rule and what the contract says of a column** (the
+command loop's phase 16, for evil's `j` and `k`).
+
+- **The model**: a tab takes the cells up to the next multiple of 8,
+  counted from its line's start, and a wide character takes two cells.
+  Which characters are wide is the model's own list of East Asian blocks,
+  not Unicode's table; an emoji is not in it and is one cell. A character
+  is of the row its first cell is in. Until phase 16 every character was
+  one cell, so the model and real layout, whose tab width is 8 by default,
+  disagreed about a tab and no property said so. The recorder answers with
+  the same rule.
+- **Three properties were added to the contract**, which the model, the
+  recorder and the real binding hold, the real binding unchanged:
+  - a move of no lines that is given a goal goes to that x of its row, and
+    to the row's end past its last character, and the goal a move with no
+    goal passes back is its position's own x: so the move query also
+    answers "the position at this x of this row";
+  - a width wider than any machine word holds wraps no line, so a row is a
+    line of the text and a move goes from line to line;
+  - a tab reaches to the next multiple of eight cells: the character after
+    it is eight cells in, and a move that aims inside the tab lands on the
+    tab.
+- **No property has a wide character.** How wide a character is drawn is
+  the shaper's, and the fake shaper the contract runs over makes every
+  glyph one cell. The model's wide characters are pinned on the model
+  alone (`ModelTest.displayChecks`), and so is what a tab or a wide
+  character does at a wrap.
+- **The property of the tab names a tab stop of 8.** When a view has a
+  setting for its tab width, the property names the default.
 
 **Who asks the two questions** (the command loop's phase 15). Until then
 nothing did. Now the loop asks them before each scene, to have each view
@@ -2562,7 +2602,12 @@ frame journal and the renderer's counters.
 - **Two views of one text at two widths.** Layout keeps one width per
   text, so two views of one text at different widths break each other's
   rows again on every frame. Keeping breaks per width is an addition when
-  splits of one buffer arrive.
+  splits of one buffer arrive. Evil's `j` and `k` are a second asker at
+  another width with one view alone: each asks about the cursor's line
+  and the line it goes to with the text unwrapped (the command loop's
+  phase 16), and the next frame asks at the view's width, so the rows both
+  touch are broken again each time, not shaped again. What that costs is
+  not measured.
 - **Where the echo area, the pending prefix and the preedit are drawn.**
   The scene carries them and layout lays out none of them; no phase of
   the display pipeline owns drawing them yet. The faces `echo-area` and

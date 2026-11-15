@@ -714,6 +714,28 @@ display model's rule over the library's snapshots. The numbers in
 `expected` were worked out by hand before the editor was run, and the run
 agreed with each.
 
+`ffi-test` runs **`j` and `k` aiming for a display column**, as a process,
+the same way (`tests/headless/column/`). The entry copies `lines.txt` into
+a temporary directory and writes the script there from the template
+`script`. The file is three lines, each ended by a line feed: `a`, a tab
+and `b`; the ten digits, which start at byte 4; and `世`, three bytes and
+two columns wide, and `b`. The script has no `reload` and no `resize`, so
+the frame is 0 by 0 and no view is laid out: the column is asked of the
+line unwrapped and needs no rectangle. It opens the file with `:e` and
+prints a `scene` after each step:
+
+| Step | Its cursor |
+|---|---|
+| `l l j`, from `b` after the tab | Byte 12: the digit `8`, the tab stop's column |
+| `k` | Byte 2: `b` again |
+| `G l k`, from `b` after the wide character | Byte 6: the digit `2` |
+
+The editor must exit with status 0, its output, with the temporary
+directory's path written `@DIR@`, must be exactly `expected`, and the copy
+must still hold the bytes of `lines.txt`. The display is the recorder. The
+three offsets were worked out by hand before the editor was run with the
+change: before it the run printed bytes 6, 2 and 5.
+
 `config-test` also runs jobs through the headless host, on a fake clock it
 moves: a job's handler runs on the editor thread, a reload that installs
 cancels the old config's jobs and a rejected one does not, and a `join` that

@@ -153,6 +153,11 @@ shows has its scroll anchor moved just far enough to show it, and the
 how many rows are kept round the cursor with `setScrollMargin`
 (`lean/Editor/Api.lean`); no command that ships sets it, and it is 0.
 
+`j` and `k` need no frame size. They ask the recorder about a line laid
+out unwrapped, so they aim for the display column in a frame of 0 by 0
+too: on the recorder a tab reaches to the next multiple of 8 cells and a
+wide character is two cells.
+
 **Registers.** A yank and a deletion set the unnamed register. `"` and
 then `+` before an operator, `x`, `p` or `P` names the clipboard: the
 headless host has no window system, so it keeps a clipboard of its own in
@@ -642,6 +647,17 @@ anchor's byte offset and the cursor's: line n of the file starts at byte
 first row is line 71 and whose cursor is on line 100, the last of its 30
 rows. The script's comments say what each step's numbers are and why
 ([the gate](the-gate.md) has them in one table).
+
+**`j` and `k` aiming for a display column** is a fifth process check of
+the same form (`tests/headless/column/`): the entry copies `lines.txt`,
+three lines of which one has a tab and one a wide character, and writes
+the template `script` there. The script loads no config and has no
+`resize`, so the frame stays 0 by 0. It opens the file and, with a `scene`
+line after each step, runs `l l j`, `k` and `G l k`. The run must exit
+with status 0, and its output, with the temporary directory's path written
+`@DIR@`, must be exactly `tests/headless/column/expected`: the cursor at
+bytes 12, 2 and 6 ([the gate](the-gate.md) says which characters those
+are).
 
 **A script waits where a command starts a job.** A script's lines are
 posted to the editor without waiting, and a job's result is queued when

@@ -467,9 +467,9 @@ structure Vocabulary.Taken where         -- where a motion leads an operator
 
 structure Vocabulary.Motion where
   name   : String
-  target : TextId → Vocabulary.From → TextM Vocabulary.To
+  target : TextId → Vocabulary.From → EditorM Vocabulary.To
   reach  : Vocabulary.Reach := .exclusive
-  taken  : Bool → TextId → Vocabulary.From → TextM Vocabulary.Taken  -- `target` with `reach`, by default
+  taken  : Bool → TextId → Vocabulary.From → EditorM Vocabulary.Taken  -- `target` with `reach`, by default
 ```
 
 - **It is not the record this section first sketched** (a `Motion` with a
@@ -481,12 +481,21 @@ structure Vocabulary.Motion where
   to where a cursor may rest. Resting is a rule of the state, applied by
   the command ("Where a cursor rests"), and an operator needs the raw
   target: `dw` on the last word wants the text's end.
-- **A motion asks the text port and changes nothing**, so its type is
-  `TextM`: it cannot edit the editor state or publish. A motion by display
-  lines needs layout and is not here; when one is built the field widens,
-  and these entries lift unchanged.
-- **The wanted column goes in and comes out as data**: a motion cannot
-  read the window. The command hands it the kept column when that still
+- **A motion asks the text, and the display where a column is the
+  display's, and changes nothing.** Its target is a command (`EditorM`),
+  since the command loop's phase 16: `j` and `k` ask the display for their
+  column ("The wanted column"). Until then the type was `TextM`, and a
+  motion could not edit the editor state or publish; that is now the
+  entry's rule and not the type's. The fourteen entries that ask only the
+  text are written over the text port and lift unchanged. Pinned by a
+  motion written in a check that asks the display and is run by the move
+  command (`evilMotionChecks`).
+  - **Set aside: the motion stays `TextM` and the move command asks the
+    display.** The motion would answer a line and a flag, and `To`,
+    `Taken`, the move command and the operator command would each carry a
+    protocol that only `j` and `k` use.
+- **The wanted column goes in and comes out as data**: a motion is not
+  handed the window. The command hands it the kept column when that still
   holds, and keeps what it hands back ("The wanted column").
 - **`unmoved` is a field of its own** because a motion cannot tell that
   it did not move: `l` at a line's last character answers the line break,
@@ -1132,6 +1141,12 @@ Status: decided 2026-11-14 and built, by the command loop's phase 11
 `ViewId.setWanted`, `lean/Editor/Api.lean`; read and kept by `Evil.move`,
 `lean/Editor/Evil.lean`; pinned by `stateChecks`, `stateRequestChecks` and
 `apiStateChecks` for the state, and by `evilMotionChecks` for the keys).
+Its unit, a display column asked of the display, was decided 2026-11-14
+and built by the command loop's phase 16 (`WantedColumn.goal`,
+`lean/Editor/State.lean`; `Evil.down`, `Evil.up`, `Evil.unwrapped`,
+`lean/Editor/Evil/Motions.lean`; pinned by `displayColumnRows` in
+`evilMotionChecks`, by three properties of the display contract, and on
+the executable by `tests/headless/column`).
 
 The wanted column is the column a view's `j` and `k` aim for, which
 survives crossing a shorter line (Vim's `curswant`).
@@ -1141,9 +1156,9 @@ it was kept at.**
 
 - **The field**: `Window.wanted : Option Window.Wanted`, none by default,
   with `Window.Wanted { column : WantedColumn, head : Nat }`. A
-  `WantedColumn` is `cells n`, a column counted in cells from the row's
-  start as the text port counts one (`ColumnUnit.cells`), or `lineEnd`,
-  which is what `$` leaves so that `j` and `k` then stay at line ends.
+  `WantedColumn` is `goal x`, a display column as the display gave it
+  ("Where the display column comes from", below), or `lineEnd`, which is
+  what `$` leaves so that `j` and `k` then stay at line ends.
 - **`head` is the offset the cursor was left at when the column was
   kept.** A vertical motion uses the kept column only when the cursor is
   still at that offset. Anything else that moves the cursor (a horizontal
@@ -1178,16 +1193,11 @@ it was kept at.**
   - Entering a state that collapses the selection keeps none: `<Escape>`
     from insert state and from a visual state, and the keys that begin an
     insert, as Vim's do. Entering a visual state leaves it.
-- **It counts cells, and Vim's counts display columns**: a departure from
-  Vim. With a tab or a wide character before the cursor the two differ:
-  from `b` in `a⇥b`, `j` onto `0123456789` lands on `2` here and on `8` in
-  Vim ([text-and-display.md](text-and-display.md), "Vim's `curswant` is a
-  display column"). Display columns need the display pipeline's tab stops
-  and character widths. The unit is evil's choice, so one evil check pins
-  it, named as a departure. That the unit is cells and not bytes is
-  pinned apart from it, by rows of `j` and `k` with characters of two
-  bytes and one display column before the cursor, on which Vim's column
-  is the same ("Motions as built").
+- **It is a display column, as Vim's is.** From `b` in `a⇥b`, `j` onto
+  `0123456789` lands on `8`; from `b` in `世b`, on `2`; and where the
+  column falls inside a tab or a wide character on the line it goes to,
+  the cursor lands on that character. Phase 11 counted cells, which put
+  the first on `2`, and pinned that as a departure; phase 16 removed it.
 - **Set aside: in the scheme's state.** `step` is pure and never sees what
   a command did, so the scheme cannot know the column.
 - **Set aside: in the selection marker.** The store's selection has no
@@ -1198,6 +1208,85 @@ it was kept at.**
 - **What it costs.** An edit made through another window that shifts the
   cursor's offset makes the kept column stale, where Vim would keep it.
   The next `j` then aims for the cursor's own column.
+
+**Where the display column comes from.** The line `j` and `k` go to is the
+text port's, by buffer lines, as phase 11 built it. The column on that line
+is the display's, asked with the move query the display interface already
+has (`Display.linesFrom`), of the text laid out unwrapped. Tab stops and
+character widths are layout's, and Lean keeps no copy of layout.
+
+- **Two questions, both a move of no lines** (`Evil.inLine`):
+  - the cursor's own x: the query with no goal, from the cursor, whose
+    reply passes back the x it would aim for;
+  - the position at an x of the line gone to: the query from that line's
+    start, which the text port answers, with the x as its goal.
+- **The unit of the kept column is that x** (`WantedColumn.goal`): what the
+  display passed back, which is pixels from the start of the line laid out
+  unwrapped. Lean stores it and hands it back, and does no arithmetic on
+  it. The display interface gained no request.
+- **Unwrapped, and not at the view's width.** The query's width is
+  `Evil.unwrapped`, 2^64: wider than any machine word holds, which the
+  display takes for wider than any view. Vim's `curswant` is a column of
+  the buffer line whatever the window's width. At the view's width an x is
+  counted from the visual row's start, which is wrong on a wrapped line,
+  and in a frame of 0 by 0, the headless host's until a script resizes,
+  every x is 0. Asked unwrapped, nothing of the view's rectangle is read,
+  so `j` and `k` are the same in a view that is not laid out.
+- **The line is the text port's, and not `lines := ±n` in one query.**
+  Real layout cuts a row longer than 4096 bytes into segments that are
+  visual lines at any width, so a move by display lines could stay in the
+  row. With the line from the text port the line is always right; on such
+  a row only the column degrades, since an x is counted in the segment.
+- **What the display model answers**
+  ([text-and-display.md](text-and-display.md), "The scene", as built): a
+  tab reaches to the next multiple of 8 cells from its line's start, and a
+  wide character is two cells, by the model's own list of East Asian
+  blocks. An emoji is one cell there. Over real layout a character is as
+  wide as its glyph.
+- **What the display is held to** (`lean/Editor/Display/Contract.lean`),
+  on the model, the recorder and the real binding: a move of no lines that
+  is given a goal goes to that x of its row; a width no machine word holds
+  wraps no line; and a tab reaches to the next multiple of eight cells.
+- **What it costs.** Each `j` or `k` that asks takes a snapshot of the
+  text round its questions and releases it:
+
+  | | Display requests | Text requests more than phase 11 |
+  |---|---|---|
+  | The line's end kept (`$` before) | 0 | 0 |
+  | A goal kept, which is every `j` or `k` after the first | 1 | 2: the snapshot and its release |
+  | No column kept | 2 | 2 |
+  | Cannot move, a goal kept | 0 | 0 |
+  | Cannot move, none kept | 1 | 2 |
+
+  A count asks no more: the text port goes to the line in one request, so
+  `2j` aims for the same x as `jj`. An operator (`dj`, `yk`) hands the
+  motion no kept column, so it asks twice. Over real layout the text is
+  asked about at a second width, and layout keeps one width for a text:
+  unmeasured ([text-and-display.md](text-and-display.md), open questions).
+- **Visual states** go through the same motion: the head of `vj` aims for
+  the display column. Block-wise columns are not built. `gj` and `gk`, by
+  visual lines, are not built either.
+- **Set aside: a new display query by buffer line.** It states the
+  question most directly, and the real binding would have to answer it.
+  The existing query answers it.
+- **Set aside: the text port, with a tab stop passed in.** It needs a
+  table of widths and a tab stop in the text store and in Lean, and gives
+  layout two places that answer one question.
+- **Departures from Vim that remain**:
+  - **A cursor on a tab counts at the tab's first column.** Vim counts it
+    at the tab's last: `j` from the tab of `a⇥b` onto `0123456789` lands
+    on `7` in Vim and on `1` here. The x the display answers for a
+    position is where its character starts, and the column of a
+    character's last cell cannot be had without Lean subtracting from an
+    x. Pinned by one check of `evilMotionChecks`, named as a departure.
+  - **An emoji is one cell on the display model**, and two columns in
+    Vim.
+  - **Over real layout**, not seen on the model: a tab after a wide
+    character stops at a multiple of 8 characters, not of 8 display
+    columns, and on a row longer than 4096 bytes the column is counted in
+    the segment.
+  - Whether a cell is a grapheme cluster stays open
+    ([text-and-display.md](text-and-display.md)).
 
 ### Where a cursor rests
 
@@ -1384,7 +1473,7 @@ cannot go the whole way, is Vim's:
 | Key | Motion | Composed from | Count |
 |---|---|---|---|
 | `h`, `l` | `left`, `right` | `previousCell`, `nextCell`, stopped at the line's start and at where its content ends | Repeats. Goes as far as the line allows |
-| `j`, `k` | `down`, `up` | `rowsDown`, `rowsUp` with the wanted column | Rows. Stops at the last line and at the first |
+| `j`, `k` | `down`, `up` | `rowsDown`, `rowsUp` to the line's start, then the display's position at the wanted column of that line ("The wanted column") | Rows. Stops at the last line and at the first |
 | `w`, `b`, `e`, `W`, `B`, `E` | `word-forward`, `word-backward`, `word-end` and the three `bigword` names | `nextWordStart`, `previousWordStart`, `nextWordEnd` of a word or a WORD | Repeats. Stops when the position no longer changes |
 | `0` | `line-start` | `lineStart` | None is ever given: a `0` after a digit is part of the count. A count is ignored |
 | `^` | `line-first-non-blank` | `lineFirstNonBlank` | Ignored, as Vim documents |
@@ -1505,7 +1594,11 @@ rows of the same kinds than are listed here.
 | `3 k` | `ab⏎cd⏎ef⏎gh⏎i\|j` | `ab⏎c\|d⏎ef⏎gh⏎ij` |
 | `j`, `2 j` | `hé\|llo⏎world`, `é\|bc⏎def⏎ghi` | `héllo⏎wo\|rld`, `ébc⏎def⏎g\|hi` (a character of two bytes before the cursor is one column) |
 | `k` | `abcdef⏎éö\|x` | `ab\|cdef⏎éöx` |
-| `j k`, `j j` | `hé\|llo⏎x⏎héllo`, `hé\|llo⏎x⏎world` | `hé\|llo⏎x⏎héllo`, `héllo⏎x⏎wo\|rld` (the kept column is in cells too) |
+| `j k`, `j j` | `hé\|llo⏎x⏎héllo`, `hé\|llo⏎x⏎world` | `hé\|llo⏎x⏎héllo`, `héllo⏎x⏎wo\|rld` (the kept column is not in bytes either) |
+| `j`, `k` | `a⇥\|b⏎0123456789`, `0123456789⏎a⇥\|b` | `a⇥b⏎01234567\|89`, `01234567\|89⏎a⇥b` (the display column after a tab, with a tab stop of 8) |
+| `j`, `k` | `世\|b⏎0123456789`, `0123456789⏎世\|b` | `世b⏎01\|23456789`, `01\|23456789⏎世b` (a wide character is two columns) |
+| `j` | `0123\|456789⏎a⇥b`, `01\|23456789⏎a世b` | `0123456789⏎a\|⇥b`, `0123456789⏎a\|世b` (a column inside a tab or a wide character lands on it) |
+| `j j k k` | `a⇥\|b⏎xy⏎0123456789`, `a世\|b⏎x⏎0123456789` | each as it started |
 | `j j` | `abc\|d⏎x⏎abcd` | `abcd⏎x⏎abc\|d` |
 | `j k` | the same | `abc\|d⏎x⏎abcd` (the acceptance criterion) |
 | `j j` | `abc\|d⏎⏎abcd` | `abcd⏎⏎abc\|d` (across an empty line) |
@@ -1557,7 +1650,8 @@ its owner:
   use ASCII text for the word motions, and one text with `é` and `ö`, on
   which the two agree. They do not restate the rule: a fix to the table
   must break no evil check.
-- **The wanted column counts cells** ("The wanted column").
+- **A cursor on a tab aims for the tab's first display column** ("The
+  wanted column"). Vim's aims for its last.
 - **A visual-state head on a last row with no line feed**, and **the empty
   last row after an insert** ("Where a cursor rests").
 - **A count before `i a I A` is ignored** ("Insert state"). Vim repeats
@@ -2658,7 +2752,7 @@ keys are pressed against a text:
 | List | Checks |
 |---|---|
 | `evilRestChecks` | Where a cursor rests under each rule, from every position of a few small texts, on the text model; the rule a report gives |
-| `evilMotionChecks` | Each motion's key, with and without a count, in a text with the cursor written into it ("Keys against the model"); the wanted column, by keys and by a command that calls the move command twice; a sweep of every motion of the table from every resting position; that every default motion key has an entry |
+| `evilMotionChecks` | Each motion's key, with and without a count, in a text with the cursor written into it ("Keys against the model"); the wanted column, by keys and by a command that calls the move command twice; the display column `j` and `k` aim for, by rows of Vim's results with a tab and with wide characters (`displayColumnRows`), in a frame of 0 by 0, and by what `down` asks of the ports; a motion written in a check that asks the display; a sweep of every motion of the table from every resting position; that every default motion key has an entry |
 | `evilStateChecks` | `v`, `V` and `<Escape>`: the selection the scene shows, its shape and what it covers; the scene's cursor and status field in each state; and, by `Evil.enter` called with a report written by hand, a state that keeps both ends entered from an exclusive selection, which no default key does: where the anchor rests, and that the head steps back |
 | `evilInsertChecks` | `i a I A`, typed text and `<Escape>`; that a session is one step of the history, by an undo request; a key typed into a prompt; a committed text in normal state and in a session |
 
@@ -3009,8 +3103,9 @@ every build). The second is proved on the text model
   sessions"). The alternative is to leave the commit as it was, which
   lets an input method's text replace the character under a normal-state
   cursor.
-- **The wanted column counts cells** ("The wanted column"). Display
-  columns need the display pipeline.
+- **The column of a cursor on a tab** ("The wanted column"). It is the
+  tab's first display column, and Vim's is its last. Vim's needs the x of
+  a character's last cell, which the display interface does not answer.
 - **The status line's order and the face names**: the state's field
   first, in the face `status.state`; the cursor faces `cursor.` followed
   by the state's name.
@@ -3065,8 +3160,10 @@ every build). The second is proved on the text model
   binds to a name.
 - **The vocabulary is a compiled table.** Registering a motion or an
   operator from `setup`, by owner, is not built ("Vocabulary").
-- **A motion runs in `TextM`.** A motion by display lines will need the
-  display port.
+- **A motion is a command that changes nothing by rule, not by type**
+  ("Vocabulary"). Its target is `EditorM`, so that `j` and `k` can ask the
+  display; a narrower type, one that admits the text port and the
+  display's queries and nothing else, is not built.
 - **One cursor.** The evil commands read the primary range and place one
   range.
 - **`gg` and `G` go to the first non-blank**, Vim's default; Neovim's
