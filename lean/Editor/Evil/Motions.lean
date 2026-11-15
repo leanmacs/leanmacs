@@ -68,7 +68,8 @@ What each says of itself for an operator (`Editor/Vocabulary.lean`,
     the column is one of the line and not of a visual row, whatever the
     view's width, and nothing of the view's rectangle is read: `j` and `k`
     are the same in a view that is not laid out. Each takes a snapshot of
-    the text round its questions and releases it (`onSnapshot`).
+    the text round its questions and releases it (`TextId.withSnapshot`,
+    `Editor/Command.lean`).
   - **What they ask**: nothing of the display when they are handed the
     line's end; one question when they are handed a goal, which is every
     `j` or `k` after the first, and none when they then cannot move; two
@@ -281,19 +282,6 @@ the line's start. -/
 def unwrapped : Nat :=
   2 ^ 64
 
-/-- Runs `run` with a snapshot of `text`, taken here. The snapshot is
-released when `run` has ended, also when it was refused, and its refusal is
-then thrown. -/
-def onSnapshot {α : Type} (text : TextId) (run : SnapshotId → EditorM α) : EditorM α := do
-  let snapshot ← text.snapshot
-  let ended ← observing (run snapshot)
-  snapshot.release
-  match ended with
-  | .ok value =>
-    return value
-  | .error refusal =>
-    throw refusal
-
 /-- What the display answers of `position` in its line of `snapshot`, laid
 out unwrapped: with no goal, the position's own x, as the goal passed back;
 with one, the position at that x of the line, or the line's end past its
@@ -334,10 +322,10 @@ def vertical (name : String) (down : Bool) : Vocabulary.Motion :=
       | some (.goal x) =>
         if rows == 0 then
           return { head, wanted := some (.goal x), failed := true }
-        let moved ← onSnapshot text fun snapshot => inLine snapshot line (some x)
+        let moved ← text.withSnapshot fun snapshot => inLine snapshot line (some x)
         return { head := moved.position, wanted := some (.goal x) }
       | none =>
-        onSnapshot text fun snapshot => do
+        text.withSnapshot fun snapshot => do
             let own ← inLine snapshot head none
             if rows == 0 then
               return { head, wanted := some (.goal own.goal), failed := true }

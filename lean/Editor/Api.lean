@@ -213,8 +213,10 @@ about its view is here.
   a position goes by rows (`Display.linesFrom`) of the text as its own
   edits have left it.
   - **The snapshot is released when `run` has ended**, also when it was
-    refused, and the refusal is then thrown. The save command takes and
-    releases a snapshot the same way.
+    refused, and the refusal is then thrown. The rule is
+    `TextId.withSnapshot`'s (`Editor/Command.lean`, "A snapshot round a
+    command's questions"), which this calls once it has the rectangle.
+    The save command takes and releases a snapshot the same way.
   - **A command that is interrupted, gives up or breaks off inside `run`
     leaves the snapshot**: the loop ends a command's program at that
     request, and a snapshot a command took is not undone
@@ -1030,19 +1032,13 @@ def scrollTo (target : Target) (offset : Nat) : TextM Unit :=
 /-- Runs `run` with what the display is asked about `target`'s view with
 (`Scroll.Area`): a snapshot of its buffer's text, taken here, and the
 view's rectangle in the frame. The snapshot is released when `run` has
-ended, also when it was refused, and its refusal is then thrown. `none`,
-with nothing taken and nothing run, for a view that is not laid out
-(`EditorState.rect?`). -/
+ended, also when it was refused, and its refusal is then thrown: that is
+`TextId.withSnapshot` (`Editor/Command.lean`), and this is the rectangle's
+lookup and it. `none`, with nothing taken and nothing run, for a view that
+is not laid out (`EditorState.rect?`). -/
 def onArea {α : Type} (target : Target) (run : Scroll.Area → EditorM α) : EditorM (Option α) := do
   let some rect := (← editorState).rect? target.window.id | return none
-  let snapshot ← target.buffer.text.snapshot
-  let ended ← observing (run (.ofRect snapshot rect))
-  snapshot.release
-  match ended with
-  | .ok value =>
-    return some value
-  | .error refusal =>
-    throw refusal
+  some <$> target.buffer.text.withSnapshot fun snapshot => run (.ofRect snapshot rect)
 
 end Target
 

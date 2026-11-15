@@ -15915,11 +15915,10 @@ def evilMotionChecks : List Check :=
         let rowDown : Vocabulary.Motion :=
           { name := "row-down"
             target := fun text origin => do
-              let snapshot ← text.snapshot
               let moved ←
-                Display.linesFrom
-                    { snapshot, width := 640, position := origin.head, lines := 1, goal := none }
-              snapshot.release
+                text.withSnapshot fun snapshot =>
+                    Display.linesFrom
+                      { snapshot, width := 640, position := origin.head, lines := 1, goal := none }
               return { head := moved.position } }
         let moving : Dispatched := fun call => do
           Evil.move (Evil.motions.push rowDown) { call with arguments := [.str rowDown.name] }

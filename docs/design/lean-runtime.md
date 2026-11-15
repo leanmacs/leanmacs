@@ -937,6 +937,14 @@ made of state requests and text requests. Config sees it through
     was refused. A command that is interrupted, gives up or breaks off
     inside it leaves the snapshot: the loop ends a command's program at
     that request, and a snapshot a command took is not undone.
+  - The take, the release and the rethrow are one helper,
+    `TextId.withSnapshot` in `lean/Editor/Command.lean`, beside the lifts:
+    the lowest module that has a command's type, which the API and the
+    evil vocabulary both import. `Target.onArea` is the rectangle's lookup
+    and that helper, and a motion that asks the display calls it with the
+    text it is handed (`j` and `k`, `lean/Editor/Evil/Motions.lean`). So
+    the release rule, and what an interrupted command leaves, is in one
+    place.
   - The policy that says where a scroll anchor goes is
     `lean/Editor/Scroll.lean`: programs over the display port alone,
     which the API imports. It holds no state, and nothing of an answer of

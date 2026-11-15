@@ -34,6 +34,28 @@ Display.publish scene` elaborates at `EditorM`. Config is written at `EditorM`, 
 what lets every text operation it calls keep its own type. There is no lift
 from `JobM`, so a job is still not a command.
 
+## A snapshot round a command's questions
+
+`TextId.withSnapshot` takes a snapshot of a text, runs a command's program
+with it, and releases it. It is here, beside the lifts, because its program
+is a command (it may ask the display of the snapshot, so it is no `TextM`),
+and because this is the lowest module that has a command's type: the API
+(`Target.onArea`, `Editor/Api.lean`) and a vocabulary's motions
+(`Editor/Evil/Motions.lean`), neither of which imports the other, both
+import it. The rule is written once, here:
+
+- **The snapshot is released when the program has ended**, also when it was
+  refused, and the refusal is then thrown.
+- **A command that is interrupted, gives up or breaks off inside the
+  program leaves the snapshot**: the loop ends a command's program at that
+  request, and a snapshot a command took is not undone (`Editor/Loop.lean`,
+  "Rollback", "What is not undone"). It is one shared version of the text,
+  held until the store is dropped.
+
+Pinned through its callers: the API's case of `Target.onArea`
+(`Editor/Api/Cases.lean`) and the motions' counts of requests and of
+snapshots held (`ModelTest.evilMotionChecks`).
+
 ## The state requests are the loop's to answer
 
 A state request reaches nothing outside the editor state, so it has no
@@ -214,5 +236,19 @@ def Fuzzy.lift {α : Type} (program : FuzzyM α) : EditorM α :=
 
 instance : MonadLift FuzzyM EditorM where
   monadLift := Fuzzy.lift
+
+/-- Runs `run` with a snapshot of `text`, taken here. The snapshot is
+released when `run` has ended, also when it was refused, and its refusal is
+then thrown ("A snapshot round a command's questions", in the module
+docs). -/
+def TextId.withSnapshot {α : Type} (text : TextId) (run : SnapshotId → EditorM α) : EditorM α := do
+  let snapshot ← text.snapshot
+  let ended ← observing (run snapshot)
+  snapshot.release
+  match ended with
+  | .ok value =>
+    return value
+  | .error refusal =>
+    throw refusal
 
 end Editor

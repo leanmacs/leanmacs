@@ -1248,7 +1248,9 @@ character widths are layout's, and Lean keeps no copy of layout.
   is given a goal goes to that x of its row; a width no machine word holds
   wraps no line; and a tab reaches to the next multiple of eight cells.
 - **What it costs.** Each `j` or `k` that asks takes a snapshot of the
-  text round its questions and releases it:
+  text round its questions and releases it, with the helper
+  `Target.onArea` is built on (`TextId.withSnapshot`,
+  `lean/Editor/Command.lean`):
 
   | | Display requests | Text requests more than phase 11 |
   |---|---|---|
