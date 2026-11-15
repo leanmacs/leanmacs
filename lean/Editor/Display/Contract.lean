@@ -31,13 +31,22 @@ rows of `cells`.
 
 A text in a property that wraps has no space in it, so it wraps at the same
 place whether lines break at characters or at words: the wrapping policy
-stays the display pipeline's. A line is laid out in characters one cell
-wide; a carriage return before a line feed is part of the break.
+stays the display pipeline's. A carriage return before a line feed is part
+of the break.
+
+A character of a property is one cell wide, but for a tab, which reaches to
+the next multiple of eight cells from its line's start: the default tab
+width, named here until a view has a setting for it. No property has a
+character that a font draws wide. How wide a character is drawn is the
+shaper's, and the fake shaper a runner uses makes every glyph one cell, so
+what is wide, and how wide, is left open. No property has a tab or a wide
+character in a line that wraps either.
 
 ## What a caller that wants a column of a line relies on
 
 Two properties are for a caller that asks about a line and not about a view
-(evil's `j` and `k`):
+(evil's `j` and `k`), with the property of the tab, whose x such a caller
+aims across:
 
 - a move of no lines that is given a goal goes to that x of its row, so the
   move query also answers "which position is at this x of this row", and
@@ -180,6 +189,18 @@ def properties (cells : Display.Cells) : List Property :=
               { snapshot := nth snapshots 0, width := 2 ^ 64, position := 6, lines := 1
                 goal := none }
         return shown == #[⟨0, 8⟩, ⟨9, 11⟩] && moved.position == 11 },
+    { name :=
+        "a tab reaches to the next multiple of eight cells: the character after it is eight cells in, and a move that aims inside the tab lands on the tab"
+      texts := #["a\tb\n0123456789"]
+      holds := fun snapshots => do
+        let move (position : Nat) (lines : Int) : DisplayM Nat := do
+          let moved ←
+            Display.linesFrom
+                { snapshot := nth snapshots 0, width := 20 * cells.advance, position, lines
+                  goal := none }
+          return moved.position
+        return (← move 2 1) == 12 && (← move 8 (-1)) == 1 && (← move 11 (-1)) == 1 &&
+            (← move 12 (-1)) == 2 },
     { name := "a query of a snapshot the display does not know is refused"
       texts := #["ab"]
       holds := fun snapshots => do

@@ -3765,7 +3765,32 @@ def displayChecks : List Check :=
       run :=
         pure
           (movedBy [wrapping] 32 3 2 none (cells := { advance := 8, lineHeight := 16 }) ==
-            .inr ⟨9, 24⟩) }]
+            .inr ⟨9, 24⟩) },
+    { name :=
+        "a wide character is two cells: the position after 世 is two cells in, and a move that aims for either of its cells lands on it; 😀 is one cell"
+      run :=
+        pure
+          (movedBy ["世b"] 10 3 0 none == .inr ⟨3, 2⟩ &&
+            movedBy ["世b"] 10 3 0 (some 0) == .inr ⟨0, 0⟩ &&
+            movedBy ["世b"] 10 3 0 (some 1) == .inr ⟨0, 1⟩ &&
+            movedBy ["世b"] 10 0 0 (some 2) == .inr ⟨3, 2⟩ &&
+            movedBy ["😀b"] 10 4 0 none == .inr ⟨4, 1⟩) },
+    { name :=
+        "a tab stops at a multiple of eight cells from its line's start, also after a wide character and on a later line"
+      run :=
+        pure
+          (movedBy ["世\tb"] 20 4 0 none == .inr ⟨4, 8⟩ &&
+            movedBy ["xyz\nabcdefghi\tb"] 20 14 0 none == .inr ⟨14, 16⟩ &&
+            movedBy ["a\tb"] 160 2 0 none (cells := { advance := 8, lineHeight := 16 }) ==
+              .inr ⟨2, 64⟩) },
+    { name :=
+        "a character is of the row its first cell is in, also when its second cell is past the width"
+      run :=
+        pure
+          (shownBy ["ab世cd"] { snapshot := ⟨0⟩, width := 4, height := 3, anchor := 0 } ==
+              .inr #[⟨0, 5⟩, ⟨5, 7⟩] &&
+            shownBy ["abc世d"] { snapshot := ⟨0⟩, width := 4, height := 3, anchor := 0 } ==
+              .inr #[⟨0, 6⟩, ⟨6, 7⟩]) }]
 
 /-- Whether every live text of `model` is in step (`TextModel.InStep`) at
 the revision it is at. -/
