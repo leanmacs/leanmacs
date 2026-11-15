@@ -520,6 +520,15 @@ name = "editor-process"
 version = "0.1.0"
 
 [[package]]
+name = "editor-process-std"
+version = "0.1.0"
+dependencies = [
+ "editor-process",
+ "rustix 1.1.6",
+ "tempfile",
+]
+
+[[package]]
 name = "editor-render"
 version = "0.1.0"
 dependencies = [
