@@ -15820,6 +15820,28 @@ def evilMotionChecks : List Check :=
         "a departure from Vim, recorded in keymaps-and-modes.md under The wanted column: the column j and k aim for counts cells, and Vim's counts display columns, so from the character after a tab j lands two cells in, where Vim's lands at the tab stop's column"
       run := evilRows [("j", "a\t|b\n0123456789", "a\tb\n01|23456789")] },
     { name :=
+        "a motion may ask the display: one written here, whose target is where the display puts the head one row down, moves the cursor there when the move command runs it over the vocabulary with it added, and says nothing"
+      run := do
+        let rowDown : Vocabulary.Motion :=
+          { name := "row-down"
+            target := fun text origin => do
+              let snapshot ← text.snapshot
+              let moved ←
+                Display.linesFrom
+                    { snapshot, width := 640, position := origin.head, lines := 1, goal := none }
+              snapshot.release
+              return { head := moved.position } }
+        let moving : Dispatched := fun call => do
+          Evil.move (Evil.motions.push rowDown) { call with arguments := [.str rowDown.name] }
+          return none
+        let some driver :=
+          evilDriver "ab|cd\nwxyz"
+            (evilHanded (commands := [("row-down", moving)])) | throw (IO.userError "no driver")
+        let (ran, _) := driver.stepped (driver.loop.runNamed driver.handed "row-down")
+        unless evilShown ran == "abcd\nwx|yz" do
+          throw (IO.userError s!"the motion left {repr (evilShown ran)}")
+        return ran.loop.state.echo.isEmpty },
+    { name :=
         "a move by a name the vocabulary has no motion of says so in the echo area, the name and then no such motion, and leaves the cursor where it was"
       run :=
         pure <|

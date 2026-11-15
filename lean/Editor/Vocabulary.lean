@@ -27,10 +27,12 @@ A motion (`Motion`) is a name and a function from where a cursor is
 - **No count is not a count of 1** (`From.count`, optional): a motion to a
   line reads a count as the line's number, so a count of 1 and no count
   differ. A motion that repeats reads none as 1.
-- **A motion asks the text port and changes nothing**: its type is `TextM`,
-  so it cannot edit the editor state or publish. A motion by display lines
-  needs the display port and is not here; when one is built the type
-  widens, and these entries lift unchanged.
+- **A motion asks the text, and the display where a column is the
+  display's, and changes nothing.** That is the entry's rule and no longer
+  the type's: a motion's target is a command (`EditorM`), so that a motion
+  whose column is the display's can ask the display for it, and the type
+  would let an entry edit the editor state or publish. No entry does. An
+  entry that asks only the text is written over the text port and lifts.
 - **The wanted column goes in and comes out as data** (`From.wanted`,
   `To.wanted`, a `WantedColumn` of the editor state, `Editor/State.lean`,
   "The wanted column"). A motion cannot read the window, so its caller
@@ -164,14 +166,16 @@ structure Motion where
   /-- The motion's vocabulary name. -/
   name : String
   /-- Where the motion leads in `text` from where the cursor is. It asks the
-  text and changes nothing. -/
-  target : TextId → From → TextM To
+  text, and the display where a column is the display's, and changes
+  nothing: the entry's rule, which its type does not enforce. -/
+  target : TextId → From → EditorM To
   /-- How an operator takes the motion. -/
   reach : Reach := .exclusive
   /-- Where the motion leads in `text` when an operator waits for it, told
   whether the operator puts an insert in place of what it takes: `target`
-  with `reach`, unless the motion says another. -/
-  taken : Bool → TextId → From → TextM Taken := fun _ text origin => do
+  with `reach`, unless the motion says another. It changes nothing, as
+  `target` changes nothing. -/
+  taken : Bool → TextId → From → EditorM Taken := fun _ text origin => do
     let to ← target text origin
     return { head := to.head, reach, failed := to.failed }
 
