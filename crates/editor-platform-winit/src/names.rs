@@ -1,24 +1,22 @@
 //! A key's names: winit's logical and physical keys as the port's, whose
 //! named keys and physical keys are W3C UI Events names.
 //!
-//! winit's `NamedKey` and `KeyCode` follow the W3C UI Events `key` and
-//! `code` tables, and say so, so a variant's own name is the W3C name: it is
-//! taken through `Debug`. Both enums grow, and a key winit adds is named
-//! here the day the pin moves, with nothing to list. The other way, a table
-//! written out, would be some five hundred rows of two enums, and every key
-//! winit adds would be unidentified until someone listed it.
+//! winit's `NamedKey` and `KeyCode` are the crate keyboard-types' `NamedKey`
+//! and `Code`, which are the W3C UI Events `key` and `code` tables, and
+//! whose `Display` is a variant's W3C name. A name is taken through it.
+//! Both enums grow, and a key they add is named here the day the pin moves,
+//! with nothing to list. The other way, a table written out, would be some
+//! five hundred rows of two enums, and every key they add would be
+//! unidentified until someone listed it.
 //!
-//! winit documents where its names are not the specification's, and those
-//! are the whole of what is decided here:
+//! winit gives the system key as `Meta`, its codes as `MetaLeft` and
+//! `MetaRight`, and Space as the character `" "` it types, as the
+//! specification does, so no name is put right here. What is decided here:
 //!
-//! | winit | The port |
-//! |---|---|
-//! | `NamedKey::Super` | The named key `Meta` |
-//! | `NamedKey::Space` | The character `" "`: the specification identifies the key by what it types |
-//! | `KeyCode::SuperLeft`, `KeyCode::SuperRight` | The codes `MetaLeft`, `MetaRight` |
-//!
-//! A key winit could not identify is unidentified here, whatever native
-//! number came with it: the port has no place for one.
+//! - **A key winit could not identify is unidentified**, whatever native
+//!   number came with it: the port has no place for one.
+//! - **keyboard-types' own `Unidentified`**, a variant of each enum, is the
+//!   port's unidentified key too, and not a key named `Unidentified`.
 
 use editor_platform::{LogicalKey, PhysicalKey};
 use winit::keyboard::{Key, KeyCode, NamedKey, PhysicalKey as Physical};
@@ -27,9 +25,8 @@ use winit::keyboard::{Key, KeyCode, NamedKey, PhysicalKey as Physical};
 pub(crate) fn logical(key: &Key) -> LogicalKey {
     match key {
         Key::Character(characters) => LogicalKey::Character(characters.to_string()),
-        Key::Named(NamedKey::Space) => LogicalKey::Character(" ".into()),
-        Key::Named(NamedKey::Super) => LogicalKey::Named("Meta".into()),
-        Key::Named(named) => LogicalKey::Named(format!("{named:?}")),
+        Key::Named(NamedKey::Unidentified) => LogicalKey::Unidentified,
+        Key::Named(named) => LogicalKey::Named(named.to_string()),
         Key::Dead(character) => LogicalKey::Dead(*character),
         _ => LogicalKey::Unidentified,
     }
@@ -38,9 +35,8 @@ pub(crate) fn logical(key: &Key) -> LogicalKey {
 /// Where a key is on the keyboard, as the port says it.
 pub(crate) fn physical(key: Physical) -> PhysicalKey {
     match key {
-        Physical::Code(KeyCode::SuperLeft) => PhysicalKey::Code("MetaLeft".into()),
-        Physical::Code(KeyCode::SuperRight) => PhysicalKey::Code("MetaRight".into()),
-        Physical::Code(code) => PhysicalKey::Code(format!("{code:?}")),
+        Physical::Code(KeyCode::Unidentified) => PhysicalKey::Unidentified,
+        Physical::Code(code) => PhysicalKey::Code(code.to_string()),
         _ => PhysicalKey::Unidentified,
     }
 }
@@ -80,9 +76,10 @@ mod tests {
 
     #[test]
     fn the_system_key_is_named_meta_and_space_is_the_character_it_types() {
-        assert_eq!(logical(&Key::Named(NamedKey::Super)), named("Meta"));
+        assert_eq!(logical(&Key::Named(NamedKey::Meta)), named("Meta"));
+        // winit gives Space as the character it types.
         assert_eq!(
-            logical(&Key::Named(NamedKey::Space)),
+            logical(&Key::Character(" ".into())),
             LogicalKey::Character(" ".into())
         );
     }
@@ -119,12 +116,24 @@ mod tests {
     #[test]
     fn the_system_keys_codes_are_meta_left_and_meta_right() {
         assert_eq!(
-            physical(Physical::Code(KeyCode::SuperLeft)),
+            physical(Physical::Code(KeyCode::MetaLeft)),
             code("MetaLeft")
         );
         assert_eq!(
-            physical(Physical::Code(KeyCode::SuperRight)),
+            physical(Physical::Code(KeyCode::MetaRight)),
             code("MetaRight")
+        );
+    }
+
+    #[test]
+    fn keyboard_types_own_unidentified_is_unidentified() {
+        assert_eq!(
+            logical(&Key::Named(NamedKey::Unidentified)),
+            LogicalKey::Unidentified
+        );
+        assert_eq!(
+            physical(Physical::Code(KeyCode::Unidentified)),
+            PhysicalKey::Unidentified
         );
     }
 

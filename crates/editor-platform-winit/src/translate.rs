@@ -3,11 +3,12 @@
 //!
 //! # A key
 //!
-//! winit's key event cannot be built outside winit (one of its fields is
-//! private to it), so a key is translated from its parts, [`KeyParts`], each
-//! a winit value a test builds. The one line that takes an event apart into
-//! them is in the window's handler (`App::window_event` in `lib.rs`), which
-//! only a real window runs.
+//! A key is translated from its parts, [`KeyParts`], each a winit value a
+//! test builds. The one line that takes an event apart into them is in the
+//! window's handler (`App::window_event` in `lib.rs`), which only a real
+//! window runs. winit 0.31's key event can be built outside winit, which
+//! 0.30's could not, so the key could now be translated from the event
+//! itself; it is not yet.
 //!
 //! A key's names are the module [`names`]'s. Its text is what the port
 //! documents, which is not always what winit gives:
@@ -21,7 +22,7 @@
 //! - **A key pressed with Control or the system key held carries no
 //!   text.** winit on macOS gives such a key the character it types
 //!   without them: Control-A arrives with the text `a` and Command-S with
-//!   `s` (read at the pin, `platform_impl/macos/event.rs`: a key's text
+//!   `s` (read at the pin, `winit-appkit/src/event.rs`: a key's text
 //!   is its logical key's, and the logical key leaves Control and Command
 //!   out; not seen). On X11 Control-A arrives with the text U+0001, which
 //!   is no text already, and Control-Shift-A with `A` (seen). Such a key
@@ -49,22 +50,33 @@
 //!
 //! # The pointer
 //!
-//! winit says where the pointer is as it moves, and that a button went down
-//! or came up with no position. So:
+//! winit says where the pointer is as it moves, and where a button went
+//! down or came up. A wheel comes with no position. So:
 //!
-//! - **A press and a release are where the pointer last was**, the origin
-//!   before winit has said where that is.
+//! - **A press and a release are where winit says**, and the pointer is
+//!   there after them. winit on macOS says where the pointer is before
+//!   every press as well (`mouse_down` calls `mouse_motion` in
+//!   `winit-appkit/src/view.rs`), so the two agree there.
 //! - **A move with a button held is a drag**, carrying the button held
 //!   longest. A move with none held is remembered and not reported: the
 //!   port has no input for it.
 //! - **Being told the pointer is where it already was is no move**, and
 //!   so no drag. winit on macOS says where the pointer is before every
-//!   press and every release, moved or not (seen: a click arrived as a
-//!   press, a drag and a release, all at one place).
-//! - **A wheel carries winit's delta as it is**, in lines or in pixels, with
-//!   no button. Positive is the content moving right and down.
+//!   press and every release, moved or not (seen on 0.30: a click arrived
+//!   as a press, a drag and a release, all at one place).
+//! - **A wheel is where the pointer last was** and carries winit's delta as
+//!   it is, in lines or in pixels, with no button. Positive is the content
+//!   moving right and down. A kind of delta winit adds reports nothing.
+//! - **A button is the port's by name or by number.** The five winit names
+//!   are the port's five. Every other is another button: winit numbers its
+//!   `MouseButton`s, the sixth being 5, and gives a button it has no name
+//!   for by the system's number. On X11 winit 0.31 numbers the buttons
+//!   with codes 8 to 36 by code less 5, where 0.30 gave the code.
 //!
-//! Touch is not mapped.
+//! **A touch and a tablet tool are not the pointer.** winit 0.31 sends them
+//! as the pointer's events with a source of their own: they report nothing
+//! and leave where the pointer is as it was. A source winit does not know
+//! is taken as a mouse.
 //!
 //! # Size and scale
 //!
@@ -75,7 +87,8 @@
 //!   before winit has said.
 //! - **A change of scale is a resize at the size last known and the new
 //!   scale.** The size winit then gives the window arrives as a resize of
-//!   its own. winit's event for it cannot be built outside winit either, so
+//!   its own. winit's event for it cannot be built outside winit (its
+//!   `SurfaceSizeWriter` is winit's own), so
 //!   [`Seen::scale`] takes the scale alone, and the handler takes the event
 //!   apart.
 //! - **A window that opens says its size and scale** ([`Seen::opened`]),
@@ -109,7 +122,8 @@
 //! window comes to be on another display by being moved, resized or
 //! rescaled, so after each of those the translation asks the display how
 //! often it refreshes, through a function the handler supplies
-//! (`current_monitor` and its `refresh_rate_millihertz`), and tells the
+//! (`current_monitor`, its `current_video_mode` and that mode's
+//! `refresh_rate_millihertz`), and tells the
 //! drawer when the answer is another than the last ([`Seen::refresh`]). It
 //! asks at no other time: reading the monitor on every key would be work
 //! for nothing.
@@ -119,7 +133,9 @@ use editor_platform::{
     Resize, WheelDelta,
 };
 use winit::dpi::PhysicalSize;
-use winit::event::{ElementState, Ime, MouseButton, MouseScrollDelta, WindowEvent};
+use winit::event::{
+    ButtonSource, ElementState, Ime, MouseButton, MouseScrollDelta, PointerSource, WindowEvent,
+};
 use winit::keyboard;
 
 use crate::names;
@@ -215,7 +231,7 @@ impl Seen {
         // drawer is told is of the window as it then is.
         let input = self.input(event);
         let canvas = match event {
-            WindowEvent::Resized(_) => self.resized_on(display),
+            WindowEvent::SurfaceResized(_) => self.resized_on(display),
             // A window that moved may be on another display.
             WindowEvent::Moved(_) => self.refresh(display()).into_iter().collect(),
             WindowEvent::RedrawRequested => vec![Canvas::Damaged],
@@ -245,7 +261,7 @@ impl Seen {
                     shift: state.shift_key(),
                     control: state.control_key(),
                     alt: state.alt_key(),
-                    super_key: state.super_key(),
+                    super_key: state.meta_key(),
                 };
                 None
             }
@@ -254,9 +270,16 @@ impl Seen {
                 Ime::Enabled => Composition::Enabled,
                 Ime::Preedit(text, _) => Composition::Preedit(text.clone()),
                 Ime::Commit(text) => Composition::Commit(text.clone()),
+                // Asked only of an input method told it may read the text
+                // around the cursor, which this one never is.
+                Ime::DeleteSurrounding { .. } => return None,
                 Ime::Disabled => Composition::Disabled,
             })),
-            WindowEvent::CursorMoved { position, .. } => {
+            WindowEvent::PointerMoved {
+                position,
+                source: PointerSource::Mouse | PointerSource::Unknown,
+                ..
+            } => {
                 let at = (position.x, position.y);
                 // winit on macOS says where the pointer is before every
                 // press and every release, whether or not it moved.
@@ -265,8 +288,14 @@ impl Seen {
                 let dragged = self.held.first().copied().filter(|_| moved)?;
                 Some(self.pointer(PointerAction::Drag, Some(dragged)))
             }
-            WindowEvent::MouseInput { state, button, .. } => {
-                let button = button_of(*button);
+            WindowEvent::PointerButton {
+                state,
+                position,
+                button,
+                ..
+            } => {
+                let button = button_of(button)?;
+                self.position = (position.x, position.y);
                 self.held.retain(|held| *held != button);
                 let action = match state {
                     ElementState::Pressed => {
@@ -284,10 +313,12 @@ impl Seen {
                         y: f64::from(*y),
                     },
                     MouseScrollDelta::PixelDelta(by) => WheelDelta::Pixels { x: by.x, y: by.y },
+                    // A kind winit adds has no delta the port can carry.
+                    _ => return None,
                 };
                 Some(self.pointer(PointerAction::Wheel(delta), None))
             }
-            WindowEvent::Resized(size) => {
+            WindowEvent::SurfaceResized(size) => {
                 self.size = *size;
                 Some(self.resized())
             }
@@ -369,19 +400,31 @@ impl Seen {
     }
 }
 
-/// winit's button as the port's.
+/// What pressed or released, as the port's button: a mouse's, or a button
+/// winit has no name for by the system's number for it. `None` for a touch
+/// or a tablet tool, which are not the pointer.
+fn button_of(source: &ButtonSource) -> Option<Button> {
+    match source {
+        ButtonSource::Mouse(button) => Some(mouse_button(*button)),
+        ButtonSource::Unknown(number) => Some(Button::Other(*number)),
+        _ => None,
+    }
+}
+
+/// A mouse's button as the port's.
 ///
-/// The match is exhaustive on purpose: the adapter must give every button
-/// winit names a [`Button`], so one winit adds has to be given its own here
-/// before the crate builds.
-fn button_of(button: MouseButton) -> Button {
+/// winit names five buttons as the port does, and numbers every other by
+/// its `repr(u8)`, the sixth being 5, with no variant for a number it has
+/// no name for. So the five are named here, and every other button is
+/// another by winit's number for it.
+fn mouse_button(button: MouseButton) -> Button {
     match button {
         MouseButton::Left => Button::Primary,
         MouseButton::Right => Button::Secondary,
         MouseButton::Middle => Button::Middle,
         MouseButton::Back => Button::Back,
         MouseButton::Forward => Button::Forward,
-        MouseButton::Other(number) => Button::Other(number),
+        other => Button::Other(u16::from(other as u8)),
     }
 }
 
@@ -406,7 +449,8 @@ mod tests {
     use std::ptr::NonNull;
     use winit::dpi::{PhysicalPosition, PhysicalSize};
     use winit::event::{
-        DeviceId, ElementState, Ime, MouseButton, MouseScrollDelta, TouchPhase, WindowEvent,
+        ButtonSource, ElementState, FingerId, Ime, MouseButton, MouseScrollDelta, PointerKind,
+        PointerSource, ScrollSource, TabletToolData, TabletToolKind, TouchPhase, WindowEvent,
     };
     use winit::keyboard::{
         Key as WinitKey, KeyCode, ModifiersState, NamedKey, NativeKeyCode, PhysicalKey as Physical,
@@ -429,20 +473,40 @@ mod tests {
         Seen::default().input(event)
     }
 
-    /// winit's word that `button` went down or came up.
-    fn button(state: ElementState, button: MouseButton) -> WindowEvent {
-        WindowEvent::MouseInput {
-            device_id: DeviceId::dummy(),
+    /// winit's word that the mouse's `button` went down or came up at `at`.
+    fn button(state: ElementState, button: MouseButton, at: (f64, f64)) -> WindowEvent {
+        WindowEvent::PointerButton {
+            device_id: None,
             state,
-            button,
+            position: PhysicalPosition::new(at.0, at.1),
+            primary: true,
+            button: button.into(),
+            is_macos_activation_click: false,
         }
     }
 
-    /// winit's word that the pointer is now at (`x`, `y`).
+    /// winit's word that the mouse is now at (`x`, `y`).
     fn moved(x: f64, y: f64) -> WindowEvent {
-        WindowEvent::CursorMoved {
-            device_id: DeviceId::dummy(),
+        WindowEvent::PointerMoved {
+            device_id: None,
             position: PhysicalPosition::new(x, y),
+            primary: true,
+            source: PointerSource::Mouse,
+        }
+    }
+
+    /// winit's word that a mouse's wheel turned by `delta`: a wheel's for
+    /// lines and a finger's on a trackpad for pixels.
+    fn wheel(delta: MouseScrollDelta) -> WindowEvent {
+        let source = match delta {
+            MouseScrollDelta::PixelDelta(_) => ScrollSource::Finger,
+            _ => ScrollSource::Wheel,
+        };
+        WindowEvent::MouseWheel {
+            device_id: None,
+            delta,
+            phase: TouchPhase::Moved,
+            source,
         }
     }
 
@@ -511,7 +575,7 @@ mod tests {
             (ModifiersState::SHIFT, held(true, false, false, false)),
             (ModifiersState::CONTROL, held(false, true, false, false)),
             (ModifiersState::ALT, held(false, false, true, false)),
-            (ModifiersState::SUPER, held(false, false, false, true)),
+            (ModifiersState::META, held(false, false, false, true)),
             (ModifiersState::all(), held(true, true, true, true)),
         ] {
             let mut seen = Seen::default();
@@ -558,6 +622,17 @@ mod tests {
     }
 
     #[test]
+    fn a_request_to_delete_around_the_cursor_is_not_reported() {
+        assert_eq!(
+            translate(&WindowEvent::Ime(Ime::DeleteSurrounding {
+                before_bytes: 1,
+                after_bytes: 0,
+            })),
+            None
+        );
+    }
+
+    #[test]
     fn focus_gained_and_lost_are_reported() {
         assert_eq!(
             translate(&WindowEvent::Focused(true)),
@@ -572,19 +647,31 @@ mod tests {
     #[test]
     fn a_button_press_is_a_press_where_the_pointer_is_with_its_button_and_modifiers() {
         let mut seen = Seen::default();
-        // A press before the pointer has been anywhere is at the origin.
+        // A press where winit says, which is where the pointer is.
         assert_eq!(
-            seen.input(&button(ElementState::Pressed, MouseButton::Left)),
+            seen.input(&button(
+                ElementState::Pressed,
+                MouseButton::Left,
+                (0.0, 0.0)
+            )),
             pointer(PointerAction::Press, (0.0, 0.0), Some(Button::Primary))
         );
-        seen.input(&button(ElementState::Released, MouseButton::Left));
+        seen.input(&button(
+            ElementState::Released,
+            MouseButton::Left,
+            (0.0, 0.0),
+        ));
 
         // The pointer moves, with no button held, and then a button goes
-        // down with alt held: the press is where the pointer last was.
+        // down there with alt held.
         assert_eq!(seen.input(&moved(12.5, 40.0)), None);
         seen.input(&modifiers_changed(ModifiersState::ALT));
         assert_eq!(
-            seen.input(&button(ElementState::Pressed, MouseButton::Right)),
+            seen.input(&button(
+                ElementState::Pressed,
+                MouseButton::Right,
+                (12.5, 40.0)
+            )),
             Some(Input::Pointer(Pointer {
                 action: PointerAction::Press,
                 x: 12.5,
@@ -596,6 +683,121 @@ mod tests {
     }
 
     #[test]
+    fn a_press_and_a_release_are_where_winit_says_and_the_pointer_is_there_after() {
+        let mut seen = Seen::default();
+        seen.input(&moved(10.0, 20.0));
+        // winit says where a button went down, which need not be where the
+        // pointer was last said to be.
+        assert_eq!(
+            seen.input(&button(
+                ElementState::Pressed,
+                MouseButton::Left,
+                (11.0, 22.0)
+            )),
+            pointer(PointerAction::Press, (11.0, 22.0), Some(Button::Primary))
+        );
+        // The pointer is there now: a wheel turned after it is there too.
+        assert_eq!(
+            seen.input(&wheel(MouseScrollDelta::LineDelta(0.0, 1.0))),
+            pointer(
+                PointerAction::Wheel(WheelDelta::Lines { x: 0.0, y: 1.0 }),
+                (11.0, 22.0),
+                None
+            )
+        );
+        // And so is a release.
+        assert_eq!(
+            seen.input(&button(
+                ElementState::Released,
+                MouseButton::Left,
+                (12.0, 23.0)
+            )),
+            pointer(PointerAction::Release, (12.0, 23.0), Some(Button::Primary))
+        );
+    }
+
+    #[test]
+    fn a_touch_and_a_tablet_tool_are_not_the_pointer() {
+        let mut seen = Seen::default();
+        seen.input(&moved(10.0, 20.0));
+        let finger_id = FingerId::from_raw(0);
+        let touch = |state| WindowEvent::PointerButton {
+            device_id: None,
+            state,
+            position: PhysicalPosition::new(50.0, 60.0),
+            primary: true,
+            button: ButtonSource::Touch {
+                finger_id,
+                force: None,
+            },
+            is_macos_activation_click: false,
+        };
+        assert_eq!(seen.input(&touch(ElementState::Pressed)), None);
+        assert_eq!(
+            seen.input(&WindowEvent::PointerMoved {
+                device_id: None,
+                position: PhysicalPosition::new(70.0, 80.0),
+                primary: true,
+                source: PointerSource::Touch {
+                    finger_id,
+                    force: None,
+                },
+            }),
+            None
+        );
+        assert_eq!(
+            seen.input(&WindowEvent::PointerMoved {
+                device_id: None,
+                position: PhysicalPosition::new(90.0, 95.0),
+                primary: true,
+                source: PointerSource::TabletTool {
+                    kind: TabletToolKind::Pen,
+                    data: TabletToolData::default(),
+                },
+            }),
+            None
+        );
+        assert_eq!(seen.input(&touch(ElementState::Released)), None);
+        // The pointer is still where the mouse last was.
+        assert_eq!(
+            seen.input(&wheel(MouseScrollDelta::LineDelta(0.0, 1.0))),
+            pointer(
+                PointerAction::Wheel(WheelDelta::Lines { x: 0.0, y: 1.0 }),
+                (10.0, 20.0),
+                None
+            )
+        );
+    }
+
+    #[test]
+    fn a_button_winit_numbers_is_another_button_by_that_number() {
+        let pressed = |button: ButtonSource| WindowEvent::PointerButton {
+            device_id: None,
+            state: ElementState::Pressed,
+            position: PhysicalPosition::new(0.0, 0.0),
+            primary: true,
+            button,
+            is_macos_activation_click: false,
+        };
+        for (given, number) in [
+            (MouseButton::Button6.into(), 5),
+            (MouseButton::Button32.into(), 31),
+            // A button winit has no name for, by the system's number.
+            (ButtonSource::Unknown(40), 40),
+        ] {
+            assert_eq!(
+                translate(&pressed(given.clone())),
+                pointer(
+                    PointerAction::Press,
+                    (0.0, 0.0),
+                    Some(Button::Other(number))
+                ),
+                "{given:?}"
+            );
+        }
+    }
+
+    #[test]
     fn each_button_winit_names_is_the_ports_own() {
         for (given, button_of_the_port) in [
             (MouseButton::Left, Button::Primary),
@@ -603,10 +805,10 @@ mod tests {
             (MouseButton::Middle, Button::Middle),
             (MouseButton::Back, Button::Back),
             (MouseButton::Forward, Button::Forward),
-            (MouseButton::Other(9), Button::Other(9)),
+            (MouseButton::Button10, Button::Other(9)),
         ] {
             assert_eq!(
-                translate(&button(ElementState::Pressed, given)),
+                translate(&button(ElementState::Pressed, given, (0.0, 0.0))),
                 pointer(PointerAction::Press, (0.0, 0.0), Some(button_of_the_port)),
                 "{given:?}"
             );
@@ -618,7 +820,11 @@ mod tests {
         let mut seen = Seen::default();
         assert_eq!(seen.input(&moved(1.0, 2.0)), None);
 
-        seen.input(&button(ElementState::Pressed, MouseButton::Left));
+        seen.input(&button(
+            ElementState::Pressed,
+            MouseButton::Left,
+            (1.0, 2.0),
+        ));
         assert_eq!(
             seen.input(&moved(30.0, 40.5)),
             pointer(PointerAction::Drag, (30.0, 40.5), Some(Button::Primary))
@@ -639,10 +845,18 @@ mod tests {
 
         // With the button up again a move is not reported, and is still
         // where the next press is.
-        seen.input(&button(ElementState::Released, MouseButton::Left));
+        seen.input(&button(
+            ElementState::Released,
+            MouseButton::Left,
+            (31.0, 41.0),
+        ));
         assert_eq!(seen.input(&moved(50.0, 60.0)), None);
         assert_eq!(
-            seen.input(&button(ElementState::Pressed, MouseButton::Middle)),
+            seen.input(&button(
+                ElementState::Pressed,
+                MouseButton::Middle,
+                (50.0, 60.0)
+            )),
             pointer(PointerAction::Press, (50.0, 60.0), Some(Button::Middle))
         );
     }
@@ -650,22 +864,35 @@ mod tests {
     #[test]
     fn a_move_to_where_the_pointer_already_is_is_not_a_drag() {
         // What winit on macOS says of a click: where the pointer is, then
-        // the press; and where it is again, unmoved, then the release.
+        // the press there; and where it is again, unmoved, then the
+        // release there.
         let mut seen = Seen::default();
         assert_eq!(seen.input(&moved(10.0, 20.0)), None);
         assert_eq!(
-            seen.input(&button(ElementState::Pressed, MouseButton::Left)),
+            seen.input(&button(
+                ElementState::Pressed,
+                MouseButton::Left,
+                (10.0, 20.0)
+            )),
             pointer(PointerAction::Press, (10.0, 20.0), Some(Button::Primary))
         );
         assert_eq!(seen.input(&moved(10.0, 20.0)), None);
         assert_eq!(
-            seen.input(&button(ElementState::Released, MouseButton::Left)),
+            seen.input(&button(
+                ElementState::Released,
+                MouseButton::Left,
+                (10.0, 20.0)
+            )),
             pointer(PointerAction::Release, (10.0, 20.0), Some(Button::Primary))
         );
 
         // A drag, and then where it ended said again before the release:
         // one drag.
-        seen.input(&button(ElementState::Pressed, MouseButton::Left));
+        seen.input(&button(
+            ElementState::Pressed,
+            MouseButton::Left,
+            (10.0, 20.0),
+        ));
         assert_eq!(
             seen.input(&moved(10.0, 21.0)),
             pointer(PointerAction::Drag, (10.0, 21.0), Some(Button::Primary))
@@ -677,29 +904,48 @@ mod tests {
             pointer(PointerAction::Drag, (11.0, 21.0), Some(Button::Primary))
         );
 
-        // A press before winit has said where the pointer is is at the
-        // origin, and so a move to the origin is no move from it.
+        // A move to where the press was is no move from it.
         let mut unsaid = Seen::default();
-        unsaid.input(&button(ElementState::Pressed, MouseButton::Left));
+        unsaid.input(&button(
+            ElementState::Pressed,
+            MouseButton::Left,
+            (0.0, 0.0),
+        ));
         assert_eq!(unsaid.input(&moved(0.0, 0.0)), None);
     }
 
     #[test]
     fn a_drag_carries_the_button_held_longest() {
         let mut seen = Seen::default();
-        seen.input(&button(ElementState::Pressed, MouseButton::Right));
-        seen.input(&button(ElementState::Pressed, MouseButton::Left));
+        seen.input(&button(
+            ElementState::Pressed,
+            MouseButton::Right,
+            (0.0, 0.0),
+        ));
+        seen.input(&button(
+            ElementState::Pressed,
+            MouseButton::Left,
+            (0.0, 0.0),
+        ));
         assert_eq!(
             seen.input(&moved(5.0, 5.0)),
             pointer(PointerAction::Drag, (5.0, 5.0), Some(Button::Secondary))
         );
         // The first comes up: the other is now the one held longest.
-        seen.input(&button(ElementState::Released, MouseButton::Right));
+        seen.input(&button(
+            ElementState::Released,
+            MouseButton::Right,
+            (5.0, 5.0),
+        ));
         assert_eq!(
             seen.input(&moved(6.0, 6.0)),
             pointer(PointerAction::Drag, (6.0, 6.0), Some(Button::Primary))
         );
-        seen.input(&button(ElementState::Released, MouseButton::Left));
+        seen.input(&button(
+            ElementState::Released,
+            MouseButton::Left,
+            (6.0, 6.0),
+        ));
         assert_eq!(seen.input(&moved(7.0, 7.0)), None);
     }
 
@@ -707,16 +953,28 @@ mod tests {
     fn a_button_release_is_a_release() {
         let mut seen = Seen::default();
         seen.input(&moved(10.0, 20.0));
-        seen.input(&button(ElementState::Pressed, MouseButton::Left));
+        seen.input(&button(
+            ElementState::Pressed,
+            MouseButton::Left,
+            (10.0, 20.0),
+        ));
         seen.input(&moved(30.0, 40.0));
         assert_eq!(
-            seen.input(&button(ElementState::Released, MouseButton::Left)),
+            seen.input(&button(
+                ElementState::Released,
+                MouseButton::Left,
+                (30.0, 40.0)
+            )),
             pointer(PointerAction::Release, (30.0, 40.0), Some(Button::Primary))
         );
         // A button that went down outside the window comes up in it: the
         // release is reported all the same.
         assert_eq!(
-            seen.input(&button(ElementState::Released, MouseButton::Back)),
+            seen.input(&button(
+                ElementState::Released,
+                MouseButton::Back,
+                (30.0, 40.0)
+            )),
             pointer(PointerAction::Release, (30.0, 40.0), Some(Button::Back))
         );
     }
@@ -726,11 +984,6 @@ mod tests {
         let mut seen = Seen::default();
         seen.input(&moved(10.0, 20.0));
         seen.input(&modifiers_changed(ModifiersState::CONTROL));
-        let wheel = |delta| WindowEvent::MouseWheel {
-            device_id: DeviceId::dummy(),
-            delta,
-            phase: TouchPhase::Moved,
-        };
         let turned = |delta| {
             Some(Input::Pointer(Pointer {
                 action: PointerAction::Wheel(delta),
@@ -759,7 +1012,11 @@ mod tests {
         );
 
         // A wheel turned with a button held has no button of its own.
-        seen.input(&button(ElementState::Pressed, MouseButton::Left));
+        seen.input(&button(
+            ElementState::Pressed,
+            MouseButton::Left,
+            (10.0, 20.0),
+        ));
         assert_eq!(
             seen.input(&wheel(MouseScrollDelta::LineDelta(0.0, 2.0))),
             turned(WheelDelta::Lines { x: 0.0, y: 2.0 })
@@ -782,8 +1039,11 @@ mod tests {
             None
         );
         assert_eq!(
-            translate(&WindowEvent::CursorLeft {
-                device_id: DeviceId::dummy()
+            translate(&WindowEvent::PointerLeft {
+                device_id: None,
+                position: None,
+                primary: true,
+                kind: PointerKind::Mouse,
             }),
             None
         );
@@ -803,12 +1063,12 @@ mod tests {
         let mut seen = Seen::default();
         // Before winit has said what the scale is, it is 1.
         assert_eq!(
-            seen.input(&WindowEvent::Resized(PhysicalSize::new(800, 600))),
+            seen.input(&WindowEvent::SurfaceResized(PhysicalSize::new(800, 600))),
             Some(resized(800, 600, 1.0))
         );
         seen.scale(2.0, &unknown);
         assert_eq!(
-            seen.input(&WindowEvent::Resized(PhysicalSize::new(300, 120))),
+            seen.input(&WindowEvent::SurfaceResized(PhysicalSize::new(300, 120))),
             Some(resized(300, 120, 2.0))
         );
     }
@@ -816,7 +1076,7 @@ mod tests {
     #[test]
     fn a_change_of_scale_is_a_resize_at_the_new_scale() {
         let mut seen = Seen::default();
-        seen.input(&WindowEvent::Resized(PhysicalSize::new(800, 600)));
+        seen.input(&WindowEvent::SurfaceResized(PhysicalSize::new(800, 600)));
         // The size is the one last known. The size winit then gives the
         // window arrives as a resize of its own.
         assert_eq!(
@@ -824,7 +1084,7 @@ mod tests {
             Some(resized(800, 600, 2.0))
         );
         assert_eq!(
-            seen.input(&WindowEvent::Resized(PhysicalSize::new(1600, 1200))),
+            seen.input(&WindowEvent::SurfaceResized(PhysicalSize::new(1600, 1200))),
             Some(resized(1600, 1200, 2.0))
         );
         assert_eq!(
@@ -845,7 +1105,7 @@ mod tests {
         let mut resized_after = Seen::default();
         resized_after.opened(PhysicalSize::new(256, 96), 1.5, None, None);
         assert_eq!(
-            resized_after.input(&WindowEvent::Resized(PhysicalSize::new(300, 120))),
+            resized_after.input(&WindowEvent::SurfaceResized(PhysicalSize::new(300, 120))),
             Some(resized(300, 120, 1.5))
         );
         assert_eq!(seen.scale(3.0, &unknown).input, Some(resized(256, 96, 3.0)));
@@ -898,7 +1158,10 @@ mod tests {
     fn a_resize_and_a_change_of_scale_are_told_to_the_drawer_as_they_are_reported() {
         let mut seen = Seen::default();
         assert_eq!(
-            seen.window_event(&WindowEvent::Resized(PhysicalSize::new(300, 120)), &unknown),
+            seen.window_event(
+                &WindowEvent::SurfaceResized(PhysicalSize::new(300, 120)),
+                &unknown
+            ),
             Told {
                 input: Some(resized(300, 120, 1.0)),
                 canvas: vec![Canvas::Resized(size(300, 120, 1.0))],
@@ -993,8 +1256,11 @@ mod tests {
         // A resize asks too. The rate is the one known, so only the size is
         // told.
         assert_eq!(
-            seen.window_event(&WindowEvent::Resized(PhysicalSize::new(300, 120)), &display)
-                .canvas,
+            seen.window_event(
+                &WindowEvent::SurfaceResized(PhysicalSize::new(300, 120)),
+                &display
+            )
+            .canvas,
             [Canvas::Resized(size(300, 120, 1.0))]
         );
         assert_eq!(asked.get(), 2);
@@ -1025,7 +1291,7 @@ mod tests {
             WindowEvent::Occluded(true),
             WindowEvent::Focused(true),
             moved(1.0, 2.0),
-            button(ElementState::Pressed, MouseButton::Left),
+            button(ElementState::Pressed, MouseButton::Left, (1.0, 2.0)),
             modifiers_changed(ModifiersState::SHIFT),
             WindowEvent::CloseRequested,
         ] {
@@ -1037,20 +1303,15 @@ mod tests {
     #[test]
     fn a_key_the_pointer_the_focus_and_a_composition_tell_the_drawer_nothing() {
         let mut seen = Seen::default();
-        let wheel = WindowEvent::MouseWheel {
-            device_id: DeviceId::dummy(),
-            delta: MouseScrollDelta::LineDelta(0.0, 1.0),
-            phase: TouchPhase::Moved,
-        };
         for event in [
             modifiers_changed(ModifiersState::SHIFT),
             WindowEvent::Focused(true),
             WindowEvent::Ime(Ime::Commit("é".into())),
             moved(1.0, 2.0),
-            button(ElementState::Pressed, MouseButton::Left),
+            button(ElementState::Pressed, MouseButton::Left, (1.0, 2.0)),
             moved(3.0, 4.0),
-            button(ElementState::Released, MouseButton::Left),
-            wheel,
+            button(ElementState::Released, MouseButton::Left, (3.0, 4.0)),
+            wheel(MouseScrollDelta::LineDelta(0.0, 1.0)),
             WindowEvent::CloseRequested,
             WindowEvent::Destroyed,
         ] {
@@ -1293,13 +1554,10 @@ mod tests {
                 ..Key::unidentified()
             })
         );
-        // Space is text: it is not a control character.
+        // Space is text: it is not a control character. winit gives it as
+        // the character it types.
         assert_eq!(
-            key(&press(
-                &WinitKey::Named(NamedKey::Space),
-                KeyCode::Space,
-                Some(" ")
-            )),
+            key(&press(&character(" "), KeyCode::Space, Some(" "))),
             Input::Key(Key {
                 pressed: true,
                 logical: LogicalKey::Character(" ".into()),
@@ -1343,7 +1601,7 @@ mod tests {
                 "a",
                 held(false, true, false, false),
             ),
-            (ModifiersState::SUPER, "a", held(false, false, false, true)),
+            (ModifiersState::META, "a", held(false, false, false, true)),
             (
                 ModifiersState::CONTROL | ModifiersState::SHIFT,
                 "A",
@@ -1351,7 +1609,7 @@ mod tests {
             ),
             // With one that leaves the text held too.
             (
-                ModifiersState::SUPER | ModifiersState::ALT,
+                ModifiersState::META | ModifiersState::ALT,
                 "å",
                 held(false, false, true, true),
             ),
