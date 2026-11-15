@@ -31,7 +31,7 @@ The operators' entries are `Evil.operators`
 | `normalCommands` | Normal state's commands: those that begin an insert, those that change text, undo, redo and the command line, the two that enter a visual state, the register prefix, and the repeat key, `.`, which is a part of speech of its own and no command's key (`Bound.repeat`) |
 | `insertCommands` | Insert state's: the key that returns to normal state |
 | `visualCommands`, `visualLineCommands` | A visual state's: the keys that return to normal state, the key that enters the other visual state, and the register prefix |
-| `minibufferCommands` | The minibuffer state's: `RET`, which accepts the prompt, `<Escape>`, which cancels it, `TAB` and `C-n`, which move to the next of its candidates, and `S-TAB` and `C-p`, which move to the previous |
+| `minibufferCommands` | The minibuffer state's: `RET`, which accepts the prompt, `<Escape>`, which cancels it, `TAB` and `C-n`, which move to the next of its candidates, `S-TAB` and `C-p`, which move to the previous, and `<Backspace>`, which deletes the character before the bar, and cancels the prompt when the minibuffer is empty, as Vim's command line does |
 | `scrollCommands` | The commands that scroll a view, of normal state and the two visual states: `C-d` and `C-u`, by half a view, `C-f` and `C-b`, by a view, and `z t`, `z z` and `z b`, which put the cursor's row at the top, in the middle and at the bottom of the view (`Editor/Evil/Scroll.lean`). Each changes no text and enters no state, so none is the last change. They are commands and not motions, so an operator's key before one is dropped. `z` begins the three sequences and is bound to nothing itself, so it is a prefix in those states. Insert state and the minibuffer's do not have the table: there `C-d` and `C-u` are Vim's editing keys, and `z` is text |
 
 ## The states
@@ -72,6 +72,13 @@ puts a view in it when it is told the view is the minibuffer's
   They are Vim's own keys in its command line: `TAB` and `C-n` for the
   next candidate, `S-TAB` and `C-p` for the previous. A window system may
   report Shift and Tab under another name than `S-TAB`; `C-p` is beside it.
+- **`<Backspace>` is bound there**, to the minibuffer's command that
+  deletes backward (`Editor/Minibuffer.lean`), because a key that prints
+  nothing does nothing in a state where typing is text unless it is bound.
+  On an empty minibuffer it cancels the prompt, as `<BS>` does on Vim's
+  empty command line; Emacs's minibuffer does nothing there. The other keys
+  of Vim's command line that edit (`<Left>`, `<Right>`, `C-u`, `C-w`) are
+  not bound.
 - **The interrupt key is not bound there**, as it is not in Vim's command
   line.
 
@@ -168,12 +175,14 @@ def visualLineCommands : List (String × Bound) :=
     ("\"", .register)]
 
 /-- The commands of the state the minibuffer's view is in: the key that
-accepts the prompt, the key that cancels it, and the keys that move to the
-next and to the previous of its candidates. -/
+accepts the prompt, the key that cancels it, the keys that move to the
+next and to the previous of its candidates, and the key that deletes
+backward. -/
 def minibufferCommands : List (String × Bound) :=
   [("RET", running "minibuffer-accept"), ("<Escape>", running "minibuffer-cancel"),
     ("TAB", running "minibuffer-next"), ("C-n", running "minibuffer-next"),
-    ("S-TAB", running "minibuffer-previous"), ("C-p", running "minibuffer-previous")]
+    ("S-TAB", running "minibuffer-previous"), ("C-p", running "minibuffer-previous"),
+    ("<Backspace>", running "minibuffer-delete-backward")]
 
 /-- The commands that scroll a view, of normal state and the visual states:
 each changes no text and enters no state. -/

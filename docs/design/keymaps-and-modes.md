@@ -29,7 +29,7 @@ registers, undo and dot repeat, on the editor API:
 | Defining a mode from `setup`, and its refusals | `lean/Editor/Setup.lean` (`defineMode`), `lean/Editor/Config/Registry.lean` (`Registrations.problem?`) |
 | A buffer's major and minor modes, and the state operations that set them | `lean/Editor/State.lean` |
 | The notice a scheme is told when the minibuffer's view opens, and the contract's property that a key that prints is text there | `lean/Editor/InputScheme.lean` (`openMinibuffer`), `lean/Editor/InputScheme/Contract.lean` (`minibufferTakesText`), `lean/Editor/Loop.lean` (`Loop.toldViews`) |
-| The minibuffer's mode and its four commands (accept, cancel, and the next and the previous candidate), and their registrations | `lean/Editor/Minibuffer.lean`, `lean/Editor/Minibuffer/Compiled.lean` |
+| The minibuffer's mode and its five commands (accept, cancel, the next and the previous candidate, and delete backward), and their registrations | `lean/Editor/Minibuffer.lean`, `lean/Editor/Minibuffer/Compiled.lean` |
 | The Vim state of the minibuffer's view, and its default keys | `lean/Editor/InputScheme/Vim.lean` (`States.minibuffer`, `State.openMinibuffer`), `lean/Editor/InputScheme/Vim/Default.lean` (`minibufferCommands`) |
 | What a scheme reports of a view, and the contract's property that a key that yields nothing leaves it as it was | `lean/Editor/InputScheme.lean` (`InputScheme.Report`, `report`), `lean/Editor/InputScheme/Contract.lean` (`quietKeyKeepsReport`) |
 | A Vim state's selection shape, and the Vim scheme's report of a view's state | `lean/Editor/InputScheme/Vim.lean` (`StateRecord.shape`, `State.report`), `lean/Editor/InputScheme/Vim/Default.lean` |
@@ -2014,7 +2014,7 @@ Which names have something behind them:
 | The fifteen motions of `motions` | Built: entries of `Evil.motions`, run by the command `move`. One check presses every key of the table and holds that none says `no such motion`, without restating either table |
 | `insert`, `append`, `insert-line-start`, `append-line-end`; `visual`, `visual-line`; `normal` | Built and registered (`Evil.commands`) |
 | `self-insert`, which no table names: typed text | Built and registered |
-| `minibuffer-accept`, `minibuffer-cancel`, `minibuffer-next`, `minibuffer-previous` | Built and registered (`Minibuffer.commands`) |
+| `minibuffer-accept`, `minibuffer-cancel`, `minibuffer-next`, `minibuffer-previous`, `minibuffer-delete-backward` | Built and registered (`Minibuffer.commands`) |
 | The operators (`delete`, `change`, `yank`) | Built: entries of `Evil.operators`, run by the command `operate`, which is registered (`Evil.commands`) |
 | `open-below`, `open-above`, `delete-char`, `put-after`, `put-before`, `undo`, `redo` | Built and registered (`Evil.commands`) |
 | `repeat`, which no table names: the repeat key's invocation | Built and registered |
@@ -2030,7 +2030,7 @@ Which names have something behind them:
 | `insertCommands` | `<Escape>` normal (enters normal) |
 | `visualCommands` | `<Escape>` and `v` normal, `V` visual-line, `"` |
 | `visualLineCommands` | `<Escape>` and `V` normal, `v` visual, `"` |
-| `minibufferCommands` | `RET` minibuffer-accept, `<Escape>` minibuffer-cancel, `TAB` and `C-n` minibuffer-next, `S-TAB` and `C-p` minibuffer-previous (each changes no text and enters no state) |
+| `minibufferCommands` | `RET` minibuffer-accept, `<Escape>` minibuffer-cancel, `TAB` and `C-n` minibuffer-next, `S-TAB` and `C-p` minibuffer-previous, `<Backspace>` minibuffer-delete-backward, which deletes the character before the bar and, on an empty minibuffer, cancels the prompt as Vim's `<BS>` does (each enters no state, and none is a change dot repeat replays) |
 | `scrollCommands` | `C-d` scroll-down, `C-u` scroll-up, `C-f` scroll-page-down, `C-b` scroll-page-up, `z t` scroll-line-to-top, `z z` scroll-line-to-center, `z b` scroll-line-to-bottom (each changes no text and enters no state) |
 
 | State | Keymaps, in precedence order | Cursor | Selection | The grammar reads |

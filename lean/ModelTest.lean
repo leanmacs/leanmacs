@@ -13453,13 +13453,13 @@ def promptModeChecks : List Check :=
               closed accepted ⟨1⟩ &&
               accepted.loop.state.windows.map (·.id) == #[⟨1⟩] },
     { name :=
-        "the minibuffer's commands are registered under their four names, each another; its one mode is called by the name the minibuffer's buffer is made with, fills four roles, to accept, to cancel and to move to the next and the previous candidate, each with its command, and has no problem under the test scheme"
+        "the minibuffer's commands are registered under their five names, each another; its one mode is called by the name the minibuffer's buffer is made with, fills four roles, to accept, to cancel and to move to the next and the previous candidate, each with its command, and has no problem under the test scheme"
       run :=
         pure
           (Minibuffer.commands.map (·.name) ==
               #[Minibuffer.acceptName, Minibuffer.cancelName, Minibuffer.nextName,
-                Minibuffer.previousName] &&
-            (Minibuffer.commands.map (·.name)).toList.eraseDups.length == 4 &&
+                Minibuffer.previousName, Minibuffer.deleteBackwardName] &&
+            (Minibuffer.commands.map (·.name)).toList.eraseDups.length == 5 &&
             Minibuffer.modes.map (·.name) == #[Prompt.mode] &&
             Minibuffer.modes.map (·.roles) ==
               #[[(Role.activate, Minibuffer.acceptName), (Role.quit, Minibuffer.cancelName),
@@ -16629,6 +16629,47 @@ def evilInsertChecks : List Check :=
               answered.loop.state.prompt.isNone &&
               answered.loop.state.echo == "hello Ada7" &&
               evilShown answered == "a|bc" },
+    { name :=
+        "<Backspace>, typed while a prompt is open, deletes the character before the minibuffer's bar, a character of two bytes whole, and RET then accepts what is left; with the bar at the start of a text it deletes nothing; on an empty minibuffer it closes the prompt as <Escape> does, and the command the prompt named is not run; its command run by name with no prompt open says so in the echo area"
+      run :=
+        pure <|
+          let ask : Dispatched := fun _ => do
+            discard <| prompt "Name: " { command := "greet" }
+            return none
+          let greet : Dispatched := fun call => do
+            message s!"hello {" ".intercalate (call.arguments.map argumentText)}"
+            return none
+          let home : Dispatched := fun call => do
+            call.target.select { ranges := #[⟨0, 0⟩], shape := .exclusive }
+            return none
+          let handed :=
+            evilHanded Minibuffer.commands [("ask", ask), ("greet", greet), ("home", home)]
+          match evilDriver "a|bc" handed with
+          | none => false
+          | some driver =>
+            let (asking, _) := driver.stepped (driver.loop.runNamed driver.handed "ask")
+            let typing := evilFed asking "A d é 7"
+            let erased := evilFed typing "<Backspace> <Backspace>"
+            let answered := evilFed erased "RET"
+            let (homed, _) := typing.stepped (typing.loop.runNamed typing.handed "home")
+            let atStart := evilFed homed "<Backspace>"
+            let emptied := evilFed typing "<Backspace> <Backspace> <Backspace> <Backspace>"
+            let closed := evilFed emptied "<Backspace>"
+            let (unasked, _) :=
+              driver.stepped (driver.loop.runNamed driver.handed Minibuffer.deleteBackwardName)
+            unasked.loop.state.echo == Minibuffer.notOpen && evilShown unasked == "a|bc" &&
+              evilShown erased ⟨1⟩ == "Ad|" &&
+              evilShown erased == "a|bc" &&
+              answered.loop.state.prompt.isNone &&
+              answered.loop.state.echo == "hello Ad" &&
+              evilShown atStart ⟨1⟩ == "|Adé7" &&
+              atStart.loop.state.prompt.isSome &&
+              evilShown emptied ⟨1⟩ == "|" &&
+              emptied.loop.state.prompt.isSome &&
+              closed.loop.state.prompt.isNone &&
+              closed.loop.state.frame.focused == ⟨0⟩ &&
+              closed.loop.state.echo == "" &&
+              evilShown closed == "a|bc" },
     { name :=
         "the command typed text runs, called with no string as its first argument, inserts nothing and says so in the echo area"
       run :=
