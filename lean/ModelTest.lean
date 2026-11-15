@@ -5821,7 +5821,23 @@ def stateChecks : List Check :=
               (asked states.saving).settleQuit == asked states.saving &&
               (asked states.bare).settleQuit == asked states.bare &&
               (asked states.saved).settleQuit == asked states.saved &&
-              states.held.settleQuit == states.held }]
+              states.held.settleQuit == states.held },
+    { name :=
+        "a view's rectangle is the one the split tree gives it in the frame: for each window, and for the minibuffer's view while a prompt is open, in the strip its place then takes; a view with no window has none, and neither has the minibuffer's view of a prompt that is not open"
+      run :=
+        pure <|
+          match onTextModel threeWindows with
+          | none => false
+          | some state =>
+            let asking := (prompted state).2
+            -- Whether `rect?` answers, for every view, the tree's rectangle.
+            let agrees (state : EditorState) : Bool :=
+              let laid := state.frame.tree.rects (frameRect state.frame.size) state.minibufferView?
+              laid.map (·.1) == state.views &&
+                laid.all fun (id, rect) => state.rect? id == some rect
+            agrees state && agrees asking && asking.views.size == state.views.size + 1 &&
+              state.rect? ⟨9⟩ == none &&
+              asking.minibufferView?.map state.rect? == some none }]
 
 /-- `twoBuffers` with a third buffer, `hidden`, over a text of its own that
 no window shows, and that text. -/
@@ -6866,6 +6882,7 @@ def loopChecks : List Check :=
                 scene.focused == some ⟨1⟩ &&
                 scene.views.map (fun view => (view.id, view.rect)) ==
                   state.frame.tree.rects (frameRect state.frame.size) (some ⟨1⟩) &&
+                (scene.views.all fun view => state.rect? view.id == some view.rect) &&
                 tiles (frameRect state.frame.size) (scene.views.map (·.rect))
             | _, _ => false
           | _ => false },

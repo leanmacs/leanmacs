@@ -702,10 +702,78 @@ def quitCases : List Case :=
         return clean matches .ok () && asked && refusedAs refused (.unsaved "scratch") &&
             (← editorState) == before }]
 
+/-- The cases of scrolling: a window's scroll anchor read and placed, and a
+command's questions about its view. -/
+def scrollCases : List Case :=
+  [{  name :=
+        "a window's scroll anchor is read where it is, at the text's start with the bias `before` in a new window; placed from a command it is read back there, with that bias, and placing it is no edit; an insertion before it moves it with the text, and one at it leaves it before the inserted text; an offset inside a character is refused with badPosition and leaves it; and once its marker is given up, reading it and placing it are refused with noSuchMarker"
+      start := holding "héllo wörld" (selection #[(0, 0)])
+      run := do
+        let some target := (← editorState).focusedTarget? | return false
+        let initial ← target.anchor
+        let before ← scratch.revision
+        target.scrollTo 7
+        let placed := (← target.anchor, ← scratch.revision)
+        scratch.insert 0 "ab"
+        let moved ← target.anchor
+        scratch.insert 9 "x"
+        let stayed ← target.anchor
+        let inside ← refusedWith .badPosition (target.scrollTo 4)
+        let kept ← target.anchor
+        scratch.unmark target.window.scroll
+        return initial == { offset := 0, bias := .before } &&
+            placed == ({ offset := 7, bias := .before }, before) &&
+            moved == { offset := 9, bias := .before } &&
+            stayed == moved &&
+            inside &&
+            kept == moved &&
+            (← refusedWith .noSuchMarker target.anchor) &&
+            (← refusedWith .noSuchMarker (target.scrollTo 0)) },
+    { name :=
+        "a command asks about its view with a snapshot of its text and the view's rectangle: the rows asked inside are the display's rows of that text at the rectangle's width and height, and the snapshot is released afterwards; a view with no rectangle is answered none, with no snapshot taken; and a program that is refused inside is refused the same way, with its snapshot released; the editor state is as it was"
+      start := do
+        let state ← holding "héllo\nwörld" (selection #[(0, 0)])
+        return { state with frame := { state.frame with size := ⟨3, 4⟩ } }
+      run := do
+        let state ← editorState
+        let some target := state.focusedTarget? | return false
+        let some rect := state.rect? ⟨0⟩ | return false
+        let own ← scratch.snapshot
+        let want ←
+          Display.rowsShown
+              { snapshot := own, width := rect.width, height := rect.height, anchor := 0 }
+        let asked ←
+          target.onArea fun area => do
+              return (area, ← area.snapshot.read, ← area.rows 0)
+        let some (area, read, rows) := asked | return false
+        let released ← refusedWith .noSuchSnapshot area.snapshot.read
+        let absent : Target := { target with window := { target.window with id := ⟨9⟩ } }
+        let nothing ← absent.onArea fun _ => pure ()
+        -- Offset 2 is inside "é": the display refuses it.
+        let refused ←
+          refusedWith .badPosition
+              (target.onArea fun area => do
+                return ← area.rows 2)
+        -- The refused program's snapshot was the next one taken, and the one
+        -- after it is taken now: the view with no rectangle took none.
+        let last ← scratch.snapshot
+        let inside : SnapshotId := ⟨area.snapshot.index + 1⟩
+        return area == Scroll.Area.ofRect area.snapshot rect && area.snapshot != own &&
+            read == "héllo\nwörld" &&
+            rows == want &&
+            !rows.isEmpty &&
+            released &&
+            nothing.isNone &&
+            refused &&
+            last.index == inside.index + 1 &&
+            (← refusedWith .noSuchSnapshot inside.read) &&
+            (← editorState) == state }]
+
 /-- Every case of the editor API, in the order they run. -/
 def cases : List Case :=
   bufferCases ++ selectionCases ++ undoCases ++ windowCases ++ lineBreakCases ++ promptCases ++
-    quitCases
+    quitCases ++
+    scrollCases
 
 /-- Plays `cases` with `run`, each from a store with no text, and returns
 the names of those that did not hold: one that returned `false`, and one

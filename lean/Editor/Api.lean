@@ -1,4 +1,5 @@
 import Editor.Command
+import Editor.Scroll
 
 /-!
 # The editor API
@@ -183,6 +184,49 @@ a value, with their `LayoutRefusal`.
   given up by the loop, as a closed window's are.
 
 A view's id is never used again (`Editor/State.lean`).
+
+## Scrolling
+
+A window's scroll position is an anchor marker of its buffer's text
+(`Window.scroll`): the view shows the text from the visual row that holds
+it. Where the anchor goes is a policy over the display's two queries, in
+`Editor/Scroll.lean`; what a command needs to read it, place it and ask
+about its view is here.
+
+- `Target.anchor` reads the window's scroll anchor: its offset in the text
+  as it is now, and its bias. It is refused with `noSuchMarker` when the
+  marker was given up or is no anchor.
+- `Target.scrollTo offset` places it there, with the bias `before`, which
+  is the bias every window's scroll anchor is made with: text inserted at
+  the first row's start is then in view. It is refused with `badPosition`
+  for an offset that is not a position.
+  - **Placing a marker is no edit**: no revision, no step of the history,
+    and the view keeps its snapshot. An edit above the view moves the
+    anchor with the text, which is what keeps the view on the same rows.
+  - **A command that scrolls and fails is rolled back**: the loop keeps and
+    places back each window's scroll marker (`Editor/Loop.lean`,
+    "Rollback").
+- `Target.onArea run` runs `run` with what the display is asked about the
+  view with (`Scroll.Area`): a snapshot of the buffer's text, taken there,
+  and the view's rectangle, read from the state (`EditorState.rect?`). So
+  a command asks which rows its view shows (`Scroll.Area.rows`) and where
+  a position goes by rows (`Display.linesFrom`) of the text as its own
+  edits have left it.
+  - **The snapshot is released when `run` has ended**, also when it was
+    refused, and the refusal is then thrown. The save command takes and
+    releases a snapshot the same way.
+  - **A command that is interrupted, gives up or breaks off inside `run`
+    leaves the snapshot**: the loop ends a command's program at that
+    request, and a snapshot a command took is not undone
+    (`Editor/Loop.lean`, "Rollback", "What is not undone"). It is one
+    shared version of the text, held until the store is dropped.
+  - **`none`, with nothing taken and nothing run**, for a view that is not
+    laid out: one whose window is not in the frame's tree.
+  - Not done: handing a command the last scene's snapshot. It is stale
+    once the command, or one run before it in the same step, has edited
+    the text.
+
+Each makes a text request, and each has a case in `Editor/Api/Cases.lean`.
 
 ## Buffer-local values, modes and the wanted column
 
@@ -945,6 +989,39 @@ that breaks a line at the cursors calls this, and none writes the line
 feed itself. -/
 def insertLineBreak (target : Target) : TextM Unit :=
   target.insertAtSelections target.buffer.lineEnding.text
+
+/-- The scroll anchor of `target`'s window: where it is in the text as it is
+now, and its bias ("Scrolling", in the module docs). Refused with
+`noSuchMarker` when the window's scroll marker was given up, or is no
+anchor. -/
+def anchor (target : Target) : TextM Anchor := do
+  let .anchor anchor ← target.buffer.text.marker target.window.scroll | throw .noSuchMarker
+  return anchor
+
+/-- Places the scroll anchor of `target`'s window at `offset`, with the bias
+`before`: the view shows its text from the row that holds it. It is no
+edit. Refused with `noSuchMarker` when the window's scroll marker was given
+up, and with `badPosition` for an offset that is not a position of the
+text. -/
+def scrollTo (target : Target) (offset : Nat) : TextM Unit :=
+  target.buffer.text.place target.window.scroll (.anchor { offset, bias := .before })
+
+/-- Runs `run` with what the display is asked about `target`'s view with
+(`Scroll.Area`): a snapshot of its buffer's text, taken here, and the
+view's rectangle in the frame. The snapshot is released when `run` has
+ended, also when it was refused, and its refusal is then thrown. `none`,
+with nothing taken and nothing run, for a view that is not laid out
+(`EditorState.rect?`). -/
+def onArea {α : Type} (target : Target) (run : Scroll.Area → EditorM α) : EditorM (Option α) := do
+  let some rect := (← editorState).rect? target.window.id | return none
+  let snapshot ← target.buffer.text.snapshot
+  let ended ← observing (run (.ofRect snapshot rect))
+  snapshot.release
+  match ended with
+  | .ok value =>
+    return some value
+  | .error refusal =>
+    throw refusal
 
 end Target
 

@@ -926,13 +926,10 @@ because it was released, is left out, with nothing taken for it, and the
 first such refusal is handed back. -/
 def views (loop : Loop scheme) : TextM (Array View × Array Shown × Option TextError) := do
   let state := loop.state
-  let frame := state.frame
   let mut shown : Array Shown := #[]
   let mut views : Array View := #[]
   let mut refusal := none
-  for (id, rect) in
-    frame.tree.rects { x := 0, y := 0, width := frame.size.width, height := frame.size.height }
-      state.minibufferView? do
+  for (id, rect) in state.rects do
     let some target := state.target? id | continue
     let text := target.buffer.text
     let taken ←

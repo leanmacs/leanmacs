@@ -57,6 +57,12 @@ input and one for the status line that carries the prompt text
 (`Editor/Loop.lean`). It is a placeholder with no font behind it: nothing
 in Lean knows the height of a row, since layout is the display's.
 
+**The rectangles of a state's views** are `EditorState.rects`: the tree
+laid out in the whole frame, with the minibuffer's view while a prompt is
+open. It is the one definition the scene's views and a command's question
+about its view (`EditorState.rect?`) are both read from, so a command is
+answered with the rectangle the next scene gives its view.
+
 The invariants are part of the model (`EditorState.wellFormed`). They are
 stated over the state's views (`EditorState.views`): the tree's windows,
 in drawing order, then the minibuffer's view while a prompt is open
@@ -918,6 +924,21 @@ def minibufferBuffer? (state : EditorState) : Option BufferId := do
 order, then the minibuffer's view while a prompt is open. -/
 def views (state : EditorState) : Array ViewId :=
   state.frame.tree.windows ++ state.minibufferView?.toArray
+
+/-- The rectangle of each view of the state in its frame, in drawing order
+(`Split.rects`): the tree's windows, and the minibuffer's view, in the strip
+its place takes, while a prompt is open. It is what a scene's views are
+laid out in (`Loop.views`, `Editor/Loop.lean`). -/
+def rects (state : EditorState) : Array (ViewId × Rect) :=
+  let frame := state.frame
+  frame.tree.rects { x := 0, y := 0, width := frame.size.width, height := frame.size.height }
+    state.minibufferView?
+
+/-- The rectangle of the view `id` in the frame (`rects`); none for a view
+that is not laid out: one with no window in the tree, and the minibuffer's
+when no prompt is open. -/
+def rect? (state : EditorState) (id : ViewId) : Option Rect :=
+  (state.rects.find? (·.1 == id)).map (·.2)
 
 /-- Whether the state keeps the layout invariants, over its views
 (`views`: the tree's windows, then the open prompt's view): the focused
