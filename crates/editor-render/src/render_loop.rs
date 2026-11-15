@@ -45,6 +45,12 @@
 //! most one draw for each refresh interval, and with no demand a wait with
 //! no deadline. Nothing is drawn before a first frame arrives.
 //!
+//! A loop whose last step found no demand and no deadline, and that has
+//! been told nothing since, is at rest ([`RenderHandle::resting`]): it
+//! draws nothing until it is told more, however far its clock moves. That
+//! is how a reader outside the loop knows that what was asked of it has
+//! been drawn, and that what it then sees drawn was asked for later.
+//!
 //! A mark, a new size and a deadline each ask for the frame shown to be
 //! drawn again. Made before a first frame is shown they ask for nothing:
 //! the first draw is on the size last asked for, and it takes the mark and
@@ -278,7 +284,17 @@ struct Shared {
     frames_replaced: AtomicU64,
     /// The journal and the counters.
     record: Mutex<Record>,
+    /// How many words the handles have left: every word adds one before
+    /// it wakes the render thread.
+    words: AtomicU64,
+    /// The count of [`Shared::words`] read as the last step began, when
+    /// that step found nothing asked and nothing to wait for;
+    /// [`NOT_AT_REST`] otherwise.
+    rested_at: AtomicU64,
 }
+
+/// What [`Shared::rested_at`] holds while the loop is not at rest.
+const NOT_AT_REST: u64 = u64::MAX;
 
 /// The way every other thread reaches a render loop: it leaves word and
 /// wakes the render thread, and never waits for a draw.
@@ -299,13 +315,37 @@ impl RenderHandle {
         if shared.mailbox.post(frame, stamp) {
             shared.frames_replaced.fetch_add(1, Ordering::SeqCst);
         }
-        shared.park.notify();
+        self.wake();
     }
 
     /// Says the frame shown must be drawn again.
     pub fn mark_dirty(&self) {
         let now = self.shared.clock.now_ns();
         keep_older(&self.shared.dirty_since, now);
+        self.wake();
+    }
+
+    /// Whether the loop is at rest: its last step found nothing asked and
+    /// nothing to wait for, and nothing has been asked since. A new loop,
+    /// which has taken no step, is not; nor is one whose last step drew,
+    /// waited for a deadline or found it was told to stop.
+    ///
+    /// A loop at rest draws nothing until it is told more, however far
+    /// its clock moves, so a reader that sees it at rest and then sees no
+    /// entry added over a period knows that nothing asked for a draw
+    /// meanwhile. A word left while a step was deciding is never lost to
+    /// the rest that step found: the step notes how many words it began
+    /// with, and the loop is at rest only while that is still the count.
+    pub fn resting(&self) -> bool {
+        let shared = &self.shared;
+        let rested_at = shared.rested_at.load(Ordering::SeqCst);
+        rested_at != NOT_AT_REST && rested_at == shared.words.load(Ordering::SeqCst)
+    }
+
+    /// Counts a word left, which ends any rest, and wakes the render
+    /// thread.
+    fn wake(&self) {
+        self.shared.words.fetch_add(1, Ordering::SeqCst);
         self.shared.park.notify();
     }
 
@@ -319,20 +359,20 @@ impl RenderHandle {
                 asked.since.get_or_insert(now);
             }
         }
-        self.shared.park.notify();
+        self.wake();
     }
 
     /// Asks for a draw when the clock reads `at`. Of two deadlines the
     /// sooner is kept.
     pub fn animate_at(&self, at: u64) {
         keep_older(&self.shared.animate_at, at);
-        self.shared.park.notify();
+        self.wake();
     }
 
     /// Says the display refreshes every `ns` nanoseconds.
     pub fn set_refresh(&self, ns: u64) {
         self.shared.refresh_ns.store(ns, Ordering::SeqCst);
-        self.shared.park.notify();
+        self.wake();
     }
 
     /// Says the target is hidden (`true`), so that nothing drawn on it
@@ -341,7 +381,7 @@ impl RenderHandle {
     /// itself.
     pub fn set_hidden(&self, hidden: bool) {
         self.shared.hidden.store(hidden, Ordering::SeqCst);
-        self.shared.park.notify();
+        self.wake();
     }
 
     /// The journal's entries, oldest first, as a copy.
@@ -361,7 +401,7 @@ impl RenderHandle {
     /// Tells the loop to stop: its next step is [`Step::Stopped`].
     pub fn stop(&self) {
         self.shared.stopped.store(true, Ordering::SeqCst);
-        self.shared.park.notify();
+        self.wake();
     }
 }
 
@@ -439,6 +479,8 @@ impl<R: Renderer> RenderLoop<R> {
             frames_submitted: AtomicU64::new(0),
             frames_replaced: AtomicU64::new(0),
             record: Mutex::new(Record::default()),
+            words: AtomicU64::new(0),
+            rested_at: AtomicU64::new(NOT_AT_REST),
         });
         let handle = RenderHandle {
             shared: Arc::clone(&shared),
@@ -465,8 +507,24 @@ impl<R: Renderer> RenderLoop<R> {
     }
 
     /// Takes one decision, and draws once if that is the decision. It
-    /// never waits.
+    /// never waits. A step that finds nothing asked and nothing to wait
+    /// for leaves the loop at rest ([`RenderHandle::resting`]).
     pub fn step(&mut self) -> Step {
+        // Read before anything is decided, so a word left meanwhile ends
+        // the rest this step finds.
+        let words = self.shared.words.load(Ordering::SeqCst);
+        let step = self.decide();
+        let rested_at = if step == Step::Wait(None) {
+            words
+        } else {
+            NOT_AT_REST
+        };
+        self.shared.rested_at.store(rested_at, Ordering::SeqCst);
+        step
+    }
+
+    /// [`RenderLoop::step`]'s decision, and its draw.
+    fn decide(&mut self) -> Step {
         let shared = Arc::clone(&self.shared);
         if shared.stopped.load(Ordering::SeqCst) {
             return Step::Stopped;
@@ -628,6 +686,9 @@ mod tests {
     /// A refresh interval for the tests: a round number, so the times read
     /// easily.
     const REFRESH: u64 = 1000;
+
+    /// A long while on the loop's clock: an hour.
+    const LONG: u64 = 3_600_000_000_000;
 
     /// The target the loops begin on.
     const TARGET: Target = Target {
@@ -1470,6 +1531,71 @@ mod tests {
         rig.park.wait(Some(5));
         rig.park.wait(None);
         assert_eq!(rig.park.waits(), vec![Some(5), None]);
+    }
+
+    /// Whether a loop is at rest is the handle's to say: true once a step
+    /// found nothing asked and nothing to wait for, until anything more is
+    /// asked. How the loop stays at rest is pinned by the two tests that
+    /// state it: [`submitting_the_frame_shown_again_draws_nothing`] (an
+    /// equal frame is no demand) and [`an_idle_loop_waits_with_no_deadline`]
+    /// (a loop with nothing asked draws nothing however far its clock
+    /// moves); this one adds that it stays at rest meanwhile.
+    #[test]
+    fn a_loop_is_at_rest_once_a_step_finds_nothing_to_do_until_more_is_asked() {
+        let mut rig = rig();
+        // A new loop has taken no step.
+        assert!(!rig.handle.resting());
+        assert_eq!(rig.render.step(), Step::Wait(None));
+        assert!(rig.handle.resting());
+        // A step that draws leaves it busy, and the step after it, with
+        // nothing more asked, rests.
+        rig.handle.submit(frame_of("one"), None);
+        assert!(!rig.handle.resting());
+        rig.drew();
+        assert!(!rig.handle.resting());
+        assert_eq!(rig.render.step(), Step::Wait(None));
+        assert!(rig.handle.resting());
+        // At rest, it draws nothing and stays at rest however far its
+        // clock moves: past a long wait, and past ten refreshes.
+        let before = rig.handle.journal();
+        for far in [LONG, REFRESH * 10] {
+            rig.clock.advance(far);
+            assert_eq!(rig.render.step(), Step::Wait(None));
+            assert!(rig.handle.resting());
+        }
+        assert_eq!(rig.handle.journal(), before);
+        // Every word a handle leaves ends the rest, until a step has
+        // found it answered.
+        let words: [&dyn Fn(&RenderHandle); 7] = [
+            &|handle| handle.submit(frame_of("two"), None),
+            &|handle| handle.mark_dirty(),
+            &|handle| {
+                handle.resize(Target {
+                    width: 800,
+                    ..TARGET
+                });
+            },
+            &|handle| handle.animate_at(1),
+            &|handle| handle.set_refresh(REFRESH),
+            &|handle| handle.set_hidden(false),
+            &|handle| handle.stop(),
+        ];
+        for (index, word) in words.iter().enumerate() {
+            let mut rig = Rig::showing(&frame_of("one"));
+            assert_eq!(rig.render.step(), Step::Wait(None));
+            assert!(rig.handle.resting(), "word {index}: at rest before it");
+            word(&rig.handle);
+            assert!(!rig.handle.resting(), "word {index}: at rest after it");
+        }
+    }
+
+    #[test]
+    fn a_step_that_waits_for_a_deadline_is_not_at_rest() {
+        let mut rig = Rig::showing(&frame_of("one"));
+        let deadline = rig.clock.peek() + REFRESH * 5;
+        rig.handle.animate_at(deadline);
+        assert_eq!(rig.render.step(), Step::Wait(Some(deadline)));
+        assert!(!rig.handle.resting());
     }
 
     #[test]
