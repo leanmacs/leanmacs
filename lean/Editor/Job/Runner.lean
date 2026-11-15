@@ -50,8 +50,8 @@ cancellation is built here.
   the id of the wait it is in, if it is in one, changed together in one
   atomic step.
 - **Every wait races it.** `Handle.cancel` sets the token, takes the id,
-  tells the clock and the file service to withdraw that wait and ends it in
-  the table as `cancelled`. A promise resolves once, so whichever of the service and the
+  tells the clock, the file service and the process service to withdraw
+  that wait and ends it in the table as `cancelled`. A promise resolves once, so whichever of the service and the
   cancel comes first wins and the other does nothing. A wait the job was
   still making when it was cancelled is withdrawn by the job itself, as
   soon as it sees the token.
@@ -68,6 +68,13 @@ cancellation is built here.
 
 - **What a cancelled job loaded is released**, like everything else it
   holds ("What a job holds", below).
+- **A cancelled job's child is killed.** A job in a process wait is
+  withdrawn like any other, and withdrawing tells the process service,
+  whose real implementation cancels the run in the library: `Handle.cancel`
+  → `Handle.withdraw` → `Processes.cancel` → `Ffi.processesCancel` → the
+  library's service, which kills the child's process group and reaps the
+  child. `Jobs.removeOwner` and `Jobs.cancelAll` cancel through
+  `Handle.cancel`, so they reach it the same way.
 
 ## The ports its waits are made of
 
@@ -85,9 +92,18 @@ service (`Editor/Job/Real.lean`). A file wait is a wait like a timer's: it
 holds no thread, and cancelling the job withdraws it from both services,
 each of which is safe for an id it does not know.
 
-`Services` is what a runner is given: the table, the clock and the files. A
-runner that is given no file service has `Files.absent`, which refuses every
-request as failed, at once: an error as a value, and the job goes on.
+`Processes` is the process port, beside them: start a process request
+(`Editor/Process.lean`) as a wait, take its reply once the wait has
+completed, and withdraw a wait, which kills the run's child. It has a fake
+over the pure model of processes (`FakeProcesses`, `Editor/Job/Fake.lean`)
+and a real implementation over the library's process service
+(`Editor/Job/Real.lean`).
+
+`Services` is what a runner is given: the table, the clock, the files and
+the processes. A runner that is given no file service has `Files.absent`,
+and one that is given no process service has `Processes.absent`, each of
+which refuses every request as failed, at once: an error as a value, and
+the job goes on.
 
 ## What a job holds
 
@@ -209,6 +225,33 @@ def Files.absent (completions : Completions) : Files where
   cancel _ := pure ()
   release _ := pure ()
 
+/-- The process port: what the runner's process waits are made of. -/
+structure Processes where
+  /-- Asks for `request` to be worked as the wait `id`, and for the wait to
+  be completed when it has been. It returns at once and never blocks. -/
+  start : (id : UInt64) → (request : ProcessRequest) → BaseIO Unit
+  /-- The reply to `request`, which was started as the wait `id` and has
+  completed. It is asked once, on the job's thread. -/
+  take : (id : UInt64) → (request : ProcessRequest) → BaseIO request.Reply
+  /-- Withdraws the wait `id`: the service will not complete it, keeps
+  nothing of it, and kills the run's child with its process group if it is
+  running. Safe for any id, a timer's included. -/
+  cancel : (id : UInt64) → BaseIO Unit
+
+/-- The reply of a process service that is not there: every request is
+refused as failed. -/
+def Processes.absentReply : (request : ProcessRequest) → request.Reply
+  | .run .. => .error (.failed "this runner has no process service")
+
+/-- No process service: every request completes at once, refused as failed,
+through the table `completions`. It is what a runner has when it was given
+none, so a job that runs a program there gets an error as a value and goes
+on. -/
+def Processes.absent (completions : Completions) : Processes where
+  start id _ := completions.finish id .completed
+  take _ request := pure (Processes.absentReply request)
+  cancel _ := pure ()
+
 /-- What a runner is given. -/
 structure Services where
   /-- The waits in flight. -/
@@ -217,6 +260,8 @@ structure Services where
   timers : Timers
   /-- The files. A runner that is given none has `Files.absent`. -/
   files : Files := Files.absent completions
+  /-- The processes. A runner that is given none has `Processes.absent`. -/
+  processes : Processes := Processes.absent completions
 
 instance {α : Type} : Nonempty (Outcome α) :=
   ⟨.cancelled⟩
@@ -258,13 +303,15 @@ def settle (handle : Handle) : BaseIO Unit := do
   for snapshot in held do
     handle.services.files.release snapshot
 
-/-- Withdraws the wait `id`: tells the clock and the file service to drop
-it, each of which is safe for an id it does not know, and ends it as
-`cancelled` in the table. Whichever of this and the service's completion
+/-- Withdraws the wait `id`: tells the clock, the file service and the
+process service to drop it, each of which is safe for an id it does not
+know, and ends it as `cancelled` in the table. The process service kills
+the child of a run it drops. Whichever of this and the service's completion
 comes first wins, and the other does nothing. -/
 def withdraw (handle : Handle) (id : UInt64) : BaseIO Unit := do
   handle.services.timers.cancel id
   handle.services.files.cancel id
+  handle.services.processes.cancel id
   handle.services.completions.finish id .cancelled
 
 /-- Cancels the job: sets its token, and withdraws the wait it is in, if it
@@ -341,6 +388,10 @@ def answer (handle : Handle) : (request : JobRequest) → BaseIO (Answer request
     let (id, wait) ← handle.services.completions.register
     handle.services.files.start id (.save source path expect)
     return .later id wait (handle.services.files.take id (.save source path expect))
+  | .process request => do
+    let (id, wait) ← handle.services.completions.register
+    handle.services.processes.start id request
+    return .later id wait (handle.services.processes.take id request)
 
 /-- Runs `program` to its end, a request at a time. A request that is
 answered at once is a direct call, and the loop goes on on the same thread.

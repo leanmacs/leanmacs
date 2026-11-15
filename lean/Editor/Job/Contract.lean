@@ -1,4 +1,5 @@
 import Editor.Job
+import Editor.Process.Model
 
 /-!
 # The contract of the job port
@@ -19,7 +20,11 @@ apart.
 The file requests have a list of their own, `fileProperties`, further down,
 run the same three ways: against the model, against the runner over the
 fake of the file service, and against the runner over the library's file
-service on real files in a temporary directory.
+service on real files in a temporary directory. So do the process requests,
+`processProperties`, at the end: against the model and the fake, which a
+property's scripts tell what each command does, and against the library's
+process service on real processes, each property in a temporary directory,
+which is what shows those scripts true.
 
 Every property is an inequality. A real clock only promises "not before": a
 wait may return late, and time passes between two requests. So nothing here
@@ -396,6 +401,183 @@ def fileFailures (run : FileProperty → IO (Job.Outcome Bool × Array (String �
         return none
       return some
           s!"{property.name} (the files afterwards are {(byName files).map (·.1)}, of {(byName files).map (·.2.size)} bytes)"
+    | .finished false =>
+      return some property.name
+    | .failed message =>
+      return some s!"{property.name} (the job failed with `{message}`)"
+    | .cancelled =>
+      return some s!"{property.name} (the job was cancelled)"
+
+/-! ## The process requests
+
+A property of the process requests (`Editor/Process.lean`) is the files there
+are to start with, the scripts of every command it runs, and a job that is
+given the directory the files are in and returns whether it held. Whoever
+runs the list makes the directory: the model and the fake of the process
+service are given a made-up absolute path and the scripts, and the
+library's service a temporary directory, where the commands really run.
+
+Every program is `/bin/sh`, `/bin/ls`, `/usr/bin/env` or a bare `sh` on a
+`PATH` the property gives, and every command runs in the property's
+directory. So `scripts` is a claim about each command, which the model and
+the fake take as true and the library's run puts to the test. -/
+
+/-- One property of the job port's process requests. -/
+structure ProcessProperty where
+  /-- What must hold, as a sentence; printed when it does not. -/
+  name : String
+  /-- The files there are to start with, each a name in the directory and
+  its bytes. -/
+  files : Array (String × ByteArray) := #[]
+  /-- What each command the property runs in the directory does. -/
+  scripts : System.FilePath → Array Process.Script
+  /-- Observes the property, given the directory, an absolute path; `true`
+  when it holds. A job that fails or is cancelled has not held. -/
+  holds : System.FilePath → JobM Bool
+
+/-- `/bin/sh -c script` in `directory`, with `environment`. -/
+def sh (directory : System.FilePath) (script : String) (environment : Process.Environment := {}) :
+    Process.Command :=
+  { program := "/bin/sh", arguments := #["-c", script], environment, directory }
+
+/-- A limit no output of a property is over, but the one whose limit is what
+it is about. -/
+def roomyOutput : Nat :=
+  1000000
+
+/-- A run of a command that ends with the status 0 and writes `stdout` and
+nothing else. -/
+def wrote (stdout : String) : Except ProcessError Process.Ran :=
+  .ok { exit := .code 0, stdout := stdout.toUTF8, stderr := .empty }
+
+/-- Runs `command`; a refusal fails the job, saying which. -/
+def ranOk (command : Process.Command) (limit : Nat := roomyOutput) : JobM Process.Ran := do
+  match ← Process.run command limit with
+  | .ok ran =>
+    return ran
+  | .error error =>
+    throw s!"the run of {command.program} was refused: {error.describe}"
+
+/-- What the first property's command writes to its standard error: `err` and the byte
+`FF`, which is not UTF-8. -/
+def errBytes : ByteArray :=
+  "err".toUTF8.push 0xFF
+
+/-- The script that writes `out` and a line feed, `err` and the byte `FF`, and
+ends with the status 3. -/
+def runScript : String :=
+  "printf 'out\\n'; printf 'err\\377' >&2; exit 3"
+
+/-- The environment that sets one variable. -/
+def setOne : Process.Environment :=
+  { set := #[("EDITOR_PROCESS_SET", "given")] }
+
+/-- The environment that has only one variable. -/
+def onlyOne : Process.Environment :=
+  { clear := true, set := #[("ONLY", "x")] }
+
+/-- The environment that removes `PATH`. -/
+def noPath : Process.Environment :=
+  { unset := #["PATH"] }
+
+/-- `/usr/bin/env`, which writes the environment it was given, in
+`directory`, with `environment`. -/
+def env (directory : System.FilePath) (environment : Process.Environment) : Process.Command :=
+  { program := "/usr/bin/env", environment, directory }
+
+/-- A bare `sh` that writes `found`, on the `PATH` `path`. -/
+def bareSh (directory : System.FilePath) (path : String) : Process.Command :=
+  { program := "sh", arguments := #["-c", "printf found"]
+    environment := { set := #[("PATH", path)] }, directory }
+
+/-- A program that is not there. -/
+def missingProgram : String :=
+  "/nonexistent/editor-process-contract"
+
+/-- The properties every implementation of the job port's process requests
+has. -/
+def processProperties : List ProcessProperty :=
+  [{ name :=
+        "a run to its end replies with its exit status 3 and both streams byte for byte, a byte that is not UTF-8 among them"
+     scripts := fun root =>
+       #[{ command := sh root runScript
+           reply := .ok { exit := .code 3, stdout := "out\n".toUTF8, stderr := errBytes } }]
+     holds := fun root => do
+       let ran ← ranOk (sh root runScript)
+       return ran.exit == .code 3 && ran.stdout == "out\n".toUTF8 && ran.stderr == errBytes },
+    { name := "a child ended by a signal replies with the signal"
+      scripts := fun root =>
+        #[{ command := sh root "kill -9 $$"
+            reply := .ok { exit := .signal 9, stdout := .empty, stderr := .empty } }]
+      holds := fun root => do
+        return (← ranOk (sh root "kill -9 $$")).exit == .signal 9 },
+    { name := "the child runs in the command's directory: `ls` there lists the property's file"
+      files := #[("listed", .empty)]
+      scripts := fun root => #[{ command := { program := "/bin/ls", directory := root }, reply := wrote "listed\n" }]
+      holds := fun root => do
+        return (← ranOk { program := "/bin/ls", directory := root }).stdout == "listed\n".toUTF8 },
+    { name :=
+        "the environment is the editor's with a variable set, emptied and then set, or with a variable unset"
+      scripts := fun root =>
+        #[{ command := sh root "printf %s \"$EDITOR_PROCESS_SET\"" setOne, reply := wrote "given" },
+          { command := env root onlyOne, reply := wrote "ONLY=x\n" },
+          { command := env root noPath, reply := wrote "" }]
+      holds := fun root => do
+        let set ← ranOk (sh root "printf %s \"$EDITOR_PROCESS_SET\"" setOne)
+        let only ← ranOk (env root onlyOne)
+        let unset ← ranOk (env root noPath)
+        let lines := (String.fromUTF8? unset.stdout).getD "PATH=" |>.splitOn "\n"
+        return set.stdout == "given".toUTF8 && only.stdout == "ONLY=x\n".toUTF8 &&
+            !lines.any (·.startsWith "PATH=") },
+    { name := "a bare program name is found on the PATH the child is given"
+      scripts := fun root => #[{ command := bareSh root "/bin:/usr/bin", reply := wrote "found" }]
+      holds := fun root => do
+        return (← ranOk (bareSh root "/bin:/usr/bin")).stdout == "found".toUTF8 },
+    { name :=
+        "a program that is not there is refused as not found, as a value, and the job goes on to a run that ends"
+      scripts := fun root =>
+        #[{ command := sh root "exit 0"
+            reply := .ok { exit := .code 0, stdout := .empty, stderr := .empty } }]
+      holds := fun root => do
+        let .error (.notFound _) ← Process.run { program := missingProgram, directory := root } roomyOutput
+          | return false
+        return (← ranOk (sh root "exit 0")).exit == .code 0 },
+    { name :=
+        "a directory that is not absolute and a program that names a directory without being absolute are refused before anything is started, and the job goes on"
+      scripts := fun root =>
+        #[{ command := sh "relative" "exit 0"
+            reply := .ok { exit := .code 0, stdout := .empty, stderr := .empty } },
+          { command := { program := "bin/sh", directory := root }
+            reply := .ok { exit := .code 0, stdout := .empty, stderr := .empty } },
+          { command := sh root "exit 0"
+            reply := .ok { exit := .code 0, stdout := .empty, stderr := .empty } }]
+      holds := fun root => do
+        let directory ← Process.run (sh "relative" "exit 0") roomyOutput
+        let program ← Process.run { program := "bin/sh", directory := root } roomyOutput
+        let after ← ranOk (sh root "exit 0")
+        return (match directory with | .error .relativeDirectory => true | _ => false) &&
+            (match program with | .error .relativeProgram => true | _ => false) &&
+            after.exit == .code 0 },
+    { name := "output past the limit is refused as too large, with the stream and the limit"
+      scripts := fun root =>
+        #[{ command := sh root "printf 0123456789"
+            reply := wrote "0123456789" }]
+      holds := fun root => do
+        match ← Process.run (sh root "printf 0123456789") 4 with
+        | .error (.outputTooLarge .out 4) =>
+          return true
+        | _ =>
+          return false }]
+
+/-- Runs each of `properties` with `run`, which makes the property's files in a
+directory of its own and runs its job there, and returns the names of those
+that did not hold, each with how its job ended if it did not finish. -/
+def processFailures (run : ProcessProperty → IO (Job.Outcome Bool)) (properties : List ProcessProperty) :
+    IO (List String) :=
+  properties.filterMapM fun property => do
+    match ← run property with
+    | .finished true =>
+      return none
     | .finished false =>
       return some property.name
     | .failed message =>

@@ -24,6 +24,7 @@ import Editor.Job.Fake
 import Editor.Job.Jobs
 import Editor.Job.Model
 import Editor.Job.Pool
+import Editor.Process.Model
 import Editor.Key.Notation
 import Editor.Loop.Driver
 import Editor.Minibuffer.Compiled
@@ -253,6 +254,13 @@ The job system is tested here with no Rust library:
   escapes against texts written out by hand, what a load and a save answer
   and in what order they are refused, and the file data's own functions.
   They touch no file;
+- `processChecks`: the pure model of the processes a job runs
+  (`Editor/Process/Model.lean`), its order of refusals and its record of
+  what a cancelled job had killed, and the runner's process waits on the
+  fake of the process service (`Job.FakeProcesses`): cancelling a job in a
+  process wait withdraws it, which is how the library comes to kill the
+  child, and a runner with no process service refuses as a value. They
+  start no process;
 - `fileRunnerChecks`, and one check among `runnerChecks`: the runner's file
   waits, on the fake of the file service (`Job.FakeFiles`,
   `Editor/Job/Fake.lean`): a file wait holds no thread, cancelling
@@ -900,6 +908,133 @@ def fileFailures : IO (List String) := do
   let onFake ← JobContract.fileFailures runFilesOnFake JobContract.fileProperties
   return onModel.map (s!"the job model: {·}") ++
       onFake.map (s!"the job runner over the fake file service: {·}")
+
+/-- The made-up directory the commands of a process property run in, for the
+model and for the fake of the process service: an absolute path that is
+never opened. -/
+def processRoot : System.FilePath :=
+  "/processes"
+
+/-- The model of the processes a process property's commands are scripted
+as. -/
+def processModelOf (property : JobContract.ProcessProperty) : ProcessModel :=
+  { scripts := property.scripts processRoot }
+
+/-- Runs a process property's job against the job port's model, over the
+model of its processes: how the job ended. -/
+def runProcessesOnModel (property : JobContract.ProcessProperty) : IO (Job.Outcome Bool) :=
+  pure ((property.holds processRoot).runModel { processes := processModelOf property }).1
+
+/-- A rig whose services have a fake process service over `model`, and that
+service. -/
+def Rig.withProcesses (model : ProcessModel) : BaseIO (Rig × Job.FakeProcesses) := do
+  let rig ← Rig.new
+  let processes ← Job.FakeProcesses.new rig.services.completions model
+  return ({ rig with services := { rig.services with processes := processes.processes } }, processes)
+
+/-- Runs a process property's job on the runner over a fake clock and the
+fake of the process service, over the model of its processes: how the job
+ended. -/
+def runProcessesOnFake (property : JobContract.ProcessProperty) : IO (Job.Outcome Bool) := do
+  let (rig, _) ← Rig.withProcesses (processModelOf property)
+  runOnFake (property.holds processRoot) (some rig)
+
+/-- The names of the job port's process properties that do not hold of the
+job model, and of those that do not hold of the runner over the fake of the
+process service. -/
+def processFailures : IO (List String) := do
+  let onModel ← JobContract.processFailures runProcessesOnModel JobContract.processProperties
+  let onFake ← JobContract.processFailures runProcessesOnFake JobContract.processProperties
+  return onModel.map (s!"the job model: {·}") ++
+      onFake.map (s!"the job runner over the fake process service: {·}")
+
+/-- A command that sleeps for ten minutes in `processRoot`, as the process
+checks script it. -/
+def sleeper : Process.Command :=
+  JobContract.sh processRoot "/bin/sleep 600"
+
+/-- The script of `sleeper`, which takes `takes` milliseconds. -/
+def sleeperScript (takes : Nat) : Process.Script :=
+  { command := sleeper, reply := .ok { exit := .code 0, stdout := .empty, stderr := .empty }, takes }
+
+/-- What the process model answers a run of `command` under `limit` made at
+`now` by a job cancelled at `cancelAt`, with the reply's type spelled out. -/
+def modelRun (model : ProcessModel) (now : Nat) (cancelAt : Option Nat) (command : Process.Command)
+    (limit : Nat) : Except ProcessError Process.Ran × ProcessModel × Nat :=
+  model.handle now cancelAt (.run command limit)
+
+/-- The checks of processes a job runs: the model's order of refusals and its
+record of what was killed, and the runner's process waits on the fake of the
+process service, where cancelling a job withdraws its wait, which is how the
+library comes to kill the job's child. -/
+def processChecks : List Check :=
+  [{ name :=
+        "the process model refuses a relative directory, then a relative program, then an unscripted command as not found, and starts none of them"
+     run := do
+       let model : ProcessModel := { scripts := #[sleeperScript 0] }
+       let ask (command : Process.Command) := modelRun model 0 none command 10
+       let (directory, afterDirectory, _) := ask { program := "bin/sh", directory := "relative" }
+       let (program, afterProgram, _) := ask { program := "bin/sh", directory := processRoot }
+       let (unscripted, afterUnscripted, _) := ask { program := "/bin/sh", directory := processRoot }
+       let isNotFound := match unscripted with | .error (.notFound _) => true | _ => false
+       return directory == .error .relativeDirectory && program == .error .relativeProgram &&
+           isNotFound &&
+           [afterDirectory, afterProgram, afterUnscripted].all (·.started.isEmpty) },
+    { name :=
+        "the process model records a scripted run as started, moves the clock by its time, and answers too large past the limit, standard output first"
+      run := do
+        let ran : Process.Ran := { exit := .code 0, stdout := "123456".toUTF8, stderr := "123456".toUTF8 }
+        let model : ProcessModel := { scripts := #[{ command := sleeper, reply := .ok ran, takes := 7 }] }
+        let (within, after, now) := modelRun model 3 none sleeper 6
+        let (over, _, _) := modelRun model 3 none sleeper 5
+        let quiet : ProcessModel :=
+          { scripts := #[{ command := sleeper, reply := .ok { ran with stdout := .empty }, takes := 7 }] }
+        let (err, _, _) := modelRun quiet 3 none sleeper 5
+        return within == .ok ran && after.started == #[sleeper] && now == 10 &&
+            over == .error (.outputTooLarge .out 5) && err == .error (.outputTooLarge .err 5) &&
+            after.killed.isEmpty },
+    { name :=
+        "a job model cancelled inside a scripted run is cancelled at that instant, and the process model records the command as killed"
+      run := do
+        let job : JobM Bool := do
+          discard <| Process.run sleeper 10
+          return true
+        let (outcome, model) := job.runModel { cancelAt := some 50, processes := { scripts := #[sleeperScript 100] } }
+        let (finished, untouched) := job.runModel { cancelAt := some 500, processes := { scripts := #[sleeperScript 100] } }
+        return outcome == .cancelled && model.now == 50 && model.processes.killed == #[sleeper] &&
+            finished == .finished true && untouched.processes.killed.isEmpty },
+    { name :=
+        "cancelling a job in a process wait withdraws the wait from the process service with the wait's id, the job ends cancelled, and it makes no further request"
+      run := do
+        let (rig, processes) ← Rig.withProcesses { scripts := #[sleeperScript 0] }
+        processes.holdCompletions
+        let spawned ←
+          rig.spawn
+              (reporting fun _ => do
+                discard <| Process.run sleeper 10
+                discard <| Process.run sleeper 10
+                return true)
+        try
+          unless ← eventually (return (← processes.waiting) == 1) do
+            return false
+          let id := ((← processes.started)[0]?.map (·.1)).getD 0
+          spawned.handle.cancel
+          let cancelled ← spawned.endedAs .cancelled
+          processes.letGo
+          return cancelled && (← processes.withdrawn) == #[id] && (← processes.started).size == 1 &&
+              (← processes.taken).isEmpty && (← processes.waiting) == 0
+        finally
+          processes.letGo },
+    { name :=
+        "a runner given no process service refuses a run as failed, as a value, and the job goes on"
+      run := do
+        let rig ← Rig.new
+        let spawned ←
+          rig.spawn
+              (reporting fun _ => do
+                let .error (.failed _) ← Process.run sleeper 10 | return false
+                return true)
+        spawned.endedAs (.finished #["true"]) }]
 
 /-- What a job's model holds, as what a run of the job's command is handed:
 each snapshot the job's loads made that was not released, under the job's
@@ -19132,6 +19267,7 @@ def checks : List Check :=
   poolChecks ++ programChecks ++ jobModelChecks ++ waitChecks ++ runnerChecks ++ tableChecks ++
     ownerChecks ++
     fileRunnerChecks ++
+    processChecks ++
     setupChecks ++
     registryChecks ++
     storeChecks ++
@@ -19320,6 +19456,7 @@ def main : IO UInt32 := do
       (← ModelTest.jobModelFailures) ++
       (← ModelTest.jobRunnerFailures) ++
       (← ModelTest.fileFailures) ++
+      (← ModelTest.processFailures) ++
       (← ModelTest.caseFailures) ++
       (← ModelTest.displayFailures) ++
       (← ModelTest.watchFailures) ++
@@ -19333,6 +19470,6 @@ def main : IO UInt32 := do
     -- returning from `main` would wait for it for ever.
     IO.Process.exit 1
   IO.println
-      s!"model-test: {ModelTest.checks.length} checks passed, {Editor.TextContract.properties.length + Editor.TextContract.adoptProperties.length + ModelTest.commandProperties.length} properties hold of the text model, {Editor.UndoTreeCases.cases.length} cases of the undo tree hold over it, and {Editor.JobContract.properties.length} properties of the job model and of the job runner over the fake clock, and {Editor.JobContract.fileProperties.length} file properties of the job model and of the job runner over the fake file service; {Editor.FileCases.cases.length} cases across the text port and the job port hold of the two models; {(Editor.DisplayContract.properties { advance := 1, lineHeight := 1 }).length} properties of the display interface hold of its model in cells of {ModelTest.displayCells.length} sizes; {Editor.WatchContract.properties.length} properties of the watch port hold of its model; {Editor.ClipboardContract.properties.length} properties of the clipboard interface hold of its model; {Editor.FuzzyContract.properties.length} properties of the fuzzy matching interface hold of its model; {Editor.ApiCases.cases.length} cases of the editor API hold of the editor's models"
+      s!"model-test: {ModelTest.checks.length} checks passed, {Editor.TextContract.properties.length + Editor.TextContract.adoptProperties.length + ModelTest.commandProperties.length} properties hold of the text model, {Editor.UndoTreeCases.cases.length} cases of the undo tree hold over it, and {Editor.JobContract.properties.length} properties of the job model and of the job runner over the fake clock, and {Editor.JobContract.fileProperties.length} file properties of the job model and of the job runner over the fake file service, and {Editor.JobContract.processProperties.length} process properties of the job model and of the job runner over the fake process service; {Editor.FileCases.cases.length} cases across the text port and the job port hold of the two models; {(Editor.DisplayContract.properties { advance := 1, lineHeight := 1 }).length} properties of the display interface hold of its model in cells of {ModelTest.displayCells.length} sizes; {Editor.WatchContract.properties.length} properties of the watch port hold of its model; {Editor.ClipboardContract.properties.length} properties of the clipboard interface hold of its model; {Editor.FuzzyContract.properties.length} properties of the fuzzy matching interface hold of its model; {Editor.ApiCases.cases.length} cases of the editor API hold of the editor's models"
   (← IO.getStdout).flush
   IO.Process.exit 0

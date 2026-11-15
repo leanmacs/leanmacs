@@ -1,5 +1,6 @@
 import Editor.File.Model
 import Editor.Job
+import Editor.Process.Model
 
 /-!
 # The pure model of the job port
@@ -25,6 +26,11 @@ here.
   there, so whoever plays a command, a job and the job's command hands the
   snapshots across as values: the published ones in, and what the job held
   out.
+- A process request is answered by the model of the processes the job runs
+  (`JobModel.processes`, `Editor/Process/Model.lean`), which is part of this
+  model. A scripted run moves the clock on by the time it takes, as a wait
+  does, so a cancellation that falls inside it ends the run as `cancelled`
+  at that instant, and the process model records the command as killed.
 
 The model's clock is exact, where a real clock only promises "not before".
 So the contract of the port (`Editor/Job/Contract.lean`) holds inequalities
@@ -43,6 +49,8 @@ structure JobModel where
   /-- The files the job reaches, and the snapshots its file requests may
   name (`Editor/File/Model.lean`). -/
   files : FileModel := {}
+  /-- The processes the job runs (`Editor/Process/Model.lean`). -/
+  processes : ProcessModel := {}
   deriving DecidableEq
 
 namespace JobModel
@@ -54,6 +62,9 @@ def handle : (request : JobRequest) → JobModel → request.Reply × JobModel
   | .file request, model =>
     let (reply, files) := model.files.handle request
     (reply, { model with files })
+  | .process request, model =>
+    let (reply, processes, now) := model.processes.handle model.now model.cancelAt request
+    (reply, { model with processes, now })
 
 /-- Whether the job is cancelled by now. -/
 def cancelled (model : JobModel) : Bool :=
