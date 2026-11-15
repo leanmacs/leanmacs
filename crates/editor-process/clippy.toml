@@ -1,0 +1,33 @@
+# What no line of `editor-process` may name, its tests included: a real
+# process. The crate reaches processes only through the `Processes` port it
+# defines (`src/lib.rs`), and its tests, the service's and the contract's,
+# run on the published fake, `fake::FakeProcesses`.
+#
+# Clippy reads the first `clippy.toml` it finds from a package's manifest
+# directory upwards, and the workspace root has none. So this file governs
+# every target of this crate and no other: the port's adapter,
+# `editor-process-std`, starts processes freely. `disallowed_methods` is on
+# by default at `warn`, and `mise run lint` denies warnings, so a line that
+# names one of these fails the gate.
+#
+# The second entry names the port's real adapter, a crate this one does not
+# depend on. Clippy takes a path into a crate that is not in the build
+# without a warning, and the entry is then idle; it is here so that a
+# dev-dependency on the adapter, which Cargo allows though it is a cycle,
+# cannot hand a test of this crate real processes. `deny.toml` closes that
+# route too, once `editor-ffi` links the adapter.
+#
+# Seen to bite once by hand, on 2026-11-15: with a test added to
+# `src/service.rs` that calls `std::process::Command::new("/bin/sh")`,
+# `cargo clippy -p editor-process --all-targets -- -D warnings` (what
+# `mise run lint` runs, for this crate) fails with "use of a disallowed
+# method `std::process::Command::new`". With the test taken out it passes.
+#
+# What this does not hold is what `crates/editor-text/clippy.toml` says of
+# its own list: it is a list of names. A call through `libc` or `rustix`,
+# which this crate does not depend on, is a reviewer's to look for.
+
+disallowed-methods = [
+  { path = "std::process::Command::new", reason = "the crate reaches processes through the `Processes` port; a test builds a `FakeProcesses`" },
+  { path = "editor_process_std::StdProcesses::system", reason = "the crate's tests run on the fake, `fake::FakeProcesses`; real processes are the adapter's own tests' and `editor-ffi`'s wiring tests'" },
+]

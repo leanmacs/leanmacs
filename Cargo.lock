@@ -516,6 +516,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "editor-process"
+version = "0.1.0"
+
+[[package]]
 name = "editor-render"
 version = "0.1.0"
 dependencies = [
