@@ -22,7 +22,9 @@
 //! (`editor-fuzzy-nucleo`) for the call, asks `editor-fuzzy`'s `rank` and
 //! keeps nothing: there is no handle and no static. What matches, and in
 //! what order, are those two crates' rules, pinned by their own tests.
-//! This module takes the candidates apart, forwards and writes the words.
+//! That a pattern and candidates of any length are answered, and not a
+//! panic of the matching library's, is the adapter's to keep (its crate
+//! docs, "The library's limit") and is pinned there. This module takes the candidates apart, forwards and writes the words.
 
 use editor_fuzzy_nucleo::NucleoScorer;
 

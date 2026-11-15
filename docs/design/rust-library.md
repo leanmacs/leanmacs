@@ -472,6 +472,16 @@ and `deny.toml` lets no other crate depend on the library.
   not compile without them; the adapter asks for neither. Its grapheme
   segmentation is off: with it only the first scalar value of each
   cluster is looked at.
+- **Its limit.** The library adds a score up in a `u16`, unchecked: at
+  most `26 n + 10` for a pattern of `n` scalar values, whatever the
+  candidate's length, so a pattern of 2,521 or more can panic in a build
+  with overflow checks and wrap in one without (read from its source and
+  measured, 2026-11-14; the crate docs have the measurement). The adapter
+  hands the library no pattern longer than 2,000 scalar values. A longer
+  one it matches itself, by the port's rule, and scores every match the
+  same, so those are ranked in the candidates' order after a candidate
+  that is the pattern. So the adapter answers for any pattern and
+  candidates, and no score it answers has wrapped.
 - **Its licence** is MPL-2.0, in a workspace that is GPL-3.0-or-later. It
   is used unmodified. Nothing in the gate checks licences, and whether
   the combination is acceptable is the owner's to confirm.
@@ -503,9 +513,9 @@ that cannot be read are one refusal, never a panic.
   highlighting the characters that matched.
 
 Tests: the ranking rule on a canned scorer, and the fake and the contract,
-in `editor-fuzzy`; the adapter's own cases and the port's contract on it,
-in `editor-fuzzy-nucleo`; the C function's decoding and one wiring case,
-in `editor-ffi`. No test pins a score.
+in `editor-fuzzy`; the adapter's own cases, its limit and the port's
+contract on it, in `editor-fuzzy-nucleo`; the C function's decoding and
+one wiring case, in `editor-ffi`. No test pins a score's value.
 
 ## Terminal
 
