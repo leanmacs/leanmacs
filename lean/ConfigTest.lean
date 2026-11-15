@@ -104,7 +104,9 @@ fakes. The checks here pin what only real collaborators can show:
   through a host handed the display's real binding over the library's
   layout: the host's reload re-themes its display (`Config.retheme`), and
   the frame the library made of the next scene is compared with a second
-  display's frame of the same scene in a theme written here;
+  display's frame of the same scene in a theme written here; and a reload
+  that makes `mode-line` taller sizes the next scene by the new heights,
+  which `agree`, asked with no event between, shows;
 - `fileChecks`: files through the host, over the library's file service.
   They are the checks whose hosts are over a real service, so they share
   one table of waits and the one completion pump, which the first of them
@@ -3607,7 +3609,54 @@ def faceChecks (context : Context) : List Check :=
                     ("every reload but (e) installed and (e) was rejected",
                       (lines.filter (·.startsWith "reload ")).map (·.endsWith "rejected") ==
                         #[false, false, false, true, false])]
-              return true }]
+              return true },
+    {
+      name :=
+        "a reload that makes mode-line taller sizes the scene published after it by the new heights: agree, asked with no event between the reload and it, says the last rows query about the focused view gave the rows of the frame, as it did before the reload",
+      run :=
+        IO.FS.withTempDir fun directory => do
+          -- `top` puts the cursor at the text's start, so that no follow
+          -- scrolls the view: `agree` compares rows from one anchor.
+          let top : Config.Registration :=
+            { name := "top"
+              action :=
+                .call fun call => call.target.select { ranges := #[⟨0, 0⟩], shape := .exclusive } }
+          let stage ←
+            Stage.new context context.elaborator (Config.Directory.source directory)
+                { commands := #[top] }
+          -- The host's display: the real binding over the library's layout
+          -- in cells 8 by 16, in the built-in theme.
+          let collaborators :=
+            { stage.collaborators with
+              display := fun snapshots => do
+                Headless.Host.Display.real
+                    (← RealDisplay.over (← Ffi.Display.newCells 8 16) snapshots Theme.builtin) }
+          onStage { stage with collaborators } fun host _ => do
+              let settled : IO Unit := do
+                unless ← host.settle patience do
+                  throw (IO.userError "the editor thread did not settle")
+              -- What `agree` says now.
+              let agreement : IO String := do
+                host.send .agree
+                settled
+                return (← stage.output.get).back?.getD ""
+              -- A view of some rows, over a text of more lines than it shows.
+              host.resize 160 96
+              let text := "\n".intercalate ((List.range 20).map toString)
+              unless ← Event.post (.commit text) do
+                return false
+              host.send (.run "top")
+              settled
+              let before ← agreement
+              writeFiles directory
+                  [("10-faces.lean", faceChunk "face \"mode-line\" { size := some 32 }")]
+              host.send .reload
+              settled
+              let after ← agreement
+              let lines ← stage.output.get
+              if !(before.endsWith ": agrees" && after.endsWith ": agrees") then
+                throw (IO.userError s!"before the reload: {before}; after it: {after}")
+              return lines.any (·.startsWith "reload 1: installed") }]
 
 /-- Every check, in the order they run. -/
 def checks (context : Context) : List Check :=

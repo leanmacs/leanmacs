@@ -1422,6 +1422,19 @@ The headless host does, through its display's `setTheme`: the real
 binding's in the window mode and under `--render`, and nothing for the
 recorder.
 
+The theme takes effect at the next publish, and that publish is sized in
+it too. `Loop.publish` asks the display's heights before it lays out the
+views, and the heights depend on the faces (`mode-line`, `echo-area`, the
+default size), so the binding's heights answer defines a theme still to
+be sent in layout first, by itself (`editor_ffi_display_define`, which is
+`Layout::define`): the heights, and the rows queries the views follow
+their cursors by, are then in the faces the frame is laid out in, the
+first frame after a re-theme and the very first frame too. The theme
+stays to be sent, and still travels with the scene; layout takes the same
+definitions again as no change. `ConfigTest.faceChecks` checks it: after
+a reload that makes `mode-line` taller, `agree`, with no event between,
+finds the rows query and the frame agree.
+
 Lean publishes the scene and asks layout's two questions through the
 display interface (`lean/Editor/Display.lean`): the rows a view shows from
 its scroll anchor, and the position some visual lines above or below a

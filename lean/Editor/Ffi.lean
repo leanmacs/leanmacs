@@ -1976,6 +1976,19 @@ def Display.publish (display : Display) (words : Array UInt64) (strings : String
     (snapshots : Array Snapshot) : IO Bool :=
   display.publishRaw (words.foldl pushWord ByteArray.empty) strings snapshots
 
+/-- `Display.define` as it crosses: the words as bytes, and the string. -/
+@[extern "editor_glue_display_define"]
+private opaque Display.defineRaw (display : @& Display) (words : @& ByteArray)
+    (strings : @& String) : IO Bool
+
+/-- Defines the faces `words` and `strings` spell, the count of definitions
+and each definition as they follow the faces' presence in a scene's words,
+as what the faces look like from now on, with no frame laid out: every
+later heights answer, query and frame is in them, until a scene carries
+others. `false`, changing nothing, when the words do not spell them. -/
+def Display.define (display : Display) (words : Array UInt64) (strings : String) : IO Bool :=
+  display.defineRaw (words.foldl pushWord ByteArray.empty) strings
+
 /-- The latest frame the display laid out, as the library's text of it
 (`Frame::describe` in `crates/editor-layout`): empty before any scene is
 published. -/

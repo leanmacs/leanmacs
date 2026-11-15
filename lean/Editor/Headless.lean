@@ -103,7 +103,7 @@ as before, so reload and job completion work as they did.
   more there are. The old config keeps running: a rejected reload installs
   nothing. A reload that installs says nothing there, so what a command
   said stays, and it hands the display the new theme (`Config.retheme`),
-  which the next scene is drawn in. With no frame made yet, the error is
+  which the next scene is drawn in and sized by. With no frame made yet, the error is
   kept and said when the frame is made (`Running.unsaid`); a command that
   makes the frame clears the echo before it runs, as any command does, so
   it shows when the frame is made for a window event that runs none.

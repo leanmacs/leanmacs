@@ -126,11 +126,16 @@ impl<S: Shaper> Layout<S> {
         }
     }
 
-    /// Takes `definitions` as what the faces look like from now on. What
-    /// is kept of a text is not dropped: an entry keeps the font runs it
-    /// was shaped with, so a row is shaped again exactly when its faces
-    /// now come to other fonts, and a change of paint shapes nothing.
-    pub(crate) fn define(&mut self, definitions: &[FaceDef]) {
+    /// Takes `definitions` as what the faces look like from now on: every
+    /// later frame, query and [`heights`](Layout::heights) answer is in
+    /// them, as if a scene had carried them, though no frame is laid out.
+    /// A caller that sizes views by the heights before it publishes a
+    /// scene with new faces defines them first. The definitions a layout
+    /// already has change nothing. What is kept of a text is not dropped:
+    /// an entry keeps the font runs it was shaped with, so a row is shaped
+    /// again exactly when its faces now come to other fonts, and a change
+    /// of paint shapes nothing.
+    pub fn define(&mut self, definitions: &[FaceDef]) {
         if self.styles.define(definitions) {
             self.base = self.styles.style(&self.shaper, &[]).font;
         }

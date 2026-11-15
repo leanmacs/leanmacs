@@ -16,10 +16,11 @@ use std::slice;
 use std::sync::{Mutex, MutexGuard, PoisonError};
 
 use editor_ffi::display::{
-    DisplayStatus, WireFace, WireScene, WireView, editor_ffi_display_frame_rows,
-    editor_ffi_display_frame_text, editor_ffi_display_free, editor_ffi_display_heights,
-    editor_ffi_display_live, editor_ffi_display_move, editor_ffi_display_new_cells,
-    editor_ffi_display_publish, editor_ffi_display_rows, editor_ffi_display_scene,
+    DisplayStatus, WireFace, WireScene, WireView, editor_ffi_display_define,
+    editor_ffi_display_frame_rows, editor_ffi_display_frame_text, editor_ffi_display_free,
+    editor_ffi_display_heights, editor_ffi_display_live, editor_ffi_display_move,
+    editor_ffi_display_new_cells, editor_ffi_display_publish, editor_ffi_display_rows,
+    editor_ffi_display_scene, encode_definitions,
 };
 use editor_ffi::document::{
     Document, RawText, editor_ffi_document_free, editor_ffi_document_new,
@@ -538,6 +539,89 @@ fn a_display_answers_the_heights_of_its_rows_at_the_scale_it_was_told() {
         .collect();
     assert_eq!(expected.len(), 2);
     assert_eq!(rows(display, snapshot, 160, 64, 0), Ok(expected));
+    // SAFETY: each handle is live and freed once.
+    unsafe {
+        editor_ffi_snapshot_free(snapshot);
+        editor_ffi_document_free(document);
+        editor_ffi_display_free(display);
+    }
+}
+
+/// Defines the faces `words` and `strings` spell on `display` through C,
+/// and returns whether they were taken.
+fn define(display: *const editor_ffi::display::Display, words: &[u8], strings: &str) -> bool {
+    // SAFETY: the buffers are alive for the call, and the handle live.
+    unsafe {
+        editor_ffi_display_define(
+            display,
+            words.as_ptr(),
+            words.len(),
+            strings.as_ptr(),
+            strings.len(),
+        )
+    }
+}
+
+#[test]
+fn faces_defined_through_c_are_the_faces_of_the_heights_and_of_a_frame_published_after_them() {
+    let _alone = alone();
+    let display = editor_ffi_display_new_cells(8, 16);
+    let taller = WireFace {
+        name: "mode-line".to_owned(),
+        face: Face {
+            line_height: Some(LineHeight::Multiple(128)),
+            ..Face::default()
+        },
+    };
+    let (words, strings) = encode_definitions(std::slice::from_ref(&taller));
+    assert!(define(display, &words, &strings));
+    let mut layout = Layout::new(CellShaper::new(8.0, 16.0));
+    layout.define(&[FaceDef {
+        name: taller.name.clone(),
+        face: taller.face.clone(),
+    }]);
+    let direct = layout.heights();
+    assert_eq!(direct.status, 32);
+    assert_eq!(
+        heights(display).1,
+        vec![
+            u64::from(direct.text),
+            u64::from(direct.status),
+            u64::from(direct.message)
+        ]
+    );
+    // A scene that carries no faces is laid out in them: as layout lays
+    // it out once they are defined.
+    let text = "abc\ndef\nghi\njkl";
+    let document = document_new(text);
+    // SAFETY: `document` is live.
+    let snapshot = unsafe { editor_ffi_document_snapshot(document) };
+    let wire = WireScene {
+        views: vec![WireView {
+            id: 1,
+            rect: [0, 0, 160, 64],
+            snapshot: Some(0),
+            status: vec![("NORMAL".to_owned(), "mode-line".to_owned())],
+            ..WireView::default()
+        }],
+        ..WireScene::default()
+    };
+    let (scene_words, scene_strings) = wire.encode();
+    assert!(publish(display, &scene_words, &scene_strings, &[snapshot]));
+    let mut directly = plain_scene_directly(text, 160, 64);
+    directly.views[0].status = vec![StatusField {
+        text: "NORMAL".to_owned(),
+        face: "mode-line".to_owned(),
+    }];
+    assert_eq!(frame_text(display), layout.frame(&directly).describe());
+    // Words that spell no definitions are refused, and change nothing.
+    assert!(!define(display, &words[..words.len() - 8], &strings));
+    assert!(!define(display, &words, &format!("{strings}x")));
+    assert_eq!(heights(display).1, vec![16, 32, 32]);
+    // No definitions undefines every face.
+    let (none, none_strings) = encode_definitions(&[]);
+    assert!(define(display, &none, &none_strings));
+    assert_eq!(heights(display).1, vec![16, 16, 16]);
     // SAFETY: each handle is live and freed once.
     unsafe {
         editor_ffi_snapshot_free(snapshot);

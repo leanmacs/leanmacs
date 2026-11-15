@@ -33,7 +33,9 @@ def installed {σ : Type} (effects : Array (Effect σ)) : Bool :=
 /-- Sets the theme of `state` with `setTheme`, a display's, when `effects`,
 the effects `Config.step` gave on the way to `state`, report a reload that
 installed: the next scene published is drawn in the faces of the config
-that is now installed. Any other event leaves the display the theme it
+that is now installed, and sized in them too, since the real binding's
+heights answer defines a theme it has yet to send
+(`RealDisplay.heights`). Any other event leaves the display the theme it
 has. -/
 def retheme {σ : Type} (setTheme : Theme → BaseIO Unit) (state : State σ)
     (effects : Array (Effect σ)) : BaseIO Unit := do

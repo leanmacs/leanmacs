@@ -997,6 +997,9 @@ bool editor_ffi_display_publish(const editor_ffi_display *display,
                                 const uint8_t *strings, size_t strings_len,
                                 const editor_ffi_snapshot *const *snapshots,
                                 size_t count);
+bool editor_ffi_display_define(const editor_ffi_display *display,
+                               const uint8_t *words, size_t words_len,
+                               const uint8_t *strings, size_t strings_len);
 void editor_ffi_display_frame_text(const editor_ffi_display *display,
                                    editor_ffi_raw_text *out);
 void editor_ffi_display_frame_rows(const editor_ffi_display *display,
@@ -1091,6 +1094,17 @@ lean_obj_res editor_glue_display_publish(b_lean_obj_arg display,
       handles, count);
   free(handles);
   return lean_io_result_mk_ok(lean_box(published));
+}
+
+// `Editor.Ffi.Display.defineRaw : @& Display → @& ByteArray → @& String →
+// IO Bool`
+lean_obj_res editor_glue_display_define(b_lean_obj_arg display,
+                                        b_lean_obj_arg words,
+                                        b_lean_obj_arg strings) {
+  bool defined = editor_ffi_display_define(
+      lean_get_external_data(display), byte_array_bytes(words),
+      byte_array_len(words), string_bytes(strings), string_len(strings));
+  return lean_io_result_mk_ok(lean_box(defined));
 }
 
 // `Editor.Ffi.Display.frameText : @& Display → IO String`

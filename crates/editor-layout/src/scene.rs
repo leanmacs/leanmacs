@@ -202,8 +202,9 @@ pub struct Scene {
     /// What the faces the scene names look like: the definitions, in the
     /// order they were made, a later one of a name over an earlier one
     /// ([`face`](crate::face)). `None` is "as last given": layout keeps
-    /// the definitions of the last scene that carried any, and none before
-    /// the first.
+    /// the definitions of the last scene that carried any, or that it was
+    /// given since by [`Layout::define`](crate::Layout::define), and none
+    /// before the first.
     pub faces: Option<Vec<FaceDef>>,
 }
 

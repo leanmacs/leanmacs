@@ -23,7 +23,11 @@
 //! bottom row ([`editor_ffi_display_heights`]) are layout's
 //! ([`Layout::heights`]): Lean sizes its views and the minibuffer's place
 //! by them, so that a view's rows asked at its height less its bottom row
-//! are the rows the frame shows.
+//! are the rows the frame shows. They are in the faces layout has, so
+//! faces Lean is about to publish are defined first, with no frame laid
+//! out ([`editor_ffi_display_define`], which is [`Layout::define`]): the
+//! heights and the queries Lean sizes a scene by are then in the faces
+//! that scene's frame is laid out in.
 //!
 //! **A text crosses as a snapshot handle.** Each query names the snapshot it
 //! is about by its handle, and layout keeps what it laid out per key of the
@@ -70,6 +74,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 use editor_layout::Layout;
+use editor_layout::face::FaceDef;
 use editor_layout::frame::{Frame, Heights};
 use editor_layout::query::{Moved, QueryError, RowRange};
 use editor_layout::scene::{Changes, Scene, TextKey, TextRef};
@@ -87,7 +92,7 @@ use crate::words::Writer;
 
 mod wire;
 
-pub use wire::{WireFace, WireScene, WireView};
+pub use wire::{WireFace, WireScene, WireView, decode_definitions, encode_definitions};
 
 /// How a display call ended, as it crosses the boundary.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -140,6 +145,8 @@ trait Lays: Send {
     ) -> Result<Moved, QueryError>;
     /// [`Layout::heights`].
     fn heights(&mut self) -> Heights;
+    /// [`Layout::define`].
+    fn define(&mut self, definitions: &[FaceDef]);
     /// [`Layout::set_scale`].
     fn set_scale(&mut self, scale: f32);
 }
@@ -175,6 +182,10 @@ where
 
     fn heights(&mut self) -> Heights {
         Layout::heights(self)
+    }
+
+    fn define(&mut self, definitions: &[FaceDef]) {
+        Layout::define(self, definitions);
     }
 
     fn set_scale(&mut self, scale: f32) {
@@ -248,6 +259,19 @@ impl Display {
     /// ([`Layout::heights`]).
     pub fn heights(&self) -> Heights {
         self.layout().heights()
+    }
+
+    /// Defines the faces `words` and `strings` spell by themselves
+    /// ([`decode_definitions`]) as what the faces look like from now on,
+    /// with no frame laid out ([`Layout::define`]): every later heights
+    /// answer, query and frame is in them, until a scene carries others.
+    /// False, changing nothing, when they spell none.
+    pub fn define(&self, words: &[u8], strings: &str) -> bool {
+        let Some(definitions) = decode_definitions(words, strings) else {
+            return false;
+        };
+        self.layout().define(&wire::face_defs(&definitions));
+        true
     }
 
     /// Publishes the scene `words` and `strings` spell ([`WireScene`]),
@@ -407,6 +431,33 @@ pub unsafe extern "C" fn editor_ffi_display_heights(display: *const Display, out
     let raw = RawWords::with_status(DisplayStatus::Done as u64, writer.finish());
     // SAFETY: the caller guarantees `out` is writable.
     unsafe { out.write(raw) };
+}
+
+/// Defines the faces the `words_len` bytes of words at `words` and the
+/// `strings_len` bytes of text at `strings` spell, the count of
+/// definitions and each definition in the layout of [`WireScene`]'s faces,
+/// as what the faces look like from now on, with no frame laid out
+/// ([`Display::define`]). False, changing nothing, when they spell none.
+///
+/// # Safety
+///
+/// `display` is a display handle this library handed out and has not taken
+/// back, `words` points to `words_len` readable bytes and `strings` to
+/// `strings_len`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn editor_ffi_display_define(
+    display: *const Display,
+    words: *const u8,
+    words_len: usize,
+    strings: *const u8,
+    strings_len: usize,
+) -> bool {
+    // SAFETY: the caller guarantees every pointer, length and the handle.
+    unsafe {
+        let words = crate::words::borrow(words, words_len);
+        let strings = text::borrow(strings, strings_len);
+        (*display).define(words, &strings)
+    }
 }
 
 /// Fills `out` with the rows of `snapshot` a view `width` pixels wide and

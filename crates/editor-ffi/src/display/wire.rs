@@ -36,6 +36,14 @@
 //! costs the definitions only when the binding has new ones; present with
 //! a count of 0 is "no definitions", which undefines every face.
 //!
+//! **The definitions also cross by themselves**, ahead of the scene that
+//! will carry them ([`decode_definitions`], [`encode_definitions`]): the
+//! words and the string that follow the faces' presence in a scene, the
+//! count of definitions and each definition, with nothing before or
+//! after. The binding sends them so when it asks the heights its next
+//! scene is sized by, so that they are the heights of that scene's frame
+//! (`super::editor_ffi_display_define`).
+//!
 //! Refused, with what was published before kept: a presence that is
 //! neither 0 nor 1; a slant, an underline style or a line height's kind
 //! that is none of those listed; a weight outside 1 to 1000; a
@@ -320,6 +328,54 @@ fn write_face(words: &mut Writer, strings: &mut String, definition: &WireFace) {
     words.word(u64::from(value));
 }
 
+/// Reads the count of definitions and each definition.
+fn definitions(words: &mut Reader<'_>, texts: &mut Texts<'_>) -> Option<Vec<WireFace>> {
+    let count = words.count(FACE_WORDS)?;
+    (0..count).map(|_| face(words, texts)).collect()
+}
+
+/// Writes the count of `definitions` and each definition.
+fn write_definitions(words: &mut Writer, strings: &mut String, definitions: &[WireFace]) {
+    words.size(definitions.len());
+    for definition in definitions {
+        write_face(words, strings, definition);
+    }
+}
+
+/// The definitions `words` and `strings` spell when they cross by
+/// themselves, to be defined with no scene
+/// ([`editor_ffi_display_define`](super::editor_ffi_display_define)): the
+/// count of definitions and each definition, the words and the string
+/// that follow the faces' presence in a scene, and nothing left over.
+/// `None` when they spell none.
+pub fn decode_definitions(words: &[u8], strings: &str) -> Option<Vec<WireFace>> {
+    let mut words = Reader::new(words)?;
+    let mut texts = Texts { rest: strings };
+    let faces = definitions(&mut words, &mut texts)?;
+    words.finish()?;
+    texts.rest.is_empty().then_some(faces)
+}
+
+/// The words and the string that spell `definitions` by themselves
+/// ([`decode_definitions`]).
+pub fn encode_definitions(definitions: &[WireFace]) -> (Vec<u8>, String) {
+    let mut words = Writer::with_capacity(1 + FACE_WORDS * definitions.len());
+    let mut strings = String::new();
+    write_definitions(&mut words, &mut strings, definitions);
+    (words.finish(), strings)
+}
+
+/// The definitions as layout takes them.
+pub fn face_defs(definitions: &[WireFace]) -> Vec<FaceDef> {
+    definitions
+        .iter()
+        .map(|definition| FaceDef {
+            name: definition.name.clone(),
+            face: definition.face.clone(),
+        })
+        .collect()
+}
+
 /// Reads one view.
 fn view(words: &mut Reader<'_>, texts: &mut Texts<'_>) -> Option<WireView> {
     let id = words.word()?;
@@ -376,11 +432,7 @@ impl WireScene {
             .map(|_| view(&mut words, &mut texts))
             .collect::<Option<_>>()?;
         let faces = if presence(&mut words)? {
-            let count = words.count(FACE_WORDS)?;
-            let faces = (0..count)
-                .map(|_| face(&mut words, &mut texts))
-                .collect::<Option<_>>()?;
-            Some(faces)
+            Some(definitions(&mut words, &mut texts)?)
         } else {
             None
         };
@@ -446,10 +498,7 @@ impl WireScene {
         }
         words.word(u64::from(self.faces.is_some()));
         if let Some(faces) = &self.faces {
-            words.size(faces.len());
-            for definition in faces {
-                write_face(&mut words, &mut strings, definition);
-            }
+            write_definitions(&mut words, &mut strings, faces);
         }
         (words.finish(), strings)
     }
@@ -526,15 +575,7 @@ impl WireScene {
             echo: self.echo.clone(),
             pending: self.pending.clone(),
             preedit: self.preedit.clone(),
-            faces: self.faces.as_ref().map(|faces| {
-                faces
-                    .iter()
-                    .map(|definition| FaceDef {
-                        name: definition.name.clone(),
-                        face: definition.face.clone(),
-                    })
-                    .collect()
-            }),
+            faces: self.faces.as_deref().map(face_defs),
         }
     }
 }
@@ -551,7 +592,7 @@ mod tests {
     use editor_layout::shaper::{Length, LineHeight, Slant, Weight};
     use editor_text::{Anchor, Bias, Marker, Selection, SelectionRange};
 
-    use super::{WireFace, WireScene, WireView, pixels};
+    use super::{WireFace, WireScene, WireView, decode_definitions, encode_definitions, pixels};
     use crate::document::Document;
     use crate::snapshot::Snapshot;
     use crate::words::tests::buffer;
@@ -853,6 +894,47 @@ mod tests {
         assert_eq!(WireScene::decode(&bytes, &format!("{strings}x")), None);
         // Words that stop where the faces' presence would be.
         assert_eq!(WireScene::decode(&buffer(&[0; 9]), ""), None);
+    }
+
+    #[test]
+    fn definitions_cross_by_themselves_as_they_follow_the_faces_presence_in_a_scene() {
+        let (every, every_words) = every();
+        let unset = WireFace {
+            name: "x".to_owned(),
+            face: Face::default(),
+        };
+        let definitions = vec![every, unset];
+        let (words, strings) = encode_definitions(&definitions);
+        let mut expected = vec![2];
+        expected.extend(every_words);
+        expected.push(1);
+        expected.extend([0; 21]);
+        assert_eq!(words, buffer(&expected));
+        assert_eq!(strings, "kwmonox");
+        assert_eq!(
+            decode_definitions(&words, &strings),
+            Some(definitions.clone())
+        );
+        // The words and the string a scene of no view carries them in,
+        // after its nine words and the faces' presence.
+        let (scene_words, scene_strings) = with_faces(definitions).encode();
+        assert_eq!(scene_words[10 * 8..], words[..]);
+        assert_eq!(scene_strings, strings);
+        // No definitions is a count of 0, and undefines every face.
+        let (none, none_strings) = encode_definitions(&[]);
+        assert_eq!((none.clone(), none_strings.as_str()), (buffer(&[0]), ""));
+        assert_eq!(decode_definitions(&none, ""), Some(vec![]));
+        // A word short, a word over, text over and no words at all are
+        // refused.
+        assert_eq!(
+            decode_definitions(&words[..words.len() - 8], &strings),
+            None
+        );
+        let mut longer = words.clone();
+        longer.extend_from_slice(&[0; 8]);
+        assert_eq!(decode_definitions(&longer, &strings), None);
+        assert_eq!(decode_definitions(&words, &format!("{strings}y")), None);
+        assert_eq!(decode_definitions(&[], ""), None);
     }
 
     #[test]

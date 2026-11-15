@@ -47,6 +47,16 @@ merges nothing: a theme is a list of definitions, sent in order, and where
 it defines a name twice the later definition is over the earlier by layout's
 rule.
 
+**A theme to be sent is in the heights already.** The loop asks the heights
+before it lays out the views it publishes (`Loop.publish`), and the heights
+are in the faces layout has. So the heights answer first defines a theme
+still to be sent, by itself (`Ffi.Display.define`), and the theme stays to
+be sent with the scene, which layout then takes as no change: the heights
+and the rows queries a publish is sized by are in the faces its frame is
+laid out in, after a re-theme and at the first publish alike.
+`ConfigTest.faceChecks` checks it after a reload that makes `mode-line`
+taller.
+
 It is never imported by `Editor` or by anything `model-test` reaches: it
 links the Rust library. `contract-test` holds it to the display contract
 (`Editor/Display/Contract.lean`), and `ffi-test display` to the fixture
@@ -84,7 +94,8 @@ def over (display : Ffi.Display) (snapshots : SnapshotReader) (theme : Theme) :
   return { display, snapshots, theme := ← IO.mkRef (some theme) }
 
 /-- Makes `theme` what the faces look like from the next publish on: it is
-sent with the next scene published, in place of the theme sent before. -/
+sent with the next scene published, in place of the theme sent before,
+and the heights asked before that publish are already in it (`heights`). -/
 def setTheme (real : RealDisplay) (theme : Theme) : BaseIO Unit :=
   real.theme.set (some theme)
 
@@ -246,6 +257,12 @@ def encodeFace (encoded : Encoded) (definition : FaceDefinition) : Encoded :=
   let words := pushOptional words (face.strikeThrough.map (·.toUInt64))
   { familied with words := words.push face.lineHeight.isSome.toUInt64 |>.push kind |>.push height }
 
+/-- The definitions of `theme` added to `encoded`: their count, then each
+(`encodeFace`). After a presence, they are a scene's faces; by themselves,
+they are what `heights` defines ahead of the scene. -/
+def encodeDefinitions (encoded : Encoded) (theme : Theme) : Encoded :=
+  theme.foldl encodeFace { encoded with words := encoded.words.push theme.size.toUInt64 }
+
 /-- `scene` as it crosses to the library, with the definitions `faces`
 after its views when there are any to send: none is sent as their absence,
 which is "as last published". A view whose snapshot the table does not
@@ -264,8 +281,7 @@ def encode (real : RealDisplay) (scene : Scene) (faces : Option Theme) : IO Enco
   | none =>
     return { encoded with words := encoded.words.push 0 }
   | some theme =>
-    let counted := { encoded with words := encoded.words.push 1 |>.push theme.size.toUInt64 }
-    return theme.foldl encodeFace counted
+    return encodeDefinitions { encoded with words := encoded.words.push 1 } theme
 
 /-- Publishes `scene` to the library, with the theme if it has not been
 sent yet. The theme counts as sent once the library has taken the scene.
@@ -279,9 +295,18 @@ def publish (real : RealDisplay) (scene : Scene) : IO Unit := do
   if unsent.isSome then
     real.theme.set none
 
-/-- The heights the library's layout answers, in the faces last sent and at
-its scale. -/
+/-- The heights the library's layout answers at its scale, in the faces
+the next publish lays out in: a theme not yet sent is defined in layout
+first, by itself, and stays to be sent with that publish's scene. So a
+caller that sizes its views by these heights and then publishes is
+answered the heights of that publish's frame, the first after a re-theme
+too. Words this binding wrote that the library cannot read are an error,
+as for `publish`. -/
 def heights (real : RealDisplay) : IO Display.Heights := do
+  if let some theme← real.theme.get then
+    let defined := encodeDefinitions { words := #[], strings := "", snapshots := #[] } theme
+    unless ← real.display.define defined.words defined.strings do
+      throw (IO.userError "the library could not read a theme's words")
   let heights ← real.display.heights
   return {
       text := heights.text.toNat, status := heights.status.toNat

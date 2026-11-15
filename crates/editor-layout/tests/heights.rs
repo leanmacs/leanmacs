@@ -163,6 +163,34 @@ fn the_status_height_is_the_mode_lines_and_the_message_height_the_taller_of_it_a
 }
 
 #[test]
+fn faces_defined_with_no_frame_between_are_the_faces_the_heights_and_the_next_frame_are_in() {
+    let mut layout = Layout::new(shaper());
+    let taller = theme(&[("mode-line", lined(LineHeight::Multiple(128)))]);
+    layout.define(&taller);
+    let heights = Heights {
+        text: 16,
+        status: 32,
+        message: 32,
+    };
+    assert_eq!(layout.heights(), heights);
+    // A frame of a scene that carries no faces is laid out in them, and
+    // agrees with the rows query at those heights.
+    let rect = Rect {
+        x: 0,
+        y: 0,
+        width: 640,
+        height: 96,
+    };
+    assert_agrees(&mut layout, 160, rect, 0);
+    // The same definitions carried by the next scene change nothing.
+    layout.frame(&Scene {
+        faces: Some(taller),
+        ..Scene::default()
+    });
+    assert_eq!(layout.heights(), heights);
+}
+
+#[test]
 fn a_height_is_rounded_up_to_a_whole_pixel() {
     // Lines of 16¼ pixels, which every face inherits from the default.
     let mut layout = layout_with(&[("default", lined(pixels(16, 16)))], 1.0);
