@@ -17,6 +17,12 @@ editor-platform = { path = "../editor-platform" }
 # The real window. This is the crate that wires the library together, so it
 # is the one that links the adapter.
 editor-platform-winit = { path = "../editor-platform-winit" }
+# The real clipboard, for the same reason: Lean's window mode opens the
+# desktop's clipboard through it (`editor_ffi_clipboard_system`), and
+# every test is on the port's memory clipboard. Through it the static
+# library Lean links holds arboard. `clippy.toml` marks the one call that
+# opens it; `deny.toml` lets no other crate depend on it.
+editor-platform-arboard = { path = "../editor-platform-arboard" }
 # Text storage: the text behind a document handle, and its snapshots; and
 # the file port, with loading and saving over it.
 editor-text = { path = "../editor-text" }

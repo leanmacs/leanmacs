@@ -392,6 +392,7 @@
 //! executable starts, where the symbols exist. Seen once by hand, with a
 //! constant defined as `add 2 3`.
 
+pub mod clipboard;
 pub mod counter;
 pub mod display;
 pub mod document;

@@ -458,6 +458,7 @@ dependencies = [
  "editor-fuzzy-nucleo",
  "editor-layout",
  "editor-platform",
+ "editor-platform-arboard",
  "editor-platform-winit",
  "editor-render",
  "editor-render-wgpu",

@@ -1,6 +1,7 @@
-# What no line of `editor-ffi` may name, its tests included, but for the two
+# What no line of `editor-ffi` may name, its tests included, but for the
 # places marked below: a real file, a directory of the machine, a process,
-# or the file port's real adapter. The file service (`src/files.rs`) reaches
+# or the file port's real adapter; and a renderer on a window, the
+# machine's fonts and the desktop's clipboard. The file service (`src/files.rs`) reaches
 # a file system only through the port `editor_text::fs::Fs`, and its unit
 # tests run on the port's published fake.
 #
@@ -73,12 +74,26 @@
 # the display's: with its `expect` taken off, `mise run lint` fails with
 # "use of a disallowed method `editor_shape_parley::FontSet::system`".
 #
+# A fifth place is marked, for the desktop's clipboard:
+# `editor_platform_arboard::SystemClipboard::open` is on the list, since
+# what it reads and writes is the desktop's, which no test may touch. Its
+# one caller here is `editor_ffi_clipboard_system` in `src/clipboard.rs`,
+# the process's clipboard, made for Lean's window mode, under its own
+# `expect`. Every test is on the port's `MemoryClipboard`
+# (`editor_ffi_clipboard_memory`). Seen to bite once by hand, on
+# 2026-11-15, twice: with the entry not yet on the list, `mise run lint`
+# failed on the `expect` itself ("this lint expectation is unfulfilled");
+# and with the `expect` taken off, it fails with "use of a disallowed
+# method `editor_platform_arboard::SystemClipboard::open`".
+#
 # What this does not hold is what `crates/editor-text/clippy.toml` says of
 # its own list: it is a list of names.
 
 disallowed-methods = [
   # The file port's real adapter.
   { path = "editor_fs_std::StdFs::system", reason = "the real file system is made in one place, the process's file service; everything else here takes an `Fs`, and a test hands it `FakeFs`" },
+  # The desktop's clipboard: what it holds is the person's.
+  { path = "editor_platform_arboard::SystemClipboard::open", reason = "no test reads or writes the desktop's clipboard: the process's clipboard is opened in one place, for Lean's window mode; every test is on `MemoryClipboard`" },
   # A renderer on a window: it needs a window, and a real adapter.
   { path = "editor_render_wgpu::WgpuRenderer::on_window", reason = "no test makes a renderer on a window: the gate opens none; it is done for the process's window, which Lean's window mode runs (`window_renderer`), and in the example `window`" },
   # The fonts of the machine: they differ from machine to machine.

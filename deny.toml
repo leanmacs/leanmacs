@@ -114,8 +114,12 @@
 # yet there, it fails on the adapter's edge ("crate 'editor-platform =
 # 0.1.0' is explicitly banned"). `arboard`: with the entry's wrapper
 # naming another crate, it fails ("crate 'arboard = 3.7.0' is explicitly
-# banned"). `editor-platform-arboard` itself has no entry: nothing depends
-# on it yet, and binding it is the display pipeline's phase 6.
+# banned"). `editor-platform-arboard` itself had no entry while nothing
+# depended on it. Its entry came in the commit in which `editor-ffi` came
+# to depend on it (2026-11-15, the display pipeline's phase 6), for the
+# clipboard Lean's window mode opens: with the entry's wrapper naming
+# another crate, it fails ("crate 'editor-platform-arboard = 0.1.0' is
+# explicitly banned").
 #
 # For `raw-window-handle` (2026-11-14), whose entry came in the commit in
 # which an adapter first named its types: `editor-platform-winit` turns
@@ -166,6 +170,7 @@ deny = [
   { crate = "editor-platform-winit", wrappers = ["editor-ffi"], reason = "the window adapter is linked only by the crate that wires the library together; everything else reaches a window through the port" },
   { crate = "editor-platform", wrappers = ["editor-ffi", "editor-platform-winit", "editor-platform-arboard", "editor-render-wgpu"], reason = "the window port has two users, its adapter and the crate that runs it onto the event queue; the clipboard port beside it has one, its adapter; and the crate of the renderer's real adapters takes one type of it, `NativeWindow`, to make a surface on a window; another is a decision, so it is made here" },
   { crate = "arboard", wrappers = ["editor-platform-arboard"], reason = "arboard stays behind the clipboard port: only its adapter crate may name its types" },
+  { crate = "editor-platform-arboard", wrappers = ["editor-ffi"], reason = "the clipboard adapter is linked only by the crate that wires the library together, for the clipboard Lean's window mode opens; everything else reaches a clipboard through the port, and every test through its memory clipboard" },
   { crate = "ropey", wrappers = ["editor-text"], reason = "the rope stays behind editor-text's own types: only that crate may name the library's" },
   { crate = "editor-text", wrappers = ["editor-ffi", "editor-fs-std", "editor-layout"], reason = "text storage has two users, the crate that puts a text behind a handle for Lean and layout, which reads its snapshots, patches and selections as plain values; and the file port it defines has one adapter, which implements it; another is a decision, so it is made here" },
   { crate = "editor-layout", wrappers = ["editor-ffi", "editor-shape-parley", "editor-render", "editor-render-wgpu"], reason = "layout is reached by the crate that puts it behind a handle for Lean and wires it to text; the Shaper port it defines has one real adapter, which implements it; and the Renderer port's crate and the crate of its real adapters take its frames as plain data; another user is a decision, so it is made here" },
