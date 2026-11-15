@@ -1656,8 +1656,9 @@ def scriptChecks (context : Context) : List Check :=
         let collaborators := stage.collaborators
         let running : Headless.Running Config.Elaborate.State TestScheme.scheme :=
           { texts := RealTexts.over collaborators.published
-            display := ← DisplayRecorder.new Headless.cells collaborators.published.reader
-            clipboard := ← Clipboard.InProcess.new
+            display :=
+              ← Headless.Host.Display.recorder Headless.cells collaborators.published.reader
+            clipboard := (← Clipboard.InProcess.new).handle
             jobs := { services := collaborators.services } }
         let (refused, running) ←
           running.attempt collaborators do

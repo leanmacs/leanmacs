@@ -2,6 +2,7 @@ import Editor.Clipboard.InProcess
 import Editor.Config.Directory
 import Editor.Config.Elaborate
 import Editor.Config.Reload
+import Editor.Display.Real
 import Editor.Display.Recorder
 import Editor.Event.Queue
 import Editor.Evil.Compiled
@@ -31,8 +32,9 @@ editor queue and handles one event to its end before the next. It owns the
 config half of the editor's state (`Config.State`) and the table of texts
 (`RealTexts`), feeds the reload reducer (`Config.step`) and performs its
 effects, and runs the command loop's programs with `EditorM.runReal`, with
-a display recorder (`Editor/Display/Recorder.lean`) as the display and a
-clipboard of its own (`Editor/Clipboard/InProcess.lean`). Every
+the display and the clipboard its collaborators make: in the headless mode,
+a display recorder (`Editor/Display/Recorder.lean`) and a clipboard of its
+own (`Editor/Clipboard/InProcess.lean`). Every
 command it runs, it runs through the command loop ("The editor loop").
 
 A reload does not run on the editor thread. The reducer's `start` effect
@@ -172,14 +174,23 @@ as before, so reload and job completion work as they did.
   through `Running.attempt` all the same, which prints one that is,
   `loop: refused: <error>`, and keeps the frame it had. With no frame made,
   the event is dropped and the next window event tries again.
-- **The display is a recorder** (`Editor/Display/Recorder.lean`), in cells
-  8 pixels across and 16 down (`cells`), over the table of snapshots the
-  text binding publishes: it keeps the last scene and counts them, and the
-  `scene` request prints it.
-- **The clipboard is the host's own** (`Editor/Clipboard/InProcess.lean`):
-  with no window system there is no system clipboard, so the host keeps a
-  text in the process and answers every command's clipboard requests from
-  it, a key's, a command's run by name and a finished job's alike. What one
+- **The host is handed its display** (`Collaborators.display`), a maker
+  over the table of snapshots the text binding publishes, and holds what it
+  makes as a `Host.Display`: what answers the loop's requests, wrapped so
+  that the host keeps the last scene and counts them, which the `scene`
+  request prints, and the rows queries answered since the publish before
+  the last one, with what each was answered. It holds how to set the
+  display's theme, and, where the display lays frames out, how to read the
+  rows of its frame. The headless mode's display is a recorder
+  (`Editor/Display/Recorder.lean`, `Host.Display.recorder`), in cells 8
+  pixels across and 16 down (`cells`), which sets no theme and lays out no
+  frame. The real binding has a maker too (`Host.Display.real`).
+- **The host is handed its clipboard** (`Collaborators.clipboard`), a maker
+  of a clipboard handler, and every command's clipboard requests are
+  answered from what it makes, a key's, a command's run by name and a
+  finished job's alike. The headless mode's is the host's own
+  (`Editor/Clipboard/InProcess.lean`): with no window system there is no
+  system clipboard, so the host keeps a text in the process. What one
   command writes the next reads; no other program sees it, and it starts
   holding no text.
 
@@ -190,8 +201,9 @@ clock, and the two tables the host makes before those services: the table of
 snapshots the loop's text binding publishes, of which the loop is the one
 writer, and what the jobs hold. Beside them, each with a default: the
 compiled commands, jobs, bindings and modes, the log, the threshold for a
-slow command, the interrupt key and how the frame is made
-(`Collaborators.start`).
+slow command, the interrupt key, how the frame is made
+(`Collaborators.start`), and how the display and the clipboard are made
+(`Collaborators.display`, `Collaborators.clipboard`).
 
 ## Jobs
 
@@ -460,6 +472,93 @@ inductive Request where
   | scene
   deriving DecidableEq, Repr
 
+/-- The cells the headless host's display lays text out in: 8 pixels across
+and 16 down, as the display contract's larger size. -/
+def cells : Display.Cells :=
+  { advance := 8, lineHeight := 16 }
+
+/-- A rows query the host's display answered, and the rows it answered. -/
+structure Asked where
+  /-- What was asked. -/
+  query : Display.RowsQuery
+  /-- The rows answered. -/
+  rows : Array Display.Row
+  deriving DecidableEq, Repr
+
+/-- The display a host publishes to and asks, as the host holds it: what
+answers the loop's requests (`handle`), wrapped so that the host keeps what
+it prints of them. A maker hands it whatever answers: the recorder
+(`Host.Display.recorder`) or the real binding (`Host.Display.real`). -/
+structure Host.Display where
+  /-- Answers the loop's display requests, and keeps what the fields below
+  hold of them. -/
+  handle : DisplayHandler
+  /-- The last scene published, if one has been. -/
+  last : IO.Ref (Option Scene)
+  /-- How many scenes have been published. -/
+  count : IO.Ref Nat
+  /-- The rows queries answered since the publish before the last one,
+  oldest first: those made before the last publish, then those made since.
+  A refused query is not kept. -/
+  asked : IO.Ref (Array Asked × Array Asked)
+  /-- Makes a theme what the faces look like from the next publish on. The
+  recorder draws no face, and ignores it. -/
+  setTheme : Theme → BaseIO Unit
+  /-- The rows the frame the display laid out last shows of a view, where
+  the display lays frames out: the real binding's. `none` for the
+  recorder, which lays out no frame. -/
+  frameRows : Option (ViewId → IO (Option (Array Display.Row)))
+
+namespace Host.Display
+
+/-- The host's display over `answer`, with no scene published and no query
+asked: every request goes to `answer`, and a publish and a rows query that
+it answers are kept. -/
+def over (answer : DisplayHandler) (setTheme : Theme → BaseIO Unit := fun _ => pure ())
+    (frameRows : Option (ViewId → IO (Option (Array Display.Row))) := none) : BaseIO Host.Display :=
+  do
+  let last ← IO.mkRef none
+  let count ← IO.mkRef 0
+  let asked ← IO.mkRef (#[], #[])
+  let handle : DisplayHandler := fun
+    | .publish scene => do
+      answer (.publish scene)
+      last.set (some scene)
+      count.modify (· + 1)
+      asked.modify fun (_, since) => (since, #[])
+    | .rows query => do
+      let reply ← answer (.rows query)
+      if let .ok rows := reply then
+        asked.modify fun (before, since) => (before, since.push { query, rows })
+      return reply
+    | .move query => answer (.move query)
+    | .heights => answer .heights
+  return { handle, last, count, asked, setTheme, frameRows }
+
+/-- The host's display over a recorder in `cells` that reads snapshots
+through `snapshots` (`Editor/Display/Recorder.lean`): the headless mode's. -/
+def recorder (cells : Display.Cells) (snapshots : SnapshotReader) : BaseIO Host.Display := do
+  over (← DisplayRecorder.new cells snapshots).handle
+
+/-- The host's display over the real binding `real`
+(`Editor/Display/Real.lean`): a theme set is sent with the next scene, and
+the frame's rows are the library's. -/
+def real (real : RealDisplay) : BaseIO Host.Display :=
+  over real.handle real.setTheme <|
+    some fun view => do
+      let rows ← real.display.frameRows (RealTexts.word view.index)
+      return rows.map (·.map fun row => { start := row.start.toNat, stop := row.stop.toNat })
+
+/-- The last scene published, if one has been. -/
+def last? (display : Host.Display) : BaseIO (Option Scene) :=
+  display.last.get
+
+/-- How many scenes have been published. -/
+def published (display : Host.Display) : BaseIO Nat :=
+  display.count.get
+
+end Host.Display
+
 /-- What a host that runs the input scheme `scheme` needs from outside. The
 scheme is a parameter, as it is of the loop (`Loop`): it is in `Type 1`, and
 cannot be a field of what a task is handed. -/
@@ -519,6 +618,16 @@ structure Collaborators (σ : Type) (scheme : InputScheme) where
   `Loop.start` in a frame of 0 by 0, which a resize changes. A test hands
   one that is refused, to see what the host does with no frame. -/
   start : TextM (Loop scheme) := Loop.start scheme ⟨0, 0⟩
+  /-- How the host makes its display, over the read half of the table of
+  snapshots the text binding publishes (`published`). The headless mode's
+  is a recorder in `cells`; a host that draws is handed the real binding. -/
+  display : SnapshotReader → IO Host.Display := fun snapshots =>
+    Host.Display.recorder cells snapshots
+  /-- How the host makes its clipboard. The headless mode's is one of its
+  own (`Editor/Clipboard/InProcess.lean`), which holds no text at first; a
+  host with a window system is handed the system's. -/
+  clipboard : IO ClipboardHandler := do
+    return (← Clipboard.InProcess.new).handle
 
 /-- What the driver posts to the editor queue: a request, a marker to wait
 for, or the end of the loop. -/
@@ -608,12 +717,12 @@ structure Running (σ : Type) (scheme : InputScheme) where
   config : Config.State σ := {}
   /-- The texts and the snapshots made so far. -/
   texts : RealTexts
-  /-- The display: with no window, a recorder of what is published, over the
-  snapshots `texts` publishes. -/
-  display : DisplayRecorder
-  /-- The clipboard: with no window system, one the host keeps in the
-  process, which every command it runs reaches. -/
-  clipboard : Clipboard.InProcess
+  /-- The display, over the snapshots `texts` publishes: what the host's
+  collaborators made (`Collaborators.display`). -/
+  display : Host.Display
+  /-- The clipboard every command the host runs reaches: what the host's
+  collaborators made (`Collaborators.clipboard`). -/
+  clipboard : ClipboardHandler
   /-- The editor loop's frame: none until the first event the loop takes or
   the first command it runs. -/
   frame : Option (Loop scheme) := none
@@ -732,7 +841,7 @@ def attempt {α : Type} (collaborators : Collaborators σ scheme) (running : Run
     (program : EditorM α) : IO (Option α × Running σ scheme) := do
   let (result, texts) ←
     program.runReal running.texts running.display.handle (watch := watch collaborators)
-        (clipboard := running.clipboard.handle)
+        (clipboard := running.clipboard)
   match result with
   | .ok value =>
     return (some value, { running with texts })
@@ -908,7 +1017,7 @@ def ended (collaborators : Collaborators σ scheme) (running : Running σ scheme
     let (result, texts) ←
       Job.finishWith collaborators.held entry.handle
           (frame.deliver (running.keys collaborators) label command) running.texts
-          running.display.handle (watch collaborators) running.clipboard.handle
+          running.display.handle (watch collaborators) running.clipboard
     let running := { running with texts }
     match result with
     | .ok stepped =>
@@ -1051,11 +1160,6 @@ structure Progress where
   cancelled with their owner. -/
   jobs : Nat := 0
 
-/-- The cells the headless host's display lays text out in: 8 pixels across
-and 16 down, as the display contract's larger size. -/
-def cells : Display.Cells :=
-  { advance := 8, lineHeight := 16 }
-
 /-- The registry a host starts with: what compiled code hands it, its
 commands, jobs, key bindings, modes and ex bindings, for the owner
 `compiled`, before any config. -/
@@ -1068,16 +1172,16 @@ def compiled {σ : Type} {scheme : InputScheme} (collaborators : Collaborators �
     .compiled collaborators.ex
 
 /-- What the editor thread holds as its loop starts: the compiled registry
-(`compiled`), no texts, a recorder in `cells` over the table of snapshots
-the text binding publishes, a clipboard that holds no text, no jobs and no
-frame. -/
+(`compiled`), no texts, the display its collaborators make over the table of
+snapshots the text binding publishes, the clipboard they make, no jobs and
+no frame. -/
 def Running.new {σ : Type} {scheme : InputScheme} (collaborators : Collaborators σ scheme) :
     IO (Running σ scheme) :=
   return {
       config := { registry := compiled collaborators }
       texts := RealTexts.over collaborators.published
-      display := ← DisplayRecorder.new cells collaborators.published.reader
-      clipboard := ← Clipboard.InProcess.new
+      display := ← collaborators.display collaborators.published.reader
+      clipboard := ← collaborators.clipboard
       jobs := { services := collaborators.services } }
 
 /-- The editor thread: pulls the editor queue and handles each event to its
