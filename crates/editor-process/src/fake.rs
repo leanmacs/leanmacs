@@ -57,6 +57,8 @@ pub enum Writer {
     Child,
     /// The `n`th process it started in its group, from 0, as `echo $!` does.
     Member(usize),
+    /// The `n`th process it started outside its group, from 0.
+    Escaped(usize),
 }
 
 /// What a scripted child does.
@@ -73,6 +75,10 @@ pub struct Script {
     /// How many processes it starts in its group, each alive until the group
     /// is ended.
     pub members: usize,
+    /// How many processes it starts outside its group, as `setsid` does,
+    /// each holding both streams. No kill of the group and no wait ends
+    /// them: each is alive until the ground ends it ([`Ground::end`]).
+    pub escaped: usize,
     /// The files it writes an id to, and whose id each holds.
     pub writes: Vec<(PathBuf, Writer)>,
     /// The streams whose read fails, each with its refusal, once the
@@ -90,6 +96,7 @@ impl Script {
             exit,
             hold: Hold::Ends,
             members: 0,
+            escaped: 0,
             writes: Vec::new(),
             read_fails: Vec::new(),
         }
@@ -120,6 +127,13 @@ impl Script {
     #[must_use]
     pub fn members(mut self, count: usize) -> Self {
         self.members = count;
+        self
+    }
+
+    /// The same child, starting `count` processes outside its group.
+    #[must_use]
+    pub fn escaped(mut self, count: usize) -> Self {
+        self.escaped = count;
         self
     }
 
@@ -165,6 +179,9 @@ pub struct Record {
     pub waiting: Vec<u32>,
     /// How many reads are parked on the hold now.
     pub reads_parked: usize,
+    /// How many waits are parked on the hold of reaps now: their child has
+    /// ended and is not yet reaped.
+    pub reaps_parked: usize,
 }
 
 /// One scripted child, its group, and where it is in its life.
@@ -176,15 +193,18 @@ struct Group {
     ended: Option<Exit>,
     /// Whether its members are alive.
     members_alive: bool,
+    /// The processes it started outside its group, each with whether it
+    /// is alive.
+    escaped: Vec<(u32, bool)>,
     /// Whether it has been reaped.
     reaped: bool,
 }
 
 impl Group {
-    /// Whether its streams have closed: it has ended and no member holds
-    /// them.
+    /// Whether its streams have closed: it has ended and no member, and no
+    /// process it started outside its group, holds them.
     fn closed(&self) -> bool {
-        self.ended.is_some() && !self.members_alive
+        self.ended.is_some() && !self.members_alive && self.escaped.iter().all(|&(_, alive)| !alive)
     }
 }
 
@@ -199,12 +219,17 @@ struct State {
     groups: HashMap<u32, Group>,
     /// The group each member is in, by the member's id.
     member_of: HashMap<u32, u32>,
+    /// The child that started each process outside its group, by the
+    /// process's id.
+    escaped_from: HashMap<u32, u32>,
     /// The ids the children wrote, by file.
     files: HashMap<PathBuf, u32>,
     /// The files the ground made.
     made: Vec<PathBuf>,
     /// Whether reads are held.
     reads_held: bool,
+    /// Whether reaps are held.
+    reaps_held: bool,
     /// What a test reads.
     record: Record,
     /// The rules it breaks.
@@ -348,18 +373,59 @@ impl FakeProcesses {
         self.shared.changed.notify_all();
     }
 
+    /// Holds every reap from now on: a wait whose child has ended parks
+    /// before it reaps, until [`FakeProcesses::release_reaps`]. The child
+    /// stays alive, as a zombie would, while its wait is parked.
+    pub fn hold_reaps(&self) {
+        self.shared.state().reaps_held = true;
+    }
+
+    /// Lets every parked wait reap, and holds none from now on.
+    pub fn release_reaps(&self) {
+        self.shared.state().reaps_held = false;
+        self.shared.changed.notify_all();
+    }
+
     /// Whether the process `id` is alive: a child until it is reaped, a
-    /// member until its group is ended. An id the fake never gave is not.
+    /// member until its group is ended, a process started outside the group
+    /// until the ground ends it. An id the fake never gave is not.
     pub fn alive(&self, id: u32) -> bool {
         let state = self.shared.state();
         if let Some(group) = state.groups.get(&id) {
             return !group.reaped;
+        }
+        if let Some(leader) = state.escaped_from.get(&id) {
+            return state.groups.get(leader).is_some_and(|group| {
+                group
+                    .escaped
+                    .iter()
+                    .any(|&(escaped, alive)| escaped == id && alive)
+            });
         }
         state
             .member_of
             .get(&id)
             .and_then(|leader| state.groups.get(leader))
             .is_some_and(|group| group.members_alive)
+    }
+
+    /// Ends the process `id`, one a child started outside its group, which
+    /// nothing else ends; its streams close once nothing else holds them.
+    /// Nothing for any other id.
+    pub fn end(&self, id: u32) {
+        let mut state = self.shared.state();
+        let Some(&leader) = state.escaped_from.get(&id) else {
+            return;
+        };
+        if let Some(group) = state.groups.get_mut(&leader) {
+            for (escaped, alive) in &mut group.escaped {
+                if *escaped == id {
+                    *alive = false;
+                }
+            }
+        }
+        drop(state);
+        self.shared.changed.notify_all();
     }
 
     /// The files the ground made, oldest first.
@@ -421,6 +487,12 @@ impl FakeProcesses {
                 .is_none_or(|group| group.ended.is_some())
         });
         state.record.waiting.retain(|&waiting| waiting != id);
+        if state.reaps_held {
+            state.record.reaps_parked += 1;
+            self.shared.changed.notify_all();
+            state = self.shared.wait_until(state, |state| !state.reaps_held);
+            state.record.reaps_parked -= 1;
+        }
         let flaws = state.flaws;
         let exit = match state.groups.get_mut(&id) {
             Some(group) => {
@@ -504,17 +576,23 @@ impl Processes for FakeProcesses {
             ))
         })?;
         let id = state.next_id;
-        let members: Vec<u32> = (1..=script.members)
-            .map(|n| id + u32::try_from(n).unwrap_or(u32::MAX))
+        let after = |n: usize| id + u32::try_from(n).unwrap_or(u32::MAX);
+        let members: Vec<u32> = (1..=script.members).map(after).collect();
+        let escaped: Vec<u32> = (1..=script.escaped)
+            .map(|n| after(script.members + n))
             .collect();
-        state.next_id = id + 1 + u32::try_from(script.members).unwrap_or(0);
+        state.next_id = after(script.members + script.escaped + 1);
         for &member in &members {
             state.member_of.insert(member, id);
+        }
+        for &process in &escaped {
+            state.escaped_from.insert(process, id);
         }
         for (file, writer) in &script.writes {
             let written = match writer {
                 Writer::Child => Some(id),
                 Writer::Member(n) => members.get(*n).copied(),
+                Writer::Escaped(n) => escaped.get(*n).copied(),
             };
             if let Some(written) = written {
                 state.files.insert(file.clone(), written);
@@ -526,6 +604,7 @@ impl Processes for FakeProcesses {
             Group {
                 script,
                 members_alive: !members.is_empty(),
+                escaped: escaped.iter().map(|&process| (process, true)).collect(),
                 ended,
                 reaped: false,
             },
@@ -648,6 +727,14 @@ impl Ground for FakeGround {
 
     fn alive(&self, id: u32) -> bool {
         self.fake.alive(id)
+    }
+
+    fn end(&self, id: u32) {
+        self.fake.end(id);
+    }
+
+    fn escapes(&self) -> bool {
+        true
     }
 
     fn deadline(&self) -> Duration {
@@ -812,6 +899,58 @@ mod tests {
         assert!(fake.alive(child.id()), "the failure ends nothing");
         child.kill();
         child.wait();
+    }
+
+    #[test]
+    fn an_escaped_process_outlives_the_group_kill_and_holds_the_streams_until_the_ground_ends_it() {
+        let fake = FakeProcesses::scripted([(
+            command("x"),
+            Ok(Script::ends(Exit::Code(0))
+                .stdout("a")
+                .hold(Hold::UntilKilled)
+                .members(1)
+                .escaped(1)
+                .writes("/dir/escaped", Writer::Escaped(0))),
+        )]);
+        let mut child = fake.spawn(&command("x")).expect("spawned");
+        let mut out = child.take_output(Stream::Out).expect("out");
+        let ground = fake.ground();
+        let escaped = ground.written(Path::new("/dir/escaped")).expect("written");
+        assert_eq!(escaped, child.id() + 2, "after the child and its member");
+        assert!(fake.alive(escaped));
+        let reading = thread::spawn(move || read_all(&mut out));
+
+        child.kill();
+        assert_eq!(child.wait(), Exit::Signal(9));
+
+        assert!(!fake.alive(child.id()) && !fake.alive(child.id() + 1));
+        assert!(fake.alive(escaped), "the group kill does not reach it");
+        assert!(!reading.is_finished(), "it holds the stream open");
+        ground.end(escaped);
+        assert!(!fake.alive(escaped));
+        assert_eq!(reading.join().expect("the read ends"), b"a");
+    }
+
+    #[test]
+    fn a_held_reap_parks_a_wait_after_the_child_has_ended_until_released() {
+        let fake = FakeProcesses::scripted([(
+            command("x"),
+            Ok(Script::ends(Exit::Code(0)).hold(Hold::UntilKilled)),
+        )]);
+        let child = fake.spawn(&command("x")).expect("spawned");
+        fake.hold_reaps();
+
+        thread::scope(|scope| {
+            let waiting = scope.spawn(|| child.wait());
+            child.kill();
+            assert!(fake.until(DEADLINE, |record| record.reaps_parked == 1));
+            assert!(fake.alive(child.id()), "ended, not reaped");
+            fake.release_reaps();
+            assert_eq!(waiting.join().expect("the wait returns"), Exit::Signal(9));
+        });
+
+        assert!(!fake.alive(child.id()));
+        assert_eq!(fake.record().reaps_parked, 0);
     }
 
     #[test]

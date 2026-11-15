@@ -21,7 +21,7 @@ use std::time::{Duration, Instant};
 use editor_process::contract::{self, Ground};
 use editor_process::{Command, Processes, RefusalKind};
 use editor_process_std::StdProcesses;
-use rustix::process::{Pid, test_kill_process};
+use rustix::process::{Pid, Signal, kill_process, test_kill_process};
 use tempfile::TempDir;
 
 /// How long the ground waits for something that should happen at once: a
@@ -82,6 +82,27 @@ impl Ground for System {
             // A process of another user's is there all the same.
             Err(error) => error == rustix::io::Errno::PERM,
         }
+    }
+
+    fn end(&self, id: u32) {
+        if let Some(pid) = i32::try_from(id).ok().and_then(Pid::from_raw) {
+            // One that has ended already is nothing to end.
+            kill_process(pid, Signal::KILL).ok();
+        }
+    }
+
+    fn escapes(&self) -> bool {
+        let there = Path::new(contract::ESCAPE).is_file();
+        if !there {
+            // No test framework here skips a part of a test, so the skip is
+            // said where `cargo test` shows what a test printed.
+            eprintln!(
+                "skipping `{}`: {} is not on this machine, and the check starts a process outside its group with it",
+                contract::ESCAPED,
+                contract::ESCAPE
+            );
+        }
+        there
     }
 
     fn deadline(&self) -> Duration {

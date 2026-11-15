@@ -8,7 +8,7 @@
 use std::path::Path;
 
 use editor_process::contract::{
-    self, AFTER_REAP, CANCEL, KILL, RUN, SHUTDOWN, SIGNAL, STRAGGLERS, TOO_LARGE,
+    self, AFTER_REAP, CANCEL, ESCAPED, KILL, RUN, SHUTDOWN, SIGNAL, STRAGGLERS, TOO_LARGE,
 };
 use editor_process::fake::{FakeChild, FakeOutput, FakeProcesses, Flaws};
 use editor_process::{Child, Command, Exit, Output, Processes, Refusal, Stream};
@@ -64,7 +64,7 @@ fn a_fake_whose_wait_does_not_reap_is_reported() {
 
     assert_eq!(
         failures(&fake, &fake),
-        [KILL, STRAGGLERS, CANCEL, SHUTDOWN, TOO_LARGE]
+        [KILL, STRAGGLERS, CANCEL, SHUTDOWN, TOO_LARGE, ESCAPED]
     );
 }
 

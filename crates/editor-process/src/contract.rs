@@ -9,11 +9,20 @@
 //! property's.
 //!
 //! The port's properties are [`RUN`] to [`AFTER_REAP`]; the service's,
-//! [`CANCEL`] to [`TOO_LARGE`], run [`Service`] over the processes the check
+//! [`CANCEL`] to [`ESCAPED`], run [`Service`] over the processes the check
 //! is given, so a real adapter shows them on real processes. A child that
 //! starts a grandchild (`/bin/sleep 600 &`) is how the group's rules are
 //! seen: the script writes its own id (`$$`) and the grandchild's (`$!`) to
 //! files, and [`Ground::written`] reads them.
+//!
+//! [`ESCAPED`] starts, with [`ESCAPE`], a process that leaves the child's
+//! group and holds both streams, which no kill of the port's ends. The
+//! check ends it itself, through [`Ground::end`], so it leaves nothing
+//! running. Seen to bite once by hand, on 2026-11-15: over the service as
+//! it was before it stopped waiting for a cancelled run's readers, the
+//! property fails on the fake (`tests/contract.rs`) and on real processes
+//! (`editor-process-std`'s `tests/contract.rs`), the cancelled run never
+//! leaving `pending` and shutdown not returning within the deadline.
 //!
 //! [`scripts`] is what each of the check's commands does, as the fake's
 //! scripts: so the fake runs the same check, and a real adapter's run is
@@ -21,8 +30,9 @@
 //!
 //! # The ground
 //!
-//! The port has no way to make a file, to read a file a child wrote, or to
-//! ask whether a process is alive. The check needs each, so its caller
+//! The port has no way to make a file, to read a file a child wrote, to
+//! ask whether a process is alive, or to end a process outside a child's
+//! group. The check needs each, so its caller
 //! supplies them as a [`Ground`]: for the fake, the fake itself
 //! ([`FakeProcesses::ground`](crate::fake::FakeProcesses::ground)); for a
 //! real adapter, the system, asked directly.
@@ -65,6 +75,16 @@ pub trait Ground {
     /// Whether a process with the id `id` exists, a zombie counted as
     /// alive.
     fn alive(&self, id: u32) -> bool;
+
+    /// Ends the process with the id `id`, which a child of the check's
+    /// started outside its group: nothing the port does ends it, and the
+    /// check leaves nothing running.
+    fn end(&self, id: u32);
+
+    /// Whether the machine has [`ESCAPE`]'s program, with which a child of
+    /// the check's starts a process outside its group. Without it,
+    /// [`ESCAPED`] is not checked, and the ground says so where it answers.
+    fn escapes(&self) -> bool;
 
     /// How long the check waits for what should happen at once. Only an
     /// implementation that breaks a rule takes this long.
@@ -109,9 +129,23 @@ pub const SPAWN_REFUSAL: &str = "a spawn refusal is the run's result, completed 
 /// A stream past the run's limit ends the run as too large, and kills the
 /// group.
 pub const TOO_LARGE: &str = "output past the limit is too large, and kills the group";
+/// A run whose child started a process outside its group, which holds both
+/// streams open after the child has ended, still ends at a cancel and at
+/// shutdown: once its child is reaped, the service stops waiting for its
+/// streams. The escaped process is not ended by the service. Checked only
+/// when the ground has [`ESCAPE`]'s program ([`Ground::escapes`]).
+pub const ESCAPED: &str =
+    "a run whose descendant left its group holding its streams ends at a cancel and at shutdown";
+
+/// The program with which a child of the check's starts a process outside
+/// its group: Perl's `setpgrp`, which puts it in a group of its own, then
+/// `exec`s the rest of its arguments. macOS has no `setsid` command; both
+/// macOS and Debian ship this Perl (on Debian in `perl-base`, which every
+/// system has).
+pub const ESCAPE: &str = "/usr/bin/perl";
 
 /// Every property, by name, in the order [`check`] runs them.
-pub const PROPERTIES: [&str; 13] = [
+pub const PROPERTIES: [&str; 14] = [
     RUN,
     SIGNAL,
     DIRECTORY,
@@ -125,6 +159,7 @@ pub const PROPERTIES: [&str; 13] = [
     AFTER_SHUTDOWN,
     SPAWN_REFUSAL,
     TOO_LARGE,
+    ESCAPED,
 ];
 
 /// The script of [`RUN`]: `out` and a line feed on standard output, `err`
@@ -150,6 +185,17 @@ const ROOMY: u64 = 1 << 20;
 /// sleeps for ten minutes.
 fn family(child: &str, grandchild: &str, then: &str) -> String {
     format!("echo $$ > {child}; /bin/sleep 600 & echo $! > {grandchild}; {then}")
+}
+
+/// The script of a child that writes its id to `{name}-child`, starts a
+/// process that leaves its group, holding both streams, and waits for it.
+/// That process writes its own id to `{name}-escaped` only once it has left
+/// the group, so the check never acts on one still in it, and then sleeps
+/// for ten minutes.
+fn escaping(name: &str) -> String {
+    format!(
+        r#"echo $$ > {name}-child; {ESCAPE} -e 'setpgrp(0, 0) or die; open(F, ">", shift) or die; print F $$, qq(\n); close(F); exec @ARGV' {name}-escaped /bin/sleep 600 & wait"#
+    )
 }
 
 /// `/bin/sh -c script` in `dir`.
@@ -282,6 +328,16 @@ pub fn scripts(dir: &Path) -> Vec<(Command, Result<Script, Refusal>)> {
             .writes(at("s5-child"), Writer::Child)
             .writes(at("s5-grandchild"), Writer::Member(0))),
     ));
+    for name in ["e1", "e2"] {
+        scripts.push((
+            sh(dir, &escaping(name)),
+            Ok(Script::ends(Exit::Code(0))
+                .hold(Hold::UntilKilled)
+                .escaped(1)
+                .writes(at(&format!("{name}-child")), Writer::Child)
+                .writes(at(&format!("{name}-escaped")), Writer::Escaped(0))),
+        ));
+    }
     scripts
 }
 
@@ -309,6 +365,7 @@ pub fn check<P: Processes + Clone + 'static>(
         (AFTER_SHUTDOWN, check.after_shutdown(processes)),
         (SPAWN_REFUSAL, check.spawn_refusal(processes)),
         (TOO_LARGE, check.too_large(processes)),
+        (ESCAPED, check.escaped(processes)),
     ];
     results
         .into_iter()
@@ -731,6 +788,63 @@ impl<G: Ground> Check<'_, G> {
             && !self.ground.alive(child)
             && self.soon(|| !self.ground.alive(grandchild))
     }
+
+    /// Starts the escaping run `name` as `id` on `service`: the ids of its
+    /// child and of the process it started outside its group, if both were
+    /// written.
+    fn start_escaping<P: Processes + 'static>(
+        &self,
+        service: &Service<P>,
+        id: u64,
+        name: &str,
+    ) -> Option<(u32, u32)> {
+        if !service.start(id, sh(self.dir, &escaping(name)), ROOMY) {
+            return None;
+        }
+        Some((
+            self.ground.written(&self.at(&format!("{name}-child")))?,
+            self.ground.written(&self.at(&format!("{name}-escaped")))?,
+        ))
+    }
+
+    /// [`ESCAPED`].
+    fn escaped<P: Processes + Clone + 'static>(&self, processes: &P) -> bool {
+        if !self.ground.escapes() {
+            return true;
+        }
+        let (service, completions) = Self::service(processes);
+        let first = self.start_escaping(&service, 1, "e1");
+        let cancelled = first.is_some_and(|(child, escaped)| {
+            self.ground.alive(child)
+                && self.ground.alive(escaped)
+                && service.cancel(1)
+                && self.soon(|| service.pending() == 0)
+                && !self.ground.alive(child)
+        });
+        let second = self.start_escaping(&service, 2, "e2");
+        let started = second
+            .is_some_and(|(child, escaped)| self.ground.alive(child) && self.ground.alive(escaped));
+        let shut = self.shut(&service);
+        let reaped = second.is_some_and(|(child, _)| !self.ground.alive(child));
+        // The escaped processes are alive still: the runs ended with their
+        // streams held open, which is what the property is about.
+        let escaped: Vec<u32> = [first, second]
+            .into_iter()
+            .flatten()
+            .map(|(_, escaped)| escaped)
+            .collect();
+        let held = escaped.len() == 2 && escaped.iter().all(|&id| self.ground.alive(id));
+        for &id in &escaped {
+            self.ground.end(id);
+        }
+        cancelled
+            && started
+            && shut
+            && reaped
+            && held
+            && service.pending() == 0
+            && completions.ids().is_empty()
+    }
 }
 
 #[cfg(test)]
@@ -738,10 +852,10 @@ mod tests {
     use super::PROPERTIES;
 
     #[test]
-    fn the_properties_are_thirteen_and_each_is_named_once() {
+    fn the_properties_are_fourteen_and_each_is_named_once() {
         let mut names = PROPERTIES.to_vec();
         names.sort_unstable();
         names.dedup();
-        assert_eq!(names.len(), 13);
+        assert_eq!(names.len(), 14);
     }
 }

@@ -114,22 +114,28 @@ and watching are not built.
   reaped.
 - **The fake** (`editor_process::fake::FakeProcesses`) is a table of
   scripts by command: what the child writes, how and when it ends, how many
-  processes it starts in its group and which ids it writes to which file.
-  It records every spawn, kill and reap, answers whether an id is alive,
-  and holds a child or a read on a latch so a test acts while a run is in
-  flight without sleeping.
+  processes it starts in its group, how many outside it (which no group
+  kill ends, holding the streams open), which ids it writes to which file,
+  and a stream whose read fails. It records every spawn, kill and reap,
+  answers whether an id is alive, and holds a child, a read or a reap on a
+  latch so a test acts while a run is in flight without sleeping.
 - **The contract** (`editor_process::contract::check`) holds an
-  implementation to thirteen properties in a directory its caller owns,
-  with a ground that makes a file, reads the ids a child wrote and asks
-  whether a process is alive, a zombie counted as alive. Eight are the
+  implementation to fourteen properties in a directory its caller owns,
+  with a ground that makes a file, reads the ids a child wrote, asks
+  whether a process is alive, a zombie counted as alive, and ends a process
+  outside a child's group. Eight are the
   port's: a run to its end, an exit by signal, the directory, the
   environment, the refusals, a kill that ends a child and the grandchild it
   started (`/bin/sleep 600 &`), the stragglers of a child that exits by
-  itself, and a kill after the reap. Five are the service's, run over the
+  itself, and a kill after the reap. Six are the service's, run over the
   given processes: a cancelled run's child and grandchild end and it is
   never completed; after shutdown every child is reaped and every
   grandchild ends; a start after shutdown is refused; a spawn refusal is a
-  result, completed once; and output past the limit kills the group. The
+  result, completed once; output past the limit kills the group; and a run
+  whose descendant left its group holding its streams still ends at a
+  cancel and at shutdown. That descendant is started with Perl's `setpgrp`
+  (`/usr/bin/perl`, on macOS and on Debian alike; macOS has no `setsid`
+  command), and the property is skipped, saying so, where it is absent. The
   fake keeps it, fakes written to break one rule each (a group kill that
   ends only the child, a wait that does not reap, one that leaves the group
   alive, one that drops standard error, one that reports a signal as a
@@ -140,14 +146,17 @@ and watching are not built.
   cancelling and its shutdown on the real adapter. A run is started with
   the caller's id and returns at once; its thread refuses a relative
   directory or program before any spawn, spawns, starts a reader thread for
-  each stream, waits, joins the readers, keeps the result and calls the
-  completion. Three threads for each running child. A stream past the
+  each stream, waits, waits for both readers to reach their stream's end,
+  keeps the result and calls the completion. Three threads for each
+  running child. A cancel, or shutdown, stops the run waiting for its
+  readers: the run is over once its child is reaped, and its readers,
+  detached, end when their streams close. A stream past the
   run's limit of bytes kills the group and the run is `OutputTooLarge`,
   never output cut short. An id in use is refused. Cancelling kills the
   group of a running child, drops its result and never completes it.
   Shutdown refuses every later start (as shut down, completed at once),
   cancels every run, kills every group and blocks until every child is
-  reaped.
+  reaped; it does not wait for a stream to close.
 - **The adapter** (`editor-process-std`) starts a child with
   `std::process` and `process_group(0)`. Its wait sees the exit with
   `waitid(P_PID, pid, WEXITED | WNOWAIT)`, which leaves the child unreaped,
@@ -676,10 +685,17 @@ better generic primitive, not a feature-specific service.
   `PR_SET_CHILD_SUBREAPER` or a cgroup; macOS has neither. Whether such
   descendants are in scope of "no process the editor started is left
   running", and if so whether a Linux-only subreaper is acceptable, is the
-  owner's to decide; phase 1 builds the group kill only. A related limit:
-  such a descendant that keeps the child's standard output open holds the
-  run's reader until it closes it. A cancel still ends the job's wait and
-  reaps the child.
+  owner's to decide; phase 1 builds the group kill only. What is
+  guaranteed when such a descendant keeps the child's standard output or
+  error open: the editor still quits, because shutdown waits for every
+  child to be reaped and its group killed, not for the streams to close;
+  and a cancel ends the run once its child is reaped, the job's wait
+  ending at once. The contract's escaped-descendant property shows both on
+  real processes. What is not: the escaped process is not killed and
+  outlives the editor; each of the run's readers stays, detached, holding
+  the stream's read end until that process closes it; and a run that is
+  not cancelled waits for it, so its output is whole, for as long as it
+  holds the stream.
 - **A graceful signal before the kill.** Cancel and shutdown send
   `SIGKILL` to the group at once. An agent or a language server may want
   `SIGTERM` and a grace period first, to save what it holds; a grace period

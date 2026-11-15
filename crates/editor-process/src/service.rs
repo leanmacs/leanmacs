@@ -22,8 +22,9 @@
 //!    cut short;
 //! 4. waits for the child, which ends what is left of its group and reaps
 //!    it ([`Child::wait`]);
-//! 5. joins the readers, so the streams are whole before the result is
-//!    kept;
+//! 5. waits for both readers to reach their stream's end, so the streams
+//!    are whole before the result is kept; unless the run is cancelled, or
+//!    the service shuts down, first: then it stops waiting for them;
 //! 6. keeps the result and completes the run, unless it was cancelled.
 //!
 //! A read that fails kills the group too, and its refusal is the run's
@@ -31,6 +32,18 @@
 //!
 //! So each running child has three threads: the run's, which waits, and
 //! one reader for each stream.
+//!
+//! # A stream held open after the reap
+//!
+//! A stream closes once every process that holds it has ended. The group
+//! kill ends the child and what is still in its group, but a process the
+//! child started that left the group (`setsid`, `setpgid`) and kept the
+//! stream holds it open after the child has been reaped. A run to its end
+//! then waits for that process to close it, which is what keeps its output
+//! whole. A cancelled run does not: it is over once its child is reaped,
+//! and its readers are left behind, each holding only its stream's read
+//! end, to end when the stream closes. The escaped process itself is not
+//! ended: no portable mechanism reaches it.
 //!
 //! # The rules
 //!
@@ -51,9 +64,12 @@
 //!   then comes to [`RefusalKind::ShutDown`] and is completed at once;
 //!   cancels every run, killing every child's group; drops every kept
 //!   result; and blocks until every run's wait has returned, so every
-//!   child it started has been reaped. It is idempotent.
-//! - **[`Service::pending`]** counts the runs whose child is not yet reaped
-//!   and the results not taken: a readout for tests.
+//!   child it started has been reaped and its group killed. It does not
+//!   wait for a stream to close, so a process that left a child's group
+//!   and holds its stream cannot hold shutdown. It is idempotent.
+//! - **[`Service::pending`]** counts the runs not over, a cancelled one
+//!   being over once its child is reaped, and the results not taken: a
+//!   readout for tests.
 
 use std::collections::HashMap;
 use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError};
@@ -97,10 +113,13 @@ enum Run<C> {
         /// Whether it has been cancelled.
         cancelled: bool,
     },
-    /// Its child is running, or its wait has not yet returned.
+    /// Its child is running, or its wait has not yet returned, or its
+    /// streams have not reached their end.
     Running {
         /// The child.
         child: Arc<C>,
+        /// What its readers have read, which a cancel stops it waiting for.
+        reads: Arc<Reads>,
         /// Whether it has been cancelled.
         cancelled: bool,
     },
@@ -153,6 +172,81 @@ enum Read {
     TooLarge,
     /// A read failed.
     Failed(Refusal),
+}
+
+/// What a run's two readers have read, shared between them and the run.
+#[derive(Default)]
+struct Reads {
+    /// The readings, and whether the run still waits for them.
+    state: Mutex<Readings>,
+    /// Told when a reading ends, and when the run stops waiting.
+    changed: Condvar,
+}
+
+/// What [`Reads`] holds.
+#[derive(Default)]
+struct Readings {
+    /// How each stream's reading ended, out then err, once it has.
+    read: [Option<Read>; 2],
+    /// Whether the run has stopped waiting: it was cancelled.
+    abandoned: bool,
+}
+
+impl Reads {
+    /// Locks the readings. The lock is never held while other code runs.
+    fn state(&self) -> MutexGuard<'_, Readings> {
+        self.state.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// Hands over how the reading of the stream in `slot` ended.
+    fn deliver(&self, slot: usize, read: Read) {
+        self.state().read[slot] = Some(read);
+        self.changed.notify_all();
+    }
+
+    /// Stops the run waiting for its readers.
+    fn abandon(&self) {
+        self.state().abandoned = true;
+        self.changed.notify_all();
+    }
+
+    /// Both readings, once both have ended; `None` if the run stops
+    /// waiting first.
+    fn wait(&self) -> Option<[Read; 2]> {
+        let mut state = self
+            .changed
+            .wait_while(self.state(), |state| {
+                !state.abandoned && state.read.iter().any(Option::is_none)
+            })
+            .unwrap_or_else(PoisonError::into_inner);
+        match &mut state.read {
+            [out @ Some(_), err @ Some(_)] => Some([out.take()?, err.take()?]),
+            _ => None,
+        }
+    }
+}
+
+/// A reader's hand-over: how its reading ended reaches the run when it is
+/// dropped, as a failure if the reader panicked before it ended.
+struct Delivery {
+    /// Where it goes.
+    reads: Arc<Reads>,
+    /// Which stream, out (0) or err (1).
+    slot: usize,
+    /// How the reading ended, once it has.
+    read: Option<Read>,
+}
+
+impl Drop for Delivery {
+    fn drop(&mut self) {
+        let read = self.read.take().unwrap_or_else(|| {
+            Read::Failed(Refusal::new(
+                RefusalKind::Failed,
+                "a stream's reader panicked",
+            ))
+        });
+        self.reads.deliver(self.slot, read);
+    }
 }
 
 impl<P: Processes + 'static> Service<P> {
@@ -250,19 +344,26 @@ impl<P: Processes + 'static> Service<P> {
                 *cancelled = true;
                 return true;
             }
-            Some(Run::Running { child, cancelled }) => {
+            Some(Run::Running {
+                child,
+                reads,
+                cancelled,
+            }) => {
                 *cancelled = true;
-                Arc::clone(child)
+                (Arc::clone(child), Arc::clone(reads))
             }
         };
         drop(state);
+        let (child, reads) = child;
         child.kill();
+        reads.abandon();
         true
     }
 
     /// Refuses every later start, cancels every run, killing each child's
     /// group, drops every kept result, and returns once every child the
-    /// service started has been reaped. Safe to call again.
+    /// service started has been reaped. It does not wait for a stream to
+    /// close. Safe to call again.
     pub fn shutdown(&self) {
         let mut state = self.inner.state();
         state.shut = true;
@@ -273,15 +374,20 @@ impl<P: Processes + 'static> Service<P> {
                 *cancelled = true;
                 true
             }
-            Run::Running { child, cancelled } => {
+            Run::Running {
+                child,
+                reads,
+                cancelled,
+            } => {
                 *cancelled = true;
-                children.push(Arc::clone(child));
+                children.push((Arc::clone(child), Arc::clone(reads)));
                 true
             }
         });
         drop(state);
-        for child in children {
+        for (child, reads) in children {
             child.kill();
+            reads.abandon();
         }
         let state = self.inner.state();
         drop(
@@ -292,7 +398,8 @@ impl<P: Processes + 'static> Service<P> {
         );
     }
 
-    /// The runs whose child is not yet reaped, and the results not taken.
+    /// The runs not over, a cancelled one being over once its child is
+    /// reaped, and the results not taken.
     pub fn pending(&self) -> usize {
         self.inner.state().runs.len()
     }
@@ -311,21 +418,29 @@ impl<P: Processes> Inner<P> {
             Some(refusal) => RunResult::Refused(refusal),
             None => match self.processes.spawn(command) {
                 Err(refusal) => RunResult::Refused(refusal),
-                Ok(child) => self.own(id, child, limit),
+                Ok(child) => match self.own(id, child, limit) {
+                    Some(result) => result,
+                    None => {
+                        self.finish(id, None);
+                        return;
+                    }
+                },
             },
         };
-        self.finish(id, result);
+        self.finish(id, Some(result));
     }
 
     /// Registers `child` as the run `id`'s, kills it if the run was
     /// cancelled meanwhile, reads its streams, waits for it and says what
-    /// the run came to.
-    fn own(&self, id: u64, mut child: P::Child, limit: u64) -> RunResult {
+    /// the run came to: `None` if it was cancelled before its streams
+    /// reached their end.
+    fn own(&self, id: u64, mut child: P::Child, limit: u64) -> Option<RunResult> {
         let outputs = [
             child.take_output(Stream::Out),
             child.take_output(Stream::Err),
         ];
         let child = Arc::new(child);
+        let reads = Arc::new(Reads::default());
         {
             let mut state = self.state();
             let cancelled = match state.runs.get(&id) {
@@ -336,85 +451,81 @@ impl<P: Processes> Inner<P> {
                 id,
                 Run::Running {
                     child: Arc::clone(&child),
+                    reads: Arc::clone(&reads),
                     cancelled,
                 },
             );
             drop(state);
             if cancelled {
                 child.kill();
+                reads.abandon();
             }
         }
         let [out, err] = outputs;
-        let readers = [(Stream::Out, out), (Stream::Err, err)].map(|(stream, output)| {
-            let child = Arc::clone(&child);
-            (
-                stream,
-                thread::Builder::new()
-                    .name("editor-process-read".into())
-                    .spawn(move || {
-                        output.map_or(Read::Whole(Vec::new()), |output| {
-                            read(output, limit, &*child)
-                        })
-                    }),
-            )
-        });
-        if readers.iter().any(|(_, reader)| reader.is_err()) {
-            // A stream that has no reader would fill and hold the child.
-            child.kill();
-        }
-        let exit = child.wait();
-        let mut streams = Vec::with_capacity(2);
-        for (stream, reader) in readers {
-            let read = match reader {
-                Ok(reader) => reader.join().unwrap_or_else(|_| {
+        for (slot, output) in [out, err].into_iter().enumerate() {
+            let (killed, delivered) = (Arc::clone(&child), Arc::clone(&reads));
+            // The reader's thread is detached: a run that stops waiting for
+            // it leaves it to end when its stream closes.
+            let spawned = thread::Builder::new()
+                .name("editor-process-read".into())
+                .spawn(move || {
+                    let mut delivery = Delivery {
+                        reads: delivered,
+                        slot,
+                        read: None,
+                    };
+                    delivery.read = Some(output.map_or(Read::Whole(Vec::new()), |output| {
+                        read(output, limit, &*killed)
+                    }));
+                });
+            if let Err(error) = spawned {
+                reads.deliver(
+                    slot,
                     Read::Failed(Refusal::new(
                         RefusalKind::Failed,
-                        "a stream's reader panicked",
-                    ))
-                }),
-                Err(error) => Read::Failed(Refusal::new(
-                    RefusalKind::Failed,
-                    format!("no thread to read a stream: {error}"),
-                )),
-            };
-            streams.push((stream, read));
-        }
-        if let Some((stream, _)) = streams
-            .iter()
-            .find(|(_, read)| matches!(read, Read::TooLarge))
-        {
-            return RunResult::OutputTooLarge {
-                stream: *stream,
-                limit,
-            };
-        }
-        let mut whole = [Vec::new(), Vec::new()];
-        for (stream, read) in streams {
-            match read {
-                Read::Whole(bytes) => whole[usize::from(stream == Stream::Err)] = bytes,
-                Read::Failed(refusal) => return RunResult::Refused(refusal),
-                Read::TooLarge => {
-                    return RunResult::OutputTooLarge { stream, limit };
-                }
+                        format!("no thread to read a stream: {error}"),
+                    )),
+                );
+                // A stream that has no reader would fill and hold the child.
+                child.kill();
             }
         }
+        let exit = child.wait();
+        let streams = reads.wait()?;
+        let streams = [Stream::Out, Stream::Err].into_iter().zip(streams);
+        let mut whole = [Vec::new(), Vec::new()];
+        let mut failed = None;
+        for (stream, read) in streams {
+            match read {
+                Read::TooLarge => return Some(RunResult::OutputTooLarge { stream, limit }),
+                Read::Failed(refusal) => {
+                    failed.get_or_insert(refusal);
+                }
+                Read::Whole(bytes) => whole[usize::from(stream == Stream::Err)] = bytes,
+            }
+        }
+        if let Some(refusal) = failed {
+            return Some(RunResult::Refused(refusal));
+        }
         let [stdout, stderr] = whole;
-        RunResult::Ran {
+        Some(RunResult::Ran {
             exit,
             stdout,
             stderr,
-        }
+        })
     }
 
     /// Ends the run `id` as `result`: kept and completed, or dropped if it
-    /// was cancelled.
-    fn finish(&self, id: u64, result: RunResult) {
+    /// was cancelled. `None` is a run cancelled before it came to anything.
+    fn finish(&self, id: u64, result: Option<RunResult>) {
         let mut state = self.state();
         let cancelled = match state.runs.remove(&id) {
             Some(Run::Starting { cancelled } | Run::Running { cancelled, .. }) => cancelled,
             Some(Run::Kept(_)) | None => true,
         };
-        if !cancelled {
+        let kept = result.filter(|_| !cancelled);
+        let cancelled = kept.is_none();
+        if let Some(result) = kept {
             state.runs.insert(id, Run::Kept(result));
         }
         state.active -= 1;
@@ -699,13 +810,12 @@ mod tests {
                 .members(1)),
         )]);
         let (service, completed) = service(&fake);
-        // Holding the reads holds the readers, and with them each run's
-        // end: shutdown must not return before they are let go.
-        fake.hold_reads();
+        // Holding the reaps holds each wait after its child has been killed:
+        // shutdown must not return before they are let go.
+        fake.hold_reaps();
         assert!(service.start(1, command("x"), ROOMY));
         assert!(service.start(2, command("x"), ROOMY));
-        assert!(fake.until(DEADLINE, |record| record.waiting.len() == 2
-            && record.reads_parked == 4));
+        assert!(fake.until(DEADLINE, |record| record.waiting.len() == 2));
 
         let (sender, returned) = mpsc::channel();
         let shutting = service.clone();
@@ -713,9 +823,10 @@ mod tests {
             shutting.shutdown();
             sender.send(()).ok();
         });
-        assert!(fake.until(DEADLINE, |record| record.reaped.len() == 2));
+        assert!(fake.until(DEADLINE, |record| record.reaps_parked == 2));
         assert!(returned.recv_timeout(Duration::from_millis(100)).is_err());
-        fake.release_reads();
+        assert_eq!(fake.record().reaped, []);
+        fake.release_reaps();
 
         assert_eq!(returned.recv_timeout(DEADLINE), Ok(()));
         shutdown.join().expect("shutdown returns");
@@ -731,6 +842,84 @@ mod tests {
             completed.try_recv().is_err(),
             "a run cancelled by shutdown is never completed"
         );
+    }
+
+    /// A child whose streams never reach their end once it has been
+    /// reaped, as when a process it started has left its group and holds
+    /// them.
+    fn streams_held_open(fake: &FakeProcesses) {
+        fake.script(
+            command("held"),
+            Ok(Script::ends(Exit::Code(0))
+                .stdout("out")
+                .hold(Hold::UntilKilled)
+                .escaped(1)),
+        );
+    }
+
+    #[test]
+    fn shutdown_returns_once_every_child_is_reaped_though_a_stream_never_ends() {
+        let fake = FakeProcesses::new();
+        streams_held_open(&fake);
+        let (service, completed) = service(&fake);
+        assert!(service.start(1, command("held"), ROOMY));
+        assert!(fake.until(DEADLINE, |record| record.waiting.len() == 1));
+        let child = fake.record().spawned[0].0;
+
+        let (sender, returned) = mpsc::channel();
+        let shutting = service.clone();
+        thread::spawn(move || {
+            shutting.shutdown();
+            sender.send(()).ok();
+        });
+
+        assert_eq!(returned.recv_timeout(DEADLINE), Ok(()));
+        assert!(!fake.alive(child), "reaped");
+        assert!(fake.alive(child + 1), "the escaped process is not ended");
+        assert_eq!(service.pending(), 0);
+        assert!(completed.try_recv().is_err());
+        fake.end(child + 1);
+    }
+
+    #[test]
+    fn a_cancelled_run_whose_stream_never_ends_is_over_once_its_child_is_reaped() {
+        let fake = FakeProcesses::new();
+        streams_held_open(&fake);
+        let (service, completed) = service(&fake);
+        assert!(service.start(1, command("held"), ROOMY));
+        assert!(fake.until(DEADLINE, |record| record.waiting.len() == 1));
+        let child = fake.record().spawned[0].0;
+
+        assert!(service.cancel(1));
+
+        assert!(pending_comes_to(&service, 0));
+        assert!(!fake.alive(child));
+        assert!(
+            service.start(1, command("held"), ROOMY),
+            "the id is free again"
+        );
+        assert!(service.cancel(1));
+        assert!(pending_comes_to(&service, 0));
+        assert!(completed.recv_timeout(Duration::from_millis(50)).is_err());
+        fake.end(child + 1);
+        fake.end(fake.record().spawned[1].0 + 1);
+    }
+
+    #[test]
+    fn a_run_whose_stream_is_held_open_after_the_reap_waits_for_it_and_keeps_it_whole() {
+        let fake = FakeProcesses::scripted([(
+            command("x"),
+            Ok(Script::ends(Exit::Code(0)).stdout("out").escaped(1)),
+        )]);
+        let (service, completed) = service(&fake);
+
+        assert!(service.start(1, command("x"), ROOMY));
+        assert!(fake.until(DEADLINE, |record| record.reaped.len() == 1));
+        assert!(completed.recv_timeout(Duration::from_millis(50)).is_err());
+        fake.end(fake.record().spawned[0].0 + 1);
+
+        assert_eq!(completed.recv_timeout(DEADLINE), Ok(1));
+        assert_eq!(service.take(1), Some(ran(Exit::Code(0), b"out", b"")));
     }
 
     #[test]

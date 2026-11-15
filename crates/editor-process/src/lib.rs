@@ -47,7 +47,10 @@
 //! What the group kill does not reach: a descendant that leaves the group
 //! (`setsid`, `setpgid`) or forks into a session of its own. No portable
 //! mechanism reaches those; the design docs keep it as an open question
-//! (`docs/design/rust-library.md`, "Processes").
+//! (`docs/design/rust-library.md`, "Processes"). One that holds a child's
+//! stream keeps it open after the child is reaped; the service does not
+//! let that hold a cancel or shutdown ([`service`], "A stream held open
+//! after the reap").
 //!
 //! # Where an addition goes
 //!
