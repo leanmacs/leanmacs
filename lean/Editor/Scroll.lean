@@ -1,7 +1,7 @@
 import Editor.Display
 
 /-!
-# Scrolling: how a view follows its cursor
+# Scrolling: how a view follows its cursor, and where a scroll puts it
 
 A view shows its text from a scroll anchor: a position of the text, and the
 rows shown start at the visual row that holds it. This module is the policy
@@ -10,7 +10,7 @@ that says where the anchor goes. It is programs over the display port
 state, reads no text and places nothing: it is handed offsets and answers
 the offset to place the anchor at, or none to keep it, and its callers read
 and place the anchor's marker (the command loop before each scene,
-`Editor/Loop.lean`).
+`Editor/Loop.lean`, and the commands that scroll).
 
 ## The follow policy: the least movement
 
@@ -57,6 +57,25 @@ the editor state, 0 by default, which this module is handed.
   cannot be above the text's first row, and a cursor fewer than the margin
   from the text's last row keeps as many rows below it as the text has.
 
+## The anchors a scroll places
+
+A command that scrolls asks here where its anchor goes, in the same way:
+
+- **By rows** (`Scroll.down`, `Scroll.up`): the anchor moves the rows
+  asked. Going down it stops where the text's last row is the last row
+  shown, and never moves up; going up it stops at the text's first row.
+  How many rows a scroll is, for half a view and for a view and with a
+  count, is `Scroll.Amount.rows`.
+- **To the cursor's row** (`Scroll.lineTo`): the anchor that puts the
+  cursor's row first, in the middle of the rows the view fits (the upper of
+  two when it fits an even number), or last. Near the text's start the
+  anchor stops at the first row, so the cursor's row cannot be put in the
+  middle or at the bottom there; near its end the view shows past the
+  text's end.
+
+Each answers none in a view that shows no row. None of them reads the
+margin: the follow that comes before the next scene holds it.
+
 ## What is asked
 
 Layout is the display's, and nothing of it is kept here between two
@@ -68,7 +87,9 @@ questions. The two queries of the display port are all that is asked:
   and from the text's start (the rows the view fits, `Area.fits`);
 - `Display.linesFrom`, aiming for the row's start (`goal := some 0`): the
   row some rows above or below a position, as an anchor (`Area.above`,
-  `Area.below`).
+  `Area.below`). A command that moves its cursor by rows asks the same
+  query itself, with no goal, so that the move aims for the cursor's own
+  x.
 
 What is relied on is in the display interface's contract
 (`Editor/Display/Contract.lean`): an anchor in the middle of a row starts
@@ -90,6 +111,10 @@ anchor, which the caller asked:
 | Cursor above, no margin | 1 |
 | Cursor below, no margin | 2: and one move; 1 in a view of one row |
 | A margin set that does not hold as set | 2: and the rows the view fits; 3 where the anchor moves |
+
+A scroll by rows is one move going up and two going down, after the rows
+the view fits, which its caller asks. A scroll to the cursor's row is one
+request to the top, and two to the middle and to the bottom.
 
 Not done: answering "is the cursor shown" from the rows shown alone, which
 would write the display's wrap rule here for one request a view; and
@@ -230,6 +255,75 @@ def follow (area : Area) (margin : Nat) (shown : Array Display.Row) (head : Nat)
     else
       area.above row.start up
   return if target == first.start then none else some target
+
+/-- How far a scroll by rows goes. -/
+inductive Amount where
+  /-- Half the rows the view fits. -/
+  | half
+  /-- The rows the view fits. -/
+  | page
+  deriving DecidableEq, Repr
+
+/-- How many rows a scroll of `amount` is in a view that fits `fits` rows,
+with the count `count` typed before it, 0 for none. Half a view is half the
+rows it fits and at least one row, and a count typed before it is the rows
+themselves. A view is the rows it fits, a count times over. -/
+def Amount.rows : Amount → (count fits : Nat) → Nat
+  | .half, count, fits => if count == 0 then max 1 (fits / 2) else count
+  | .page, count, fits => max 1 count * fits
+
+/-- Where in a view a scroll to the cursor's row puts that row. -/
+inductive Place where
+  /-- The first row shown. -/
+  | top
+  /-- The middle row of those the view fits, the upper of two. -/
+  | middle
+  /-- The last row shown. -/
+  | bottom
+  deriving DecidableEq, Repr
+
+/-- Where a scroll down by `rows` rows places the anchor of a view whose
+anchor is at `anchor` and which fits `fits` rows (`Area.fits`, which the
+caller asks once); none to keep it. The anchor moves that many rows, and no
+further than where the text's last row is the last row shown; it never
+moves up. None in a view that fits no row.
+
+It is asked as the row `fits - 1 + rows` below the anchor, which stops at
+the text's last row, and then the row `fits - 1` above that. -/
+def down (area : Area) (anchor rows fits : Nat) : DisplayM (Option Nat) := do
+  if fits == 0 then
+    return none
+  let last ← area.below anchor (fits - 1 + rows)
+  let target ← area.above last (fits - 1)
+  return if target ≤ anchor then none else some target
+
+/-- Where a scroll up by `rows` rows places the anchor of a view whose
+anchor is at `anchor` and which fits `fits` rows; none to keep it. The
+anchor moves that many rows and stops at the text's first row. None in a
+view that fits no row. -/
+def up (area : Area) (anchor rows fits : Nat) : DisplayM (Option Nat) := do
+  if fits == 0 then
+    return none
+  let target ← area.above anchor rows
+  return if target == anchor then none else some target
+
+/-- Where a scroll that puts the row of the cursor at `head` at `place`
+places the anchor; none in a view that shows no row. To the top it is where
+the cursor's row starts; to the middle `(fits - 1) / 2` rows above that, and
+to the bottom `fits - 1` rows above it, for the rows the view fits
+(`Area.fits`), and the text's first row where it has fewer rows above the
+cursor.
+
+The rows the view fits, and not the rows it shows: after a scroll to the
+top on the text's last line the view shows one row, and with that as its
+rows a scroll to the bottom would do nothing. -/
+def lineTo (place : Place) (area : Area) (head : Nat) : DisplayM (Option Nat) := do
+  if place == .top then
+    return (← area.rows head)[0]?.map (·.start)
+  let fits ← area.fits
+  if fits == 0 then
+    return none
+  return some (← area.above head (if place == .middle then (fits - 1) / 2 else fits - 1))
 
 end Scroll
 

@@ -64,8 +64,9 @@ of the built-in theme (`Editor/Face.lean`).
 The policy by which a view follows its cursor (`Editor/Scroll.lean`) is
 programs over the display port, and is checked on the display model alone
 (`scrollChecks`), with a view's scroll anchor and its cursor as offsets:
-which anchors are kept, how far one moves, the margin, and what the policy
-costs in requests. Each row a check names is one the model answered, so no
+which anchors are kept, how far one moves, the margin, what the policy
+costs in requests, and the anchors a scroll by rows and a scroll to the
+cursor's row place. Each row a check names is one the model answered, so no
 check says where a text wraps.
 
 A command is tested the same way: as a property, a command that returns
@@ -4629,9 +4630,64 @@ def followCost (height margin top cursor : Nat) : Option (Bool × Nat) :=
     return (moved.isSome, (← Watch.now) - before)
   (program.runModel countingModel).1.toOption
 
-/-- The checks of the policy by which a view follows its cursor
-(`Editor/Scroll.lean`), on the display model alone, with the scroll anchor
-and the cursor as offsets. A row is one the display model answers
+/-- Where a scroll down by `rows` rows places the anchor of a view of `text`
+whose anchor is at `anchor`, handed the rows the view fits as its caller
+asks them: none inside to keep it, none outside where the display
+refused. -/
+def scrolledDown (text : String) (width height anchor rows : Nat) : Option (Option Nat) :=
+  onDisplay text do
+    let area := areaOf width height
+    Scroll.down area anchor rows (← area.fits)
+
+/-- The same for a scroll up. -/
+def scrolledUp (text : String) (width height anchor rows : Nat) : Option (Option Nat) :=
+  onDisplay text do
+    let area := areaOf width height
+    Scroll.up area anchor rows (← area.fits)
+
+/-- Whether, from every row of `text` as the first row shown, a scroll by 1,
+2, 3, 5 and 100 rows places the anchor the model's rows say: down, the row
+that many below, no further than where the text's last row is the last row
+shown, and never a row before the one given; up, the row that many above,
+no further than the first; none where that is the row it was at. -/
+def scrollSweep (text : String) (width height : Nat) : Bool :=
+  let rows := allRows text width
+  let fits := (rowsFrom text width height 0).size
+  let placed (was want : Nat) : Option (Option Nat) :=
+    some (if want == was then none else some (startOf rows want))
+  fits > 0 &&
+    (List.range rows.size).all fun top =>
+      [1, 2, 3, 5, 100].all fun count =>
+        scrolledDown text width height (startOf rows top) count ==
+            placed top (max top (min (top + count) (rows.size - fits))) &&
+          scrolledUp text width height (startOf rows top) count == placed top (top - count)
+
+/-- Whether, from every offset of `text` as the cursor (the text is ASCII),
+a scroll to the cursor's row places an anchor from which the model shows
+that row first, in the middle of the rows the view fits (the upper of two)
+and last; or, where the text has fewer rows above the cursor than that
+takes, the text's first row first. -/
+def lineToSweep (text : String) (width height : Nat) : Bool :=
+  let rows := allRows text width
+  let fits := (rowsFrom text width height 0).size
+  fits > 0 &&
+    (List.range (text.utf8ByteSize + 1)).all fun head =>
+      match rowAt text width head with
+      | none => false
+      | some row =>
+        let cursor := (rows.findIdx? (· == row)).getD rows.size
+        -- The cursor's row is to be `up` rows below the first row shown.
+        let placed (place : Scroll.Place) (up : Nat) : Bool :=
+          match onDisplay text (Scroll.lineTo place (areaOf width height) head) with
+          | some (some anchor) =>
+            let shown := rowsFrom text width height anchor
+            if cursor ≥ up then shown[up]? == some row else shown[0]? == rows[0]?
+          | _ => false
+        placed .top 0 && placed .middle ((fits - 1) / 2) && placed .bottom (fits - 1)
+
+/-- The checks of the policy by which a view follows its cursor and of the
+anchors a scroll places (`Editor/Scroll.lean`), on the display model alone,
+with the scroll anchor and the cursor as offsets. A row is one the display model answers
 (`allRows`, `rowsFrom`, `rowAt`): no check says where a text wraps. -/
 def scrollChecks : List Check :=
   [{  name :=
@@ -4744,7 +4800,79 @@ def scrollChecks : List Check :=
             followCost 5 0 0 10 == some (true, 2) &&
             followCost 1 0 0 10 == some (true, 1) &&
             followCost 5 2 0 1 == some (false, 2) &&
-            followCost 5 2 3 7 == some (true, 3)) }]
+            followCost 5 2 3 7 == some (true, 3)) },
+    { name :=
+        "the rows a view fits are the rows it shows from the text's start: its own rows where the text has more, and the text's rows where the text is shorter than the view"
+      run :=
+        pure
+          (onDisplay sixteen (areaOf 10 5).fits == some 5 &&
+            onDisplay "a\nb\nc" (areaOf 10 9).fits == some (allRows "a\nb\nc" 10).size &&
+            (allRows "a\nb\nc" 10).size < 9 &&
+            onDisplay sixteen (areaOf 10 0).fits == some 0) },
+    { name :=
+        "how many rows a scroll is: half the rows the view fits and at least one, or the count when one was typed; and the rows the view fits, times the count when one was typed"
+      run :=
+        pure
+          (Scroll.Amount.half.rows 0 6 == 3 && Scroll.Amount.half.rows 0 7 == 3 &&
+            Scroll.Amount.half.rows 0 1 == 1 &&
+            Scroll.Amount.half.rows 5 6 == 5 &&
+            Scroll.Amount.page.rows 0 6 == 6 &&
+            Scroll.Amount.page.rows 1 6 == 6 &&
+            Scroll.Amount.page.rows 2 6 == 12) },
+    { name :=
+        "a scroll down moves the anchor the rows asked; near the text's end it stops where the text's last row is the last row shown; and from there, and from an anchor past it, it places none"
+      run :=
+        pure <|
+          let rows := allRows sixteen 10
+          scrolledDown sixteen 10 5 (startOf rows 3) 2 == some (some (startOf rows 5)) &&
+            scrolledDown sixteen 10 5 (startOf rows 9) 5 == some (some (startOf rows 11)) &&
+            rowsFrom sixteen 10 5 (startOf rows 11) == rows.extract 11 16 &&
+            scrolledDown sixteen 10 5 (startOf rows 11) 1 == some none &&
+            scrolledDown sixteen 10 5 (startOf rows 13) 1 == some none },
+    { name :=
+        "a scroll up moves the anchor the rows asked, and no further than the text's first row, where it places none"
+      run :=
+        pure <|
+          let rows := allRows sixteen 10
+          scrolledUp sixteen 10 5 (startOf rows 9) 2 == some (some (startOf rows 7)) &&
+            scrolledUp sixteen 10 5 (startOf rows 3) 5 == some (some (startOf rows 0)) &&
+            scrolledUp sixteen 10 5 (startOf rows 0) 1 == some none },
+    { name :=
+        "from every row as the first row shown, of sixteen short lines, of a text with wrapped lines and of a text shorter than its view, by 1, 2, 3, 5 and 100 rows: a scroll down places the row that many below, no further than where the text's last row is the last row shown, and never a row before the one it was given; a scroll up the row that many above, no further than the first; and each places none where that is the row it was at"
+      run :=
+        pure
+          (scrollSweep sixteen 10 5 && scrollSweep sixteen 10 1 && scrollSweep ragged 4 3 &&
+            scrollSweep ragged 4 7 &&
+            scrollSweep "a\nb\nc" 10 9 &&
+            scrollSweep "" 4 3) },
+    { name :=
+        "a scroll to the cursor's row, from every position as the cursor: to the top, the cursor's row is the first row then shown; to the middle, the middle row of those the view fits, the upper of two; to the bottom, the last; and where the text has too few rows above the cursor for that, the first row shown is the text's first"
+      run :=
+        pure
+          (lineToSweep sixteen 10 5 && lineToSweep sixteen 10 6 && lineToSweep ragged 4 3 &&
+            lineToSweep ragged 4 4 &&
+            lineToSweep "a\nb\nc" 10 9 &&
+            lineToSweep "" 4 3) },
+    { name :=
+        "on the text's last line a scroll to the top leaves the view showing one row, and a scroll to the bottom from there shows as many rows as the view fits, the cursor's row the last"
+      run :=
+        pure <|
+          let rows := allRows sixteen 10
+          let last := startOf rows 15
+          let top := onDisplay sixteen (Scroll.lineTo .top (areaOf 10 5) last)
+          let bottom := onDisplay sixteen (Scroll.lineTo .bottom (areaOf 10 5) last)
+          top == some (some last) && rowsFrom sixteen 10 5 last == rows.extract 15 16 &&
+            bottom == some (some (startOf rows 11)) },
+    { name :=
+        "in a view that shows no row a scroll down, a scroll up and a scroll to the cursor's row each place none"
+      run :=
+        pure <|
+          let rows := allRows sixteen 10
+          let area := areaOf 10 0
+          scrolledDown sixteen 10 0 (startOf rows 3) 2 == some none &&
+            scrolledUp sixteen 10 0 (startOf rows 3) 2 == some none &&
+            [Scroll.Place.top, .middle, .bottom].all fun place =>
+              onDisplay sixteen (Scroll.lineTo place area (startOf rows 8)) == some none }]
 
 /-- The checks of the user's origin (`Origin.user`) and of how a refusal is
 described to the user (`TextError.describe`). -/
