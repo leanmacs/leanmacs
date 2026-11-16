@@ -176,11 +176,6 @@ the command expects. -/
 def noOperatorNamed : String :=
   "no operator named (expects an operator's name, the kind of what it acts on, that thing's name, a count and a register's name)"
 
-/-- What the operate command gives up with, or breaks off with, when the
-motion called `name` could not be made. -/
-def cannotMove (name : String) : String :=
-  s!"{name} cannot move"
-
 /-- What the operate command gives up with when a doubled operator with a
 count above 1 is on the last line, where no line is below to count. -/
 def noLineBelow : String :=

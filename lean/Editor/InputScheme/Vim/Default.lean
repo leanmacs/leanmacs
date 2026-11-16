@@ -29,7 +29,7 @@ The operators' entries are `Evil.operators`
 | `motions` | The motions of normal state and the visual states |
 | `operators` | The operators. `c` names the state `insert`, and `y` changes no text |
 | `normalCommands` | Normal state's commands: those that begin an insert, those that change text, undo, redo and the command line, the two that enter a visual state, the register prefix, and the repeat key, `.`, which is a part of speech of its own and no command's key (`Bound.repeat`) |
-| `insertCommands` | Insert state's: the key that returns to normal state, and its editing keys, `<Backspace>`, `RET`, `TAB` and the four arrow keys (`Editor/Evil.lean`, "Editing keys"), each bound as a command that changes no text for the grammar, so it keeps the session's recording and is not the last change |
+| `insertCommands` | Insert state's: the key that returns to normal state, and its editing keys, `<Backspace>`, `RET`, `TAB` and the four arrow keys (`Editor/Evil.lean`, "Editing keys"), each bound as a command that changes no text for the grammar, so it is not the last change. `<Backspace>`, `RET` and `TAB` add themselves to the session's recording (`Command.typed`), so `.` replays them; each arrow key restarts the last change as `i` once something is typed after it (`Command.restarts`), as Vim 9.1's `ins-special-special` says |
 | `visualCommands`, `visualLineCommands` | A visual state's: the keys that return to normal state, the key that enters the other visual state, and the register prefix |
 | `minibufferCommands` | The minibuffer state's: `RET`, which accepts the prompt, `<Escape>`, which cancels it, `TAB` and `C-n`, which move to the next of its candidates, `S-TAB` and `C-p`, which move to the previous, `<Backspace>`, which deletes the character before the bar, and cancels the prompt when the minibuffer is empty, as Vim's command line does, `<ArrowLeft>` and `<ArrowRight>`, the motions `left` and `right`, and `C-u`, which deletes from the bar to the input's start |
 | `scrollCommands` | The commands that scroll a view, of normal state and the two visual states: `C-d` and `C-u`, by half a view, `C-f` and `C-b`, by a view, and `z t`, `z z` and `z b`, which put the cursor's row at the top, in the middle and at the bottom of the view (`Editor/Evil/Scroll.lean`). Each changes no text and enters no state, so none is the last change. They are commands and not motions, so an operator's key before one is dropped. `z` begins the three sequences and is bound to nothing itself, so it is a prefix in those states. Insert state and the minibuffer's do not have the table: there `C-d` and `C-u` are Vim's editing keys, and `z` is text. `C-u` is built in the minibuffer's state, which binds it in its own table; in insert state neither is built |
@@ -144,6 +144,17 @@ private def changing (name : String) : Bound :=
 private def running (name : String) : Bound :=
   .command { name }
 
+/-- A command of insert state's that changes no text for the grammar and
+adds `typed` to the text kept for the last change, for the repeat. -/
+private def typing (name typed : String) : Bound :=
+  .command { name, typed := some typed }
+
+/-- A command of insert state's that changes no text for the grammar and
+restarts the last change as `i`, the command `insert`, once something is
+typed after it. -/
+private def restarting (name : String) : Bound :=
+  .command { name, restarts := some "insert" }
+
 /-- The motions: each key string, and the motion's vocabulary name. -/
 def motions : List (String × Bound) :=
   [("h", .motion "left"), ("j", .motion "down"), ("k", .motion "up"), ("l", .motion "right"),
@@ -170,10 +181,10 @@ def normalCommands : List (String × Bound) :=
 /-- Insert state's commands: the key that returns to normal state, and the
 editing keys. -/
 def insertCommands : List (String × Bound) :=
-  [("<Escape>", entering "normal"), ("<Backspace>", running "insert-delete-backward"),
-    ("RET", running "insert-newline"), ("TAB", running "insert-tab"),
-    ("<ArrowLeft>", running "insert-left"), ("<ArrowRight>", running "insert-right"),
-    ("<ArrowUp>", running "insert-up"), ("<ArrowDown>", running "insert-down")]
+  [("<Escape>", entering "normal"), ("<Backspace>", typing "insert-delete-backward" backspaceTyped),
+    ("RET", typing "insert-newline" lineBreakTyped), ("TAB", typing "insert-tab" "\t"),
+    ("<ArrowLeft>", restarting "insert-left"), ("<ArrowRight>", restarting "insert-right"),
+    ("<ArrowUp>", restarting "insert-up"), ("<ArrowDown>", restarting "insert-down")]
 
 /-- The commands of the character-wise visual state, and the register
 prefix. -/

@@ -189,9 +189,20 @@ for), since typed text is no edit and a replay of the change needs it:
 - Text typed in the recording view is added to `inserted`
   (`State.typedText`). Text typed in another view, the minibuffer's
   included, is not.
+- A command that changes no text, run in the recording view, adds what its
+  binding says it adds (`Command.typed`), as typed text is added: insert
+  state's `<Backspace>`, `RET` and `TAB` add `backspaceTyped`,
+  `lineBreakTyped` and a tab, which the repeat runs again.
+- A command that restarts the last change (`Command.restarts`, insert
+  state's arrow keys), run in the recording view, leaves a restart waiting
+  (`State.restart`): the command it names, as a change that enters the Vim
+  state the view is in, with no count and no register. The next text added
+  in the recording view makes it the last change, with that text alone kept
+  for it; ending the recording drops it. This is Vim 9.1's restart of the
+  redo as `i` at the first key after an arrow key (`ins-special-special`).
 - An edit that enters a state for the recording view, and that view being
   closed, end the recording. What was kept stays.
-- A reset keeps both, as it keeps the last change.
+- A reset keeps both and the waiting restart, as it keeps the last change.
 - A command that does not run to its end is not the last change and its
   typed text is not kept, with no rule here: the loop puts the scheme back
   in its state at rest (`Editor/Loop.lean`).
@@ -288,7 +299,32 @@ structure Command where
   changes : Bool := false
   /-- The Vim state the view is in after it runs, if it names one. -/
   enters : Option String := none
+  /-- What running it in the insert session the last change began adds to
+  the text kept for that change, as typed text is added, so that the repeat
+  replays it: insert state's editing keys say so (`backspaceTyped`,
+  `lineBreakTyped`, a tab). None for a command that adds nothing. Read only
+  of a command that changes no text. -/
+  typed : Option String := none
+  /-- The name of the command the last change restarts as once something
+  is added to its text after this command ran in the session it began, with
+  the text from there on: an arrow key of insert state's, which restarts
+  it as `i` (Vim 9.1's `ins-special-special`). Read only of a command that
+  changes no text. -/
+  restarts : Option String := none
   deriving DecidableEq, Repr
+
+/-- What `<Backspace>` in an insert session adds to the text kept for the
+last change (`Command.typed`): the backspace character, U+0008, which no
+key prints. The repeat deletes the cell before the bar for it
+(`Editor/Evil/Repeat.lean`). -/
+def backspaceTyped : String :=
+  "\x08"
+
+/-- What `RET` in an insert session adds to the text kept for the last
+change: a line feed. The repeat breaks the line there with the buffer's own
+line ending. -/
+def lineBreakTyped : String :=
+  "\n"
 
 /-- What a key sequence is bound to in the Vim scheme's keymaps: a part of
 speech, named by its vocabulary name. -/
@@ -483,6 +519,10 @@ structure State where
   /-- The view whose typed text is being added to `inserted`: the view of
   the last change, while it is in the session that change began. -/
   recording : Option ViewId := none
+  /-- The change the last change is restarted as once something is added
+  to its text: set by a command that restarts it (`Command.restarts`), and
+  dropped when the recording ends. -/
+  restart : Option Edit := none
   deriving DecidableEq, Repr
 
 /-- The record of the Vim state `view` is in: the registry's record of the
@@ -563,21 +603,32 @@ inductive Parsed where
 
 /-- The state with the edit begun dropped. A reset keeps which Vim state
 each view is in, the last change and the text typed in the session it
-began, with the view that text is being kept for, and nothing else. -/
+began, with the view that text is being kept for and the change it is
+restarted as, and nothing else. -/
 private def State.reset (state : State) : State :=
   { current := state.current, lastChange := state.lastChange, inserted := state.inserted
-    recording := state.recording }
+    recording := state.recording, restart := state.restart }
 
 /-- The state with the typed text of `view` no longer kept, when `view` is
-the view it is being kept for. The text kept so far stays. -/
+the view it is being kept for. The text kept so far stays, and no restart
+waits. -/
 private def State.endRecording (state : State) (view : ViewId) : State :=
-  if state.recording == some view then { state with recording := none } else state
+  if state.recording == some view then
+    { state with
+      recording := none, restart := none }
+  else state
 
-/-- The state once `text` was typed in `view`: the text is added to what is
-kept for the last change when `view` is the view it is being kept for, and
-the state is as it was otherwise. -/
+/-- The state once `text` was typed in `view`: when `view` is the view it is
+being kept for, the text is added to what is kept for the last change, or,
+when a restart waits, the last change is the change it restarts as, with
+the text alone kept for it; the state is as it was otherwise. -/
 def State.typedText (state : State) (view : ViewId) (text : String) : State :=
-  if state.recording == some view then { state with inserted := state.inserted.map (· ++ text) }
+  if state.recording == some view then
+    match state.restart with
+    | some change =>
+      { state with
+        lastChange := some change, inserted := some text, restart := none }
+    | none => { state with inserted := state.inserted.map (· ++ text) }
   else state
 
 /-- The state once `view` is closed: without the Vim state kept for it, and
@@ -632,6 +683,23 @@ private def State.finish (states : States) (view : ViewId) (state : State) (edit
   | some name => (next.enter states view name, .edit edit)
   | none => (next, .edit edit)
 
+/-- The state once `command`, which a key for `view` ran, completed its
+edit: when it changes no text and `view` is the view whose typed text is
+kept, what it adds (`Command.typed`) is added as typed text is, and a
+command that restarts the last change (`Command.restarts`) leaves the
+change it restarts as waiting: its command, which changes text and enters
+the Vim state the view is in, with no count and no register. -/
+private def State.ran (states : States) (view : ViewId) (command : Command) (state : State) :
+    State :=
+  if command.changes || state.recording != some view then state
+  else
+    let state := (command.typed.map (state.typedText view)).getD state
+    match command.restarts with
+    | some name =>
+      let enters := some (state.stateOf states view)
+      { state with restart := some (.run { name, changes := true, enters } none none) }
+    | none => state
+
 /-- What the grammar makes of a binding that a key for `view` reached, with
 `typed` the keys of the edit begun, that key included. -/
 private def State.reached (states : States) (view : ViewId) (state : State) (typed : List Key) :
@@ -667,7 +735,9 @@ private def State.reached (states : States) (view : ViewId) (state : State) (typ
   | .command command =>
     match state.operator with
     | some _ => (state.reset, .nothing)
-    | none => state.finish states view (.run command state.count state.register)
+    | none =>
+      let (next, parsed) := state.finish states view (.run command state.count state.register)
+      (next.ran states view command, parsed)
   | .register =>
     if state.operator.isSome || state.register.isSome then (state.reset, .nothing)
     else

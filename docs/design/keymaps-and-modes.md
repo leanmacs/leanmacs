@@ -646,9 +646,11 @@ structure Operator where
   enters  : Option String := none   -- the Vim state the view is in after it
 
 structure Command where
-  name    : String                  -- the command's name, as the registry names it
-  changes : Bool := false
-  enters  : Option String := none
+  name     : String                  -- the command's name, as the registry names it
+  changes  : Bool := false
+  enters   : Option String := none
+  typed    : Option String := none   -- what it adds to the last change's typed text
+  restarts : Option String := none   -- the command the last change restarts as after it
 
 inductive Bound where
   | motion     (name : String)
@@ -689,7 +691,7 @@ inductive Edit where
   | move    (motion : String) (count : Option Nat)
   | operate (operator : Operator) (over : Over) (count : Option Nat) (register : Option String)
   | run     (command : Command) (count : Option Nat) (register : Option String)
-  | replay  (change : Edit) (inserted : Option String)   -- the last change, and its typed text
+  | replay  (change : Edit) (inserted : Option String)   -- the last change, and its typed text, editing keys' marks in it
 ```
 
 The rules of the grammar:
@@ -1053,6 +1055,18 @@ for). Typed text is no edit, so the change alone would not hold it.
   other edit that changes text sets both to none.
 - Text typed in the recording view is added. Text typed in another view,
   the minibuffer's included, is not.
+- **A command that changes no text adds what its binding says**
+  (`Command.typed`), run in the recording view: insert state's
+  `<Backspace>`, `RET` and `TAB` add the backspace character, a line feed
+  and a tab, so the replay runs them again ("Insert state").
+- **A command can restart the last change** (`Command.restarts`, insert
+  state's arrow keys): run in the recording view, it leaves a restart
+  waiting (`State.restart`), the command it names as a change that enters
+  the view's Vim state, with no count. The next text added in the recording
+  view makes that the last change, with that text alone kept for it. Ending
+  the recording drops the restart, so with nothing typed after the key the
+  last change is as it was. This is Vim's `stop_arrow`, which starts the
+  redo again as `i` at the first key after an arrow key.
 - **A committed text is typed text here too.** No key printed it, so the
   scheme's `step` never sees it: the scheme interface has a notice,
   `committed`, which the loop makes of both states of the scheme it keeps
@@ -1115,7 +1129,9 @@ for). Typed text is no edit, so the change alone would not hold it.
 - **A change with an insert session** is three things in one command: the
   change, told of an exclusive selection that no motion extends, which is
   all a command that begins an insert reads of insert state's report; the
-  typed text, inserted at the bar when it is not empty; and `Evil.enter`
+  typed text, replayed at the bar as it was typed (a backspace character
+  deletes the cell before the bar, a line feed breaks the line with the
+  buffer's line ending, and the rest is inserted); and `Evil.enter`
   with the call's own report, which is normal state's and steps the head
   back as `<Escape>` does.
 - **It is one command in normal state**, so it is one step of the history
@@ -1493,10 +1509,22 @@ follows Vim 9.1 with its default options:
 - **Each is bound as a command that changes no text for the grammar**, so
   it is not the last change and keeps the recording of the session's typed
   text ("The last change").
-- **A recorded departure: dot repeat replays only the printed text** of
-  the session. Vim's replays `<BS>`, `<CR>` and `<Tab>` inside the insert,
-  and restarts the recorded insert after an arrow key ("always behaves
-  like an 'i' command"). That is not built.
+- **Dot repeat replays them as Vim 9.1's does** ("The last change", "Dot
+  repeat as built"). `<Backspace>`, `RET` and `TAB` are kept in the
+  session's typed text, in the order typed (`Command.typed`: the backspace
+  character, a line feed and a tab), and `.` runs them again, so it makes
+  the session's result: after `i x <BS> y <Esc>` it inserts `y`, a
+  `<Backspace>` past where the insert began deletes there too, and `RET`
+  breaks the line with the buffer's line ending. An arrow key that moved
+  restarts the last change as `i` once something is typed after it, with
+  the text typed from there on (`Command.restarts`), as
+  `ins-special-special` says: "only the last change can be redone and
+  always behaves like an 'i' command". Vim restarts at the first key typed
+  after the arrow key, not at the arrow key, so with nothing typed after it
+  the change is as it was. An arrow key that did not move gives its command
+  up (`cannotMove`, said in the echo area where Vim beeps), so the loop puts
+  the scheme back in its state from before the key and nothing restarts,
+  as Vim's beep restarts nothing.
 - **Not built: the other keys of Vim's insert state**: `C-w`, `C-u`,
   `C-o`, `C-r`, `<Home>` and `<End>` do nothing there (the open
   questions).
@@ -2796,7 +2824,7 @@ The Vim scheme is checked the same way, by six lists:
 | `vimRegistryChecks` | The registry of Vim states: looking a state up, and registering one |
 | `vimGrammarChecks` | Which keymaps a key is looked up in; moves, operators and their targets, the doubled operator, counts, registers, resets, and the pending keys |
 | `vimStateChecks` | Which Vim state a view is in and how one is entered; what the scheme reports of a view in a state; typed text; an operator over the selection; the last change; the state the minibuffer's view is put in when the scheme is told of it, and what the notice keeps |
-| `vimDefaultChecks` | The default states and bindings, through what each default key parses to and what the scheme reports after it, the minibuffer's state among them; that each editing key of insert state runs a command of its own, keeps the view in insert state, the last change and the session's recording; the minibuffer state's `<ArrowLeft>`, `<ArrowRight>` and `C-u`; and that every command name of the insert and minibuffer tables is registered |
+| `vimDefaultChecks` | The default states and bindings, through what each default key parses to and what the scheme reports after it, the minibuffer's state among them; that each editing key of insert state runs a command of its own and keeps the view in insert state and the last change; that `<Backspace>`, `RET` and `TAB` are kept in the session's recording and that an arrow key restarts the last change as `i` once something is typed after it; the minibuffer state's `<ArrowLeft>`, `<ArrowRight>` and `C-u`; and that every command name of the insert and minibuffer tables is registered |
 | `vimContractChecks` | The scheme contract holds of the Vim scheme, over the checks' registry and over the default states, and is reported for a registry that names no state for the minibuffer |
 
 - **The grammar's checks run on a registry and keymaps written in the
@@ -3135,8 +3163,8 @@ every build). The second is proved on the text model
   file land one row below Vim's.
 - **Insert state's other editing keys** ("Insert state"). `<Backspace>`,
   `RET`, `TAB` and the arrow keys are built; `C-w`, `C-u`, `C-o`, `C-r`,
-  `<Home>` and `<End>` are not, and dot repeat replays only a session's
-  printed text, not those keys.
+  `<Home>` and `<End>` are not. Dot repeat replays the built keys as Vim
+  does.
 - **A count before `i a I A o O` is ignored.** Vim repeats the insert.
   Dot repeat is built and replays a session's text, so the repeat is now
   a matter of running that replay `count - 1` times when the session

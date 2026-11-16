@@ -34,10 +34,20 @@ table of them.
   the change's arguments in place of the call's.
 - **A change with an insert session** is three things in one command: the
   change, told of an exclusive selection that no motion extends, so it
-  leaves its bar; the typed text, inserted at the bar
-  (`Target.insertAtSelections`) when it is not empty; and `Evil.enter` with
+  leaves its bar; the typed text, replayed at the bar (`replayTyped`); and
+  `Evil.enter` with
   the call's own report, which is normal state's and steps the head back as
   `<Escape>` does.
+- **The typed text is replayed as it was typed**: each run of it with
+  neither mark below is inserted at the bar (`Target.insertAtSelections`);
+  the backspace character (`Vim.backspaceTyped`), which `<Backspace>`
+  added, deletes the cell before the bar as `<Backspace>` does
+  (`deleteBackward`), past where the insert began too; and a line feed
+  (`Vim.lineBreakTyped`), which `RET` added, breaks the line with the
+  buffer's own line ending (`Target.insertLineBreak`). `TAB` added a tab,
+  which is inserted as text. So `.` makes the session's result, as Vim
+  9.1's does. A line feed or a backspace character in a committed text is
+  read the same way.
 - **It is one command in normal state**, so it is one step of the history
   and is rolled back whole when any part of it gives up or is refused.
 - **The clipboard is written last** (`Editor/Evil/Registers.lean`, "The
@@ -92,6 +102,27 @@ does not replay. -/
 def overSelection : String :=
   "a change over a selection"
 
+/-- Replays `text`, the text typed in an insert session with the marks of
+its editing keys in it, at the bar of the call's target ("The typed text is
+replayed as it was typed", in the module docs). -/
+private def replayTyped (call : Call) (text : String) : EditorM Unit := do
+  let insert (run : String) : EditorM Unit := do
+    unless run.isEmpty do
+      call.target.insertAtSelections run
+  let mut run := ""
+  for char in text.toList do
+    if char.toString == Vim.backspaceTyped then
+      insert run
+      run := ""
+      deleteBackward call
+    else if char.toString == Vim.lineBreakTyped then
+      insert run
+      run := ""
+      call.target.insertLineBreak
+    else
+      run := run.push char
+  insert run
+
 /-- The repeat command, as it is called ("The repeat command", in the
 module docs): its arguments are whether the change began an insert session,
 the text typed in it, the name of the command the change compiles to, and
@@ -131,8 +162,7 @@ def «repeat» (call : Call) : EditorM Unit := do
           report :=
             { call.report with
               shape := .exclusive, selecting := false } }
-    unless text.isEmpty do
-      call.target.insertAtSelections text
+    replayTyped call text
     -- The session ends as `<Escape>` ends one, for the state the view is in.
     enter call
     if later then

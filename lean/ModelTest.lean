@@ -412,7 +412,8 @@ registers for evil (`Editor/Evil/Compiled.lean`), on the loop's driver:
   Vim, which leaves the cursor at the start of the changed text;
 - `evilRepeatChecks`: `.` after a change of each kind (`repeatRows`), a
   count before it, a change with an insert session and its typed and
-  committed text, and what is not repeated.
+  committed text, the editing keys of insert state in a session
+  (`insertKeysRepeatRows`), and what is not repeated.
 
 Each expected text of a row is written by hand from Vim's documented
 behaviour (`docs/design/keymaps-and-modes.md`, "Motions as built"). No
@@ -12070,7 +12071,7 @@ def vimDefaultChecks : List Check :=
           (moved "<ArrowLeft>" == some (.move "left" none) &&
             moved "<ArrowRight>" == some (.move "right" none)) },
     { name :=
-        "each of the default keys <Backspace> RET TAB <ArrowLeft> <ArrowRight> <ArrowUp> <ArrowDown>, after i, runs a command of its own that leaves the view in the state i enters, does not replace the last change, and keeps the text typed in the session for a repeat"
+        "each of the default keys <Backspace> RET TAB <ArrowLeft> <ArrowRight> <ArrowUp> <ArrowDown>, after i, runs a command of its own that leaves the view in the state i enters and does not replace the last change"
       run :=
         let editingKeys :=
           ["<Backspace>", "RET", "TAB", "<ArrowLeft>", "<ArrowRight>", "<ArrowUp>", "<ArrowDown>"]
@@ -12078,8 +12079,31 @@ def vimDefaultChecks : List Check :=
           (vimDefaultCommands (editingKeys.map (s!"i {·}")) &&
             editingKeys.all fun text =>
               (vimDefault s!"i {text}").1.current == (vimDefault "i").1.current &&
-                (vimDefault s!"i {text}").1.lastChange == (vimDefault "i").1.lastChange &&
-                (vimDefault s!"i x {text} y").1.inserted == some "xy") },
+                (vimDefault s!"i {text}").1.lastChange == (vimDefault "i").1.lastChange) },
+    { name :=
+        "<Backspace>, RET and TAB in a session are kept with its typed text, in the order typed, for a repeat: <Backspace> as the backspace character, RET as a line feed and TAB as a tab"
+      run :=
+        pure
+          ((vimDefault "i x <Backspace> y").1.inserted == some "x\x08y" &&
+            (vimDefault "i x RET y").1.inserted == some "x\ny" &&
+            (vimDefault "i x TAB y").1.inserted == some "x\ty" &&
+            (vimDefault "c w <Backspace> <Backspace> y").1.inserted == some "\x08\x08y" &&
+            (vimDefault "c w <Backspace>").1.lastChange == (vimDefault "c w").1.lastChange) },
+    { name :=
+        "an arrow key in a session restarts the last change as i once something is typed after it, as Vim 9.1's ins-special-special says: the text kept is what was typed since; with nothing typed after it the last change and its text stay as they were"
+      run :=
+        let arrows := ["<ArrowLeft>", "<ArrowRight>", "<ArrowUp>", "<ArrowDown>"]
+        pure
+          (arrows.all fun arrow =>
+            (vimDefault s!"i x {arrow} y").1.inserted == some "y" &&
+              (vimDefault s!"A x {arrow} y").1.lastChange == (vimDefault "i").1.lastChange &&
+              (vimDefault s!"c w x {arrow} y z").1.inserted == some "yz" &&
+              (vimDefault s!"c w x {arrow} <Backspace>").1.inserted == some "\x08" &&
+              (vimDefault s!"c w x {arrow} RET").1.lastChange == (vimDefault "i").1.lastChange &&
+              (vimDefault s!"c w x {arrow}").1.inserted == some "x" &&
+              (vimDefault s!"c w x {arrow} <Escape>").1.lastChange ==
+                (vimDefault "c w").1.lastChange &&
+              (vimDefault s!"c w x {arrow} <Escape> y").1.inserted == some "x") },
     { name :=
         "every command a key of insert state's table or of the minibuffer's state's table runs is registered under its name by evil's commands or the minibuffer's"
       run :=
@@ -19136,6 +19160,24 @@ def repeatRows : List (String × String × String) :=
     ("y w P .", "|ab cd", "abab|  ab cd"), ("y y p .", "|ab", "ab\nab\n|ab"),
     ("d w y w .", "|a b c d", "|c d")]
 
+/-- The oracle table's rows for `.` after an insert session that used insert
+state's editing keys, Vim 9.1's results: `<Backspace>`, `RET` and `TAB` are
+replayed as typed, a `<Backspace>` past where the insert began included;
+after an arrow key that moved and a text typed after it the change is `i`
+with that text (`ins-special-special`); an arrow key with nothing typed
+after it, and one that did not move, leave the change as it was. -/
+def insertKeysRepeatRows : List (String × String × String) :=
+  [("i x <Backspace> y <Escape> .", "a|b", "a|yyb"),
+    ("a <Backspace> X <Escape> .", "ab|cd", "ab|Xd"),
+    ("i x RET y <Escape> .", "a|b", "ax\nx\n|yyb"), ("i x TAB y <Escape> .", "a|b", "ax\tx\t|yyb"),
+    ("i x <ArrowLeft> y <Escape> .", "a|b", "a|yyxb"),
+    ("i x <ArrowRight> y <Escape> .", "a|bc", "axb|yyc"),
+    ("i x <ArrowUp> y <Escape> .", "ab\na|b", "ab|yy\naxb"),
+    ("i x <ArrowDown> y <Escape> .", "a|b\nab", "axb\nab|yy"),
+    ("A x <ArrowLeft> y <Escape> 0 .", "a|b", "|yabyx"),
+    ("c w X <ArrowLeft> <Escape> w .", "|foo bar", "X |X"),
+    ("A x <ArrowRight> y <Escape> 0 .", "a|b", "abxyx|y")]
+
 /-- The checks of evil's dot repeat (`Editor/Evil/Repeat.lean`), by key, on
 the loop's driver over the editor's models, under the Vim scheme that ships
 with evil's commands. -/
@@ -19143,6 +19185,19 @@ def evilRepeatChecks : List Check :=
   [{  name :=
         ". replays the last change: after d w it deletes the next word, and after c w, typed text and <Escape> it makes the same change with the same text at the cursor; a count before it replaces the change's and is kept; x, the doubled operator, o, O, i, a, I, A, p and P are replayed, and a yank is not the last change"
       run := evilRows repeatRows },
+    { name :=
+        ". after a session that used <Backspace>, RET or TAB replays them as typed, a <Backspace> past where the insert began included, and RET with the buffer's line ending; after an arrow key that moved and a text typed after it, . is i with that text, as in Vim 9.1; after an arrow key with nothing typed after it, or one that did not move, . replays the change as it was"
+      run := do
+        let rows ← evilRows insertKeysRepeatRows
+        let crlf :=
+          let start : TextM EditorState := do
+            let state ← evilState "abc" 2
+            return { state with
+                buffers := state.buffers.map (·.map ({ · with lineEnding := .crlf })) }
+          match (Loop.Driver.over evilHanded (fun _ => none) start editorModel).toOption with
+          | none => false
+          | some driver => evilShown (evilFed driver "i RET <Escape> .") == "ab\r\n\r\n|c"
+        return rows && crlf },
     { name :=
         "a replayed change that itself gives up gives the replay up and changes nothing: after d j, G and . on the last line, where j fails, the text, the cursor, the register and the history are as they were, the view is in normal state, and the echo area says why under the repeat command's name; after c j, a text, <Escape> and G, . likewise, with no text inserted and the view left in normal state; and the change is still the last change, which . replays from the first line"
       run :=

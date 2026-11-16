@@ -204,16 +204,25 @@ Vim state. Each follows Vim 9.1 with its default options:
   9.1's `ins-special-special` says: once the head moved, `insertMove` sets
   the boundary in the buffer's history (`BufferId.closeGroup`), so what was
   edited before the key and after it are undone separately. A move that
-  fails, left at a line's start or up on the first line, sets none, as
-  Vim's beeps without breaking the step. Placing a marker is no edit, so
-  closing the group after the move is the same as before it.
+  fails, left at a line's start or up on the first line, gives the command
+  up (`cannotMove`, said in the echo area where Vim beeps), so it sets no
+  boundary and the loop puts the scheme back as it was before the key.
+  Placing a marker is no edit, so closing the group after the move is the
+  same as before it.
 - **Backspace, Enter and Tab join the session's step.** Their keys are
-  bound as commands that change no text for the grammar (`running`), so
-  each keeps the recording of the session's typed text, and does not
-  become the last change.
-- **A recorded departure: dot repeat replays only the printed text** of the
-  session. Vim's replays `<BS>`, `<CR>` and `<Tab>` too, and restarts the
-  recorded insert after an arrow key. That is not built.
+  bound as commands that change no text for the grammar, so none becomes
+  the last change.
+- **Dot repeat replays the keys as Vim 9.1's does**
+  (`Editor/InputScheme/Vim.lean`, "The last change";
+  `Editor/Evil/Repeat.lean`). `<Backspace>`, `RET` and `TAB` are kept in
+  the text recorded for the last change, in the order typed, and `.` runs
+  them again: a `<Backspace>` deletes the cell before the bar, past where
+  the insert began too, `RET` breaks the line with the buffer's line ending,
+  and `TAB` inserts a tab. An arrow key that moved restarts the change as
+  `i` once something is typed after it, with the text typed from there on:
+  `ins-special-special`'s "only the last change can be redone and always
+  behaves like an i command". With nothing typed after it, and when it did
+  not move, the change is as it was.
 - **Not built: the other keys of Vim's insert state** (`C-w`, `C-u`,
   `C-o`, `C-r`, `<Home>`, `<End>`, ...): they do nothing there.
 
@@ -341,6 +350,12 @@ is malformed, which is another fault than a name the vocabulary has no
 motion of (`noSuchMotion`), so it says what the command expects. -/
 def noMotionNamed : String :=
   "move: no motion named (expects a motion's name, then an optional count)"
+
+/-- What the operate command gives up with, or breaks off with, when the
+motion called `name` could not be made, and what an arrow key of insert
+state's gives up with when its move did not move the cursor. -/
+def cannotMove (name : String) : String :=
+  s!"{name} cannot move"
 
 /-- What the command typed text runs says in the echo area when it is called
 with no string to insert. -/
@@ -527,13 +542,15 @@ def insertTab (call : Call) : EditorM Unit :=
 keys", in the module docs): the move command over `motions` by the motion
 `name`, with no count, and then, when the head moved, a boundary in the
 buffer's history, so that what was edited before the key and after it are
-two steps, as in Vim 9.1. A move that fails sets none. -/
+two steps, as in Vim 9.1. A move that fails gives the command up with
+`cannotMove`, so the scheme does not restart the last change for it. -/
 def insertMove (motions : Array Vocabulary.Motion) (name : String) (call : Call) : EditorM Unit :=
   do
   let head (selection : Selection) := (selection.ranges[selection.primary]?).map (·.head)
   let before := head (← call.target.selection)
   move motions { call with arguments := [.str name, .nat 0] }
-  if head (← call.target.selection) != before then
-    discard <| call.target.window.buffer.closeGroup
+  if head (← call.target.selection) == before then
+    giveUp (cannotMove name)
+  discard <| call.target.window.buffer.closeGroup
 
 end Editor.Evil
