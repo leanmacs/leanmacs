@@ -210,6 +210,9 @@ mod tests {
         ) -> Result<Self::Query, crate::QueryError> {
             Parens.compile(grammar, source)
         }
+        fn shipped_query(&self, grammar: &GrammarName, kind: crate::QueryKind) -> Option<String> {
+            Parens.shipped_query(grammar, kind)
+        }
         fn capture_names(&self, query: &Self::Query) -> Vec<String> {
             Parens.capture_names(query)
         }

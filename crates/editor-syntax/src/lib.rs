@@ -51,6 +51,6 @@ pub mod query;
 pub mod session;
 pub mod worker;
 
-pub use port::{Capture, GrammarName, Node, QueryError, QueryErrorKind, Syntax};
+pub use port::{Capture, GrammarName, Node, QueryError, QueryErrorKind, QueryKind, Syntax};
 pub use session::{CapturesRefusal, Consumer, Latest, Outcome, Parsed, Session, Source};
 pub use worker::{Handle, Worker};

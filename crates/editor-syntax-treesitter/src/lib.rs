@@ -15,8 +15,8 @@
 //! exactly, whose build compiles the generated parser's C with `cc` when
 //! Cargo builds this crate; the objects end up in the static library Lean
 //! links. Nothing is fetched, generated or loaded at run time, and the
-//! grammars are the private table `GRAMMARS`: a name, and the language of
-//! the grammar's crate.
+//! grammars are the private table `GRAMMARS`: a name, the language of the
+//! grammar's crate, and the highlights query that crate exports.
 //!
 //! The other two ways were set aside (the decision is in
 //! `docs/design/README.md`'s table and `docs/design/rust-library.md`,
@@ -47,6 +47,10 @@
 //!   fields and points carried over one for one.
 //! - [`Syntax::compile`]: the library's query, its refusal carried over
 //!   with its kind and offset.
+//! - [`Syntax::shipped_query`]: the query the grammar's crate exports
+//!   (`HIGHLIGHTS_QUERY`, its `queries/highlights.scm`), from the table, so
+//!   a query is pinned by the same exact version as the grammar it was
+//!   written for.
 //! - [`Syntax::captures`]: a query cursor set to the range, whose
 //!   predicates (`#eq?`, `#match?`) read the snapshot's chunks of a node.
 //!   The library answers every match that meets the range, captures
@@ -68,7 +72,7 @@
 
 use std::ops::Range;
 
-use editor_syntax::{Capture, GrammarName, Node, QueryError, QueryErrorKind, Syntax};
+use editor_syntax::{Capture, GrammarName, Node, QueryError, QueryErrorKind, QueryKind, Syntax};
 use editor_text::{InputEdit, Point, Snapshot};
 use tree_sitter::{Language, Parser, Query, QueryCursor, StreamingIterator, Tree};
 
@@ -80,18 +84,38 @@ pub struct TreeSitter;
 /// How to make a grammar's language.
 type MakeLanguage = fn() -> Language;
 
-/// The grammars compiled in: each name, and how to make its language.
-const GRAMMARS: [(&str, MakeLanguage); 2] = [
-    ("json", || Language::new(tree_sitter_json::LANGUAGE)),
-    ("rust", || Language::new(tree_sitter_rust::LANGUAGE)),
+/// A grammar compiled in.
+struct Grammar {
+    /// Its name.
+    name: &'static str,
+    /// How to make its language.
+    language: MakeLanguage,
+    /// The highlights query its crate is published with, pinned with it.
+    highlights: &'static str,
+}
+
+/// The grammars compiled in.
+const GRAMMARS: [Grammar; 2] = [
+    Grammar {
+        name: "json",
+        language: || Language::new(tree_sitter_json::LANGUAGE),
+        highlights: tree_sitter_json::HIGHLIGHTS_QUERY,
+    },
+    Grammar {
+        name: "rust",
+        language: || Language::new(tree_sitter_rust::LANGUAGE),
+        highlights: tree_sitter_rust::HIGHLIGHTS_QUERY,
+    },
 ];
+
+/// The grammar `name`, if it is compiled in.
+fn grammar(name: &GrammarName) -> Option<&'static Grammar> {
+    GRAMMARS.iter().find(|known| known.name == name.as_str())
+}
 
 /// The language of the grammar `name`, if it is compiled in.
 fn language(name: &GrammarName) -> Option<Language> {
-    GRAMMARS
-        .iter()
-        .find(|(known, _)| *known == name.as_str())
-        .map(|(_, language)| language())
+    grammar(name).map(|grammar| (grammar.language)())
 }
 
 /// A parser of one grammar.
@@ -147,7 +171,7 @@ impl Syntax for TreeSitter {
     fn grammars(&self) -> Vec<GrammarName> {
         GRAMMARS
             .iter()
-            .map(|(name, _)| GrammarName::new(*name))
+            .map(|grammar| GrammarName::new(grammar.name))
             .collect()
     }
 
@@ -198,6 +222,13 @@ impl Syntax for TreeSitter {
                 kind: kind_of(&error.kind),
                 offset: error.offset,
             })
+    }
+
+    fn shipped_query(&self, name: &GrammarName, kind: QueryKind) -> Option<String> {
+        let grammar = grammar(name)?;
+        match kind {
+            QueryKind::Highlights => Some(grammar.highlights.to_owned()),
+        }
     }
 
     fn capture_names(&self, query: &TreeSitterQuery) -> Vec<String> {

@@ -433,6 +433,9 @@ pub(crate) mod tests {
         fn compile(&self, grammar: &GrammarName, source: &str) -> Result<ParensQuery, QueryError> {
             Parens.compile(grammar, source)
         }
+        fn shipped_query(&self, grammar: &GrammarName, kind: crate::QueryKind) -> Option<String> {
+            Parens.shipped_query(grammar, kind)
+        }
         fn capture_names(&self, query: &ParensQuery) -> Vec<String> {
             Parens.capture_names(query)
         }

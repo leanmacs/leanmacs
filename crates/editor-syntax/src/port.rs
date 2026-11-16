@@ -90,6 +90,14 @@ impl Capture {
     }
 }
 
+/// Which of a grammar's own queries: the queries a grammar is published
+/// with, each for one job ([`Syntax::shipped_query`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum QueryKind {
+    /// What to draw in which face: `highlights.scm`.
+    Highlights,
+}
+
 /// Why a query was refused.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum QueryErrorKind {
@@ -171,6 +179,11 @@ pub trait Syntax: Send + Sync + 'static {
 
     /// The query `source` compiled for `grammar`, or why not.
     fn compile(&self, grammar: &GrammarName, source: &str) -> Result<Self::Query, QueryError>;
+
+    /// The source of the query of `kind` that `grammar` is published with,
+    /// pinned with the grammar it was written for; `None` for a grammar it
+    /// does not have, or one published with no query of that kind.
+    fn shipped_query(&self, grammar: &GrammarName, kind: QueryKind) -> Option<String>;
 
     /// The names of `query`'s captures, which a [`Capture`] indexes.
     fn capture_names(&self, query: &Self::Query) -> Vec<String>;

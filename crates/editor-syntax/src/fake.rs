@@ -28,6 +28,12 @@
 //! whatever range it is asked: [`crate::query::captures_in`] keeps what the
 //! range holds.
 //!
+//! **The grammar's shipped highlights** are [`PARENS_HIGHLIGHTS`]
+//! ([`Syntax::shipped_query`]): each paren a `punctuation.bracket`, each
+//! atom a `variable` (and, by a later pattern of the same node, a
+//! `constant`, which the first pattern wins over), each list a `list`, and
+//! each stray paren an `error`.
+//!
 //! It is public, not `cfg(test)`, so the tests of any crate above the port
 //! run on it. [`PARENS_CORPUS`] is what [`crate::contract::check`] holds it
 //! to.
@@ -38,7 +44,7 @@ use std::sync::Arc;
 use editor_text::{InputEdit, Point, Snapshot};
 
 use crate::contract::Corpus;
-use crate::port::{Capture, GrammarName, Node, QueryError, QueryErrorKind, Syntax};
+use crate::port::{Capture, GrammarName, Node, QueryError, QueryErrorKind, QueryKind, Syntax};
 
 /// The fake: the `parens` grammar.
 #[derive(Debug, Default, Clone, Copy)]
@@ -46,6 +52,16 @@ pub struct Parens;
 
 /// The name of the fake's one grammar.
 pub const GRAMMAR: &str = "parens";
+
+/// The highlights query the `parens` grammar ships
+/// ([`Syntax::shipped_query`]).
+pub const PARENS_HIGHLIGHTS: &str = "\"(\" @punctuation.bracket
+\")\" @punctuation.bracket
+list @list
+atom @variable
+atom @constant
+ERROR @error
+";
 
 /// The named kinds of the `parens` grammar.
 const NAMED_KINDS: [&str; 4] = ["document", "list", "atom", "ERROR"];
@@ -131,6 +147,14 @@ impl Syntax for Parens {
             });
         }
         compile(source)
+    }
+
+    fn shipped_query(&self, grammar: &GrammarName, kind: QueryKind) -> Option<String> {
+        match kind {
+            QueryKind::Highlights => {
+                (grammar.as_str() == GRAMMAR).then(|| PARENS_HIGHLIGHTS.to_owned())
+            }
+        }
     }
 
     fn capture_names(&self, query: &ParensQuery) -> Vec<String> {

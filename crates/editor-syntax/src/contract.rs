@@ -20,7 +20,7 @@ use std::ops::Range;
 
 use editor_text::{ChangeSet, Origin, Revision, Snapshot, Text, Transaction};
 
-use crate::port::{Capture, GrammarName, Node, QueryErrorKind, Syntax};
+use crate::port::{Capture, GrammarName, Node, QueryErrorKind, QueryKind, Syntax};
 use crate::query::{captures_in, overlaps};
 use crate::session::reparse;
 
@@ -89,8 +89,14 @@ pub const RANGE: &str = "a range answers the whole text's captures that overlap 
 pub const ORDER: &str =
     "every capture names a capture of the query and is a node's range, in the core's order, once";
 
+/// The grammar is published with a highlights query
+/// ([`Syntax::shipped_query`]) that compiles for it, and a grammar that is
+/// not listed ships none.
+pub const SHIPPED: &str =
+    "the corpus's grammar ships a highlights query that compiles, and one not listed ships none";
+
 /// Every property, by name.
-pub const PROPERTIES: [&str; 9] = [
+pub const PROPERTIES: [&str; 10] = [
     GRAMMARS,
     WHOLE,
     DETERMINISTIC,
@@ -100,6 +106,7 @@ pub const PROPERTIES: [&str; 9] = [
     QUERY_NAMES,
     RANGE,
     ORDER,
+    SHIPPED,
 ];
 
 /// How many random edit sequences the sweep runs from each text.
@@ -128,6 +135,7 @@ pub fn check<S: Syntax>(syntax: &S, corpus: &Corpus) -> Vec<&'static str> {
         (QUERY_NAMES, query_names(syntax, &grammar, corpus)),
         (RANGE, parses(range)),
         (ORDER, parses(order)),
+        (SHIPPED, shipped(syntax, &grammar)),
     ];
     results
         .into_iter()
@@ -143,6 +151,17 @@ fn grammars<S: Syntax>(syntax: &S, grammar: &GrammarName) -> bool {
         && syntax.parser(grammar).is_some()
         && !listed.contains(&other)
         && syntax.parser(&other).is_none()
+}
+
+/// [`SHIPPED`].
+fn shipped<S: Syntax>(syntax: &S, grammar: &GrammarName) -> bool {
+    let other = GrammarName::new(format!("{grammar}-that-is-not-listed"));
+    syntax
+        .shipped_query(grammar, QueryKind::Highlights)
+        .is_some_and(|source| syntax.compile(grammar, &source).is_ok())
+        && syntax
+            .shipped_query(&other, QueryKind::Highlights)
+            .is_none()
 }
 
 /// The snapshot of `text`.
@@ -625,15 +644,15 @@ mod tests {
     use editor_text::InputEdit;
 
     use super::*;
-    use crate::fake::{PARENS_CORPUS, Parens, ParensParser, ParensQuery, ParensTree};
+    use crate::fake::{GRAMMAR, PARENS_CORPUS, Parens, ParensParser, ParensQuery, ParensTree};
     use crate::port::QueryError;
 
     #[test]
-    fn the_properties_are_nine_and_each_is_named_once() {
+    fn the_properties_are_ten_and_each_is_named_once() {
         let mut names = PROPERTIES.to_vec();
         names.sort_unstable();
         names.dedup();
-        assert_eq!(names.len(), 9);
+        assert_eq!(names.len(), 10);
     }
 
     /// One rule a broken syntax breaks; everything else it answers as the
@@ -666,6 +685,10 @@ mod tests {
         DropsAtEdge,
         /// A capture's index is past the query's names.
         BadIndex,
+        /// The highlights query it ships does not compile.
+        BrokenShipped,
+        /// It ships a highlights query for a grammar it does not have.
+        ShipsForAny,
     }
 
     /// The fake with one flaw.
@@ -728,6 +751,14 @@ mod tests {
             match Parens.compile(grammar, source) {
                 Err(_) if self.flaw == Flaw::AcceptsAll => Parens.compile(grammar, ""),
                 compiled => compiled,
+            }
+        }
+
+        fn shipped_query(&self, grammar: &GrammarName, kind: QueryKind) -> Option<String> {
+            match self.flaw {
+                Flaw::BrokenShipped => Some("((".to_owned()),
+                Flaw::ShipsForAny => Parens.shipped_query(&GrammarName::new(GRAMMAR), kind),
+                _ => Parens.shipped_query(grammar, kind),
             }
         }
 
@@ -850,6 +881,16 @@ mod tests {
     #[test]
     fn a_syntax_that_answers_a_capture_the_query_has_not_is_reported() {
         assert_eq!(failed(Flaw::BadIndex), [ORDER]);
+    }
+
+    #[test]
+    fn a_syntax_whose_shipped_highlights_query_does_not_compile_is_reported() {
+        assert_eq!(failed(Flaw::BrokenShipped), [SHIPPED]);
+    }
+
+    #[test]
+    fn a_syntax_that_ships_a_query_for_a_grammar_it_lacks_is_reported() {
+        assert_eq!(failed(Flaw::ShipsForAny), [SHIPPED]);
     }
 
     #[test]
