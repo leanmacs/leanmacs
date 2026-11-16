@@ -118,6 +118,13 @@ as before, so reload and job completion work as they did.
   kept and said when the frame is made (`Running.unsaid`); a command that
   makes the frame clears the echo before it runs, as any command does, so
   it shows when the frame is made for a window event that runs none.
+- **The window's appearance follows the paper.** When the window says it
+  opened, the reload reducer is told (`Config.Event.windowOpened`), and
+  from then on its `appearance` effects are asked of the window through
+  the display (`Display.FrameRequest.appearance`): at the open, and after
+  a reload or a choice of theme that changes whether the paper is light or
+  dark. No headless script posts `windowOpened`, so the headless mode asks
+  for none.
 - **A window event goes to the loop** (`Running.input`): `Loop.take`, run
   against the library with the recorder as the display, handles it and
   publishes a scene. A key press is still printed with its identity, as the
@@ -967,6 +974,8 @@ def reduce (collaborators : Collaborators σ scheme) (running : Running σ schem
     | .themed =>
       -- `retheme` above has handed the display the theme.
       pure ()
+    | .appearance appearance =>
+      discard <| running.display.handle (.frame (.appearance appearance))
   return running
 
 /-- Takes the finished reload job's outcome and feeds it to the reducer. This
@@ -1158,7 +1167,9 @@ partial def took (collaborators : Collaborators σ scheme) (running : Running σ
   return running
 
 /-- Handles an event from the window input: prints a key press with its
-identity, makes the frame if there is none, and has the editor loop take the
+identity, tells the reload reducer the window opened when it has (which
+asks the window for the paper's appearance), makes the frame if there is
+none, and has the editor loop take the
 event (`Loop.take`), which lowers the interrupt flag for an interrupt key,
 steps the event, runs the command a key yields and publishes a scene. What
 the step handed back is taken in (`took`). A close request ends the loop.
@@ -1171,6 +1182,12 @@ def input (collaborators : Collaborators σ scheme) (running : Running σ scheme
     (received : Received) : IO (Running σ scheme) := do
   if let .key which true _ := received.event then
     collaborators.emit s!"key arrived: {which.describe}"
+  -- The window's appearance is asked once it has opened (`Config.step`).
+  let running ←
+    if received.event matches .windowOpened _ then
+      running.reduce collaborators .windowOpened
+    else
+      pure running
   let (made, running) ← running.framed collaborators
   let some frame := made |
     drop collaborators received.interrupt

@@ -1,3 +1,4 @@
+import Editor.Appearance
 import Editor.Config.Session
 import Editor.Config.Stores
 
@@ -60,6 +61,19 @@ the model tests run it with outcomes built by hand
   editor's 8 (`Loop.padding`), so a reload that sets none goes back to it.
   The host hands it to the loop for each step (`Headless.keys`), so it
   changes with no restart. A rejected outcome changes none of it.
+- **The window's appearance follows the paper.** Once the window has
+  opened (`Event.windowOpened`), the reducer asks for the appearance that
+  contrasts with the effective paper (`Theme.paper` of `State.theme`,
+  classified by `Appearance.ofPaper`, `Editor/Appearance.lean`) with the
+  effect `appearance`, and after that only when the classification
+  changes: after a reload, installed or not, and after a choice of a
+  theme. So a switch between two dark themes, or a reload that keeps the
+  paper dark, asks for nothing, and one that keeps the theme and overrides
+  the paper from light to dark asks for dark. Nothing is asked before the
+  window has opened, since a request asked of no running window is lost
+  (`editor-platform`'s crate docs, "What a window is asked"), and a window
+  that opens again is asked afresh. A theme that states no paper asks for
+  nothing. The effect comes after `themed` and after a reload's report.
 - **A reload cancels the old config's jobs when, and only when, it
   installs.** An accepted outcome's effects begin with `cancelJobs config`,
   before its report and before a follow-up job starts; a rejected outcome has
@@ -158,6 +172,12 @@ structure State (σ : Type) where
   editor's own (`Loop.padding`): set at every install, so a config that
   sets none goes back to it. -/
   framePadding : Option Nat := none
+  /-- Whether the window has opened (`Event.windowOpened`): only then is an
+  appearance asked of it. -/
+  windowOpen : Bool := false
+  /-- The appearance the window was last asked, since it last opened; none
+  before one is. -/
+  appearance : Option Appearance := none
 
 /-- What happened, as far as reloads go. -/
 inductive Event (σ : Type) where
@@ -168,6 +188,8 @@ inductive Event (σ : Type) where
   /-- The theme called `name` was chosen, by a command, to be the theme in
   force. -/
   | choose (name : String)
+  /-- The window opened. Whatever was asked of it before is lost. -/
+  | windowOpened
 
 /-- What the runtime is to do. -/
 inductive Effect (σ : Type) where
@@ -183,6 +205,8 @@ inductive Effect (σ : Type) where
   /-- The theme in force was switched, with no reload: the display is to
   be handed the new theme. -/
   | themed
+  /-- Ask the window to draw its title and buttons in this appearance. -/
+  | appearance (appearance : Appearance)
 
 namespace State
 
@@ -257,10 +281,22 @@ def install (state : State σ) (outcome : Outcome σ) : State σ × Report :=
       { number := state.finished, installed := true, diagnostics := outcome.diagnostics ++ lost,
         chunks := state.chunks.size, commands := state.commands, unknownTheme, unknownSegments })
 
+/-- The appearance the window is to be asked for, and the state that
+remembers it: when the window is open and the paper of the theme now in
+force (`theme`) classifies as an appearance other than the one last asked,
+that one; nothing otherwise. -/
+def ask (state : State σ) : State σ × Array (Effect σ) :=
+  match state.theme.paper.map Appearance.ofPaper with
+  | some appearance =>
+    if state.windowOpen && state.appearance != some appearance then
+      ({ state with appearance := some appearance }, #[.appearance appearance])
+    else (state, #[])
+  | none => (state, #[])
+
 end State
 
-/-- The reducer: the state after `event`, and the effects to perform. -/
-def step {σ : Type} (state : State σ) : Event σ → State σ × Array (Effect σ)
+/-- The reducer before the window's appearance is asked. -/
+private def stepTheme {σ : Type} (state : State σ) : Event σ → State σ × Array (Effect σ)
   | .requested => if state.running then ({ state with pending := true }, #[]) else state.start
   | .finished outcome =>
     let (state, report) := state.install outcome
@@ -274,6 +310,18 @@ def step {σ : Type} (state : State σ) : Event σ → State σ × Array (Effect
   | .choose name =>
     if (state.registry.theme? name).isSome then ({ state with themeName := name }, #[.themed])
     else (state, #[])
+  | .windowOpened =>
+    ({ state with
+        windowOpen := true, appearance := none },
+      #[])
+
+/-- The reducer: the state after `event`, and the effects to perform. The
+window's appearance is asked last (`State.ask`), after whatever the event
+did to the theme in force. -/
+def step {σ : Type} (state : State σ) (event : Event σ) : State σ × Array (Effect σ) :=
+  let (state, effects) := stepTheme state event
+  let (state, asked) := state.ask
+  (state, effects ++ asked)
 
 namespace State
 
