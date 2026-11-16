@@ -17,8 +17,14 @@
 #    no later than `LSMinimumSystemVersion`, the executable is arm64 alone
 #    (`lipo`), and its `CFBundleDocumentTypes`
 #    are exactly two, `public.plain-text` then `public.source-code`, each
-#    with the role `Editor` and the rank `Alternate`;
-# 4. reads the icon with ImageIO (`sips`): 16 pixels wide;
+#    with the role `Editor` and the rank `Alternate`. Its
+#    `CFBundleShortVersionString` and `CFBundleVersion` are each the line of
+#    `lean/app/version`, read here from the file the build reads; its
+#    `LSApplicationCategoryType` is `public.app-category.developer-tools`
+#    and its `NSHumanReadableCopyright` is not empty;
+# 4. converts the icon back to an iconset (`iconutil -c iconset`), which
+#    must hold exactly the ten standard images, each read by ImageIO
+#    (`sips`) at its nominal size, 16 to 1024 pixels;
 # 5. runs the copy's `Contents/MacOS/editor headless` on the fixture
 #    `tests/headless/bundle`, copied there too, with no directory argument,
 #    an empty environment (`env -i`: no `HOME`, `PATH` or `LEAN_PATH`) and
@@ -39,7 +45,18 @@
 #    to the old trace again, and builds once more. The bundle must still
 #    verify (`codesign --verify --strict --deep`) and be the old one: a
 #    rebuild that never finished leaves no half-built bundle that the old
-#    trace takes as up to date.
+#    trace takes as up to date;
+# 8. in the same clone, writes another version, 9.8.7, into
+#    `lean/app/version` and builds: the bundle must be rebuilt, verify, and
+#    name 9.8.7 as both version keys;
+# 9. turns the clone's artwork, `lean/app/Leanmacs.png`, a quarter
+#    (`sips -r 90`) and builds: the bundle must be rebuilt and verify, its
+#    icon must pass step 4's check, and its 1024-pixel image must differ
+#    from before. So the artwork must not look the same turned a quarter;
+# 10. writes malformed versions into the clone's `lean/app/version` (a
+#    trailing space, an empty file, `1.x`, a second line, four parts) and
+#    builds each: each build must fail on the version file and leave the
+#    old bundle, which must still verify.
 #
 # It writes nothing outside the temporary directory but that second build,
 # which is shown to write nothing. It opens no window and needs no person.
@@ -65,6 +82,11 @@ fail() {
   echo "app-check: $*" >&2
   exit 1
 }
+
+# The version, read from the file the build reads, so the two cannot drift.
+version_file="$lean_dir/app/version"
+IFS= read -r version <"$version_file" || fail "cannot read a line from $version_file"
+[ -n "$version" ] || fail "$version_file is empty"
 
 started=$SECONDS
 step() {
@@ -133,12 +155,44 @@ done
 if read_key CFBundleDocumentTypes.2 >/dev/null 2>&1; then
   fail "CFBundleDocumentTypes has more than two document types"
 fi
-step "Info.plist lints and names arm64, $executable, macOS $minimum (this machine runs $running), and the document types ${types[*]}, each as an editor at rank Alternate"
+# The version, from the file the build reads, as both version keys.
+for key in CFBundleShortVersionString CFBundleVersion; do
+  value=$(read_key "$key" 2>/dev/null) || fail "Info.plist has no $key"
+  [ "$value" = "$version" ] || fail "Info.plist's $key is $value, not $version (lean/app/version)"
+done
+category=$(read_key LSApplicationCategoryType 2>/dev/null) || fail "Info.plist has no LSApplicationCategoryType"
+[ "$category" = public.app-category.developer-tools ] ||
+  fail "Info.plist's LSApplicationCategoryType is $category, not public.app-category.developer-tools"
+copyright=$(read_key NSHumanReadableCopyright 2>/dev/null) || fail "Info.plist has no NSHumanReadableCopyright"
+[ -n "$copyright" ] || fail "Info.plist's NSHumanReadableCopyright is empty"
+step "Info.plist lints and names arm64, $executable, macOS $minimum (this machine runs $running), the document types ${types[*]}, each as an editor at rank Alternate, version $version, the category $category and the copyright \"$copyright\""
 
-# 4. The icon, read by ImageIO.
-width=$(sips -g pixelWidth "$app/Contents/Resources/Leanmacs.icns" | awk '/pixelWidth/ { print $2 }')
-[ "$width" = 16 ] || fail "ImageIO reads the icon as ${width:-nothing} pixels wide, not 16"
-step "ImageIO reads the icon, 16 pixels wide"
+# 4. The icon, converted back to its images and each read by ImageIO.
+# Whether the iconset at $1 holds exactly the ten standard images, each at
+# its nominal size.
+icon_names=(icon_16x16.png icon_16x16@2x.png icon_32x32.png icon_32x32@2x.png icon_128x128.png
+  icon_128x128@2x.png icon_256x256.png icon_256x256@2x.png icon_512x512.png icon_512x512@2x.png)
+icon_sizes=(16 32 32 64 128 256 256 512 512 1024)
+check_iconset() {
+  local found expected i width height
+  found=$(ls "$1" | sort)
+  expected=$(printf '%s\n' "${icon_names[@]}" | sort)
+  [ "$found" = "$expected" ] ||
+    fail "the icon holds the images
+$found
+not the ten standard ones
+$expected"
+  for i in "${!icon_names[@]}"; do
+    width=$(sips -g pixelWidth "$1/${icon_names[i]}" | awk '/pixelWidth/ { print $2 }')
+    height=$(sips -g pixelHeight "$1/${icon_names[i]}" | awk '/pixelHeight/ { print $2 }')
+    [ "$width" = "${icon_sizes[i]}" ] && [ "$height" = "${icon_sizes[i]}" ] ||
+      fail "the icon's ${icon_names[i]} is ${width:-nothing}x${height:-nothing} pixels, not ${icon_sizes[i]}x${icon_sizes[i]}"
+  done
+}
+iconutil -c iconset "$app/Contents/Resources/Leanmacs.icns" -o "$dir/icon.iconset" ||
+  fail "iconutil cannot convert the icon back to an iconset"
+check_iconset "$dir/icon.iconset"
+step "the icon has the ten standard images, 16 to 1024 pixels"
 
 # 5. The headless mode from the copy, with nothing but its own path.
 cp -R "$fixtures/config" "$dir/config"
@@ -190,5 +244,56 @@ codesign --verify --strict --deep "$cloned" ||
   fail "after a failed rebuild, the old trace took a half-built bundle as up to date"
 [ "$before" = "$(clone_marks)" ] || fail "after a failed rebuild, the bundle is not the old one"
 step "a failed rebuild left the old bundle, signed, and the next build took it as up to date"
+
+# 8. A change of version rebuilds the bundle with the new version.
+before=$(clone_marks)
+printf '9.8.7\n' >"$clone/lean/app/version"
+build_clone || fail "building editorApp in the clone after a change of version failed"
+[ "$before" != "$(clone_marks)" ] || fail "a change of version did not rebuild the bundle"
+codesign --verify --strict --deep "$cloned" || fail "after a change of version, the bundle does not verify"
+for key in CFBundleShortVersionString CFBundleVersion; do
+  value=$(plutil -extract "$key" raw -o - "$cloned/Contents/Info.plist" 2>/dev/null) ||
+    fail "after a change of version, Info.plist has no $key"
+  [ "$value" = 9.8.7 ] || fail "after a change of version to 9.8.7, Info.plist's $key is $value"
+done
+step "a change of version rebuilt the bundle, signed, with the new version"
+
+# 9. A change of artwork rebuilds the bundle with the new icon. The
+# artwork is turned a quarter, so it must not look the same turned.
+iconutil -c iconset "$cloned/Contents/Resources/Leanmacs.icns" -o "$dir/before.iconset" ||
+  fail "iconutil cannot convert the clone's icon back to an iconset"
+before=$(clone_marks)
+sips -r 90 "$clone/lean/app/Leanmacs.png" --out "$dir/turned.png" >/dev/null ||
+  fail "sips cannot turn the artwork"
+mv "$dir/turned.png" "$clone/lean/app/Leanmacs.png"
+build_clone || fail "building editorApp in the clone after a change of artwork failed"
+[ "$before" != "$(clone_marks)" ] || fail "a change of artwork did not rebuild the bundle"
+codesign --verify --strict --deep "$cloned" || fail "after a change of artwork, the bundle does not verify"
+iconutil -c iconset "$cloned/Contents/Resources/Leanmacs.icns" -o "$dir/after.iconset" ||
+  fail "iconutil cannot convert the rebuilt icon back to an iconset"
+check_iconset "$dir/after.iconset"
+if cmp -s "$dir/before.iconset/icon_512x512@2x.png" "$dir/after.iconset/icon_512x512@2x.png"; then
+  fail "the icon did not change after the artwork did (is lean/app/Leanmacs.png the same turned a quarter?)"
+fi
+step "a change of artwork rebuilt the bundle, signed, with the new icon"
+
+# 10. A malformed version fails the build, naming the version file, and
+# leaves the old bundle.
+before=$(clone_marks)
+for malformed in '0.1.0 \n' '' '1.x\n' '0.1.0\n0.2.0\n' '1.2.3.4\n'; do
+  printf "$malformed" >"$clone/lean/app/version"
+  if build_clone >"$dir/malformed.log" 2>&1; then
+    cat "$dir/malformed.log"
+    fail "building editorApp with the version file written by printf '$malformed' succeeded"
+  fi
+  grep -q "app/version must be one line" "$dir/malformed.log" || {
+    cat "$dir/malformed.log"
+    fail "building editorApp with the version file written by printf '$malformed' failed, but not on the version file"
+  }
+  [ "$before" = "$(clone_marks)" ] || fail "a build with a malformed version changed the bundle"
+done
+codesign --verify --strict --deep "$cloned" || fail "after a malformed version, the bundle does not verify"
+printf '9.8.7\n' >"$clone/lean/app/version"
+step "a malformed version failed the build on the version file and left the old bundle"
 
 echo "app-check: ok, $(du -sh "$built" | awk '{ print $1 }') bundle"

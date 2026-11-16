@@ -393,8 +393,9 @@ run = '''dir=$(mktemp -d) && trap 'rm -rf "$dir"' EXIT && sysroot=$(lean --print
 #
 # It builds `lean/.lake/build/Leanmacs.app` with Lake (`editorApp` in
 # lean/lakefile.lean): the editor executable, the `.olean` files of the
-# modules `Editor` imports, Info.plist and a placeholder icon, ad-hoc
-# signed as a whole, last. Lake rebuilds it only when an input changed, so a
+# modules `Editor` imports, Info.plist with the version from
+# lean/app/version, and the icon made from lean/app/Leanmacs.png with sips
+# and iconutil, ad-hoc signed as a whole, last. Lake rebuilds it only when an input changed, so a
 # second run with nothing changed copies and signs nothing, and prints no
 # `Built editorApp` line. It waits for `lean` so that the Lake builds in
 # lean/ run in one chain, and sets LEAN_CC as `lean` does, since the
@@ -413,13 +414,16 @@ run = "lake build --wfail editorApp"
 #
 # tools/app-check.sh copies the built bundle into a temporary directory
 # removed by a trap, verifies its signature with `codesign --verify
-# --strict --deep`, reads its Info.plist (its document types among its keys)
-# and icon as the system does, runs
-# its headless mode on tests/headless/bundle with no directory argument, an
-# empty environment and / as the working directory, which must print
-# exactly `expected`, and builds `editorApp` again to show that copies and
-# signs nothing. It ends `app-check: ok`. It opens no window and needs no
-# person.
+# --strict --deep`, reads its Info.plist (its document types and its
+# version keys, which must be the line of lean/app/version, among its keys)
+# and icon (the ten standard sizes, 16 to 1024 pixels) as the system does,
+# runs its headless mode on tests/headless/bundle with no directory
+# argument, an empty environment and / as the working directory, which must
+# print exactly `expected`, and builds `editorApp` again to show that copies
+# and signs nothing. In a clone of lean/ it shows that a failed rebuild
+# leaves the old bundle, that changing the version or the artwork rebuilds
+# it, and that a malformed version fails the build. It ends `app-check: ok`.
+# It opens no window and needs no person.
 [tasks.app-check]
 description = "Opt-in, never part of ci; macOS on arm64 only: verify the built Leanmacs.app's signature and run its headless mode from a copy in a temporary directory, with no directory argument, an empty environment and / as the working directory (tools/app-check.sh, tests/headless/bundle)"
 depends = ["app"]

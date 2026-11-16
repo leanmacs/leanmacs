@@ -72,8 +72,9 @@ count for a script a hundred times as long.
 **The app bundle is a Lake target too** (`editorApp`, not a default
 target; `mise run app`). It copies the executable and the `.olean` files of
 the closure of `Editor` into `Leanmacs.app`, laid out as module lookup
-expects (`lean/Editor/ModuleLookup.lean`), writes `Info.plist` and a
-placeholder icon, and signs the whole bundle ad-hoc, last. Lake's trace of
+expects (`lean/Editor/ModuleLookup.lean`), writes `Info.plist`, with
+the version from `lean/app/version`, and the icon, made from the checked-in
+artwork `lean/app/Leanmacs.png`, and signs the whole bundle ad-hoc, last. Lake's trace of
 its inputs makes it rebuild only when one changed. It builds on macOS on
 arm64 only. How to build it, what it holds and why it is signed again are
 in [building.md](../dev-practices/building.md), "The app bundle".

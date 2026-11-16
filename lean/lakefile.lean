@@ -180,8 +180,38 @@ only after running it there. -/
 def appMinimumSystemVersion : String :=
   "27.2"
 
-/-- The bundle's `Contents/Info.plist`. It has no version keys, since the
-project has no version scheme yet.
+/-- The app's version file, relative to the package's directory: one line,
+the version, which `editorApp` writes into `Info.plist`. -/
+def appVersionFile : FilePath :=
+  "app" / "version"
+
+/-- The icon's artwork, relative to the package's directory: a 1024×1024
+PNG, from which `editorApp` makes `Contents/Resources/Leanmacs.icns`. -/
+def appIconFile : FilePath :=
+  "app" / "Leanmacs.png"
+
+/-- The version in the contents of the version file (`appVersionFile`): its
+one line, less one trailing newline, which must be one to three
+dot-separated runs of ASCII digits, the form `CFBundleShortVersionString`
+and `CFBundleVersion` both take. Anything else, a second line, whitespace or
+an empty file among it, is an error naming the file and what it holds, so a
+malformed version fails the build instead of making a bundle LaunchServices
+misreads (`mise run app-check`, step 10). -/
+def parseAppVersion (contents : String) : Except String String :=
+  let line := if contents.endsWith "\n" then (contents.dropEnd 1).toString else contents
+  let parts := line.splitOn "."
+  let isRun (part : String) : Bool := !part.isEmpty && part.all Char.isDigit
+  if parts.length ≤ 3 && parts.all isRun then .ok line
+  else
+    .error
+      s!"{appVersionFile} must be one line of one to three dot-separated runs of digits, such as 0.1.0, but holds {repr contents}"
+
+/-- The bundle's `Contents/Info.plist`, for the app at `version`, the line
+of the version file (`appVersionFile`). The version is both
+`CFBundleShortVersionString` and `CFBundleVersion`, the same string until a
+release needs a build number of its own. `NSHumanReadableCopyright` names
+the licence, as `Cargo.toml` gives it, and `LSApplicationCategoryType` files
+the app under developer tools.
 
 Its document types (`CFBundleDocumentTypes`) are plain text
 (`public.plain-text`, which covers `.txt` and Markdown among others) and
@@ -192,7 +222,7 @@ drop on its Dock icon, but it never becomes the default app for the type,
 which `Owner` or `Default` would claim. `.lean` files have no system type and
 get a dynamic one that conforms to neither, so Finder does not offer the app
 for them until a type is declared for them (the rdm task `lean-source-uti`). -/
-def appInfoPlist : String :=
+def appInfoPlist (version : String) : String :=
   s!"<?xml version=\"1.0\" encoding=\"UTF-8\"?>
 <!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">
 <plist version=\"1.0\">
@@ -236,6 +266,12 @@ def appInfoPlist : String :=
 \t<string>{appName}</string>
 \t<key>CFBundlePackageType</key>
 \t<string>APPL</string>
+\t<key>CFBundleShortVersionString</key>
+\t<string>{version}</string>
+\t<key>CFBundleVersion</key>
+\t<string>{version}</string>
+\t<key>LSApplicationCategoryType</key>
+\t<string>public.app-category.developer-tools</string>
 \t<key>LSArchitecturePriority</key>
 \t<array>
 \t\t<string>arm64</string>
@@ -244,34 +280,21 @@ def appInfoPlist : String :=
 \t<string>{appMinimumSystemVersion}</string>
 \t<key>NSHighResolutionCapable</key>
 \t<true/>
+\t<key>NSHumanReadableCopyright</key>
+\t<string>Licensed under GPL-3.0-or-later.</string>
 </dict>
 </plist>
 "
 
-/-- `n` as four bytes, the most significant first, as ICNS writes its
-lengths. -/
-def bigEndian32 (n : Nat) : ByteArray :=
-  ⟨#[(n / 16777216 % 256).toUInt8, (n / 65536 % 256).toUInt8, (n / 256 % 256).toUInt8,
-      (n % 256).toUInt8]⟩
-
-/-- An ICNS entry: its four-byte type, its length with its eight-byte
-header, and its data. -/
-def icnsEntry (type : String) (data : ByteArray) : ByteArray :=
-  type.toUTF8 ++ bigEndian32 (8 + data.size) ++ data
-
-/-- The placeholder icon, `Contents/Resources/Leanmacs.icns`, which the
-target writes and nothing checks in: a minimal ICNS of one 16×16 image in
-one flat colour. Its `is32` entry holds the red, green and blue channels
-one after the other, each 256 bytes run-length encoded as two runs (a byte
-of 0x80 + n − 3 repeats the next byte n times: 130, then 126), and its
-`s8mk` entry is the mask, 256 bytes of 0xFF. `mise run app-check` reads it
-with ImageIO (`sips`). -/
-def appIcon : ByteArray :=
-  let channel (value : UInt8) : ByteArray := ⟨#[0xFF, value, 0xFB, value]⟩
-  let entries :=
-    icnsEntry "is32" (channel 0x3A ++ channel 0x6E ++ channel 0xA5) ++
-      icnsEntry "s8mk" ⟨Array.replicate 256 0xFF⟩
-  "icns".toUTF8 ++ bigEndian32 (8 + entries.size) ++ entries
+/-- The images of the icon's `.iconset`, each with its size in pixels: the
+ten standard ones, 16, 32, 128, 256 and 512 points at 1× and 2×.
+`editorApp` makes each from the artwork (`appIconFile`) with `sips`, and
+`mise run app-check` finds exactly these in the built icon. -/
+def appIconSizes : List (String × Nat) :=
+  [("icon_16x16.png", 16), ("icon_16x16@2x.png", 32), ("icon_32x32.png", 32),
+    ("icon_32x32@2x.png", 64), ("icon_128x128.png", 128), ("icon_128x128@2x.png", 256),
+    ("icon_256x256.png", 256), ("icon_256x256@2x.png", 512), ("icon_512x512.png", 512),
+    ("icon_512x512@2x.png", 1024)]
 
 /-- `Leanmacs.app`, the editor as a macOS app bundle, at
 `.lake/build/Leanmacs.app` (`mise run app`; `docs/dev-practices/building.md`,
@@ -285,7 +308,11 @@ It holds `Contents/MacOS/editor`, a copy of the `editor` executable; under
 `config-test bench-modules` lists), from the toolchain Lake runs on, which
 is the pinned one, and from this package, laid out by
 `tools/stage-bundle.sh` as `bundle-test` lays them out; `Contents/Info.plist`
-(`appInfoPlist`); and `Contents/Resources/Leanmacs.icns` (`appIcon`).
+(`appInfoPlist`), with the version from `app/version` (`appVersionFile`,
+`parseAppVersion`, which fails the build on a malformed line); and
+`Contents/Resources/Leanmacs.icns`, made from the artwork `app/Leanmacs.png`
+(`appIconFile`) by `sips` into the ten images of `appIconSizes` and then
+`iconutil`.
 
 The bundle is signed again as a whole, ad-hoc, and last: the linker's
 ad-hoc signature covers only the Mach-O, so `Info.plist` and the resources
@@ -294,8 +321,8 @@ Extended attributes are cleared first, since `codesign --verify --strict`
 refuses them.
 
 The trace mixes the executable's, `config-test`'s, the library's, the stage
-script's and this lakefile's traces with the toolchain's, the platform's,
-the property list's and the icon's, so the bundle is rebuilt, from nothing,
+script's, this lakefile's, the version file's and the artwork's traces with
+the toolchain's, the platform's and the property list's, so the bundle is rebuilt, from nothing,
 only when one of them changed, or when the bundle is gone. The lakefile is
 in it because it is the recipe: without it, a change to how the bundle is
 made would leave the old bundle standing. A rebuild assembles and signs the
@@ -311,15 +338,24 @@ target editorApp pkg : FilePath := do
   let stager ← inputTextFile <| pkg.dir / ".." / "tools" / "stage-bundle.sh"
   -- This file is the recipe, so a change to it rebuilds the bundle too.
   let recipe ← inputTextFile <| pkg.dir / "lakefile.lean"
+  let versionJob ← inputTextFile <| pkg.dir / appVersionFile
+  let artJob ← inputBinFile <| pkg.dir / appIconFile
   let inputs :=
-    (((exe.zipWith Prod.mk lister).zipWith Prod.mk stager).zipWith (fun paths _ => paths)
-          library).zipWith
-      (fun paths _ => paths) recipe
-  inputs.mapM fun ((exe, lister), stager) => do
+    ((((((exe.zipWith Prod.mk lister).zipWith Prod.mk stager).zipWith (fun paths _ => paths)
+                  library).zipWith
+              (fun paths _ => paths) recipe).zipWith
+          Prod.mk versionJob).zipWith
+      Prod.mk artJob)
+  inputs.mapM fun ((((exe, lister), stager), versionFile), art) => do
       addLeanTrace
       addPlatformTrace
-      addTrace (.ofHash (pureHash appInfoPlist) "Info.plist")
-      addTrace (.ofHash (Hash.ofByteArray appIcon) s!"{appName}.icns")
+      let version ←
+        match parseAppVersion (← IO.FS.readFile versionFile) with
+        | .ok version =>
+          pure version
+        | .error message =>
+          error message
+      addTrace (.ofHash (pureHash (appInfoPlist version)) "Info.plist")
       let bundle := pkg.buildDir / s!"{appName}.app"
       let traceFile := pkg.buildDir / s!"{appName}.app.trace"
       buildUnlessUpToDate bundle (← getTrace) traceFile do
@@ -345,10 +381,24 @@ target editorApp pkg : FilePath := do
                 args :=
                   #["--closure", closure.toString, staged.toString, exe.toString, sysroot.toString,
                     pkg.leanLibDir.toString, "olean", "olean.server", "olean.private"] }
-          IO.FS.writeFile (staged / "Contents" / "Info.plist") appInfoPlist
-          IO.FS.writeBinFile (staged / "Contents" / "Resources" / s!"{appName}.icns") appIcon
+          IO.FS.writeFile (staged / "Contents" / "Info.plist") (appInfoPlist version)
           -- The system's tools, by absolute path: mise's PATH may hold others of
           -- the same name (a Python package installs an `xattr` with no `-r`).
+          -- The iconset is in the staging directory but outside the bundle, so
+          -- it is never sealed and goes with the staging directory.
+          let iconset := staging / s!"{appName}.iconset"
+          IO.FS.createDirAll iconset
+          for (name, size) in appIconSizes do
+            proc (quiet := true)
+                { cmd := "/usr/bin/sips"
+                  args :=
+                    #["-z", toString size, toString size, art.toString, "--out",
+                      (iconset / name).toString] }
+          proc (quiet := true)
+              { cmd := "/usr/bin/iconutil"
+                args :=
+                  #["-c", "icns", iconset.toString, "-o",
+                    (staged / "Contents" / "Resources" / s!"{appName}.icns").toString] }
           proc (quiet := true) { cmd := "/usr/bin/xattr", args := #["-cr", staged.toString] }
           -- Last: nothing may be written into the bundle after this.
           proc (quiet := true)

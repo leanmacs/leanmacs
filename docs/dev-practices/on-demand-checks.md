@@ -89,8 +89,13 @@ copy; verifies the copy's signature with `codesign --verify --strict
 later than this machine's macOS, and `CFBundleDocumentTypes` is exactly two
 types, `public.plain-text` then `public.source-code`, each with
 `CFBundleTypeRole` `Editor` and `LSHandlerRank` `Alternate`, read key by key
-with `plutil -extract`) and the executable with `lipo` (arm64
-alone); reads the icon with ImageIO (`sips`: 16 pixels wide); and runs the
+with `plutil -extract`; `CFBundleShortVersionString` and `CFBundleVersion`
+are each the line of `lean/app/version`, read from the file the build
+reads; `LSApplicationCategoryType` is `public.app-category.developer-tools`
+and `NSHumanReadableCopyright` is not empty) and the executable with `lipo`
+(arm64 alone); converts the icon back to an iconset with `iconutil -c
+iconset`, which must hold exactly the ten standard images, each read by
+ImageIO (`sips`) at its nominal size, 16 to 1024 pixels; and runs the
 copy's `Contents/MacOS/editor headless` on `tests/headless/bundle` with no
 directory argument, an empty environment (`env -i`) and `/` as the working
 directory, which must exit 0 and print exactly `expected`. Last, it builds
@@ -103,8 +108,17 @@ package in the temporary directory (`cp -c`, so it takes no space), with a
 for one that stages and then fails, builds `editorApp`, which must fail,
 puts the script back so the inputs hash to the old trace again, and builds
 once more: the bundle must still verify and be the old one, so a failed or
-interrupted rebuild leaves no half-built bundle taken as up to date. It
-ends `app-check: ok` with the bundle's size, and takes seconds.
+interrupted rebuild leaves no half-built bundle taken as up to date. In the
+same clone it writes another version, 9.8.7, into `lean/app/version` and
+builds: the bundle must be rebuilt, verify, and name 9.8.7 as both version
+keys. It turns the artwork, `lean/app/Leanmacs.png`, a quarter
+(`sips -r 90`) and builds: the bundle must be rebuilt and verify, and its
+icon must hold the ten images with a 1024-pixel one that differs from
+before, so the artwork must not look the same turned a quarter. Last, it
+writes malformed versions (a trailing space, an empty file, `1.x`, a second
+line, four parts) and builds each: each build must fail on the version file
+and leave the old bundle. It ends `app-check: ok` with the bundle's size,
+and takes under a minute.
 
 It writes nothing outside its temporary directory but that second build,
 which is shown to write nothing, opens no window and needs no person. It is

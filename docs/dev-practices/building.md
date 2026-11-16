@@ -83,7 +83,7 @@ What it holds:
 ```
 Leanmacs.app/Contents/Info.plist
 Leanmacs.app/Contents/MacOS/editor                         a copy of the editor executable
-Leanmacs.app/Contents/Resources/Leanmacs.icns              a placeholder icon
+Leanmacs.app/Contents/Resources/Leanmacs.icns              the icon, made from lean/app/Leanmacs.png
 Leanmacs.app/Contents/Resources/lean/toolchain/lib/lean/   the toolchain's modules
 Leanmacs.app/Contents/Resources/lean/editor/               the editor's modules
 ```
@@ -101,11 +101,28 @@ the icon, `NSHighResolutionCapable`, `LSArchitecturePriority` arm64 and
 (`public.plain-text`) and source code (`public.source-code`), each with the
 app as an `Editor` at the rank `Alternate`: Finder offers it under "Open
 With" and it takes a drop on its Dock icon, but it is never the default app
-for either. It has no version yet.
+for either. `LSApplicationCategoryType` is
+`public.app-category.developer-tools`, and `NSHumanReadableCopyright` names
+the licence, GPL-3.0-or-later.
+
+The version is the one line of `lean/app/version`: 0.1.0, as every crate's
+`version` is. It is written as both `CFBundleShortVersionString` and
+`CFBundleVersion`; the release that first needs a build number of its own
+decides how the two part. The line must be one to three dot-separated runs
+of digits, and `editorApp` refuses anything else, a second line or
+whitespace among it, with an error naming the file.
+
+The icon is made from `lean/app/Leanmacs.png`, a 1024×1024 PNG: `sips`
+scales it to the ten standard sizes (16, 32, 128, 256 and 512 points, at 1×
+and 2×) in an iconset in the staging directory, and `iconutil` makes
+`Leanmacs.icns` of them. The owner may replace the PNG with any 1024×1024
+image that does not look the same turned a quarter (`mise run app-check`
+turns it to show a new artwork rebuilds the icon).
 
 Lake rebuilds the bundle only when an input changes: the executable, the
 `Editor` library's modules, `config-test` (which lists the closure), the
-stage script, the toolchain, the lakefile, the property list or the icon.
+stage script, the toolchain, the lakefile, the version file or the
+artwork.
 A second `mise run app` with nothing changed copies and signs nothing, and
 Lake prints no `Built editorApp` line. A rebuild starts from an empty
 bundle, so it never keeps a module that is no longer imported. It assembles
