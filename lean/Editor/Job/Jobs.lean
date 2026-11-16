@@ -29,7 +29,9 @@ moment it is started until its result is taken or its owner is removed.
 - **A job's posts** (`JobRequest.post`) are handed, with the job's id, to
   what the runtime gave `start`. The runtime runs one only while the job is
   still in the table (`has`): a post of a job that was cancelled or removed
-  is dropped, as its result is.
+  is dropped, as its result is. A runtime whose posts cross threads keeps
+  them in a `Mailbox`, which the job's thread pushes to and the editor
+  thread takes from, a job's oldest first.
 - **What a job holds is released.** A job that finished holds what its
   loads made until its command has run (`Editor/Job/Runner.lean`, "What a
   job holds"): whoever takes its result with `finish` runs the command and
@@ -110,5 +112,41 @@ def cancelAll (jobs : Jobs) : BaseIO Unit := do
     entry.handle.settle
 
 end Jobs
+
+/-- The posts of a runtime's jobs that the editor thread has not taken, each
+with its job's id, oldest first: a job's thread pushes one, and the editor
+thread takes it when the event that says so arrives. -/
+structure Mailbox where
+  /-- The posts. Every change to it is one atomic step. -/
+  entries : IO.Ref (Array (Nat × Invocation))
+
+namespace Mailbox
+
+/-- A mailbox with no post. -/
+def new : BaseIO Mailbox :=
+  return { entries := ← IO.mkRef #[] }
+
+/-- Adds `invocation`, a post of the job `id`, last. -/
+def push (mailbox : Mailbox) (id : Nat) (invocation : Invocation) : BaseIO Unit :=
+  mailbox.entries.modify (·.push (id, invocation))
+
+/-- Takes the oldest post of the job `id` out of the mailbox; `none` when it
+has none. The posts of one job are taken in the order it made them,
+whatever other jobs posted between them. -/
+def take (mailbox : Mailbox) (id : Nat) : BaseIO (Option Invocation) :=
+  mailbox.entries.modifyGet fun entries =>
+    match entries.findIdx? (·.1 == id) with
+    | some index =>
+      match entries[index]? with
+      | some (_, invocation) =>
+        (some invocation, entries.extract 0 index ++ entries.extract (index + 1) entries.size)
+      | none => (none, entries)
+    | none => (none, entries)
+
+/-- How many posts the mailbox holds. -/
+def size (mailbox : Mailbox) : BaseIO Nat :=
+  return (← mailbox.entries.get).size
+
+end Mailbox
 
 end Editor.Job

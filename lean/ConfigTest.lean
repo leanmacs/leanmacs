@@ -485,7 +485,7 @@ def Stage.new {σ : Type} (context : Context) (elaborator : Config.Elaborator σ
       Job.Completions.new
   let clock ← Job.FakeClock.new completions
   let watches ← Job.FakeFileWatches.new completions { directories := #["/watched"] }
-  let requests ← context.ids.modifyGet fun next => (next, next + 4)
+  let requests ← context.ids.modifyGet fun next => (next, next + 5)
   return {
       collaborators :=
         { elaborator, source,
@@ -495,6 +495,7 @@ def Stage.new {σ : Type} (context : Context) (elaborator : Config.Elaborator σ
           services := { completions, timers := clock.timers, fileWatches := watches.fileWatches }
           published := ← Snapshots.new, held := ← Job.HeldSnapshots.new, requests,
           wakeups := requests + 1, jobs := requests + 2, environment := requests + 3
+          posts := requests + 4
           commands := compiled.commands, compiledJobs := compiled.jobs,
           bindings := compiled.bindings, modes := compiled.modes, ex := compiled.ex,
           themes := compiled.themes, log := fun entry => log.modify (·.push entry),
@@ -1824,7 +1825,7 @@ def scriptChecks (context : Context) : List Check :=
             display :=
               ← Headless.Host.Display.recorder Headless.cells collaborators.published.reader
             clipboard := (← Clipboard.InProcess.new).handle
-            jobs := { services := collaborators.services } }
+            jobs := { services := collaborators.services }, mailbox := ← Job.Mailbox.new }
         let (refused, running) ←
           running.attempt collaborators do
               let made ← createText "made before the refusal"
@@ -2493,6 +2494,45 @@ def hostLoopChecks (context : Context) : List Check :=
           let running ← running.run collaborators { command := "stamp" }
           return running.frame.isNone &&
               (← stage.output.get) == #["loop: refused: no such text", "run stamp: no frame"] },
+    { name :=
+        "a job's post runs on the editor thread as a command labelled with the job while the job still runs, and is printed; the post of a job removed before its event is taken is dropped, unprinted"
+      run :=
+        withRunning context
+          (fun collaborators =>
+            { collaborators with
+              commands :=
+                #[{ name := "mark"
+                    action :=
+                      .call fun call => do
+                        if let [.str text] := call.arguments then
+                          discard <| call.target.window.id.insertAtSelections text }]
+              compiledJobs :=
+                #[{ name := "poster"
+                    work := fun _ =>
+                      Work.of
+                        (fun _ => do
+                          post { command := "mark", arguments := [.str "p"] }
+                          sleep 10)
+                        fun _ => pure () }] })
+          fun collaborators running stage => do
+          let (first, running) ← running.startJob collaborators "poster"
+          let some first := first | return false
+          unless ← eventually (return (← running.mailbox.size) == 1) do
+            return false
+          let running := { running with jobs := ← running.jobs.cancel first }
+          let running ← running.posted collaborators first
+          let dropped := (← stage.output.get).isEmpty && (← running.mailbox.size) == 0
+          let (second, running) ← running.startJob collaborators "poster"
+          let some second := second | return false
+          unless ← eventually (return (← running.mailbox.size) == 1) do
+            return false
+          let running ← running.posted collaborators second
+          let live := running.jobs.has second
+          running.show collaborators
+          let output ← stage.output.get
+          running.jobs.cancelAll
+          return dropped && live && output[0]? == some s!"job {second} poster: ok" &&
+              output.contains "text 0: \"p\"" },
     { name :=
         "a key's command starts a job with an argument: the host says it started, keys sent while the job sleeps are handled before its result, and once the clock lets it go its command runs after them, with the value the job computed in the text and in the scene's echo"
       run :=
@@ -4441,7 +4481,7 @@ def start (elaborator : Config.Elaborator Config.Elaborate.State) : IO Rig := do
         { elaborator, source := { chunks := chunks.get }, emit,
           services := { completions, timers := clock.timers }, published := ← Snapshots.new,
           held := ← Job.HeldSnapshots.new, requests := 1, wakeups := 2, jobs := 3,
-          environment := 4 }
+          environment := 4, posts := 5 }
   return { host, chunks, reported, others }
 
 /-- Makes `config` the source's chunks, asks for a reload, and returns the
@@ -4715,14 +4755,14 @@ def jobs (sysroot oleanDir : String) (samples : Nat) : IO UInt8 := do
   -- cancels its jobs, and the row is over when every pool thread is free.
   let row (job : String) (count : Nat) (going : IO Unit) : IO (Array Nat × Nat × Nat) := do
     -- Hosts follow one another on one queue: each has source ids of its own.
-    let requests ← ids.modifyGet fun next => (next, next + 4)
+    let requests ← ids.modifyGet fun next => (next, next + 5)
     reloads.set #[]
     let host ←
       Headless.start (scheme := TestScheme.scheme)
           { elaborator, source := { chunks := pure jobsConfig }, emit,
             services := { completions, timers := counted }, published := ← Snapshots.new,
             held := ← Job.HeldSnapshots.new, requests, wakeups := requests + 1,
-            jobs := requests + 2, environment := requests + 3 }
+            jobs := requests + 2, environment := requests + 3, posts := requests + 4 }
     try
       host.send .reload
       unless ← host.settle patience do
