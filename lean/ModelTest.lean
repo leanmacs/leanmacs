@@ -17195,6 +17195,31 @@ def stalenessChecks : List Check :=
             (steps.all fun step => (step.map (·.starts.isEmpty)).getD false) &&
               stepped.pending.isEmpty },
     { name :=
+        "the save criterion, with no check run: a save of a buffer whose file changed on disk writes nothing and says so, both with no check job registered and with the check the first edit started still unfinished; the file keeps the other program's bytes"
+      run :=
+        pure <|
+          match noteOpen, noteRewritten with
+          | some unchecked, some behind =>
+            -- No check job is registered here: the first edit starts none.
+            let changed := rewritten unchecked note reloadedBytes
+            let (saving, _) := fedTo changed ([.commit "x"] ++ presses "C-o w")
+            let refused := finishNamed saving Files.saveJob
+            -- The check the first edit starts is left unfinished.
+            let (pending, _) := fedTo behind [.commit "x"]
+            let (asked, _) := fedTo pending (exLine "w")
+            let held := finishNamed asked Files.saveJob
+            (pendingOf saving Files.checkJob).isNone && (pendingOf saving Files.saveJob).isSome &&
+              bytesOf refused note == some reloadedBytes &&
+              echoOf refused == some (Files.notSaved note (.changed (stampOf changed note))) &&
+              (pendingOf pending Files.checkJob).isSome &&
+              (pendingOf held Files.checkJob).isSome &&
+              (heldFile held).bind (·.changed) == none &&
+              (pendingOf asked Files.saveJob).isSome &&
+              bytesOf held note == some reloadedBytes &&
+              echoOf held == some (Files.notSaved note (.changed (stampOf behind note))) &&
+              textOf held == some ("x" ++ FileCases.noteText)
+          | _, _ => false },
+    { name :=
         "the mark's state requests: a result for another stamp changes nothing, one for the buffer's stamp marks it, one that finds that stamp clears it, telling sets told, and a save that wrote the file clears it"
       run :=
         pure <|
@@ -17344,6 +17369,28 @@ def autoReloadChecks : List Check :=
               (pendingOf twice Files.followJob).isNone &&
               !(startNames steps).contains Files.followJob &&
               later.openWatches == 1 },
+    { name :=
+        "a refused watch is said in words and says how to retry: the echo area has the refusal's sentence, not its constructor, and that auto-reload is off for the buffer until noautoread then autoread, which starts a follow again"
+      run :=
+        pure <|
+          -- No directory may be watched here, so the follow's watch is
+          -- refused.
+          match reloadDriver with
+          | none => false
+          | some fresh =>
+            let opened := finishNamed (fedTo fresh (presses "C-o n")).1 Files.loadJob
+            let (on, _) := fedTo opened (exLine "autoread")
+            let refused := finishNamed on Files.followJob
+            let (later, steps) := fedTo refused [.preedit ""]
+            let (off, _) := fedTo later (exLine "noautoread")
+            let (retried, _) := fedTo off (exLine "autoread")
+            let error : FileWatchError := .notFound s!"cannot watch {note}: {fileRoot} is not there"
+            (pendingOf on Files.followJob).isSome &&
+              echoOf refused == some (Files.notFollowing note error.describe) &&
+              (echoOf refused).map (·.endsWith Files.followRetry) == some true &&
+              !((echoOf refused).getD "").contains "FileWatchError" &&
+              !(startNames steps).contains Files.followJob &&
+              (pendingOf retried Files.followJob).isSome },
     { name :=
         "config's setting decides while no command has: under it the next step arms the watches, and noautoread then wins over it"
       run :=

@@ -901,9 +901,16 @@ def followCoalescing : FileWatch.Coalescing :=
 def autoReloadSays (on : Bool) : String :=
   if on then "auto-reload on" else "auto-reload off"
 
-/-- What the echo area says when the file at `path` could not be followed. -/
+/-- What a refused follow's message ends with: that auto-reload is off for
+the buffer, and how to try again. -/
+def followRetry : String :=
+  "auto-reload is off for this buffer; :noautoread then :autoread retries"
+
+/-- What the echo area says when the file at `path` could not be followed:
+why, as a sentence (`FileWatchError.describe`, `FileError.describe`), then
+`followRetry`. -/
 def notFollowing (path : System.FilePath) (detail : String) : String :=
-  s!"cannot follow {path}: {detail}"
+  s!"cannot follow {path}: {detail}; {followRetry}"
 
 /-- What a follow job is started with: the buffer, its file's path, the stamp
 the buffer recorded, which `markChanged` is guarded by, and the last stamp
@@ -989,7 +996,7 @@ def followWork (arguments : List Argument) : Work := fun _ => do
     FollowOrder.ofArguments? arguments | throw s!"{followJob}: its arguments are not a follow order"
   match ← FileWatch.start (.file order.path) followCoalescing with
   | .error error =>
-    return unfollowable order (repr error).pretty
+    return unfollowable order error.describe
   | .ok watch =>
     -- Each round is a stat, then a wait for a delivery; nothing else ends
     -- the job but a change, a refusal, or its cancel.
@@ -1004,7 +1011,7 @@ def followWork (arguments : List Argument) : Work := fun _ => do
             return followed order found
           match ← FileWatch.next watch with
           | .error error =>
-            return unfollowable order (repr error).pretty
+            return unfollowable order error.describe
           | .ok _ =>
             go rounds
     go 1000000
