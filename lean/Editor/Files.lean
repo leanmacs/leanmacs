@@ -776,4 +776,91 @@ def editCommand (call : Call) : EditorM Unit := do
     else if let .error refusal← prompt openPrompt { command := openName } then
       message (notAsking refusal)
 
+/-- The name the job that checks files for a change on disk is registered
+under. -/
+def checkJob : String :=
+  "check-files"
+
+/-- One file a check looks at: the buffer, its file's path, and the stamp the
+buffer recorded for it when the check was asked for. -/
+structure Checked where
+  /-- The buffer. -/
+  buffer : BufferId
+  /-- Its file's path. -/
+  path : System.FilePath
+  /-- The stamp the buffer recorded. -/
+  stamp : File.Stamp
+  deriving DecidableEq, Repr
+
+/-- The files of a check as the arguments a job is started with: for each,
+the buffer's number, the path and the stamp's seconds, nanoseconds and
+size. -/
+def checkArguments (files : Array Checked) : List Argument :=
+  files.toList.flatMap fun file =>
+    [.nat file.buffer.index, .str file.path.toString, .int file.stamp.seconds,
+      .nat file.stamp.nanoseconds, .nat file.stamp.size]
+
+/-- The files `arguments` are, if they are a check's (`checkArguments`). -/
+def checkOfArguments? : List Argument → Option (Array Checked)
+  | [] => some #[]
+  | .nat buffer :: .str path :: .int seconds :: .nat nanoseconds :: .nat size :: rest =>
+    (checkOfArguments? rest).map fun others =>
+      #[{ buffer := ⟨buffer⟩, path, stamp := { seconds, nanoseconds, size } }] ++ others
+  | _ => none
+
+/-- What the echo area says when the first edit of the buffer of `path` was
+refused because its file changed on disk: how to reload, and that the next
+edit keeps the buffer's text. -/
+def changedOnDisk (path : System.FilePath) : String :=
+  s!"{path} changed on disk; :e reloads it, or edit again to keep this text"
+
+/-- What the echo area says when the first edit of the buffer of `path` was
+refused because its file is gone: `:e` cannot reload a file that is not
+there, and `:w!` writes it again. -/
+def goneFromDisk (path : System.FilePath) : String :=
+  s!"{path} is gone from disk; :w! writes it again, or edit again to keep this text"
+
+/-- What the echo area says when a check found that the file of a buffer with
+unsaved changes, at `path`, changed on disk: the two resolutions. -/
+def changedUnderEdits (path : System.FilePath) : String :=
+  s!"{path} changed on disk; :e! takes the file's text, :w! writes yours over it"
+
+/-- What a stat's reply says of a file for the mark: its stamp, `none` for a
+file that is gone, or nothing to say, for any other refusal. -/
+def foundOf : Except FileError File.Stamp → Option (Option File.Stamp)
+  | .ok stamp => some (some stamp)
+  | .error .notFound => some none
+  | .error _ => none
+
+/-- The command a finished check hands the loop ("Files that changed on
+disk", `Editor/Loop.lean`). It is made of state requests alone, so it cannot
+be interrupted or rolled back. For each file the mark is set or cleared
+(`BufferId.markChanged`), told when the buffer is modified, since its text
+is not touched and the user is told here: the echo area says
+`changedUnderEdits` for the first such buffer newly found changed. A buffer
+that is unmodified is marked untold, so its next edit is refused once. -/
+def checked (results : Array (Checked × Except FileError File.Stamp)) : EditorM Unit := do
+  let mut said := false
+  for (file, reply) in results do
+    let some found := foundOf reply | continue
+    let state ← editorState
+    let some buffer := state.buffer? file.buffer | continue
+    let modified := buffer.isModified
+    let was := buffer.file.bind (·.changed)
+    discard <| file.buffer.markChanged file.stamp found modified
+    let fresh := found != some file.stamp && was.all (·.found != found)
+    if modified && fresh && !said && (buffer.file.map (·.stamp)) == some file.stamp then
+      message (changedUnderEdits file.path)
+      said := true
+
+/-- The check job: stats each file its order names, in turn, and finishes
+with what the replies become (`checked`). One stat a file, and no watch. -/
+def checkWork (arguments : List Argument) : Work := fun _ => do
+  let some files :=
+    checkOfArguments? arguments | throw s!"{checkJob}: its arguments are not files to check"
+  let mut results := #[]
+  for file in files do
+    results := results.push (file, ← File.stat file.path)
+  return checked results
+
 end Editor.Files

@@ -213,9 +213,14 @@ directly does, and so does any other program. What happens then (decided by
 the daily-driver floor's phase 5):
 
 - **Keep mine, and offer two explicit resolutions.** A buffer with unsaved
-  edits is never touched by a change on disk. A plain save of it is refused,
-  since the file is not the one the buffer loaded (`lean/Editor/File.lean`,
-  "A save says what it expects to find").
+  edits is never touched by a change on disk. The staleness check, one stat
+  as the window gains the focus, as the buffer is switched to and at its
+  first edit, marks it `[changed on disk]` in its status line and says the
+  two resolutions; a buffer with no unsaved edits has its first edit
+  refused once, naming `:e` (`lean/Editor/Loop.lean`, "Files that changed
+  on disk"). A plain save of it is refused, since the file is not the one
+  the buffer loaded (`lean/Editor/File.lean`, "A save says what it expects
+  to find").
 - **`:e!` takes theirs**: the file's text comes in as one edit, of origin
   `disk`, made from a line diff of the buffer and the file
   (`lean/Editor/Files.lean`, "Reload"), so `u` brings the buffer's own text

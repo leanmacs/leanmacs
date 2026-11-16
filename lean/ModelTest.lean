@@ -16033,10 +16033,14 @@ def fileCommandChecks : List Check :=
             let (asked, _) := fedTo driver (presses "C-o n")
             let (opened, _) := asked.finish 1
             let (saving, _) := fedTo opened ([.commit "x"] ++ presses "C-o w")
-            let (saved, _) := saving.finish 2
+            -- The first edit starts a check of the file too: the save is
+            -- found by its name.
+            let saveId := ((saving.pending.find? (·.name == Files.saveJob)).map (·.id)).getD 0
+            let (saved, _) := saving.finish saveId
             Files.commands.map (·.name) ==
                 #[Files.openName, Files.saveName, Files.editName, Files.reloadName] &&
-              Files.jobs.map (·.name) == #[Files.loadJob, Files.saveJob, Files.reloadJob] &&
+              Files.jobs.map (·.name) ==
+                #[Files.loadJob, Files.saveJob, Files.reloadJob, Files.checkJob] &&
               started steps == #[] &&
               bare.pending.isEmpty &&
               bare.loop.state.prompt.map (fun asking => (asking.label, asking.continuation)) ==
@@ -16880,7 +16884,7 @@ line, each under its name, and `undo` and `redo`, which move one step of the
 history of the buffer of the window they are called with. -/
 def reloadCommands : List (String × Dispatched) :=
   let compiled : List (String × Dispatched) :=
-    (Ex.commands ++ Minibuffer.commands ++ Files.commands).toList.filterMap
+    (Ex.commands ++ Minibuffer.commands ++ Files.commands ++ Buffers.commands).toList.filterMap
       fun (registration : Config.Registration) =>
       match registration.action with
       | .call run =>
@@ -16895,6 +16899,9 @@ def reloadCommands : List (String × Dispatched) :=
         return none),
       ("redo", fun call => do
         discard <| call.target.window.buffer.redo
+        return none),
+      ("type-x", fun call => do
+        Loop.insert call.target "x"
         return none)]
 
 /-- A driver of the reload checks: the commands of `reloadCommands`, every job
@@ -16906,7 +16913,8 @@ def reloadDriver : Option TestDriver :=
   let keys : Loop.Keys TestScheme.scheme :=
     {
       dispatchKeys
-        [("C-o n", opens (inFiles "note.txt")), ("C-o r", invoke Files.reloadName),
+        [("C-o n", opens (inFiles "note.txt")), ("C-o l", opens (inFiles "lf.txt")),
+          ("C-o x", invoke "type-x"), ("C-o r", invoke Files.reloadName),
           ("C-o R", { command := Files.reloadName, arguments := [.bool true] }),
           ("C-o u", invoke "undo"), ("C-o U", invoke "redo"), ("C-e e", invoke Ex.name),
           ("C-e y", invoke Minibuffer.acceptName)]
@@ -17055,6 +17063,148 @@ def fileReloadChecks : List Check :=
               echoOf noFile == some (Files.noReloadFile "scratch") &&
               (pendingOf noFile Files.reloadJob).isNone
           | _, _ => false }]
+
+/-- The status line's field that says a buffer's file changed on disk. -/
+def changedField : StatusField :=
+  { text := Loop.changedMark, face := Loop.changedFace }
+
+/-- `driver` once the file at `path` is gone. -/
+def removed (driver : TestDriver) (path : System.FilePath) : TestDriver :=
+  { driver with
+    jobs :=
+      { driver.jobs with
+        files :=
+          { driver.jobs.files with files := driver.jobs.files.files.filter (·.path != path) } } }
+
+/-- `driver` after the frame lost the keyboard focus and gained it again, and
+the check that started finished. -/
+def focusChecked (driver : TestDriver) : TestDriver :=
+  finishNamed (fedTo driver [.focus false, .focus true]).1 Files.checkJob
+
+/-- The checks of the staleness check (`Files.checkWork`, `Loop.fileJobs`,
+`Editor/Loop.lean`, "Files that changed on disk"), with auto-reload off, on
+the loop's driver over the editor's models and the model of files, with the
+commands and the jobs compiled code registers. -/
+def stalenessChecks : List Check :=
+  let textOf (driver : TestDriver) : Option String := (showing driver).bind (·.text)
+  let note := inFiles "note.txt"
+  [{  name :=
+        "criterion 5: the first edit to a buffer whose file changed is refused and the next lands: after a check started by the focus coming back, the first edit leaves the text, says the file changed and names :e, with no modified field, and the second edit lands"
+      run :=
+        pure <|
+          match noteRewritten with
+          | none => false
+          | some rewritten =>
+            let checked := focusChecked rewritten
+            let (refused, _) := fedTo checked (presses "C-o x")
+            let (landed, _) := fedTo refused (presses "C-o x")
+            textOf refused == some FileCases.noteText &&
+              echoOf refused == some (Files.changedOnDisk note) &&
+              statusOf refused == some (named "note.txt" ++ #[changedField]) &&
+              textOf landed == some ("x" ++ FileCases.noteText) &&
+              statusOf landed == some (namedModified "note.txt" ++ #[changedField]) },
+    { name :=
+        "a committed text after a change on disk is dropped the same way, and the next commit lands"
+      run :=
+        pure <|
+          match noteRewritten with
+          | none => false
+          | some rewritten =>
+            let (refused, _) := fedTo (focusChecked rewritten) [.commit "a"]
+            let (landed, _) := fedTo refused [.commit "b"]
+            textOf refused == some FileCases.noteText &&
+              echoOf refused == some (Files.changedOnDisk note) &&
+              textOf landed == some ("b" ++ FileCases.noteText) },
+    { name :=
+        "the first edit of an unmodified file buffer starts a check: the edit lands, and once the check is finished the buffer is marked and the echo area gives both resolutions"
+      run :=
+        pure <|
+          match noteRewritten with
+          | none => false
+          | some rewritten =>
+            let (edited, _) := fedTo rewritten (presses "C-o x")
+            let checked := finishNamed edited Files.checkJob
+            textOf edited == some ("x" ++ FileCases.noteText) &&
+              (pendingOf edited Files.checkJob).isSome &&
+              statusOf checked == some (namedModified "note.txt" ++ #[changedField]) &&
+              echoOf checked == some (Files.changedUnderEdits note) },
+    { name :=
+        "a file that is gone is marked: the first edit is refused saying :w! writes it again, and the next lands"
+      run :=
+        pure <|
+          match noteRewritten with
+          | none => false
+          | some rewritten =>
+            let checked := focusChecked (removed rewritten note)
+            let (refused, _) := fedTo checked (presses "C-o x")
+            let (landed, _) := fedTo refused (presses "C-o x")
+            ((heldFile checked).bind (·.changed)).map (·.found) == some none &&
+              echoOf refused == some (Files.goneFromDisk note) &&
+              textOf refused == some FileCases.noteText &&
+              textOf landed == some ("x" ++ FileCases.noteText) },
+    { name :=
+        "criterion 6: switching to a buffer whose file changed marks its status line and leaves its text; switching to one whose file did not change adds no field; and the focus coming back marks every changed buffer"
+      run :=
+        pure <|
+          match noteRewritten with
+          | none => false
+          | some rewritten =>
+            let (both, _) := fedTo rewritten (presses "C-o l")
+            let both := finishNamed both Files.loadJob
+            let (switched, _) := fedTo both (exLine "b note.txt")
+            let switched := finishNamed switched Files.checkJob
+            let (back, _) := fedTo switched (exLine "b lf.txt")
+            let back := finishNamed back Files.checkJob
+            let focused := focusChecked both
+            let noteOf (driver : TestDriver) : Option Bool :=
+              (driver.loop.state.buffer? ⟨1⟩).bind (·.file.map (·.changed.isSome))
+            let lfOf (driver : TestDriver) : Option Bool :=
+              (driver.loop.state.buffer? ⟨2⟩).bind (·.file.map (·.changed.isSome))
+            (showing switched).map (·.buffer.name) == some "note.txt" &&
+              statusOf switched == some (named "note.txt" ++ #[changedField]) &&
+              textOf switched == some FileCases.noteText &&
+              statusOf back == some (named "lf.txt") &&
+              noteOf focused == some true &&
+              lfOf focused == some false },
+    { name :=
+        "with no check job registered nothing is checked: the focus coming back and a first edit start nothing"
+      run :=
+        pure <|
+          match noteOpen with
+          | none => false
+          | some opened =>
+            let rewritten := rewritten opened (inFiles "note.txt") reloadedBytes
+            let (stepped, steps) := fedTo rewritten [.focus false, .focus true, .commit "x"]
+            (steps.all fun step => (step.map (·.starts.isEmpty)).getD false) &&
+              stepped.pending.isEmpty },
+    { name :=
+        "the mark's state requests: a result for another stamp changes nothing, one for the buffer's stamp marks it, one that finds that stamp clears it, telling sets told, and a save that wrote the file clears it"
+      run :=
+        pure <|
+          match noteRewritten with
+          | none => false
+          | some rewritten =>
+            let state := rewritten.loop.state
+            match (heldFile rewritten) with
+            | none => false
+            | some file =>
+              let other : File.Stamp := { file.stamp with size := file.stamp.size + 1 }
+              let changedOf (state : EditorState) :=
+                (state.buffer? ⟨1⟩).bind (·.file.bind (·.changed))
+              let (_, stale) := state.markChanged ⟨1⟩ other (some other) false
+              let (_, marked) := state.markChanged ⟨1⟩ file.stamp (some other) false
+              let (_, cleared) := marked.markChanged ⟨1⟩ file.stamp (some file.stamp) false
+              let (_, told) := marked.tellChanged ⟨1⟩
+              let (_, began) := told.beginSave ⟨1⟩ ⟨0⟩ ⟨0⟩
+              let (_, saved) := began.endSave ⟨1⟩ ⟨0⟩ (some other)
+              let text := ((state.buffer? ⟨1⟩).map (·.text)).getD ⟨0⟩
+              changedOf stale == none &&
+                changedOf marked == some { found := some other, told := false } &&
+                changedOf cleared == none &&
+                changedOf told == some { found := some other, told := true } &&
+                (marked.untold? text).isSome &&
+                (told.untold? text).isNone &&
+                changedOf saved == none }]
 
 /-- What a step of the buffer command checks is handed. The commands are the
 ones compiled code registers for files, the minibuffer, the buffers and the
@@ -22930,6 +23080,7 @@ def checks : List Check :=
     dispatchQuitChecks ++
     exChecks ++
     fileReloadChecks ++
+    stalenessChecks ++
     bufferCommandChecks ++
     evilRestChecks ++
     evilMotionChecks ++

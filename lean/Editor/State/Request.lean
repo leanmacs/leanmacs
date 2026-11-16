@@ -102,7 +102,10 @@ the models and against the library alike (`Editor/Command/Dispatch.lean`).
   `endSave` ends it with what the save answered: the stamp and the saved
   mark are set by that one request (`Editor/State.lean`, "A buffer's
   file"). The handler releases no snapshot: the loop does, once the
-  command that ended the save has run to its end.
+  command that ended the save has run to its end. What a check of the
+  file found is recorded by one request, `markChanged`, and that the user
+  was told of it by another, `tellChanged`, so the command a check finishes
+  with is made of state requests alone and cannot be interrupted.
 - **A command gives up by one request**, `giveUp`, with its reason
   (`giveUp`, `Editor/Api.lean`). It is the loop's to act on: the
   transformation that runs a command ends the command's program at this
@@ -188,6 +191,12 @@ inductive StateRequest where
   /-- End the save of the buffer `id` that writes `snapshot`: with the stamp
   of the file it wrote, or with `none` for a save that was refused. -/
   | endSave (id : BufferId) (snapshot : SnapshotId) (stamp : Option File.Stamp)
+  /-- Record what a check of the buffer `id`'s file found, if its stamp is
+  still `stamp`: the file's stamp now, or `none` for one that is gone, and
+  whether the user was told (`EditorState.markChanged`). -/
+  | markChanged (id : BufferId) (stamp : File.Stamp) (found : Option File.Stamp) (told : Bool)
+  /-- Mark the change on disk of the buffer `id`'s file as told. -/
+  | tellChanged (id : BufferId)
   /-- Open a prompt labelled `label`, whose answer the command of
   `continuation` receives: the minibuffer is a buffer over `text`, whose
   history is `history`, in a window with `scroll` and `selection` as its
@@ -253,6 +262,8 @@ abbrev StateRequest.Reply : StateRequest → Type
   | .attachFile .. => Except BufferRefusal Unit
   | .beginSave .. => Except BufferRefusal Unit
   | .endSave .. => Except BufferRefusal Unit
+  | .markChanged .. => Except BufferRefusal Unit
+  | .tellChanged _ => Except BufferRefusal Unit
   | .openPrompt .. => Except PromptRefusal ViewId
   | .closePrompt _ => Except PromptRefusal Unit
   | .setCandidates _ => Except PromptRefusal Unit
@@ -309,6 +320,8 @@ def handle : (request : StateRequest) → EditorState → request.Reply × Edito
   | .attachFile id path stamp ending, state => state.attachFile id path stamp ending
   | .beginSave id snapshot saved, state => state.beginSave id snapshot saved
   | .endSave id snapshot stamp, state => state.endSave id snapshot stamp
+  | .markChanged id stamp found told, state => state.markChanged id stamp found told
+  | .tellChanged id, state => state.tellChanged id
   | .openPrompt label continuation text history scroll selection, state =>
     state.openPrompt label continuation text history scroll selection
   | .closePrompt answer, state => state.closePrompt answer

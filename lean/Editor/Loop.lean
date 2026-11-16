@@ -533,11 +533,11 @@ is queued, and marks that event. What the loop does with the flag is here
 
 | Event | What it does to the state |
 |---|---|
-| `commit text` | Where the scheme reports that the focused view takes text (`InputScheme.Report.takesText`): replaces what each range of the focused window's selection covers with `text`, as one transaction with the user's origin. Elsewhere the text is dropped. Either way it clears the preedit |
+| `commit text` | Where the scheme reports that the focused view takes text (`InputScheme.Report.takesText`): replaces what each range of the focused window's selection covers with `text`, as one transaction with the user's origin. Elsewhere the text is dropped, and so is the first commit into a buffer whose file changed on disk unbeknown to the user ("Files that changed on disk"). Either way it clears the preedit |
 | `preedit text` | Sets the preedit to `text`; an empty one clears it |
 | `compositionDisabled` | Clears the preedit |
 | `resize` | Sets the frame's size and whether the window is in fullscreen (`Frame.fullscreen`); the views are laid out in it when the scene is made, and each then follows its cursor ("Following the cursor"). Its scale is not kept: the scene has no field for it |
-| `focus gained` | Sets whether the frame has the keyboard focus |
+| `focus gained` | Sets whether the frame has the keyboard focus. A gain starts a check of every file buffer after the publish ("Files that changed on disk") |
 | `closeRequested` | Runs the quit rule (`Ex.closeRequested`) as a delivered command is run (`Loop.deliver`), labelled `quit`: it publishes a scene, and says stop only once the editor leaves ("Quit") |
 | `quit` | Nothing: the step says stop, and publishes nothing |
 | `openFiles paths` | Runs `open-file` (`Files.openName`) with the paths as its arguments, as an invocation no key yielded (`Loop.invoke`), in the focused window: guarded, rolled back and published as every command is, and config's command of that name runs in its place. The open command opens the paths one after another, so the last path's buffer is shown last (`Editor/Files.lean`, "Open"). With no path it does nothing |
@@ -624,8 +624,59 @@ changed the state or not (`Loop.publish`):
 5. **Release** each snapshot the previous scene named that this one does
    not. So a scene's handles are alive while it is the last one published,
    and a real binding resolves them when it is published.
+6. **The checks of files** (`Loop.fileJobs`): the loop compares what the
+   state shows with what it saw at the last publish (`Loop.Seen`) and
+   starts one `check-files` for the files that are due ("Files that
+   changed on disk", below).
 
 Every edit the loop makes for an input event carries `Origin.user`.
+
+## Files that changed on disk
+
+The editor watches no file unless auto-reload is on, and it is off by
+default: what notices that another program changed a buffer's file is a
+check, one stat a file (`Files.checkWork`, `Editor/Files.lean`), which the
+loop asks for at three moments, and a save's own check.
+
+- **When.** After each publish, `Loop.fileJobs` compares the state with
+  `Loop.seen`, what the last publish saw (`Loop.seenOf`: whether the frame
+  had the focus, the buffers shown, modified and open). A file buffer with
+  no save in flight is due (`Loop.dueChecks`) when the frame gained the
+  keyboard focus, every one of them; when it is shown now, was open and no
+  view showed it, which covers a switch, a closed buffer's fallback and an
+  open of a path that is open; and when it is modified now, was open and
+  was not, its first edit. A buffer opened this step is not due: its stamp
+  is a moment old. All that are due go in one `check-files` start, handed
+  back with the step's other starts, and only where that job is
+  registered, so a host with no `Files.jobs` checks nothing.
+- **What the check does.** Its command (`Files.checked`) is made of state
+  requests alone, so it cannot be interrupted or rolled back: for each
+  file it records what the stat found (`BufferId.markChanged`), told when
+  the buffer is modified, and says `Files.changedUnderEdits` for the first
+  modified buffer newly found changed. A file that is gone is `found =
+  none`. Any other refusal of the stat is ignored.
+- **What it shows.** The status line has the field `Loop.changedMark`, in
+  the face `Loop.changedFace`, after the modified field, while the buffer
+  is marked. Nothing defines the face, so it draws as the rest of the line
+  does until a theme does.
+- **The first edit is refused.** A dispatched command whose next request
+  would edit the text of a marked buffer that was not told ends
+  `Guarded.superseded` (`Editor/Command/Dispatch.lean`). It is rolled back
+  as one that gave up is; then the told flag is set on the restored state,
+  so it survives the rollback, and the echo area reads
+  `Files.changedOnDisk`, which names `:e`, or for a file that is gone
+  `Files.goneFromDisk`, which names `:w!`, with no command name before it.
+  A committed text is dropped the same way (`handle`, `inserts`).
+- **The next edit lands**, since the user was told, as Emacs's supersession
+  check lets the next modification through. The mark stays, and a save is
+  still refused until `:w!` or `:e!`.
+- **The gap.** The check is a job, so the refusal acts on what the last
+  check found: a change made while nothing asked for a check is not refused
+  at the first edit, which lands and starts a check, whose result then
+  marks the buffer and says so. Emacs stats synchronously at the first
+  modification; the editor thread never blocks on I/O.
+
+Pinned by `ModelTest.stalenessChecks`.
 
 ## Decorations
 
@@ -819,6 +870,20 @@ structure Loop.Shown where
   snapshot : SnapshotId
   deriving DecidableEq, Repr
 
+/-- What the loop saw of the editor state at its last publish, which the
+next one compares its own with to know which files to check for a change
+on disk ("Files that changed on disk", in the module docs). -/
+structure Loop.Seen where
+  /-- Whether the frame had the keyboard focus. -/
+  focused : Bool := false
+  /-- The buffers a window showed. -/
+  shown : Array BufferId := #[]
+  /-- The buffers that were modified. -/
+  modified : Array BufferId := #[]
+  /-- The buffers that were open. -/
+  present : Array BufferId := #[]
+  deriving DecidableEq, Repr
+
 /-- The loop's own state, for a loop that runs the input scheme `scheme`:
 the editor state, the snapshots the last scene named, and the scheme's
 state.
@@ -838,6 +903,8 @@ structure Loop (scheme : InputScheme) where
   and no command had just failed. It is what the scheme goes back to when
   the invocation a key yields does not run to its end. -/
   atRest : scheme.State := scheme.init
+  /-- What the last publish saw of the editor state. -/
+  seen : Loop.Seen := {}
 
 /-- What the loop does after a step. -/
 inductive Loop.Next where
@@ -1004,12 +1071,26 @@ line. -/
 def chosenFace : FaceName :=
   ⟨"minibuffer.chosen"⟩
 
+/-- The face of the status line's field that says the buffer's file changed
+on disk. -/
+def changedFace : FaceName :=
+  ⟨"status.changed"⟩
+
+/-- What the status line's field that says the buffer's file changed on disk
+says. -/
+def changedMark : String :=
+  "[changed on disk]"
+
 /-- A buffer's fields of the status line of a view of it: the buffer's name,
-and, while the buffer is modified, the modified field after it. A buffer
-that is not modified has no such field, not an empty one. -/
+and, while the buffer is modified, the modified field after it; and then,
+while a check has found its file changed on disk, or gone, the changed
+field. A buffer that is not modified has no modified field, not an empty
+one, and one whose file has not changed no changed field. -/
 def status (buffer : Buffer) : Array StatusField :=
   #[{ text := buffer.name, face := nameFace }] ++
-    if buffer.isModified then #[{ text := modifiedMark, face := modifiedFace }] else #[]
+    (if buffer.isModified then #[{ text := modifiedMark, face := modifiedFace }] else #[]) ++
+    if (buffer.file.bind (·.changed)).isSome then #[{ text := changedMark, face := changedFace }]
+    else #[]
 
 /-- The fields of the minibuffer's status line for the prompt `asked`: its
 label, in `promptFace`, then one field for each candidate it has listed, in
@@ -1241,6 +1322,13 @@ and the cursors after, and places the selection at those cursors
 def insert (target : Target) (text : String) : TextM Unit :=
   target.replaceSelections text
 
+/-- What the echo area says when the first edit of the buffer of `path` was
+refused because its file changed on disk, or, with `found = none`, is
+gone. -/
+def supersededSays (path : System.FilePath) : Option File.Stamp → String
+  | some _ => Files.changedOnDisk path
+  | none => Files.goneFromDisk path
+
 /-- What `event` does to `state` ("What each event does", in the module
 docs), `report` being what the scheme says of the focused view: a committed
 text is inserted only where the report says the view takes text. -/
@@ -1256,16 +1344,28 @@ def handle (state : EditorState) (report : InputScheme.Report := {}) : Event →
   | .commit text => do
     let some target := state.focusedTarget? | return { state with preedit := none }
     if report.takesText then
+      -- The first edit after a change on disk the user was not told of is
+      -- dropped and said, as a command's is refused ("Files that changed on
+      -- disk", in the module docs).
+      if let some (buffer, path, found) := state.untold? target.buffer.text then
+        let (_, told) := state.tellChanged buffer
+        return { told with
+            echo := supersededSays path found, preedit := none }
       insert target text
     return { state with preedit := none }
   | _ => return state
 
 /-- The text `handle` inserts for `event` from `state`, `report` being what
 the scheme says of the focused view: a committed text, where there is a
-focused window and the report says its view takes text. None for any other
-event, and for a commit that is dropped. -/
+focused window, the report says its view takes text, and its buffer's file
+did not change on disk unbeknown to the user. None for any other event, and
+for a commit that is dropped. -/
 def inserts (state : EditorState) (report : InputScheme.Report) : Event → Option String
-  | .commit text => if report.takesText && state.focusedTarget?.isSome then some text else none
+  | .commit text =>
+    match state.focusedTarget? with
+    | some target =>
+      if report.takesText && (state.untold? target.buffer.text).isNone then some text else none
+    | none => none
   | _ => none
 
 /-- Whether the loop steps `event` through its scheme: a key press, a
@@ -1563,6 +1663,14 @@ def dispatch (keys : Keys scheme) (state : EditorState) (name : String)
     failed reason (.gaveUp reason)
   | .brokeOff reason =>
     stays (said left name reason) (.brokeOff reason) none
+  | .superseded buffer path found =>
+    -- Rolled back as a command that gave up is; the told flag is written
+    -- on the restored state, so it survives the rollback, and the echo
+    -- area has no command name before it.
+    let (state, _) ← kept.restore state left
+    let (_, state) := state.tellChanged buffer
+    let reason := supersededSays path found
+    return { state := { state with echo := reason }, ending := .gaveUp reason, log }
 
 /-- Runs `invocation`, which the keys `typed` yielded, from `state` ("Running
 an invocation", in the module docs): clears the echo area, looks the
@@ -1634,14 +1742,59 @@ def key (keys : Keys scheme) (loop : Loop scheme) (key : Key) : EditorM (Stepped
   else
     return ({ loop with input := loop.atRest } : Loop scheme).ranInto ran
 
+/-- What `state` shows the loop of itself, for the next publish to compare
+with ("Files that changed on disk", in the module docs). -/
+def seenOf (state : EditorState) : Seen :=
+  let present :=
+    (List.range state.buffers.size).filterMap fun index =>
+      (state.buffer? ⟨index⟩).map fun _ => (⟨index⟩ : BufferId)
+  { focused := state.frame.hasFocus
+    shown := state.windows.map (·.buffer)
+    modified := present.toArray.filter fun id => (state.buffer? id).any (·.isModified)
+    present := present.toArray }
+
+/-- The files of `state` that are due a check, `seen` being what the last
+publish saw ("Files that changed on disk", in the module docs): every file
+buffer with no save in flight, when the frame gained the keyboard focus;
+otherwise one shown now that was open and shown by no view then, and one
+modified now that was open and unmodified then. A buffer opened since is
+not due: its stamp is a moment old. -/
+def dueChecks (seen : Seen) (state : EditorState) : Array Files.Checked :=
+  let now := seenOf state
+  let gained := now.focused && !seen.focused
+  now.present.filterMap fun id => do
+    let buffer ← state.buffer? id
+    let file ← buffer.file
+    if file.saving.isSome then
+      none
+    let switched := now.shown.contains id && !seen.shown.contains id
+    let edited := now.modified.contains id && !seen.modified.contains id
+    if gained || (seen.present.contains id && (switched || edited)) then
+      some { buffer := id, path := file.path, stamp := file.stamp }
+    else
+      none
+
+/-- The loop after a publish, with what it saw kept, and the job it starts:
+one `check-files` holding every file that is due (`dueChecks`), where that
+job is registered, and nothing otherwise. -/
+def fileJobs (loop : Loop scheme) (keys : Keys scheme) : Loop scheme × Array JobStart :=
+  let due := dueChecks loop.seen loop.state
+  let starts :=
+    if keys.registered.jobs Files.checkJob && !due.isEmpty then
+      #[{ name := Files.checkJob, arguments := Files.checkArguments due }]
+    else #[]
+  ({ loop with seen := seenOf loop.state }, starts)
+
 /-- `stepped`, a step whose scene is not yet published, once it is
 (`publish`): its loop is the one the publish left, and it says stop when
 the editor then leaves (`nextOf`) and to go on otherwise. The scene comes
 first, so the scene of the step that says stop is the last one. -/
-def Stepped.published (stepped : Stepped scheme) : EditorM (Stepped scheme) := do
+def Stepped.published (keys : Keys scheme) (stepped : Stepped scheme) : EditorM (Stepped scheme) :=
+  do
   let loop ← stepped.loop.publish
+  let (loop, checks) := loop.fileJobs keys
   return { stepped with
-      loop, next := nextOf loop }
+      loop, next := nextOf loop, starts := stepped.starts ++ checks }
 
 /-- Hands the answer `invocation` carries, its first argument, to the input
 scheme, for the focused view (`InputScheme.answered`), and runs the
@@ -1660,13 +1813,13 @@ def answer (keys : Keys scheme) (loop : Loop scheme) (invocation : Invocation) :
   let focused := loop.state.frame.focused
   let (input, yielded) := scheme.answered focused text loop.input
   let some completed := yielded |
-    return ← ({ loop := { loop with input, atRest := input }, next := .continue } : Stepped scheme).published
+    return ← ({ loop := { loop with input, atRest := input }, next := .continue } : Stepped scheme).published keys
   let ran ← run keys loop.state completed [] (scheme.report input focused)
   let stepped :=
     if ran.finished then
       ({ loop with input, atRest := input } : Loop scheme).ranInto ran
     else ({ loop with input := loop.atRest } : Loop scheme).ranInto ran
-  stepped.published
+  stepped.published keys
 
 /-- Runs `invocation`, which no key yielded (`run`), and publishes a scene of
 the state after it: the echo area is cleared, the command is looked up, and
@@ -1678,7 +1831,7 @@ def invoke (keys : Keys scheme) (loop : Loop scheme) (invocation : Invocation) :
   if invocation.command == InputScheme.answerName then
     return ← loop.answer keys invocation
   let report := scheme.report loop.input loop.state.frame.focused
-  (loop.ranInto (← run keys loop.state invocation [] report)).published
+  (loop.ranInto (← run keys loop.state invocation [] report)).published keys
 
 /-- Runs the command registered under `name` as an invocation with no
 arguments that no key yielded (`invoke`), and publishes a scene of the
@@ -1699,7 +1852,7 @@ def deliver (keys : Keys scheme) (loop : Loop scheme) (label : String) (command 
     dispatch keys loop.state label do
         command
         return none
-  (loop.ranInto ran).published
+  (loop.ranInto ran).published keys
 
 /-- Handles `event` and publishes a scene of the state after it, and says
 whether to go on: stop, once the editor leaves ("Quit", in the module
@@ -1712,7 +1865,7 @@ refused: the publish puts a refusal of its own in the echo area too ("When
 publishing is refused", in the module docs). -/
 def step (keys : Keys scheme) (loop : Loop scheme) (event : Event) : EditorM (Stepped scheme) := do
   if let some pressed := stepped? event then
-    return ← (← loop.key keys pressed).published
+    return ← (← loop.key keys pressed).published keys
   match event with
   | .quit =>
     return { loop, next := .stop }
@@ -1740,10 +1893,10 @@ def step (keys : Keys scheme) (loop : Loop scheme) (event : Event) : EditorM (St
       match typed with
       | some text => scheme.committed focused text input
       | none => input
-    ({      loop :=
-              { loop with
-                state, input := told loop.input, atRest := told loop.atRest }
-            next := .continue } : Stepped scheme).published
+    ({        loop :=
+                { loop with
+                  state, input := told loop.input, atRest := told loop.atRest }
+              next := .continue } : Stepped scheme).published keys
 
 /-- Lowers the interrupt flag for an event taken off the queue when the
 library marked it as a press of the interrupt key (`interrupt`), and for no

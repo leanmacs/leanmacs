@@ -854,6 +854,19 @@ def endSave (id : BufferId) (snapshot : SnapshotId) (stamp : Option File.Stamp) 
     EditorM (Except BufferRefusal Unit) :=
   EditorState.ask (.endSave id snapshot stamp)
 
+/-- Records what a check of the buffer `id`'s file found, if its stamp is
+still `stamp` (`EditorState.markChanged`): the mark is cleared when `found` is
+`stamp`, and otherwise holds `found`, `none` for a file that is gone, told
+or not. Refused with `noSuchBuffer` for a buffer there is none of. -/
+def markChanged (id : BufferId) (stamp : File.Stamp) (found : Option File.Stamp) (told : Bool) :
+    EditorM (Except BufferRefusal Unit) :=
+  EditorState.ask (.markChanged id stamp found told)
+
+/-- Marks the change on disk of the buffer `id`'s file as told, so its next
+edit lands. Refused with `noSuchBuffer` for a buffer there is none of. -/
+def tellChanged (id : BufferId) : EditorM (Except BufferRefusal Unit) :=
+  EditorState.ask (.tellChanged id)
+
 /-- Replaces the bytes of the buffer `id`'s text from `start` up to, not
 including, `stop` with `s` (`TextId.replaceRange`). Refused with
 `noSuchBuffer` for a buffer there is none of; what the store refuses is

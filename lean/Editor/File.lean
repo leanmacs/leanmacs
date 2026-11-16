@@ -60,11 +60,13 @@ names a snapshot.
   order: `relativePath`, `notFound` for nothing there, `notAFile` for a
   directory. A stat after a load answers the load's stamp, and after a save
   the save's.
-- **What notices a change.** A save notices one when it is asked for, and a
-  stat when one is asked for; nothing watches a file. A rewrite within the
-  file system's timestamp granularity that keeps the size is seen by
-  neither: that is the library's limit, pinned there (`crates/editor-text`,
-  `file`).
+- **What notices a change.** A save notices one when it is asked for, and
+  the staleness check, one stat a file buffer, when the loop asks for one:
+  as the frame gains the focus, as a buffer is switched to, and at a
+  buffer's first edit (`Editor/Loop.lean`, "Files that changed on disk").
+  Nothing watches a file. A rewrite within the file system's timestamp
+  granularity that keeps the size is seen by neither: that is the
+  library's limit, pinned there (`crates/editor-text`, `file`).
 - **A save never leaves a half-written file**: the library writes a
   temporary file beside the file and renames it. A save into a directory
   that is not there is refused with `notFound`.

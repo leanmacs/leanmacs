@@ -806,7 +806,13 @@ transaction through. Where those come from is open.
   - the host starts each, for the owner that registered it, and the result
     comes back as above, through the queue's wake-up. Events queued before
     the wake-up are handled before it, by the queue's order, so a job's
-    result never lands in the middle of what the user typed meanwhile.
+    result never lands in the middle of what the user typed meanwhile;
+  - **the loop starts jobs of its own** too, handed back with the step's
+    the same way: after each publish it starts one `check-files` for the
+    file buffers that are due a check for a change on disk, as the frame
+    gains the focus, as a buffer is switched to and at a buffer's first edit
+    (`lean/Editor/Loop.lean`, "Files that changed on disk"), where that job
+    is registered. It is one stat a file, and no watch.
   
   An owner other than the registering one (a buffer or a view, whose jobs
   end with it) is not built. On the models the loop's driver

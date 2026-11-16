@@ -179,9 +179,23 @@ design driver").
 It is a pure transformation of the program, so it runs on the models as it
 runs against the library.
 
+## The first edit after a change on disk
+
+After the interrupt flag is asked, and before an insert, a delete, a
+transaction or an applied inverse of a text (`TextRequest.edited?`), the
+transformation looks the text up among the buffers: when its buffer's file
+changed on disk and the user was not told (`EditorState.untold?`,
+`Editor/State.lean`, "A buffer's file"), the program ends there, with
+`Guarded.superseded`, the edit not made. The loop rolls the command back,
+marks the change as told, and says so (`Editor/Loop.lean`, "Files that
+changed on disk"), so the next edit lands. An edit script
+(`TextId.applyScript`) is not looked at: a reload is never refused by it.
+Undo is an edit here too; the loop's own rollback is not dispatched.
+
 Pinned by `ModelTest.guardChecks` (the guard, on commands that make no
-state request), `ModelTest.dispatchStateChecks` and
-`ModelTest.modeEnterChecks`.
+state request), `ModelTest.dispatchStateChecks`,
+`ModelTest.modeEnterChecks` and, for the first edit after a change on disk,
+`ModelTest.stalenessChecks`.
 -/
 
 namespace Editor
@@ -200,7 +214,19 @@ inductive Guarded (α : Type) where
   /-- It broke off, with `reason`, and made no request after that one: what
   it did so far is to stay. -/
   | brokeOff (reason : String)
+  /-- It was about to edit the text of the buffer `buffer`, whose file at
+  `path` changed on disk and the user was not told: the edit was not made,
+  nor any request after it. `found` is the file's stamp now, `none` for a
+  file that is gone. -/
+  | superseded (buffer : BufferId) (path : System.FilePath) (found : Option File.Stamp)
   deriving BEq, Repr
+
+/-- The text a request edits, for the requests the first-edit refusal looks
+at: an insert, a delete, a transaction and an applied inverse. An edit
+script is not among them, so a reload is never refused by it. -/
+def TextRequest.edited? : TextRequest → Option TextId
+  | .insert text .. | .delete text .. | .apply text .. | .applyInverse text .. => some text
+  | _ => none
 
 /-- What the loop is told of the registry for the state requests that name
 something registered. A step is handed one, made from the registry as it
@@ -292,7 +318,17 @@ partial def Program.dispatched {α : Type} (registered : Loop.Registered) :
   | state, .step request next =>
     .step (.watch .interrupted) fun (raised : Bool) =>
       if raised then .done (.interrupted, state)
-      else .step request fun reply => dispatched registered state (next reply)
+      else
+        -- The first edit of a buffer whose file changed on disk, which the
+        -- user was not told of, is not made ("The first edit after a change
+        -- on disk", in the module docs).
+        let untold :=
+          match request with
+          | .text text => text.edited?.bind state.untold?
+          | _ => none
+        match untold with
+        | some (buffer, path, found) => .done (.superseded buffer path found, state)
+        | none => .step request fun reply => dispatched registered state (next reply)
 
 /-- `command` as the loop runs it from the editor state `state`: its state
 requests answered in place, and stopped at its next other request once the

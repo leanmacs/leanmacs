@@ -35,7 +35,10 @@ for the owner `compiled` when its loop starts, before any config
     line as the path, `e!` the same after `true`, and `w` and `w!` take
     nothing, so `save-buffer` is never handed a string it would ignore.
 - **`Files.jobs`**: `load-file` and `reload-file`, under the editor's limit
-  (`Files.limit`), and `save-file`. Each is started by its command with an order as its
+  (`Files.limit`), `save-file`, and `check-files`, which the loop itself
+  starts to check file buffers for a change on disk, one stat a file
+  (`Editor/Loop.lean`, "Files that changed on disk"): a host that is not
+  handed it checks nothing. Each is started by its command with an order as its
   arguments. They are compiled jobs, so a reload does not cancel one: a
   save that was started is ended.
 
@@ -61,6 +64,6 @@ owner `compiled`: the load job and the reload job, under the editor's limit,
 and the save job. -/
 def jobs : Array Config.JobRegistration :=
   #[{ name := loadJob, work := loadWork limit }, { name := saveJob, work := saveWork },
-    { name := reloadJob, work := reloadWork limit }]
+    { name := reloadJob, work := reloadWork limit }, { name := checkJob, work := checkWork }]
 
 end Editor.Files

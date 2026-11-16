@@ -378,8 +378,25 @@ buffers in that order.
   and `fileOpen`, with the buffer that holds it, for a path another buffer
   holds, so that `findFile` has one answer, as `nameTaken` gives
   `findBuffer` one. Attaching the path a buffer holds to that buffer again
-  replaces its stamp. It leaves the history: a buffer made over loaded
-  text has a new tree, which is saved at its root.
+  replaces its stamp, and clears the changed-on-disk mark. It leaves the
+  history: a buffer made over loaded text has a new tree, which is saved at
+  its root.
+- **A buffer keeps what a check found of its file** (`Buffer.File.changed`,
+  a `Buffer.Changed`): the file's stamp now, the last one found, or `none`
+  for a file that is gone, and whether the user was told. A check is one
+  stat, asked for by the loop (`Editor/Loop.lean`, "Files that changed on
+  disk"); nothing watches a file.
+  - `markChanged id stamp found told` records a check's result. `stamp` is
+    the stamp the buffer recorded when the stat was asked for, and the
+    request applies only while the buffer's stamp is still that one, so a
+    result a save or a reload has overtaken is dropped. It clears the mark
+    when `found = some stamp`; otherwise it sets it, in place of the
+    `found` of a buffer already marked, told when `told` is or when the
+    mark was already told of that same `found`.
+  - `tellChanged id` marks the user as told: an edit is refused only while
+    `told` is false (`untold?`, `Editor/Command/Dispatch.lean`, "The first
+    edit after a change on disk").
+  - `attachFile` and `endSave` with a stamp clear it.
 - `freeName` is a name no buffer has, for a new buffer that would be
   called `name`: the name itself, or the name followed by `<2>`, `<3>` and
   so on, the first that is free. Two files with one base name are two
@@ -527,6 +544,18 @@ structure Buffer.Saving where
   state : UndoTree.State
   deriving DecidableEq, Repr
 
+/-- What a check found of a buffer's file that is not the file the buffer
+holds: the file changed on disk ("A buffer's file", in the module docs). -/
+structure Buffer.Changed where
+  /-- The stamp the file has now, the last one found; `none` when the file
+  is gone. -/
+  found : Option File.Stamp
+  /-- Whether the user was told, by a refused first edit or by the echo
+  area of a check that found the buffer modified. An edit is refused only
+  while this is false. -/
+  told : Bool
+  deriving DecidableEq, Repr
+
 /-- The file a buffer shows: where it is, and what the next save of it
 expects to find there. -/
 structure Buffer.File where
@@ -537,6 +566,9 @@ structure Buffer.File where
   stamp : File.Stamp
   /-- The save of the buffer that is in flight, if one is. -/
   saving : Option Buffer.Saving := none
+  /-- The file changed on disk, if a check found so since the last load or
+  save; `none` otherwise. -/
+  changed : Option Buffer.Changed := none
   deriving DecidableEq, Repr
 
 /-- A buffer: a text and what the editor keeps about it. -/
@@ -1398,13 +1430,75 @@ def endSave (id : BufferId) (snapshot : SnapshotId) (stamp : Option File.Stamp)
                 file :=
                   some
                     { file with
-                      stamp, saving := none }
+                      stamp, saving := none, changed := none }
                 history := buffer.history.markSaved saving.state }
             | none => { buffer with file := some { file with saving := none } }
           -- A save that was refused wrote nothing: a quit that waited for
           -- it is withdrawn ("Quit", in the module docs).
           let state := if stamp.isNone then { state with quitting := false } else state
           changeBuffer id (fun _ => ((), ended)) state
+
+/-- Records what a check of the buffer `id`'s file found ("A buffer's file",
+in the module docs): `found` is the file's stamp now, `none` for a file that
+is gone, and `told` whether the user was told. It applies only while the
+buffer holds a file whose stamp is still `stamp`, the one recorded when the
+check was asked for, so a result a save or a reload has overtaken changes
+nothing. With `found = some stamp` the mark is cleared; otherwise the mark
+holds `found`, in place of what it held, and is told when `told` is, or when
+it was told already of that same `found`. Refused only with `noSuchBuffer`;
+a buffer with no file or another stamp is left as it is. -/
+def markChanged (id : BufferId) (stamp : File.Stamp) (found : Option File.Stamp) (told : Bool)
+    (state : EditorState) : Except BufferRefusal Unit × EditorState :=
+  match state.buffer? id with
+  | none => (.error (.noSuchBuffer id), state)
+  | some buffer =>
+    match buffer.file with
+    | some file =>
+      if file.stamp != stamp then (.ok (), state)
+      else
+        let changed : Option Buffer.Changed :=
+          if found == some stamp then none
+          else
+            let already := file.changed.any fun was => was.found == found && was.told
+            some { found, told := told || already }
+        changeBuffer id (fun buffer => ((), { buffer with file := some { file with changed } }))
+          state
+    | none => (.ok (), state)
+
+/-- Marks the change on disk of the buffer `id`'s file as told: the next edit
+lands ("A buffer's file", in the module docs). A buffer whose file is not
+marked is left as it is. Refused only with `noSuchBuffer`. -/
+def tellChanged (id : BufferId) (state : EditorState) : Except BufferRefusal Unit × EditorState :=
+  match state.buffer? id with
+  | none => (.error (.noSuchBuffer id), state)
+  | some buffer =>
+    match buffer.file with
+    | some file =>
+      match file.changed with
+      | some changed =>
+        changeBuffer id
+          (fun buffer =>
+            ((),
+              { buffer with
+                file := some { file with changed := some { changed with told := true } } }))
+          state
+      | none => (.ok (), state)
+    | none => (.ok (), state)
+
+/-- The buffer over the text `text` whose file changed on disk and the user
+was not yet told of it, with the file's path and what was found, `none` for
+a file that is gone: what refuses the first edit of that text. -/
+def untold? (state : EditorState) (text : TextId) :
+    Option (BufferId × System.FilePath × Option File.Stamp) :=
+  (List.range state.buffers.size).findSome? fun index =>
+    match state.buffer? ⟨index⟩ with
+    | some buffer =>
+      if buffer.text != text then none
+      else
+        match buffer.file with
+        | some { path, changed := some { found, told := false }, .. } => some (⟨index⟩, path, found)
+        | _ => none
+    | none => none
 
 /-- The register kept under `name`, if one was set under it. -/
 def register? (state : EditorState) (name : String) : Option Register :=

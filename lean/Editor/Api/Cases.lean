@@ -63,7 +63,7 @@ def Case.play (case : Case) : EditorM Bool := do
     return held
   | (.refused error, _) =>
     throw error
-  | (.interrupted, _) | (.gaveUp _, _) | (.brokeOff _, _) =>
+  | (.interrupted, _) | (.gaveUp _, _) | (.brokeOff _, _) | (.superseded .., _) =>
     return false
 
 /-- Whether `reply` is the refusal `refusal`. -/

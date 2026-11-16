@@ -1364,10 +1364,25 @@ fields the loop gives such a buffer's views (`Loop.status`). So a check that
 compares a host's whole output repeats neither the loop's faces and texts
 nor the host's form. The scratch buffer is the default: the loop's frame is
 made with it, and its name is the editor state's to choose. -/
-def statusOf (view : Nat := 0) (name : String := "scratch") (modified : Bool := false) : String :=
+def statusOf (view : Nat := 0) (name : String := "scratch") (modified : Bool := false)
+    (changed : Bool := false) : String :=
   let saved := UndoTree.new ⟨0⟩ 0
+  -- A file whose change on disk a check found: the status line's changed
+  -- field, whatever the file's path and stamps.
+  let file : Option Buffer.File :=
+    if changed then
+      some
+        { path := "", stamp := { seconds := 0, nanoseconds := 0, size := 0 }
+          changed := some { found := none, told := true } }
+    else none
   Headless.statusLine ⟨view⟩
-    (Loop.status { name, text := ⟨0⟩, history := if modified then saved.record 1 else saved })
+    (Loop.status { name, text := ⟨0⟩, history := if modified then saved.record 1 else saved, file })
+
+/-- Whether `output` has a line that says a job registered under `name`
+ended ok, whatever its id: the loop's own checks of files shift the ids of
+the jobs a command starts. -/
+def endedOk (output : Array String) (name : String) : Bool :=
+  output.any fun line => line.startsWith "job " && line.endsWith s!" {name}: ok"
 
 /-- A scene of one focused view, number 2, of the snapshot 5, 64 pixels
 across and 48 down in a frame 64 down: what `Headless.Running.agreement` is asked
@@ -3213,6 +3228,10 @@ def fileChecks (context : Context) : List Check :=
                 return false
               unless ← Event.post (.commit "x") do
                 return false
+              -- The commit was the buffer's first edit, which starts a check
+              -- of its file: its lines are printed before the scene is asked.
+              unless (← session.host.join patience) == .settled do
+                return false
               let (_, edited) ← session.viewsAndStatus
               let saved ← session.ran Files.saveName
               let (echo, lines) ← session.viewsAndStatus
@@ -3220,7 +3239,7 @@ def fileChecks (context : Context) : List Check :=
                   edited ==
                     #[viewLine ("x" ++ noteText) 1,
                       statusOf (name := "note.txt") (modified := true)] &&
-                  (← session.output.get).contains s!"job 2 {Files.saveJob}: ok" &&
+                  endedOk (← session.output.get) Files.saveJob &&
                   (← IO.FS.readBinFile path) == ("x" ++ noteText).toUTF8 &&
                   echo == (Files.wrote path).quote &&
                   lines == #[viewLine ("x" ++ noteText) 1, statusOf (name := "note.txt")] },
@@ -3279,10 +3298,13 @@ def fileChecks (context : Context) : List Check :=
                 return false
               let saved ← session.ran Files.saveName
               let (echo, lines) ← session.viewsAndStatus
+              -- The commit was the buffer's first edit, which starts a check:
+              -- it finds the file changed, so the status line has the
+              -- changed field too.
               return saved && (← IO.FS.readBinFile path) == other &&
                   lines ==
                     #[viewLine ("x" ++ noteText) 1,
-                      statusOf (name := "note.txt") (modified := true)] &&
+                      statusOf (name := "note.txt") (modified := true) (changed := true)] &&
                   echo == (Files.notSaved path (.changed (some found))).quote },
     { name :=
         "the open command on a path with no file: the echo area says the refusal, and the focused view still shows the buffer it showed, with its text, its cursor and its name"
@@ -3422,7 +3444,7 @@ def exScriptChecks (context : Context) : List Check :=
                   exLineDirectives "q" ++
                   [.request .show])
           return failure == none && (← IO.FS.readBinFile path) == ("x" ++ noteText).toUTF8 &&
-              output.contains s!"job 2 {Files.saveJob}: ok" &&
+              endedOk output Files.saveJob &&
               !listed output },
     { name :=
         "criterion 2 through the host: the same script with wq in place of w, the join and q, and a join after it: the script has no failure, the file holds the buffer's text, and the show line was not run"
@@ -3435,7 +3457,7 @@ def exScriptChecks (context : Context) : List Check :=
                 (exLineDirectives s!"e {path}" ++ [.join, .commit "x"] ++ exLineDirectives "wq" ++
                   [.join, .request .show])
           return failure == none && (← IO.FS.readBinFile path) == ("x" ++ noteText).toUTF8 &&
-              output.contains s!"job 2 {Files.saveJob}: ok" &&
+              endedOk output Files.saveJob &&
               !listed output },
     { name :=
         "a script whose q is refused, for a file's buffer that was edited, runs its later lines: the show line prints the commands, the script has no failure, and the file is as it was"
