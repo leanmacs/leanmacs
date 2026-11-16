@@ -825,9 +825,13 @@ reports the path it wrote).
 ### As built
 
 The log is built (decided 2026-11-13), in `editor-text`, and Lean reaches
-it through the text port. Layout and parsing do not exist yet, so Lean is
-its one consumer; nothing produces an origin yet either, and the reload
-from disk above is not built.
+it through the text port. Parsing is a consumer of it too (2026-11-16): a
+syntax session pulls the patch since the revision of the tree it last
+parsed together with the snapshot it reaches, under the document's lock
+(`editor_syntax::Source::latest`), and tells the tree the patch's edits
+before it reparses ([rust-library.md](rust-library.md), "Syntax, as
+built"). Nothing produces an origin yet, and the reload from disk above is
+not built.
 
 **An entry** is one applied transaction: the revision it produced, its
 origin, and its edits.
@@ -842,8 +846,11 @@ origin, and its edits.
   the two texts. The three are derived (`Edit::input_edit`), for edits fed
   to a parser in order: the start is the new start, and the old end is the
   new start moved on by the extent of the old range. This is checked
-  against the texts, not against tree-sitter, which is not a dependency
-  yet.
+  against the texts, and against tree-sitter by the syntax adapter's
+  contract (`editor_syntax::contract::INCREMENTAL`, run by
+  `editor-syntax-treesitter`'s `tests/contract.rs`): edits made through a
+  real text, its patches told to a tree in order and the text reparsed,
+  equal to a fresh parse.
 - The old points are read from the rope before the changes and the new ones
   from the rope after.
 

@@ -1167,6 +1167,151 @@ state the editor can draw itself.
   names to faces; query results as plain rows (for text objects, outlines,
   indentation, tags).
 
+### Syntax, as built
+
+Built by the syntax roadmap's phase 1 (2026-11-16): the port, the
+reparse off the editor thread, and the Lean interface with its model.
+Highlights, a mode's grammar and capture faces are the next phase's.
+
+**How grammars are loaded: compiled in.** Each grammar is a crates.io
+grammar crate, pinned exactly (`tree-sitter-rust` 0.24.2,
+`tree-sitter-json` 0.24.8, over `tree-sitter` 0.27.2), whose build compiles
+the generated `parser.c` (and the grammar's scanner, if it has one) with
+`cc` when Cargo builds the library; the objects end up in
+`libeditor_ffi.a`, which Lake links. Nothing is fetched, generated or
+loaded at run time. Set aside, and why:
+
+- **Native libraries** loaded with `dlopen`: a second build product for
+  each grammar and platform, a search path, a check of the ABI when one is
+  loaded and a failure at run time, and bundling into the app, for no gain
+  while the set of grammars is fixed when the library is built (a
+  non-goal of the roadmap is to download or build grammars at run time).
+- **WebAssembly grammars**, through tree-sitter's `wasm` feature: it brings
+  wasmtime, a JIT and hundreds of crates, and a `.wasm` build of each
+  grammar to make or fetch. Its sandbox protects against a grammar that is
+  not trusted; every grammar here is pinned and reviewed.
+- `tree-sitter-loader`, which finds and builds grammars at run time, and a
+  parser of our own.
+
+`deny.toml` bans `wasmtime` and `tree-sitter-loader` outright, and lets only
+the adapter depend on tree-sitter and the grammars. The grammars are Rust,
+for the editor's own language, and JSON, which the Lean model reproduces.
+
+**The port** (`crates/editor-syntax`, over `editor-text` alone) is
+`Syntax`: the grammars it has, a parser for one, a parse of a snapshot
+(handed an old tree that has been told every edit since, it reuses what the
+edits left alone), an edit told to a tree, a query compiled or refused as a
+value with its kind and offset, a query's capture names, its captures in or
+around a range, and a tree read as plain `Node`s in pre-order (kind, named,
+field, depth, range and points, error, missing). Two trees are equal when
+their nodes are. The tree, the parser and the query are the
+implementation's own types. `fake::Parens` is the published fake, a toy
+grammar of parens and atoms that reparses whole.
+
+**The contract** (`editor_syntax::contract::check`, over a `Corpus` of a
+grammar: texts, pieces random edits insert, a query and its names, bad
+queries with their kinds) holds every implementation to eight properties:
+the grammar listed and opening a parser; a whole tree (the root reaches
+the text's end, each node within its parent on positions with their points,
+siblings in order; the root may start after the blanks that lead the text,
+as tree-sitter's does); two fresh parses equal; the incremental reparse
+equal to a fresh parse; queries refused by kind; capture names in order; a
+range answering the whole text's captures that overlap it; and every
+capture naming one of the query's and being a node's range, in the core's
+order. Each property is seen to bite on an implementation written to break
+it. The fake passes it, and the adapter passes it for Rust and for JSON.
+
+- **Incremental equals fresh** is checked on named cases (an insert inside
+  a token, a delete across lines, everything deleted, an edit at offset 0
+  and at the end, a CRLF, multibyte text, one transaction of several
+  changes, several transactions pulled as one patch) and on a sweep of
+  random edit sequences from a fixed seed, each ended by its own inverse.
+  Every edit goes through a real `Text`, and the tree is told the log's own
+  patch, so this is where `Edit::input_edit` is held to tree-sitter.
+- **Error recovery is the exception.** Where the fresh parse has an error
+  or a missing node, the two trees may differ: how tree-sitter recovers
+  depends on what it reuses, and its own randomized tests compare only
+  texts without errors. Seen on 2026-11-16: 11 of some 6,700 reparses of
+  random edits of Rust differed, every one of a text with errors, and none
+  of JSON. There the reparsed tree must still be whole, and every sequence
+  ends in an exact comparison of a text without errors reparsed from a
+  tree with them.
+
+**What a range answers** is the core's rule (`query::captures_in`), so the
+model and every implementation answer alike: the captures whose node
+shares a byte with the range, or, when the node or the range is empty,
+starts within it, its ends included; each once; by start, the longer
+first, then by pattern, then by capture. A range that is not two positions
+in order is refused. The port is asked about the range widened by a byte on
+each side: tree-sitter leaves out a node that only touches an end of its
+byte range, and answers nothing of an empty one.
+
+**A session and the worker.** A `Session` is one text's parse state: its
+grammar and parser, its `Source`, its consumers, the last tree parsed (the
+base, delivered or not) and the newest revision it has been told of.
+
+1. A round asks the source for the text as it is now and the patch since
+   the base's revision, taken together under the document's lock
+   (`Source::latest`, which `editor_ffi::snapshot::Source` implements over
+   a snapshot's weak hold on its document's text). A text gone ends the
+   session; one at the base's revision needs nothing.
+2. With a base and a patch that chains from it, a clone of the base tree is
+   told each edit of the patch, in order, and the text reparsed with it;
+   otherwise (the first parse, a log that has forgotten the base's
+   revision, a patch that does not chain) it is parsed whole. The bytes go
+   from the snapshot's chunks to the parser; parsing never passes through
+   Lean.
+3. **The delivery rule.** The result is the new base. It is delivered only
+   if its revision is at least the newest the session has been told of;
+   delivering moves that revision to the result's, keeps the result and
+   hands it to each consumer. A result older than a revision the session
+   has been told of is stale: nobody sees it, and the session is queued
+   again. So the revisions delivered only grow.
+
+The `Worker` holds a queue of sessions, each in it at most once; a touch
+tells a session of a revision and queues it, and the worker takes one out
+before its round, so a touch during a round queues it again. Its loop
+blocks with no deadline while the queue is empty. The crate starts no
+thread.
+
+**Locks.** A round holds the session's work lock (its parser and base),
+which only the worker takes, and no other lock while it parses: it takes
+the document's lock only inside `Source::latest`, and the session's state
+lock only to deliver. A touch takes the registry's lock, then the
+session's state lock, then the worker's queue lock, each let go before the
+next where it can, and never the document's: the edit paths touch once the
+edit is made and the document's lock let go. There is no cycle. A consumer
+is called under the session's state lock and must not call back into it.
+
+**In `editor-ffi`** the syntax service is one process-wide registry of the
+attached documents by key, the tree-sitter adapter, and one worker thread
+named `syntax`, started at the first attach. Every edit path of a document
+(a replace, a transaction, an inverse) touches it, and freeing a document
+detaches it. A question of captures is answered at once from the tree the
+document's session last delivered, if that tree is of the snapshot's
+revision, and is otherwise refused as not parsed: the editor thread never
+waits for a parse. The wiring tests run on the process's registry, which
+the edit paths reach; keys are given out once in the process, so tests in
+parallel never share a session.
+
+**In Lean**, `Editor.SyntaxTree` is a port of its own: the grammars,
+attaching a text to a grammar, a query compiled, its capture names and its
+captures in a range, each refusal a value. Its model knows JSON alone: a
+pure parser of a subset of JSON (no escapes, no comments) that builds the
+tree `tree-sitter-json` builds, and a subset of the query language that
+refuses quantifiers, alternations, anchors, negated fields, predicates and
+groupings as unsupported. One contract, whose exact cases are the
+library's answers, holds the model and the real binding to the same
+properties. Making it a sub-port of the editor's port is the next phase's.
+
+**Open questions:**
+
+- Cancelling a parse a newer revision has overtaken, with tree-sitter's
+  progress callback: a stale parse runs to its end today, and only its
+  delivery is withheld.
+- A pool of workers, where one thread parses every document in turn.
+- A job's wait for a parse, in place of the test-only settle.
+
 ## Built in Lean on these services
 
 These were core services in the first design, when the core was Rust. With

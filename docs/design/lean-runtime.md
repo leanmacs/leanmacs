@@ -929,6 +929,10 @@ editor state's buffers and windows through one port, whose shape is:
 | Its pure model, with no state: a subsequence test, and the candidates that are the pattern first | `lean/Editor/Fuzzy/Model.lean` |
 | Its contract, imported from the port alone, run against the model by `lake test` and against the real binding by `contract-test` | `lean/Editor/Fuzzy/Contract.lean` |
 | Its real binding: one call into the library | `lean/Editor/Fuzzy/Real.lean` |
+| The syntax tree port, standalone for now and not yet a sub-port of the editor's (the syntax roadmap's next phase makes it one, by the recipe above, when a major mode chooses its grammar): the grammars, attaching a text to a grammar, a query compiled, its capture names and its captures in a range, each refusal a value; `SyntaxTreeHandler`. Named `SyntaxTree`, since `Syntax` is `Lean.Syntax` wherever `Lean` is open and `Grammar` an input scheme's | `lean/Editor/SyntaxTree.lean` |
+| Its pure model: one grammar, a parser of a subset of JSON that builds the tree `tree-sitter-json` builds, a subset of the query language, and the Rust core's rule for a range; it parses at once, so it never answers `notParsed` | `lean/Editor/SyntaxTree/Model.lean`, `Model/Json.lean`, `Model/Query.lean` |
+| Its contract, imported from the port alone, run against the model by `lake test` and against the real binding by `contract-test`, whose runner waits for a snapshot's tree to be delivered before each question of captures | `lean/Editor/SyntaxTree/Contract.lean` |
+| Its real binding: one call into the library a request, over the read half of the text binding's table of snapshots and a table of its own of the queries it compiled | `lean/Editor/SyntaxTree/Real.lean` |
 | The clipboard port: its two requests, each refused as a value; `ClipboardHandler`; `Clipboard.unavailable` | `lean/Editor/Clipboard.lean` |
 | Its pure model: the text held, and a clipboard a test takes away | `lean/Editor/Clipboard/Model.lean` |
 | Its contract, imported from the port alone, run against the model by `lake test` and against the in-process clipboard by `contract-test` | `lean/Editor/Clipboard/Contract.lean` |

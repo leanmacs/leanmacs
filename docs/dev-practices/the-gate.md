@@ -189,6 +189,25 @@ adapter depends on the library. It checks no licence: the library's is
 MPL-2.0, and whether that is acceptable in this workspace is the owner's
 to confirm.
 
+Syntax trees are tested there too. The core (`crates/editor-syntax`)
+reaches a parser only through the `Syntax` port it defines, and is tested
+on the port's published fake, a toy grammar of parens: the rule for what a
+query answers of a range, on syntaxes that answer out of order, twice and
+as tree-sitter does at a range's ends; a session's round, the delivery
+rule and its stale results, on a recording mock, single-threaded; and the
+worker stepped by hand and, in `tests/worker.rs`, on a real thread while
+another edits and touches, with every wait bounded. The port's contract is
+tested on the fake and on implementations written to break each of its
+eight properties. The real adapter, over tree-sitter with the Rust and
+JSON grammars compiled in (`crates/editor-syntax-treesitter`), is held to
+that contract for each grammar, over fixtures under `tests/syntax/`: among
+it, that a tree told the edit log's patches and reparsed equals a fresh
+parse, on named cases and on a sweep of random edits from a fixed seed.
+`crates/editor-ffi/tests/syntax.rs` runs the syntax service on real
+documents through their edit paths and the C functions. `mise run deny`
+holds that only the adapter depends on tree-sitter and its grammars, and
+bans `wasmtime` and `tree-sitter-loader`.
+
 Child processes are tested there too. The service that runs a command
 to its end, cancels it and shuts down (`crates/editor-process`) reaches
 processes only through the `Processes` port it defines, and its tests run
@@ -494,6 +513,15 @@ checks:
   first. **The model and the binding are not held to agree on the order
   past the exact matches**, so every check above the port computes what
   it expects with the model.
+  The syntax tree interface's contract
+  (`lean/Editor/SyntaxTree/Contract.lean`) runs on its model here
+  (`syntaxTreeFailures`), and `contract-test` runs it on its real binding:
+  the grammars, refusals, capture names, a table of exact cases that are
+  the library's answers, and the range rule. `syntaxTreeChecks` are what
+  only the model shows: its JSON tree node by node, its `ERROR` answer
+  outside the subset, what its query subset refuses as unsupported, and
+  the contract seen to report a model that answers a range with the whole
+  text.
   `textModelStepChecks` hold a premise of the theorem about undo where it
   is not proved: every live text of the model is in step after each
   request of a sample sequence.
@@ -915,7 +943,16 @@ fuzzy matching interface's contract against its real binding
 (`lean/Editor/Fuzzy/Real.lean`), so against the library's matcher, and
 checks that a command run against the library that asks for a ranking is
 answered by it. `ffi-test`'s own `fuzzyChecks` pin that a pattern, a list
-of strings and the ranking cross the boundary.
+of strings and the ranking cross the boundary. It runs the syntax tree
+interface's contract against its real binding
+(`lean/Editor/SyntaxTree/Real.lean`), over the library's syntax service,
+waiting with a bound for each snapshot's tree before a question of its
+captures, and checks what only the library shows: its Rust grammar, a Rust
+function's name captured, a query of one grammar asked of a text parsed
+with another, and a text edited through its document reparsed.
+`ffi-test`'s own `syntaxChecks` pin that a list of strings out, a query
+handle with its refusals, and captures with each of their refusals cross
+the boundary, and that a file's loaded text is of no document.
 
 `config-test` (`lean/ConfigTest.lean`) is linked like the editor, with
 Lean's elaborator, and is given the toolchain's directory and the package's
