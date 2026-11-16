@@ -26983,8 +26983,12 @@ def withScript (driver : TestDriver) (script : Process.Script) : TestDriver :=
 and `C-e y`, the ex line and its accept key (`exLine`); `C-e g` runs the
 interrupt command, as `C-g` does under the Vim scheme; `C-e k` gives the
 window's buffer a workspace registered as reachable through `kube`, which
-cannot run commands; `C-e u` undoes in the window's buffer; and `C-o s`
-and `C-o t` open `/r/src/s.txt` and `/r/src/t.txt`. -/
+cannot run commands; `C-e u` undoes in the window's buffer; `C-e o` makes
+a buffer `*shell output: r@main*` that the shell did not make; `C-e s`
+splits the window and focuses the new one, and `C-e c` closes the window;
+`C-e x` shows a new buffer `elsewhere` in the window and removes the buffer
+it showed; and `C-o s` and `C-o t` open `/r/src/s.txt` and
+`/r/src/t.txt`. -/
 def shellKeys : Loop.Keys TestScheme.scheme :=
   let compiled : List (String × Dispatched) :=
     (Ex.commands ++ Minibuffer.commands ++ Shell.commands).toList.filterMap fun registration =>
@@ -26998,7 +27002,8 @@ def shellKeys : Loop.Keys TestScheme.scheme :=
   dispatchKeys
     (workspaceBindings ++
       [("C-e e", invoke Ex.name), ("C-e y", invoke Minibuffer.acceptName), ("C-e k", invoke "kube"),
-        ("C-e g", invoke Shell.interruptName), ("C-e u", invoke "undo"),
+        ("C-e g", invoke Shell.interruptName), ("C-e u", invoke "undo"), ("C-e o", invoke "squat"),
+        ("C-e s", invoke "split"), ("C-e c", invoke "close"), ("C-e x", invoke "drop"),
         ("C-o s", opens "/r/src/s.txt"), ("C-o t", opens "/r/src/t.txt")])
     (workspaceCommands ++ compiled ++
       [("kube", fun call => do
@@ -27008,6 +27013,22 @@ def shellKeys : Loop.Keys TestScheme.scheme :=
           return none),
         ("undo", fun call => do
           discard <| call.target.window.buffer.undo
+          return none),
+        ("squat", fun (_ : Call) => do
+          discard <| createBuffer "*shell output: r@main*"
+          return none),
+        ("split", fun call => do
+          if let .ok made← call.target.window.id.split .rows then
+            discard <| made.focus
+          return none),
+        ("close", fun call => do
+          discard <| call.target.window.id.close
+          return none),
+        ("drop", fun call => do
+          let window := call.target.window
+          if let .ok elsewhere← createBuffer "elsewhere" then
+            discard <| window.id.show elsewhere
+            discard <| window.buffer.remove
           return none)])
 
 /-- A driver of the shell checks: the workspace driver's world, with the
@@ -27108,6 +27129,59 @@ def shellChecks : List Check :=
               (showing second).map (·.id) == id &&
               namedText second "*shell output: r@main*" == some "again\nand again\n[exit 0]\n" &&
               outputBuffers second == #["*shell output: r@main*"] },
+    { name :=
+        "a run after the kept output buffer was removed makes a new one, holding the new run's output, and the workspace keeps the new one's number"
+      run :=
+        pure <|
+          match shellDriver with
+          | none => false
+          | some driver =>
+            let first := shellRan (settledAfter driver "C-o a") "!build"
+            let removed := settledAfter first "C-e x"
+            let second := shellRan (settledAfter removed "C-o a") "!rebuild"
+            let state := second.loop.state
+            match first.loop.state.findBuffer "*shell output: r@main*",
+              state.findBuffer "*shell output: r@main*" with
+            | some old, some made =>
+              (removed.loop.state.buffer? old).isNone && made != old &&
+                bufferText second made == some "again\nand again\n[exit 0]\n" &&
+                (showing second).map (·.id) == some made &&
+                Shell.scopedValue state Shell.outputStore main == some made.index &&
+                (state.workspaceOf? made).map (·.1.location) == some (.local "/r")
+            | _, _ => false },
+    { name :=
+        "with a buffer the shell did not make holding the output buffer's name, a run makes `*shell output: r@main*<2>`, and leaves that buffer alone"
+      run :=
+        pure <|
+          match shellDriver with
+          | none => false
+          | some driver =>
+            let squatted := settledAfter (settledAfter driver "C-o a") "C-e o"
+            let ran := shellRan squatted "!build"
+            let state := ran.loop.state
+            match state.findBuffer "*shell output: r@main*<2>" with
+            | some made =>
+              bufferText ran made == some "l1\nl2\nwarn\n[exit 2]\n" &&
+                namedText ran "*shell output: r@main*" == some "" &&
+                (showing ran).map (·.id) == some made &&
+                Shell.scopedValue state Shell.outputStore main == some made.index
+            | none => false },
+    { name := "output asked for from a view closed before the run ends is shown in the focused view"
+      run :=
+        pure <|
+          match shellDriver with
+          | none => false
+          | some driver =>
+            let split := settledAfter (settledAfter driver "C-o a") "C-e s"
+            let asked := (fedTo split (exLine "!build")).1
+            let closed := (fedTo asked (presses "C-e c")).1
+            let finished := asked.pending.foldl (fun driver job => (driver.finish job.id).1) closed
+            let state := finished.loop.state
+            split.loop.state.frame.focused != (⟨0⟩ : ViewId) && asked.pending.size == 1 &&
+              (state.window? split.loop.state.frame.focused).isNone &&
+              state.frame.focused == ⟨0⟩ &&
+              (showing finished).map (·.buffer.name) == some "*shell output: r@main*" &&
+              (showing finished).bind (·.text) == some "l1\nl2\nwarn\n[exit 2]\n" },
     { name :=
         "criterion 7: in a buffer with no workspace, long output goes to `*shell output*` and the line to the editor-wide history; the project's history is left as it was"
       run :=
