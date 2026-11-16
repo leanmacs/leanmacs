@@ -1,0 +1,7 @@
+{
+  "name": "leanmacs",
+  "version": 1,
+  "tags": ["editor", "lean", "rust"],
+  "nested": {"empty": {}, "list": [], "flag": true, "nothing": null},
+  "number": -12.5e3
+}
