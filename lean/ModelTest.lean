@@ -1108,6 +1108,41 @@ def processChecks : List Check :=
           | .error _ => false
         return notTooLong && afterWaiting.killed.isEmpty && whole && afterLast.killed.isEmpty &&
             afterLast.children.isEmpty },
+    -- Seen to bite once by hand, on 2026-11-15: with the filter of
+    -- `Handle.children` after a last delivery taken out of `answer`, the
+    -- later read, write and close reach the fake, and the check fails.
+    { name :=
+        "after a child's last delivery the runner forgets it: a later read, write or close is noSuchProcess, answered without a request to the process service"
+      run := do
+        let script : Process.StreamScript :=
+          { command := sleeper, steps := #[.write .out "a\n".toUTF8] }
+        let (rig, processes) ← Rig.withProcesses { streams := #[script] }
+        let noSuchProcess {α : Type} : Except ProcessError α → Bool
+          | .error .noSuchProcess => true
+          | _ => false
+        let spawned ←
+          rig.spawn
+              (reporting fun _ => do
+                let child ← JobContract.started sleeper (JobContract.lines 64)
+                let all ← JobContract.toTheEnd child
+                let read ← Process.read child
+                let write ← Process.write child "late".toUTF8
+                let close ← Process.closeInput child
+                return JobContract.linesOf all .out == JobContract.linesFrom ["a"] &&
+                    JobContract.endOf all == some (.exited (.code 0)) &&
+                    noSuchProcess read &&
+                    noSuchProcess write &&
+                    noSuchProcess close)
+        let finished ← spawned.endedAs (.finished #["true"])
+        let kinds :=
+          (← processes.started).map fun (_, request) =>
+            match request with
+            | .start _ _ => "start"
+            | .read _ => "read"
+            | .write _ _ => "write"
+            | .closeInput _ => "closeInput"
+            | .run _ _ => "run"
+        return finished && kinds == #["start", "read"] && (← processes.withdrawn).isEmpty },
     -- Seen to bite once by hand, on 2026-11-15: with `Handle.endChildren`
     -- taken out of `Handle.conclude`, this check and the next fail.
     { name :=
