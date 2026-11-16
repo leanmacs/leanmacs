@@ -214,12 +214,13 @@ job reads as it comes and whose standard input it writes to (phase 2;
   it does every run. The contract holds the port's input to three more
   properties (a write reaches `/bin/cat` byte for byte, a write to an input
   the child closed is `InputClosed`, a child spawned with no input has
-  none to take) and the service to eight more, 25 in all, on real processes: lines
-  as they are written and a line written echoed back, bytes, 20,000 lines
-  in order at a bound of 256, one completion for 10,000 lines, a child held
-  at a bound of 4,096 that cannot finish until it is read, a line too long,
-  a cancel of a held child and its grandchild, and shutdown of a held child
-  and one waiting for input. In Lean, `Process.start`, `read`, `write`,
+  none to take) and the service to nine more, 26 in all, on real
+  processes: lines as they are written and a line written echoed back,
+  bytes, 20,000 lines in order at a bound of 256, one completion for
+  10,000 lines, a child held at a bound of 4,096 that cannot finish until
+  it is read, a line too long, a last line exactly the bound long delivered
+  whole and one a byte longer too long, a cancel of a held child and its
+  grandchild, and shutdown of a held child and one waiting for input. In Lean, `Process.start`, `read`, `write`,
   `writeLine` and `closeInput` are requests of the job port; a child is
   named for the job that started it, and the runner cancels every child a
   job still holds when the job ends.
