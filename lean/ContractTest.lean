@@ -542,17 +542,22 @@ def fileWatchChecks (services : Job.Services) : List Check :=
               -- string. So the shell that made it removes it.
               discard <| Process.run (JobContract.sh directory "rm -f \"$(printf '\\377')\"") 1000
               return told
-            | _ =>
+            | made =>
               -- The volume refuses the name (APFS does): there is nothing
-              -- to deliver. The job leaves a marker, and the check says so
-              -- on stderr.
-              discard <| Process.run (JobContract.sh directory ": > refused") 1000
+              -- to deliver. The job leaves a marker saying why, and the
+              -- check says so on stderr.
+              let why :=
+                match made with
+                | .ok ran => s!"{repr ran.exit}: {String.fromUTF8! ran.stderr}"
+                | .error error => error.describe
+              discard <|
+                  Process.run (JobContract.sh directory s!"printf '%s' '{why}' > refused") 1000
               return true
           let outcome ← runOnTimers services job
           if outcome == .finished true then
             if ← (directory / "refused").pathExists then
               IO.eprintln
-                  "contract-test: the volume refuses a name that is not UTF-8, so the change of one was not checked here"
+                  s!"contract-test: the volume refuses a name that is not UTF-8, so the change of one was not checked here ({← IO.FS.readFile (directory / "refused")})"
           return outcome == .finished true
         finally
           IO.FS.removeDirAll directory }]
