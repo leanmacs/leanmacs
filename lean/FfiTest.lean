@@ -2844,14 +2844,17 @@ theme-references`); without, it compares the scene's picture with that
 file within `pictureTolerance`, runs `roleChecks`, and guards that each
 reference is the scene's size and at most `largestReference` bytes, and
 that the light picture does not match the dark reference. Exits 0 after a
-line naming what held, or 1 after `FAILED:` lines. -/
-def themePicturesScenario (dir font : String) (write : Bool) : IO UInt8 := do
+line naming what held, or 1 after `FAILED:` lines, in either mode.
+`variants`, the themes it draws, are `solarizedRoles` except in its own
+check (`themePicturesChecks`). -/
+def themePicturesScenario (dir font : String) (write : Bool)
+    (variants : List ThemeRoles := solarizedRoles) : IO UInt8 := do
   let source ← IO.FS.readFile (System.FilePath.mk dir / "source.lean")
   let fontBytes ← IO.FS.readBinFile font
   let mut failed : List String := []
   let mut scenes : List (String × Editor.Ffi.Picture) := []
   let mut references : List (String × Editor.Ffi.Picture) := []
-  for roles in solarizedRoles do
+  for roles in variants do
     let some named := Editor.Themes.shipped.find? (·.name == roles.name)
       | failed := failed ++ [s!"no shipped theme is named {roles.name}"]
     let pictures ← themePictures fontBytes named.theme source
@@ -2882,21 +2885,42 @@ def themePicturesScenario (dir font : String) (write : Bool) : IO UInt8 := do
     | none =>
       failed := failed ++ [s!"the picture of {roles.name} is not the size of {path}"]
     failed := failed ++ roleChecks roles pictures
-  if write then
-    return if failed.isEmpty then 0 else 1
-  match scenes.lookup "solarized-light", references.lookup "solarized-dark" with
-  | some light, some dark =>
-    unless (difference light dark).any (·.1 > pictureTolerance) do
-      failed := failed ++ ["the light picture matches the dark reference"]
-  | _, _ =>
-    failed := failed ++ ["there is no light picture and dark reference to tell apart"]
+  unless write do
+    match scenes.lookup "solarized-light", references.lookup "solarized-dark" with
+    | some light, some dark =>
+      unless (difference light dark).any (·.1 > pictureTolerance) do
+        failed := failed ++ ["the light picture matches the dark reference"]
+    | _, _ =>
+      failed := failed ++ ["there is no light picture and dark reference to tell apart"]
   for name in failed do
     IO.eprintln s!"FAILED: {name}"
   unless failed.isEmpty do
     return 1
+  if write then
+    return 0
   IO.println
       "ffi-test theme-pictures: solarized-dark and solarized-light match their reference images; in each the paper, the cursor and the text carry the palette's colours; the light picture is not the dark reference"
   return 0
+
+/-- The checks of the theme-pictures scenario's own reporting, over a
+directory of its own and a theme no shipped theme is named, so that
+nothing is drawn or written. -/
+def themePicturesChecks (_ : Unit) : List Check :=
+  [{  name := "theme-pictures --write says why it fails on stderr, not only by its status"
+      run :=
+        inOwnDirectory fun directory => do
+          IO.FS.writeFile (directory / "source.lean") ""
+          let font := directory / "font.ttf"
+          IO.FS.writeBinFile font .empty
+          let missing : ThemeRoles :=
+            { name := "no-such-theme", paper := .rgb 0 0 0, ink := .rgb 0 0 0,
+              cursor := .rgb 0 0 0 }
+          let errors ← IO.mkRef ({} : IO.FS.Stream.Buffer)
+          let status ←
+            IO.withStderr (IO.FS.Stream.ofBuffer errors) <|
+                themePicturesScenario directory.toString font.toString true [missing]
+          let said := String.fromUTF8? (← errors.get).data
+          return status == 1 && said == some "FAILED: no shipped theme is named no-such-theme\n" }]
 
 /-- The checks of the fuzzy ranking's binding: a pattern and a list of
 strings in, as words and one string, and the indices of the candidates the
@@ -3123,6 +3147,7 @@ def checks (_ : Unit) : List Check :=
     interruptChecks () ++
     fuzzyChecks () ++
     pictureChecks () ++
+    themePicturesChecks () ++
     renderChecks ()
 
 /-- Runs `checks` and returns the names of those that failed. A check that
