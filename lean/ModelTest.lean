@@ -1300,6 +1300,36 @@ def processChecks : List Check :=
           | .error _ => false
         return notTooLong && afterWaiting.killed.isEmpty && whole && afterLast.killed.isEmpty &&
             afterLast.children.isEmpty },
+    { name :=
+        "on the job model a child that pauses holds its second line: the first read gives the first line at once, with no end, and the next moves the clock to the pause's end and gives the second with the end"
+      run := do
+        let script := JobContract.pausingStream processRoot
+        let job : JobM (Process.Delivery × Nat × Array Process.Delivery × Nat) := do
+          let child ← JobContract.started script.command (JobContract.lines 64)
+          let first ← JobContract.delivered child
+          let between ← now
+          let rest ← JobContract.toTheEnd child
+          return (first, between, rest, ← now)
+        match job.runModel { processes := { streams := #[script] } } with
+        | (.finished (first, between, rest, after), _) =>
+          return first.stdout == .lines #["one".toUTF8] && first.ended.isNone && between == 0 &&
+              JobContract.linesOf rest .out == #["two".toUTF8] &&
+              JobContract.endOf rest == some (.exited (.code 0)) &&
+              after == 500
+        | _ =>
+          return false },
+    { name :=
+        "on the job model a job cancelled while its child pauses is cancelled at that instant, and its child is recorded as killed"
+      run := do
+        let script := JobContract.pausingStream processRoot
+        let job : JobM Unit := do
+          let child ← JobContract.started script.command (JobContract.lines 64)
+          discard <| JobContract.delivered child
+          discard <| JobContract.delivered child
+        let (outcome, after) :=
+          job.runModel { processes := { streams := #[script] }, cancelAt := some 200 }
+        return outcome == .cancelled && after.now == 200 &&
+            after.processes.killed == #[script.command] },
     -- Seen to bite once by hand, on 2026-11-15: with the filter of
     -- `Handle.children` after a last delivery taken out of `answer`, the
     -- later read, write and close reach the fake, and the check fails.

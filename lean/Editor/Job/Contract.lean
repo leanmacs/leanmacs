@@ -810,6 +810,28 @@ feed. -/
 def longLine : ByteArray :=
   (String.ofList (List.replicate 4999 ' ')).toUTF8 ++ "x".toUTF8
 
+/-- The script of the streaming child that pauses between two lines: `one`,
+then it waits, polling every 10 ms, until there is a file `go` in the
+directory its first argument names, then `two`. -/
+def pausingScript : String :=
+  "echo one; while [ ! -e \"$1/go\" ]; do sleep 0.01; done; echo two"
+
+/-- The child that pauses between two lines (`pausingScript`), in and on
+`root`. -/
+def pausing (root : System.FilePath) : Process.Command :=
+  { program := "/bin/sh", arguments := #["-c", pausingScript, "sh", root.toString]
+    directory := root }
+
+/-- What releases the pausing child: makes the file `go` in `root`. -/
+def release (root : System.FilePath) : Process.Command :=
+  sh root "touch go"
+
+/-- What the pausing child does, as the model's script: on the model it is
+released when the job clock has passed its pause. -/
+def pausingStream (root : System.FilePath) : Process.StreamScript :=
+  { command := pausing root
+    steps := #[.write .out "one\n".toUTF8, .pause 500, .write .out "two\n".toUTF8] }
+
 /-- The properties every implementation of the job port's streaming process
 requests has. -/
 def streamProperties : List ProcessProperty :=
@@ -904,7 +926,23 @@ def streamProperties : List ProcessProperty :=
       streams := fun root => #[{ command := sh root "/bin/sleep 600", steps := #[.awaitClosed] }]
       holds := fun root => do
         discard <| started (sh root "/bin/sleep 600") (lines 64 true)
-        return true }]
+        return true },
+    -- Gated, not timed: the real child waits for a file the job makes, and
+    -- the model's is released by the job clock passing its pause. The run
+    -- that makes the file is a run of the model's that does nothing.
+    { name :=
+        "a child that pauses between two lines delivers the first, alone and with no end, before it is released, and the second with its end after it"
+      streams := fun root => #[pausingStream root]
+      scripts := fun root => #[{ command := release root, reply := wrote "" }]
+      holds := fun root => do
+        let child ← started (pausing root) (lines roomyOutput)
+        let first ← delivered child
+        discard <| ranOk (release root)
+        let rest ← toTheEnd child
+        return first.stdout == .lines (linesFrom ["one"]) && first.stderr == .lines #[] &&
+            first.ended.isNone &&
+            linesOf rest .out == linesFrom ["two"] &&
+            endOf rest == some (.exited (.code 0)) }]
 
 /-- The properties every implementation of the job port's process requests
 has. -/

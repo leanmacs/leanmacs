@@ -34,6 +34,16 @@ runner's process service is this model behind a reference
   input. It is recorded with its input in `fed`, so a test sees what was
   written, once it has passed the refusals that start nothing.
 
+- **A streaming child that pauses** (`Process.Step.pause`) stops for that
+  many milliseconds of the job clock from when it begins the step. A read
+  that finds nothing to deliver while the child pauses moves the clock to
+  the pause's end, the child goes on, and the read is answered by the usual
+  rules, through as many pauses as come one after another; when the job's
+  cancel comes first, it is answered as a read that nothing can answer is.
+  So a job sees a child's first line, alone and with no end, before its
+  second. The fake process service, which asks at 0 every time, delivers
+  through a pause at once.
+
 The contract (`JobContract.processProperties`, `Editor/Job/Contract.lean`)
 is what says the model, the fake and the library agree: each property
 carries the scripts of its commands, and the library's run of the same
@@ -77,6 +87,9 @@ inductive Process.Step where
   | awaitClosed
   /-- Closes its own standard input: a later write to it is refused. -/
   | closesInput
+  /-- Stops for `milliseconds` on the job clock, from the moment it begins
+  the step: nothing more is written until the clock has moved that far. -/
+  | pause (milliseconds : Nat)
   deriving DecidableEq
 
 /-- What a scripted streaming command does: its steps, in order, then it
@@ -116,6 +129,9 @@ structure ProcessModel.Child where
   stdout : ByteArray := .empty
   /-- What it has written to its standard error and has not been delivered. -/
   stderr : ByteArray := .empty
+  /-- The instant on the job clock at which the pause it is in ends; `none`
+  when it is in none. -/
+  resumeAt : Option Nat := none
   deriving DecidableEq
 
 /-- The model of the processes a job runs. -/
@@ -165,13 +181,14 @@ def inputEnded (child : Child) : Bool :=
   child.inputClosed || child.closedItsInput || !child.streaming.input
 
 /-- Whether `child` is done with its steps: it has exited, and its streams
-have ended. -/
+have ended. A child in a pause is not. -/
 def done (child : Child) : Bool :=
-  child.writing.isNone && child.step ≥ child.script.steps.size
+  child.writing.isNone && child.resumeAt.isNone && child.step ≥ child.script.steps.size
 
-/-- `child` one move on, or `none` when it cannot move: it waits for input,
-or for the bound to leave room, or it is done. -/
-def advanceOnce (child : Child) : Option Child :=
+/-- `child`, in no pause, one move on when the job clock reads `now`, or
+`none` when it cannot move: it waits for input, or for the bound to leave
+room, or it is done. A pause it begins ends `milliseconds` after `now`. -/
+def moveOnce (now : Nat) (child : Child) : Option Child :=
   match child.writing with
   | some (stream, bytes, written) =>
     let room := child.room stream
@@ -213,20 +230,31 @@ def advanceOnce (child : Child) : Option Child :=
       | .awaitClosed =>
         if child.inputEnded then some { next with consumed := child.received.size } else none
       | .closesInput => some { next with closedItsInput := true }
+      | .pause milliseconds => some { next with resumeAt := some (now + milliseconds) }
 
-/-- `child` taken as far as it can go, through at most `fuel` moves. -/
-def advanceFor : Nat → Child → Child
+/-- `child` one move on when the job clock reads `now`, or `none` when it
+cannot move: it waits for input, or for the bound to leave room, or for its
+pause to end, or it is done. A pause ends when the clock reads its end. -/
+def advanceOnce (now : Nat) (child : Child) : Option Child :=
+  match child.resumeAt with
+  | some instant => if instant ≤ now then some { child with resumeAt := none } else none
+  | none => child.moveOnce now
+
+/-- `child` taken as far as it can go when the job clock reads `now`,
+through at most `fuel` moves. -/
+def advanceFor (now : Nat) : Nat → Child → Child
   | 0, child => child
   | fuel + 1, child =>
-    match child.advanceOnce with
-    | some moved => advanceFor fuel moved
+    match child.advanceOnce now with
+    | some moved => advanceFor now fuel moved
     | none => child
 
-/-- `child` taken as far as it can go: until it waits for input, or for the
-bound to leave room, or is done. A move begins or ends a step, or fills a
-stream to the bound, so a few for each step are always enough. -/
-def advance (child : Child) : Child :=
-  advanceFor (4 * child.script.steps.size + 8) child
+/-- `child` taken as far as it can go when the job clock reads `now`: until
+it waits for input, or for the bound to leave room, or for its pause to
+end, or is done. A move begins or ends a step, or fills a stream to the
+bound, so a few for each step are always enough. -/
+def advance (now : Nat) (child : Child) : Child :=
+  advanceFor now (4 * child.script.steps.size + 8) child
 
 /-- Whether `bytes` holds a line feed. -/
 def hasLineFeed (bytes : ByteArray) : Bool :=
@@ -276,6 +304,27 @@ def none (child : Child) (stream : Process.Stream) : Process.Frames :=
   match child.framing stream with
   | .bytes => .bytes .empty
   | .lines => .lines #[]
+
+/-- Whether a read of `child` is answered as it is: it has something to
+deliver, a line too long, or it is done. -/
+def answerable (child : Child) : Bool :=
+  child.deliverable .out || child.deliverable .err || child.tooLong .out || child.tooLong .err ||
+    child.done
+
+/-- Where a read of `child` made at `now` by a job cancelled at `cancelAt`
+is answered from, through at most `fuel` pauses: while it has nothing to
+answer and pauses, the clock moves to the pause's end and the child goes
+on, unless the cancel comes first. The clock, and the child. -/
+def through (cancelAt : Option Nat) : Nat → Nat → Child → Nat × Child
+  | 0, now, child => (now, child)
+  | fuel + 1, now, child =>
+    if child.answerable then (now, child)
+    else
+      match child.resumeAt with
+      | some instant =>
+        if cancelAt.any (· ≤ instant) then (now, child)
+        else through cancelAt fuel (max now instant) (child.advance (max now instant))
+      | Option.none => (now, child)
 
 end ProcessModel.Child
 
@@ -362,14 +411,16 @@ def handle (model : ProcessModel) (now : Nat) (cancelAt : Option Nat) :
             (.ok ⟨model.next⟩,
               { model with
                 started := model.started.push command
-                children := model.children.push child.advance
+                children := model.children.push (child.advance now)
                 next := model.next + 1 },
               now)
   | .read process =>
     match model.children.find? (·.id == process.number) with
     | none => (.error .noSuchProcess, model, now)
     | some child =>
-      let child := child.advance
+      -- A child that pauses with nothing to deliver is waited for, to the
+      -- pause's end, unless the cancel comes first.
+      let (now, child) := (child.advance now).through cancelAt (child.script.steps.size + 1) now
       let forget (model : ProcessModel) :=
         { model with children := model.children.filter (·.id != child.id) }
       let put (child : Child) := model.put child
@@ -381,7 +432,7 @@ def handle (model : ProcessModel) (now : Nat) (cancelAt : Option Nat) :
             stdout := outRest, stderr := errRest }
         if child.done && outRest.size == 0 && errRest.size == 0 then
           (.ok { stdout, stderr, ended := some (.exited child.script.exit) }, forget model, now)
-        else (.ok { stdout, stderr }, put child.advance, now)
+        else (.ok { stdout, stderr }, put (child.advance now), now)
       else
         match [Process.Stream.out, .err].find? child.tooLong with
         | some stream =>
@@ -405,7 +456,7 @@ def handle (model : ProcessModel) (now : Nat) (cancelAt : Option Nat) :
     match model.children.find? (·.id == process.number) with
     | none => (.error .noSuchProcess, model, now)
     | some child =>
-      let child := child.advance
+      let child := child.advance now
       if !child.streaming.input || child.inputClosed then
         (.error (.inputClosed "the job closed the child's input, or asked for none"), model, now)
       else
@@ -413,11 +464,11 @@ def handle (model : ProcessModel) (now : Nat) (cancelAt : Option Nat) :
           (.error (.inputClosed "the child has closed its input"), model, now)
         else
           let child := { child with received := child.received ++ bytes }
-          (.ok (), model.put child.advance, now)
+          (.ok (), model.put (child.advance now), now)
   | .closeInput process =>
     match model.children.find? (·.id == process.number) with
     | none => (.error .noSuchProcess, model, now)
-    | some child => (.ok (), model.put { child with inputClosed := true }.advance, now)
+    | some child => (.ok (), model.put ({ child with inputClosed := true }.advance now), now)
 
 /-- Ends the streaming child `id`, as a cancel does: recorded as killed if
 it was still running, and forgotten. Nothing for an id it does not hold. -/

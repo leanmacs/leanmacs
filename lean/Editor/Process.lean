@@ -78,6 +78,11 @@ Starting, waiting for, killing and reaping a child are the library's
   the child, its group killed, with `lineTooLong`, the frames before it
   intact. A last line exactly the bound long, with no line feed, is
   delivered whole.
+- **A child that pauses** between two lines, for however long, has the
+  first delivered alone, with no end: a read waits for whatever comes next,
+  and gives what there is. So a job sees output before its child ends, which
+  is what the compile mode streams (`Editor/Compile.lean`). The model has a
+  step for it (`Process.Step.pause`, `Editor/Process/Model.lean`).
 - **The last delivery** says how the child ended (`Process.End`): `exited`
   once both streams have ended and every frame is in it. The child is then
   forgotten: a later read of it is `noSuchProcess`.
