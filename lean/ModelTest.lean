@@ -21551,6 +21551,37 @@ def linewise (text : String) : Option Register :=
 def asItWas : Option Register :=
   none
 
+/-- The text objects source of the test mode the tree's text objects are
+checked under, in the model's query subset over its JSON grammar: an object
+is a function and inside one, an array a class and inside one, and a pair
+and an array's item an argument. -/
+def jsonTextObjects : String :=
+  "(object) @function.outer\n(object) @function.inner\n(array) @class.outer\n(array) @class.inner\n(pair) @parameter.inner\n(array (_) @parameter.inner)"
+
+/-- A driver of the evil checks over the state the fixture `fixture` says,
+with the unnamed register holding `evilSentinel`, whose buffer's text is
+entered in a test mode of the model's JSON grammar that keeps
+`jsonTextObjects`, on the editor's models. -/
+def treeRegistered (fixture : String) : Option EvilDriver :=
+  let (contents, head) := barred fixture
+  let prepared : EditorM EditorState := do
+    let state ← evilState contents head
+    if let some (some buffer) := state.buffers[0]? then
+      Highlight.enter "json-objects" buffer.text
+          { grammar := "json", textObjects := some jsonTextObjects }
+    return state.setRegister Evil.unnamed evilSentinel
+  match prepared.runModel editorModel with
+  | (.ok state, model) => (Loop.Driver.over evilHanded (fun _ => none) (pure state) model).toOption
+  | (.error _, _) => none
+
+/-- The selection the scene shows after the keys `typed`, pressed from the
+fixture `fixture` on `treeRegistered`: its ranges, as an anchor and a head
+each, its shape, and the text each range covers. -/
+def treeSelected (fixture typed : String) : Option (List (Nat × Nat) × Shape × List String) :=
+  ((treeRegistered fixture).bind fun driver => evilSeen (evilFed driver typed)).map fun seen =>
+    ((seen.selection.ranges.map fun range => (range.anchor, range.head)).toList,
+      seen.selection.shape, seen.covered.toList)
+
 /-- One row of an oracle table of the operators: keys, the text and the
 cursor they are pressed from, and what Vim leaves. -/
 structure OperatorRow where
@@ -21571,6 +21602,10 @@ structure OperatorRow where
   /-- What the echo area says when the command did not give up: nothing,
   unless a motion said something, as a search says its warning. -/
   echo : String := ""
+  /-- Whether the row's buffer is set to the test mode of the model's JSON
+  grammar whose text keeps `jsonTextObjects` (`treeRegistered`), so the
+  syntax tree's text objects are there. -/
+  tree : Bool := false
 
 namespace OperatorRow
 
@@ -21598,7 +21633,11 @@ is not what the row says, and a key string that names no keys. -/
 def wrong (row : OperatorRow) : Option String :=
   if (ModelTest.keys row.keys).isEmpty then some s!"{repr row.keys} names no keys"
   else
-    match evilEdited row.before row.keys with
+    let edited :=
+      if row.tree then
+        (treeRegistered row.before).map fun driver => evilLeft (evilFed driver row.keys)
+      else evilEdited row.before row.keys
+    match edited with
     | none => some s!"no driver for {repr row.before}"
     | some left =>
       let saidSo := !left.echo.isEmpty && (left.echo.splitOn "refused").length == 1
@@ -23242,6 +23281,68 @@ def objectOperatorRows : List OperatorRow :=
     .rests "[a \"|]\" b]" "d i [" "[|]" (charwise "a \"]\" b"),
     .rests "x|(a ')' b)" "d i (" "x(|)" (charwise "a ')' b"), .givesUp "(a ')' |b)" "d i ("]
 
+/-- The JSON text the tree's text objects are checked over, on one line:
+an object holding a pair of an array and a pair of an object. -/
+def treeText : String :=
+  "{\"a\": [1, 2], \"b\": {\"c\": 3}}"
+
+/-- `treeText` with the cursor at the byte offset `at`. -/
+def treeAt (at_ : Nat) : String :=
+  withBar treeText at_
+
+/-- The rows of the syntax tree's text objects under an operator, on a test
+mode of the model's JSON grammar (`jsonTextObjects`), written by hand: each
+default operator over each of the six objects, a count, an argument with a
+comma after, before and neither, a pair as an argument, dot repeat over
+`a a`, and the objects that are not there on a buffer with no syntax
+tree. -/
+def treeObjectOperatorRows : List OperatorRow :=
+  let onTree (row : OperatorRow) : OperatorRow := { row with tree := true }
+  let three := treeAt 25
+  let two := treeAt 10
+  (([.rests three "d a f" "{\"a\": [1, 2], \"b\": |}" (charwise "{\"c\": 3}"),
+            .inserts three "c a f" "{\"a\": [1, 2], \"b\": |}" (charwise "{\"c\": 3}"),
+            .rests three "y a f" "{\"a\": [1, 2], \"b\": |{\"c\": 3}}" (charwise "{\"c\": 3}"),
+            .rests three "d i f" "{\"a\": [1, 2], \"b\": {|}}" (charwise "\"c\": 3"),
+            .inserts three "c i f" "{\"a\": [1, 2], \"b\": {|}}" (charwise "\"c\": 3"),
+            .rests three "y i f" "{\"a\": [1, 2], \"b\": {|\"c\": 3}}" (charwise "\"c\": 3"),
+            .rests three "d 2 a f" "|" (charwise treeText),
+            .rests two "d a c" "{\"a\": |, \"b\": {\"c\": 3}}" (charwise "[1, 2]"),
+            .inserts two "c a c" "{\"a\": |, \"b\": {\"c\": 3}}" (charwise "[1, 2]"),
+            .rests two "y a c" "{\"a\": |[1, 2], \"b\": {\"c\": 3}}" (charwise "[1, 2]"),
+            .rests two "d i c" "{\"a\": [|], \"b\": {\"c\": 3}}" (charwise "1, 2"),
+            .inserts two "c i c" "{\"a\": [|], \"b\": {\"c\": 3}}" (charwise "1, 2"),
+            .rests two "y i c" "{\"a\": [|1, 2], \"b\": {\"c\": 3}}" (charwise "1, 2"),
+            .rests two "d a a" "{\"a\": [1|], \"b\": {\"c\": 3}}" (charwise ", 2"),
+            .inserts two "c a a" "{\"a\": [1|], \"b\": {\"c\": 3}}" (charwise ", 2"),
+            .rests two "y a a" "{\"a\": [1|, 2], \"b\": {\"c\": 3}}" (charwise ", 2"),
+            .rests two "d i a" "{\"a\": [1, |], \"b\": {\"c\": 3}}" (charwise "2"),
+            .inserts two "c i a" "{\"a\": [1, |], \"b\": {\"c\": 3}}" (charwise "2"),
+            .rests two "y i a" "{\"a\": [1, |2], \"b\": {\"c\": 3}}" (charwise "2"),
+            .rests (treeAt 7) "d a a" "{\"a\": [|2], \"b\": {\"c\": 3}}" (charwise "1, "),
+            .rests (treeAt 2) "d a a" "{|\"b\": {\"c\": 3}}" (charwise "\"a\": [1, 2], "),
+            .rests three "d a a" "{\"a\": [1, 2], \"b\": {|}}" (charwise "\"c\": 3"),
+            .rests (treeAt 7) "d a a ." "{\"a\": [|], \"b\": {\"c\": 3}}" (charwise "2"),
+            .rests (treeAt 3) "d i a" "{|, \"b\": {\"c\": 3}}" (charwise "\"a\": [1, 2]"),
+            .givesUp three "d a c", .givesUp (treeAt 0) "d i a"] :
+          List OperatorRow).map
+      onTree) ++
+    [.givesUp three "d a f", .givesUp three "d i f", .givesUp two "d a c", .givesUp two "d i c",
+      .givesUp two "d a a", .givesUp two "d i a"]
+
+/-- The rows of the syntax tree's text objects in a visual state, on the
+test mode of `treeObjectOperatorRows`, written by hand: the text and the
+cursor, the keys, the selection's one range as an anchor and a head, and
+the text it covers. One-cell selections of each object, a wider selection
+extended to the next node out, a count, and an object that is not there,
+which leaves the selection as it was. -/
+def treeSelectionRows : List (String × String × List (Nat × Nat) × List String) :=
+  [(treeAt 25, "v a f", [(19, 26)], ["{\"c\": 3}"]), (treeAt 25, "v i f", [(20, 25)], ["\"c\": 3"]),
+    (treeAt 10, "v a c", [(6, 11)], ["[1, 2]"]), (treeAt 10, "v i c", [(7, 10)], ["1, 2"]),
+    (treeAt 10, "v a a", [(8, 10)], [", 2"]), (treeAt 10, "v i a", [(10, 10)], ["2"]),
+    (treeAt 25, "v a f a f", [(0, 27)], [treeText]), (treeAt 25, "v 2 a f", [(0, 27)], [treeText]),
+    (treeAt 25, "v a c", [(25, 25)], ["3"])]
+
 /-- The rows of the oracle table for `%` under an operator, each run through
 Vim 9.1.1752 headless: inclusive, from the cursor, a bracket after the
 cursor on the line included, across lines, and a line with no bracket. -/
@@ -23268,7 +23369,7 @@ def objectNames : List String :=
 /-- The pairs of an operator's key and a text object's name that the rows of
 `objectOperatorRows` have, with the counts left out. -/
 def objectOperatorPairs : List (String × String) :=
-  objectOperatorRows.filterMap fun row =>
+  (objectOperatorRows ++ treeObjectOperatorRows).filterMap fun row =>
     match (row.keys.splitOn " ").filter (fun token => !token.all Char.isDigit) with
     | operator :: rest => (objectNamed (" ".intercalate rest)).map (operator, ·)
     | [] => none
@@ -23384,6 +23485,52 @@ def visualObjectSweep (contents : String) : List String :=
             else
               some s!"{what}: left {repr (evilSelection after)}, echo {repr after.loop.state.echo}"
 
+/-- A row of the text objects query, for the tree objects' rule checks. -/
+def objectRow (name : String) (start stop : Nat) : Evil.TreeObjects.Row :=
+  { name, start, stop }
+
+/-- The checks of the syntax tree's text-object rule
+(`Evil.TreeObjects.choose`, `Editor/Evil/TreeObjects.lean`), pure, over
+hand-built rows. -/
+def treeObjectRuleChecks : List Check :=
+  let rows :=
+    #[objectRow "function.outer" 0 100, objectRow "function.inner" 10 99,
+      objectRow "function.outer" 20 60, objectRow "function.inner" 30 59,
+      objectRow "function.inner" 31 40, objectRow "function.outer" 20 60,
+      objectRow "class.outer" 70 80, objectRow "parameter.inner" 22 25, objectRow "comment" 21 26]
+  let choose (kind : Evil.TreeObjects.Kind) (inner : Bool) (low high : Nat) (wider : Bool := false)
+    (count : Nat := 1) := Evil.TreeObjects.choose rows kind inner low high wider count
+  [{  name := "the smallest node round the cursor comes first, a range captured twice once"
+      run :=
+        pure
+          (choose .function false 35 35 == some (20, 60) &&
+            choose .argument false 23 23 == some (22, 25)) },
+    { name := "a count takes the node that many out, and too few is no object"
+      run :=
+        pure
+          (choose .function false 35 35 (count := 2) == some (0, 100) &&
+            choose .function false 35 35 (count := 3) == none) },
+    { name := "a wider selection passes over a node no bigger than it for the next one out"
+      run :=
+        pure
+          (choose .function false 20 59 (wider := true) == some (0, 100) &&
+            choose .function false 21 59 (wider := true) == some (20, 60) &&
+            choose .function false 20 59 == some (20, 60)) },
+    { name := "the inside is the longest inner row within the chosen node"
+      run :=
+        pure
+          (choose .function true 35 35 == some (30, 59) &&
+            choose .function true 5 5 == some (10, 99)) },
+    { name := "a node with no inner row has no inside"
+      run :=
+        pure (choose .class true 75 75 == none && choose .class false 75 75 == some (70, 80)) },
+    { name :=
+        "with no node round the cursor there is no object, and names the rule does not read count for nothing"
+      run :=
+        pure
+          (choose .class false 35 35 == none && choose .argument false 21 21 == none &&
+            choose .function false 100 100 == none) }]
+
 /-- The checks of evil's text objects (`Editor/Evil/Objects.lean`), by key,
 on the loop's driver over the editor's models, under the Vim scheme that
 ships: what each operator takes over each object and what each object
@@ -23393,6 +23540,24 @@ def evilObjectChecks : List Check :=
   [{  name :=
         "an operator over each text object takes the range Vim 9.1 documents: the words and WORDs with their blanks and counts, the quoted strings and their blanks, the blocks with an escaped bracket passed over, a block found forward with none round the cursor, an empty block, and i{ over lines as whole lines; the text, the cursor, the register and the insert state are Vim's"
       run := operatorRows objectOperatorRows },
+    { name :=
+        "an operator over each of the syntax tree's text objects, on a test mode of the model's JSON grammar, takes the node the tree's rule chooses: a function, a class and an argument, inside each, with a count, an argument's separator after it, before it or none, dot repeat, and no object where the tree has none or the buffer no syntax tree"
+      run := operatorRows treeObjectOperatorRows },
+    { name :=
+        "in v each of the syntax tree's text objects sets the selection to its node, inclusive, in visual: a wider selection is extended to the next node out, a count takes the node that many out, and an object that is not there leaves the selection as it was"
+      run := do
+        let visual := evilBadge "v"
+        let wrong :=
+          treeSelectionRows.filterMap fun (fixture, typed, ranges, covered) =>
+            let got := treeSelected fixture typed
+            let state :=
+              ((treeRegistered fixture).bind fun driver => evilSeen (evilFed driver typed)).bind
+                (·.status[0]?)
+            if got == some (ranges, .inclusive, covered) && state == visual then none
+            else some s!"{typed} from {repr fixture} left {repr got}, in {repr state}"
+        unless wrong.isEmpty do
+          throw (IO.userError ("; ".intercalate wrong))
+        return true },
     { name :=
         "% under an operator takes from the cursor through the partner of the first bracket of the line at or after it, across lines, and gives up on a line with no bracket; v % extends the selection to the partner, as Vim 9.1.1752 does"
       run := do
@@ -23452,7 +23617,7 @@ def evilObjectChecks : List Check :=
       run :=
         pure <|
           objectNames.all fun name =>
-            objectSelectionRows.any fun (_, typed, _, _) =>
+            (objectSelectionRows ++ treeSelectionRows).any fun (_, typed, _, _) =>
               let tokens := (typed.splitOn " ").filter (fun token => !token.all Char.isDigit)
               (objectNamed (" ".intercalate (tokens.drop (tokens.length - 2)))) == some name },
     { name :=
@@ -27285,6 +27450,7 @@ def checks : List Check :=
     modeEnterChecks ++
     highlightFaceChecks ++
     highlightEnterChecks ++
+    treeObjectRuleChecks ++
     indentRuleChecks ++
     indentLevelChecks ++
     apiStateChecks ++

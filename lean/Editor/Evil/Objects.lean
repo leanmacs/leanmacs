@@ -5,10 +5,11 @@ import Editor.Evil.Motions
 # Evil's text objects
 
 Vim's text objects as vocabulary entries (`Editor/Vocabulary.lean`, "Text
-objects"), the table the operate command and the select command look names
-up in (`objects`), and the select command (`selectObject`), which sets a
-visual selection to an object (`docs/design/keymaps-and-modes.md`, "Text
-objects as built"). The names are the ones the Vim scheme's default tables
+objects"), their table (`vimObjects`), and the select command
+(`selectObject`), which sets a visual selection to an object
+(`docs/design/keymaps-and-modes.md`, "Text objects as built"). The table the
+operate command and the select command look names up in, `Evil.objects`, is
+these and the syntax tree's (`Editor/Evil/TreeObjects.lean`). The names are the ones the Vim scheme's default tables
 bind keys to (`Editor/InputScheme/Vim/Default.lean`). Nothing here names a
 key. What an operator does with an object is the operate command's
 (`Editor/Evil/Operators.lean`).
@@ -620,9 +621,11 @@ def innerBrace : Vocabulary.TextObject :=
 def aBrace : Vocabulary.TextObject :=
   blockObject "a-brace" .curly true
 
-/-- The table the operate and select commands look a text object's name up
-in: one entry for each name the Vim scheme's default tables bind a key to. -/
-def objects : Array Vocabulary.TextObject :=
+/-- Vim's own text objects: an entry for each name of Vim's the Vim scheme's
+default tables bind a key to. `Evil.objects`, which the operate and select
+commands look a name up in, is these and the syntax tree's
+(`Editor/Evil/TreeObjects.lean`). -/
+def vimObjects : Array Vocabulary.TextObject :=
   #[innerWord, aWord, innerBigword, aBigword, innerDoubleQuote, aDoubleQuote, innerSingleQuote,
     aSingleQuote, innerBackquote, aBackquote, innerParen, aParen, innerBracket, aBracket,
     innerBrace, aBrace]

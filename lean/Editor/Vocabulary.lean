@@ -122,8 +122,9 @@ object, as Vim fails a text object.
   `stop` its new head, or the cell before `stop` when the reach is
   `exclusive`; the two may be in either order.
 - **Its function is a command** (`EditorM`), as a motion's target is, so
-  that an object that asks more than the text, such as a syntax tree, has
-  the same shape. It changes nothing: the entry's rule, which its type does
+  that an object that asks more than the text has the same shape: the
+  syntax tree's objects ask the text's kept text objects query
+  (`Editor/Evil/TreeObjects.lean`). It changes nothing: the entry's rule, which its type does
   not enforce.
 
 ## Where an addition goes

@@ -1331,6 +1331,86 @@ def jsonDefaultFaces : IO String := do
   let faces := Highlight.faces [] (← query.captureNames)
   return s!"highlight {", ".intercalate (faces.map fun face => (face.map (·.name)).getD "-").toList}"
 
+/-- The Rust text of `rustObjectsChunk`: a method in an `impl`, after a
+unit struct. -/
+def rustObjectsText : String :=
+  "struct S;\n\nimpl S {\n    fn one(&self) -> u8 {\n        let x = 1;\n        x\n    }\n}\n"
+
+/-- A chunk whose `setup` defines the mode `rust-test`, whose text is
+parsed with the grammar `rust` and drawn by the shipped default, and the
+command `rust-buffer`, which puts `rustObjectsText` in the scratch buffer's
+text, places the cursor inside the method's body, at `let`, and only then
+makes `rust-test` its major mode, so the text is attached at its last
+revision. -/
+def rustObjectsChunk : String :=
+  "def rustText : String := " ++ rustObjectsText.quote ++
+    "
+
+def rustBuffer : EditorM Unit := do
+  let text : TextId := ⟨0⟩
+  text.insert 0 rustText
+  let cursor := ((rustText.splitOn \"let x\").headD \"\").utf8ByteSize
+  discard <| (⟨0⟩ : ViewId).select { ranges := #[⟨cursor, cursor⟩], shape := .inclusive }
+  discard <| (⟨0⟩ : ViewId).setMajorMode \"rust-test\"
+
+def setup : SetupM Unit := do
+  defineMode { name := \"rust-test\", syntaxTree := some { grammar := \"rust\" } }
+  command \"rust-buffer\" rustBuffer
+"
+
+/-- Runs `check` against a host of the Vim scheme that ships, made over the
+collaborators the executable's hosts are made of (`Headless.shippedOver`),
+with the real elaborator, a config directory of `files` and the services of
+a stage of its own; its syntax tree is the real binding over the library's
+syntax service, which after an attach waits, with a bound, for the attached
+text's tree to be delivered. Stops the host; `false` if the check did not
+hold or the host did not stop. The directory is removed. -/
+def withVimHost (context : Context) (files : List (String × String)) (check : Session → IO Bool) :
+    IO Bool :=
+  IO.FS.withTempDir fun directory => do
+    writeFiles directory files
+    let source := Config.Directory.source directory
+    let stage ← Stage.new context context.elaborator source
+    let staged := stage.collaborators
+    let shipped :=
+      Headless.shippedOver "" "" "" staged.emit staged.services staged.published staged.held
+    let syntaxTree (snapshots : SnapshotReader) : IO SyntaxTreeHandler := do
+      let real ← RealSyntaxTree.new snapshots
+      return fun request => do
+        let reply ← real.handle request
+        if let .attach snapshot _ := request then
+          if let some found← snapshots.find? snapshot then
+            discard (Ffi.syntaxSettle found 5000)
+        return reply
+    let collaborators :=
+      { shipped with
+        elaborator := context.elaborator, source, requests := staged.requests
+        wakeups := staged.wakeups, jobs := staged.jobs, environment := staged.environment
+        log := staged.log, syntaxTree }
+    let host ← Headless.start collaborators
+    try
+      let held ←
+        check {
+              host, directory, output := stage.output, threads := stage.threads,
+              clock := stage.clock
+              watches := stage.watches, log := stage.log }
+      let stopped ← host.stop patience
+      return held && stopped
+    catch error =>
+      discard <| host.halt patience
+      throw error
+
+/-- The byte offset of the first occurrence of `needle` in `text`; none
+when it does not hold it. -/
+def offsetOf (text needle : String) : Option Nat :=
+  match text.splitOn needle with
+  | before :: _ :: _ => some before.utf8ByteSize
+  | _ => none
+
+/-- The view line of the last scene the host printed. -/
+def lastViewLine (lines : Array String) : String :=
+  (lines.filter (·.startsWith "view 0 ")).back?.getD ""
+
 /-- The thread that emitted the first line of the host's output that is
 `line`, if there is one. -/
 def Session.threadOf (session : Session) (line : String) : IO (Option UInt64) := do
@@ -3242,6 +3322,36 @@ def evilChecks (context : Context) : List Check :=
                 lines.contains "run again: ok")
           { commands := Evil.commands } }]
 
+/-- The checks of the syntax tree's text objects through a host of the Vim
+scheme that ships (`withVimHost`), with the real elaborator, the real text
+binding and the library's syntax service: what keys select and delete in a
+Rust buffer. Which node an object is, is `Editor/Evil/TreeObjects.lean`'s,
+pinned by `ModelTest.treeObjectRuleChecks` and `ModelTest.evilObjectChecks`
+and, over the library, by `ContractTest`. -/
+def treeObjectChecks (context : Context) : List Check :=
+  [{  name :=
+        "in a Rust buffer v a f selects the enclosing function, from its fn through its closing brace, through the host's loop and the library's syntax tree; and <Escape> d a f then deletes it, its lines whole"
+      run :=
+        -- Seen to bite once by hand: with `a-function` taken out of
+        -- `Evil.objects`, `v a f` leaves the cursor's one cell selected.
+        withVimHost context [("10-objects.lean", rustObjectsChunk)] fun session => do
+          session.ask [.reload]
+          session.ask [.run "rust-buffer"]
+          let before := lastViewLine (← session.sceneLines)
+          session.typed "v a f"
+          let selected := lastViewLine (← session.sceneLines)
+          session.typed "<Escape> d a f"
+          let deleted := lastViewLine (← session.sceneLines)
+          let some fnAt := offsetOf rustObjectsText "fn one" | return false
+          let some closing := offsetOf rustObjectsText "}\n}\n" | return false
+          let some letAt := offsetOf rustObjectsText "let x" | return false
+          -- `d` over a charwise span from a line's indent to the end of a
+          -- later line takes the lines whole, Vim's exception for `d`.
+          let without := "struct S;\n\nimpl S {\n}\n"
+          return (before.splitOn s!"selections {letAt}..{letAt},").length == 2 &&
+              (selected.splitOn s!"selections {fnAt}..{closing},").length == 2 &&
+              (deleted.splitOn s!"{without.quote}, scroll").length == 2 }]
+
 /-- A chunk whose `setup` registers two jobs that each load a file and whose
 handler makes a text of what was loaded: `open`, of `note.txt` in
 `directory`, and `missing`, of a file that is not there. A load that is
@@ -4481,6 +4591,7 @@ def environmentHostChecks (context : Context) : List Check :=
 def checks (context : Context) : List Check :=
   elaboratorChecks context ++ directoryChecks () ++ hostChecks context ++ threadChecks context ++
     jobChecks context ++
+    treeObjectChecks context ++
     watchReloadChecks context ++
     agreementChecks () ++
     shippedChecks () ++

@@ -6,6 +6,7 @@ import Editor.Evil.Operators
 import Editor.Evil.Repeat
 import Editor.Evil.Scroll
 import Editor.Evil.Theorems
+import Editor.Evil.TreeObjects
 import Editor.Evil.Undo
 import Editor.Ex
 import Editor.FrameCommands
