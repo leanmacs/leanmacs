@@ -11,6 +11,7 @@ import Editor.FrameCommands
 import Editor.InputScheme.Vim.Default
 import Editor.Minibuffer
 import Editor.Setup
+import Editor.SyntaxTree
 import Editor.Themes
 
 /-!
@@ -120,6 +121,14 @@ The
 commands' registrations (`Editor/Evil/Compiled.lean`) name the registry
 and are not imported, as the file commands' and the minibuffer's are not.
 Pinned by `ConfigTest.evilChecks`, on a config the real elaborator loads.
+
+The syntax tree interface is here too (`Editor/SyntaxTree.lean`): which
+grammars the library has, which text it parses with which grammar, off the
+editor thread, and what a query captures in a range of a text. It is a
+port of its own for now, with a program type of its own; making it a
+sub-port of the editor's port, so that a command asks it, is the syntax
+roadmap's next phase. Its model and contract are for tests, and are not
+imported.
 
 It never imports `Editor.Ffi` or a port's real binding (`Editor/Text/Real.lean`).
 Those reach the Rust library, and only an executable linked with it imports

@@ -44,6 +44,8 @@ import Editor.Scene
 import Editor.Scroll
 import Editor.State
 import Editor.State.Request
+import Editor.SyntaxTree.Contract
+import Editor.SyntaxTree.Model
 import Editor.Text.Contract
 import Editor.Themes.Check
 import Editor.Themes.Compiled
@@ -120,6 +122,15 @@ shows: its rule of what matches, and that after the candidates that are
 the pattern its order is the candidates'. They also show the contract
 biting on each of the two things it asks: a matcher written here that
 ignores case, and one that does not put an exact match first.
+
+The syntax tree interface's contract (`Editor/SyntaxTree/Contract.lean`)
+is run against its model here (`syntaxTreeFailures`), with each property's
+texts as the snapshots `0`, `1` and so on, and `contract-test` runs the
+same list against the real binding. `syntaxTreeChecks` are what only the
+model shows: the JSON tree of a small text node by node, the root of a text
+of blanks, the `ERROR` answer outside the subset, what the query subset
+refuses as unsupported, and the contract biting on a model written here
+that answers a range with the whole text's captures.
 
 The editor state (`Editor/State.lean`) is checked on the text model
 (`stateChecks`): the initial state, that a split tree's views tile the
@@ -6236,6 +6247,95 @@ def fuzzyChecks : List Check :=
             (← fuzzyBroken (matcherBy FuzzyModel.matches true)).isEmpty &&
             names.any (·.startsWith FuzzyContract.whichMatch) &&
             names.any (·.startsWith FuzzyContract.exactFirst) }]
+
+/-- The syntax tree model knowing `texts`, as the snapshots `0`, `1` and so
+on, and the ids of those snapshots. -/
+def syntaxTreeModelOf (texts : Array String) : SyntaxTreeModel × Array SnapshotId :=
+  let ids := (Array.range texts.size).map (⟨·⟩)
+  ({ texts := ids.zip texts }, ids)
+
+/-- The names of the syntax tree contract's properties that do not hold of
+`handle`, run from a model knowing each property's texts. -/
+def syntaxTreeBroken
+    (handle : (request : SyntaxTreeRequest) → SyntaxTreeModel → request.Reply × SyntaxTreeModel) :
+    IO (List String) :=
+  SyntaxTreeContract.failures
+    (fun property =>
+      let (model, ids) := syntaxTreeModelOf property.texts
+      pure
+        ((Program.run (port := syntaxTreePort) handle (property.holds ids).run model).1 matches
+          .ok true))
+    SyntaxTreeContract.properties
+
+/-- The model, but a question of captures in a range answers the whole
+text's: a model that breaks the range rule. -/
+def wholeRange : (request : SyntaxTreeRequest) → SyntaxTreeModel → request.Reply × SyntaxTreeModel
+  | .captures snapshot query _ _, model =>
+    let length := ((model.text? snapshot).map (·.utf8ByteSize)).getD 0
+    SyntaxTreeModel.handle (.captures snapshot query 0 length) model
+  | request, model => SyntaxTreeModel.handle request model
+
+/-- The flat tree the model parses `text` to, each node as its kind, its
+field, its depth and its range. -/
+def jsonShape (text : String) : Array (String × Option String × Nat × Nat × Nat) :=
+  (SyntaxTreeModel.Json.parse text).flatten.map fun node =>
+    (node.kind, node.field, node.depth, node.start, node.stop)
+
+/-- Whether `source` is refused by the model's query subset as unsupported. -/
+def unsupportedQuery (source : String) : Bool :=
+  match SyntaxTreeModel.Query.compile source with
+  | .error (.unsupported, _) => true
+  | _ => false
+
+/-- The checks of the syntax tree interface's model
+(`Editor/SyntaxTree/Model.lean`): what only the model shows, and the
+contract (`Editor/SyntaxTree/Contract.lean`) seen to report a model that
+breaks the range rule. -/
+def syntaxTreeChecks : List Check :=
+  [{  name :=
+        "the JSON model parses a small object node by node as the library's grammar does: the root, the object and its braces, a pair with its key and value at their fields, and each string's quotes and content"
+      run :=
+        pure <|
+          jsonShape "{\"k\": \"v\"}" ==
+            #[("document", none, 0, 0, 10), ("object", none, 1, 0, 10), ("{", none, 2, 0, 1),
+              ("pair", none, 2, 1, 9), ("string", some "key", 3, 1, 4), ("\"", none, 4, 1, 2),
+              ("string_content", none, 4, 2, 3), ("\"", none, 4, 3, 4), (":", none, 3, 4, 5),
+              ("string", some "value", 3, 6, 9), ("\"", none, 4, 6, 7),
+              ("string_content", none, 4, 7, 8), ("\"", none, 4, 8, 9), ("}", none, 2, 9, 10)] },
+    { name :=
+        "the JSON model's root starts after the blanks that lead the text, and at its end when it has no value"
+      run :=
+        pure <|
+          jsonShape "" == #[("document", none, 0, 0, 0)] &&
+            jsonShape "   " == #[("document", none, 0, 3, 3)] &&
+            jsonShape " 1 " == #[("document", none, 0, 1, 3), ("number", none, 1, 1, 2)] &&
+            jsonShape "-0.5e-3" == #[("document", none, 0, 0, 7), ("number", none, 1, 0, 7)] },
+    { name :=
+        "a text outside the JSON model's subset parses to the root over one ERROR node, from its first character that is not a blank"
+      run :=
+        pure <|
+          jsonShape "[1,]" == #[("document", none, 0, 0, 4), ("ERROR", none, 1, 0, 4)] &&
+            jsonShape " \"a\\nb\"" == #[("document", none, 0, 1, 7), ("ERROR", none, 1, 1, 7)] },
+    { name :=
+        "the model's query subset refuses a quantifier, an alternation, an anchor, a negated field, a predicate and a grouping as unsupported, and accepts what it implements"
+      run :=
+        pure <|
+          unsupportedQuery "(number)* @n" && unsupportedQuery "(array (number)+ @n)" &&
+            unsupportedQuery "[(true) (false)] @b" &&
+            unsupportedQuery "(array . (number) @n)" &&
+            unsupportedQuery "(pair !key) @p" &&
+            unsupportedQuery "((number) @n (#eq? @n \"1\"))" &&
+            unsupportedQuery "((number) @n (string) @s)" &&
+            (SyntaxTreeModel.Query.compile
+                "(pair key: (string) @k value: _ @v) ; c\n\",\" @c").toBool },
+    { name :=
+        "the syntax tree contract reports a model that answers a range with the whole text's captures, by its properties of ranges and by none of the whole text"
+      run := do
+        let broken ← syntaxTreeBroken wholeRange
+        return broken.any (·.startsWith "a range answers the whole text's rows that are in it") &&
+            broken.all (·.startsWith "a range ") },
+    { name := "every property of the syntax tree contract holds of the model"
+      run := return (← syntaxTreeBroken SyntaxTreeModel.handle).isEmpty }]
 
 /-- The editor's models with a watch model that counts: its clock, at 0,
 moves on by 1 at each text request and each display request, so its reading
@@ -23376,6 +23476,7 @@ def checks : List Check :=
     watchChecks ++
     clipboardChecks ++
     fuzzyChecks ++
+    syntaxTreeChecks ++
     guardChecks ++
     scrollChecks ++
     originChecks ++
@@ -23528,6 +23629,12 @@ def fuzzyFailures : IO (List String) := do
   let failed ← fuzzyBroken FuzzyModel.handle
   return failed.map (s!"the fuzzy model: {·}")
 
+/-- The names of the syntax tree interface's contract properties that do
+not hold of its model. -/
+def syntaxTreeFailures : IO (List String) := do
+  let failed ← syntaxTreeBroken SyntaxTreeModel.handle
+  return failed.map (s!"the syntax tree model: {·}")
+
 /-- The names of the cases of the editor API (`Editor/Api/Cases.lean`) that
 do not hold of the editor's models, each played from models with no
 text. -/
@@ -23541,8 +23648,8 @@ end ModelTest
 job port's contract against its model and against the runner over the fake
 clock, the display interface's contract against its model, the watch
 port's against its model, the clipboard interface's against its model, the
-fuzzy matching interface's against its model and
-the cases of the editor API on the editor's models: exits 0 when all hold,
+fuzzy matching interface's against its model, the syntax tree
+interface's against its model and the cases of the editor API on the editor's models: exits 0 when all hold,
 and 1 after naming on stderr the ones that do not.
 
 It exits explicitly. A check of the job runner that failed may have left a
@@ -23562,6 +23669,7 @@ def main : IO UInt32 := do
       (← ModelTest.watchFailures) ++
       (← ModelTest.clipboardFailures) ++
       (← ModelTest.fuzzyFailures) ++
+      (← ModelTest.syntaxTreeFailures) ++
       (← ModelTest.apiCaseFailures)
   for name in failed do
     IO.eprintln s!"FAILED: {name}"
@@ -23570,6 +23678,6 @@ def main : IO UInt32 := do
     -- returning from `main` would wait for it for ever.
     IO.Process.exit 1
   IO.println
-      s!"model-test: {ModelTest.checks.length} checks passed, {Editor.TextContract.properties.length + Editor.TextContract.adoptProperties.length + ModelTest.commandProperties.length} properties hold of the text model, {Editor.UndoTreeCases.cases.length} cases of the undo tree hold over it, and {Editor.JobContract.properties.length} properties of the job model and of the job runner over the fake clock, and {Editor.JobContract.fileProperties.length} file properties of the job model and of the job runner over the fake file service, and {Editor.JobContract.processProperties.length} process properties of the job model and of the job runner over the fake process service, and {Editor.JobContract.fileWatchProperties.length} watch properties of the job model and of the job runner over the fake watch service; {Editor.FileCases.cases.length} cases across the text port and the job port hold of the two models; {(Editor.DisplayContract.properties { advance := 1, lineHeight := 1 }).length} properties of the display interface hold of its model in cells of {ModelTest.displayCells.length} sizes; {Editor.WatchContract.properties.length} properties of the watch port hold of its model; {Editor.ClipboardContract.properties.length} properties of the clipboard interface hold of its model; {Editor.FuzzyContract.properties.length} properties of the fuzzy matching interface hold of its model; {Editor.ApiCases.cases.length} cases of the editor API hold of the editor's models"
+      s!"model-test: {ModelTest.checks.length} checks passed, {Editor.TextContract.properties.length + Editor.TextContract.adoptProperties.length + ModelTest.commandProperties.length} properties hold of the text model, {Editor.UndoTreeCases.cases.length} cases of the undo tree hold over it, and {Editor.JobContract.properties.length} properties of the job model and of the job runner over the fake clock, and {Editor.JobContract.fileProperties.length} file properties of the job model and of the job runner over the fake file service, and {Editor.JobContract.processProperties.length} process properties of the job model and of the job runner over the fake process service, and {Editor.JobContract.fileWatchProperties.length} watch properties of the job model and of the job runner over the fake watch service; {Editor.FileCases.cases.length} cases across the text port and the job port hold of the two models; {(Editor.DisplayContract.properties { advance := 1, lineHeight := 1 }).length} properties of the display interface hold of its model in cells of {ModelTest.displayCells.length} sizes; {Editor.WatchContract.properties.length} properties of the watch port hold of its model; {Editor.ClipboardContract.properties.length} properties of the clipboard interface hold of its model; {Editor.FuzzyContract.properties.length} properties of the fuzzy matching interface hold of its model; {Editor.SyntaxTreeContract.properties.length} properties of the syntax tree interface hold of its model; {Editor.ApiCases.cases.length} cases of the editor API hold of the editor's models"
   (← IO.getStdout).flush
   IO.Process.exit 0
