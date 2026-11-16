@@ -17,9 +17,11 @@
 
 use std::cell::Cell;
 use std::ops::Range;
+use std::sync::Arc;
 
 use editor_text::{ChangeSet, Origin, Revision, Snapshot, Text, Transaction};
 
+use crate::highlight::Highlighter;
 use crate::port::{Capture, GrammarName, Node, QueryErrorKind, QueryKind, Syntax};
 use crate::query::{captures_in, overlaps};
 use crate::session::reparse;
@@ -95,8 +97,17 @@ pub const ORDER: &str =
 pub const SHIPPED: &str =
     "the corpus's grammar ships a highlights query that compiles, and one not listed ships none";
 
+/// Over the same edits as [`INCREMENTAL`], the cases and the sweep, the
+/// spans the grammar's shipped highlights query draws
+/// ([`crate::highlight::spans`], each capture in a face of its own) on the
+/// tree reparsed as the core reparses equal those on a fresh parse of the
+/// same snapshot; and at least one incremental parse is kept, so the
+/// property is never held only by whole parses.
+pub const HIGHLIGHTS_AFTER_EDITS: &str =
+    "after an edit, the shipped highlights of the reparsed tree equal those of a fresh full parse";
+
 /// Every property, by name.
-pub const PROPERTIES: [&str; 10] = [
+pub const PROPERTIES: [&str; 11] = [
     GRAMMARS,
     WHOLE,
     DETERMINISTIC,
@@ -107,6 +118,7 @@ pub const PROPERTIES: [&str; 10] = [
     RANGE,
     ORDER,
     SHIPPED,
+    HIGHLIGHTS_AFTER_EDITS,
 ];
 
 /// How many random edit sequences the sweep runs from each text.
@@ -136,6 +148,7 @@ pub fn check<S: Syntax>(syntax: &S, corpus: &Corpus) -> Vec<&'static str> {
         (RANGE, parses(range)),
         (ORDER, parses(order)),
         (SHIPPED, shipped(syntax, &grammar)),
+        (HIGHLIGHTS_AFTER_EDITS, parses(highlights_after_edits)),
     ];
     results
         .into_iter()
@@ -319,9 +332,10 @@ impl<'a, S: Syntax> Run<'a, S> {
     }
 
     /// Tells the tree the log's patch since its revision, reparses with it
-    /// as the core does, keeps the result, and returns whether it equals a
-    /// fresh parse ([`INCREMENTAL`]).
-    fn reparse(&mut self, parser: &mut S::Parser) -> bool {
+    /// as the core reparses ([`crate::session::reparse`]), keeps the result,
+    /// and returns whether `same` holds of it and a fresh parse of the
+    /// snapshot.
+    fn reparse(&mut self, parser: &mut S::Parser, same: Same<'_, S>) -> bool {
         let Ok(patch) = self.text.changes_since(self.revision) else {
             return false;
         };
@@ -335,7 +349,7 @@ impl<'a, S: Syntax> Run<'a, S> {
             self.kept.set(self.kept.get() + 1);
         }
         let fresh = self.syntax.parse(parser, &snapshot, None);
-        let holds = self.syntax.nodes(&reparsed.tree) == self.syntax.nodes(&fresh);
+        let holds = same(&reparsed.tree, &fresh, &snapshot);
         self.tree = reparsed.tree;
         self.revision = snapshot.revision();
         holds
@@ -435,10 +449,58 @@ const NAMED_CASES: [NamedCase; 10] = [
     },
 ];
 
-/// [`INCREMENTAL`]: the named cases from every text, and the sweep; and at
-/// least one incremental parse kept, so that the property is never held
-/// only by whole parses.
+/// What a reparse is held to: whether a tree reparsed as the core reparses
+/// and a fresh parse, both of the snapshot, agree.
+type Same<'a, S> = &'a dyn Fn(&<S as Syntax>::Tree, &<S as Syntax>::Tree, &Snapshot) -> bool;
+
+/// [`INCREMENTAL`]: the reparsed tree's nodes are a fresh parse's.
 fn incremental<S: Syntax>(syntax: &S, parser: &mut S::Parser, corpus: &Corpus) -> bool {
+    let same = |reparsed: &S::Tree, fresh: &S::Tree, _: &Snapshot| {
+        syntax.nodes(reparsed) == syntax.nodes(fresh)
+    };
+    after_edits(syntax, parser, corpus, &same)
+}
+
+/// [`HIGHLIGHTS_AFTER_EDITS`]: the shipped highlights of the reparsed tree
+/// are a fresh parse's, each capture in a face of its own.
+fn highlights_after_edits<S: Syntax>(syntax: &S, parser: &mut S::Parser, corpus: &Corpus) -> bool {
+    let grammar = GrammarName::new(corpus.grammar);
+    let Some(query) = syntax
+        .shipped_query(&grammar, QueryKind::Highlights)
+        .and_then(|source| syntax.compile(&grammar, &source).ok())
+    else {
+        return false;
+    };
+    let names = syntax.capture_names(&query);
+    let faces = names.iter().cloned().map(Some).collect();
+    let Ok(highlighter) = Highlighter::new(Arc::new(query), names.len(), faces) else {
+        return false;
+    };
+    let drawn = |tree: &S::Tree, snapshot: &Snapshot| {
+        captures_in(
+            syntax,
+            highlighter.query(),
+            tree,
+            snapshot,
+            0..snapshot.len(),
+        )
+        .map(|captures| crate::highlight::spans(&highlighter, &captures))
+    };
+    let same = |reparsed: &S::Tree, fresh: &S::Tree, snapshot: &Snapshot| {
+        drawn(reparsed, snapshot) == drawn(fresh, snapshot)
+    };
+    after_edits(syntax, parser, corpus, &same)
+}
+
+/// The named cases from every text, and the sweep, each reparse held to
+/// `same`; and at least one incremental parse kept, so that a property is
+/// never held only by whole parses.
+fn after_edits<S: Syntax>(
+    syntax: &S,
+    parser: &mut S::Parser,
+    corpus: &Corpus,
+    same: Same<'_, S>,
+) -> bool {
     let kept = Cell::new(0);
     let named = corpus.texts.iter().all(|text| {
         NAMED_CASES.iter().all(|case| {
@@ -461,13 +523,14 @@ fn incremental<S: Syntax>(syntax: &S, parser: &mut S::Parser, corpus: &Corpus) -
                     .collect();
                 run.apply(&changes)
             });
-            applied && run.reparse(parser)
+            applied && run.reparse(parser, same)
         })
     });
-    named && sweep(syntax, parser, corpus, &kept) && kept.get() > 0
+    named && sweep(syntax, parser, corpus, &kept, same) && kept.get() > 0
 }
 
-/// The sweep of [`INCREMENTAL`]: from each text, random sequences of
+/// The sweep of [`INCREMENTAL`] and [`HIGHLIGHTS_AFTER_EDITS`]: from each
+/// text, random sequences of
 /// transactions, each step one to three transactions of one to three
 /// changes, reparsed once a step; and then the inverse of the whole
 /// sequence, which puts the text back as it was, reparsed once more. Every
@@ -477,6 +540,7 @@ fn sweep<S: Syntax>(
     parser: &mut S::Parser,
     corpus: &Corpus,
     kept: &Cell<usize>,
+    same: Same<'_, S>,
 ) -> bool {
     let mut random = Random(0x5eed_5eed_5eed_5eed);
     corpus.texts.iter().all(|text| {
@@ -492,9 +556,9 @@ fn sweep<S: Syntax>(
                         .collect();
                     run.apply(&changes)
                 });
-                applied && run.reparse(parser)
+                applied && run.reparse(parser, same)
             }) && run.undo()
-                && run.reparse(parser)
+                && run.reparse(parser, same)
         })
     })
 }
@@ -648,11 +712,11 @@ mod tests {
     use crate::port::QueryError;
 
     #[test]
-    fn the_properties_are_ten_and_each_is_named_once() {
+    fn the_properties_are_eleven_and_each_is_named_once() {
         let mut names = PROPERTIES.to_vec();
         names.sort_unstable();
         names.dedup();
-        assert_eq!(names.len(), 10);
+        assert_eq!(names.len(), 11);
     }
 
     /// One rule a broken syntax breaks; everything else it answers as the
@@ -689,6 +753,9 @@ mod tests {
         BrokenShipped,
         /// It ships a highlights query for a grammar it does not have.
         ShipsForAny,
+        /// A reparse handed an old tree answers the fresh tree, but marked,
+        /// and a marked tree's captures leave out the first.
+        StaleCaptures,
     }
 
     /// The fake with one flaw.
@@ -730,6 +797,15 @@ mod tests {
         ) -> ParensTree {
             match (self.flaw, old) {
                 (Flaw::StaleReuse, Some(old)) => old.clone(),
+                (Flaw::StaleCaptures, Some(old)) => {
+                    // The fake's tree, with the old tree's edits as the
+                    // mark: its nodes are a fresh parse's.
+                    let mut tree = Parens.parse(parser, text, None);
+                    for edit in old.edits() {
+                        Parens.edit(&mut tree, edit);
+                    }
+                    tree
+                }
                 (Flaw::RecoversOtherwise, Some(old)) => {
                     let tree = Parens.parse(parser, text, Some(old));
                     if Parens.has_errors(&tree) {
@@ -786,6 +862,9 @@ mod tests {
                     for capture in &mut captures {
                         capture.capture += 100;
                     }
+                }
+                Flaw::StaleCaptures if !tree.edits().is_empty() && !captures.is_empty() => {
+                    captures.remove(0);
                 }
                 _ => {}
             }
@@ -844,7 +923,10 @@ mod tests {
 
     #[test]
     fn a_syntax_that_reuses_a_stale_tree_is_reported() {
-        assert_eq!(failed(Flaw::StaleReuse), [INCREMENTAL]);
+        assert_eq!(
+            failed(Flaw::StaleReuse),
+            [INCREMENTAL, HIGHLIGHTS_AFTER_EDITS]
+        );
     }
 
     #[test]
@@ -860,7 +942,10 @@ mod tests {
 
     #[test]
     fn a_syntax_that_says_every_tree_has_errors_is_reported_and_keeps_no_incremental_parse() {
-        assert_eq!(failed(Flaw::AlwaysErrors), [ERRORS, INCREMENTAL]);
+        assert_eq!(
+            failed(Flaw::AlwaysErrors),
+            [ERRORS, INCREMENTAL, HIGHLIGHTS_AFTER_EDITS]
+        );
     }
 
     #[test]
@@ -885,12 +970,20 @@ mod tests {
 
     #[test]
     fn a_syntax_whose_shipped_highlights_query_does_not_compile_is_reported() {
-        assert_eq!(failed(Flaw::BrokenShipped), [SHIPPED]);
+        assert_eq!(
+            failed(Flaw::BrokenShipped),
+            [SHIPPED, HIGHLIGHTS_AFTER_EDITS]
+        );
     }
 
     #[test]
     fn a_syntax_that_ships_a_query_for_a_grammar_it_lacks_is_reported() {
         assert_eq!(failed(Flaw::ShipsForAny), [SHIPPED]);
+    }
+
+    #[test]
+    fn a_syntax_whose_captures_of_a_reparsed_tree_differ_from_a_fresh_ones_is_reported() {
+        assert_eq!(failed(Flaw::StaleCaptures), [HIGHLIGHTS_AFTER_EDITS]);
     }
 
     #[test]

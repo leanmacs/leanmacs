@@ -4,7 +4,10 @@
 //! The check is `editor-syntax`'s, the same one its fake passes
 //! (`editor_syntax::contract::check`). Its incremental property drives a
 //! real `editor_text::Text` and tells the library the edit log's own
-//! patches, so this is where `Edit::input_edit` is held to tree-sitter.
+//! patches, so this is where `Edit::input_edit` is held to tree-sitter;
+//! and over the same edits it holds the grammar crate's shipped highlights
+//! query to draw on a reparsed tree what it draws on a fresh one
+//! (`contract::HIGHLIGHTS_AFTER_EDITS`).
 //! The texts are the fixtures checked in under `tests/syntax/`, read with
 //! `include_str!`, and a few written here.
 
