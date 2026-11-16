@@ -761,14 +761,20 @@ whose loop delivers the command hands in what its loop watches.
 
 `clipboard` answers the program's clipboard requests. By default there is
 none (`Clipboard.unavailable`), as for any command run where no host handed
-one in; a host hands in the clipboard its loop's commands reach. -/
+one in; a host hands in the clipboard its loop's commands reach.
+
+`syntaxTree` answers the program's syntax tree requests. By default there is
+none (`SyntaxTree.none`, which has no grammars), as for any command run
+where no host handed one in; a host hands in the one its loop's commands
+reach, so a job's command that sets a major mode with a syntax attaches and
+highlights its text as a key's command does. -/
 def finishWith {α : Type} (held : HeldSnapshots) (handle : Handle) (command : EditorM α)
     (texts : RealTexts) (display : DisplayHandler) (watch : WatchHandler := Watch.idle)
-    (clipboard : ClipboardHandler := Clipboard.unavailable) : IO (Except TextError α × RealTexts) :=
-  do
+    (clipboard : ClipboardHandler := Clipboard.unavailable)
+    (syntaxTree : SyntaxTreeHandler := SyntaxTree.none) : IO (Except TextError α × RealTexts) := do
   let arrived ← (← handle.holding).filterMapM fun id => return (← held.find? id).map (id, ·)
   try
-    command.runReal texts display arrived watch clipboard
+    command.runReal texts display arrived watch clipboard syntaxTree
   finally
     handle.settle
 

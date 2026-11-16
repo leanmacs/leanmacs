@@ -353,6 +353,11 @@ def Event.ofFfi (event : Ffi.Event) : Except String Received := do
     | .menu, 0 =>
       -- An empty name crosses as it is: the loop says no such command.
       none (.menu event.text)
+    | .parsed, 0 =>
+      if event.text.isEmpty then
+        none .parsed
+      else
+        throw "a parse delivered has no text"
     | kind, code =>
       throw s!"{repr kind} has no code {code}"
   return { event := decoded, stamp := event.stamp, interrupt }
@@ -360,8 +365,8 @@ def Event.ofFfi (event : Ffi.Event) : Except String Received := do
 /-- Posts `event` to the editor queue as the process's window would report it,
 through the library's window input (`Ffi.postInput`), so that it takes the
 same encoding path a real window's input does. `false` when it was not
-queued: a message, a completion and a quit are not a window's, and are never
-posted; nor is anything once the queues are quit. -/
+queued: a message, a completion, a parse delivered and a quit are not a
+window's, and are never posted; nor is anything once the queues are quit. -/
 def Event.post : Event → IO Bool
   | .windowOpened platform => Ffi.postInput .windowOpened 0 platform #[]
   | .focus gained => Ffi.postInput .windowFocus (if gained then 1 else 0) "" #[]
@@ -382,7 +387,7 @@ def Event.post : Event → IO Bool
   | .openFiles paths => Ffi.postInput .openFiles 0 "" (EventWords.pathWords paths)
   | .quitRequested => Ffi.postInput .quitRequested 0 "" #[]
   | .menu command => Ffi.postInput .menu 0 command #[]
-  | .message .. | .completion .. | .quit => pure false
+  | .message .. | .completion .. | .parsed | .quit => pure false
 
 /-- Tells the library which key is the interrupt key, or that there is none:
 from then on a press of that key, as a chord names it, raises the library's

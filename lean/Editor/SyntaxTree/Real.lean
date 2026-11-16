@@ -30,6 +30,9 @@ query when the last reference to its handle goes.
 - Offsets are `Nat` here and machine words in the library: one no word
   holds is sent as the largest word, past the end of every text, so it is
   refused and never cut down.
+- A face crosses as its name, and `none` as the empty string, which is no
+  face's name: `some ⟨""⟩` crosses as `none` does. A kind crosses as its
+  tag (`kindTag`).
 - **`captures` never waits for a parse.** It is answered from the tree the
   library last delivered, and refused with `notParsed` when that tree is not
   of the snapshot's revision. A caller asks again later; `contract-test`'s
@@ -74,6 +77,10 @@ def kindOf (tag : UInt64) : QueryErrorKind :=
   | 4 => .predicate
   | 5 => .shape
   | _ => .language
+
+/-- The library's tag of a kind of query. -/
+def kindTag : QueryKind → UInt8
+  | .highlights => 0
 
 /-- The library's handle of the query `query`, if this binding gave it out
 and it is not released. -/
@@ -124,6 +131,20 @@ def handle (real : RealSyntaxTree) : SyntaxTreeHandler
       | .error .wrongGrammar => .error .wrongGrammar
       | .error .badRange => .error .badRange
   | .release query => real.queries.modify fun queries => queries.setIfInBounds query.index none
+  | .shippedQuery grammar kind => do
+    return match ← Ffi.syntaxShippedQuery grammar (kindTag kind) with
+      | .ok source => .ok source
+      | .error .unknownGrammar => .error .unknownGrammar
+      | .error .noShippedQuery => .error .noShippedQuery
+  | .highlight snapshot query faces => do
+    let some text ← real.snapshots.find? snapshot | return .error .noSuchSnapshot
+    let some found ← real.query? query | return .error .noSuchQuery
+    let names := faces.map fun face => (face.map (·.name)).getD ""
+    return match ← Ffi.syntaxHighlight text found names with
+      | .ok () => .ok ()
+      | .error .notAttached => .error .notAttached
+      | .error .wrongGrammar => .error .wrongGrammar
+      | .error .badFaces => .error .badFaces
 
 end RealSyntaxTree
 

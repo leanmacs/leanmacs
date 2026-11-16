@@ -1,4 +1,5 @@
 import Editor.Command
+import Editor.Highlight
 import Editor.Mode
 
 /-!
@@ -123,6 +124,15 @@ from the next command.
   action of each mode of its lineage runs, root first, each once, with the
   view, before the command goes on with its reply. Setting the major mode
   the buffer already has runs nothing.
+- **A major mode with a syntax tree is highlighted first.** When the new
+  lineage says how its text is parsed and drawn (`Mode.syntaxTreeOf`), the
+  loop runs `Highlight.enter` for the buffer's text before the on-enter
+  actions: it attaches the text and has it highlighted, and says a refusal
+  in the echo area without refusing the command (`Editor/Highlight.lean`).
+  When it says nothing and the old major mode's lineage did, the text is
+  detached (`Highlight.leave`). When neither says, the syntax tree port is
+  asked nothing. It runs inside the command as an on-enter action does, so
+  its requests are guarded.
 - **An on-enter action runs inside the command.** Its program is put before
   the rest of the command's and goes through this same transformation: its
   state requests are answered from the state the command had reached, its
@@ -268,10 +278,18 @@ partial def Program.dispatched {α : Type} (registered : Loop.Registered) :
     match state.target? view, registered.entering name with
     | none, _ => dispatched registered state (next (.error (.noSuchWindow view)))
     | some _, none => dispatched registered state (next (.error (.noSuchMode name)))
-    | some _, some lineage =>
+    | some target, some lineage =>
+      let before := (target.buffer.major.bind registered.entering).bind Mode.syntaxTreeOf
       match state.handle (.setMajorMode view name) with
       | (.ok true, state) =>
-        let entering : EditorM Unit := lineage.forM (·.onEnter view)
+        let highlighting : EditorM Unit :=
+          match Mode.syntaxTreeOf lineage, before with
+          | some syntaxTree, _ => Highlight.enter name target.buffer.text syntaxTree
+          | none, some _ => Highlight.leave target.buffer.text
+          | none, none => pure ()
+        let entering : EditorM Unit := do
+          highlighting
+          lineage.forM (·.onEnter view)
         dispatched registered state do
           match ← entering.run with
           | .ok () =>

@@ -2,6 +2,7 @@ import Editor.Clipboard.Model
 import Editor.Command
 import Editor.Display.Model
 import Editor.Fuzzy.Model
+import Editor.SyntaxTree.Model
 import Editor.Text.Model
 import Editor.Watch.Model
 
@@ -29,6 +30,14 @@ took by how much it asked.
 
 A fuzzy request is answered by the fuzzy model (`FuzzyModel.rank`), which
 has no state, so there is no field for it here.
+
+The syntax tree model sees a snapshot's text through its `texts`, as the
+display model does: before each syntax tree request they are set to the
+text of every snapshot the text model holds, and its `documents` to the
+text each was taken of (`snapshotDocuments`), so two snapshots of one text
+share its parse there as they do in the library. A syntax tree request moves
+the clock by a pace, as a text request does. A test reads what a command
+attached and highlighted from the model (`SyntaxTreeModel.highlighted`).
 
 The clipboard model is a field here, so a test reads what a command left
 on the clipboard from the models the command ran against, and takes the
@@ -60,6 +69,9 @@ structure EditorModel where
   /-- The clipboard model: available, and holding nothing, unless a test
   says otherwise. -/
   clipboard : ClipboardModel := {}
+  /-- The syntax tree model. Its `texts` are filled from `texts` before
+  each syntax tree request. -/
+  syntaxTree : SyntaxTreeModel := {}
 
 namespace EditorModel
 
@@ -73,9 +85,15 @@ def snapshotTexts (texts : TextModel) : Array (SnapshotId × String) :=
         slot.map fun content => (⟨index⟩, content.contents)).filterMap
     id
 
+/-- The text each snapshot the text model holds was taken of, under the
+snapshot's id: what tells the syntax tree model two snapshots of one text
+from two texts. -/
+def snapshotDocuments (texts : TextModel) : Array (SnapshotId × Nat) :=
+  (texts.snapshotOf.mapIdx fun index text => text.map fun id => (⟨index⟩, id.index)).filterMap id
+
 /-- Answers `request` with its sub-port's model. A text request, a display
-request, a clipboard request and a fuzzy request each move the watch model's
-clock on by its pace. A state request is answered from an editor with
+request, a clipboard request, a fuzzy request and a syntax tree request each
+move the watch model's clock on by its pace. A state request is answered from an editor with
 nothing in it, and changes nothing. -/
 def handle : (request : EditorRequest) → EditorModel → request.Reply × EditorModel
   | .state request, model => ((EditorState.none.handle request).1, model)
@@ -100,6 +118,14 @@ def handle : (request : EditorRequest) → EditorModel → request.Reply × Edit
         clipboard, watch := model.watch.paced })
   | .fuzzy request, model =>
     ((FuzzyModel.handle request ()).1, { model with watch := model.watch.paced })
+  | .syntaxTree request, model =>
+    let syntaxTree :=
+      { model.syntaxTree with
+        texts := snapshotTexts model.texts, documents := snapshotDocuments model.texts }
+    let (reply, syntaxTree) := SyntaxTreeModel.handle request syntaxTree
+    (reply,
+      { model with
+        syntaxTree, watch := model.watch.paced })
 
 end EditorModel
 

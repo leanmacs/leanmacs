@@ -498,7 +498,15 @@ names a scheme's key:
   and the leader then a suffix runs the mode's local command;
 - `modeEnterChecks`: a mode's on-enter action, on the editor's models: it
   runs once, with the view, when the mode becomes a buffer's major mode, a
-  derived mode's lineage root first, and a refusal runs nothing.
+  derived mode's lineage root first, and a refusal runs nothing;
+- `highlightFaceChecks`: the capture-to-face rule (`Editor/Highlight.lean`),
+  pure: the shipped default from the face vocabulary, the fallback of a
+  dotted capture to its first component, and config's mapping over both;
+- `highlightEnterChecks`: a major mode with a syntax tree, on the editor's
+  models through the loop's dispatch: the text attached and highlighted in
+  the faces the rule gives, a mode's own query, a refusal said in the echo
+  area with the mode still set, a parent's syntax tree taken, and the text
+  detached when a mode with none replaces it.
 -/
 
 namespace ModelTest
@@ -5934,6 +5942,29 @@ def replied {ε α : Type} : Except ε α → ε ⊕ α
 its model runner does with each sub-port's requests. -/
 def commandPortChecks : List Check :=
   [{  name :=
+        "a program over the syntax tree port, lifted to a command, is answered by the syntax tree model over the text model's snapshots, each request a pace; its refusal comes back as a value, and the command is not refused"
+      run := do
+        let program (snapshot : SnapshotId) : SyntaxTreeM (Array String × Nat) := do
+          SyntaxTree.attach snapshot "json"
+          let query ← SyntaxTree.compile "json" "(number) @number"
+          let found ← SyntaxTree.captures snapshot query 0 3
+          return (← SyntaxTree.captureNames query, found.size)
+        let command :
+          EditorM (Except SyntaxTreeError (Array String × Nat) × Except SyntaxTreeError Unit) := do
+          let snapshot ← (← createText "[1]").snapshot
+          let answered ← SyntaxTree.lift (program snapshot)
+          let refused ← SyntaxTree.lift (SyntaxTree.attach snapshot "cobol")
+          return (answered, refused)
+        let (result, model) := command.runModel { editorModel with watch := { pace := 1 } }
+        -- Two text requests, then five syntax tree requests, each a pace.
+        return (match result with
+            | .ok (answered, refused) =>
+              replied answered == .inr (#["number"], 1) && replied refused == .inl .unknownGrammar
+            | .error _ => false) &&
+            model.watch.clock == 7 &&
+            model.syntaxTree.attached.map (·.2) == #["json"] &&
+            model.texts.contents == #["[1]"] },
+    { name :=
         "a program over the text port, lifted to a command, gives the same result and the same texts on the editor's models as on the text model"
       run := do
         let program : TextM String := do
@@ -8691,6 +8722,20 @@ def loopChecks : List Check :=
             loop.state == { state with heights := editorModel.display.cells.heights } &&
               nexts == #[.continue, .continue, .continue] &&
               model.display.scenes.size == 3
+          | (.error _, _) => false },
+    { name :=
+        "a parse delivered leaves the state as it was, but for the heights the display answered, and publishes one scene"
+      run :=
+        pure <|
+          let start : EditorM (EditorState × TestLoop × Array Loop.Next) := do
+            let state ← EditorState.initial ⟨640, 480⟩
+            let (loop, nexts) ← stepsFrom (pure state) [.parsed]
+            return (state, loop, nexts)
+          match (start.runModel editorModel) with
+          | (.ok (state, loop, nexts), model) =>
+            loop.state == { state with heights := editorModel.display.cells.heights } &&
+              nexts == #[.continue] &&
+              model.display.scenes.size == 1
           | (.error _, _) => false },
     { name := "a close request and a quit say stop and publish nothing"
       run :=
@@ -13820,6 +13865,16 @@ def modeRecordChecks : List Check :=
               .bound (invoke "listing-previous") &&
             modeLookup listing (keys "C-o") tuned == .unbound &&
             ((listing.keymaps tuned).head?.map (·.bindings.length)) == some 2) },
+    { name :=
+        "a mode says nothing of a syntax tree by default, and a lineage's is its nearest mode's that says"
+      run :=
+        let json : Mode := { name := "json", syntaxTree := some { grammar := "json" } }
+        let five : Mode :=
+          { name := "five", syntaxTree := some { grammar := "json", highlights := some "x" } }
+        pure
+          (listing.syntaxTree == none && Mode.syntaxTreeOf [listing] == none &&
+            Mode.syntaxTreeOf [json, listing] == some { grammar := "json" } &&
+            Mode.syntaxTreeOf [json, five, listing] == five.syntaxTree) },
     { name := "Mode.check reports nothing for a mode with no problem, under a scheme that tunes it"
       run := pure (listing.check TestScheme.scheme == [] && listing.check checkedScheme == []) },
     { name := "Mode.check reports a role that is not registered, by its name"
@@ -14091,6 +14146,164 @@ def entered (steps : List (ViewId × String)) (registry : Config.Registry := ent
     let texts := model.texts.contents
     some (texts.extract 2 texts.size, echoes, state.buffers.map (·.bind (·.major)))
   | (.error _, _) => none
+
+/-- Each face, by name, `-` for none. -/
+def faceNames (faces : Array (Option FaceName)) : Array String :=
+  faces.map fun face => (face.map (·.name)).getD "-"
+
+/-- The checks of the capture-to-face rule (`Editor/Highlight.lean`), pure:
+the shipped default, the fallback of a dotted capture to its first
+component, and config's mapping over both. -/
+def highlightFaceChecks : List Check :=
+  let faceOf (config : List (String × Option FaceName)) (capture : String) : String :=
+    ((Highlight.faceOf config capture).map (·.name)).getD "-"
+  [{  name :=
+        "by the shipped default, each capture of the face vocabulary's syntax captures is drawn in its syntax face, the vocabulary's own"
+      run :=
+        pure
+          (Face.syntaxCaptures.all
+              (fun (capture, _) => faceOf [] capture == s!"syntax.{capture}") &&
+            Highlight.defaultFaces.map (·.2) == (Face.syntaxEntries.map (·.name)).toList) },
+    { name :=
+        "a dotted capture with no mapping of its own is drawn in its first component's face, and a capture nothing maps draws nothing"
+      run :=
+        pure
+          (faceOf [] "keyword.control" == "syntax.keyword" &&
+            faceOf [] "function.method" == "syntax.function" &&
+            faceOf [] "punctuation.bracket" == "syntax.punctuation" &&
+            faceOf [] "string.special.key" == "syntax.string" &&
+            faceOf [] "escape" == "-" &&
+            faceOf [] "label" == "-" &&
+            faceOf [] "escape.x" == "-") },
+    { name :=
+        "config's mapping wins over the default: a full name for itself alone, a first component for every dotted capture under it with no entry of its own, and none draws nothing"
+      run :=
+        pure
+          (faceOf [("keyword.control", some ⟨"my-face"⟩)] "keyword.control" == "my-face" &&
+            faceOf [("keyword.control", some ⟨"my-face"⟩)] "keyword" == "syntax.keyword" &&
+            faceOf [("string", some ⟨"json-string"⟩)] "string.special.key" == "json-string" &&
+            faceOf [("string", some ⟨"json-string"⟩)] "string" == "json-string" &&
+            faceOf [("number", none)] "number" == "-" &&
+            faceOf [("number", none)] "number.float" == "-" &&
+            faceOf [("escape", some ⟨"syntax.string"⟩)] "escape" == "syntax.string") },
+    { name := "a full name mapped to none stops the fallback to its first component"
+      run :=
+        pure
+          (faceOf [("keyword.control", none)] "keyword.control" == "-" &&
+            faceOf [("keyword.control", none)] "keyword.return" == "syntax.keyword") },
+    { name := "a query's faces are each capture name's, in order"
+      run :=
+        pure
+          (faceNames (Highlight.faces [("number", some ⟨"n"⟩)] #["string", "number", "label"]) ==
+            #["syntax.string", "n", "-"]) }]
+
+/-- A mode called `name` whose text is parsed and drawn as `syntaxTree`
+says. -/
+def parsedMode (name : String) (syntaxTree : Mode.SyntaxTree := { grammar := "json" }) : Mode :=
+  { name, syntaxTree := some syntaxTree }
+
+/-- Sets each mode of `steps`, in turn, as the major mode of buffer 1
+through view 1, by an invocation of `enter` the loop runs, over the
+registry of the on-enter checks with `modes` registered for config, on the
+editor's models: what each left in the echo area, buffer 1's major mode at
+the end, and the syntax tree model then. `none` when the run was
+refused. -/
+def highlightedBy (modes : Array Mode) (steps : List String) :
+    Option (List String × Option String × SyntaxTreeModel) :=
+  let registry := enterRegistry.replaceModes .config modes
+  let program : EditorM (List String × EditorState) := do
+    let mut state ← twoBuffers
+    let mut echoes := []
+    for name in steps do
+      state := (← Loop.run (enterKeys registry) state (entersMode ⟨1⟩ name) []).state
+      echoes := echoes ++ [state.echo]
+    return (echoes, state)
+  match program.runModel editorModel with
+  | (.ok (echoes, state), model) =>
+    some (echoes, (state.buffer? ⟨1⟩).bind (·.major), model.syntaxTree)
+  | (.error _, _) => none
+
+/-- The faces of the syntax tree model's highlighter, by name, `-` for
+none; none when no text is highlighted. -/
+def highlightedFaces (model : SyntaxTreeModel) : Option (Array String) :=
+  model.highlighted.back?.map fun (_, _, faces) => faceNames faces
+
+/-- The checks of setting a major mode with a syntax tree
+(`Editor/Highlight.lean`, `Editor/Command/Dispatch.lean`), on the editor's
+models through the loop's dispatch: what the syntax tree model is asked and
+records. -/
+def highlightEnterChecks : List Check :=
+  [{  name :=
+        "a major mode with a syntax tree attaches its buffer's text and highlights it with the grammar's shipped query, each capture in its syntax face by the shipped default, and releases the query"
+      run :=
+        pure <|
+          match highlightedBy #[parsedMode "json"] ["json"] with
+          | some (echoes, major, model) =>
+            echoes == [""] && major == some "json" && model.attached.map (·.2) == #["json"] &&
+              highlightedFaces model ==
+                some #["syntax.string", "syntax.string", "syntax.number", "syntax.constant"] &&
+              model.queries.all (·.isNone)
+          | none => false },
+    { name := "a capture the mode's config maps to a face is highlighted in that face"
+      run :=
+        pure <|
+          let mapped :=
+            parsedMode "json" { grammar := "json", captures := [("string", some ⟨"json-string"⟩)] }
+          match highlightedBy #[mapped] ["json"] with
+          | some (_, _, model) =>
+            highlightedFaces model ==
+              some #["json-string", "json-string", "syntax.number", "syntax.constant"]
+          | none => false },
+    { name :=
+        "a mode's own highlights query is compiled in place of the shipped one, a dotted capture falling to its first component and an unmapped one drawing nothing"
+      run :=
+        pure <|
+          let own :=
+            parsedMode "numbers"
+              { grammar := "json", highlights := some "(number) @number.float\n(null) @label" }
+          match highlightedBy #[own] ["numbers"] with
+          | some (_, _, model) => highlightedFaces model == some #["syntax.number", "-"]
+          | none => false },
+    { name :=
+        "a query that does not compile, and a grammar the service lacks, are said in the echo area under the mode's name; the mode is set and the command runs to its end"
+      run :=
+        pure <|
+          let broken := parsedMode "broken" { grammar := "json", highlights := some "((" }
+          let cobol := parsedMode "cobol-mode" { grammar := "cobol" }
+          (match highlightedBy #[broken] ["broken"] with
+            | some ([echo], major, model) =>
+              echo.startsWith "highlights: `broken`: the query is not one" &&
+                major == some "broken" &&
+                model.highlighted.isEmpty
+            | _ => false) &&
+            match highlightedBy #[cobol] ["cobol-mode"] with
+            | some ([echo], major, model) =>
+              echo == "highlights: `cobol-mode`: no grammar of that name" &&
+                major == some "cobol-mode" &&
+                model.attached.isEmpty
+            | _ => false },
+    { name := "a derived mode that says nothing of a syntax tree takes its parent's"
+      run :=
+        pure <|
+          let child : Mode := { name := "json-child", parent := some "json" }
+          match highlightedBy #[parsedMode "json", child] ["json-child"] with
+          | some (_, major, model) =>
+            major == some "json-child" &&
+              highlightedFaces model ==
+                some #["syntax.string", "syntax.string", "syntax.number", "syntax.constant"]
+          | none => false },
+    { name :=
+        "a major mode with no syntax tree set over one with a syntax tree detaches the text, which drops its highlights; one set over a mode with none asks the syntax tree port nothing"
+      run :=
+        pure <|
+          (match highlightedBy #[parsedMode "json"] ["json", "listing"] with
+            | some (_, major, model) =>
+              major == some "listing" && model.attached.isEmpty && model.highlighted.isEmpty
+            | none => false) &&
+            match highlightedBy #[] ["listing", "other"] with
+            | some (_, major, model) =>
+              major == some "other" && model.texts.isEmpty && model.attached.isEmpty
+            | none => false }]
 
 /-- The checks of a mode's on-enter action, on the editor's models: a
 command asks for a major mode by the request, and the loop that runs the
@@ -23502,6 +23715,8 @@ def checks : List Check :=
     modeRegistryChecks ++
     modeDispatchChecks ++
     modeEnterChecks ++
+    highlightFaceChecks ++
+    highlightEnterChecks ++
     apiStateChecks ++
     driverChecks ++
     promptChecks ++

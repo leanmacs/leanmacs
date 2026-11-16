@@ -1,4 +1,5 @@
 import Editor.Program
+import Editor.Scene
 import Editor.Text
 
 /-!
@@ -33,6 +34,16 @@ scheme's key grammar (`Editor/InputScheme.lean`).
   range is empty, when the node starts within it, its ends included. Offsets
   are bytes, as everywhere at the boundary.
 - **`release query`**: the query is not needed any more.
+- **`shippedQuery grammar kind`** answers the source of the query of `kind`
+  that `grammar` is published with (`QueryKind.highlights`: its
+  `highlights.scm`). Each implementation ships its own: the library the
+  grammar crate's, pinned with it, and the model one in its own query
+  subset. A caller compares only that it compiles.
+- **`highlight snapshot query faces`**: the text `snapshot` is of is drawn
+  with `query`'s captures in `faces` from now on, one entry for each of its
+  capture names, `none` for a capture that draws nothing, in place of any
+  highlighter before. Highlights reach the display in the library, never
+  through Lean; `detach`, and an attach with another grammar, drop them.
 
 ## Refusals
 
@@ -52,12 +63,16 @@ A refusal is a value: each reply is an `Except SyntaxTreeError`.
 - `query kind offset`: the source is not a query, for `kind`, found at the
   byte `offset` of the source. Offsets are each implementation's own; the
   kind is what a caller compares.
+- `noShippedQuery`: the grammar is published with no query of that kind.
+- `badFaces`: the faces are not one for each of the query's capture
+  names.
 
 ## Scope
 
-In this phase the port is standalone, with a program type of its own.
-Making it a sub-port of the editor's port (`Editor/Command.lean`), so that a
-command and a major mode ask it, is the next phase's.
+The port has a program type of its own, `SyntaxTreeM`, and is a sub-port
+of the editor's port (`Editor/Command.lean`): a command and a major mode ask
+it through `SyntaxTree.lift`, which hands a refusal back as a value. What
+setting a major mode with a syntax asks of it is `Editor/Highlight.lean`'s.
 
 ## Where an addition goes
 
@@ -74,6 +89,13 @@ what only one of them shows.
 -/
 
 namespace Editor
+
+/-- Which of a grammar's own queries: the queries a grammar is published
+with, each for one job. -/
+inductive QueryKind where
+  /-- What to draw in which face: `highlights.scm`. -/
+  | highlights
+  deriving DecidableEq, Repr
 
 /-- The name of a compiled query the syntax service holds. It is plain data,
 so a request can carry it. -/
@@ -125,7 +147,25 @@ inductive SyntaxTreeError where
   | badRange
   /-- The source is not a query, for `kind`, found at the byte `offset`. -/
   | query (kind : QueryErrorKind) (offset : Nat)
+  /-- The grammar is published with no query of that kind. -/
+  | noShippedQuery
+  /-- The faces are not one for each of the query's capture names. -/
+  | badFaces
   deriving DecidableEq, Repr
+
+/-- The refusal, as words a user reads in the echo area. -/
+def SyntaxTreeError.describe : SyntaxTreeError → String
+  | .unknownGrammar => "no grammar of that name"
+  | .noSuchSnapshot => "no such snapshot"
+  | .noSuchQuery => "no such query"
+  | .noDocument => "the text is of no document"
+  | .notAttached => "the text is not parsed"
+  | .notParsed => "the text is not parsed yet"
+  | .wrongGrammar => "the query is of another grammar"
+  | .badRange => "the range is not two positions in order"
+  | .query kind offset => s!"the query is not one: {repr kind} at byte {offset}"
+  | .noShippedQuery => "the grammar ships no such query"
+  | .badFaces => "the faces are not one for each capture name"
 
 namespace SyntaxTree
 
@@ -161,6 +201,11 @@ inductive SyntaxTreeRequest where
   | captures (snapshot : SnapshotId) (query : QueryId) (start stop : Nat)
   /-- `query` is not needed any more. -/
   | release (query : QueryId)
+  /-- The source of the query of `kind` that `grammar` is published with. -/
+  | shippedQuery (grammar : String) (kind : QueryKind)
+  /-- Draw the text `snapshot` is of with `query`'s captures in `faces`,
+  one for each capture name, from now on. -/
+  | highlight (snapshot : SnapshotId) (query : QueryId) (faces : Array (Option FaceName))
   deriving DecidableEq, Repr
 
 /-- The type of the reply to each request. -/
@@ -172,6 +217,8 @@ def SyntaxTreeRequest.Reply : SyntaxTreeRequest → Type
   | .captureNames _ => Except SyntaxTreeError (Array String)
   | .captures _ _ _ _ => Except SyntaxTreeError (Array SyntaxTree.Capture)
   | .release _ => Unit
+  | .shippedQuery _ _ => Except SyntaxTreeError String
+  | .highlight _ _ _ => Except SyntaxTreeError Unit
 
 /-- The syntax tree port: `SyntaxTreeRequest` and the reply to each request. -/
 abbrev syntaxTreePort : Port :=
@@ -224,6 +271,21 @@ def captures (snapshot : SnapshotId) (query : QueryId) (start stop : Nat) :
 def release (query : QueryId) : SyntaxTreeM Unit :=
   ExceptT.lift (Program.request (port := syntaxTreePort) (.release query))
 
+/-- The source of the query of `kind` that `grammar` is published with.
+Refused with `unknownGrammar`, or `noShippedQuery` for a grammar published
+with none of that kind. -/
+def shippedQuery (grammar : String) (kind : QueryKind) : SyntaxTreeM String :=
+  ExceptT.mk (Program.request (port := syntaxTreePort) (.shippedQuery grammar kind))
+
+/-- Draw the text `snapshot` is of with `query`'s captures in `faces`, one
+entry for each of its capture names (`none` draws nothing), from now on, in
+place of any highlighter before. Refused, checked in this order, with
+`noSuchSnapshot`, `noSuchQuery`, `notAttached`, `wrongGrammar` or
+`badFaces`. -/
+def highlight (snapshot : SnapshotId) (query : QueryId) (faces : Array (Option FaceName)) :
+    SyntaxTreeM Unit :=
+  ExceptT.mk (Program.request (port := syntaxTreePort) (.highlight snapshot query faces))
+
 /-- Whether a node over `start`..`stop` is in the range `first`..`last`: it
 shares a byte with it, or, when the node or the range is empty, it starts
 within it, its ends included. The Rust core's `query::overlaps`. -/
@@ -245,6 +307,23 @@ def sorted (captures : Array Capture) : Array Capture :=
     (fun kept capture => if kept.back? == some capture then kept else kept.push capture) #[]
 
 end SyntaxTree
+
+/-- The handler of a run with no syntax service handed in: it has no
+grammars, so an attach and a compile are refused with `unknownGrammar`, as
+is a shipped query; it holds no query, so a question of one is refused with
+`noSuchQuery`; and a detach and a release do nothing. What a command run
+where no host handed one in reaches (`EditorM.runReal`,
+`Editor/Command/Real.lean`). -/
+def SyntaxTree.none : SyntaxTreeHandler
+  | .grammars => pure #[]
+  | .attach _ _ => pure (.error .unknownGrammar)
+  | .detach _ => pure (.ok ())
+  | .compile _ _ => pure (.error .unknownGrammar)
+  | .captureNames _ => pure (.error .noSuchQuery)
+  | .captures _ _ _ _ => pure (.error .noSuchQuery)
+  | .release _ => pure ()
+  | .shippedQuery _ _ => pure (.error .unknownGrammar)
+  | .highlight _ _ _ => pure (.error .noSuchQuery)
 
 /-- Runs a syntax tree program against `handler`: its result, or the refusal
 it failed with. -/

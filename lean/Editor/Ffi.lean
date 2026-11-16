@@ -61,7 +61,7 @@ answers cross (`FfiTest.displayChecks`); `tests/c_api.rs`,
 | Byte range | Two scalars | `ByteRange`: two `UInt64`, half-open, in bytes |
 | List | *Words*: a `@& ByteArray` of 64-bit numbers, eight bytes each, least significant first, written by a private encoder here; the glue passes its bytes and byte length, and Rust checks every count against the buffer | The glue copies the library's buffer of words into a `ByteArray` and hands the buffer back; a private decoder here builds the typed value, and words it cannot read are an `IO` error |
 | List of handles | `@& Array Snapshot`, an array of handles borrowed for the call, beside the words, which name a handle by its index in it; the glue passes it as a C array of the handles' pointers and its count, which it builds for the call (`Display.publish`) | None yet |
-| List of strings | Words, the count and then the byte length of each string, written by a private encoder here, and one `@& String` of all of them end to end; Rust refuses lengths that do not add up to the string or that end inside a character (`fuzzyRank`) | The same words and string in a private structure of two object fields the glue builds in one call, decoded here; words that do not add up to the string are an `IO` error (`syntaxGrammars`, `SyntaxQuery.captureNames`) |
+| List of strings | Words, the count and then the byte length of each string, written by a private encoder here, and one `@& String` of all of them end to end; Rust refuses lengths that do not add up to the string or that end inside a character (`fuzzyRank`, `syntaxHighlight`) | The same words and string in a private structure of two object fields the glue builds in one call, decoded here; words that do not add up to the string are an `IO` error (`syntaxGrammars`, `SyntaxQuery.captureNames`) |
 
 A picture (`Picture`, for tests) crosses as a small structure: its pixels,
 an object field the glue copies from the library's buffer into a
@@ -238,6 +238,15 @@ in a range of a snapshot, as words, at once from the tree the library last
 delivered, and refuses with `notParsed` when that tree is not of the
 snapshot's revision: it never waits for a parse. `syntaxSettle` waits, with
 a bound, for a delivery, for tests.
+
+`syntaxShippedQuery` answers the source of the query of a kind a grammar is
+published with (the kind as a tag, 0 for highlights), or a status.
+`syntaxHighlight` has the library draw a document with a query's captures
+in faces from now on: the faces cross as a list of strings in, the empty
+string for none, and the refusal is a status. Highlights never come back to
+Lean: the library draws them in the display, and reports each delivery of a
+highlighted document's parse as a `parsed` event on the editor queue
+("The event queues").
 
 Its one caller is the syntax tree interface's real binding
 (`Editor/SyntaxTree/Real.lean`). Tests: the syntax checks of `ffi-test`
@@ -1409,6 +1418,10 @@ inductive EventKind where
   /-- A command item of the menu bar was chosen. The code is 0, the text
   the command's name, and there is no word. -/
   | menu
+  /-- A parse of a highlighted document was delivered, from the library's
+  syntax service: the next scene draws with it. The code is 0, and there is
+  no text and no word. -/
+  | parsed
   deriving DecidableEq, Repr
 
 /-- The kind the library's number `tag` stands for, if it is one. -/
@@ -1426,6 +1439,7 @@ def EventKind.ofTag? : UInt64 → Option EventKind
   | 10 => some .openFiles
   | 11 => some .quitRequested
   | 12 => some .menu
+  | 13 => some .parsed
   | _ => none
 
 /-- What kind of thing an event came from. -/
@@ -1534,6 +1548,12 @@ opaque quit : IO Unit
 know a pull is parked before they post. -/
 @[extern "editor_glue_events_waiting"]
 opaque waiting (queue : Queue) : IO UInt64
+
+/-- How many events `queue` holds that have not been pulled. A readout for
+tests, which drain the `parsed` events a highlighted document's parses
+leave on the editor queue without parking a pull on an empty queue. -/
+@[extern "editor_glue_events_queued"]
+opaque queued (queue : Queue) : IO UInt64
 
 /-- Has the library's scripted source, a fake for tests, feed `queue` from a
 new Rust thread: `count` messages from the script source `sourceId`, with the
@@ -2998,6 +3018,76 @@ def syntaxCaptures (snapshot : Snapshot) (query : SyntaxQuery) (start stop : USi
     return .error .badRange
   | status =>
     throw (IO.userError s!"the library answered captures with the status {status}")
+
+/-- Why the library shipped no query. -/
+inductive SyntaxShippedRefusal where
+  /-- No grammar of that name. -/
+  | unknownGrammar
+  /-- The grammar is published with no query of that kind. -/
+  | noShippedQuery
+  deriving DecidableEq, Repr
+
+/-- A shipped query as the glue builds it in one call: the source, empty
+for a refusal, then the status. -/
+private structure RawShipped where
+  /-- The source, copied from the library's buffer. -/
+  source : String
+  /-- 0 shipped, 1 unknown grammar, 2 no such query. -/
+  status : UInt64
+
+/-- `syntaxShippedQuery` as it crosses. -/
+@[extern "editor_glue_syntax_shipped_query"]
+private opaque syntaxShippedQueryRaw (grammar : @& String) (kind : UInt8) : IO RawShipped
+
+/-- The source of the query of the kind `kind` tags (0, highlights) that
+`grammar` is published with, or why not. A status the library has no word
+for is an `IO` error. -/
+def syntaxShippedQuery (grammar : String) (kind : UInt8) :
+    IO (Except SyntaxShippedRefusal String) := do
+  let raw ← syntaxShippedQueryRaw grammar kind
+  match raw.status with
+  | 0 =>
+    return .ok raw.source
+  | 1 =>
+    return .error .unknownGrammar
+  | 2 =>
+    return .error .noShippedQuery
+  | status =>
+    throw (IO.userError s!"the library answered a shipped query with the status {status}")
+
+/-- Why the library did not highlight a document. -/
+inductive SyntaxHighlightRefusal where
+  /-- The snapshot's document is not attached. -/
+  | notAttached
+  /-- The query is of another grammar than the document is parsed with. -/
+  | wrongGrammar
+  /-- The faces are not one for each of the query's capture names. -/
+  | badFaces
+  deriving DecidableEq, Repr
+
+/-- `syntaxHighlight` as it crosses: the faces as words and one string, and
+the status (0 highlighted, 1 not attached, 2 wrong grammar, 3 bad faces). -/
+@[extern "editor_glue_syntax_highlight"]
+private opaque syntaxHighlightRaw (snapshot : @& Snapshot) (query : @& SyntaxQuery)
+    (words : @& ByteArray) (strings : @& String) : IO UInt64
+
+/-- Has the library draw the document `snapshot` is of with `query`'s
+captures in `faces`, one for each capture name, from now on, the empty
+string for a capture that draws nothing. A status the library has no word
+for is an `IO` error. -/
+def syntaxHighlight (snapshot : Snapshot) (query : SyntaxQuery) (faces : Array String) :
+    IO (Except SyntaxHighlightRefusal Unit) := do
+  match ← syntaxHighlightRaw snapshot query (lengthWords faces) (faces.foldl (· ++ ·) "") with
+  | 0 =>
+    return .ok ()
+  | 1 =>
+    return .error .notAttached
+  | 2 =>
+    return .error .wrongGrammar
+  | 3 =>
+    return .error .badFaces
+  | status =>
+    throw (IO.userError s!"the library answered a highlight with the status {status}")
 
 /-- For tests: waits up to `boundMs` milliseconds for the library to deliver
 a tree of `snapshot`'s revision, or a newer one, and returns whether it did.

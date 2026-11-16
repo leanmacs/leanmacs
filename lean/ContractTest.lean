@@ -890,6 +890,30 @@ def jobChecks (services : Job.Services) (pool : Array UInt64) : List Check :=
         let threads ← Job.Pool.warm (pool.size + 2) warmPatience
         return !pool.isEmpty && threads.size == pool.size && threads.all pool.contains }]
 
+/-- `handler`, a real syntax tree binding's over `table`, which after an
+attach waits, with a bound, for the attached text's tree to be delivered:
+so a highlighter set after the attach sees no delivery of that parse, and
+no `parsed` event of it is left on the editor queue, which the watch checks
+pull after these. A delivery a check makes after a highlight, by an edit,
+leaves one, which the check pulls (`pulledParsed`). -/
+def settlingAttach (table : Snapshots) (handler : SyntaxTreeHandler) : SyntaxTreeHandler :=
+  fun request => do
+  let reply ← handler request
+  if let .attach snapshot _ := request then
+    if let some found← table.find? snapshot then
+      discard (Ffi.syntaxSettle found 5000)
+  return reply
+
+/-- Whether the editor queue holds exactly one event, the library's report
+of a parse delivered, which is pulled: what an edit of a highlighted text
+leaves once its tree is delivered. It never parks a pull on an empty
+queue. -/
+def pulledParsed : IO Bool := do
+  unless (← Ffi.queued .editor) == 1 do
+    return false
+  let event ← Ffi.nextEvent .editor
+  return event.kind == .parsed && event.source.kind == .library
+
 /-- What a check of the runner over the library's file service works with: a
 text store whose table of snapshots is published, the file service over its
 read half, and a fake clock a check parks a job on. The file waits are
@@ -982,6 +1006,33 @@ def fileChecks (completions : Job.Completions) : List Check :=
                 (← eventually (return (← Ffi.Snapshot.live) == live))
           finally
             handle.cancel },
+    { name :=
+        "a job's command run by Job.finishWith reaches the syntax tree it is handed: its text, highlighted as a mode with a syntax tree is entered, is attached in the library, and a query of it answers"
+      run := do
+        let rig ← FileRig.new completions
+        let handle ← Job.spawn rig.services (reporting fun _ => pure 1) (pure ())
+        unless ← eventually handle.ended do
+          return false
+        let real ← RealSyntaxTree.new rig.published.reader
+        let syntaxTree := settlingAttach rig.published real.handle
+        let command : EditorM SnapshotId := do
+          let text ← createText "[1, 2]"
+          Highlight.enter "json" text { grammar := "json" }
+          text.snapshot
+        let display := (← recorderOf rig.published).handle
+        let (.ok snapshot, texts) ←
+          Job.finishWith rig.held handle command (.over rig.published) display (syntaxTree :=
+              syntaxTree) | return false
+        let numbers : SyntaxTreeM Nat := do
+          let query ← SyntaxTree.compile "json" "(number) @n"
+          return (← SyntaxTree.captures snapshot query 0 6).size
+        let some found ← rig.published.find? snapshot | return false
+        unless ← Ffi.syntaxSettle found 5000 do
+          return false
+        let answered ← numbers.runWith syntaxTree
+        -- The text's document is held until here: a document freed is
+        -- detached.
+        return answered matches .ok 2 && texts.documents.size == 1 },
     { name :=
         "a snapshot a job loaded that no command adopted is freed when the job is settled: the library holds what it held, and the editor's table never grew"
       run :=
@@ -1368,7 +1419,8 @@ def fuzzyChecks : List Check :=
 /-- Documents of `texts` in the library, a table of a snapshot of each, the
 ids of those snapshots in the order of `texts`, and a real syntax tree
 binding over the table whose handler waits, with a bound, for a snapshot's
-tree to be delivered before it forwards a question of its captures. The
+tree to be delivered before it forwards a question of its captures, and
+after an attach (`settlingAttach`). The
 documents are returned so that the caller keeps them alive: a document
 freed detaches its text. -/
 def syntaxTreeOver (texts : Array String) :
@@ -1384,7 +1436,7 @@ def syntaxTreeOver (texts : Array String) :
       if let some found← table.find? snapshot then
         discard (Ffi.syntaxSettle found 5000)
     real.handle request
-  return (documents, table, ids, handler)
+  return (documents, table, ids, settlingAttach table handler)
 
 /-- Runs `property` of the syntax tree interface's contract against the real
 binding, over documents of its texts. -/
@@ -1469,7 +1521,55 @@ def syntaxTreeChecks : List Check :=
           return attached matches .ok () &&
               match ← program.runWith handler with
               | .ok captures => capturedTexts text captures == #["zero", "one"]
-              | .error _ => false }]
+              | .error _ => false },
+    { name :=
+        "a highlight with a query of another grammar than its text's is refused as of the wrong grammar"
+      run :=
+        onRealSyntaxTree #["fn one() {}"] fun _ _ ids handler => do
+          let program : SyntaxTreeM Bool := do
+            SyntaxTree.attach (SyntaxTreeContract.nth ids 0) "rust"
+            let query ← SyntaxTree.compile "json" "(number) @n"
+            SyntaxTreeContract.refusedWith .wrongGrammar
+                (SyntaxTree.highlight (SyntaxTreeContract.nth ids 0) query #[none])
+          return (← program.runWith handler) matches .ok true },
+    { name :=
+        "a Rust text highlighted by the shipped default and edited is drawn by the real display with its keywords in the keyword face's colour, once the edit's tree is delivered and reported on the editor queue"
+      run := do
+        let table ← Snapshots.new
+        let real ← RealSyntaxTree.new table.reader
+        let syntaxTree := settlingAttach table real.handle
+        let red := Color.rgb 0xcc 0 0
+        let display ← Ffi.Display.newCells 8 16
+        let shown ←
+          RealDisplay.over display table.reader
+              #[{ name := ⟨"syntax.keyword"⟩, face := { foreground := some red } }]
+        let highlighted : EditorM TextId := do
+          let text ← createText "fn one() {}\n"
+          Highlight.enter "rust" text { grammar := "rust" }
+          return text
+        let (.ok text, texts) ←
+          highlighted.runReal (.over table) shown.handle (syntaxTree := syntaxTree) | return false
+        let edited : EditorM (SnapshotId × MarkerId) := do
+          text.insert 0 "fn zero() {}\n"
+          return (← text.snapshot, ← text.mark (.anchor { offset := 0, bias := .before }))
+        let (.ok (snapshot, scroll), texts) ←
+          edited.runReal texts shown.handle (syntaxTree := syntaxTree) | return false
+        let some found ← table.find? snapshot | return false
+        unless ← Ffi.syntaxSettle found 5000 do
+          return false
+        let reported ← pulledParsed
+        let scene : Scene :=
+          { size := { width := 160, height := 64 }
+            views :=
+              #[{ id := ⟨0⟩, rect := { x := 0, y := 0, width := 160, height := 64 }, snapshot
+                  scroll, selections := #[], cursor := { shape := .block, face := ⟨"cursor"⟩ }
+                  decorations := #[], status := #[] }]
+            focused := none, echo := "", pending := "", preedit := none }
+        let publish : EditorM Unit := Display.publish scene
+        let (published, _) ← publish.runReal texts shown.handle
+        let frame ← display.frameText
+        -- Each row starts with `fn`: its first run, two bytes, in red.
+        return reported && published.isOk && (frame.splitOn "runs 0..2:cc0000ff/").length == 3 }]
 
 /-- Runs a property of the watch port's contract against the real binding
 over `timers`. The library is told the interrupt key, and the property's

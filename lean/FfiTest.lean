@@ -190,9 +190,11 @@ def dataChecks (_ : Unit) : List Check :=
                 some .closeRequested, some .resize, some .openFiles, some .quitRequested,
                 some .menu] &&
             Editor.Ffi.SourceKind.ofTag? 3 == some .window) },
+    { name := "the tag of a parse delivered is known"
+      run := pure (Editor.Ffi.EventKind.ofTag? 13 == some .parsed) },
     { name := "a tag the bindings do not know is refused"
       run :=
-        pure ((Editor.Ffi.EventKind.ofTag? 13).isNone && (Editor.Ffi.SourceKind.ofTag? 4).isNone) }]
+        pure ((Editor.Ffi.EventKind.ofTag? 14).isNone && (Editor.Ffi.SourceKind.ofTag? 4).isNone) }]
 
 /-- An hour, in milliseconds: a deadline no check reaches. -/
 def hour : UInt64 :=
@@ -1902,6 +1904,17 @@ def eventDecodeChecks (_ : Unit) : List Check :=
                       stamp := 0 }).map
                 (·.event) ==
               some .quit) },
+    { name :=
+        "a parse delivered decodes from the library's syntax service, with no code, text or word"
+      run :=
+        let parsed (code : UInt64) (text : String) (words : Array UInt64) : Editor.Ffi.Event :=
+          { source := { kind := .library, id := 5 }, kind := .parsed, code, text, stamp := 0
+            words }
+        pure
+          ((decodedEvent (parsed 0 "" #[])).map (·.event) == some .parsed &&
+            (decodedEvent (parsed 1 "" #[])).isNone &&
+            (decodedEvent (parsed 0 "x" #[])).isNone &&
+            (decodedEvent (parsed 0 "" #[1])).isNone) },
     { name := "a window opened decodes with its platform, and a focus gained and lost"
       run :=
         pure
@@ -3279,6 +3292,37 @@ def syntaxChecks (_ : Unit) : List Check :=
             badRange matches .error .badRange &&
             pastTheEnd matches .error .badRange &&
             notParsed matches .error .notParsed },
+    { name :=
+        "a shipped query crosses as its source, and its refusals as their statuses: a grammar the library lacks and a kind it has no tag for"
+      run := do
+        let shipped ← Editor.Ffi.syntaxShippedQuery "json" 0
+        let unknown ← Editor.Ffi.syntaxShippedQuery "cobol" 0
+        let noKind ← Editor.Ffi.syntaxShippedQuery "json" 9
+        let compiles ←
+          match shipped with
+          | .ok source =>
+            do
+              pure (← Editor.Ffi.SyntaxQuery.new "json" source).toBool
+          | .error _ =>
+            pure false
+        return compiles && unknown matches .error .unknownGrammar &&
+            noKind matches .error .noShippedQuery },
+    { name :=
+        "faces cross as a list of strings in, and each refusal of a highlight as its status: a text not attached, a query of another grammar and faces not one for each capture name"
+      run := do
+        let some (document, snapshot) ← parsedSnapshot "[1, true]" "json" | return false
+        let some json ← syntaxQuery "json" "(number) @number\n(true) @constant" | return false
+        let some rust ← syntaxQuery "rust" "(identifier) @id" | return false
+        let other ← (← Editor.Ffi.Document.new "[2]").snapshot
+        let notAttached ← Editor.Ffi.syntaxHighlight other json #["syntax.number", ""]
+        let wrongGrammar ← Editor.Ffi.syntaxHighlight snapshot rust #["syntax.variable"]
+        let badFaces ← Editor.Ffi.syntaxHighlight snapshot json #["syntax.number"]
+        let highlighted ← Editor.Ffi.syntaxHighlight snapshot json #["syntax.number", "é漢"]
+        let kept ← document.read
+        return !kept.isEmpty && notAttached matches .error .notAttached &&
+            wrongGrammar matches .error .wrongGrammar &&
+            badFaces matches .error .badFaces &&
+            highlighted matches .ok () },
     { name :=
         "a document is attached and detached through a snapshot of it, and one of a grammar the library lacks is refused"
       run := do

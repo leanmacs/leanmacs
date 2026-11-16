@@ -47,6 +47,14 @@ absolute paths in the order the system gave them. The window holds files it
 is told of before it has opened, and reports them after `windowOpened` and
 the resize after it. What the loop does with them is `Editor/Loop.lean`'s.
 
+## A parse delivered
+
+The library's syntax service reports each delivery of a parse of a
+highlighted text as `Event.parsed`, from the library's source. It carries
+nothing: the loop changes no state for it and publishes a scene, which the
+library lays out with the new tree. A host hands it to its loop as it hands
+a window's event (`Editor/Headless.lean`, `Running.handle`).
+
 ## Where an addition goes
 
 Two roadmaps build on these events. The display pipeline owns producing them
@@ -352,6 +360,9 @@ inductive Event where
   /-- A command item of the menu bar was chosen: the command of this name
   runs, as an invocation no key yielded (`Editor/Menu.lean`). -/
   | menu (command : String)
+  /-- The library delivered a parse of a highlighted text: a scene
+  published now is drawn with it (`Editor/Highlight.lean`). -/
+  | parsed
   /-- The queue has been quit: the loop pulling it must return. -/
   | quit
   deriving BEq, Repr

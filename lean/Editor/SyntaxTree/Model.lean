@@ -14,11 +14,22 @@ Its state has three parts:
 - `texts`: the snapshots it knows and the text of each, which a runner
   fills, as `DisplayModel.texts` is. Every one is of a document, so the
   model never answers `noDocument`.
-- `attached`: the snapshots whose text is parsed, each with its grammar. A
-  snapshot is its own text here; the library parses the document behind
-  it, so every snapshot of one document shares its parse.
+- `attached`: the snapshots whose text is parsed, each with its grammar.
+  The library parses the document behind a snapshot, so every snapshot of
+  one document shares its parse. Here two snapshots are of one text when
+  `documents`, which a runner fills, says so (`sameText`); a snapshot it
+  says nothing of is a text of its own, as in the contract's runs.
 - `queries`: the queries compiled, by id, each with its grammar; `none`
   once released.
+- `highlighted`: the highlighter of each snapshot that has one, its query
+  and its faces, as `highlight` set it: a later one replaces it, and
+  `detach` drops it. It is what the editor's checks read
+  (`ModelTest.highlightEnterChecks`); the model draws nothing.
+
+Its shipped highlights query (`highlights`) is its own, in its query subset:
+the library's JSON one uses an alternation, which the model refuses as
+unsupported. Each implementation's source is its own, and the contract
+compares only that it compiles.
 
 A request is checked in the order the real binding checks it: the
 snapshot and the query ids first, then whether the text is attached, the
@@ -35,11 +46,18 @@ namespace Editor
 structure SyntaxTreeModel where
   /-- The snapshots it knows, each with its text. -/
   texts : Array (SnapshotId × String) := #[]
+  /-- The text each snapshot is of, by a number of the runner's, for the
+  snapshots the runner knows that of; a snapshot not here is a text of its
+  own. -/
+  documents : Array (SnapshotId × Nat) := #[]
   /-- The snapshots whose text is parsed, each with its grammar. -/
   attached : Array (SnapshotId × String) := #[]
   /-- The queries compiled, by id, each with its grammar; `none` once
   released. -/
   queries : Array (Option (String × SyntaxTreeModel.Query)) := #[]
+  /-- The highlighter of each snapshot that has one: its query and its
+  faces. -/
+  highlighted : Array (SnapshotId × QueryId × Array (Option FaceName)) := #[]
 
 namespace SyntaxTreeModel
 
@@ -47,13 +65,24 @@ namespace SyntaxTreeModel
 def grammar : String :=
   "json"
 
+/-- The highlights query the model ships for `json`, in its own query
+subset. -/
+def highlights : String :=
+  "(pair key: (_) @string.special.key)\n(string) @string\n(number) @number\n(null) @constant.builtin\n(true) @constant.builtin\n(false) @constant.builtin\n"
+
 /-- The text of `snapshot`, if the model knows it. -/
 def text? (model : SyntaxTreeModel) (snapshot : SnapshotId) : Option String :=
   (model.texts.find? (·.1 == snapshot)).map (·.2)
 
+/-- Whether the snapshots `a` and `b` are of one text: they are the same
+snapshot, or `documents` names one text for both. -/
+def sameText (model : SyntaxTreeModel) (a b : SnapshotId) : Bool :=
+  let document (snapshot : SnapshotId) := (model.documents.find? (·.1 == snapshot)).map (·.2)
+  a == b || (document a).isSome && document a == document b
+
 /-- The grammar `snapshot`'s text is parsed with, if it is attached. -/
 def attachedTo? (model : SyntaxTreeModel) (snapshot : SnapshotId) : Option String :=
-  (model.attached.find? (·.1 == snapshot)).map (·.2)
+  (model.attached.find? (model.sameText ·.1 snapshot)).map (·.2)
 
 /-- The query `query` names, with its grammar, if it is compiled and not
 released. -/
@@ -74,14 +103,42 @@ def attach (model : SyntaxTreeModel) (snapshot : SnapshotId) (named : String) :
   else
     if named != grammar then (.error .unknownGrammar, model)
     else
-      let others := model.attached.filter (·.1 != snapshot)
+      let others := model.attached.filter (!model.sameText ·.1 snapshot)
       (.ok (), { model with attached := others.push (snapshot, named) })
 
-/-- `detach`. -/
+/-- `detach`: the highlighter goes with the parse. -/
 def detach (model : SyntaxTreeModel) (snapshot : SnapshotId) :
     Except SyntaxTreeError Unit × SyntaxTreeModel :=
   if (model.text? snapshot).isNone then (.error .noSuchSnapshot, model)
-  else (.ok (), { model with attached := model.attached.filter (·.1 != snapshot) })
+  else
+    (.ok (),
+      { model with
+        attached := model.attached.filter (!model.sameText ·.1 snapshot)
+        highlighted := model.highlighted.filter (!model.sameText ·.1 snapshot) })
+
+/-- `shippedQuery`. -/
+def shippedQuery (named : String) (_kind : QueryKind) : Except SyntaxTreeError String :=
+  if named != grammar then .error .unknownGrammar else .ok highlights
+
+/-- `highlight`, checked in the order the real binding checks it. -/
+def highlight (model : SyntaxTreeModel) (snapshot : SnapshotId) (query : QueryId)
+    (faces : Array (Option FaceName)) : Except SyntaxTreeError Unit × SyntaxTreeModel :=
+  let checked : Except SyntaxTreeError Unit := do
+    if (model.text? snapshot).isNone then
+      throw .noSuchSnapshot
+    let some (queryGrammar, compiled) := model.query? query | throw .noSuchQuery
+    let some textGrammar := model.attachedTo? snapshot | throw .notAttached
+    if queryGrammar != textGrammar then
+      throw .wrongGrammar
+    if faces.size != compiled.names.size then
+      throw .badFaces
+  match checked with
+  | .error refusal => (.error refusal, model)
+  | .ok () =>
+    (.ok (),
+      { model with
+        highlighted :=
+          (model.highlighted.filter (!model.sameText ·.1 snapshot)).push (snapshot, query, faces) })
 
 /-- `compile`. -/
 def compile (model : SyntaxTreeModel) (named source : String) :
@@ -119,6 +176,8 @@ def handle : (request : SyntaxTreeRequest) → SyntaxTreeModel → request.Reply
   | .captures snapshot query first last, model => (model.captures snapshot query first last, model)
   | .release query, model =>
     ((), { model with queries := model.queries.modify query.index fun _ => none })
+  | .shippedQuery named kind, model => (shippedQuery named kind, model)
+  | .highlight snapshot query faces, model => model.highlight snapshot query faces
 
 end SyntaxTreeModel
 

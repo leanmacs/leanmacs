@@ -1222,6 +1222,101 @@ def setup : SetupM Unit := do
 def jobsConfig : List (String × String) :=
   [("10-greet.lean", greetChunk "v1"), ("20-setup.lean", jobsChunk)]
 
+/-- Asks the host for the scene, and returns every line it printed for it:
+the scene's line, then each view's line followed by its status line. -/
+def Session.sceneLines (session : Session) : IO (Array String) := do
+  let before := (← session.output.get).size
+  session.ask [.scene]
+  return (← session.output.get).extract before
+
+/-- A chunk whose `setup` registers the mode `json`, whose text is parsed
+with the grammar `json` and drawn by the shipped default; the command
+`edit`, which puts `, 2` before the last byte of the scratch buffer's text;
+and the job `highlight`, which sleeps 10 ms and finishes with a command that
+puts `[1, true]` in the scratch buffer's text and makes `json` its major
+mode, through the scratch buffer's window. -/
+def highlightChunk : String :=
+  "def wait : Unit → JobM Nat := fun _ => do
+  sleep 10
+  return 1
+
+def edit : EditorM Unit := do
+  let text : TextId := ⟨0⟩
+  let length := (← text.read).utf8ByteSize
+  text.insert (length - 1) \", 2\"
+
+def setup : SetupM Unit := do
+  defineMode { name := \"json\", syntaxTree := some { grammar := \"json\" } }
+  command \"edit\" edit
+  job \"highlight\" wait fun _ => do
+    (⟨0⟩ : TextId).insert 0 \"[1, true]\"
+    discard <| (⟨0⟩ : ViewId).setMajorMode \"json\"
+"
+
+/-- A syntax tree request as `withRecordedSyntaxTree` records it: its
+constructor, with the grammar it names, and a highlight's faces by name,
+`-` for none. -/
+def recordedRequest : SyntaxTreeRequest → String
+  | .grammars => "grammars"
+  | .attach _ grammar => s!"attach {grammar}"
+  | .detach _ => "detach"
+  | .compile grammar _ => s!"compile {grammar}"
+  | .captureNames _ => "captureNames"
+  | .captures .. => "captures"
+  | .release _ => "release"
+  | .shippedQuery grammar _ => s!"shippedQuery {grammar}"
+  | .highlight _ _ faces =>
+    s!"highlight {", ".intercalate (faces.map fun face => (face.map (·.name)).getD "-").toList}"
+
+/-- Runs `check` against a host over a config of `highlightChunk`, whose
+syntax tree collaborator is the real binding over the library's syntax
+service with every request recorded (`recordedRequest`) in the array `check`
+is handed, and stops the host. `check` is handed too how many scenes the
+host's display has had published to it, read from the display the host's
+collaborator made, with no request of the driver's. `false` if the check
+did not hold or the host did not stop. The directory is removed. -/
+def withRecordedSyntaxTree (context : Context)
+    (check : Session → IO.Ref (Array String) → IO Nat → IO Bool) : IO Bool :=
+  IO.FS.withTempDir fun directory => do
+    writeFiles directory [("10-setup.lean", highlightChunk)]
+    let stage ← Stage.new context context.elaborator (Config.Directory.source directory)
+    let asked ← IO.mkRef #[]
+    let syntaxTree (snapshots : SnapshotReader) : IO SyntaxTreeHandler := do
+      let real ← RealSyntaxTree.new snapshots
+      return fun request => do
+        asked.modify (·.push (recordedRequest request))
+        real.handle request
+    let made : IO.Ref (Option Headless.Host.Display) ← IO.mkRef none
+    let display (snapshots : SnapshotReader) : IO Headless.Host.Display := do
+      let shown ← Headless.Host.Display.recorder Headless.cells snapshots
+      made.set (some shown)
+      return shown
+    let published : IO Nat := do
+      match ← made.get with
+      | some shown =>
+        shown.count.get
+      | none =>
+        return 0
+    onStage
+        { stage with
+          collaborators :=
+            { stage.collaborators with
+              syntaxTree, display } }
+        fun host stage =>
+        check
+          { host, directory, output := stage.output, threads := stage.threads, clock := stage.clock
+            watches := stage.watches, log := stage.log } asked published
+
+/-- The faces the shipped default draws the captures of the library's
+shipped JSON highlights query in, by name, `-` for none, as
+`recordedRequest` writes a highlight: read from the library, so no check
+repeats its query. -/
+def jsonDefaultFaces : IO String := do
+  let .ok source ← Ffi.syntaxShippedQuery "json" 0 | return "none shipped"
+  let .ok query ← Ffi.SyntaxQuery.new "json" source | return "does not compile"
+  let faces := Highlight.faces [] (← query.captureNames)
+  return s!"highlight {", ".intercalate (faces.map fun face => (face.map (·.name)).getD "-").toList}"
+
 /-- The thread that emitted the first line of the host's output that is
 `line`, if there is one. -/
 def Session.threadOf (session : Session) (line : String) : IO (Option UInt64) := do
@@ -1354,7 +1449,48 @@ def jobChecks (context : Context) : List Check :=
             (refusal "reload\nspawn\n").startsWith "line 2: " &&
             (working.splitOn "line 12").length == 2 &&
             working != Headless.Failure.describe 30000 (.reloading (some 12)) &&
-            working != Headless.Failure.describe 30000 (.unanswered (some 12))) }]
+            working != Headless.Failure.describe 30000 (.unanswered (some 12))) },
+    { name :=
+        "a job's command that sets a mode with a syntax tree reaches the host's syntax tree: the text is attached, the grammar's shipped query compiled and its text highlighted in the default faces"
+      run :=
+        -- Seen to bite once by hand: with `Running.ended` handing
+        -- `Job.finishWith` no syntax tree, the job's command reaches
+        -- `SyntaxTree.none`, the recorder sees nothing, and the echo area
+        -- says the attach was refused.
+        withRecordedSyntaxTree context fun session asked _ => do
+          session.ask [.reload]
+          session.ask [.spawn "highlight"]
+          unless ← eventually (return (← session.clock.waiting) == 1) do
+            return false
+          session.clock.advance 10
+          let joined ← session.host.join patience
+          let scene ← session.sceneLines
+          return joined == .settled && (← session.output.get).contains "job 1 highlight: ok" &&
+              (← asked.get) ==
+                #["attach json", "shippedQuery json", "compile json", "captureNames",
+                  ← jsonDefaultFaces, "release"] &&
+              scene.any fun line =>
+                line.startsWith "scene " && (line.splitOn "highlights:").length == 1 },
+    { name :=
+        "a parse of a highlighted text the library delivers makes the real host publish a scene, with no key pressed"
+      run :=
+        -- Seen to bite once by hand: a host whose `handle` returns at once
+        -- for an event from the library's source publishes nothing for the
+        -- parse, and the count stays at the edit's.
+        withRecordedSyntaxTree context fun session _ published => do
+          session.ask [.reload]
+          session.ask [.spawn "highlight"]
+          unless ← eventually (return (← session.clock.waiting) == 1) do
+            return false
+          session.clock.advance 10
+          unless (← session.host.join patience) == .settled do
+            return false
+          let before ← published
+          -- Sent with no marker after it, which would publish a scene of its
+          -- own: the edit's command publishes one, and a publish beyond it is
+          -- a delivered parse's.
+          session.host.send (.run "edit")
+          eventually (return (← published) > before + 1) }]
 
 /-- A config of one chunk with one command, `forget`, which releases the
 text of index 0: the text of the editor loop's scratch buffer, made with the
@@ -1810,6 +1946,7 @@ def scriptChecks (context : Context) : List Check :=
             display :=
               ← Headless.Host.Display.recorder Headless.cells collaborators.published.reader
             clipboard := (← Clipboard.InProcess.new).handle
+            syntaxTree := SyntaxTree.none
             jobs := { services := collaborators.services } }
         let (refused, running) ←
           running.attempt collaborators do
@@ -2640,13 +2777,6 @@ def setup : SetupM Unit := do
     pure (n + 1)
   command \"ask\" (discard <| prompt \"Name: \" { command := \"bump\" })
 "
-
-/-- Asks the host for the scene, and returns every line it printed for it:
-the scene's line, then each view's line followed by its status line. -/
-def Session.sceneLines (session : Session) : IO (Array String) := do
-  let before := (← session.output.get).size
-  session.ask [.scene]
-  return (← session.output.get).extract before
 
 /-- The line of the minibuffer's view, view 1 in a frame of no size, showing
 `text` with its one cursor at `cursor`. -/

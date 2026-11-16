@@ -38,7 +38,12 @@ the library has:
   child: how those align is an implementation's own;
 - the range rule: of each case's text, several ranges, each answering the
   whole text's rows that are in it;
-- a range that is not two positions in order refused.
+- a range that is not two positions in order refused;
+- a grammar's shipped highlights query, which compiles (its source is each
+  implementation's own and is not compared), and an unlisted grammar's
+  refused;
+- a highlighter set, and refused for a text not attached, a face table of
+  the wrong size, and a released query.
 
 The cases are the library's own answers, read from the library when the
 cases were written; the model is written to the rule, and the contract
@@ -184,7 +189,45 @@ def properties : List Property :=
           SyntaxTree.attach snapshot json
           let query ← SyntaxTree.compile json "(number) @n"
           return (← refusedWith .badRange (SyntaxTree.captures snapshot query 0 7)) &&
-              (← refusedWith .badRange (SyntaxTree.captures snapshot query 4 2)) }] ++
+              (← refusedWith .badRange (SyntaxTree.captures snapshot query 4 2)) },
+      { name := "json ships a highlights query that compiles, and an unlisted grammar ships none"
+        texts := #[]
+        holds := fun _ => do
+          let source ← SyntaxTree.shippedQuery json .highlights
+          let query ← SyntaxTree.compile json source
+          let named := !(← SyntaxTree.captureNames query).isEmpty
+          SyntaxTree.release query
+          return named &&
+              (← refusedWith .unknownGrammar (SyntaxTree.shippedQuery "no-such" .highlights)) },
+      { name := "a well-formed highlight is answered, and one of a text not attached is refused"
+        texts := #["{\"a\": [1, true]}"]
+        holds := fun snapshots => do
+          let snapshot := nth snapshots 0
+          let query ← SyntaxTree.compile json "(number) @number\n(true) @constant.builtin"
+          let faces := #[some ⟨"syntax.number"⟩, none]
+          let before ← refusedWith .notAttached (SyntaxTree.highlight snapshot query faces)
+          SyntaxTree.attach snapshot json
+          SyntaxTree.highlight snapshot query faces
+          SyntaxTree.highlight snapshot query #[none, some ⟨""⟩]
+          return before },
+      { name := "a face table not one for each capture name is refused as bad faces"
+        texts := #["[1]"]
+        holds := fun snapshots => do
+          let snapshot := nth snapshots 0
+          SyntaxTree.attach snapshot json
+          let query ← SyntaxTree.compile json "(number) @number\n(array) @punctuation"
+          return (← refusedWith .badFaces (SyntaxTree.highlight snapshot query #[none])) &&
+              (←
+                refusedWith .badFaces
+                    (SyntaxTree.highlight snapshot query #[none, none, some ⟨"x"⟩])) },
+      { name := "a highlight with a released query is refused"
+        texts := #["[1]"]
+        holds := fun snapshots => do
+          let snapshot := nth snapshots 0
+          SyntaxTree.attach snapshot json
+          let query ← SyntaxTree.compile json "(number) @number"
+          SyntaxTree.release query
+          refusedWith .noSuchQuery (SyntaxTree.highlight snapshot query #[none]) }] ++
     (cases.map fun (what, text, query, expected) =>
       { name := s!"a query answers the library's rows: {what}"
         texts := #[text]

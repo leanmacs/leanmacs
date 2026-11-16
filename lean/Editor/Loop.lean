@@ -454,8 +454,10 @@ they were before it (`docs/design/concurrency.md`, "Foreground: commands").
   the kept state is a node's, and the revert leaves nothing pending, no
   node and nothing to redo.
 - **What is not undone**: the texts, snapshots and markers the command
-  made, and the scenes it published. The step publishes the true scene
-  right after.
+  made, the scenes it published, what it wrote to the clipboard, and what
+  it asked of the syntax tree port: a text attached, highlighted or
+  detached stays so in the library, as the clipboard is outside the editor
+  state. The step publishes the true scene right after.
 - **A rollback that is refused is said, and the rest is still done.** A
   command that released a buffer's text, gave up a window's marker or
   dropped the inverses of its own edits cannot be rolled back. The echo
@@ -559,6 +561,7 @@ is queued, and marks that event. What the loop does with the flag is here
 | `menu name` | Tells the scheme that a menu item named the command `name`, with no arguments, for the focused view (`InputScheme.invoked`), and runs the invocation it hands back as one no key yielded, in the focused window, with the report of the scheme's state it hands back: guarded, rolled back and published as every command is, and config's command of the name runs in its place. A name no command is registered under says so, as an invocation does. The scheme's states are then as after a key: a command that runs to its end keeps the state handed back, which is the state at rest when nothing is pending, and one that does not puts the scheme back at rest. A scheme that treats no menu item apart hands back the invocation and the state as they were, so the command `name` runs |
 | a key press | It is stepped through the scheme, whose state the loop keeps ("The scheme"), and the invocation it yields, if it yields one, is run ("Running an invocation") |
 | a key release, the press of a modifier by itself, a pointer, `windowOpened`, `compositionEnabled`, a message, a completion | Nothing |
+| `parsed` | Nothing; the scene is published, laid out with the tree the library delivered, so a highlighted text is drawn with its new highlights, which replace the old ones only then (`Editor/Highlight.lean`) |
 
 **A committed text is typed text.** It is inserted only where the scheme
 says the view takes text, which under a scheme that says nothing is every

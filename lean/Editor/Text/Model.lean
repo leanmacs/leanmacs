@@ -155,6 +155,11 @@ structure TextModel where
   texts : Array (Option TextContent) := #[]
   /-- The snapshots, in the order they were taken. -/
   snapshots : Array (Option TextContent) := #[]
+  /-- The text each snapshot was taken of, by snapshot id: `none` for one
+  adopted from a job, and for one this array has no slot for. It is what
+  another model that keeps something per text reads to tell two snapshots
+  of one text from two texts (`EditorModel.snapshotDocuments`). -/
+  snapshotOf : Array (Option TextId) := #[]
   /-- The edit log of each text, in the order the texts were made. It is
   beside the texts and not inside them, so that a snapshot, which is a copy
   of a text's content, carries none. -/
@@ -1159,6 +1164,11 @@ def copy (model : TextModel) (source : TextSource) : Except TextError TextId × 
     let (id, model) := model.made content.contents
     (.ok id, model)
 
+/-- `slots` cut or padded with `none` to `size` slots: `snapshotOf` lined up
+with the snapshots before one more of each is pushed. -/
+private def padded (slots : Array (Option TextId)) (size : Nat) : Array (Option TextId) :=
+  slots.extract 0 size ++ Array.replicate (size - slots.size) none
+
 /-- The model's answer to taking the job's snapshot `snapshot` into the
 store, and the model after it: what this run was handed under that name
 (`arrived`) becomes a snapshot of the store, under the next id, as one
@@ -1169,7 +1179,10 @@ def adopt (model : TextModel) (snapshot : JobSnapshotId) :
     Except TextError SnapshotId × TextModel :=
   match model.arrived.find? (·.1 == snapshot) with
   | some (_, content) =>
-    (.ok ⟨model.snapshots.size⟩, { model with snapshots := model.snapshots.push (some content) })
+    (.ok ⟨model.snapshots.size⟩,
+      { model with
+        snapshots := model.snapshots.push (some content)
+        snapshotOf := (padded model.snapshotOf model.snapshots.size).push none })
   | none => (.error .noSuchSnapshot, model)
 
 /-- The model's answer to each request, and the model after it. -/
@@ -1185,7 +1198,10 @@ def handle : (request : TextRequest) → TextModel → request.Reply × TextMode
     match model.lookup (.text id) with
     | .error refusal => (.error refusal, model)
     | .ok content =>
-      (.ok ⟨model.snapshots.size⟩, { model with snapshots := model.snapshots.push (some content) })
+      (.ok ⟨model.snapshots.size⟩,
+        { model with
+          snapshots := model.snapshots.push (some content)
+          snapshotOf := (padded model.snapshotOf model.snapshots.size).push (some id) })
   | .ask source query, model =>
     match model.lookup source with
     | .error refusal => (.error refusal, model)

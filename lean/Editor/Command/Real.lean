@@ -20,7 +20,11 @@ clipboard has none, and a command is told so, as a value. Its fuzzy requests
 go to the fuzzy port's real binding (`Fuzzy.real`,
 `Editor/Fuzzy/Real.lean`), as its text requests go to the text's: the
 matcher keeps nothing and needs nothing a host could hand in, so no caller
-passes a handler for it. This module adds
+passes a handler for it. Its syntax tree requests go to the syntax tree
+handler the caller hands in, and by default to the one with no grammars
+(`SyntaxTree.none`): a host hands in its binding over the library's syntax
+service (`Editor/SyntaxTree/Real.lean`), made once over the table of
+snapshots its loop's commands take theirs in. This module adds
 no decision: each request is passed to its sub-port's handler as it is.
 
 A state request is the loop's to answer (`Editor/Command.lean`, "The state
@@ -33,17 +37,19 @@ models answer it: as an editor with no buffer and no window would
 namespace Editor
 
 /-- Answers `request` with its sub-port's handler: the text binding over the
-table of texts, `display`, `watch`, `clipboard`, or the fuzzy port's real
-binding. A state request is answered from an editor with nothing in it, and
+table of texts, `display`, `watch`, `clipboard`, the fuzzy port's real
+binding, or `syntaxTree`. A state request is answered from an editor with nothing in it, and
 changes nothing. -/
 def EditorRequest.handleReal (display : DisplayHandler) (watch : WatchHandler := Watch.idle)
-    (clipboard : ClipboardHandler := Clipboard.unavailable) :
+    (clipboard : ClipboardHandler := Clipboard.unavailable)
+    (syntaxTree : SyntaxTreeHandler := SyntaxTree.none) :
     (request : EditorRequest) → StateT RealTexts IO request.Reply
   | .text request => RealTexts.handle request
   | .display request => StateT.lift (display request)
   | .watch request => StateT.lift (watch request)
   | .clipboard request => StateT.lift (clipboard request)
   | .fuzzy request => StateT.lift (Fuzzy.real request)
+  | .syntaxTree request => StateT.lift (syntaxTree request)
   | .state request => pure (EditorState.none.handle request).1
 
 /-- Runs a command against the Rust library, with `texts` as the texts made
@@ -57,10 +63,10 @@ nothing for any other command. The table that comes back holds none of it
 but what the command adopted. -/
 def EditorM.runReal {α : Type} (command : EditorM α) (texts : RealTexts) (display : DisplayHandler)
     (arrived : Array (JobSnapshotId × Ffi.Snapshot) := #[]) (watch : WatchHandler := Watch.idle)
-    (clipboard : ClipboardHandler := Clipboard.unavailable) : IO (Except TextError α × RealTexts) :=
-  do
+    (clipboard : ClipboardHandler := Clipboard.unavailable)
+    (syntaxTree : SyntaxTreeHandler := SyntaxTree.none) : IO (Except TextError α × RealTexts) := do
   let (result, texts) ←
-    (Program.runM (port := editorPort) (EditorRequest.handleReal display watch clipboard)
+    (Program.runM (port := editorPort) (EditorRequest.handleReal display watch clipboard syntaxTree)
             command.run).run
         { texts with arrived }
   return (result, { texts with arrived := #[] })

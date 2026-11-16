@@ -18,6 +18,7 @@ import Editor.Job.Real
 import Editor.Loop
 import Editor.Menu.Compiled
 import Editor.Minibuffer.Compiled
+import Editor.SyntaxTree.Real
 import Editor.Text.Real
 import Editor.Themes.Compiled
 import Editor.Watch.Real
@@ -53,7 +54,9 @@ elaborates. It is a dedicated task, not one of the pool's: it reads files.
 
 It knows a request from its driver, the wake-up of a reload job, the wake-up
 of a job that has ended, an event of the library's scripted source, an event
-from the window input and quit, and nothing else.
+from the window input, the library's report that a parse of a highlighted
+text was delivered (`Event.parsed`, from the library's source), and quit,
+and nothing else.
 
 ## The editor loop
 
@@ -239,6 +242,15 @@ as before, so reload and job completion work as they did.
   system clipboard, so the host keeps a text in the process. What one
   command writes the next reads; no other program sees it, and it starts
   holding no text.
+- **The host is handed its syntax tree** (`Collaborators.syntaxTree`), a
+  maker of a syntax tree handler over the read half of the table of
+  snapshots its text binding publishes. It is made once, when the loop
+  starts (`Running.new`), and kept (`Running.syntaxTree`), so the queries it
+  compiles live as long as the loop; every command's syntax tree requests
+  are answered from it, a key's, a command's run by name and a finished
+  job's alike. By default it is the real binding over the library's syntax
+  service (`Editor/SyntaxTree/Real.lean`), in both modes. What setting a
+  major mode with a syntax asks of it is `Editor/Highlight.lean`'s.
 
 The collaborators are handed in (`Collaborators`): the elaborator and the
 source of the config session, `emit`, the port every line of output goes
@@ -248,8 +260,9 @@ snapshots the loop's text binding publishes, of which the loop is the one
 writer, and what the jobs hold. Beside them, each with a default: the
 compiled commands, jobs, bindings and modes, the log, the threshold for a
 slow command, the interrupt key, how the frame is made
-(`Collaborators.start`), and how the display and the clipboard are made
-(`Collaborators.display`, `Collaborators.clipboard`).
+(`Collaborators.start`), and how the display, the clipboard and the
+syntax tree are made (`Collaborators.display`, `Collaborators.clipboard`,
+`Collaborators.syntaxTree`).
 
 ## Jobs
 
@@ -276,8 +289,10 @@ the arguments the command gave. `setup` starts none.
   (`JobSnapshotId.adopt`, `JobSnapshotId.toText`), and the job is settled
   once the delivery has run, which releases what it held. It hands
   `finishWith` what its loop watches (`Running.watch`), so the command's
-  guard asks the library's interrupt flag, and its clipboard. A job that failed or was
-  cancelled settled itself.
+  guard asks the library's interrupt flag, its clipboard and its syntax
+  tree (`Running.syntaxTree`), so a job's command that sets a major mode
+  with a syntax attaches and highlights through the host's binding. A job
+  that failed or was cancelled settled itself.
 - **A reload that installs cancels the old config's jobs**: the reducer's
   `cancelJobs` effect, performed before the reload's report, takes the
   owner's jobs out of the table and cancels them. A wake-up one of them had
@@ -795,6 +810,12 @@ structure Collaborators (σ : Type) (scheme : InputScheme) where
   host with a window system is handed the system's. -/
   clipboard : IO ClipboardHandler := do
     return (← Clipboard.InProcess.new).handle
+  /-- How the host makes its syntax tree handler, over the read half of the
+  table of snapshots the text binding publishes (`published`): the real
+  binding over the library's syntax service. A test hands one that records
+  what it is asked. -/
+  syntaxTree : SnapshotReader → IO SyntaxTreeHandler := fun snapshots => do
+    return (← RealSyntaxTree.new snapshots).handle
   /-- The render loop the host's display draws through, for the driver's
   `idle` and `journal`; none when nothing draws, as in the headless mode
   without `--render`. -/
@@ -918,6 +939,10 @@ structure Running (σ : Type) (scheme : InputScheme) where
   /-- The clipboard every command the host runs reaches: what the host's
   collaborators made (`Collaborators.clipboard`). -/
   clipboard : ClipboardHandler
+  /-- The syntax tree every command the host runs reaches: what the host's
+  collaborators made once, as the loop started
+  (`Collaborators.syntaxTree`), so its queries live as long as the loop. -/
+  syntaxTree : SyntaxTreeHandler
   /-- The editor loop's frame: none until the first event the loop takes or
   the first command it runs. -/
   frame : Option (Loop scheme) := none
@@ -1052,8 +1077,8 @@ def drop (collaborators : Collaborators σ scheme) (interrupt : Bool) : IO Unit 
 
 /-- Runs `program`, a program of the editor loop, against the library, with
 the recorder as the display, the library's interrupt flag and the jobs'
-clock as what it watches and the host's own clipboard, and hands back its
-result. The loop's own
+clock as what it watches, and the host's own clipboard and syntax tree, and
+hands back its result. The loop's own
 programs put a refusal in the echo area and are not refused
 (`Editor/Loop.lean`, "When publishing is refused"). One that is refused all
 the same is never dropped in silence: it is printed,
@@ -1063,7 +1088,7 @@ def attempt {α : Type} (collaborators : Collaborators σ scheme) (running : Run
     (program : EditorM α) : IO (Option α × Running σ scheme) := do
   let (result, texts) ←
     program.runReal running.texts running.display.handle (watch := watch collaborators)
-        (clipboard := running.clipboard)
+        (clipboard := running.clipboard) (syntaxTree := running.syntaxTree)
   match result with
   | .ok value =>
     return (some value, { running with texts })
@@ -1190,7 +1215,8 @@ partial def took (collaborators : Collaborators σ scheme) (running : Running σ
       running ← running.took collaborators answered
   return running
 
-/-- Handles an event from the window input: prints a key press with its
+/-- Handles an event the loop takes (`takenByLoop`), from the window input
+or the library's report of a parse delivered: prints a key press with its
 identity, tells the reload reducer the window opened when it has (which
 asks the window for the paper's appearance), makes the frame if there is
 none, and has the editor loop take the
@@ -1255,8 +1281,9 @@ not run.
 The delivery is run by `Job.finishWith`, which hands the run what the job
 held and settles the job once it has run, with what the loop's programs
 watch (`watch`): the command's guard asks the library's interrupt flag. It
-is handed the host's clipboard too, so a job's command reaches the one a
-key's does. -/
+is handed the host's clipboard and the host's syntax tree too, so a job's
+command reaches the ones a key's does: a job's command that sets a major
+mode with a syntax attaches and highlights through the host's binding. -/
 def ended (collaborators : Collaborators σ scheme) (running : Running σ scheme) (id : Nat) :
     IO (Running σ scheme) := do
   let (result, jobs) ← running.jobs.finish id
@@ -1274,7 +1301,7 @@ def ended (collaborators : Collaborators σ scheme) (running : Running σ scheme
     let (result, texts) ←
       Job.finishWith collaborators.held entry.handle
           (frame.deliver (running.keys collaborators) label command) running.texts
-          running.display.handle (watch collaborators) running.clipboard
+          running.display.handle (watch collaborators) running.clipboard running.syntaxTree
     let running := { running with texts }
     match result with
     | .ok stepped =>
@@ -1404,7 +1431,15 @@ def «show» (collaborators : Collaborators σ scheme) (running : Running σ sch
   for cell in running.config.cells.cells do
     collaborators.emit s!"store {cell.name} v{cell.version}: {render cell.value}"
 
-/-- Handles one event of the editor queue that is not the window's. -/
+/-- Whether the editor loop takes `event` (`input`): an event from the
+window input, and the library's report that a parse of a highlighted text
+was delivered (`Event.parsed`), which the loop answers with a scene laid
+out with the new tree. Every other event is `other`'s. -/
+def takenByLoop (event : Ffi.Event) : Bool :=
+  event.source.kind == .window || (event.source.kind == .library && event.kind == .parsed)
+
+/-- Handles one event of the editor queue that the loop does not take
+(`takenByLoop`). -/
 def other (collaborators : Collaborators σ scheme) (running : Running σ scheme)
     (event : Ffi.Event) : IO (Running σ scheme) := do
   match event.source.kind with
@@ -1412,6 +1447,8 @@ def other (collaborators : Collaborators σ scheme) (running : Running σ scheme
     collaborators.emit s!"event {event.source.id} {event.code}"
     return running
   | .library | .window =>
+    -- The library's events the loop takes are `takenByLoop`'s: what is
+    -- left of the library's is nothing to handle here.
     return running
   | .lean =>
     if event.source.id == collaborators.wakeups then
@@ -1447,17 +1484,19 @@ def other (collaborators : Collaborators σ scheme) (running : Running σ scheme
     | none =>
       return running
 
-/-- Handles one event of the editor queue to its end. An event from the
-window input goes to the editor loop (`input`), which publishes a scene after
-it. So does a command the loop runs for another event: the driver's `run`,
-and a finished job's command. After any other event, a scene is published
-once there is a frame, unless the driver has ended the loop. A window event
-that cannot be read is dropped (`drop`), which lowers the interrupt flag for
-a key that carries the library's mark (`Event.interruptMarked`), since the
-event has been taken off the queue. -/
+/-- Handles one event of the editor queue to its end. An event the loop takes
+(`takenByLoop`: from the window input, or the library's report of a parse
+delivered) goes to the editor loop (`input`), which publishes a scene after
+it, so a delivered parse is drawn with no key pressed. So does a command the
+loop runs for another event: the driver's `run`, and a finished job's
+command. After any other event, a scene is published once there is a frame,
+unless the driver has ended the loop. An event the loop takes that cannot
+be read is dropped (`drop`), which lowers the interrupt flag for a key that
+carries the library's mark (`Event.interruptMarked`), since the event has
+been taken off the queue. -/
 def handle (collaborators : Collaborators σ scheme) (running : Running σ scheme)
     (event : Ffi.Event) : IO (Running σ scheme) := do
-  if event.source.kind == .window then
+  if takenByLoop event then
     match Event.ofFfi event with
     | .ok received =>
       running.input collaborators received
@@ -1504,8 +1543,8 @@ def compiled {σ : Type} {scheme : InputScheme} (collaborators : Collaborators �
 
 /-- What the editor thread holds as its loop starts: the compiled registry
 (`compiled`), no texts, the display its collaborators make over the table of
-snapshots the text binding publishes, the clipboard they make, no jobs and
-no frame. -/
+snapshots the text binding publishes, the clipboard they make, the syntax
+tree they make over the same table, no jobs and no frame. -/
 def Running.new {σ : Type} {scheme : InputScheme} (collaborators : Collaborators σ scheme) :
     IO (Running σ scheme) :=
   return {
@@ -1513,6 +1552,7 @@ def Running.new {σ : Type} {scheme : InputScheme} (collaborators : Collaborator
       texts := RealTexts.over collaborators.published
       display := ← collaborators.display collaborators.published.reader
       clipboard := ← collaborators.clipboard
+      syntaxTree := ← collaborators.syntaxTree collaborators.published.reader
       jobs := { services := collaborators.services } }
 
 /-- The editor thread: pulls the editor queue and handles each event to its
