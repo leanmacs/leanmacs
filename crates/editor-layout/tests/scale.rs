@@ -17,7 +17,9 @@ use std::ops::Range;
 use editor_layout::Layout;
 use editor_layout::face::{Face, FaceDef};
 use editor_layout::frame::{Area, Frame, ViewFrame};
-use editor_layout::scene::{Decoration, Rect, Scene, StatusField, TextKey, TextRef, View, ViewId};
+use editor_layout::scene::{
+    Decoration, Rect, Scene, Side, StatusField, TextKey, TextRef, View, ViewId,
+};
 use editor_layout::shaper::fake::CellShaper;
 use editor_layout::shaper::{Length, LineHeight};
 use editor_text::{Selection, SelectionRange, Text};
@@ -319,4 +321,57 @@ fn the_vertical_padding_is_points() {
     assert_eq!(layout.heights().status, 32 + 12);
     assert_eq!(layout.heights().message, 32 + 12);
     assert_eq!(layout.heights().text, 32);
+}
+
+#[test]
+fn the_horizontal_padding_is_points() {
+    // A view 200 pixels across with a left field and a right field, each
+    // of two glyphs padded 2 points, under no theme: a glyph is 10 across
+    // at scale 1 and 20 at scale 2, and the padding 2 and 4.
+    let field = |text: &str, side: Side| StatusField {
+        text: text.to_owned(),
+        side,
+        padding: 2,
+        ..StatusField::default()
+    };
+    let scene = Scene {
+        views: vec![View {
+            id: ViewId(1),
+            rect: rect(200, 100),
+            text: Some(TextRef::fixed(TextKey(1), Text::from("ab").snapshot())),
+            status: vec![field("ab", Side::Left), field("cd", Side::Right)],
+            ..View::default()
+        }],
+        ..Scene::default()
+    };
+    // Each box's x and width, and each glyph's x, of the status row.
+    let placed = |frame: &Frame| {
+        let status = view(frame).status.as_ref().expect("a status row");
+        let boxes: Vec<(f32, f32)> = status
+            .boxes
+            .iter()
+            .map(|status_box| (status_box.x, status_box.width))
+            .collect();
+        let xs: Vec<f32> = status.line.glyphs.iter().map(|glyph| glyph.x).collect();
+        (boxes, xs)
+    };
+    let mut layout = Layout::new(shaper());
+    assert_eq!(
+        placed(&layout.frame(&scene)),
+        (
+            vec![(0.0, 2.0 * 2.0 + 20.0), (176.0, 2.0 * 2.0 + 20.0)],
+            vec![2.0, 12.0, 178.0, 188.0]
+        )
+    );
+    layout.set_scale(2.0);
+    // Each box is twice its padding of 4 and its text of 40 across, the
+    // left one from the row's start and the right one to its end; the
+    // first glyph is 4 in, and the last ends 4 short of 200.
+    assert_eq!(
+        placed(&layout.frame(&scene)),
+        (
+            vec![(0.0, 2.0 * 4.0 + 40.0), (152.0, 2.0 * 4.0 + 40.0)],
+            vec![4.0, 24.0, 156.0, 176.0]
+        )
+    );
 }
