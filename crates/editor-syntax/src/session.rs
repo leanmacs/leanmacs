@@ -52,6 +52,28 @@
 //! answers of that tree. The order is what the Lean model of the syntax
 //! interface reproduces.
 //!
+//! # Highlights ([`Session::highlights`])
+//!
+//! A session may be given a [`Highlighter`] ([`Session::set_highlighter`]),
+//! and then says what a snapshot of its text is drawn with, from the tree
+//! delivered last, of revision M, for a snapshot of revision N. It is
+//! asked once a frame, and what it answers is fixed for that frame:
+//!
+//! - with no highlighter, or nothing delivered yet, nothing: the text is
+//!   drawn plain until the first parse arrives;
+//! - when M is N, the tree delivered answers;
+//! - when M is older, the tree delivered still answers, carried: the
+//!   source is asked for the patch from M ([`Source::latest`]), and the
+//!   spans are carried through it ([`crate::highlight`], "Carrying through
+//!   a patch"). When the text has moved on past N, or the log has
+//!   forgotten M, nothing, for that frame: the next one draws again;
+//! - when M is newer (a scene of an old snapshot), nothing.
+//!
+//! So the old highlights stay, carried through the edits since, until the
+//! reparse that replaces them is delivered, and an edit never waits for a
+//! parse: a question of highlights takes the state lock, lets it go, and
+//! then the source's, and never the work lock.
+//!
 //! # Locks
 //!
 //! A session has two: the *work* lock, over the parser and the base, which
@@ -70,6 +92,7 @@ use std::time::Duration;
 
 use editor_text::{Patch, Revision, Snapshot};
 
+use crate::highlight::{Highlighter, Highlights};
 use crate::port::{Capture, GrammarName, Syntax};
 use crate::query::{captures_in, positions};
 
@@ -183,7 +206,7 @@ pub struct Session<S: Syntax> {
     /// The parser and the base, which only a round takes.
     work: Mutex<Work<S>>,
     /// What the round delivers into and a touch tells.
-    state: Mutex<State<S::Tree>>,
+    state: Mutex<State<S>>,
     /// Woken at each delivery.
     delivered: Condvar,
     /// Whether the session is in a worker's queue
@@ -200,13 +223,15 @@ struct Work<S: Syntax> {
 }
 
 /// What a round delivers into and a touch tells.
-struct State<T> {
+struct State<S: Syntax> {
     /// The newest revision the session has been told of or delivered.
     current: Revision,
     /// The last result delivered.
-    delivered: Option<Arc<Parsed<T>>>,
+    delivered: Option<Arc<Parsed<S::Tree>>>,
     /// Who is handed each result.
-    consumers: Vec<Box<dyn Consumer<T>>>,
+    consumers: Vec<Box<dyn Consumer<S::Tree>>>,
+    /// What the text is drawn with, once one is set.
+    highlighter: Option<Arc<Highlighter<S::Query>>>,
 }
 
 /// `mutex`, locked. A round and a touch leave what they guard whole at
@@ -229,6 +254,7 @@ impl<S: Syntax> Session<S> {
                 current: Revision::default(),
                 delivered: None,
                 consumers: Vec::new(),
+                highlighter: None,
             }),
             delivered: Condvar::new(),
             queued: AtomicBool::new(false),
@@ -268,7 +294,7 @@ impl<S: Syntax> Session<S> {
     /// then. For tests, and for nothing on the editor thread.
     pub fn wait_for(&self, revision: Revision, bound: Duration) -> Option<Arc<Parsed<S::Tree>>> {
         let state = lock(&self.state);
-        let reached = |state: &mut State<S::Tree>| {
+        let reached = |state: &mut State<S>| {
             state
                 .delivered
                 .as_ref()
@@ -283,6 +309,44 @@ impl<S: Syntax> Session<S> {
         } else {
             None
         }
+    }
+
+    /// Draws the text with `highlighter` from now on, in place of any
+    /// before, and says whether there was one before.
+    pub fn set_highlighter(&self, highlighter: Highlighter<S::Query>) -> bool {
+        lock(&self.state)
+            .highlighter
+            .replace(Arc::new(highlighter))
+            .is_some()
+    }
+
+    /// What `snapshot` is drawn with, as the module docs say
+    /// ("Highlights"): none with no highlighter or nothing delivered, the
+    /// tree delivered when it is of the snapshot's revision, the tree
+    /// delivered carried through the log's patch when it is older, and
+    /// none when the patch cannot be had of exactly the snapshot's
+    /// revision, or the tree is newer.
+    ///
+    /// It takes the state lock and lets it go, and then the source's,
+    /// never the work lock: it never waits for a parse.
+    pub fn highlights(&self, snapshot: &Snapshot) -> Option<Highlights<S>> {
+        let (parsed, highlighter) = {
+            let state = lock(&self.state);
+            (state.delivered.clone()?, state.highlighter.clone()?)
+        };
+        let revision = snapshot.revision();
+        if parsed.revision == revision {
+            return Some(Highlights::new(parsed, highlighter, None));
+        }
+        if parsed.revision > revision {
+            return None;
+        }
+        let latest = self.source.latest(Some(parsed.revision))?;
+        let patch = latest
+            .patch
+            .filter(|patch| patch.from == parsed.revision && patch.to == revision)?;
+        (latest.snapshot.revision() == revision)
+            .then(|| Highlights::new(parsed, highlighter, Some(patch)))
     }
 
     /// The captures of `query`, compiled for `grammar`, in `range` of
@@ -368,7 +432,8 @@ pub(crate) mod tests {
 
     use super::*;
     use crate::fake::{GRAMMAR, Parens, ParensParser, ParensQuery, ParensTree};
-    use crate::port::{Node, QueryError};
+    use crate::highlight::Highlighter;
+    use crate::port::{Node, QueryError, QueryKind};
 
     /// A text behind a lock, as a document holds one, read as a source.
     pub(crate) struct TextSource(pub(crate) Weak<Mutex<Text>>);
@@ -395,6 +460,7 @@ pub(crate) mod tests {
     #[derive(Default)]
     pub(crate) struct Recording {
         pub(crate) olds: Mutex<Vec<Option<Vec<InputEdit>>>>,
+        pub(crate) asked: Mutex<Vec<Range<usize>>>,
         pub(crate) hook: Mutex<Option<Box<dyn FnOnce() + Send>>>,
         pub(crate) recovers_otherwise: bool,
     }
@@ -446,6 +512,7 @@ pub(crate) mod tests {
             text: &Snapshot,
             range: Range<usize>,
         ) -> Vec<Capture> {
+            lock(&self.asked).push(range.clone());
             Parens.captures(query, tree, text, range)
         }
         fn nodes(&self, tree: &ParensTree) -> Vec<Node> {
@@ -866,6 +933,167 @@ pub(crate) mod tests {
             ranges(captures(&fixture, GRAMMAR, &second, 3..7)),
             Ok(vec![0..5, 3..4, 6..7])
         );
+    }
+
+    /// The fake's shipped highlights, each capture drawn in a face named
+    /// after it.
+    fn parens_highlighter() -> Highlighter<ParensQuery> {
+        let grammar = GrammarName::new(GRAMMAR);
+        let source = Parens
+            .shipped_query(&grammar, QueryKind::Highlights)
+            .unwrap();
+        let query = Parens.compile(&grammar, &source).unwrap();
+        let names = Parens.capture_names(&query);
+        let faces = names
+            .iter()
+            .map(|name| Some(format!("syntax.{name}")))
+            .collect();
+        Highlighter::new(Arc::new(query), names.len(), faces).unwrap()
+    }
+
+    /// The spans `session` draws over the whole of `snapshot`, each with
+    /// the name of its face; none when it draws nothing.
+    fn highlighted(
+        syntax: &Recording,
+        session: &Session<Recording>,
+        snapshot: &Snapshot,
+    ) -> Option<Vec<(Range<usize>, String)>> {
+        let highlights = session.highlights(snapshot)?;
+        let mut spans = Vec::new();
+        highlights.spans(syntax, 0..snapshot.len(), &mut spans);
+        Some(
+            spans
+                .into_iter()
+                .map(|span| (span.bytes, highlights.faces()[span.face].clone()))
+                .collect(),
+        )
+    }
+
+    /// The fresh highlights of `snapshot`, each with the name of its face.
+    fn fresh_of(snapshot: &Snapshot) -> Vec<(Range<usize>, String)> {
+        let highlighter = parens_highlighter();
+        crate::highlight::fresh(&Parens, &highlighter, &mut ParensParser, snapshot)
+            .into_iter()
+            .map(|span| (span.bytes, highlighter.names()[span.face].clone()))
+            .collect()
+    }
+
+    #[test]
+    fn no_highlights_before_the_first_delivery_or_without_a_highlighter() {
+        let fixture = Fixture::new("(a b)");
+        let snapshot = lock(&fixture.text).snapshot();
+        fixture.session.parse_once(&fixture.syntax);
+        // Delivered, but no highlighter.
+        assert!(fixture.session.highlights(&snapshot).is_none());
+
+        let fixture = Fixture::new("(a b)");
+        assert!(!fixture.session.set_highlighter(parens_highlighter()));
+        assert!(fixture.session.highlights(&snapshot).is_none());
+        fixture.session.parse_once(&fixture.syntax);
+        assert_eq!(
+            highlighted(&fixture.syntax, &fixture.session, &snapshot),
+            Some(fresh_of(&snapshot))
+        );
+        // A second highlighter replaces the first.
+        assert!(fixture.session.set_highlighter(parens_highlighter()));
+    }
+
+    #[test]
+    fn the_highlights_of_a_newer_snapshot_are_the_delivered_ones_carried() {
+        let fixture = Fixture::new("(ab cd)");
+        fixture.session.set_highlighter(parens_highlighter());
+        fixture.session.parse_once(&fixture.syntax);
+        // `x` typed inside `ab`, told and not parsed.
+        let revision = fixture.replace(2..2, "x");
+        fixture.session.touch(revision);
+        let snapshot = lock(&fixture.text).snapshot();
+
+        let carried = highlighted(&fixture.syntax, &fixture.session, &snapshot).unwrap();
+        // Revision 0's spans, carried around the `x`, which is plain: not
+        // none, and not what a fresh parse of revision 1 draws.
+        assert_eq!(
+            carried,
+            [
+                (0..2, "syntax.list".to_owned()),
+                (3..8, "syntax.list".to_owned()),
+                (0..1, "syntax.punctuation.bracket".to_owned()),
+                (1..2, "syntax.variable".to_owned()),
+                (3..4, "syntax.variable".to_owned()),
+                (5..7, "syntax.variable".to_owned()),
+                (7..8, "syntax.punctuation.bracket".to_owned()),
+            ]
+        );
+        assert_ne!(carried, fresh_of(&snapshot));
+        assert_eq!(
+            fixture.session.highlights(&snapshot).unwrap().revision(),
+            Revision::new(0)
+        );
+    }
+
+    #[test]
+    fn the_delivered_highlights_replace_the_carried_ones() {
+        let fixture = Fixture::new("(ab cd)");
+        fixture.session.set_highlighter(parens_highlighter());
+        fixture.session.parse_once(&fixture.syntax);
+        let revision = fixture.replace(2..2, "x");
+        fixture.session.touch(revision);
+        let snapshot = lock(&fixture.text).snapshot();
+
+        fixture.session.parse_once(&fixture.syntax);
+        assert_eq!(
+            highlighted(&fixture.syntax, &fixture.session, &snapshot),
+            Some(fresh_of(&snapshot))
+        );
+    }
+
+    #[test]
+    fn a_published_snapshot_the_text_has_moved_past_draws_nothing() {
+        let fixture = Fixture::new("(a b)");
+        fixture.session.set_highlighter(parens_highlighter());
+        fixture.session.parse_once(&fixture.syntax);
+        fixture.replace(0..0, "x ");
+        let published = lock(&fixture.text).snapshot();
+        // The text moves on past the snapshot published.
+        fixture.replace(0..0, "y ");
+
+        assert!(fixture.session.highlights(&published).is_none());
+        // A snapshot older than the tree delivered draws nothing either.
+        let first = Text::from("(a b)").snapshot();
+        fixture.session.parse_once(&fixture.syntax);
+        assert!(fixture.session.highlights(&first).is_none());
+    }
+
+    #[test]
+    fn a_log_that_has_forgotten_the_delivered_revision_draws_nothing() {
+        let fixture = Fixture::new("(a b)");
+        fixture.session.set_highlighter(parens_highlighter());
+        fixture.session.parse_once(&fixture.syntax);
+        let revision = fixture.replace(0..0, "x ");
+        lock(&fixture.text).forget(revision).unwrap();
+        let snapshot = lock(&fixture.text).snapshot();
+
+        assert!(fixture.session.highlights(&snapshot).is_none());
+    }
+
+    #[test]
+    fn the_query_is_asked_only_of_the_range_mapped_back() {
+        let fixture = Fixture::new("(a)\n(bb)\n(c)\n");
+        fixture.session.set_highlighter(parens_highlighter());
+        fixture.session.parse_once(&fixture.syntax);
+        // `zz` put in at the start of the second row: revision 0's second
+        // row, 4..8, is 6..10 now.
+        let revision = fixture.replace(4..4, "zz");
+        fixture.session.touch(revision);
+        let snapshot = lock(&fixture.text).snapshot();
+        let highlights = fixture.session.highlights(&snapshot).unwrap();
+        lock(&fixture.syntax.asked).clear();
+
+        let mut spans = Vec::new();
+        highlights.spans(&fixture.syntax, 6..10, &mut spans);
+        // The port is asked the range mapped back, a byte wider each side.
+        assert_eq!(lock(&fixture.syntax.asked).clone(), vec![3..9]);
+        let ranges: Vec<Range<usize>> = spans.into_iter().map(|span| span.bytes).collect();
+        assert_eq!(ranges, [6..10, 6..7, 7..9, 9..10]);
     }
 
     #[test]

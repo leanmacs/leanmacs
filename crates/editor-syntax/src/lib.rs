@@ -19,6 +19,12 @@
 //!   revision has been told by then: a stale result is never handed out.
 //! - **The worker** ([`Worker`]) runs sessions' rounds on whichever thread
 //!   runs its loop. The crate starts no thread.
+//! - **Highlighting** ([`highlight`]) is a query's captures drawn in faces
+//!   by the highlight rule ([`highlight::spans`]), from a [`Highlighter`]
+//!   a session is given; a session answers what a snapshot is drawn with
+//!   ([`Session::highlights`]): the tree delivered, carried through the
+//!   edit log's patch to a newer snapshot until the reparse that replaces
+//!   it is delivered, without waiting for a parse.
 //!
 //! The crate depends on `editor-text` alone and knows nothing about Lean or
 //! a parsing library. The real implementation of the port is another crate
@@ -41,16 +47,20 @@
 //! | Something more asked of a parsing library | A method of [`Syntax`], answered in plain data | A property of [`contract`], with a broken implementation that it catches, and the fake |
 //! | A rule of what a range answers, or of the order | [`query`] | Its unit tests, on a syntax that answers out of order; and the same rule in the Lean model (`lean/Editor/SyntaxTree/Model.lean`) |
 //! | A rule of when a text is reparsed, which result is handed out, or when a question of captures is refused | [`session`] | Its unit tests, on the fake and a recording mock, single-threaded |
+//! | A rule of how captures are drawn, or carried through edits | [`highlight`] | Its unit tests, on the fake and hand-built patches |
+//! | A rule of which tree a snapshot is drawn from | [`session`] ("Highlights") | Its unit tests, single-threaded, and `tests/highlight.rs` on a real thread with a parse held |
 //! | A rule of what runs next | [`worker`] | Its unit tests, stepped by hand, and `tests/worker.rs` on a real thread |
 //! | A grammar | The real adapter's table, with a corpus its contract test runs | That crate's `tests/contract.rs` |
 
 pub mod contract;
 pub mod fake;
+pub mod highlight;
 mod port;
 pub mod query;
 pub mod session;
 pub mod worker;
 
+pub use highlight::{BadFaces, HighlightSpan, Highlighter, Highlights};
 pub use port::{Capture, GrammarName, Node, QueryError, QueryErrorKind, QueryKind, Syntax};
 pub use session::{CapturesRefusal, Consumer, Latest, Outcome, Parsed, Session, Source};
 pub use worker::{Handle, Worker};
