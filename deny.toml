@@ -170,6 +170,22 @@
 # so an entry would list their internals, as `raw-window-handle`'s does,
 # and no port type names either.
 #
+# For watching (2026-11-15, the process service's phase 3), whose entries
+# came in the commit that added the Watch port's adapter,
+# `editor-watch-notify`. `notify`: with it added to `editor-watch`'s
+# dependencies, it fails ("crate 'notify = 8.2.2' is explicitly banned").
+# `notify-types`, notify's own crate, whose one wrapper is notify, as
+# `fontique`'s are Parley's own crates: with it added to
+# `editor-watch-notify`'s dependencies, it fails ("crate 'notify-types =
+# 2.3.1' is explicitly banned"). `editor-watch`, the port's crate: with the
+# entry's wrapper naming another crate, it fails on the adapter's edge
+# ("crate 'editor-watch = 0.1.0' is explicitly banned"). The wrapper
+# `editor-watch-notify` of `tempfile`'s entry, for the adapter's contract
+# test: with it taken out, it fails on that edge ("crate 'tempfile =
+# 3.27.0' is explicitly banned"). `editor-watch-notify` itself has no entry
+# while nothing depends on it. `inotify`, `mio` and `objc2-core-services`
+# have none: they are reached only through notify, as wgpu's internals are.
+#
 # One rule has no entry: "no crate depends on `editor-ffi`", the one crate
 # that knows about Lean. No entry for it passes the gate. With
 # `wrappers = ["editor-ffi"]` the wrapper matches nothing and
@@ -204,9 +220,12 @@ deny = [
   { crate = "parley", wrappers = ["editor-shape-parley"], reason = "Parley stays behind the Shaper port: only its adapter crate may name its types" },
   { crate = "fontique", wrappers = ["editor-shape-parley", "parley", "parley_engine"], reason = "fontique is Parley's font library and stays behind the Shaper port with it: beside Parley's own crates, only the adapter may name its types" },
   { crate = "editor-fs-std", wrappers = ["editor-ffi"], reason = "the file adapter is linked only by the crate that wires the library together; everything else reaches a file through the port, and editor-text's tests through its fake" },
-  { crate = "tempfile", wrappers = ["editor-fs-std", "editor-ffi", "editor-process-std"], reason = "a temporary directory is for a test that touches real files: the file adapter's contract test, the process adapter's contract test, whose children run and write there, and editor-ffi's wiring tests; editor-text's and editor-process's tests run on their fakes and make no file" },
+  { crate = "tempfile", wrappers = ["editor-fs-std", "editor-ffi", "editor-process-std", "editor-watch-notify"], reason = "a temporary directory is for a test that touches real files: the file adapter's contract test, the process adapter's contract test, whose children run and write there, the watch adapter's contract test, which watches and writes there, and editor-ffi's wiring tests; editor-text's, editor-process's and editor-watch's tests run on their fakes and make no file" },
   { crate = "editor-process", wrappers = ["editor-process-std", "editor-ffi"], reason = "the Processes port and the process service have two users: the port's adapter, which implements it and runs its contract, and the crate that wires the library together, whose C functions forward to the service over the adapter; a third is a decision, so it is made here" },
   { crate = "editor-process-std", wrappers = ["editor-ffi"], reason = "the process adapter is linked only by the crate that wires the library together, for the process's process service; everything else reaches a process through the port, and editor-process's tests through its fake" },
+  { crate = "editor-watch", wrappers = ["editor-watch-notify"], reason = "the Watch port and the watch service have one user: the port's adapter, which implements it and runs its contract; another is a decision, so it is made here" },
+  { crate = "notify", wrappers = ["editor-watch-notify"], reason = "notify stays behind the Watch port: only its adapter crate may name its types" },
+  { crate = "notify-types", wrappers = ["notify"], reason = "notify's own crate of event types stays behind the Watch port with it: no crate of the workspace may name it, the adapter reaching its types through notify's re-export" },
   { crate = "nucleo-matcher", wrappers = ["editor-fuzzy-nucleo"], reason = "the matching library stays behind the Scorer port: only its adapter crate may name its types" },
   { crate = "editor-fuzzy", wrappers = ["editor-fuzzy-nucleo", "editor-ffi"], reason = "the Scorer port and the ranking rule have two users: the port's adapter, which implements it and runs its contract, and the crate that wires the library together, whose one C function asks the ranking rule over the adapter; a third is a decision, so it is made here" },
   { crate = "editor-fuzzy-nucleo", wrappers = ["editor-ffi"], reason = "the scorer's real adapter is linked only by the crate that wires the library together; everything else reaches a scorer through the port, and its tests through the port's fake" },
