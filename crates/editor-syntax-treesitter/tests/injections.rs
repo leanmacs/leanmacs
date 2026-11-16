@@ -108,7 +108,7 @@ fn a_fenced_rust_blocks_layer_is_its_content_parsed_as_rust() {
         .iter()
         .find(|layer| layer.language == "rust" && layer.depth == 1)
         .unwrap();
-    assert_eq!(rust.ranges, [range.clone()]);
+    assert_eq!(rust.ranges, std::slice::from_ref(&range));
     assert_eq!(rust.grammar, GrammarName::new("rust"));
     assert_eq!(
         TreeSitter.nodes(&rust.tree),

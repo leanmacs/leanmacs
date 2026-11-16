@@ -358,15 +358,22 @@
 //! handle ([`syntax::SyntaxQuery`]), and its captures in a range of a
 //! snapshot are answered at once from the tree the document's session last
 //! delivered, if that tree is of the snapshot's revision, and are otherwise
-//! refused as not parsed: the editor thread never waits for a parse.
+//! refused as not parsed: the editor thread never waits for a parse. A
+//! document is given its injections and the languages they may name, which
+//! its session parses as layers on the worker and draws over its own spans,
+//! and keeps one query of each structural kind (text objects, indents),
+//! whose captures are answered as a query's are.
 //! [`syntax::editor_ffi_syntax_settle`] waits for a delivery, with a bound,
-//! for tests. The rules of when a document is reparsed and which tree is
-//! handed out are `editor-syntax`'s, pinned there on the fake.
+//! for tests. The rules of when a document is reparsed, which tree is
+//! handed out and what an injection is are `editor-syntax`'s, pinned there
+//! on the fake.
 //!
 //! Tests: the unit tests of `syntax.rs` (each layout), and
 //! `tests/syntax.rs`, the wiring test on real documents and the real
-//! adapter, on the process's service; on the Lean side, the syntax checks
-//! of `ffi-test` and `contract-test`'s syntax-tree properties.
+//! adapter, on the process's service, and `tests/highlight.rs`, highlights
+//! and a Markdown document's injected layers drawn; on the Lean side, the
+//! syntax checks of `ffi-test` and `contract-test`'s syntax-tree
+//! properties.
 //!
 //! ## The window
 //!

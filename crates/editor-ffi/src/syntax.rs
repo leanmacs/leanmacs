@@ -41,6 +41,11 @@
 //! | [`editor_ffi_syntax_captures`] | a query's captures in a range of the snapshot, as words, with a [`CapturesStatus`] |
 //! | [`editor_ffi_syntax_shipped_query`] | the source of the query of a kind a grammar is published with, or a [`ShippedStatus`] |
 //! | [`editor_ffi_syntax_highlight`] | draw the snapshot's document with a query's captures in faces from now on; a [`HighlightStatus`] |
+//! | [`editor_ffi_syntax_inject`] | find the snapshot's document's injections with a query from now on; an [`InjectStatus`] |
+//! | [`editor_ffi_syntax_inject_language`] | parse and draw an injection of a language with a highlights query, faces and its own injections query, if any; an [`InjectLanguageStatus`] |
+//! | [`editor_ffi_syntax_keep`] | keep a query as the snapshot's document's query of a kind; a [`KeepStatus`] |
+//! | [`editor_ffi_syntax_kept_names`] | the capture names of the query kept of a kind, with a [`KeptStatus`] |
+//! | [`editor_ffi_syntax_kept_captures`] | the captures of the query kept of a kind in a range of the snapshot, as words, with a [`KeptStatus`] |
 //! | [`editor_ffi_syntax_settle`] | for tests: wait, with a bound, for the snapshot's revision to be delivered |
 //!
 //! **A query is answered from the tree delivered, never parsed for.**
@@ -73,9 +78,25 @@
 //! Lean publishes a scene for it, laid out with the new tree: the old
 //! highlights stay until then.
 //!
+//! **Injections.** [`editor_ffi_syntax_inject`] gives the document's
+//! session its injections query, and [`editor_ffi_syntax_inject_language`]
+//! a language an injection may name: a grammar's highlights query, a face
+//! for each of its captures, and the grammar's own injections query. Each
+//! queues the session, whose next round finds the layers and delivers them
+//! at the same revision when the text has not moved (`editor_syntax::session`,
+//! step 4), so the [`ParsedNotice`] the highlighter subscribed has Lean
+//! publish a scene drawn with them, with no key pressed.
+//!
+//! **Kept queries.** [`editor_ffi_syntax_keep`] has the document's session
+//! keep a query of a kind (text objects, indents), and
+//! [`editor_ffi_syntax_kept_captures`] answers its captures in a range from
+//! the tree delivered, refused as `Session::kept_captures` refuses, and
+//! never parsed for.
+//!
 //! **An attach with the grammar a document is attached with keeps its
-//! session**, its tree and its highlighter; another grammar replaces the
-//! session and drops the highlighter.
+//! session**, its tree, its highlighter, its injections and its kept
+//! queries; another grammar replaces the session and drops them all, as a
+//! detach does.
 //!
 //! # Layouts
 //!
@@ -96,6 +117,14 @@
 //! - **A shipped query out**: its source in a [`RawText`], with the status
 //!   as the function's result; a kind crosses as a `u8` tag
 //!   ([`query_kind_of`]).
+//! - **A language in** ([`editor_ffi_syntax_inject_language`]): its name
+//!   as a string, its highlights query's handle and faces in the layout of
+//!   [`editor_ffi_syntax_highlight`], and its injections query's handle, or
+//!   null for none.
+//! - **Kept names out** ([`editor_ffi_syntax_kept_names`]): a
+//!   [`RawStrings`], with the status as the function's result. **Kept
+//!   captures out** ([`editor_ffi_syntax_kept_captures`]): a [`RawWords`] of
+//!   the layout of captures, its status a [`KeptStatus`].
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -104,9 +133,10 @@ use std::thread;
 use std::time::Duration;
 
 use editor_layout::scene::{SpansAt, TextSpans};
+use editor_syntax::inject::Language;
 use editor_syntax::{
-    Capture, CapturesRefusal, Consumer, GrammarName, Handle, Highlighter, Highlights, Parsed,
-    QueryErrorKind, QueryKind, Session, Syntax, Worker,
+    Capture, CapturesRefusal, Consumer, GrammarName, Handle, Highlighter, Highlights, KeptRefusal,
+    Parsed, QueryErrorKind, QueryKind, Session, Syntax, Worker,
 };
 use editor_syntax_treesitter::TreeSitter;
 use editor_text::Revision;
@@ -194,10 +224,87 @@ pub enum ShippedStatus {
     NoShippedQuery = 2,
 }
 
-/// The kind of query `tag` stands for: 0 is [`QueryKind::Highlights`].
+/// How giving a document an injections query ended, as it crosses the
+/// boundary.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum InjectStatus {
+    /// The document's injections are found with the query from the next
+    /// round on.
+    Injected = 0,
+    /// The snapshot's document is not attached.
+    NotAttached = 1,
+    /// The query is of another grammar than the document is parsed with.
+    WrongGrammar = 2,
+}
+
+/// How giving a document a language for its injections ended, as it
+/// crosses the boundary.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum InjectLanguageStatus {
+    /// An injection of the language is parsed and drawn as given from the
+    /// next round on.
+    Injected = 0,
+    /// The snapshot's document is not attached.
+    NotAttached = 1,
+    /// The injections query is of another grammar than the highlights
+    /// query.
+    WrongGrammar = 2,
+    /// The faces are not one for each of the highlights query's capture
+    /// names, or do not spell a list of strings.
+    BadFaces = 3,
+}
+
+/// How keeping a query ended, as it crosses the boundary.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum KeepStatus {
+    /// The document keeps the query as its query of the kind.
+    Kept = 0,
+    /// The snapshot's document is not attached.
+    NotAttached = 1,
+    /// The query is of another grammar than the document is parsed with.
+    WrongGrammar = 2,
+    /// The kind's tag names no kind.
+    NoSuchKind = 3,
+}
+
+/// How a question of a kept query ended, as it crosses the boundary.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum KeptStatus {
+    /// Answered.
+    Answered = 0,
+    /// The snapshot's document is not attached.
+    NotAttached = 1,
+    /// The document keeps no query of that kind.
+    NoQuery = 2,
+    /// The range is not two positions of the snapshot's text in order.
+    BadRange = 3,
+    /// No tree of the snapshot's revision has been delivered.
+    NotParsed = 4,
+    /// The kind's tag names no kind.
+    NoSuchKind = 5,
+}
+
+impl From<KeptRefusal> for KeptStatus {
+    /// The status of a session's refusal. Every refusal crosses the
+    /// boundary as a status of its own, so this matches each one.
+    fn from(refusal: KeptRefusal) -> Self {
+        match refusal {
+            KeptRefusal::NoQuery => Self::NoQuery,
+            KeptRefusal::BadRange => Self::BadRange,
+            KeptRefusal::NotParsed => Self::NotParsed,
+        }
+    }
+}
+
+/// The kind of query `tag` stands for: 0 is [`QueryKind::Highlights`], 1
+/// [`QueryKind::Injections`], 2 [`QueryKind::TextObjects`] and 3
+/// [`QueryKind::Indents`].
 pub const fn query_kind_of(tag: u8) -> Option<QueryKind> {
     match tag {
         0 => Some(QueryKind::Highlights),
+        1 => Some(QueryKind::Injections),
+        2 => Some(QueryKind::TextObjects),
+        3 => Some(QueryKind::Indents),
         _ => None,
     }
 }
@@ -483,6 +590,106 @@ impl Syntaxes {
         HighlightStatus::Highlighted
     }
 
+    /// Has the session of the document `key` start a round: the text's
+    /// revision told is `revision`, which it may have reached already.
+    fn queue(&self, session: &Arc<SyntaxSession>, revision: Revision) {
+        if let Some(worker) = lock(&self.worker).clone() {
+            worker.touch(session, revision);
+        }
+    }
+
+    /// Finds the injections of `snapshot`'s document with `query` from the
+    /// next round on, and queues that round.
+    pub fn inject(&self, snapshot: &Snapshot, query: &SyntaxQuery) -> InjectStatus {
+        let Some(session) = self.session(snapshot.key()) else {
+            return InjectStatus::NotAttached;
+        };
+        if *session.grammar() != query.grammar {
+            return InjectStatus::WrongGrammar;
+        }
+        session.set_injections(Some(query.query.clone()));
+        self.queue(&session, snapshot.text().revision());
+        InjectStatus::Injected
+    }
+
+    /// Parses an injection of the language `name` in `snapshot`'s document
+    /// with `highlights`' grammar, draws it with its captures in `faces`,
+    /// and finds injections of its own with `injections`, from the next
+    /// round on; and queues that round.
+    pub fn inject_language(
+        &self,
+        snapshot: &Snapshot,
+        name: &str,
+        highlights: &SyntaxQuery,
+        faces: Vec<Option<String>>,
+        injections: Option<&SyntaxQuery>,
+    ) -> InjectLanguageStatus {
+        let Some(session) = self.session(snapshot.key()) else {
+            return InjectLanguageStatus::NotAttached;
+        };
+        if injections.is_some_and(|injections| injections.grammar != highlights.grammar) {
+            return InjectLanguageStatus::WrongGrammar;
+        }
+        let count = self.syntax.capture_names(&highlights.query).len();
+        let Ok(highlighter) = Highlighter::new(highlights.query.clone(), count, faces) else {
+            return InjectLanguageStatus::BadFaces;
+        };
+        let language = Language {
+            grammar: highlights.grammar.clone(),
+            highlighter: Arc::new(highlighter),
+            injections: injections.map(|injections| injections.query.clone()),
+        };
+        session.set_language(name.to_owned(), language);
+        self.queue(&session, snapshot.text().revision());
+        InjectLanguageStatus::Injected
+    }
+
+    /// Has `snapshot`'s document keep `query` as its query of `kind`, in
+    /// place of any before.
+    pub fn keep(&self, snapshot: &Snapshot, kind: QueryKind, query: &SyntaxQuery) -> KeepStatus {
+        let Some(session) = self.session(snapshot.key()) else {
+            return KeepStatus::NotAttached;
+        };
+        if *session.grammar() != query.grammar {
+            return KeepStatus::WrongGrammar;
+        }
+        session.keep(kind, query.query.clone());
+        KeepStatus::Kept
+    }
+
+    /// The capture names of the query `snapshot`'s document keeps of
+    /// `kind`, or why not.
+    pub fn kept_names(
+        &self,
+        snapshot: &Snapshot,
+        kind: QueryKind,
+    ) -> Result<Vec<String>, KeptStatus> {
+        let session = self
+            .session(snapshot.key())
+            .ok_or(KeptStatus::NotAttached)?;
+        session
+            .kept_names(&self.syntax, kind)
+            .ok_or(KeptStatus::NoQuery)
+    }
+
+    /// The captures of the query `snapshot`'s document keeps of `kind`, in
+    /// `range` of its text, as the session answers them
+    /// (`Session::kept_captures`); not attached when it has none.
+    pub fn kept_captures(
+        &self,
+        snapshot: &Snapshot,
+        kind: QueryKind,
+        range: std::ops::Range<usize>,
+    ) -> Result<Vec<Capture>, KeptStatus> {
+        let session = self
+            .session(snapshot.key())
+            .ok_or(KeptStatus::NotAttached)?;
+        session
+            .kept_captures(&self.syntax, kind, snapshot.text(), range)
+            .map(|(_, captures)| captures)
+            .map_err(KeptStatus::from)
+    }
+
     /// The source of the query of `kind` the grammar named `grammar` is
     /// published with, or why not.
     pub fn shipped_query(&self, grammar: &str, kind: QueryKind) -> Result<String, ShippedStatus> {
@@ -506,7 +713,8 @@ impl Syntaxes {
     }
 
     /// Waits up to `bound` for a tree of `snapshot`'s revision, or a newer
-    /// one, to be delivered; whether one was. False at once when its
+    /// one, to be delivered, with layers found with the injections as they
+    /// are now (`Session::wait_for`); whether one was. False at once when its
     /// document is not attached.
     pub fn settle(&self, snapshot: &Snapshot, bound: Duration) -> bool {
         self.session(snapshot.key()).is_some_and(|session| {
@@ -860,9 +1068,159 @@ pub unsafe extern "C" fn editor_ffi_syntax_highlight(
     }
 }
 
+/// [`Syntaxes::inject`] for C: finds the injections of the document of
+/// `snapshot` with `query` from the next round on, and returns an
+/// [`InjectStatus`] as its number.
+///
+/// # Safety
+///
+/// `snapshot` is a live snapshot handle and `query` a live query handle.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn editor_ffi_syntax_inject(
+    snapshot: *const Snapshot,
+    query: *const SyntaxQuery,
+) -> u64 {
+    // SAFETY: the caller guarantees both handles are live.
+    let (snapshot, query) = unsafe { (&*snapshot, &*query) };
+    syntaxes().inject(snapshot, query) as u64
+}
+
+/// [`Syntaxes::inject_language`] for C: an injection of the language the
+/// `name_len` bytes at `name` name is parsed with `highlights`' grammar,
+/// drawn with its captures in the faces the `words_len` bytes at `words`
+/// and the `strings_len` bytes at `strings` spell (the layout of
+/// [`editor_ffi_syntax_highlight`]), and finds injections of its own with
+/// `injections`, or none when it is null. Returns an
+/// [`InjectLanguageStatus`] as its number.
+///
+/// # Safety
+///
+/// `snapshot` is a live snapshot handle, `highlights` a live query handle,
+/// and `injections` one or null; `name` points to `name_len` readable
+/// bytes, `words` to `words_len` and `strings` to `strings_len`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn editor_ffi_syntax_inject_language(
+    snapshot: *const Snapshot,
+    name: *const u8,
+    name_len: usize,
+    highlights: *const SyntaxQuery,
+    words: *const u8,
+    words_len: usize,
+    strings: *const u8,
+    strings_len: usize,
+    injections: *const SyntaxQuery,
+) -> u64 {
+    // SAFETY: the caller guarantees the handles, each pointer and its
+    // length, and that `injections` is live or null.
+    let (snapshot, name, highlights, words, strings, injections) = unsafe {
+        (
+            &*snapshot,
+            text::borrow(name, name_len),
+            &*highlights,
+            words::borrow(words, words_len),
+            words::borrow(strings, strings_len),
+            injections.as_ref(),
+        )
+    };
+    let faces = std::str::from_utf8(strings)
+        .ok()
+        .and_then(|strings| faces_of(words, strings));
+    match faces {
+        Some(faces) => {
+            syntaxes().inject_language(snapshot, &name, highlights, faces, injections) as u64
+        }
+        None => InjectLanguageStatus::BadFaces as u64,
+    }
+}
+
+/// [`Syntaxes::keep`] for C: the document of `snapshot` keeps `query` as
+/// its query of the kind `kind` tags ([`query_kind_of`]). Returns a
+/// [`KeepStatus`] as its number.
+///
+/// # Safety
+///
+/// `snapshot` is a live snapshot handle and `query` a live query handle.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn editor_ffi_syntax_keep(
+    snapshot: *const Snapshot,
+    kind: u8,
+    query: *const SyntaxQuery,
+) -> u64 {
+    // SAFETY: the caller guarantees both handles are live.
+    let (snapshot, query) = unsafe { (&*snapshot, &*query) };
+    match query_kind_of(kind) {
+        Some(kind) => syntaxes().keep(snapshot, kind, query) as u64,
+        None => KeepStatus::NoSuchKind as u64,
+    }
+}
+
+/// [`Syntaxes::kept_names`] for C: fills `out` with the capture names of
+/// the query the document of `snapshot` keeps of the kind `kind` tags, and
+/// returns [`KeptStatus::Answered`]; or returns the refusal's status and
+/// leaves `out` alone.
+///
+/// # Safety
+///
+/// `snapshot` is a live snapshot handle and `out` points to a writable
+/// [`RawStrings`].
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn editor_ffi_syntax_kept_names(
+    snapshot: *const Snapshot,
+    kind: u8,
+    out: *mut RawStrings,
+) -> u64 {
+    // SAFETY: the caller guarantees `snapshot` is live.
+    let snapshot = unsafe { &*snapshot };
+    let Some(kind) = query_kind_of(kind) else {
+        return KeptStatus::NoSuchKind as u64;
+    };
+    match syntaxes().kept_names(snapshot, kind) {
+        Ok(names) => {
+            // SAFETY: the caller guarantees `out` is writable.
+            unsafe { out.write(RawStrings::of(&names)) };
+            KeptStatus::Answered as u64
+        }
+        Err(status) => status as u64,
+    }
+}
+
+/// [`Syntaxes::kept_captures`] for C: fills `out` with the captures of the
+/// query the document of `snapshot` keeps of the kind `kind` tags, in the
+/// range from `start` to `end`, as words, and the status
+/// [`KeptStatus::Answered`]; or with no words and the refusal's status.
+///
+/// # Safety
+///
+/// `snapshot` is a live snapshot handle and `out` points to a writable
+/// [`RawWords`].
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn editor_ffi_syntax_kept_captures(
+    snapshot: *const Snapshot,
+    kind: u8,
+    start: usize,
+    end: usize,
+    out: *mut RawWords,
+) {
+    // SAFETY: the caller guarantees `snapshot` is live.
+    let snapshot = unsafe { &*snapshot };
+    let answer = match query_kind_of(kind) {
+        Some(kind) => syntaxes().kept_captures(snapshot, kind, start..end),
+        None => Err(KeptStatus::NoSuchKind),
+    };
+    let raw = match answer {
+        Ok(captures) => {
+            RawWords::with_status(KeptStatus::Answered as u64, captures_words(&captures))
+        }
+        Err(status) => RawWords::with_status(status as u64, Vec::new()),
+    };
+    // SAFETY: the caller guarantees `out` is writable.
+    unsafe { out.write(raw) };
+}
+
 /// For tests, like the other readouts: waits up to `bound_ms` milliseconds
-/// for a tree of `snapshot`'s revision, or a newer one, to be delivered,
-/// and returns whether one was. It blocks on the session's delivery and
+/// for a tree of `snapshot`'s revision, or a newer one, to be delivered
+/// with layers found with the injections as they are now, and returns
+/// whether one was. It blocks on the session's delivery and
 /// does not sleep. False at once for a document that is not attached.
 ///
 /// # Safety
@@ -989,8 +1347,170 @@ mod tests {
             ShippedStatus::NoShippedQuery,
         ];
         assert_eq!(shipped.map(|status| status as u64), [0, 1, 2]);
-        assert_eq!(query_kind_of(0), Some(QueryKind::Highlights));
-        assert_eq!(query_kind_of(1), None);
+        assert_eq!(
+            [0, 1, 2, 3, 4].map(query_kind_of),
+            [
+                Some(QueryKind::Highlights),
+                Some(QueryKind::Injections),
+                Some(QueryKind::TextObjects),
+                Some(QueryKind::Indents),
+                None
+            ]
+        );
+    }
+
+    #[test]
+    fn each_status_of_an_injection_a_keep_and_a_kept_query_has_a_number_of_its_own() {
+        let inject = [
+            InjectStatus::Injected,
+            InjectStatus::NotAttached,
+            InjectStatus::WrongGrammar,
+        ];
+        assert_eq!(inject.map(|status| status as u64), [0, 1, 2]);
+        let language = [
+            InjectLanguageStatus::Injected,
+            InjectLanguageStatus::NotAttached,
+            InjectLanguageStatus::WrongGrammar,
+            InjectLanguageStatus::BadFaces,
+        ];
+        assert_eq!(language.map(|status| status as u64), [0, 1, 2, 3]);
+        let keep = [
+            KeepStatus::Kept,
+            KeepStatus::NotAttached,
+            KeepStatus::WrongGrammar,
+            KeepStatus::NoSuchKind,
+        ];
+        assert_eq!(keep.map(|status| status as u64), [0, 1, 2, 3]);
+        let kept = [
+            KeptStatus::Answered,
+            KeptStatus::NotAttached,
+            KeptStatus::NoQuery,
+            KeptStatus::BadRange,
+            KeptStatus::NotParsed,
+            KeptStatus::NoSuchKind,
+        ];
+        assert_eq!(kept.map(|status| status as u64), [0, 1, 2, 3, 4, 5]);
+        assert_eq!(
+            [
+                KeptRefusal::NoQuery,
+                KeptRefusal::BadRange,
+                KeptRefusal::NotParsed
+            ]
+            .map(KeptStatus::from),
+            [
+                KeptStatus::NoQuery,
+                KeptStatus::BadRange,
+                KeptStatus::NotParsed
+            ]
+        );
+    }
+
+    /// `source` compiled as a query of `grammar` by `service`.
+    fn query_of(service: &Syntaxes, grammar: &str, source: &str) -> SyntaxQuery {
+        let grammar = GrammarName::new(grammar);
+        SyntaxQuery {
+            query: Arc::new(service.syntax.compile(&grammar, source).unwrap()),
+            grammar,
+        }
+    }
+
+    #[test]
+    fn an_injection_a_language_and_a_keep_are_refused_for_a_text_not_attached_or_a_wrong_grammar() {
+        static NOTICES: Queue = Queue::new();
+        let service = Syntaxes::new(&NOTICES);
+        let document = Document::new("[1]");
+        let snapshot = Snapshot::of(&document);
+        let json = query_of(&service, "json", "(number) @n");
+        let rust = query_of(&service, "rust", "(identifier) @i");
+
+        assert_eq!(service.inject(&snapshot, &json), InjectStatus::NotAttached);
+        assert_eq!(
+            service.inject_language(&snapshot, "json", &json, vec![None], None),
+            InjectLanguageStatus::NotAttached
+        );
+        assert_eq!(
+            service.keep(&snapshot, QueryKind::Indents, &json),
+            KeepStatus::NotAttached
+        );
+        assert_eq!(
+            service.kept_captures(&snapshot, QueryKind::Indents, 0..3),
+            Err(KeptStatus::NotAttached)
+        );
+        assert_eq!(service.attach(&snapshot, "json"), AttachStatus::Attached);
+        assert_eq!(service.inject(&snapshot, &rust), InjectStatus::WrongGrammar);
+        assert_eq!(
+            service.keep(&snapshot, QueryKind::Indents, &rust),
+            KeepStatus::WrongGrammar
+        );
+        // A language of another grammar than the text's is what an
+        // injection is; only its injections query must be of its own.
+        assert_eq!(
+            service.inject_language(&snapshot, "rust", &rust, vec![None], Some(&json)),
+            InjectLanguageStatus::WrongGrammar
+        );
+        assert_eq!(
+            service.inject_language(&snapshot, "rust", &rust, vec![], None),
+            InjectLanguageStatus::BadFaces
+        );
+        assert_eq!(
+            service.inject_language(&snapshot, "rust", &rust, vec![None], None),
+            InjectLanguageStatus::Injected
+        );
+        assert_eq!(service.inject(&snapshot, &json), InjectStatus::Injected);
+        assert!(service.detach(snapshot.key()));
+    }
+
+    #[test]
+    fn an_attach_with_the_same_grammar_keeps_the_kept_queries() {
+        static NOTICES: Queue = Queue::new();
+        let service = Syntaxes::new(&NOTICES);
+        let document = Document::new("[1, 2]");
+        let snapshot = Snapshot::of(&document);
+        assert_eq!(service.attach(&snapshot, "json"), AttachStatus::Attached);
+        let numbers = query_of(&service, "json", "(number) @n");
+        assert_eq!(
+            service.keep(&snapshot, QueryKind::TextObjects, &numbers),
+            KeepStatus::Kept
+        );
+        drop(numbers);
+
+        assert_eq!(service.attach(&snapshot, "json"), AttachStatus::Attached);
+        assert!(service.settle(&snapshot, BOUND));
+        assert_eq!(
+            service.kept_names(&snapshot, QueryKind::TextObjects),
+            Ok(vec!["n".to_owned()])
+        );
+        assert_eq!(
+            service
+                .kept_captures(&snapshot, QueryKind::TextObjects, 0..6)
+                .map(|captures| captures.len()),
+            Ok(2)
+        );
+        assert_eq!(
+            service.kept_names(&snapshot, QueryKind::Indents),
+            Err(KeptStatus::NoQuery)
+        );
+        assert!(service.detach(snapshot.key()));
+    }
+
+    #[test]
+    fn a_detach_drops_the_kept_queries() {
+        static NOTICES: Queue = Queue::new();
+        let service = Syntaxes::new(&NOTICES);
+        let document = Document::new("[1]");
+        let snapshot = Snapshot::of(&document);
+        assert_eq!(service.attach(&snapshot, "json"), AttachStatus::Attached);
+        let numbers = query_of(&service, "json", "(number) @n");
+        service.keep(&snapshot, QueryKind::Indents, &numbers);
+
+        assert!(service.detach(snapshot.key()));
+        assert_eq!(service.attach(&snapshot, "json"), AttachStatus::Attached);
+        assert!(service.settle(&snapshot, BOUND));
+        assert_eq!(
+            service.kept_captures(&snapshot, QueryKind::Indents, 0..3),
+            Err(KeptStatus::NoQuery)
+        );
+        assert!(service.detach(snapshot.key()));
     }
 
     #[test]

@@ -326,6 +326,9 @@ struct State<S: Syntax> {
     injections: Arc<Injections<S::Query>>,
     /// How many times the injections have changed.
     generation: u64,
+    /// The generation of the injections the result delivered last found
+    /// its layers with.
+    delivered_generation: u64,
     /// The query kept of each kind.
     kept: BTreeMap<QueryKind, Arc<S::Query>>,
 }
@@ -357,6 +360,7 @@ impl<S: Syntax> Session<S> {
                 highlighter: None,
                 injections: Arc::new(Injections::default()),
                 generation: 0,
+                delivered_generation: 0,
                 kept: BTreeMap::new(),
             }),
             delivered: Condvar::new(),
@@ -392,16 +396,18 @@ impl<S: Syntax> Session<S> {
         lock(&self.state).delivered.clone()
     }
 
-    /// The last result delivered once its revision is at least `revision`,
+    /// The last result delivered once its revision is at least `revision`
+    /// and its layers were found with the injections as they are now,
     /// waiting for a delivery up to `bound`; `None` when none has come by
     /// then. For tests, and for nothing on the editor thread.
     pub fn wait_for(&self, revision: Revision, bound: Duration) -> Option<Arc<Parsed<S::Tree>>> {
         let state = lock(&self.state);
         let reached = |state: &mut State<S>| {
-            state
-                .delivered
-                .as_ref()
-                .is_some_and(|parsed| parsed.revision >= revision)
+            state.delivered_generation == state.generation
+                && state
+                    .delivered
+                    .as_ref()
+                    .is_some_and(|parsed| parsed.revision >= revision)
         };
         let (mut state, _) = self
             .delivered
@@ -525,6 +531,13 @@ impl<S: Syntax> Session<S> {
         lock(&self.state).kept.insert(kind, query);
     }
 
+    /// The capture names of the query kept of `kind`; none when nothing of
+    /// that kind is kept.
+    pub fn kept_names(&self, syntax: &S, kind: QueryKind) -> Option<Vec<String>> {
+        let query = lock(&self.state).kept.get(&kind).cloned()?;
+        Some(syntax.capture_names(&query))
+    }
+
     /// The capture names of the query kept of `kind` and its captures in
     /// `range` of `text`, from the tree delivered last when it is of
     /// `text`'s revision; or why not, as the module docs say.
@@ -595,20 +608,24 @@ impl<S: Syntax> Session<S> {
             generation,
         });
         drop(work);
-        self.deliver(Parsed {
-            layers,
-            ..Parsed::new(revision, latest.snapshot, tree)
-        })
+        self.deliver(
+            Parsed {
+                layers,
+                ..Parsed::new(revision, latest.snapshot, tree)
+            },
+            generation,
+        )
     }
 
     /// The delivery rule.
-    fn deliver(&self, parsed: Parsed<S::Tree>) -> Outcome {
+    fn deliver(&self, parsed: Parsed<S::Tree>, generation: u64) -> Outcome {
         let mut state = lock(&self.state);
         let revision = parsed.revision;
         if revision < state.current {
             return Outcome::Stale(revision);
         }
         state.current = revision;
+        state.delivered_generation = generation;
         let parsed = Arc::new(parsed);
         for consumer in &state.consumers {
             consumer.deliver(&parsed);
@@ -1386,6 +1403,27 @@ pub(crate) mod tests {
     /// The layers of the tree `fixture`'s session delivered last.
     fn delivered_layers(fixture: &Fixture) -> Vec<Shape> {
         shape(&fixture.session.parsed().unwrap().layers)
+    }
+
+    #[test]
+    fn waiting_for_a_revision_waits_for_layers_found_with_the_injections_as_they_are() {
+        let fixture = Fixture::new("(a)");
+        fixture.session.parse_once(&fixture.syntax);
+        inject(&fixture.session);
+
+        assert!(
+            fixture
+                .session
+                .wait_for(Revision::new(0), Duration::ZERO)
+                .is_none()
+        );
+        fixture.session.parse_once(&fixture.syntax);
+        assert!(
+            fixture
+                .session
+                .wait_for(Revision::new(0), Duration::ZERO)
+                .is_some()
+        );
     }
 
     #[test]

@@ -2,7 +2,9 @@
 //! a document highlighted through the C functions, edited, and reparsed is
 //! drawn as a fresh highlight of its text draws it; the adapter keeps the
 //! layout's spans contract; and a published scene paints a keyword in its
-//! face.
+//! face. The same holds of a Markdown document given its injections through
+//! the C functions: its fences are drawn in their languages' captures over
+//! the host's spans.
 //!
 //! Every test runs on the process's syntax service, as the edit paths reach
 //! it (the module docs of `editor_ffi::syntax`), in parallel: each makes
@@ -18,16 +20,18 @@ use editor_ffi::display::{Display, WireFace, WireScene, WireView};
 use editor_ffi::document::{Document, RawText};
 use editor_ffi::snapshot::Snapshot;
 use editor_ffi::syntax::{
-    AttachStatus, HighlightStatus, QueryStatus, RawQuery, ShippedStatus, SyntaxQuery,
-    editor_ffi_syntax_highlight, editor_ffi_syntax_query_free, editor_ffi_syntax_query_new,
+    AttachStatus, HighlightStatus, InjectLanguageStatus, InjectStatus, QueryStatus, RawQuery,
+    ShippedStatus, SyntaxQuery, editor_ffi_syntax_highlight, editor_ffi_syntax_inject,
+    editor_ffi_syntax_inject_language, editor_ffi_syntax_query_free, editor_ffi_syntax_query_new,
     editor_ffi_syntax_shipped_query, strings_words, syntaxes,
 };
 use editor_ffi::text::editor_ffi_text_free;
 use editor_layout::face::{Color, Face};
 use editor_layout::scene::{Padding, spans_contract};
 use editor_syntax::highlight::{self, Highlighter};
+use editor_syntax::inject::{Injections, Language};
 use editor_syntax::{GrammarName, QueryKind, Syntax};
-use editor_syntax_treesitter::TreeSitter;
+use editor_syntax_treesitter::{TreeSitter, TreeSitterQuery};
 use editor_text::{ChangeSet, Origin, Transaction};
 
 /// The longest a test waits for a delivery.
@@ -395,5 +399,302 @@ fn a_published_scene_draws_the_highlights() {
     assert_eq!(*bytes, 0..2);
     assert_eq!(paint.foreground, RED);
     // The name after it is not a keyword.
+    assert_ne!(row.runs[1].1.foreground, RED);
+}
+
+/// The Markdown fixture of fences.
+const FENCED: &str = include_str!("../../../tests/syntax/markdown/fenced.md");
+
+/// The languages a Markdown document is given: each with its shipped
+/// highlights, a face for each capture, and its shipped injections.
+const LANGUAGES: [&str; 2] = ["rust", "json"];
+
+/// The kind tag of injections.
+const INJECTIONS: u8 = 1;
+
+/// `grammar`'s shipped highlights as a highlighter, each capture in
+/// `syntax.` and its name.
+fn highlighter_of(grammar: &str) -> Highlighter<TreeSitterQuery> {
+    let source = shipped(grammar, 0).unwrap();
+    let (names, faces) = names_and_faces(grammar, &source);
+    let query = TreeSitter
+        .compile(&GrammarName::new(grammar), &source)
+        .unwrap();
+    let faces = faces.into_iter().map(Some).collect();
+    Highlighter::new(std::sync::Arc::new(query), names.len(), faces).unwrap()
+}
+
+/// The injections a Markdown document is given, as the core holds them:
+/// what a fresh highlight is drawn with.
+fn markdown_injections() -> Injections<TreeSitterQuery> {
+    let compiled = |grammar: &str, source: String| {
+        std::sync::Arc::new(
+            TreeSitter
+                .compile(&GrammarName::new(grammar), &source)
+                .unwrap(),
+        )
+    };
+    Injections {
+        query: Some(compiled(
+            "markdown",
+            shipped("markdown", INJECTIONS).unwrap(),
+        )),
+        languages: LANGUAGES
+            .iter()
+            .map(|grammar| {
+                let language = Language {
+                    grammar: GrammarName::new(*grammar),
+                    highlighter: std::sync::Arc::new(highlighter_of(grammar)),
+                    injections: shipped(grammar, INJECTIONS)
+                        .ok()
+                        .map(|source| compiled(grammar, source)),
+                };
+                ((*grammar).to_owned(), language)
+            })
+            .collect(),
+    }
+}
+
+/// A document of `text`, attached to `markdown`, highlighted with its
+/// shipped query and given its shipped injections and the languages of
+/// [`LANGUAGES`], all through C, each capture in `syntax.` and its name.
+fn injected_markdown(text: &str) -> Document {
+    let document = Document::new(text);
+    let snapshot = Snapshot::of(&document);
+    assert_eq!(
+        syntaxes().attach(&snapshot, "markdown"),
+        AttachStatus::Attached
+    );
+    let source = shipped("markdown", 0).unwrap();
+    let (_, faces) = names_and_faces("markdown", &source);
+    let query = query_new("markdown", &source);
+    assert_eq!(
+        highlight_through_c(&snapshot, query, &faces),
+        HighlightStatus::Highlighted as u64
+    );
+    let injections = query_new("markdown", &shipped("markdown", INJECTIONS).unwrap());
+    // SAFETY: both handles are live.
+    let injected = unsafe { editor_ffi_syntax_inject(&snapshot, injections) };
+    assert_eq!(injected, InjectStatus::Injected as u64);
+    for grammar in LANGUAGES {
+        let source = shipped(grammar, 0).unwrap();
+        let (_, faces) = names_and_faces(grammar, &source);
+        let highlights = query_new(grammar, &source);
+        let own = shipped(grammar, INJECTIONS)
+            .map(|source| query_new(grammar, &source))
+            .unwrap_or(std::ptr::null_mut());
+        let words = strings_words(&faces);
+        let strings = faces.concat();
+        // SAFETY: the handles are live or null, and each buffer is alive
+        // for the call.
+        let status = unsafe {
+            editor_ffi_syntax_inject_language(
+                &snapshot,
+                grammar.as_ptr(),
+                grammar.len(),
+                highlights,
+                words.as_ptr(),
+                words.len(),
+                strings.as_ptr(),
+                strings.len(),
+                own,
+            )
+        };
+        assert_eq!(status, InjectLanguageStatus::Injected as u64);
+        // SAFETY: each handle is live, freed once: the language keeps its
+        // queries.
+        unsafe {
+            editor_ffi_syntax_query_free(highlights);
+            if !own.is_null() {
+                editor_ffi_syntax_query_free(own);
+            }
+        }
+    }
+    // SAFETY: each handle is live, freed once.
+    unsafe {
+        editor_ffi_syntax_query_free(query);
+        editor_ffi_syntax_query_free(injections);
+    }
+    document
+}
+
+/// A fresh highlight of `text` with `grammar`'s shipped highlights, and
+/// with `injections` when given, each span with its face's name.
+fn fresh_with(
+    text: &str,
+    grammar: &str,
+    injections: Option<&Injections<TreeSitterQuery>>,
+) -> Vec<(Range<usize>, String)> {
+    let highlighter = highlighter_of(grammar);
+    let (faces, _) = highlight::face_table(&highlighter, injections);
+    let mut parser = TreeSitter.parser(&GrammarName::new(grammar)).unwrap();
+    let snapshot = Document::new(text).snapshot();
+    highlight::fresh(
+        &TreeSitter,
+        &highlighter,
+        injections,
+        &mut parser,
+        &snapshot,
+    )
+    .into_iter()
+    .map(|span| (span.bytes, faces[span.face].clone()))
+    .collect()
+}
+
+/// The spans of `spans` within `range`, moved back by its start.
+fn within(spans: &[(Range<usize>, String)], range: &Range<usize>) -> Vec<(Range<usize>, String)> {
+    spans
+        .iter()
+        .filter(|(bytes, _)| range.start <= bytes.start && bytes.end <= range.end)
+        .map(|(bytes, face)| {
+            (
+                bytes.start - range.start..bytes.end - range.start,
+                face.clone(),
+            )
+        })
+        .collect()
+}
+
+#[test]
+fn a_fenced_rust_block_in_markdown_is_drawn_with_rusts_captures() {
+    let document = injected_markdown(FENCED);
+    assert!(syntaxes().settle(&Snapshot::of(&document), BOUND));
+    let drawn = drawn(&document).unwrap();
+
+    // The host's spans first, as a Markdown highlight alone draws them.
+    let host = fresh_with(FENCED, "markdown", None);
+    assert_eq!(drawn[..host.len()], host[..]);
+    let layers = &drawn[host.len()..];
+
+    // Over the Rust fence's content: the content alone, highlighted as
+    // Rust with its own injections (its `println!`), shifted.
+    let rust = "fn main() {\n    let x = (1, [2, 3]);\n    println!(\"{x:?}\");\n}\n";
+    let at = FENCED.find(rust).unwrap();
+    let languages = markdown_injections().languages;
+    let rust_injections = Injections {
+        query: languages["rust"].injections.clone(),
+        languages,
+    };
+    let alone = fresh_with(rust, "rust", Some(&rust_injections));
+    assert_eq!(within(layers, &(at..at + rust.len())), alone);
+    assert!(alone.iter().any(|(_, face)| face == "syntax.keyword"));
+
+    // The JSON fence in JSON's.
+    let json = "{\"a\": [1, true, null]}\n";
+    let at = FENCED.find(json).unwrap();
+    assert_eq!(
+        within(layers, &(at..at + json.len())),
+        fresh_with(json, "json", None)
+    );
+
+    // No layer's span covers a `> ` of the quoted fence.
+    let quoted = FENCED.find("> ```rust").unwrap();
+    let markers: Vec<usize> = FENCED[quoted..]
+        .match_indices("\n> ")
+        .map(|(offset, _)| quoted + offset + 1)
+        .take(4)
+        .collect();
+    for marker in markers {
+        assert!(
+            layers
+                .iter()
+                .all(|(bytes, _)| bytes.end <= marker || marker + 2 <= bytes.start),
+            "a span over the `> ` at {marker}"
+        );
+    }
+}
+
+#[test]
+fn injected_highlights_after_edits_and_a_reparse_equal_a_fresh_highlight() {
+    let document = injected_markdown(FENCED);
+    assert!(syntaxes().settle(&Snapshot::of(&document), BOUND));
+
+    // An insert inside the Rust fence.
+    let at = find(&document, "let x") + 4;
+    assert!(document.replace(at, at, "y, "));
+    // A new fence typed, at the end.
+    let end = document.snapshot().len();
+    assert!(document.replace(end, end, "\n```rust\nconst N: u8 = 1;\n```\n"));
+    // A fence's info string changed from `rust` to `json`.
+    let listed = find(&document, "```rust\n  struct") + 3;
+    assert!(document.replace(listed, listed + 4, "json"));
+    // A fence's closing line deleted: the JSON one's.
+    let closing = find(&document, "null]}\n```\n") + "null]}\n".len();
+    assert!(document.replace(closing, closing + 4, ""));
+
+    assert!(syntaxes().settle(&Snapshot::of(&document), BOUND));
+    let text = document.read().to_string();
+    let drawn = drawn(&document).unwrap();
+    assert_eq!(
+        drawn,
+        fresh_with(&text, "markdown", Some(&markdown_injections()))
+    );
+    assert!(drawn.iter().any(|(_, face)| face == "syntax.keyword"));
+}
+
+#[test]
+fn the_service_keeps_the_layout_spans_contract_with_layers() {
+    let document = injected_markdown(FENCED);
+    let snapshot = Snapshot::of(&document);
+    assert!(syntaxes().settle(&snapshot, BOUND));
+    let spans = syntaxes().spans(snapshot.key()).unwrap();
+    assert_eq!(
+        spans_contract::check(&*spans, &document.snapshot()),
+        [""; 0]
+    );
+
+    // Carried through an edit not yet parsed too.
+    let at = find(&document, "fn main");
+    assert!(document.replace(at, at + 2, "pub fn é"));
+    assert_eq!(
+        spans_contract::check(&*spans, &document.snapshot()),
+        [""; 0]
+    );
+}
+
+#[test]
+fn a_published_scene_draws_a_fenced_rust_keyword() {
+    const RED: Color = Color::rgb(0xcc, 0, 0);
+    let document = injected_markdown(FENCED);
+    let snapshot = Snapshot::of(&document);
+    assert!(syntaxes().settle(&snapshot, BOUND));
+    let display = Display::cells(8, 16);
+    let wire = WireScene {
+        size: [960, 1280],
+        views: vec![WireView {
+            id: 1,
+            rect: [0, 0, 960, 1280],
+            snapshot: Some(0),
+            scroll: None,
+            selections: vec![],
+            cursor_shape: 0,
+            cursor_face: "cursor".to_owned(),
+            decorations: vec![],
+            status: vec![],
+            status_face: None,
+            padding: Padding::default(),
+        }],
+        faces: Some(vec![WireFace {
+            name: "syntax.keyword".to_owned(),
+            face: Face {
+                foreground: Some(RED),
+                ..Face::default()
+            },
+        }]),
+        ..WireScene::default()
+    };
+    let (words, strings) = wire.encode();
+    assert!(display.publish(&words, &strings, &[&snapshot]));
+
+    let frame = display.latest();
+    let at = find(&document, "fn main");
+    let row = frame.views[0]
+        .rows
+        .iter()
+        .find(|row| row.bytes.start == at)
+        .expect("the row of `fn main`");
+    let (bytes, paint) = &row.runs[0];
+    assert_eq!(*bytes, 0..2);
+    assert_eq!(paint.foreground, RED);
     assert_ne!(row.runs[1].1.foreground, RED);
 }
