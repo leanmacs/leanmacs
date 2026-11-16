@@ -249,10 +249,22 @@ def save (model : FileModel) (source : File.Source) (path : System.FilePath)
             let (stamp, model) := model.written path (encode content.contents)
             (.ok stamp, model)
 
+/-- The model's answer to a stat of the file at `path`: its stamp, refused as a
+load is, in the same order. It changes nothing. -/
+def stat (model : FileModel) (path : System.FilePath) : Except FileError File.Stamp :=
+  if !path.isAbsolute then .error .relativePath
+  else
+    if model.directories.contains path then .error .notAFile
+    else
+      match model.file? path with
+      | none => .error .notFound
+      | some file => .ok file.stamp
+
 /-- The model's answer to each file request, and the model after it. -/
 def handle : (request : FileRequest) → FileModel → request.Reply × FileModel
   | .load path limit, model => model.load path limit
   | .save source path expect, model => model.save source path expect
+  | .stat path, model => (model.stat path, model)
 
 /-- The model's answer to a diff request (`Editor/Diff.lean`), over the
 snapshots it holds: the script of the model of a line diff

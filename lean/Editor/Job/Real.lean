@@ -294,6 +294,8 @@ completed. -/
 def taken (held : HeldSnapshots) (id : UInt64) : (request : FileRequest) → BaseIO request.Reply
   | .load .. => takenLoad held id
   | .save .. => takenSave held id
+  -- A stat's stamp crosses as a save's does: the request says which it was.
+  | .stat _ => takenSave held id
 
 /-- The file port answered by the library's file service. `completions` is
 the table its waits are registered in, `published` the read half of the text
@@ -323,6 +325,10 @@ def realFiles (completions : Completions) (published : SnapshotReader) (held : H
                 pure false
           unless started do
             refuse id notTaken
+      | .stat path =>
+        let started ← (Ffi.filesStat id path.toString).catchExceptions fun _ => pure false
+        unless started do
+          refuse id notTaken
     take := fun id request => taken held id request
     cancel := fun id => do
       held.refused.modify (·.erase id)

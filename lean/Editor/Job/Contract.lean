@@ -216,6 +216,14 @@ def saveRefusedAs (error : FileError) (source : File.Source) (path : System.File
   | .error refusal =>
     return refusal == error
 
+/-- Whether the stat `reply` is `expected`: the same stamp, or the same
+refusal. -/
+def statIs (reply expected : Except FileError File.Stamp) : Bool :=
+  match reply, expected with
+  | .ok stamp, .ok other => stamp == other
+  | .error error, .error other => error == other
+  | _, _ => false
+
 /-- The round trip of a file holding `bytes`: loaded, saved to a second path
 and saved over itself, with no edit between, it is byte for byte what it
 was in both places. -/
@@ -233,7 +241,32 @@ def roundTrip (what : String) (bytes : ByteArray) : FileProperty where
 /-- The properties every implementation of the job port's file requests
 has. -/
 def fileProperties : List FileProperty :=
-  [roundTrip "LF line endings" lfFile, roundTrip "CRLF line endings" crlfFile,
+  [{  name :=
+        "a stat answers a load's stamp, and after a save a stamp that differs and that the next save expects; nothing there is notFound, a directory notAFile and a relative path relativePath"
+      files := #[("a.txt", rawFile), ("b.txt", otherFile)]
+      holds := fun root => do
+        let file ← loaded (root / "a.txt")
+        let other ← loaded (root / "b.txt")
+        let atLoad ← File.stat (root / "a.txt")
+        let written ← saved (.held other.snapshot) (root / "a.txt") (.unchanged file.stamp)
+        let afterSave ← File.stat (root / "a.txt")
+        let again ←
+          match afterSave with
+          | .ok stamp =>
+            saved (.held other.snapshot) (root / "a.txt") (.unchanged stamp)
+          | .error error =>
+            throw s!"the stat after the save was refused: {error.describe}"
+        let missing ← File.stat (root / "none.txt")
+        let directory ← File.stat root
+        let relative ← File.stat "a.txt"
+        return statIs atLoad (.ok file.stamp) && statIs afterSave (.ok written) &&
+            written != file.stamp &&
+            again.size == otherFile.size &&
+            statIs missing (.error .notFound) &&
+            statIs directory (.error .notAFile) &&
+            statIs relative (.error .relativePath)
+      after := #[("a.txt", otherFile), ("b.txt", otherFile)] }, roundTrip "LF line endings" lfFile,
+    roundTrip "CRLF line endings" crlfFile,
     roundTrip
       "bytes that are not UTF-8, with mixed endings, a reserved code point, a four-byte character and no final newline"
       rawFile,

@@ -70,6 +70,7 @@
 //! |---|---|---|
 //! | Loaded | 0 | seconds, nanoseconds, size, lone line feeds, CRLF pairs |
 //! | Saved | 0 | seconds, nanoseconds, size |
+//! | Statted | 0 | seconds, nanoseconds, size, as a save's: the request says which it was |
 //! | The path is not absolute | 1 | |
 //! | Not found | 2 | |
 //! | Not a file | 3 | |
@@ -90,6 +91,7 @@
 //! |---|---|
 //! | [`editor_ffi_files_load`] | Starts a load. False, starting nothing, for an id in use, or when the service has no thread |
 //! | [`editor_ffi_files_save`] | Starts a save of the snapshot behind a handle, which it clones. What it expects on disk is a [`RawExpect`] |
+//! | [`editor_ffi_files_stat`] | Starts a stat of a path, which reads nothing ([`editor_text::file::stat`]) |
 //! | [`editor_ffi_files_take`] | Fills a [`RawFileResult`] and returns true, or returns false when the service keeps no result for the id |
 //! | [`editor_ffi_files_cancel`] | Cancels, and says whether there was anything to cancel |
 //! | [`editor_ffi_files_pending`] | Requests waiting or being worked, and results not taken |
@@ -186,6 +188,11 @@ pub enum Request {
         /// What the save expects to find there.
         expect: Expect,
     },
+    /// Stat the file at `path`, reading nothing.
+    Stat {
+        /// Where the file is.
+        path: PathBuf,
+    },
 }
 
 /// What a request came to.
@@ -201,7 +208,9 @@ pub enum FileResult {
     },
     /// A file was saved, and has this stamp.
     Saved(Stamp),
-    /// A load was refused.
+    /// A file was statted, and has this stamp.
+    Stamped(Stamp),
+    /// A load or a stat was refused.
     NotLoaded(LoadError),
     /// A save was refused.
     NotSaved(SaveError),
@@ -303,7 +312,7 @@ impl FileResult {
                     ..Encoded::bare(FileStatus::Done)
                 }
             }
-            Self::Saved(stamp) => Encoded {
+            Self::Saved(stamp) | Self::Stamped(stamp) => Encoded {
                 words: stamp_words(*stamp).to_vec(),
                 ..Encoded::bare(FileStatus::Done)
             },
@@ -492,6 +501,13 @@ impl<F: Fs> Files<F> {
         )
     }
 
+    /// Asks for the file at `path` to be statted, as the request `id`, and
+    /// returns whether it was accepted. It returns at once and touches no
+    /// file. An id in use is refused.
+    pub fn start_stat(&self, id: u64, path: PathBuf) -> bool {
+        self.start(id, Request::Stat { path })
+    }
+
     /// Adds `request` as `id`, unless the id is in use.
     fn start(&self, id: u64, request: Request) -> bool {
         let mut state = self.state();
@@ -600,6 +616,10 @@ impl<F: Fs> Files<F> {
                 cancelled.load(Ordering::SeqCst)
             })
             .into(),
+            Request::Stat { path } => match file::stat(&self.fs, &path) {
+                Ok(stamp) => FileResult::Stamped(stamp),
+                Err(error) => FileResult::NotLoaded(error),
+            },
         }
     }
 
@@ -687,6 +707,22 @@ pub unsafe extern "C" fn editor_ffi_files_load(
     service_started() && FILES.start_load(id, path, limit)
 }
 
+/// Asks the process's file service to stat the file whose path is the
+/// `path_len` bytes at `path`, reading nothing, as the request `id`, and
+/// returns whether it was accepted. It returns at once and never blocks.
+/// The completion and the result are as [`editor_ffi_files_load`]'s: a
+/// stamp, as a save's is, or a load's refusal.
+///
+/// # Safety
+///
+/// `path` points to `path_len` readable bytes.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn editor_ffi_files_stat(id: u64, path: *const u8, path_len: usize) -> bool {
+    // SAFETY: the caller guarantees the pointer and the length.
+    let path = unsafe { path_of(path, path_len) };
+    service_started() && FILES.start_stat(id, path)
+}
+
 /// Asks the process's file service to save what `snapshot` holds as the
 /// file whose path is the `path_len` bytes at `path`, if what is on disk is
 /// what `expect` says, as the request `id`, and returns whether it was
@@ -767,9 +803,10 @@ pub unsafe extern "C" fn editor_ffi_files_take(id: u64, out: *mut RawFileResult)
     let encoded = result.encoded();
     let snapshot = match result {
         FileResult::Loaded { snapshot, .. } => Snapshot::hand_out(Snapshot::loaded(snapshot)),
-        FileResult::Saved(_) | FileResult::NotLoaded(_) | FileResult::NotSaved(_) => {
-            ptr::null_mut()
-        }
+        FileResult::Saved(_)
+        | FileResult::Stamped(_)
+        | FileResult::NotLoaded(_)
+        | FileResult::NotSaved(_) => ptr::null_mut(),
     };
     let mut writer = Writer::with_capacity(encoded.words.len());
     for word in encoded.words {
@@ -1255,6 +1292,41 @@ mod tests {
             rig.stop();
         }
         // The five answers differ, so each argument was the one forwarded.
+        for (index, one) in answers.iter().enumerate() {
+            for other in &answers[index + 1..] {
+                assert_ne!(one, other);
+            }
+        }
+    }
+
+    #[test]
+    fn a_stat_answers_what_editor_text_answers_for_that_path_and_reads_nothing() {
+        let mut answers = Vec::new();
+        for path in [FILE, OTHER, MISSING, "relative.txt"] {
+            let rig = Rig::over(fake());
+
+            assert!(rig.files.start_stat(1, path.into()));
+            assert_eq!(rig.next(), 1);
+            let Some(answer) = rig.files.take(1) else {
+                panic!("no result was kept for {path}");
+            };
+
+            let expected = match file::stat(&fake(), Path::new(path)) {
+                Ok(stamp) => FileResult::Stamped(stamp),
+                Err(error) => FileResult::NotLoaded(error),
+            };
+            assert_eq!(said(&answer), said(&expected), "{path}");
+            assert!(
+                rig.files
+                    .fs()
+                    .calls()
+                    .iter()
+                    .all(|call| call.op() == editor_text::fs::Op::Stat),
+                "{path}"
+            );
+            answers.push(said(&answer));
+            rig.stop();
+        }
         for (index, one) in answers.iter().enumerate() {
             for other in &answers[index + 1..] {
                 assert_ne!(one, other);

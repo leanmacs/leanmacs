@@ -384,6 +384,25 @@ pub fn load(fs: &dyn Fs, path: &Path, limit: u64) -> Result<Loaded, LoadError> {
     })
 }
 
+/// The stamp of the file at `path`, from one stat and no read: what a check
+/// for a change on disk compares with the stamp the last load or save
+/// answered. It is refused as a load is, in the same order, before the
+/// file would be read: [`LoadError::Relative`] for a path that is not
+/// absolute, [`LoadError::NotFound`] for nothing there, and
+/// [`LoadError::NotAFile`] for a directory or anything else that is not a
+/// file. A rewrite within the file system's timestamp granularity that
+/// keeps the length is not seen, as a save's check does not see one.
+pub fn stat(fs: &dyn Fs, path: &Path) -> Result<Stamp, LoadError> {
+    if !path.is_absolute() {
+        return Err(LoadError::Relative);
+    }
+    let stat = fs.stat(path)?.ok_or(LoadError::NotFound)?;
+    if stat.kind != Kind::File {
+        return Err(LoadError::NotAFile);
+    }
+    Ok(Stamp::of(&stat))
+}
+
 /// What a save expects to find at the path, which it checks before it
 /// writes and again before it replaces the file.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1278,6 +1297,39 @@ mod tests {
             assert!(saved.is_ok(), "{name}: {saved:?}");
             assert_eq!(fs.bytes(PATH).as_deref(), Some(NEW_BYTES), "{name}");
         }
+    }
+
+    #[test]
+    fn a_stat_answers_the_stamp_a_load_answered_and_after_a_save_the_saves() {
+        let fs = fake_with(OLD);
+        let loaded = loaded(&fs);
+        assert_eq!(stat(&fs, Path::new(PATH)).ok(), Some(loaded.stamp));
+        fs.set_now(LATER);
+        let saved = save_new(&fs, PATH, Expect::Unchanged(loaded.stamp)).unwrap();
+        let after = stat(&fs, Path::new(PATH)).ok();
+        assert_eq!(after, Some(saved));
+        assert_ne!(after, Some(loaded.stamp));
+    }
+
+    #[test]
+    fn a_stat_reads_nothing_and_is_refused_as_a_load_is() {
+        let fs = fake_with(OLD);
+        fs.directory("/dir/sub");
+        fs.calls();
+        assert!(matches!(
+            stat(&fs, Path::new("dir/file.txt")),
+            Err(LoadError::Relative)
+        ));
+        assert!(matches!(
+            stat(&fs, Path::new("/dir/none")),
+            Err(LoadError::NotFound)
+        ));
+        assert!(matches!(
+            stat(&fs, Path::new("/dir/sub")),
+            Err(LoadError::NotAFile)
+        ));
+        stat(&fs, Path::new(PATH)).unwrap();
+        assert!(fs.calls().iter().all(|call| call.op() == Op::Stat));
     }
 
     #[test]

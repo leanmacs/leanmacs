@@ -1705,6 +1705,13 @@ started, if `id` is in use or the service could not start its thread. -/
 @[extern "editor_glue_files_load"]
 opaque filesLoad (id : UInt64) (path : @& String) (limit : UInt64) : IO Bool
 
+/-- Asks the library's file service to stat the file at `path`, reading
+nothing, as the request `id`, and returns whether it was accepted. The
+completion and the result are as `filesLoad`'s: a stamp, which comes back as
+a save's does (`FileResult.saved`), or a load's refusal. -/
+@[extern "editor_glue_files_stat"]
+opaque filesStat (id : UInt64) (path : @& String) : IO Bool
+
 /-- `filesSave` as it crosses: what the save expects as a tag (0 whatever, 1
 absent, 2 unchanged) and a stamp's three numbers, its seconds as a two's
 complement word. -/

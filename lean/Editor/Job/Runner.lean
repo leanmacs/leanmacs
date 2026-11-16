@@ -258,6 +258,7 @@ as failed. -/
 def Files.absentReply : (request : FileRequest) → request.Reply
   | .load .. => .error (.failed "this runner has no file service")
   | .save .. => .error (.failed "this runner has no file service")
+  | .stat _ => .error (.failed "this runner has no file service")
 
 /-- No file service: every request completes at once, refused as failed,
 through the table `completions`. It is what a runner has when it was given
@@ -512,6 +513,10 @@ def answer (handle : Handle) : (request : JobRequest) → BaseIO (Answer request
     let (id, wait) ← handle.services.completions.register
     handle.services.files.start id (.save source path expect)
     return .later id wait (handle.services.files.take id (.save source path expect))
+  | .file (.stat path) => do
+    let (id, wait) ← handle.services.completions.register
+    handle.services.files.start id (.stat path)
+    return .later id wait (handle.services.files.take id (.stat path))
   | .process (.start command streaming) => do
     let (id, wait) ← handle.services.completions.register
     handle.services.processes.start id (.start command streaming)

@@ -346,6 +346,12 @@ def take (files : FakeFiles) (id : UInt64) : (request : FileRequest) → BaseIO 
             { state with
               model, pending := state.pending.filter (·.1 != id) })
         else (.error (.failed "the request is not pending"), state)
+  | .stat path => do
+    files.parkTake
+    files.state.modifyGet fun state =>
+        if state.pending.any (·.1 == id) then
+          (state.model.stat path, { state with pending := state.pending.filter (·.1 != id) })
+        else (.error (.failed "the request is not pending"), state)
 
 /-- Withdraws the wait `id`, if its request is pending: it is never
 completed here and never happens. -/

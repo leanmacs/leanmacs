@@ -223,6 +223,12 @@ def Timer.tick (timer : Timer) : JobM Timer := do
   waitUntil timer.next
   return { timer with next := timer.next + timer.period }
 
+/-- Stats the file at `path`, reading nothing, and waits for it: the file's
+stamp, or why it was refused, as a load would be. `Editor/File.lean` has the
+rules. -/
+def File.stat (path : System.FilePath) : JobM (Except FileError File.Stamp) :=
+  ExceptT.lift (Program.request (port := jobPort) (.file (.stat path)))
+
 /-- Loads the file at `path`, unless it is longer than `limit` bytes, and
 waits for it: the file's text as a snapshot this job holds, its stamp and
 its line endings, or why it was refused. The refusal is a value: the job

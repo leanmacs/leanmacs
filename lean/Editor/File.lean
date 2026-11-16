@@ -3,8 +3,8 @@ import Editor.Text
 /-!
 # Files, as a job asks for them
 
-The data of the two file requests a job can make: load a file, and save a
-snapshot as a file. It is plain data, and it imports only the text port, for
+The data of the three file requests a job can make: load a file, save a
+snapshot as a file, and stat a file. It is plain data, and it imports only the text port, for
 the two kinds of id a save names its source by. The requests themselves are
 requests of the job port (`Editor/Job.lean`, `JobRequest.file`): a command
 may not wait and a job may, so loading and saving are things a job does, and
@@ -53,8 +53,18 @@ names a snapshot.
   stamp a load or the last save answered, no file, or whatever is there. A
   save that finds something else is refused with `changed` and what is there
   now, and writes nothing over the file. The caller may ask again with
-  `whatever`, which is the override, or load again. A change is noticed when
-  a save is asked for, and not before: nothing watches a file.
+  `whatever`, which is the override, or load again.
+- **A stat** (`FileRequest.stat`) answers the stamp of the file at a path
+  from one stat, reading nothing: what a check for a change on disk compares
+  with the stamp a buffer recorded. It is refused as a load is, in the same
+  order: `relativePath`, `notFound` for nothing there, `notAFile` for a
+  directory. A stat after a load answers the load's stamp, and after a save
+  the save's.
+- **What notices a change.** A save notices one when it is asked for, and a
+  stat when one is asked for; nothing watches a file. A rewrite within the
+  file system's timestamp granularity that keeps the size is seen by
+  neither: that is the library's limit, pinned there (`crates/editor-text`,
+  `file`).
 - **A save never leaves a half-written file**: the library writes a
   temporary file beside the file and renames it. A save into a directory
   that is not there is refused with `notFound`.
@@ -207,6 +217,8 @@ inductive FileRequest where
   /-- Save what `source` holds as the file at `path`, if what is there is
   what `expect` says. -/
   | save (source : File.Source) (path : System.FilePath) (expect : File.Expect)
+  /-- Stat the file at `path`, reading nothing. -/
+  | stat (path : System.FilePath)
   deriving DecidableEq, Repr
 
 /-- The type of the reply to each file request: a refusal or the result. A
@@ -214,5 +226,6 @@ refusal is a value, never a throw. -/
 def FileRequest.Reply : FileRequest → Type
   | .load .. => Except FileError File.Loaded
   | .save .. => Except FileError File.Stamp
+  | .stat _ => Except FileError File.Stamp
 
 end Editor
