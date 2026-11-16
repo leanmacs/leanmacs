@@ -64,7 +64,8 @@ names a snapshot.
   the staleness check, one stat a file buffer, when the loop asks for one:
   as the frame gains the focus, as a buffer is switched to, and at a
   buffer's first edit (`Editor/Loop.lean`, "Files that changed on disk").
-  Nothing watches a file. A rewrite within the file system's timestamp
+  Nothing watches a file unless auto-reload is on, which is off by default
+  (`Editor/Loop.lean`, "Auto-reload"). A rewrite within the file system's timestamp
   granularity that keeps the size is seen by neither: that is the
   library's limit, pinned there (`crates/editor-text`, `file`).
 - **A save never leaves a half-written file**: the library writes a

@@ -87,6 +87,8 @@ def bindings : Array Binding :=
     { name := "w!", command := Files.saveName, arguments := [.bool true] },
     { name := "e", command := Files.editName, takes := .text },
     { name := "e!", command := Files.editName, takes := .text, arguments := [.bool true] },
+    { name := "autoread", command := Files.autoReloadName, arguments := [.bool true] },
+    { name := "noautoread", command := Files.autoReloadName, arguments := [.bool false] },
     { name := "q", command := quitName }, { name := "wq", command := saveQuitName },
     { name := "reload", command := reloadName },
     { name := "b", command := Buffers.switchName, takes := .text },

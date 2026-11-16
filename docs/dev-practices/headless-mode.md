@@ -171,6 +171,7 @@ with no config and `show` lists them before config's
 | `open-file` | Opens the file at the path that is its first argument in the window it is called with: it starts the job `load-file`, and when the file is loaded a buffer of its text, called by its base name, is shown there. A path a buffer already holds is shown at once. A file that is not there, or is refused for another reason, is said in the echo area, `cannot open <path>: <why>`, and the window shows what it showed. With no path it asks for one, with the prompt `Open file: `, and opens the answer. |
 | `save-buffer` | Saves the buffer of the window it is called with to its file: it starts the job `save-file`, and when the file is written the echo area says `wrote <path>` and the buffer is no longer modified. A file that changed on disk since it was loaded is left as it is, and the echo area says `cannot save <path>: <why>`. With `true` as its first argument it writes whatever is on disk. |
 | `reload-buffer` | Reloads the buffer of the window it is called with from its file: it starts the job `reload-file`, which loads the file and diffs it against the buffer's text off the editor thread, and the buffer then takes the file's text as one edit, with the cursor kept on the lines the diff kept, not modified, which one undo takes back. It is refused while the buffer has unsaved changes, saying `<name> has unsaved changes; :e! discards them`, unless its first argument is `true`. A text edited while the file loaded is reloaded once more, and then left, saying `<path> was edited while it reloaded; :e reloads it`. |
+| `auto-reload-mode` | Turns auto-reload on with `true` first, off with `false`, and toggles it with neither, saying `auto-reload on` or `auto-reload off`. With it on, a job `follow-file` watches each file buffer's file, and another program's change reloads a buffer with no unsaved changes, or marks one with them `[changed on disk]` in face `status.changed`. Off by default; config's `autoReload` in `setup` decides until a command does. |
 | `edit-file` | What the ex names `e` and `e!` run: a leading `true` is the force; a path opens it as `open-file` does; with none it reloads the window's buffer as `reload-buffer` does when that has a file, and otherwise asks for a path. |
 
 `run <name>` hands a command no argument, so a script cannot give
@@ -304,6 +305,8 @@ which the ex names `b`, `ls` and `bd` run.
 | `w!` | `save-buffer` with `true` | Nothing: writes the buffer over whatever the file on disk is |
 | `e <path>` | `edit-file` | The rest of the line, whole, as the path. With none it reloads the window's file, refused while the buffer has unsaved changes; on a buffer with no file it asks for a path |
 | `e! <path>` | `edit-file` with `true` | As `e`, but with none the reload discards unsaved changes, as one step `u` undoes |
+| `autoread` | `auto-reload-mode` with `true` | Nothing: turns auto-reload on |
+| `noautoread` | `auto-reload-mode` with `false` | Nothing: turns it off, ending every follow job |
 | `q` | `quit` | Nothing |
 | `wq` | `save-and-quit` | Nothing |
 | `reload` | `reload-config` | Nothing |

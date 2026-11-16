@@ -223,6 +223,9 @@ structure Registry where
   ex : Array ExEntry := #[]
   /-- The face entries: the definitions each owner made, apart too. -/
   faces : Array FaceEntry := #[]
+  /-- Whether config turns auto-reload on (`autoReload`,
+  `Editor/Setup.lean`): false when it says nothing. -/
+  autoReload : Bool := false
 
 namespace Registry
 
@@ -374,7 +377,7 @@ another"). -/
 def registered (registry : Registry) : Loop.Registered :=
   { entering := fun name => (registry.mode? name).map fun _ => (registry.lineage name).reverse
     jobs := fun name => (registry.findJob? name).isSome, ex := registry.ex?
-    exNames := registry.exNames }
+    exNames := registry.exNames, autoReload := registry.autoReload }
 
 end Registry
 
@@ -394,6 +397,8 @@ structure Registrations where
   ex : Array Ex.Binding := #[]
   /-- The faces, in the order they were set. -/
   faces : Array FaceDefinition := #[]
+  /-- What each `autoReload` of the `setup` said, in order. -/
+  autoReload : Array Bool := #[]
 
 namespace Registrations
 
@@ -418,6 +423,11 @@ def collect : (request : SetupRequest) → Registrations → request.Reply × Re
   | .ex binding, collected => ((), { collected with ex := collected.ex.push binding })
   | .face name attributes, collected =>
     ((), { collected with faces := collected.faces.push { name, face := attributes } })
+  | .autoReload on, collected => ((), { collected with autoReload := collected.autoReload.push on })
+
+/-- What a `setup` that sets auto-reload twice is refused with. -/
+def autoReloadTwice : String :=
+  "auto-reload is set twice"
 
 /-- The first of `items` that an earlier one already is, if any. -/
 def repeated? {α : Type} [BEq α] (items : Array α) : Option α := do
@@ -455,6 +465,8 @@ def problem? (collected : Registrations) : Option String := do
     return s!"the job `{name}` is registered twice"
   if let some name := repeated? (collected.faces.map (·.name.name)) then
     return s!"the face `{name}` is set twice"
+  if collected.autoReload.size > 1 then
+    return autoReloadTwice
   for binding in collected.bindings do
     if binding.keys.isEmpty then
       return boundToNoKeys binding.command

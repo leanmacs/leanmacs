@@ -825,6 +825,20 @@ unsaved changes, at `path`, changed on disk: the two resolutions. -/
 def changedUnderEdits (path : System.FilePath) : String :=
   s!"{path} changed on disk; :e! takes the file's text, :w! writes yours over it"
 
+/-- Whether auto-reload is in effect: a command's choice, or else config's
+setting. -/
+def autoReloadOn : EditorM Bool :=
+  EditorState.ask .autoReloadMode
+
+/-- Starts the reload of the buffer `id` that a change on disk found by
+auto-reload asks for, unforced, when the buffer has a file and no unsaved
+changes. It takes the snapshot the reload diffs against. -/
+def autoReloading (id : BufferId) : EditorM Unit := do
+  let some buffer := (← editorState).buffer? id | return
+  if buffer.isModified || (buffer.file.bind (·.saving)).isSome then
+    return
+  reload id
+
 /-- What a stat's reply says of a file for the mark: its stamp, `none` for a
 file that is gone, or nothing to say, for any other refusal. -/
 def foundOf : Except FileError File.Stamp → Option (Option File.Stamp)
@@ -849,9 +863,15 @@ def checked (results : Array (Checked × Except FileError File.Stamp)) : EditorM
     let was := buffer.file.bind (·.changed)
     discard <| file.buffer.markChanged file.stamp found modified
     let fresh := found != some file.stamp && was.all (·.found != found)
-    if modified && fresh && !said && (buffer.file.map (·.stamp)) == some file.stamp then
+    let current := (buffer.file.map (·.stamp)) == some file.stamp
+    if modified && fresh && !said && current then
       message (changedUnderEdits file.path)
       said := true
+    -- Under auto-reload an unmodified buffer found changed is reloaded, as
+    -- a follow's change reloads it; a file that is gone is only marked.
+    if !modified && current && found.isSome && found != some file.stamp then
+      if ← autoReloadOn then
+        autoReloading file.buffer
 
 /-- The check job: stats each file its order names, in turn, and finishes
 with what the replies become (`checked`). One stat a file, and no watch. -/
@@ -862,5 +882,146 @@ def checkWork (arguments : List Argument) : Work := fun _ => do
   for file in files do
     results := results.push (file, ← File.stat file.path)
   return checked results
+
+/-- The name the auto-reload command is registered under. -/
+def autoReloadName : String :=
+  "auto-reload-mode"
+
+/-- The name the job that follows a file for auto-reload is registered
+under. -/
+def followJob : String :=
+  "follow-file"
+
+/-- How a follow job's watch coalesces: a change is delivered 50 ms after the
+first, and a delivery holds one path, the file's own; past it, `missed`. -/
+def followCoalescing : FileWatch.Coalescing :=
+  { window := 50, bound := 1 }
+
+/-- What the echo area says when auto-reload is on, or off. -/
+def autoReloadSays (on : Bool) : String :=
+  if on then "auto-reload on" else "auto-reload off"
+
+/-- What the echo area says when the file at `path` could not be followed. -/
+def notFollowing (path : System.FilePath) (detail : String) : String :=
+  s!"cannot follow {path}: {detail}"
+
+/-- What a follow job is started with: the buffer, its file's path, the stamp
+the buffer recorded, which `markChanged` is guarded by, and the last stamp
+found, which the job compares a stat with: `none` for a file that is gone.
+The two differ exactly while the buffer is marked. -/
+structure FollowOrder where
+  /-- The buffer. -/
+  buffer : BufferId
+  /-- The file's path. -/
+  path : System.FilePath
+  /-- The stamp the buffer recorded. -/
+  stamp : File.Stamp
+  /-- The last stamp found, or `none` for a file that is gone. -/
+  expected : Option File.Stamp
+  deriving DecidableEq, Repr
+
+/-- A stamp as three arguments. -/
+def stampArguments (stamp : File.Stamp) : List Argument :=
+  [.int stamp.seconds, .nat stamp.nanoseconds, .nat stamp.size]
+
+/-- The order as arguments: the buffer's number, the path, the stamp, and the
+expected stamp after `true`, or `false` alone for none. -/
+def FollowOrder.arguments (order : FollowOrder) : List Argument :=
+  [.nat order.buffer.index, .str order.path.toString] ++ stampArguments order.stamp ++
+    match order.expected with
+    | some expected => .bool true :: stampArguments expected
+    | none => [.bool false]
+
+/-- The order `arguments` are, if they are one (`FollowOrder.arguments`). -/
+def FollowOrder.ofArguments? : List Argument → Option FollowOrder
+  |
+  [.nat buffer, .str path, .int seconds, .nat nanoseconds, .nat size, .bool true,
+      .int expectedSeconds, .nat expectedNanoseconds, .nat expectedSize] =>
+    some
+      { buffer := ⟨buffer⟩, path, stamp := { seconds, nanoseconds, size }
+        expected :=
+          some
+            { seconds := expectedSeconds, nanoseconds := expectedNanoseconds
+              size := expectedSize } }
+  | [.nat buffer, .str path, .int seconds, .nat nanoseconds, .nat size, .bool false] =>
+    some { buffer := ⟨buffer⟩, path, stamp := { seconds, nanoseconds, size }, expected := none }
+  | _ => none
+
+/-- The command a follow job finishes with when the file's stat answered
+`found`, which is not what the order expected ("Auto-reload",
+`Editor/Loop.lean`). The loop arms the follow again after this step. A
+stale order is ignored. An unmodified buffer is marked untold and, when the
+file is there, reloaded; a gone file is only marked. A modified buffer is
+marked told and its text left: its status line shows the mark. -/
+def followed (order : FollowOrder) (found : Option File.Stamp) : EditorM Unit := do
+  discard <| EditorState.ask (.unfollow order.buffer)
+  let some buffer := (← editorState).buffer? order.buffer | return
+  let some file := buffer.file | return
+  if file.path != order.path || file.saving.isSome || !(← autoReloadOn) then
+    return
+  let modified := buffer.isModified
+  discard <| order.buffer.markChanged order.stamp found modified
+  if !modified && found.isSome then
+    autoReloading order.buffer
+
+/-- The command a follow job finishes with when its watch or a stat was
+refused: it is said, and the follow is not armed again until the mode is
+turned off and on. -/
+def unfollowable (order : FollowOrder) (detail : String) : EditorM Unit := do
+  discard <| EditorState.ask (.refuseFollow order.buffer)
+  message (notFollowing order.path detail)
+
+/-- What a stat's reply is for a follow: the stamp, `none` for a file that is
+gone, or the refusal's sentence. -/
+def followFound : Except FileError File.Stamp → Except String (Option File.Stamp)
+  | .ok stamp => .ok (some stamp)
+  | .error .notFound => .ok none
+  | .error error => .error error.describe
+
+/-- The follow job ("Auto-reload", `Editor/Loop.lean`): it watches the file,
+then stats it, and waits for the watch's next delivery whenever the stat
+answers what the order expected, so a change made before the watch existed
+is still seen. It finishes with `followed` once a stat answers something
+else, and with `unfollowable` when the watch or a stat is refused. A file
+that is still gone waits again, so a deleted file does not spin. -/
+def followWork (arguments : List Argument) : Work := fun _ => do
+  let some order :=
+    FollowOrder.ofArguments? arguments | throw s!"{followJob}: its arguments are not a follow order"
+  match ← FileWatch.start (.file order.path) followCoalescing with
+  | .error error =>
+    return unfollowable order (repr error).pretty
+  | .ok watch =>
+    -- Each round is a stat, then a wait for a delivery; nothing else ends
+    -- the job but a change, a refusal, or its cancel.
+    let rec go : Nat → JobM (EditorM Unit)
+      | 0 => return unfollowable order "the follow ran out of rounds"
+      | rounds + 1 => do
+        match followFound (← File.stat order.path) with
+        | .error detail =>
+          return unfollowable order detail
+        | .ok found =>
+          if found != order.expected then
+            return followed order found
+          match ← FileWatch.next watch with
+          | .error error =>
+            return unfollowable order (repr error).pretty
+          | .ok _ =>
+            go rounds
+    go 1000000
+
+/-- The auto-reload command: a `true` or `false` first argument chooses it on
+or off; with none it toggles what is in effect. It says which, and is made of
+state requests alone. -/
+def autoReloadCommand (call : Call) : EditorM Unit := do
+  let on ←
+    match call.arguments with
+    | .bool on :: _ =>
+      pure on
+    | _ =>
+      do
+        let current ← autoReloadOn
+        pure !current
+  discard <| EditorState.ask (.setAutoReload on)
+  message (autoReloadSays on)
 
 end Editor.Files

@@ -251,6 +251,9 @@ structure Loop.Registered where
   registered under. The loop fills it from the lookup a key's invocation
   goes through (`Loop.dispatch`), in place of what it is handed here. -/
   command : String → Option (Call → EditorM Unit) := fun _ => none
+  /-- Whether config's setting turns auto-reload on (`autoReload`,
+  `Editor/Setup.lean`): what decides while no command has chosen. -/
+  autoReload : Bool := false
 
 /-- A program that ends at once, interrupted, with no state: what the
 compiler is shown for `Program.dispatched`, which is `partial`. -/
@@ -300,6 +303,8 @@ partial def Program.dispatched {α : Type} (registered : Loop.Registered) :
     else dispatched registered state (next (.error (.noSuchJob name)))
   | state, .step (.state (.ex name)) next => dispatched registered state (next (registered.ex name))
   | state, .step (.state .exNames) next => dispatched registered state (next registered.exNames)
+  | state, .step (.state .autoReloadMode) next =>
+    dispatched registered state (next (state.autoReload.getD registered.autoReload))
   | state, .step (.state (.runCommand name call)) next =>
     match registered.command name with
     | none => dispatched registered state (next false)

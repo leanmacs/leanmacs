@@ -698,7 +698,30 @@ structure JobStart where
   name : String
   /-- What the job is started with, in order. -/
   arguments : List Argument := []
+  /-- The key a host keeps the job under, if it has one: starting a job of a
+  key cancels the running job of that key, and a cancel of the key ends it
+  (`Loop.Stepped.cancels`). -/
+  key : Option String := none
   deriving DecidableEq, Repr
+
+/-- A file buffer the loop follows for auto-reload: a `follow-file` job of
+the key `Following.key` is armed for it ("Auto-reload", `Editor/Loop.lean`). -/
+structure Following where
+  /-- The buffer. -/
+  buffer : BufferId
+  /-- The path its watch is on. -/
+  path : System.FilePath
+  /-- The buffer's stamp when it was armed: a load, a reload or a save that
+  changes it arms the follow again, so its order's stamp is the buffer's. -/
+  stamp : File.Stamp
+  /-- Whether its watch was refused: it is not armed again until the mode is
+  turned off and on. -/
+  refused : Bool := false
+  deriving DecidableEq, Repr
+
+/-- The key a host keeps the follow job of `buffer` under. -/
+def Following.keyOf (buffer : BufferId) : String :=
+  s!"follow {buffer.index}"
 
 /-- The candidates of an open prompt, and what the prompt has shown of
 them ("Prompts", in the module docs). It is plain data. -/
@@ -874,6 +897,13 @@ structure EditorState where
   each once, without the minibuffer's ("Most recently used", in the module
   docs). -/
   recent : Array BufferId := #[]
+  /-- Whether a command chose auto-reload on or off (`Files.autoReloadName`):
+  `none` until one does, and then config's setting no longer decides. It
+  lasts until the editor stops; a reload of config leaves it. -/
+  autoReload : Option Bool := none
+  /-- The file buffers the loop follows for auto-reload, each with its path
+  and whether its watch was refused (`Editor/Loop.lean`, "Auto-reload"). -/
+  following : Array Following := #[]
   deriving BEq, Repr
 
 /-- What a handler acts on: a window and the buffer it shows. -/

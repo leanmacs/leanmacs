@@ -812,7 +812,15 @@ transaction through. Where those come from is open.
     file buffers that are due a check for a change on disk, as the frame
     gains the focus, as a buffer is switched to and at a buffer's first edit
     (`lean/Editor/Loop.lean`, "Files that changed on disk"), where that job
-    is registered. It is one stat a file, and no watch.
+    is registered. It is one stat a file, and no watch. Under auto-reload,
+    which is off by default, it also starts a `follow-file` job for each
+    file buffer, keyed by the buffer (`JobStart.key`), and hands back the
+    keys of follows to end (`Loop.Stepped.cancels`);
+  - **a keyed job is cancelled by its key**: the host keeps a map from key
+    to job id, starting a job of a key cancels the running one of that key,
+    and a cancel ends the job, finished and not delivered or not, by
+    `Jobs.cancel`, which takes it out of the table, so its command never
+    runs. Before this only removing an owner or shutdown cancelled a job.
   
   An owner other than the registering one (a buffer or a view, whose jobs
   end with it) is not built. On the models the loop's driver

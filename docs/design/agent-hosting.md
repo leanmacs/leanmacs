@@ -238,9 +238,16 @@ Why: neither side is ever lost in silence (the file is untouched until
 choice stays with the person, which keeps the owner's rule that reloading
 is an explicit action.
 
-**The invariant**: the editor watches no file; the reload is explicit; a
-config's job may watch, as a plugin would (`FileWatch.start` is a job
-request config can use).
+**The invariant**: the editor watches no file unless auto-reload is on,
+and it is off by default; the reload is explicit; a config's job may
+watch, as a plugin would (`FileWatch.start` is a job request config can
+use). With auto-reload on (`autoread`, or `autoReload` in `setup`), a
+follow job watches each file buffer's file and a change reloads a buffer
+with no unsaved edits, as Emacs's auto-revert does; a buffer with unsaved
+edits is only marked, and a file that is gone is marked and never reloaded
+(`lean/Editor/Loop.lean`, "Auto-reload"). `ModelTest.autoReloadChecks`
+pins that with the mode off no watch is open; the phase is
+`phase/daily-driver-floor/phase-5-follow-files-on-disk`.
 
 ## Open questions
 

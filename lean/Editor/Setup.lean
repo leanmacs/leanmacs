@@ -184,6 +184,8 @@ inductive SetupRequest where
   /-- Set the attributes `attributes` sets of the face called `name`, over
   the theme's (`Editor/Face.lean`). -/
   | face (name : FaceName) (attributes : Face)
+  /-- Set auto-reload on or off: the editor's first setting. -/
+  | autoReload (on : Bool)
 
 /-- The type of the reply to each request: nothing, for all of them. -/
 def SetupRequest.Reply : SetupRequest → Type
@@ -196,6 +198,7 @@ def SetupRequest.Reply : SetupRequest → Type
   | .mode _ => Unit
   | .ex _ => Unit
   | .face .. => Unit
+  | .autoReload _ => Unit
 
 /-- The setup port: `SetupRequest` and the reply to each request. -/
 abbrev setupPort : Port :=
@@ -304,5 +307,15 @@ what the face looks like from the first frame after the config is
 installed. -/
 def face (name : String) (attributes : Face) : SetupM Unit :=
   ExceptT.lift (Program.request (port := setupPort) (.face ⟨name⟩ attributes))
+
+/-- Turns auto-reload on, or with `false` off: the editor's first setting.
+With it on, a follow job watches each file buffer's file, and a change on
+disk reloads a buffer with no unsaved changes, or marks one with them
+(`Editor/Loop.lean`, "Auto-reload"). It is off when config says nothing, and
+a command's choice (`auto-reload-mode`, the ex names `autoread` and
+`noautoread`) decides over it until the editor stops. A second call in one
+`setup` is refused, as a second face of one name is. -/
+def autoReload (on : Bool := true) : SetupM Unit :=
+  ExceptT.lift (Program.request (port := setupPort) (.autoReload on))
 
 end Editor

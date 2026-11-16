@@ -845,6 +845,9 @@ structure Running (σ : Type) (scheme : InputScheme) where
   /-- What the host has to say in the echo area once the frame is made: a
   reload's error said before there was a frame (`said`). -/
   unsaid : Option String := none
+  /-- The jobs started with a key, by their key: the id each runs as
+  (`JobStart.key`). -/
+  keyed : Array (String × Nat) := #[]
 
 namespace Running
 
@@ -926,6 +929,14 @@ def startJob (collaborators : Collaborators σ scheme) (running : Running σ sch
       fun _ => pure ()
   let (id, jobs) ← running.jobs.start owner name work wake
   return (some id, { running with jobs })
+
+/-- Cancels the job started with `key`, if one is running or has finished and
+not been delivered (`Job.Jobs.cancel`), and forgets the key. -/
+def cancelKeyed (running : Running σ scheme) (key : String) : IO (Running σ scheme) := do
+  let some (_, id) := running.keyed.find? (·.1 == key) | return running
+  let jobs ← running.jobs.cancel id
+  return { running with
+      jobs, keyed := running.keyed.filter (·.1 != key) }
 
 /-- Starts the job registered under `name`, with no arguments, as the driver
 asks, and prints its id. -/
@@ -1051,13 +1062,21 @@ partial def took (collaborators : Collaborators σ scheme) (running : Running σ
     { running with
       frame := some stepped.loop, stepped := true, config := running.config.written stepped.write
       stopped := running.stopped || stepped.next == .stop }
+  -- A cancel ends the job of its key, finished and not delivered or not.
+  for key in stepped.cancels do
+    running ← running.cancelKeyed key
   for start in stepped.starts do
+    -- Starting a job of a key cancels the running job of that key.
+    if let some key := start.key then
+      running ← running.cancelKeyed key
     let (id?, started) ← running.startJob collaborators start.name start.arguments
     running := started
     -- The loop refused a name no job is registered under when the command
     -- asked, from the registry as it is in this event: one is found.
     if let some id := id? then
       collaborators.emit s!"job {id} {start.name}: started"
+      if let some key := start.key then
+        running := { running with keyed := running.keyed.push (key, id) }
   if stepped.reload then
     -- What the driver's `reload` request does: one job at a time.
     running ← running.reduce collaborators .requested
@@ -1138,8 +1157,11 @@ key's does. -/
 def ended (collaborators : Collaborators σ scheme) (running : Running σ scheme) (id : Nat) :
     IO (Running σ scheme) := do
   let (result, jobs) ← running.jobs.finish id
-  let running := { running with jobs }
-  let some (entry, outcome) := result | return running
+  let some (entry, outcome) := result | return { running with jobs }
+  -- A keyed job that ended has no key any more.
+  let running :=
+    { running with
+      jobs, keyed := running.keyed.filter (·.2 != id) }
   let label := s!"job {entry.id} {entry.name}"
   match outcome with
   | .finished command =>

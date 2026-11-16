@@ -2365,7 +2365,22 @@ def setupChecks : List Check :=
         let shared : SetupM Unit := do
           command "keyword" (makes "1")
           face "keyword" (coloured 1)
-        pure (refusal twice == some "the face `keyword` is set twice" && refusal shared == none) }]
+        pure (refusal twice == some "the face `keyword` is set twice" && refusal shared == none) },
+    { name :=
+        "a setup that sets auto-reload twice is refused; once is collected, and it is off when the setup says nothing"
+      run :=
+        let twice : SetupM Unit := do
+          autoReload
+          autoReload false
+        let once : SetupM Unit := autoReload
+        pure
+          (refusal twice == some Config.Registrations.autoReloadTwice && refusal once == none &&
+            (match Config.Registrations.ofSetup once with
+            | .ok collected => collected.autoReload == #[true]
+            | .error _ => false) &&
+            match Config.Registrations.ofSetup (pure ()) with
+            | .ok collected => collected.autoReload.isEmpty
+            | .error _ => false) }]
 
 /-- A registration of the plain command `name`, which makes the text `text`. -/
 def registration (name text : String) : Config.Registration :=
@@ -16038,9 +16053,10 @@ def fileCommandChecks : List Check :=
             let saveId := ((saving.pending.find? (·.name == Files.saveJob)).map (·.id)).getD 0
             let (saved, _) := saving.finish saveId
             Files.commands.map (·.name) ==
-                #[Files.openName, Files.saveName, Files.editName, Files.reloadName] &&
+                #[Files.openName, Files.saveName, Files.editName, Files.reloadName,
+                  Files.autoReloadName] &&
               Files.jobs.map (·.name) ==
-                #[Files.loadJob, Files.saveJob, Files.reloadJob, Files.checkJob] &&
+                #[Files.loadJob, Files.saveJob, Files.reloadJob, Files.checkJob, Files.followJob] &&
               started steps == #[] &&
               bare.pending.isEmpty &&
               bare.loop.state.prompt.map (fun asking => (asking.label, asking.continuation)) ==
@@ -16866,7 +16882,7 @@ def exChecks : List Check :=
               promptEcho ran == greeted hello &&
               closed ran },
     { name :=
-        "with the ex names that ship, the letter e lists the name e first, which is the letter, and then e! and reload, and no other; the prompt the name e then asks for a path with, on the scratch buffer, which has no file, has no candidates"
+        "with the ex names that ship, the letter e lists the name e first, which is the letter, and then e!, autoread, noautoread and reload, and no other; the prompt the name e then asks for a path with, on the scratch buffer, which has no file, has no candidates"
       run :=
         pure <|
           match exDriver Ex.bindings with
@@ -16875,7 +16891,8 @@ def exChecks : List Check :=
             let (typed, _) := fedTo driver (presses "C-e e e")
             let (opening, _) := fedTo typed (presses "C-e t C-e y")
             candidatesOf typed == some (exListed "e" none Ex.bindings) &&
-              (candidatesOf typed).map (·.listed) == some #["e", "e!", "reload"] &&
+              (candidatesOf typed).map (·.listed) ==
+                some #["e", "e!", "autoread", "noautoread", "reload"] &&
               opening.loop.state.prompt.map (·.label) == some Files.openPrompt &&
               candidatesOf opening == some {} }]
 
@@ -17205,6 +17222,143 @@ def stalenessChecks : List Check :=
                 (marked.untold? text).isSome &&
                 (told.untold? text).isNone &&
                 changedOf saved == none }]
+
+/-- `reloadDriver` whose watches may be made in `fileRoot`, with `note.txt`
+open in view 0 and its load finished. -/
+def watchedNote : Option TestDriver :=
+  reloadDriver.map fun driver =>
+    let driver :=
+      { driver with
+        jobs :=
+          { driver.jobs with
+            fileWatches := { driver.jobs.fileWatches with directories := #[fileRoot] } } }
+    finishNamed (fedTo driver (presses "C-o n")).1 Files.loadJob
+
+/-- The starts every step of `steps` handed back, by name. -/
+def startNames (steps : Array (Option (Loop.Stepped TestScheme.scheme))) : Array String :=
+  steps.flatMap fun step => ((step.map (·.starts)).getD #[]).map (·.name)
+
+/-- The checks of auto-reload (`Editor/Loop.lean`, "Auto-reload"), on the
+loop's driver over the editor's models, the model of files and the model of
+watches, whose waiting jobs it holds parked (`Loop.Driver.touch`). -/
+def autoReloadChecks : List Check :=
+  let textOf (driver : TestDriver) : Option String := (showing driver).bind (·.text)
+  let note := inFiles "note.txt"
+  [{  name :=
+        "criterion 7: with auto-reload off no file buffer has a watch open: through opening two files, switching, the focus going and coming, an edit, a reload, closing one and a change on disk, no follow job is started, none is parked, and the watch model started none; with autoread two are open, bd ends one and noautoread the other"
+      run :=
+        pure <|
+          match watchedNote with
+          | none => false
+          | some opened =>
+            let (two, s1) := fedTo opened (presses "C-o l")
+            let two := finishNamed two Files.loadJob
+            let (switched, s2) := fedTo two (exLine "b note.txt")
+            let (focused, s3) :=
+              fedTo (finishNamed switched Files.checkJob) [.focus false, .focus true]
+            let (edited, s4) := fedTo (finishNamed focused Files.checkJob) (presses "C-o x")
+            let (reloading, s5) := fedTo (finishNamed edited Files.checkJob) (presses "C-o R")
+            let (closed, s6) := fedTo (finishNamed reloading Files.reloadJob) (exLine "bd lf.txt")
+            let touched := (rewritten closed note reloadedBytes).touch #[(note, .written)]
+            let steps := s1 ++ s2 ++ s3 ++ s4 ++ s5 ++ s6
+            let (on, _) := fedTo two (exLine "autoread")
+            let (one, _) := fedTo on (exLine "bd lf.txt")
+            let (off, _) := fedTo one (exLine "noautoread")
+            !(startNames steps).contains Files.followJob &&
+              [two, switched, focused, edited, reloading, closed, touched].all
+                (fun driver =>
+                  driver.openWatches == 0 && driver.jobs.fileWatches.next == 1 &&
+                    driver.jobs.fileWatches.ended.isEmpty) &&
+              on.openWatches == 2 &&
+              one.openWatches == 1 &&
+              off.openWatches == 0 &&
+              off.jobs.fileWatches.ended.size == 2 },
+    { name :=
+        "criterion 8: with auto-reload on, an injected change shows the file's new text: one watch is parked, the change resumes it, its follow finishes and reloads, and the buffer then holds the new text with no modified or changed field, and a watch parked again"
+      run :=
+        pure <|
+          match watchedNote with
+          | none => false
+          | some opened =>
+            let (on, _) := fedTo opened (exLine "autoread")
+            let changed := (rewritten on note reloadedBytes).touch #[(note, .written)]
+            let followed := finishNamed changed Files.followJob
+            let reloaded := finishNamed followed Files.reloadJob
+            -- After the reload the follow is on the new stamp: a later
+            -- change to the buffer, now edited, marks it.
+            let (edited, _) := fedTo reloaded (presses "C-o x")
+            let edited := finishNamed edited Files.checkJob
+            let again := rewritten edited note ("again\n".toUTF8 ++ reloadedBytes)
+            let marked := finishNamed (again.touch #[(note, .written)]) Files.followJob
+            on.openWatches == 1 && (pendingOf changed Files.followJob).isSome &&
+              (pendingOf followed Files.reloadJob).isSome &&
+              textOf reloaded == some reloadedText &&
+              statusOf reloaded == some (named "note.txt") &&
+              reloaded.openWatches == 1 &&
+              statusOf marked == some (namedModified "note.txt" ++ #[changedField]) &&
+              marked.openWatches == 1 },
+    { name :=
+        "a deleted file is marked and waited on: no reload, the text kept, the changed field with nothing found, one watch parked and a further step starts no follow; the file put back is reloaded"
+      run :=
+        pure <|
+          match watchedNote with
+          | none => false
+          | some opened =>
+            let (on, _) := fedTo opened (exLine "autoread")
+            let gone := finishNamed ((removed on note).touch #[(note, .removed)]) Files.followJob
+            let (later, steps) := fedTo gone [.preedit ""]
+            let back :=
+              finishNamed ((rewritten later note reloadedBytes).touch #[(note, .created)])
+                Files.followJob
+            let reloaded := finishNamed back Files.reloadJob
+            (pendingOf gone Files.reloadJob).isNone && textOf gone == some FileCases.noteText &&
+              statusOf gone == some (named "note.txt" ++ #[changedField]) &&
+              ((heldFile gone).bind (·.changed)).map (·.found) == some none &&
+              gone.openWatches == 1 &&
+              !(startNames steps).contains Files.followJob &&
+              textOf reloaded == some reloadedText &&
+              statusOf reloaded == some (named "note.txt") },
+    { name :=
+        "criterion 10 on the model: a modified buffer keeps its text and is marked, the follow armed again on what was found, so a touch with no further change starts nothing; two changes leave one parked watch, the mark on the second stamp"
+      run :=
+        pure <|
+          match watchedNote with
+          | none => false
+          | some opened =>
+            let (on, _) := fedTo opened (exLine "autoread")
+            let (edited, _) := fedTo on (presses "C-o x")
+            let edited := finishNamed edited Files.checkJob
+            let first := rewritten edited note reloadedBytes
+            let marked := finishNamed (first.touch #[(note, .written)]) Files.followJob
+            let quiet := marked.touch #[(note, .written)]
+            let second := rewritten quiet note ("again\n".toUTF8 ++ reloadedBytes)
+            let twice := finishNamed (second.touch #[(note, .written)]) Files.followJob
+            let (later, steps) := fedTo twice [.preedit ""]
+            textOf marked == some ("x" ++ FileCases.noteText) &&
+              (pendingOf marked Files.reloadJob).isNone &&
+              statusOf marked == some (namedModified "note.txt" ++ #[changedField]) &&
+              (pendingOf quiet Files.followJob).isNone &&
+              quiet.openWatches == 1 &&
+              ((heldFile twice).bind (·.changed)).map (·.found) == some (stampOf twice note) &&
+              twice.openWatches == 1 &&
+              (pendingOf twice Files.followJob).isNone &&
+              !(startNames steps).contains Files.followJob &&
+              later.openWatches == 1 },
+    { name :=
+        "config's setting decides while no command has: under it the next step arms the watches, and noautoread then wins over it"
+      run :=
+        pure <|
+          match watchedNote with
+          | none => false
+          | some opened =>
+            let configured :=
+              { opened with
+                keys :=
+                  { opened.keys with
+                    registered := { opened.keys.registered with autoReload := true } } }
+            let (armed, _) := fedTo configured [.preedit ""]
+            let (off, _) := fedTo armed (exLine "noautoread")
+            armed.openWatches == 1 && off.openWatches == 0 }]
 
 /-- What a step of the buffer command checks is handed. The commands are the
 ones compiled code registers for files, the minibuffer, the buffers and the
@@ -23081,6 +23235,7 @@ def checks : List Check :=
     exChecks ++
     fileReloadChecks ++
     stalenessChecks ++
+    autoReloadChecks ++
     bufferCommandChecks ++
     evilRestChecks ++
     evilMotionChecks ++

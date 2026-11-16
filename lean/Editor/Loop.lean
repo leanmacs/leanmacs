@@ -678,6 +678,56 @@ loop asks for at three moments, and a save's own check.
 
 Pinned by `ModelTest.stalenessChecks`.
 
+## Auto-reload
+
+An opt-in mode, off by default: **compiled code opens no file watch unless
+auto-reload is on.** A config's own jobs may still watch, as a plugin would.
+
+- **Whether it is on** is a command's choice (`EditorState.autoReload`, set
+  by `auto-reload-mode`, the ex names `autoread` and `noautoread`), which
+  lasts until the editor stops and survives a reload of config; and
+  otherwise config's setting (`autoReload` in `setup`,
+  `Loop.Registered.autoReload`); and otherwise off. The state request
+  `autoReloadMode` answers it from the dispatcher.
+- **The reconciler** (`Loop.reconcile`, after each publish, in
+  `Loop.fileJobs`) keeps `EditorState.following` in step with what is
+  wanted: every open file buffer with no save in flight, while the mode is
+  on and `follow-file` is registered, and nothing otherwise. A buffer
+  wanted and not followed gets a `follow-file` start of the key
+  `follow <buffer>` (`JobStart.key`); one followed and no longer wanted (the
+  mode off, the buffer closed, its path changed, a save started) gets a
+  cancel of its key (`Loop.Stepped.cancels`). One whose buffer's stamp
+  changed since it was armed (a reload, a save) is armed again, so its
+  order's stamp, which guards `markChanged`, is the buffer's. A rename keeps
+  the watch: the key is the buffer's id. A follow whose watch was refused stays, refused,
+  and is not armed again until the mode is turned off and on.
+- **Keyed jobs.** A host keeps a map from key to job id (`Running.keyed`,
+  `Loop.Driver`): starting a job of a key cancels the running job of that
+  key, and a cancel ends the job of its key, even one that has finished
+  and not been delivered, so its command never runs (`Job.Jobs.cancel`).
+- **The follow job** (`Files.followWork`) starts a watch on the file, with
+  a window of 50 ms and a bound of one path, then stats the file, and
+  waits for the next delivery while the stat answers what its order
+  expected: the last stamp found, which is the buffer's own unless it is
+  marked, or `none` for a gone file. Watching before the stat means a
+  change made before the watch existed is still seen. A stat that answers
+  something else finishes it with `Files.followed`; a refused watch or
+  stat with `Files.unfollowable`, which says so.
+- **`followed`** drops the following, so the reconciler arms it again with
+  the new expected stamp, ignores a stale order, and marks the buffer: an
+  unmodified one untold, reloaded when the file is there (`reload-file`),
+  only marked when it is gone; a modified one told, its text left, its
+  status line showing the mark. A check that finds an unmodified buffer
+  changed under the mode reloads it too.
+- **The model driver holds a waiting job** (`Loop.Driver.parked`,
+  `JobModel.runParking`): `Loop.Driver.touch` records changes in the
+  parked jobs' watches and resumes those with a delivery, and
+  `Loop.Driver.openWatches` is how many watches they hold.
+
+Pinned by `ModelTest.autoReloadChecks` on the models, and by
+`ConfigTest.autoReloadChecks` on real files with the library's watch
+service.
+
 ## Decorations
 
 A view's decorations are the one source of them built: the matches of the
@@ -997,6 +1047,11 @@ structure Loop.Stepped (scheme : InputScheme) where
   /-- How the command the step ran ended; `none` for a step that ran no
   command. -/
   ended : Option Loop.Ending := none
+  /-- The keys of the jobs the host is to cancel: a cancel ends the job of
+  that key, if there is one, even one that has finished and not yet been
+  delivered, so its command never runs ("Auto-reload", in the module
+  docs). -/
+  cancels : Array String := #[]
 
 namespace EditorState
 
@@ -1774,16 +1829,59 @@ def dueChecks (seen : Seen) (state : EditorState) : Array Files.Checked :=
     else
       none
 
-/-- The loop after a publish, with what it saw kept, and the job it starts:
-one `check-files` holding every file that is due (`dueChecks`), where that
-job is registered, and nothing otherwise. -/
-def fileJobs (loop : Loop scheme) (keys : Keys scheme) : Loop scheme × Array JobStart :=
+/-- The reconciler of auto-reload ("Auto-reload", in the module docs): the
+state with what it follows brought in step with what it should follow, the
+follow jobs to start, and the keys of those to cancel. It wants every open
+file buffer with no save in flight while auto-reload is in effect and
+`follow-file` is registered, and nothing otherwise. A refused entry stays,
+and is not armed again, while it is wanted. -/
+def reconcile (state : EditorState) (keys : Keys scheme) :
+    EditorState × Array JobStart × Array String :=
+  let on := state.autoReload.getD keys.registered.autoReload && keys.registered.jobs Files.followJob
+  let wanted : Array (BufferId × Buffer.File) :=
+    if on then
+      (seenOf state).present.filterMap fun id => do
+        let file ← (← state.buffer? id).file
+        if file.saving.isSome then
+          none
+        else
+          some (id, file)
+    else #[]
+  let wants (entry : Following) : Bool :=
+    wanted.any fun (id, file) =>
+      id == entry.buffer && file.path == entry.path && file.stamp == entry.stamp
+  let kept := state.following.filter wants
+  let cancels := (state.following.filter (!wants ·)).map (Following.keyOf ·.buffer)
+  let arming := wanted.filter fun (id, _) => !kept.any (·.buffer == id)
+  let starts : Array JobStart :=
+    arming.map fun (id, file) =>
+      { name := Files.followJob
+        arguments :=
+          Files.FollowOrder.arguments
+            { buffer := id, path := file.path, stamp := file.stamp
+              expected := (file.changed.map (·.found)).getD (some file.stamp) }
+        key := some (Following.keyOf id) }
+  ({ state with
+      following :=
+        kept ++
+          arming.map fun (id, file) => { buffer := id, path := file.path, stamp := file.stamp } },
+    starts, cancels)
+
+/-- The loop after a publish, with what it saw kept, the jobs it starts and
+the keys of those it cancels: one `check-files` holding every file that is
+due (`dueChecks`), where that job is registered; and the follow jobs of
+auto-reload's reconciler (`reconcile`). -/
+def fileJobs (loop : Loop scheme) (keys : Keys scheme) :
+    Loop scheme × Array JobStart × Array String :=
   let due := dueChecks loop.seen loop.state
-  let starts :=
+  let checks :=
     if keys.registered.jobs Files.checkJob && !due.isEmpty then
       #[{ name := Files.checkJob, arguments := Files.checkArguments due }]
     else #[]
-  ({ loop with seen := seenOf loop.state }, starts)
+  let (state, follows, cancels) := reconcile loop.state keys
+  ({ loop with
+      seen := seenOf loop.state, state },
+    checks ++ follows, cancels)
 
 /-- `stepped`, a step whose scene is not yet published, once it is
 (`publish`): its loop is the one the publish left, and it says stop when
@@ -1792,9 +1890,10 @@ first, so the scene of the step that says stop is the last one. -/
 def Stepped.published (keys : Keys scheme) (stepped : Stepped scheme) : EditorM (Stepped scheme) :=
   do
   let loop ← stepped.loop.publish
-  let (loop, checks) := loop.fileJobs keys
+  let (loop, starts, cancels) := loop.fileJobs keys
   return { stepped with
-      loop, next := nextOf loop, starts := stepped.starts ++ checks }
+      loop, next := nextOf loop, starts := stepped.starts ++ starts
+      cancels := stepped.cancels ++ cancels }
 
 /-- Hands the answer `invocation` carries, its first argument, to the input
 scheme, for the focused view (`InputScheme.answered`), and runs the

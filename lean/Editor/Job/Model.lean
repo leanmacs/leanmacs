@@ -125,6 +125,45 @@ def run {α : Type} : Program jobPort α → JobModel → Option α × JobModel
         else run (next reply) after
       | none => run (next reply) after
 
+/-- How a run that may park ended: with its value, or `none` if it was
+cancelled, and the model after its last request; or parked, at a `next` of
+the watch `watch` that nothing recorded can answer yet, with the model as it
+then was and the rest of the program. -/
+inductive Ran (α : Type) where
+  /-- It ended. -/
+  | ended (value : Option α) (model : JobModel)
+  /-- It is parked at a `next` of `watch`. -/
+  |
+  parked (watch : Nat) (model : JobModel)
+    (resume : Except FileWatchError (Array FileWatch.Change) → Program jobPort α)
+
+/-- Runs `program` as `run` does, but parks it at a `next` of a watch that has
+nothing recorded, when no cancel is due: what a driver that holds a waiting
+job needs (`Loop.Driver.touch`, `Editor/Loop/Driver.lean`). Parked, no
+watch is ended: the job has not ended. -/
+def runParking {α : Type} : Program jobPort α → JobModel → Ran α
+  | .done value, model => .ended (if model.cancelled then none else some value) model.ended
+  | .step request next, model =>
+    if model.cancelled then .ended none model.ended
+    else
+      let waiting : Option Nat :=
+        match request with
+        | .fileWatch (.next watch) =>
+          match model.fileWatches.watches.find? (·.id == watch.number) with
+          | some found =>
+            if found.opened.isNone && model.cancelAt.isNone then some found.id else none
+          | none => none
+        | _ => none
+      match request, next, waiting with
+      | .fileWatch (.next _), next, some watch => .parked watch model next
+      | request, next, _ =>
+        let (reply, after) := handle request model
+        match model.cancelAt with
+        | some instant =>
+          if instant ≤ after.now then .ended none { after with now := instant }.ended
+          else runParking (next reply) after
+        | none => runParking (next reply) after
+
 end JobModel
 
 /-- Runs `job` against the model, from `model`: how it ended, and the model

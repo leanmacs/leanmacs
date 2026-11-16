@@ -3063,20 +3063,23 @@ def setup : SetupM Unit := do
 
 /-- A stage for a host whose jobs reach real files: one over the real
 elaborator and `source`, with what `compiled` hands it, whose services have
-the library's file service, over the table of waits the file checks share
+the library's file service, its diff service and its watch service, as the
+executable wires them, over the table of waits the file checks share
 (`Context.fileWaits`), which the one completion pump runs over. Its clock is
-still a fake one. -/
+still a fake one: the watch service coalesces on the library's own. -/
 def Stage.overFiles (context : Context) (source : Config.Source) (compiled : Compiled := {}) :
     IO (Stage Config.Elaborate.State) := do
   let completions ← context.fileWaits
   let stage ← Stage.new context context.elaborator source compiled (some completions)
   let collaborators := stage.collaborators
   let refusedDiffs ← Job.RefusedDiffs.new
+  let watches ← Job.RealWatches.new
   return { stage with
       collaborators :=
         { collaborators with
           services :=
             { collaborators.services with
+              fileWatches := Job.realFileWatches completions watches
               files := Job.realFiles completions collaborators.published.reader collaborators.held
               diffs :=
                 Job.realDiffs completions collaborators.published.reader collaborators.held
@@ -3386,6 +3389,81 @@ def reloadChecks (context : Context) : List Check :=
                   output.contains s!"text 1: {new.quote}" &&
                   echo == "".quote &&
                   lines == #[viewLine new 16, statusOf (name := "note.txt")] }]
+
+/-- Rewrites the file at `path` with `text` from another process, as agents
+and editors write: a temporary file beside it, renamed over it. Waits for
+the process to exit; whether it exited with 0. -/
+def rewriteFromOutside (path : System.FilePath) (text : String) : IO Bool := do
+  let child ←
+    IO.Process.output
+        { cmd := "/bin/sh"
+          args :=
+            #["-c", "printf '%s' \"$2\" > \"$1.tmp\" && mv \"$1.tmp\" \"$1\"", "sh", path.toString,
+              text] }
+  return child.exitCode == 0
+
+/-- Polls the scene every 10 ms, with `settle` and no fixed sleep as the
+assertion, until `done` holds of its view and status lines or `bound`
+milliseconds have passed: how long it took, and the lines it last saw. -/
+def Session.within (session : Session) (bound : Nat) (done : Array String → Bool) :
+    IO (Option Nat × Array String) := do
+  let start ← IO.monoMsNow
+  let mut lines := #[]
+  repeat
+    let (_, seen) ← session.viewsAndStatus
+    lines := seen
+    let took := (← IO.monoMsNow) - start
+    if done seen then
+      return (some took, lines)
+    if took > bound then
+      break
+    IO.sleep 10
+  return (none, lines)
+
+/-- The checks of auto-reload through the headless host on real files, with
+the library's watch service (`Editor/Loop.lean`, "Auto-reload"): criteria 9
+and 10. Measured on 2026-11-16 on macOS (FSEvents), over six runs: the
+rewrite was shown 66 to 83 ms after the other process exited, a median of
+about 80 ms, and the edited buffer marked in 78 to 84 ms; the 50 ms
+coalescing window is most of it. The bound is a second, and every wait is
+polled, never a fixed sleep. -/
+def autoReloadChecks (context : Context) : List Check :=
+  [{  name :=
+        "criteria 9 and 10 on real files: with auto-reload on, another process's rewrite of an unmodified buffer's file is shown within a second; once the buffer is edited, another rewrite leaves its text and marks its status line within a second"
+      run :=
+        IO.FS.withTempDir fun files => do
+          let path := files / "note.txt"
+          let (old, new, again) := ("one\ntwo\n", "one\ntwo\nthree\n", "rewritten again\n")
+          IO.FS.writeBinFile path old.toUTF8
+          withFileHost context [("open-note", path)] fun session => do
+              unless ← session.ran "open-note" do
+                return false
+              -- With no argument the command toggles: off, so on.
+              session.ask [.run Files.autoReloadName]
+              let armed ←
+                eventually do
+                    return (← session.output.get).any fun line =>
+                        line.startsWith "job " && line.endsWith s!" {Files.followJob}: started"
+              unless armed do
+                return false
+              unless ← rewriteFromOutside path new do
+                return false
+              let (shown, saw) ← session.within 1000 (·.contains (viewLine new 0))
+              unless shown.isSome do
+                throw (IO.userError s!"the rewrite was not shown within a second: {saw}")
+              unless ← Event.post (.commit "x") do
+                return false
+              unless ← rewriteFromOutside path again do
+                return false
+              let edited := "x" ++ new
+              let (marked, last) ←
+                session.within 1000 fun lines =>
+                    lines ==
+                      #[viewLine edited 1,
+                        statusOf (name := "note.txt") (modified := true) (changed := true)]
+              unless marked.isSome do
+                throw (IO.userError s!"the edited buffer was not marked within a second: {last}")
+              return (← IO.FS.readBinFile path) == again.toUTF8 }]
 
 /-- The directives of one ex line of a script: the ex command run by its
 name, which asks, `line` committed into the minibuffer, and the accept
@@ -3867,6 +3945,7 @@ def checks (context : Context) : List Check :=
     faceChecks context ++
     fileChecks context ++
     reloadChecks context ++
+    autoReloadChecks context ++
     exScriptChecks context
 
 /-- Runs `checks` and returns the names of those that failed. A check that

@@ -197,6 +197,16 @@ inductive StateRequest where
   | markChanged (id : BufferId) (stamp : File.Stamp) (found : Option File.Stamp) (told : Bool)
   /-- Mark the change on disk of the buffer `id`'s file as told. -/
   | tellChanged (id : BufferId)
+  /-- Choose auto-reload on or off, for as long as the editor runs. -/
+  | setAutoReload (on : Bool)
+  /-- Whether auto-reload is in effect: a command's choice, or else config's
+  setting, which the loop that runs the command answers with. -/
+  | autoReloadMode
+  /-- Stop following the buffer `id` for auto-reload: its follow job ended. -/
+  | unfollow (id : BufferId)
+  /-- Mark the following of the buffer `id` as refused: its watch could not
+  be made. -/
+  | refuseFollow (id : BufferId)
   /-- Open a prompt labelled `label`, whose answer the command of
   `continuation` receives: the minibuffer is a buffer over `text`, whose
   history is `history`, in a window with `scroll` and `selection` as its
@@ -264,6 +274,10 @@ abbrev StateRequest.Reply : StateRequest → Type
   | .endSave .. => Except BufferRefusal Unit
   | .markChanged .. => Except BufferRefusal Unit
   | .tellChanged _ => Except BufferRefusal Unit
+  | .setAutoReload _ => Unit
+  | .autoReloadMode => Bool
+  | .unfollow _ => Unit
+  | .refuseFollow _ => Unit
   | .openPrompt .. => Except PromptRefusal ViewId
   | .closePrompt _ => Except PromptRefusal Unit
   | .setCandidates _ => Except PromptRefusal Unit
@@ -322,6 +336,17 @@ def handle : (request : StateRequest) → EditorState → request.Reply × Edito
   | .endSave id snapshot stamp, state => state.endSave id snapshot stamp
   | .markChanged id stamp found told, state => state.markChanged id stamp found told
   | .tellChanged id, state => state.tellChanged id
+  | .setAutoReload on, state => ((), { state with autoReload := some on })
+  -- Config's setting is the loop's to answer with (`Program.dispatched`):
+  -- here, with no loop, a choice no command made is off.
+  | .autoReloadMode, state => (state.autoReload.getD false, state)
+  | .unfollow id, state => ((), { state with following := state.following.filter (·.buffer != id) })
+  | .refuseFollow id, state =>
+    ((),
+      { state with
+        following :=
+          state.following.map fun entry =>
+            if entry.buffer == id then { entry with refused := true } else entry })
   | .openPrompt label continuation text history scroll selection, state =>
     state.openPrompt label continuation text history scroll selection
   | .closePrompt answer, state => state.closePrompt answer

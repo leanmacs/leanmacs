@@ -162,12 +162,14 @@ def install (state : State σ) (outcome : Outcome σ) : State σ × Report :=
       { state with
         chunks := built.chunks,
         registry :=
-          (((((state.registry.replace .config built.registrations.commands).replaceJobs .config
-                            built.registrations.jobs).replaceBindings
-                        .config built.registrations.bindings).replaceModes
-                    .config built.registrations.modes).replaceEx
-                .config built.registrations.ex).replaceFaces
-            .config built.registrations.faces,
+          {
+            (((((state.registry.replace .config built.registrations.commands).replaceJobs .config
+                              built.registrations.jobs).replaceBindings
+                          .config built.registrations.bindings).replaceModes
+                      .config built.registrations.modes).replaceEx
+                  .config built.registrations.ex).replaceFaces
+              .config built.registrations.faces with
+            autoReload := built.registrations.autoReload.back?.getD false },
         cells }
     (state,
       { number := state.finished, installed := true, diagnostics := outcome.diagnostics ++ lost,

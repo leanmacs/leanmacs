@@ -57,13 +57,15 @@ def commands : Array Config.Registration :=
   #[{ name := openName, action := .call openCommand },
     { name := saveName, action := .call saveCommand },
     { name := editName, action := .call editCommand },
-    { name := reloadName, action := .call reloadCommand }]
+    { name := reloadName, action := .call reloadCommand },
+    { name := autoReloadName, action := .call autoReloadCommand }]
 
 /-- The jobs the file commands start, as a host registers them for the
 owner `compiled`: the load job and the reload job, under the editor's limit,
 and the save job. -/
 def jobs : Array Config.JobRegistration :=
   #[{ name := loadJob, work := loadWork limit }, { name := saveJob, work := saveWork },
-    { name := reloadJob, work := reloadWork limit }, { name := checkJob, work := checkWork }]
+    { name := reloadJob, work := reloadWork limit }, { name := checkJob, work := checkWork },
+    { name := followJob, work := followWork }]
 
 end Editor.Files
