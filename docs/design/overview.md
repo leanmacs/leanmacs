@@ -83,7 +83,7 @@ can be interpreted and live-reloaded.
 | Processes, pseudo-terminals, file watching | Rust | Test 2: Lean's own process handling leaves orphans and zombies |
 | Timers | Rust, a service behind the completion queue | Every wait of a job then completes one way, the clock is one port with one fake a test can move, and the completion pump is proven before processes depend on it. Lean's own timers (`Std.Async`) run on a loop thread of their own, with no clock a test controls |
 | Sockets, small file reads and writes | Lean | Lean's runtime already provides them |
-| Text diff, search, fuzzy matching | Rust | Test 1. Fuzzy matching is built: a library behind a port, asked in one call that answers on the thread that asked (`rust-library.md`, "Fuzzy matching, as built"). A matcher on a worker thread, for lists too long for that, is not built |
+| Text diff, search, fuzzy matching | Rust | Test 1. Fuzzy matching is built: a library behind a port, asked in one call that answers on the thread that asked (`rust-library.md`, "Fuzzy matching, as built"). A matcher on a worker thread, for lists too long for that, is not built. Search within a text is built the same way: a regex library behind a port of its own, over a snapshot's pieces and copying no text, asked by the text port's `search` and `matches` (`rust-library.md`, "Search, as built"). Project-wide search is not built |
 | Tree-sitter parsing and queries | Rust | Tests 1 and 3 |
 | ACP and language-server clients | Lean, compiled, over the process service | Lean has real concurrency and JSON; the protocol rules are types |
 | Agent table, permission policy, transcript views | Lean | Policy |

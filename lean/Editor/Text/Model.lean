@@ -610,7 +610,7 @@ def classOf (kind : WordKind) (c : Char) : WordClass :=
   else
     match kind with
     | .bigWord => .word
-    | .word => if c.isAlphanum || c == '_' || c.val ≥ 0x80 then .word else .punctuation
+    | .word => if wordCharacter c then .word else .punctuation
 
 /-- Every cell of `text` with its class for words of `kind`, in order: the
 cells of each row's content, and then the row's line break, when it has one,
@@ -689,6 +689,118 @@ def motion? (text : String) (motion : Motion) (offset : Nat) : Option Nat :=
     | .rowsDown count column =>
       some (atColumn (rows[min (point.row + count) (rows.size - 1)]?.getD row) column)
 
+/-- A literal pattern, as the model reads one: the characters it finds, and
+whether a word must start where they start (`\<`) and end where they end
+(`\>`). -/
+structure Literal where
+  /-- Whether `\<` begins the pattern. -/
+  wordStart : Bool
+  /-- The characters, unescaped. -/
+  chars : List Char
+  /-- Whether `\>` ends the pattern. -/
+  wordEnd : Bool
+
+/-- The characters a literal pattern writes with a backslash before them,
+and that are not literal without one. -/
+def specials : List Char :=
+  ['\\', '.', '*', '[', '~', '^', '$']
+
+/-- `pattern` as a literal ("Search", in the rules of the port): every
+character is literal, none of `specials` and no line feed, or a backslash
+before one of `specials`, `/` or `]`, with an optional `\<` first and `\>`
+last; `none` for any other pattern and for the empty one. -/
+def literalOf (pattern : String) : Option Literal :=
+  let chars := pattern.toList
+  let (wordStart, chars) :=
+    match chars with
+    | '\\' :: '<' :: rest => (true, rest)
+    | _ => (false, chars)
+  let (wordEnd, chars) :=
+    match chars.reverse with
+    | '>' :: '\\' :: rest => (true, rest.reverse)
+    | _ => (false, chars)
+  let rec unescape : List Char → Option (List Char)
+    | [] => some []
+    | '\\' :: c :: rest =>
+      if specials.contains c || c == '/' || c == ']' then (unescape rest).map (c :: ·) else none
+    | c :: rest => if specials.contains c || c == '\n' then none else (unescape rest).map (c :: ·)
+  match unescape chars with
+  | some found => if found.isEmpty then none else some { wordStart, chars := found, wordEnd }
+  | none => none
+
+/-- What the model answers for a pattern that is not literal: it matches
+literal patterns only. -/
+def notLiteral : String :=
+  "the text model matches literal patterns only"
+
+/-- Every match of `literal` in `text`, in order, as the walk of the rules
+of the port finds them: from the text's start, the next occurrence that
+meets the word assertions is a match and the walk goes on from its end; an
+occurrence that does not meet them is passed over, and the walk goes on one
+character after its start. -/
+def literalMatches (text : String) (literal : Literal) : Array Extent :=
+  Id.run do
+    let chars := text.toList.toArray
+    let offsets :=
+      (chars.foldl (fun (acc : Array Nat × Nat) c => (acc.1.push acc.2, acc.2 + c.utf8Size))
+          (#[], 0)).1
+    let length := text.utf8ByteSize
+    let word (index : Nat) : Bool := (chars[index]?.map wordCharacter).getD false
+    let width := literal.chars.length
+    let mut found := #[]
+    let mut index := 0
+    while index + width ≤ chars.size do
+      let here := (chars.extract index (index + width)).toList == literal.chars
+      let starts := !literal.wordStart || word index && (index == 0 || !word (index - 1))
+      let ends := !literal.wordEnd || word (index + width - 1) && !word (index + width)
+      if here && starts && ends then
+        found := found.push ⟨offsets[index]!, (offsets[index + width]?).getD length⟩
+        index := index + width
+      else
+        index := index + 1
+    return found
+
+/-- Whether `offset` is a position of `text`: a character boundary within
+it. -/
+def isPosition (text : String) (offset : Nat) : Bool :=
+  (String.Pos.Raw.mk offset).IsValid text
+
+/-- The model's answer to a search of `text` for `pattern` from `offset`
+("Search", in the rules of the port), for a literal pattern. -/
+def search (text : String) (pattern : String) (forward : Bool) (offset : Nat) :
+    Except TextError Searched :=
+  if !isPosition text offset then .error .badPosition
+  else
+    match literalOf pattern with
+    | none => .ok (.invalid notLiteral)
+    | some literal =>
+      let all := literalMatches text literal
+      let found (extent : Extent) (wrapped : Bool) : Searched :=
+        .found extent.start extent.stop wrapped
+      if forward then
+        match all.find? (·.start > offset), all[0]? with
+        | some extent, _ => .ok (found extent false)
+        | none, some first => .ok (found first true)
+        | none, none => .ok .notFound
+      else
+        match (all.filter (·.start < offset)).back?, all.back? with
+        | some extent, _ => .ok (found extent false)
+        | none, some last => .ok (found last true)
+        | none, none => .ok .notFound
+
+/-- The model's answer to the matches of `pattern` in `text` that start from
+`start` up to `stop`, for a literal pattern. -/
+def matchesIn (text : String) (pattern : String) (start stop : Nat) : Except TextError Matched :=
+  if !(isPosition text start && isPosition text stop && start ≤ stop) then .error .badRange
+  else
+    match literalOf pattern with
+    | none => .ok (.invalid notLiteral)
+    | some literal =>
+      .ok
+        (.ranges
+          ((literalMatches text literal).filter fun extent =>
+            start ≤ extent.start && extent.start < stop))
+
 /-- The model's answer to `query` about `content`. -/
 def answer (content : TextContent) : (query : TextQuery) → Except TextError query.Answer
   | .revision => .ok content.revision
@@ -719,6 +831,8 @@ def answer (content : TextContent) : (query : TextQuery) → Except TextError qu
     match motion? content.contents motion offset with
     | some position => .ok position
     | none => .error .badPosition
+  | .search pattern forward offset => search content.contents pattern forward offset
+  | .matches pattern start stop => matchesIn content.contents pattern start stop
 
 end TextModel
 

@@ -213,6 +213,35 @@
 # fails on each ("crate 'objc2-app-kit = 0.3.2' is explicitly banned",
 # and the same for `objc2-foundation = 0.3.2` and `objc2 = 0.6.5`).
 #
+# For search (2026-11-16, the daily-driver floor's phase 3), whose entries
+# came in the commit that added the search engine port's adapter,
+# `editor-search-regex`. `regex-cursor`: with it added to
+# `editor-search`'s dependencies, it fails ("crate 'regex-cursor = 0.1.5'
+# is explicitly banned"). `regex-syntax`, whose tree the adapter builds:
+# with it added to `editor-search`'s dependencies, it fails the same way
+# ("crate 'regex-syntax = 0.8.11' is explicitly banned"); its wrappers
+# beside the adapter are the third-party crates that depend on it in the
+# resolved graph (`cargo tree --target all -i regex-syntax -e
+# normal,build,dev --depth 1`: regex-cursor, regex-automata, and proptest,
+# which already did), and with the wrapper `regex-cursor` taken out it
+# fails on that edge. `regex-automata`, whose engines regex-cursor forks,
+# with regex-cursor its one wrapper, as `notify-types`'s is notify: with
+# it added to `editor-search-regex`'s dependencies, it fails ("crate
+# 'regex-automata = 0.4.18' is explicitly banned"). `editor-search`, the
+# port's crate, which had no entry while nothing depended on it: with the
+# entry's wrapper naming another crate, it fails on the adapter's edge
+# ("crate 'editor-search = 0.1.0' is explicitly banned"). The adapter
+# itself had no entry while nothing depended on it. Its entry came in the
+# commit in which `editor-ffi` came to depend on it, for the two C
+# functions that search a snapshot: with the entry's wrapper naming
+# another crate, it fails ("crate 'editor-search-regex = 0.1.0' is
+# explicitly banned"); and in that commit `editor-ffi` joined the wrappers
+# of `editor-search`'s entry: with the wrapper not yet there, it fails on
+# that edge ("crate 'editor-search = 0.1.0' is explicitly banned").
+# `aho-corasick`,
+# `memchr` and `log`, which the libraries bring, have none: they are
+# reached only through them, or many crates of the graph depend on them.
+#
 # One rule has no entry: "no crate depends on `editor-ffi`", the one crate
 # that knows about Lean. No entry for it passes the gate. With
 # `wrappers = ["editor-ffi"]` the wrapper matches nothing and
@@ -260,4 +289,9 @@ deny = [
   { crate = "nucleo-matcher", wrappers = ["editor-fuzzy-nucleo"], reason = "the matching library stays behind the Scorer port: only its adapter crate may name its types" },
   { crate = "editor-fuzzy", wrappers = ["editor-fuzzy-nucleo", "editor-ffi"], reason = "the Scorer port and the ranking rule have two users: the port's adapter, which implements it and runs its contract, and the crate that wires the library together, whose one C function asks the ranking rule over the adapter; a third is a decision, so it is made here" },
   { crate = "editor-fuzzy-nucleo", wrappers = ["editor-ffi"], reason = "the scorer's real adapter is linked only by the crate that wires the library together; everything else reaches a scorer through the port, and its tests through the port's fake" },
+  { crate = "regex-cursor", wrappers = ["editor-search-regex"], reason = "the regex library stays behind the search engine port: only its adapter crate may name its types" },
+  { crate = "regex-automata", wrappers = ["regex-cursor"], reason = "regex-cursor's engines are built on it, and it stays behind the search engine port with them: no crate of the workspace may name it" },
+  { crate = "regex-syntax", wrappers = ["editor-search-regex", "regex-cursor", "regex-automata", "proptest"], reason = "the regex syntax's tree is built by the search engine port's adapter alone, from the pattern tree of editor-search, so no pattern string in the library's syntax is ever made; the other wrappers are the third-party crates that depend on it: regex-cursor and regex-automata, and proptest, for its generated strings" },
+  { crate = "editor-search", wrappers = ["editor-search-regex", "editor-ffi"], reason = "the search engine port, the pattern syntax and the rule of which match have two users: the port's adapter, which implements it and runs its contract, and the crate that wires the library together, whose two C functions ask the rule over the adapter; a third is a decision, so it is made here" },
+  { crate = "editor-search-regex", wrappers = ["editor-ffi"], reason = "the search engine's real adapter is linked only by the crate that wires the library together; everything else reaches an engine through the port, and its tests through the port's fake" },
 ]

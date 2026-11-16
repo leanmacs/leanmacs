@@ -913,7 +913,7 @@ interface in Lean:
 | Service | Notes |
 |---|---|
 | **Diff** | Line and word diff between two texts or snapshots, producing hunks; apply or revert a hunk. Used for gutter marks, for turning an agent's whole-file "old text / new text" into reviewable hunks, and for external reloads. |
-| **Search** | Regex and literal search over a rope without copying it; project-wide search on worker threads with streamed results. |
+| **Search** | Regex and literal search over a rope without copying it; project-wide search on worker threads with streamed results. Built of it: search within a text, "Search, as built", below. |
 | **Fuzzy matching** | Which candidates a pattern matches, and in what order, for a prompt's candidates and for pickers. Built: "Fuzzy matching, as built", below. |
 
 ### Fuzzy matching, as built
@@ -1025,6 +1025,148 @@ Tests: the ranking rule on a canned scorer, and the fake and the contract,
 in `editor-fuzzy`; the adapter's own cases, its limit and the port's
 contract on it, in `editor-fuzzy-nucleo`; the C function's decoding and
 one wiring case, in `editor-ffi`. No test pins a score's value.
+
+### Search, as built
+
+Built by the daily-driver floor's phase 3, for `/ ? n N * #` in a buffer.
+Two crates are built, and `editor-ffi` links them: its two C functions
+(`crates/editor-ffi/src/search.rs`) make the adapter for each call and ask
+the rule over a snapshot's pieces, with `editor_text::is_word_character`
+as the word class, and keep nothing; no compiled pattern is cached. The
+text port's `search` and `matches` (`lean/Editor/Text.lean`, "Search")
+reach them through the real binding, and the text model answers literal
+patterns alone.
+
+**The pattern is Vim's syntax, parsed by our own parser**
+(`crates/editor-search`, `pattern`, no dependencies). The user types Vim's
+syntax with its default `magic` option, not the regex library's:
+
+- The most common search in code is a literal with punctuation in it, and
+  the two syntaxes disagree on the punctuation. In the library's syntax
+  `foo(` is an error and `a|b` matches `a` or `b`; in Vim `( ) | + ? { }`
+  are characters and `\( \| \+` are the operators.
+- `\<word\>` is what `*` and `#` build, and the library has no such atom:
+  its `\b{start}` uses Unicode's word class, not the text's.
+- A Vim user types Vim's syntax without thinking.
+
+The parse answers a tree of the crate's own (top-level branches, each with
+its `\<` and `\>`, holding a sequence of atoms with their repetition), so
+no pattern string in the library's syntax is ever made. The subset built,
+with case kept (`ignorecase` is off):
+
+| Typed | Means |
+|---|---|
+| Any other character, and `\` before one of `\ / . * [ ] ~ ^ $` | That character |
+| `.` | Any character but a line feed |
+| `[…]`, `[^…]` | A collection, with ranges `a-z`, `]` first literal, and `\\ \] \^ \- \t` inside. A negated one never matches a line feed. A `[` with no closing `]` is a literal `[`, as in Vim |
+| `*` after an atom; `\+`; `\=` and `\?`; `\{n,m}` `\{n}` `\{n,}` `\{,m}` `\{}`; `\{-…}` | Greedy repetition; one or more; zero or one; counted; and the same lazily. `*` at the start of a branch is a literal `*`, as in Vim |
+| `^` at the start of a branch, `$` at its end | The start and the end of a row (before its line feed, or the text's end). Elsewhere each is literal, as in Vim; a group's alternatives have them too |
+| `\(…\)`, `\|` | A group, and alternatives (leftmost-first) |
+| `\s \S \d \D \w \W \t` | A space or a tab; not one; `[0-9]`; not; `[0-9A-Za-z_]`; not; a tab. A negated class never matches a line feed |
+| `\<` at the start of a branch, `\>` at its end | A word starts there; a word ends there. The word class is the text's |
+
+**What is refused**, each with the sentence Vim gives where it has one:
+`E54: Unmatched \(`, `E55: Unmatched \)`, `E51: Too many \(` (nine groups
+at most, as in Vim), `E64: \+ follows nothing` (and the same for `\=`,
+`\?`, `\{`, and `*` after `\<`), `E61: Nested *` and `E62: Nested \+`, `E554:
+Syntax error in \{...}`, `E944: Reverse range in character class`, and
+for `~`, Vim's answer while no `:s` has run, `E33: No previous substitute
+regular expression`. The empty pattern is refused (the editor never sends
+one). The rest are refused as `<atom> is not built in a pattern`: a line
+feed, `\n` and `\_x` (a match across rows); `\%…`, `\@…`, `\z…` and the
+back-references `\1` to `\9`; `\c \C \v \m \M \V`; `[:alpha:]`-style
+classes; `\<` or `\>` away from a branch's end; and every other escape.
+**No pattern that parses matches a line feed**, and the
+rule of which match rests on that.
+
+**The port is an engine** (`Engine::compile`, `Compiled::find`). The
+engine is asked to compile a branch's sequence, without its `\<` and
+`\>`, which the core checks. What it compiles answers
+`find(haystack, from, to)`: the leftmost-first match that starts in
+`from..=to`, where `^` and `$` see the text outside the span, and it may
+stop looking at the end of the row that holds `to`. The haystack is
+`Pieces`, a text as the pieces it is held in, borrowed: a snapshot's
+chunks.
+
+**The fake and the contract.** `Literal` is the port's fake: it compiles
+a run of literal characters and refuses any other sequence with a
+refusal named for it. `contract::check` names each property an engine
+breaks, all on literal cases: found at its leftmost occurrence; across the
+pieces' boundaries; not found when absent; case kept; a scalar value is
+itself alone; an escaped special is a character; a match starts in
+`from..=to` and may end after `to`; no match holds a line feed; and a sweep
+of generated texts cut into generated pieces, from a fixed seed, against a
+naive scan. It is seen to bite on engines written in its tests.
+
+**The rule of which match** is core logic (`search`, `matches`), Vim 9.1's
+under its default options (`cpoptions` holds `c`, `wrapscan` on):
+
+- The matches of a pattern in a text are found row by row: in a row, the
+  leftmost-first match from its start, then from where each one stopped,
+  or one character further after an empty one. No match holds a line
+  feed, so this is one walk of the whole text, begun at any row's start.
+- `\<` and `\>` are checked by the core with the word class the caller
+  hands in (the text's: an ASCII letter or digit, `_`, or any character
+  from U+0080 up). A candidate that fails is passed over and the walk
+  tries again one character after its start.
+- Top-level alternatives are asked one by one: the leftmost wins, the
+  earlier on a tie, so `\<foo\>\|\<bar\>` works.
+- **Forward** from `p`: the first match that starts after `p`, walking
+  from `p`'s row start (`cpo-c`: `abab` in `abababab` from 0 answers 4),
+  or else the text's first match, wrapped. **Backward**: the last match
+  that starts before `p`, walking each row from its start, from `p`'s row
+  upward, or else the text's last match, wrapped. **Matches in a range**:
+  those that start in it, walked from its start's row start (`aa` in
+  `aaaa` from 1 answers `2..4` only).
+- A backward search asks the engine spans within one row, each row once,
+  so its cost is a scan of the rows it walks.
+- An offset that is not a position, or a range that is not two positions
+  in order, is refused.
+
+**The adapter** is `crates/editor-search-regex`: `RegexEngine`, over
+`regex-cursor`, pinned `=0.1.5` (MIT OR Apache-2.0), a fork of
+`regex-automata`'s engines that searches a discontiguous haystack through
+a `Cursor`, which Helix uses over its rope. Its `ropey` feature is off (it
+brings ropey 1.x, which only `editor-text` may name); the adapter has its
+own cursor over the pieces. `regex-syntax`, pinned `=0.8.11`, builds the
+library's `Hir` from our tree. No type of either is public, and
+`deny.toml` lets no other crate depend on them, nor on `regex-automata`.
+
+- `.`, a negated collection and `\S \D \W` are classes of every character
+  but theirs and a line feed; `\s` is a space or a tab.
+- `^` and `$` are the library's `StartLF` and `EndLF`. A carriage return is
+  a character of its row, so in CRLF rows `$` holds after the `\r`:
+  `a$` does not match `a\r\n`.
+- A pattern too large for the library's limits is refused with
+  `E363: pattern uses more memory than 'maxmempattern'`.
+- **The library's bug** (0.1.5, seen 2026-11-16): a search whose span
+  ends inside a chunk that is not the last can panic. The adapter's
+  cursor shows the library no text past the end of the row that holds
+  `to`, which changes no answer.
+- **Set aside**: `regex` 1.13 and `regex-automata` alone, which search
+  one contiguous `&str`, so a search would copy the rope; `fancy-regex`,
+  whose look-around could state `\<` and `\>` anywhere but which needs a
+  contiguous haystack and has no linear-time bound; `pcre2` and `onig`, C
+  libraries; and an engine of our own.
+
+**The limits**:
+
+- `\>` is checked against the match the engine answers, so a branch whose
+  end could match fewer characters (`\<x.*\>` on `xy z!`) can miss a match
+  Vim finds by backtracking. For `*`, `#` and literal patterns it is
+  exact.
+- `\<` and `\>` only at a branch's ends.
+- No multi-line patterns (`\n`, `\_x`).
+- No compile cache: a search compiles its pattern for the call.
+
+Tests: the parser on the table and every refusal, the haystack, the rule
+of which match on `Literal` (forward, backward, `cpo-c`, wrap, the word
+checks with a class beyond ASCII, rows and CRLF, ranges, empty matches,
+and how many questions a long backward search asks), and the contract on
+the fake and on engines that break it, in `editor-search`; what only a
+regex shows, a sweep that how a text is cut changes no answer, the
+library's bug, and the port's contract on the adapter, in
+`editor-search-regex`.
 
 ## Terminal
 

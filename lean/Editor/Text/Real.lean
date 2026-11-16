@@ -510,6 +510,28 @@ def answer (snapshot : Ffi.Snapshot) : (query : TextQuery) → IO (Except TextEr
     let some position ←
       snapshot.motion (motionOf motion) offset.toUSize | return .error .badPosition
     return .ok position.toNat
+  | .search pattern forward offset => do
+    unless offset < USize.size do
+      return .error .badPosition
+    match ← snapshot.search pattern forward offset.toUSize with
+    | .found range wrapped =>
+      return .ok (.found range.start.toNat range.stop.toNat wrapped)
+    | .notFound =>
+      return .ok .notFound
+    | .invalid reason =>
+      return .ok (.invalid reason)
+    | .badPosition =>
+      return .error .badPosition
+  | .matches pattern start stop => do
+    unless start < USize.size ∧ stop < USize.size do
+      return .error .badRange
+    match ← snapshot.matches pattern start.toUSize stop.toUSize with
+    | .ranges all =>
+      return .ok (.ranges (all.map fun range => ⟨range.start.toNat, range.stop.toNat⟩))
+    | .invalid reason =>
+      return .ok (.invalid reason)
+    | .badRange =>
+      return .error .badRange
 
 /-- The library's snapshot of `source`: the snapshot it names, or a new one
 of the text it names, as the text is now. The refusal when it names nothing,

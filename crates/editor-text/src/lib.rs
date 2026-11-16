@@ -416,4 +416,4 @@ pub use selection::{Selection, SelectionRange, Shape};
 pub use snapshot::{Chunks, Revision, Snapshot};
 pub use text::{BadRange, Text};
 pub use transaction::{ApplyError, Transaction};
-pub use word::WordKind;
+pub use word::{WordKind, is_word_character};

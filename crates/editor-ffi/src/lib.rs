@@ -131,7 +131,12 @@
 //! pattern and candidates in, and the indices of the candidates the
 //! pattern matches out, best first, as words
 //! ([`fuzzy::editor_ffi_fuzzy_rank`], with its one refusal in
-//! [`fuzzy::FuzzyStatus`]). In words, a
+//! [`fuzzy::FuzzyStatus`]). A search of a snapshot is another call that
+//! keeps nothing, and the example of an answer that is a sentence when the
+//! call refuses: a pattern and scalars in, and words out, or the bytes of
+//! the reason a pattern is refused ([`search::editor_ffi_snapshot_search`],
+//! [`search::editor_ffi_snapshot_matches`], with their statuses in
+//! [`search::SearchStatus`]; `tests/search.rs`). In words, a
 //! length or an offset the other side cannot hold is sent as the largest it
 //! can, which no text accepts, so it too is refused and never cut down.
 //! Tests: the unit tests in `text.rs`, `document.rs`, `snapshot.rs`,
@@ -505,6 +510,7 @@ pub mod marker;
 pub mod motion;
 pub mod processes;
 pub mod render;
+pub mod search;
 pub mod snapshot;
 pub mod text;
 pub mod timers;

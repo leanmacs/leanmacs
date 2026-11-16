@@ -36,6 +36,15 @@ pub(crate) enum Class {
     Punctuation,
 }
 
+/// Whether `character` is a word character: an ASCII letter, an ASCII
+/// digit, an underscore, or any character from U+0080 up. It is the class
+/// the word motions go by, and the one a search's `\<` and `\>` go by
+/// (`editor-search`, to which `editor-ffi` hands it), so the rule is stated
+/// once on the Rust side.
+pub fn is_word_character(character: char) -> bool {
+    character.is_ascii_alphanumeric() || character == '_' || !character.is_ascii()
+}
+
 /// Whether `character` is a blank: a space (U+0020) or a tab (U+0009), and
 /// nothing else. A no-break space and the other spaces of Unicode are not.
 pub(crate) fn is_blank(character: char) -> bool {
@@ -48,9 +57,7 @@ pub(crate) fn class(kind: WordKind, character: char) -> Option<Class> {
         return None;
     }
     let word = match kind {
-        WordKind::Word => {
-            character.is_ascii_alphanumeric() || character == '_' || !character.is_ascii()
-        }
+        WordKind::Word => is_word_character(character),
         WordKind::BigWord => true,
     };
     Some(if word {
@@ -98,6 +105,7 @@ mod tests {
                 Some(Class::Word),
                 "{character:?}"
             );
+            assert!(is_word_character(character), "{character:?}");
         }
     }
 
@@ -109,6 +117,7 @@ mod tests {
                 Some(Class::Punctuation),
                 "{character:?}"
             );
+            assert!(!is_word_character(character), "{character:?}");
         }
     }
 

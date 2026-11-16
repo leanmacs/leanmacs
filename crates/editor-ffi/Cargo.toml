@@ -62,6 +62,14 @@ editor-fuzzy = { path = "../editor-fuzzy" }
 # call. Through it the static library Lean links holds nucleo-matcher,
 # which has no system dependency.
 editor-fuzzy-nucleo = { path = "../editor-fuzzy-nucleo" }
+# Search within a text: the rule of which match is answered, which the two
+# C functions of `src/search.rs` ask, and the Engine port it asks it over.
+editor-search = { path = "../editor-search" }
+# The real engine. This is the crate that wires the library together, so it
+# is the one that links the adapter: each of those C functions makes one for
+# its call. Through it the static library Lean links holds regex-cursor,
+# which has no system dependency.
+editor-search-regex = { path = "../editor-search-regex" }
 # The process service: the Processes port, its fake, and the service that
 # runs a command to its end, cancels it and shuts down, which the C
 # functions of `src/processes.rs` forward to.

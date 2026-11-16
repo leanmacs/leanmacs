@@ -640,6 +640,46 @@ lean_obj_res editor_glue_document_drop_inverses(b_lean_obj_arg document,
       lean_get_external_data(document), first, last)));
 }
 
+// ---- Search within a snapshot ----
+//
+// The pattern goes to the library as a string, borrowed for the call, and
+// the direction and the offsets as scalars; the answer comes back as words,
+// or, for a pattern the syntax refuses, as the bytes of the sentence that
+// says why. The call keeps nothing in the library.
+
+void editor_ffi_snapshot_search(const editor_ffi_snapshot *snapshot,
+                                const uint8_t *pattern, size_t pattern_len,
+                                bool forward, size_t offset,
+                                editor_ffi_raw_words *out);
+void editor_ffi_snapshot_matches(const editor_ffi_snapshot *snapshot,
+                                 const uint8_t *pattern, size_t pattern_len,
+                                 size_t start, size_t stop,
+                                 editor_ffi_raw_words *out);
+
+// `Editor.Ffi.Snapshot.searchRaw : @& Snapshot → @& String → Bool → USize →
+// IO RawWords`
+lean_obj_res editor_glue_snapshot_search(b_lean_obj_arg snapshot,
+                                         b_lean_obj_arg pattern,
+                                         uint8_t forward, size_t offset) {
+  editor_ffi_raw_words raw;
+  editor_ffi_snapshot_search(lean_get_external_data(snapshot),
+                             string_bytes(pattern), string_len(pattern),
+                             forward != 0, offset, &raw);
+  return lean_io_result_mk_ok(raw_words_take(raw));
+}
+
+// `Editor.Ffi.Snapshot.matchesRaw : @& Snapshot → @& String → USize → USize →
+// IO RawWords`
+lean_obj_res editor_glue_snapshot_matches(b_lean_obj_arg snapshot,
+                                          b_lean_obj_arg pattern, size_t start,
+                                          size_t stop) {
+  editor_ffi_raw_words raw;
+  editor_ffi_snapshot_matches(lean_get_external_data(snapshot),
+                              string_bytes(pattern), string_len(pattern), start,
+                              stop, &raw);
+  return lean_io_result_mk_ok(raw_words_take(raw));
+}
+
 // ---- Fuzzy ranking ----
 //
 // The example of a list of strings crossing. The candidates go to the

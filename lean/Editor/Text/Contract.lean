@@ -2119,6 +2119,93 @@ def motionProperties : List Property :=
           refusedWith .noSuchSnapshot (discard <| (SnapshotId.mk 99).motion .nextCell 99)
         return alike && kept && moved && noText && noSnapshot }]
 
+/-- A case of a search: the text, the pattern, the direction, the offset
+searched from, and what is answered. -/
+def searchAnswers : List (String × String × Bool × Nat × Searched) :=
+  [ -- Forward from before a match, at its start and inside it.
+    ("a foo b foo", "foo", true, 0, .found 2 5 false),
+    ("a foo b foo", "foo", true, 2, .found 8 11 false),
+    ("a foo b foo", "foo", true, 3, .found 8 11 false),
+    -- `cpo-c`: the walk goes on from a match's end.
+    ("abababab", "abab", true, 0, .found 4 8 false),
+    ("abababab", "abab", true, 1, .found 4 8 false),
+    -- The first match after the cursor on the same row, and across rows.
+    ("xfoo foo\nfoo", "foo", true, 1, .found 5 8 false),
+    ("foo\nbar foo", "foo", true, 0, .found 8 11 false),
+    -- Wrapping, both ways, and the only match at the cursor itself.
+    ("foo bar", "foo", true, 4, .found 0 3 true), ("bar foo", "foo", false, 2, .found 4 7 true),
+    ("foo", "foo", true, 0, .found 0 3 true), ("foo", "foo", false, 0, .found 0 3 true),
+    -- Backward: strictly before, so a match at the offset is not taken.
+    ("foo foo foo", "foo", false, 8, .found 4 7 false),
+    ("foo foo foo", "foo", false, 9, .found 8 11 false),
+    ("foo\nfoo", "foo", false, 4, .found 0 3 false),
+    -- Not found, and the empty text.
+    ("abc", "x", true, 0, .notFound), ("", "x", true, 0, .notFound), ("", "x", false, 0, .notFound),
+    -- Whole words, by the text's class: a character from U+0080 up is one.
+    ("food foo", "\\<foo\\>", true, 0, .found 5 8 false),
+    ("_foo foo", "\\<foo\\>", true, 0, .found 5 8 false),
+    ("foo_ foo", "\\<foo\\>", true, 1, .found 5 8 false),
+    ("éfoo foo", "\\<foo\\>", true, 0, .found 6 9 false),
+    ("xfoo foox", "\\<foo", true, 0, .found 5 8 false),
+    ("xfoo foox", "foo\\>", true, 0, .found 1 4 false),
+    -- Escaped specials are literal.
+    ("axb a.b", "a\\.b", true, 0, .found 4 7 false),
+    -- Case is kept.
+    ("Foo foo", "foo", true, 0, .found 4 7 false),
+    -- Offsets are bytes, and a pattern may hold characters of several.
+    ("héllo héllo", "héllo", true, 0, .found 7 13 false),
+    -- A carriage return is a character of its row.
+    ("a\r\nfoo\r\n", "foo", true, 0, .found 3 6 false),
+    ("ab\r\nab", "b\r", true, 0, .found 1 3 false)]
+
+/-- A case of the matches in a range: the text, the pattern, the range, and
+the matches answered. -/
+def matchesAnswers : List (String × String × Nat × Nat × Array Extent) :=
+  [("foo bar foo", "foo", 0, 11, #[⟨0, 3⟩, ⟨8, 11⟩]),
+    -- The walk from the row's start decides, not the range's start.
+    ("aaaa", "aa", 1, 4, #[⟨2, 4⟩]), ("aaaa", "aa", 0, 4, #[⟨0, 2⟩, ⟨2, 4⟩]),
+    -- A match that starts before the range's end and ends after it is one.
+    ("foo bar foo", "foo", 0, 9, #[⟨0, 3⟩, ⟨8, 11⟩]), ("foo bar foo", "foo", 1, 8, #[]),
+    ("foo\nfoo\nfoo", "foo", 4, 11, #[⟨4, 7⟩, ⟨8, 11⟩]), ("food foo", "\\<foo\\>", 0, 8, #[⟨5, 8⟩]),
+    ("", "x", 0, 0, #[])]
+
+/-- The properties of the two search questions ("Search", in the rules of
+the port), all of literal patterns, which both the model and the library
+answer. -/
+def searchProperties : List Property :=
+  [{  name :=
+        "a search answers, for a literal pattern, the match the rule of the port says: forward the first that starts after the offset and back the last that starts before it, walking each row from its start, wrapping to the text's first or last, case kept, words by the text's class"
+      holds := do
+        let mut held := true
+        for (contents, pattern, forward, offset, answer) in searchAnswers do
+          let text ← createText contents
+          let snapshot ← text.snapshot
+          held :=
+            held && (← text.search pattern forward offset) == answer &&
+              (← snapshot.search pattern forward offset) == answer
+        return held },
+    { name :=
+        "the matches of a literal pattern in a range are the text's matches that start in it, in order, found by the walk from the row's start"
+      holds := do
+        let mut held := true
+        for (contents, pattern, start, stop, all) in matchesAnswers do
+          let text ← createText contents
+          let snapshot ← text.snapshot
+          held :=
+            held && (← text.matches pattern start stop) == .ranges all &&
+              (← snapshot.matches pattern start stop) == .ranges all
+        return held },
+    { name :=
+        "a search is refused with badPosition for an offset that is not a position, and the matches with badRange for a range that is not two positions in order"
+      holds := do
+        let text ← createText "héllo"
+        let inside ← refusedWith .badPosition (discard <| text.search "l" true 2)
+        let past ← refusedWith .badPosition (discard <| text.search "l" false 9)
+        let reversed ← refusedWith .badRange (discard <| text.matches "l" 3 1)
+        let split ← refusedWith .badRange (discard <| text.matches "l" 0 2)
+        let beyond ← refusedWith .badRange (discard <| text.matches "l" 0 9)
+        return inside && past && reversed && split && beyond }]
+
 /-- The properties every implementation of the text port has. -/
 def properties : List Property :=
   editProperties ++ revisionProperties ++ snapshotProperties ++ positionProperties ++
@@ -2131,7 +2218,8 @@ def properties : List Property :=
     inverseProperties ++
     copyProperties ++
     readProperties ++
-    motionProperties
+    motionProperties ++
+    searchProperties
 
 /-- Runs each of `properties` with `run`, which must start every command from
 an empty store, and returns the names of those that did not hold. A property

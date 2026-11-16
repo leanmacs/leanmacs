@@ -367,6 +367,41 @@ operations as they are: they are lifted into it.
   already made. A caller that wants that applies the inverse of the run the
   command made.
 
+### Search
+
+Two questions search a text for a pattern: `search` and `matches`. The
+pattern is a string, as the user typed it, in a subset of Vim's syntax under
+its default `magic` option (`docs/design/rust-library.md`, "Search, as
+built"). The rule of which match is answered is Vim 9.1's under its default
+options (`cpoptions` with `c`, `wrapscan`):
+
+- **The matches of a pattern in a text are found row by row.** In a row,
+  the first match is the leftmost-first match from the row's start; each
+  next one is the leftmost-first match from where the one before it
+  stopped, or one character further when that one was empty; and a row's
+  matches end when no further match starts in the row. A text's matches
+  are its rows' matches, in order. No match contains a line feed.
+- **`\<` and `\>`** hold where a word starts and where a word ends, by the
+  text's word class (`wordCharacter`): the class `w` goes by.
+- **Forward from a position** (`search` with `forward`): the first match
+  whose start is after the position. A match that starts at or before it
+  is passed over, so `abab` in `abababab` from 0 answers 4, which is
+  `cpo-c`. With none, the text's first match, marked `wrapped`.
+- **Backward**: the last match whose start is before the position; with
+  none, the text's last match, wrapped.
+- **No match anywhere**: `notFound`.
+- **Matches in a range** (`matches`): the text's matches whose start is at
+  or after `start` and before `stop`, in order. A match that starts before
+  `stop` and ends after it is one of them.
+- **A pattern the syntax refuses is answered `invalid`**, with the sentence
+  Vim gives where it has one (`E54: Unmatched \(`), and no refusal: the
+  question was asked of a text that is there. The empty pattern is
+  invalid. The model (`Editor/Text/Model.lean`) answers literal patterns
+  only, and calls any other invalid.
+- They are refused with `badPosition` for an offset that is not a position,
+  and `matches` with `badRange` for a range that is not two positions in
+  order.
+
 The library keeps a byte of a file that is not valid UTF-8 as one character
 in `U+10DC80..U+10DCFF` (`crates/editor-text`). To this port it is a
 character like any other: four bytes long, and two UTF-16 code units.
@@ -601,6 +636,31 @@ inductive Motion where
   | rowsDown (count column : Nat)
   deriving DecidableEq, Repr
 
+/-- Whether `char` is a word character, the text's word class: an ASCII
+letter, an ASCII digit, `_`, or any character from U+0080 up. The word
+motions go by it, and so do a search's `\<` and `\>`. -/
+def wordCharacter (char : Char) : Bool :=
+  char.isAlphanum || char == '_' || char.val ≥ 0x80
+
+/-- What a search answers ("Search", in the rules of the port). -/
+inductive Searched where
+  /-- The match from `start` up to `stop`, and whether the search went past
+  the text's end, or its start, to find it. -/
+  | found (start stop : Nat) (wrapped : Bool)
+  /-- The text has no match. -/
+  | notFound
+  /-- The pattern is none the syntax takes, for `reason`. -/
+  | invalid (reason : String)
+  deriving DecidableEq, Repr
+
+/-- What the matches in a range answer. -/
+inductive Matched where
+  /-- The matches, in order. -/
+  | ranges (all : Array Extent)
+  /-- The pattern is none the syntax takes, for `reason`. -/
+  | invalid (reason : String)
+  deriving DecidableEq, Repr
+
 /-- A question about a text or a snapshot. A new question is a constructor
 here, not a request. -/
 inductive TextQuery where
@@ -624,6 +684,12 @@ inductive TextQuery where
   | slice (start stop : Nat)
   /-- Where `motion` leads from the byte offset `offset`. -/
   | motion (motion : Motion) (offset : Nat)
+  /-- The match of `pattern` a search from the byte offset `offset` answers,
+  forward when `forward` and back otherwise. -/
+  | search (pattern : String) (forward : Bool) (offset : Nat)
+  /-- The matches of `pattern` that start from the byte offset `start` up to,
+  not including, `stop`. -/
+  | matches (pattern : String) (start stop : Nat)
 
 /-- The type of the answer to each question. It is an `abbrev` so that an
 answer's type unfolds where an instance is looked for: with a `def`,
@@ -639,6 +705,8 @@ abbrev TextQuery.Answer : TextQuery → Type
   | .rowContent _ => String
   | .slice .. => String
   | .motion .. => Nat
+  | .search .. => Searched
+  | .matches .. => Matched
 
 /-- Who made an edit: a number the editor chooses and the text store keeps
 with the edit and never reads. What a number stands for is the editor's
@@ -1111,6 +1179,19 @@ whichever motion it is. -/
 def TextId.motion (text : TextId) (motion : Motion) (offset : Nat) : TextM Nat :=
   (TextSource.text text).ask (.motion motion offset)
 
+/-- The match of `pattern` in `text` a search from `offset` answers, forward
+when `forward` and back otherwise ("Search", in the rules of the port).
+Refused with `badPosition` unless `offset` is a position. -/
+def TextId.search (text : TextId) (pattern : String) (forward : Bool) (offset : Nat) :
+    TextM Searched :=
+  (TextSource.text text).ask (.search pattern forward offset)
+
+/-- The matches of `pattern` in `text` that start from `start` up to, not
+including, `stop`. Refused with `badRange` unless both are positions and
+`start` is not after `stop`. -/
+def TextId.matches (text : TextId) (pattern : String) (start stop : Nat) : TextM Matched :=
+  (TextSource.text text).ask (.matches pattern start stop)
+
 /-- Gives `text` up. Its id is refused from then on; its snapshots still
 read. -/
 def TextId.release (text : TextId) : TextM Unit :=
@@ -1170,6 +1251,18 @@ def SnapshotId.slice (snapshot : SnapshotId) (start stop : Nat) : TextM String :
 `offset` is a position, whichever motion it is. -/
 def SnapshotId.motion (snapshot : SnapshotId) (motion : Motion) (offset : Nat) : TextM Nat :=
   (TextSource.snapshot snapshot).ask (.motion motion offset)
+
+/-- The match of `pattern` in the text `snapshot` holds a search from
+`offset` answers, as `TextId.search`. -/
+def SnapshotId.search (snapshot : SnapshotId) (pattern : String) (forward : Bool) (offset : Nat) :
+    TextM Searched :=
+  (TextSource.snapshot snapshot).ask (.search pattern forward offset)
+
+/-- The matches of `pattern` in the text `snapshot` holds that start from
+`start` up to, not including, `stop`, as `TextId.matches`. -/
+def SnapshotId.matches (snapshot : SnapshotId) (pattern : String) (start stop : Nat) :
+    TextM Matched :=
+  (TextSource.snapshot snapshot).ask (.matches pattern start stop)
 
 /-- Gives `snapshot` up. Its id is refused from then on. -/
 def SnapshotId.release (snapshot : SnapshotId) : TextM Unit :=
