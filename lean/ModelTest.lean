@@ -20816,6 +20816,42 @@ def clipboardCommandChecks : List Check :=
                 some
                   (⟨"foo | baz", charwise "bar", false, Evil.clipboardUnavailable⟩, none, normal) },
     { name :=
+        "Cut in visual replaces the last change, as \" + d does: after an x, a . after it leaves what a . after \" + d leaves (a change over a selection, not repeated), not a second x; a . after a Copy repeats the x, as a . after \" + y does"
+      run :=
+        pure <|
+          bothWays fun byKey =>
+            let repeated (chord name : String) : Option (EvilEdited × Option String) :=
+              (clipDriver "foo |bar bar bar").map fun driver =>
+                let after := evilFed (clipRan byKey name chord (evilFed driver "x v l l")) "."
+                (evilLeft after, after.model.clipboard.held)
+            let cut := repeated "s-x" Evil.cutName
+            let copied := repeated "s-c" Evil.copyName
+            cut.isSome && cut == evilClipped "foo |bar bar bar" "x v l l \" + d ." &&
+              (cut.map fun left =>
+                  (left.1.shown, left.1.echo.endsWith (Evil.notRepeated Evil.overSelection))) ==
+                some ("foo |bar bar", true) &&
+              copied.isSome &&
+              copied == evilClipped "foo |bar bar bar" "x v l l \" + y ." &&
+              (copied.map (·.1.shown)) == some "foo |r bar bar" },
+    { name :=
+        "Paste called with a report that is not exclusive, in no state whose run table has an entry for it, puts the clipboard's text before the cursor, as \" + P does, and leaves the clipboard model as it was"
+      run :=
+        pure <|
+          let pasting : Dispatched := fun call => do
+            Evil.paste { call with report := { call.report with shape := .inclusive } }
+            return none
+          let pasted (fixture : String) (held : String) : Option (EvilEdited × Option String) :=
+            (clipDriver fixture { held := some held }
+                  (clipHanded (commands := [("t-paste", pasting)]))).map
+              fun driver =>
+              let (after, _) := driver.stepped (driver.loop.runNamed driver.handed "t-paste")
+              (evilLeft after, after.model.clipboard.held)
+          pasted "a|b" "XY" == evilClipped "a|b" "\" + P" { held := some "XY" } &&
+            (pasted "a|b" "XY").map (fun left => (left.1.shown, left.2)) ==
+              some ("aX|Yb", some "XY") &&
+            (pasted "a|b\n" "cd\n").map (fun left => (left.1.shown, left.2)) ==
+              some ("|cd\nab\n", some "cd\n") },
+    { name :=
         "Paste puts the clipboard's text before the cursor in normal state (as \" + P), in place of the selection in visual and visual-line, and at the bar as typed text in insert state and in the minibuffer"
       run :=
         pure <|
