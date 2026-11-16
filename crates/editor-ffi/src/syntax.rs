@@ -39,6 +39,8 @@
 //! | [`editor_ffi_syntax_query_new`], [`editor_ffi_syntax_query_free`] | a query handle, or the refusal's kind and offset |
 //! | [`editor_ffi_syntax_capture_names`] | a query's capture names, as a list of strings |
 //! | [`editor_ffi_syntax_captures`] | a query's captures in a range of the snapshot, as words, with a [`CapturesStatus`] |
+//! | [`editor_ffi_syntax_shipped_query`] | the source of the query of a kind a grammar is published with, or a [`ShippedStatus`] |
+//! | [`editor_ffi_syntax_highlight`] | draw the snapshot's document with a query's captures in faces from now on; a [`HighlightStatus`] |
 //! | [`editor_ffi_syntax_settle`] | for tests: wait, with a bound, for the snapshot's revision to be delivered |
 //!
 //! **A query is answered from the tree delivered, never parsed for.**
@@ -47,6 +49,33 @@
 //! otherwise [`CapturesStatus::NotParsed`]: the editor thread never waits
 //! for a parse. A caller asks again after the next delivery. The rule and
 //! the order of the refusals are the session's (`Session::captures`).
+//!
+//! # Highlights
+//!
+//! **A document is highlighted** by [`editor_ffi_syntax_highlight`]: its
+//! session is given a highlighter (`editor_syntax::Highlighter`), the query
+//! and a face, or none, for each of its captures, which Lean's config
+//! chose. The highlighter shares the query ([`SyntaxQuery`] holds it in an
+//! `Arc`), so it outlives the query's handle. Which tree draws a snapshot,
+//! and how the delivered spans are carried through edits until the reparse
+//! that replaces them, are `editor-syntax`'s (`Session::highlights`).
+//!
+//! **Highlights reach the display without passing through Lean.** The
+//! display makes every text it lays out with [`crate::display::text_ref`],
+//! which hands layout the document's session as the text's own spans
+//! ([`Syntaxes::spans`], a [`TextSpans`]): a frame, and the rows and move
+//! queries, resolve them once each, and ask only the rows they lay out.
+//!
+//! **A delivery is reported.** The first highlighter set on a session
+//! subscribes a [`ParsedNotice`], which pushes one
+//! [`EventKind::Parsed`](crate::events::EventKind::Parsed) from the
+//! library's source [`SERVICE`] onto the editor queue for each delivery.
+//! Lean publishes a scene for it, laid out with the new tree: the old
+//! highlights stay until then.
+//!
+//! **An attach with the grammar a document is attached with keeps its
+//! session**, its tree and its highlighter; another grammar replaces the
+//! session and drops the highlighter.
 //!
 //! # Layouts
 //!
@@ -59,6 +88,14 @@
 //! - **A query made** ([`RawQuery`]): the handle, or null, with a status
 //!   ([`QueryStatus`]) and, for a refusal, its kind ([`kind_tag`]) and the
 //!   byte offset into the query's text where it was found.
+//! - **Faces in** ([`editor_ffi_syntax_highlight`]): a list of strings in
+//!   the borrowed layout lists of strings cross in, words of the count and
+//!   each byte length and one string of them end to end, as
+//!   `editor_ffi_fuzzy_rank`'s candidates; the empty string stands for
+//!   none.
+//! - **A shipped query out**: its source in a [`RawText`], with the status
+//!   as the function's result; a kind crosses as a `u8` tag
+//!   ([`query_kind_of`]).
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -66,15 +103,24 @@ use std::sync::{Arc, Mutex, MutexGuard, OnceLock, PoisonError};
 use std::thread;
 use std::time::Duration;
 
+use editor_layout::scene::{SpansAt, TextSpans};
 use editor_syntax::{
-    Capture, CapturesRefusal, GrammarName, Handle, QueryErrorKind, Session, Syntax, Worker,
+    Capture, CapturesRefusal, Consumer, GrammarName, Handle, Highlighter, Highlights, Parsed,
+    QueryErrorKind, QueryKind, Session, Syntax, Worker,
 };
 use editor_syntax_treesitter::TreeSitter;
 use editor_text::Revision;
 
+use crate::document::RawText;
+use crate::events::{Event, Queue, QueueId, Source, SourceKind};
+use crate::fuzzy::candidates;
 use crate::log::RawWords;
 use crate::snapshot::Snapshot;
 use crate::{text, words};
+
+/// The syntax service's id, as the source of the events it reports: the
+/// library's, numbered after the other services'.
+pub const SERVICE: u64 = 5;
 
 /// The real syntax's session of one document.
 type SyntaxSession = Session<TreeSitter>;
@@ -121,6 +167,41 @@ impl From<CapturesRefusal> for CapturesStatus {
     }
 }
 
+/// How setting a highlighter ended, as it crosses the boundary.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HighlightStatus {
+    /// The text is drawn with the query's captures in the faces from now
+    /// on.
+    Highlighted = 0,
+    /// The snapshot's document is not attached.
+    NotAttached = 1,
+    /// The query is of another grammar than the document is parsed with.
+    WrongGrammar = 2,
+    /// The faces are not one for each of the query's capture names, or do
+    /// not spell a list of strings.
+    BadFaces = 3,
+}
+
+/// How asking for a grammar's shipped query ended, as it crosses the
+/// boundary.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ShippedStatus {
+    /// The record holds the query's source.
+    Shipped = 0,
+    /// No grammar of that name is compiled in.
+    UnknownGrammar = 1,
+    /// The grammar ships no query of that kind, or the kind's tag is none.
+    NoShippedQuery = 2,
+}
+
+/// The kind of query `tag` stands for: 0 is [`QueryKind::Highlights`].
+pub const fn query_kind_of(tag: u8) -> Option<QueryKind> {
+    match tag {
+        0 => Some(QueryKind::Highlights),
+        _ => None,
+    }
+}
+
 /// How making a query ended, as it crosses the boundary.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum QueryStatus {
@@ -153,8 +234,9 @@ pub const fn kind_tag(kind: QueryErrorKind) -> u64 {
 pub struct SyntaxQuery {
     /// The grammar it was compiled for.
     grammar: GrammarName,
-    /// The query.
-    query: <TreeSitter as Syntax>::Query,
+    /// The query, shared: a highlighter made of it keeps it after the
+    /// handle is freed.
+    query: Arc<<TreeSitter as Syntax>::Query>,
 }
 
 /// How many query handles are live.
@@ -169,6 +251,69 @@ pub struct Syntaxes {
     worker: Mutex<Option<Handle<TreeSitter>>>,
     /// The documents attached, by key, each with its session.
     attached: Mutex<HashMap<u64, Arc<SyntaxSession>>>,
+    /// Where a delivery of a highlighted document is reported: the editor
+    /// queue, in the process.
+    notices: &'static Queue,
+}
+
+/// Reports each delivery of a session with a highlighter: one
+/// [`EventKind::Parsed`](crate::events::EventKind::Parsed) from the
+/// service on its queue, which makes Lean publish a scene laid out with
+/// the new tree. It is subscribed to a session the first time a
+/// highlighter is set, and a session never loses its highlighter (a
+/// detach, or another grammar, drops the session). It takes only the
+/// queue's lock, under the session's state lock, which nothing takes the
+/// other way round.
+pub struct ParsedNotice(pub &'static Queue);
+
+impl<T> Consumer<T> for ParsedNotice {
+    fn deliver(&self, _parsed: &Parsed<T>) {
+        self.0.push(Event::parsed(Source {
+            kind: SourceKind::Library,
+            id: SERVICE,
+        }));
+    }
+}
+
+/// A document's session as the text's own spans: what layout draws under
+/// the scene's decorations ([`TextSpans`]). Each frame and each query asks
+/// it once ([`Session::highlights`]), and every span after that is one call
+/// of [`Highlights::spans`].
+struct SessionSpans {
+    /// The real syntax.
+    syntax: Arc<TreeSitter>,
+    /// The document's session.
+    session: Arc<SyntaxSession>,
+}
+
+impl TextSpans for SessionSpans {
+    fn at(&self, snapshot: &editor_text::Snapshot) -> Option<Box<dyn SpansAt>> {
+        let highlights = self.session.highlights(snapshot)?;
+        Some(Box::new(SpansOf {
+            syntax: self.syntax.clone(),
+            highlights,
+        }))
+    }
+}
+
+/// What a session draws over one snapshot.
+struct SpansOf {
+    /// The real syntax.
+    syntax: Arc<TreeSitter>,
+    /// What the session answered.
+    highlights: Highlights<TreeSitter>,
+}
+
+impl SpansAt for SpansOf {
+    fn faces(&self) -> &[String] {
+        self.highlights.faces()
+    }
+
+    fn spans(&self, bytes: std::ops::Range<usize>, out: &mut Vec<(std::ops::Range<usize>, usize)>) {
+        let mut spans = Vec::new();
+        self.highlights.spans(&*self.syntax, bytes, &mut spans);
+        out.extend(spans.into_iter().map(|span| (span.bytes, span.face)));
+    }
 }
 
 /// `mutex`, locked. Nothing here leaves what it guards half-changed, so a
@@ -181,11 +326,7 @@ fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
 pub fn syntaxes() -> &'static Syntaxes {
     /// The one service.
     static SYNTAXES: OnceLock<Syntaxes> = OnceLock::new();
-    SYNTAXES.get_or_init(|| Syntaxes {
-        syntax: Arc::new(TreeSitter),
-        worker: Mutex::new(None),
-        attached: Mutex::new(HashMap::new()),
-    })
+    SYNTAXES.get_or_init(|| Syntaxes::new(QueueId::Editor.queue()))
 }
 
 /// Tells the process's service that the document `key` has reached
@@ -203,6 +344,19 @@ pub(crate) fn detach(key: u64) {
 }
 
 impl Syntaxes {
+    /// A service with nothing attached and no worker started, which reports
+    /// deliveries of highlighted documents on `notices`. The process has
+    /// one ([`syntaxes`]), on the editor queue; a unit test makes one on a
+    /// queue of its own.
+    pub fn new(notices: &'static Queue) -> Self {
+        Self {
+            syntax: Arc::new(TreeSitter),
+            worker: Mutex::new(None),
+            attached: Mutex::new(HashMap::new()),
+            notices,
+        }
+    }
+
     /// The grammars compiled in.
     pub fn grammars(&self) -> Vec<GrammarName> {
         self.syntax.grammars()
@@ -225,6 +379,9 @@ impl Syntaxes {
 
     /// Parses the document `snapshot` is of with `grammar` from now on, in
     /// place of any grammar before, starting with a parse of it as it is.
+    /// A document already attached with `grammar` keeps its session, its
+    /// tree and its highlighter: a switch between two modes of one grammar
+    /// does not draw the text plain again.
     pub fn attach(&self, snapshot: &Snapshot, grammar: &str) -> AttachStatus {
         let grammar = GrammarName::new(grammar);
         if !self.grammars().contains(&grammar) {
@@ -233,6 +390,15 @@ impl Syntaxes {
         let source = snapshot.source();
         if !source.has_document() {
             return AttachStatus::NoDocument;
+        }
+        if let Some(session) = self
+            .session(snapshot.key())
+            .filter(|session| *session.grammar() == grammar)
+        {
+            if let Some(worker) = lock(&self.worker).clone() {
+                worker.touch(&session, snapshot.text().revision());
+            }
+            return AttachStatus::Attached;
         }
         let Some(session) = Session::new(&*self.syntax, grammar, Box::new(source.clone())) else {
             return AttachStatus::UnknownGrammar;
@@ -288,6 +454,55 @@ impl Syntaxes {
                 range,
             )
             .map_err(CapturesStatus::from)
+    }
+
+    /// Draws the text of `snapshot`'s document with `query`'s captures in
+    /// `faces`, one for each of its capture names (none draws nothing),
+    /// from now on, in place of any highlighter before
+    /// (`Session::set_highlighter`). The first highlighter set on a session
+    /// subscribes [`ParsedNotice`] to it.
+    pub fn highlight(
+        &self,
+        snapshot: &Snapshot,
+        query: &SyntaxQuery,
+        faces: Vec<Option<String>>,
+    ) -> HighlightStatus {
+        let Some(session) = self.session(snapshot.key()) else {
+            return HighlightStatus::NotAttached;
+        };
+        if *session.grammar() != query.grammar {
+            return HighlightStatus::WrongGrammar;
+        }
+        let count = self.syntax.capture_names(&query.query).len();
+        let Ok(highlighter) = Highlighter::new(query.query.clone(), count, faces) else {
+            return HighlightStatus::BadFaces;
+        };
+        if !session.set_highlighter(highlighter) {
+            session.subscribe(Box::new(ParsedNotice(self.notices)));
+        }
+        HighlightStatus::Highlighted
+    }
+
+    /// The source of the query of `kind` the grammar named `grammar` is
+    /// published with, or why not.
+    pub fn shipped_query(&self, grammar: &str, kind: QueryKind) -> Result<String, ShippedStatus> {
+        let grammar = GrammarName::new(grammar);
+        if !self.grammars().contains(&grammar) {
+            return Err(ShippedStatus::UnknownGrammar);
+        }
+        self.syntax
+            .shipped_query(&grammar, kind)
+            .ok_or(ShippedStatus::NoShippedQuery)
+    }
+
+    /// The document `key`'s own spans, its highlights, as layout asks them
+    /// ([`TextSpans`]); none when it is not attached.
+    pub fn spans(&self, key: u64) -> Option<Arc<dyn TextSpans>> {
+        let session = self.session(key)?;
+        Some(Arc::new(SessionSpans {
+            syntax: self.syntax.clone(),
+            session,
+        }))
     }
 
     /// Waits up to `bound` for a tree of `snapshot`'s revision, or a newer
@@ -466,7 +681,10 @@ pub unsafe extern "C" fn editor_ffi_syntax_query_new(
                     status: QueryStatus::Made as u64,
                     kind: 0,
                     offset: 0,
-                    query: Box::into_raw(Box::new(SyntaxQuery { grammar, query })),
+                    query: Box::into_raw(Box::new(SyntaxQuery {
+                        grammar,
+                        query: Arc::new(query),
+                    })),
                 }
             }
             Err(error) => RawQuery {
@@ -547,6 +765,101 @@ pub unsafe extern "C" fn editor_ffi_syntax_captures(
     unsafe { out.write(raw) };
 }
 
+/// The faces `words` and `strings` spell: a list of strings in the layout
+/// lists of strings cross in (`fuzzy::candidates`), the empty string
+/// standing for none. `None` when they spell no list.
+pub(crate) fn faces_of(words: &[u8], strings: &str) -> Option<Vec<Option<String>>> {
+    let faces = candidates(words, strings)?;
+    Some(
+        faces
+            .into_iter()
+            .map(|face| (!face.is_empty()).then(|| face.to_owned()))
+            .collect(),
+    )
+}
+
+/// [`Syntaxes::shipped_query`] for C: fills `out` with the source of the
+/// query of the kind `kind` tags ([`query_kind_of`]) the grammar the `len`
+/// bytes at `grammar` name is published with, and returns
+/// [`ShippedStatus::Shipped`]; or returns the refusal's status and leaves
+/// `out` alone. A kind tag that names no kind is
+/// [`ShippedStatus::NoShippedQuery`].
+///
+/// # Safety
+///
+/// `grammar` points to `len` readable bytes, and `out` to a writable
+/// [`RawText`].
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn editor_ffi_syntax_shipped_query(
+    grammar: *const u8,
+    len: usize,
+    kind: u8,
+    out: *mut RawText,
+) -> u64 {
+    // SAFETY: the caller guarantees the pointer and the length.
+    let grammar = unsafe { text::borrow(grammar, len) };
+    let service = syntaxes();
+    let shipped = match query_kind_of(kind) {
+        Some(kind) => service.shipped_query(&grammar, kind),
+        None if service
+            .grammars()
+            .contains(&GrammarName::new(grammar.as_ref())) =>
+        {
+            Err(ShippedStatus::NoShippedQuery)
+        }
+        None => Err(ShippedStatus::UnknownGrammar),
+    };
+    match shipped {
+        Ok(source) => {
+            let (text, text_len) = text::lend(source);
+            // SAFETY: the caller guarantees `out` is writable.
+            unsafe { out.write(RawText { text, text_len }) };
+            ShippedStatus::Shipped as u64
+        }
+        Err(status) => status as u64,
+    }
+}
+
+/// [`Syntaxes::highlight`] for C: draws the document of `snapshot` with
+/// `query`'s captures in the faces the `words_len` bytes at `words` and
+/// the `strings_len` bytes at `strings` spell, a list of strings in the
+/// borrowed layout (the empty string none), and returns a
+/// [`HighlightStatus`] as its number. Faces that spell no list are
+/// [`HighlightStatus::BadFaces`].
+///
+/// # Safety
+///
+/// `snapshot` is a live snapshot handle and `query` a live query handle,
+/// and `words` points to `words_len` readable bytes and `strings` to
+/// `strings_len` (no bytes at all may be lent with any pointer).
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn editor_ffi_syntax_highlight(
+    snapshot: *const Snapshot,
+    query: *const SyntaxQuery,
+    words: *const u8,
+    words_len: usize,
+    strings: *const u8,
+    strings_len: usize,
+) -> u64 {
+    // SAFETY: the caller guarantees both handles are live, and each
+    // pointer and its length for the call.
+    let (snapshot, query, words, strings) = unsafe {
+        (
+            &*snapshot,
+            &*query,
+            words::borrow(words, words_len),
+            words::borrow(strings, strings_len),
+        )
+    };
+    let faces = std::str::from_utf8(strings)
+        .ok()
+        .and_then(|strings| faces_of(words, strings));
+    match faces {
+        Some(faces) => syntaxes().highlight(snapshot, query, faces) as u64,
+        None => HighlightStatus::BadFaces as u64,
+    }
+}
+
 /// For tests, like the other readouts: waits up to `bound_ms` milliseconds
 /// for a tree of `snapshot`'s revision, or a newer one, to be delivered,
 /// and returns whether one was. It blocks on the session's delivery and
@@ -567,7 +880,122 @@ pub unsafe extern "C" fn editor_ffi_syntax_settle(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::words::tests::words_of;
+    use crate::document::Document;
+    use crate::events::{EventKind, Queue};
+    use crate::words::tests::{buffer, words_of};
+
+    /// The longest a test waits for a delivery.
+    const BOUND: Duration = Duration::from_secs(10);
+
+    /// The kinds of the events on `queue`, once it is quit, up to the quit.
+    fn drained(queue: &Queue) -> Vec<EventKind> {
+        queue.quit();
+        let mut kinds = Vec::new();
+        loop {
+            let event = queue.next();
+            if event.kind == EventKind::Quit {
+                return kinds;
+            }
+            kinds.push(event.kind);
+        }
+    }
+
+    #[test]
+    fn a_delivery_with_a_highlighter_pushes_one_parsed_event_and_none_without() {
+        static NOTICES: Queue = Queue::new();
+        let service = Syntaxes::new(&NOTICES);
+        let document = Document::new("{\"a\": 1}");
+        let snapshot = Snapshot::of(&document);
+        assert_eq!(service.attach(&snapshot, "json"), AttachStatus::Attached);
+        assert!(service.settle(&snapshot, BOUND));
+        // A second delivery, still with no highlighter.
+        assert!(document.replace(7, 8, "2"));
+        let second = Snapshot::of(&document);
+        service.touched(second.key(), second.text().revision());
+        assert!(service.settle(&second, BOUND));
+
+        let grammar = GrammarName::new("json");
+        let query = SyntaxQuery {
+            query: Arc::new(
+                service
+                    .syntax
+                    .compile(&grammar, "(number) @number")
+                    .unwrap(),
+            ),
+            grammar,
+        };
+        assert_eq!(
+            service.highlight(&second, &query, vec![Some("syntax.number".to_owned())]),
+            HighlightStatus::Highlighted
+        );
+        // Highlighted again: still one notice for each delivery.
+        assert_eq!(
+            service.highlight(&second, &query, vec![None]),
+            HighlightStatus::Highlighted
+        );
+        assert!(document.replace(7, 8, "3"));
+        let third = Snapshot::of(&document);
+        service.touched(third.key(), third.text().revision());
+        assert!(service.settle(&third, BOUND));
+
+        assert_eq!(drained(&NOTICES), [EventKind::Parsed]);
+    }
+
+    #[test]
+    fn a_parsed_notice_is_the_syntax_services_event() {
+        static NOTICES: Queue = Queue::new();
+        let notice = ParsedNotice(&NOTICES);
+        let snapshot = Document::new("1").snapshot();
+        editor_syntax::Consumer::deliver(
+            &notice,
+            &editor_syntax::Parsed {
+                revision: snapshot.revision(),
+                snapshot,
+                tree: (),
+            },
+        );
+        NOTICES.quit();
+        let event = NOTICES.next();
+        assert_eq!(event.kind, EventKind::Parsed);
+        assert_eq!(
+            (event.source.kind, event.source.id),
+            (SourceKind::Library, SERVICE)
+        );
+    }
+
+    #[test]
+    fn faces_cross_as_a_list_of_strings_the_empty_one_none() {
+        assert_eq!(
+            faces_of(&buffer(&[3, 6, 0, 14]), "stringsyntax.keyword"),
+            Some(vec![
+                Some("string".to_owned()),
+                None,
+                Some("syntax.keyword".to_owned())
+            ])
+        );
+        assert_eq!(faces_of(&buffer(&[0]), ""), Some(vec![]));
+        // Lengths that do not add up to the string spell no faces.
+        assert_eq!(faces_of(&buffer(&[1, 3]), "ab"), None);
+    }
+
+    #[test]
+    fn each_status_of_a_highlight_and_a_shipped_query_has_a_number_of_its_own() {
+        let highlight = [
+            HighlightStatus::Highlighted,
+            HighlightStatus::NotAttached,
+            HighlightStatus::WrongGrammar,
+            HighlightStatus::BadFaces,
+        ];
+        assert_eq!(highlight.map(|status| status as u64), [0, 1, 2, 3]);
+        let shipped = [
+            ShippedStatus::Shipped,
+            ShippedStatus::UnknownGrammar,
+            ShippedStatus::NoShippedQuery,
+        ];
+        assert_eq!(shipped.map(|status| status as u64), [0, 1, 2]);
+        assert_eq!(query_kind_of(0), Some(QueryKind::Highlights));
+        assert_eq!(query_kind_of(1), None);
+    }
 
     #[test]
     fn a_list_of_strings_is_its_count_and_lengths_and_the_strings_end_to_end() {

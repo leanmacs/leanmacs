@@ -32,6 +32,11 @@
 //! docs, "Services and completions"). The timer service in this crate
 //! ([`crate::timers`]) is the first.
 //!
+//! The syntax service ([`crate::syntax`]) reports each delivery of a
+//! highlighted document's parse with an [`EventKind::Parsed`] on the editor
+//! queue, from the library's source with the service's id, so Lean
+//! publishes a scene laid out with the new tree.
+//!
 //! The queue lives in `editor-ffi`, which no other crate depends on. A
 //! service crate therefore defines its own port for reporting, and
 //! `editor-ffi` adapts that port to a queue.
@@ -86,6 +91,10 @@ pub enum EventKind {
     /// A command item of the menu bar was chosen: its `text` is the
     /// command's name, with no code or words.
     Menu = 12,
+    /// A parse of a document whose text is highlighted was delivered: the
+    /// next scene draws with it. From the library's syntax service
+    /// ([`crate::syntax`]), with no code, text or words.
+    Parsed = 13,
 }
 
 impl EventKind {
@@ -110,6 +119,7 @@ impl EventKind {
             10 => Some(Self::OpenFiles),
             11 => Some(Self::QuitRequested),
             12 => Some(Self::Menu),
+            13 => Some(Self::Parsed),
             _ => None,
         }
     }
@@ -210,6 +220,18 @@ impl Event {
             source: service,
             kind: EventKind::Completion,
             code: request,
+            text: String::new(),
+            words: Vec::new(),
+            stamp: 0,
+        }
+    }
+
+    /// The [`EventKind::Parsed`] of the service `service`.
+    pub const fn parsed(service: Source) -> Self {
+        Self {
+            source: service,
+            kind: EventKind::Parsed,
+            code: 0,
             text: String::new(),
             words: Vec::new(),
             stamp: 0,
@@ -920,8 +942,29 @@ mod tests {
     }
 
     #[test]
+    fn a_parse_delivered_is_its_own_kind() {
+        assert_eq!(EventKind::from_tag(13), Some(EventKind::Parsed));
+        assert_eq!(EventKind::Parsed.tag(), 13);
+        let service = Source {
+            kind: SourceKind::Library,
+            id: 5,
+        };
+        assert_eq!(
+            Event::parsed(service),
+            Event {
+                source: service,
+                kind: EventKind::Parsed,
+                code: 0,
+                text: String::new(),
+                words: Vec::new(),
+                stamp: 0,
+            }
+        );
+    }
+
+    #[test]
     fn an_unknown_event_kind_tag_is_refused() {
-        assert_eq!(EventKind::from_tag(13), None);
+        assert_eq!(EventKind::from_tag(14), None);
         assert_eq!(EventKind::from_tag(u64::MAX), None);
     }
 

@@ -458,7 +458,9 @@ pub fn input(kind: EventKind, code: u64, text: &str, words: &[u8]) -> Option<Inp
     let mut reader = Reader::new(words)?;
     let no_text = || text.is_empty().then_some(());
     let input = match kind {
-        EventKind::Quit | EventKind::Message | EventKind::Completion => return None,
+        EventKind::Quit | EventKind::Message | EventKind::Completion | EventKind::Parsed => {
+            return None;
+        }
         EventKind::WindowOpened => {
             (code == 0).then_some(())?;
             Input::Opened {
