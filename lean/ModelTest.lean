@@ -149,10 +149,10 @@ over sample states of the three layouts, and focus in list order.
 The window commands (`Editor/WindowCommands.lean`) are checked by key on
 the loop's driver over the editor's models, under the Vim scheme that ships
 (`windowCommandChecks`): Vim 9.1's `C-w` behaviours under the manual split
-layout, the reorders, zoom and resizes under master-and-stack, focus by
-direction under the three layouts, the refusals in the echo area, and a
-config's `C-w` keys reached in insert state while one that binds none
-keeps the word delete.
+layout, resizes among them, the reorders, zoom and resizes under
+master-and-stack, focus by direction under the three layouts, the refusals
+in the echo area, and a config's `C-w` keys reached in insert state while
+one that binds none keeps the word delete.
 
 The command loop (`Editor/Loop.lean`) is checked on the editor's models
 (`loopChecks`): events fed to `Loop.step` one by one, the state each leaves
@@ -7551,6 +7551,32 @@ def windowOperationChecks : List Check :=
             refused 3 Layout.default .rows &&
             refused 1 Layout.default .columns &&
             refused 2 .monocle .columns },
+    { name :=
+        "resize under manual splits moves the boundary of the deepest split on the axis that holds the window's tile by 5 percent a step, towards the tile's part when it grows; with no split on the axis it is refused with notResizable, and the state is as it was"
+      run :=
+        pure <|
+          let tree := Splits.split .columns 1 1 .tile (.split .rows 1 1 .tile .tile)
+          let resized (view : Nat) (axis : Axis) (grow : Bool) (steps : Nat) : Option Layout :=
+            match onTextModel (windowsUnder 3 (.splits tree)) with
+            | none => none
+            | some state =>
+              match state.arrange ⟨view⟩ (.resize axis grow steps) with
+              | (.ok (), after) => some after.frame.layout
+              | _ => none
+          let rows (first second : Nat) : Layout :=
+            .splits (.split .columns 1 1 .tile (.split .rows first second .tile .tile))
+          resized 1 .rows true 1 == some (rows 55 45) &&
+            resized 1 .rows false 1 == some (rows 45 55) &&
+            resized 2 .rows true 2 == some (rows 40 60) &&
+            resized 2 .rows false 1 == some (rows 55 45) &&
+            resized 2 .columns false 1 ==
+              some (.splits (.split .columns 55 45 .tile (.split .rows 1 1 .tile .tile))) &&
+            match onTextModel (windowsUnder 3 (.splits tree)) with
+            | none => false
+            | some state =>
+              match state.arrange ⟨0⟩ (.resize .rows true 1) with
+              | (.error (.notResizable .rows), after) => after == state
+              | _ => false },
     { name :=
         "main's count goes up and down by the steps asked, not below 0; under any layout but master-and-stack it is refused with noMain, and the state is as it was"
       run :=
@@ -25913,8 +25939,9 @@ def windowRects (state : EditorState) : List (Nat × Nat × Nat × Nat × Nat) :
 key, on the loop's driver over the editor's models, under the Vim scheme
 that ships, with evil's, the minibuffer's, the ex line's and the window
 commands handed: Vim 9.1's `C-w` behaviours under the manual split layout,
-the reorders, zoom and resizes under master-and-stack, focus by direction
-under the three layouts, and the refusals in the echo area. -/
+resizes among them, the reorders, zoom and resizes under master-and-stack,
+focus by direction under the three layouts, and the refusals in the echo
+area. -/
 def windowCommandChecks : List Check :=
   let manual (count : Nat) (typed : String) (focus : Nat := 0) : Option EditorState :=
     windowsAfter count Layout.manual typed focus
@@ -26087,6 +26114,27 @@ def windowCommandChecks : List Check :=
             layout "C-w <" == some (.masterStack { share := 45 }) &&
             layout "C-w ," == some (.masterStack { count := 2 }) &&
             layout "C-w , C-w ." == some Layout.default },
+    { name :=
+        "resize by key under manual splits, after C-w s at 640 by 464: C-w + makes the focused top row 5 percent of the extent taller and C-w - shorter, with a count 10 percent; on the bottom row C-w + grows it and shrinks the top; C-w > in a tree of rows only, and C-w + and C-w - under master-and-stack on the left, are refused, and the echo area says why"
+      run :=
+        pure <|
+          let heights (typed : String) : Option (List Nat) :=
+            (manual 1 typed).map fun state => (windowRects state).map (·.2.2.2.2)
+          let rowsRefused := (LayoutRefusal.notResizable .rows).describe
+          heights "C-w s C-w +" == some [255, 209] && heights "C-w s C-w -" == some [208, 256] &&
+            heights "C-w s 2 C-w +" == some [278, 186] &&
+            heights "C-w s C-w j C-w +" == some [208, 256] &&
+            heights "C-w s C-w j C-w -" == some [255, 209] &&
+            (windowsAfter 2 Layout.default "C-w +").map (·.echo) ==
+              some s!"{WindowCommands.tallerName}: {rowsRefused}" &&
+            (windowsAfter 2 Layout.default "C-w -").map (·.echo) ==
+              some s!"{WindowCommands.shorterName}: {rowsRefused}" &&
+            match manual 1 "C-w s C-w >" with
+            | none => false
+            | some wider =>
+              (windowRects wider).map (·.2.2.2.2) == [232, 232] &&
+                wider.echo ==
+                  s!"{WindowCommands.widerName}: {(LayoutRefusal.notResizable .columns).describe}" },
     { name :=
         "criterion 4, by key: under master-and-stack C-w l from main reaches the top of the stack, C-w j walks it and C-w h comes back to main; under monocle no window is in any direction and the focus stays"
       run :=
