@@ -12,8 +12,10 @@
 # 3. reads its `Info.plist` as the system does (`plutil`): it lints, its
 #    `CFBundleExecutable` is an executable file under `Contents/MacOS`, its
 #    `LSArchitecturePriority` starts with arm64, its
-#    `LSMinimumSystemVersion` is no later than this machine's macOS, and
-#    the executable is arm64 alone (`lipo`);
+#    `LSMinimumSystemVersion` is no later than this machine's macOS, the
+#    executable is arm64 alone (`lipo`), and its `CFBundleDocumentTypes`
+#    are exactly two, `public.plain-text` then `public.source-code`, each
+#    with the role `Editor` and the rank `Alternate`;
 # 4. reads the icon with ImageIO (`sips`): 16 pixels wide;
 # 5. runs the copy's `Contents/MacOS/editor headless` on the fixture
 #    `tests/headless/bundle`, copied there too, with no directory argument,
@@ -107,7 +109,22 @@ not_later "$minimum" "$running" ||
   fail "LSMinimumSystemVersion is $minimum, later than this machine's macOS $running"
 archs=$(lipo -archs "$app/Contents/MacOS/$executable")
 [ "$archs" = arm64 ] || fail "the executable is for $archs, not arm64 alone"
-step "Info.plist lints and names arm64, $executable, and macOS $minimum (this machine runs $running)"
+# The document types: plain text and source code, each with the app as an
+# editor at rank Alternate, offered under "Open With" and never the default
+# owner of the type; and no third.
+types=(public.plain-text public.source-code)
+for i in 0 1; do
+  [ "$(read_key "CFBundleDocumentTypes.$i.CFBundleTypeRole")" = Editor ] ||
+    fail "CFBundleDocumentTypes.$i.CFBundleTypeRole is not Editor"
+  [ "$(read_key "CFBundleDocumentTypes.$i.LSHandlerRank")" = Alternate ] ||
+    fail "CFBundleDocumentTypes.$i.LSHandlerRank is not Alternate"
+  [ "$(read_key "CFBundleDocumentTypes.$i.LSItemContentTypes.0")" = "${types[i]}" ] ||
+    fail "CFBundleDocumentTypes.$i.LSItemContentTypes.0 is not ${types[i]}"
+done
+if read_key CFBundleDocumentTypes.2 >/dev/null 2>&1; then
+  fail "CFBundleDocumentTypes has more than two document types"
+fi
+step "Info.plist lints and names arm64, $executable, macOS $minimum (this machine runs $running), and the document types ${types[*]}, each as an editor at rank Alternate"
 
 # 4. The icon, read by ImageIO.
 width=$(sips -g pixelWidth "$app/Contents/Resources/Leanmacs.icns" | awk '/pixelWidth/ { print $2 }')

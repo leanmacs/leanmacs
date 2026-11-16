@@ -400,7 +400,8 @@ run = "lake build --wfail editorApp"
 #
 # tools/app-check.sh copies the built bundle into a temporary directory
 # removed by a trap, verifies its signature with `codesign --verify
-# --strict --deep`, reads its Info.plist and icon as the system does, runs
+# --strict --deep`, reads its Info.plist (its document types among its keys)
+# and icon as the system does, runs
 # its headless mode on tests/headless/bundle with no directory argument, an
 # empty environment and / as the working directory, which must print
 # exactly `expected`, and builds `editorApp` again to show that copies and

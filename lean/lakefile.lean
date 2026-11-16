@@ -180,14 +180,50 @@ only after running it there. -/
 def appMinimumSystemVersion : String :=
   "27.2"
 
-/-- The bundle's `Contents/Info.plist`. There are no document types (the
-roadmap's phase 5 adds them) and no version keys, since the project has no
-version scheme yet. -/
+/-- The bundle's `Contents/Info.plist`. It has no version keys, since the
+project has no version scheme yet.
+
+Its document types (`CFBundleDocumentTypes`) are plain text
+(`public.plain-text`, which covers `.txt` and Markdown among others) and
+source code (`public.source-code`, C, scripts and the system's other source
+types). For each the app's role is `Editor`, since it reads and writes them,
+and its rank `Alternate`: Finder offers it under "Open With" and it accepts a
+drop on its Dock icon, but it never becomes the default app for the type,
+which `Owner` or `Default` would claim. `.lean` files have no system type and
+get a dynamic one that conforms to neither, so Finder does not offer the app
+for them until a type is declared for them (the rdm task `lean-source-uti`). -/
 def appInfoPlist : String :=
   s!"<?xml version=\"1.0\" encoding=\"UTF-8\"?>
 <!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">
 <plist version=\"1.0\">
 <dict>
+\t<key>CFBundleDocumentTypes</key>
+\t<array>
+\t\t<dict>
+\t\t\t<key>CFBundleTypeName</key>
+\t\t\t<string>Plain text</string>
+\t\t\t<key>CFBundleTypeRole</key>
+\t\t\t<string>Editor</string>
+\t\t\t<key>LSHandlerRank</key>
+\t\t\t<string>Alternate</string>
+\t\t\t<key>LSItemContentTypes</key>
+\t\t\t<array>
+\t\t\t\t<string>public.plain-text</string>
+\t\t\t</array>
+\t\t</dict>
+\t\t<dict>
+\t\t\t<key>CFBundleTypeName</key>
+\t\t\t<string>Source code</string>
+\t\t\t<key>CFBundleTypeRole</key>
+\t\t\t<string>Editor</string>
+\t\t\t<key>LSHandlerRank</key>
+\t\t\t<string>Alternate</string>
+\t\t\t<key>LSItemContentTypes</key>
+\t\t\t<array>
+\t\t\t\t<string>public.source-code</string>
+\t\t\t</array>
+\t\t</dict>
+\t</array>
 \t<key>CFBundleExecutable</key>
 \t<string>editor</string>
 \t<key>CFBundleIconFile</key>
