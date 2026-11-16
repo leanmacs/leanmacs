@@ -21632,6 +21632,17 @@ def movedTo (command : Process.Command) (directory : System.FilePath) : Process.
 def filesAt (paths : List System.FilePath) : FileModel :=
   paths.foldl (fun model path => model.withFile path "x".toUTF8) {}
 
+/-- `model` with the file at `path` gone. -/
+def withoutFile (model : FileModel) (path : System.FilePath) : FileModel :=
+  { model with files := model.files.filter (·.path != path) }
+
+/-- Whether `requests` read the stamp of any of `paths`. -/
+def stampsAny (requests : Array JobRequest) (paths : List System.FilePath) : Bool :=
+  requests.any fun request =>
+    match request with
+    | .file (.stamp path) => paths.contains path
+    | _ => false
+
 /-- The job model the lookup checks start from: the files `files`, the
 scripts of `mise` at `executable` printing `lookupJson` in each of
 `directories` and of each command merged there, and the environments with
@@ -21672,6 +21683,50 @@ def environmentLookupChecks : List Check :=
               #[Process.lookupCommand "/opt/homebrew/bin/mise" "/p/d", mergedOf lakeBuild] &&
             (after (runsOn lakeBuild) home).processes.started ==
               #[Process.lookupCommand "/u/.local/bin/mise" "/p/d", mergedOf lakeBuild]) },
+    { name :=
+        "auto in the window mode keeps what it resolved until a reload: with Homebrew's mise gone, a start in another directory still runs it and reads no candidate's stamp, and after install the next start resolves again"
+      run :=
+        let all : List System.FilePath := "/u/.local/bin/mise" :: candidates
+        let model :=
+          lookupModel .auto (.window (some "/u")) (filesAt candidates) "/opt/homebrew/bin/mise"
+            (directories := ["/p/d", "/p/e"])
+        let model :=
+          { model with
+            processes :=
+              { model.processes with
+                scripts :=
+                  model.processes.scripts.push
+                    { command := Process.lookupCommand "/usr/local/bin/mise" "/p/d"
+                      reply := printed lookupJson } } }
+        let inE := movedTo lakeBuild "/p/e"
+        let once := after (runsOn lakeBuild) model
+        let gone := { once with files := withoutFile once.files "/opt/homebrew/bin/mise" }
+        let second := after (runsOn inE) gone
+        let installed := { second with environments := second.environments.install .auto }
+        let third := after (runsOn lakeBuild) installed
+        pure
+          (second.processes.started ==
+              #[Process.lookupCommand "/opt/homebrew/bin/mise" "/p/d", mergedOf lakeBuild,
+                Process.lookupCommand "/opt/homebrew/bin/mise" "/p/e", mergedOf inE] &&
+            !stampsAny (requestsOf (runsOn inE) gone) all &&
+            stampsAny (requestsOf (runsOn lakeBuild) installed) all &&
+            third.processes.started ==
+              second.processes.started ++
+                #[Process.lookupCommand "/usr/local/bin/mise" "/p/d", mergedOf lakeBuild]) },
+    { name :=
+        "mise with no path runs the first candidate that exists, in the headless mode and in the window mode"
+      run :=
+        let headless :=
+          lookupModel (.mise none) .headless (filesAt candidates) "/opt/homebrew/bin/mise"
+        let window :=
+          lookupModel (.mise none) (.window (some "/u"))
+            (filesAt ("/u/.local/bin/mise" :: candidates)) "/u/.local/bin/mise"
+        pure
+          ((after (runsOn lakeBuild) headless).processes.started ==
+              #[Process.lookupCommand "/opt/homebrew/bin/mise" "/p/d", mergedOf lakeBuild] &&
+            (after (runsOn lakeBuild) window).processes.started ==
+              #[Process.lookupCommand "/u/.local/bin/mise" "/p/d", mergedOf lakeBuild] &&
+            (after (runsOn lakeBuild) headless).reported.isEmpty) },
     { name :=
         "auto in the window mode with none of the candidates starts the child as it would have"
       run :=
