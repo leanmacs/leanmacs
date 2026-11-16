@@ -366,7 +366,7 @@ def segment? (registry : Registry) (name : String) : Option Segment :=
 (`segment?`), and the names no segment is registered under, in order, each
 once (`ModeLine.resolve`). -/
 def resolve (registry : Registry) (order : ModeLine.Order) : ModeLine × Array String :=
-  ModeLine.resolve order (registry.segments.map (·.segment))
+  ModeLine.resolve order registry.segment?
 
 /-- The job entry `name` starts: the latest one of that name. -/
 def findJob? (registry : Registry) (name : String) : Option JobEntry :=

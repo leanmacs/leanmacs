@@ -234,21 +234,27 @@ def Order.standard : Order where
   left := #["state", "buffer", "modified", "directory"]
   right := #["major-mode", "line-column", "position"]
 
-/-- The mode line `order` names, each name the latest of `segments` of that
-name, and the names none of `segments` has, in order, each once. -/
-def resolve (order : Order) (segments : Array Segment) : ModeLine × Array String :=
-  let found (name : String) := segments.findRev? (·.name == name)
-  let side (names : Array String) := names.filterMap found
+/-- The mode line `order` names, each name the segment `segment?` finds for
+it, and the names it finds none for, in order, each once. Which segment a
+name finds is the caller's rule: the registry's is its latest entry of the
+name (`Config.Registry.segment?`). -/
+def resolve (order : Order) (segment? : String → Option Segment) : ModeLine × Array String :=
+  let side (names : Array String) := names.filterMap segment?
   let unknown :=
     (order.left ++ order.right).foldl
       (fun unknown name =>
-        if (found name).isNone && !unknown.contains name then unknown.push name else unknown)
+        if (segment? name).isNone && !unknown.contains name then unknown.push name else unknown)
       #[]
   ({ left := side order.left, right := side order.right }, unknown)
 
+/-- The shipped segment called `name`: each shipped segment has a name of
+its own, so no entry of a name is later than another. -/
+def shipped? (name : String) : Option Segment :=
+  shipped.find? (·.name == name)
+
 /-- The shipped mode line, in the default order. -/
 def standard : ModeLine :=
-  (resolve Order.standard shipped).1
+  (resolve Order.standard shipped?).1
 
 /-- What is said of a segment name a listing gives and nobody registered. -/
 def unknown (name : String) : String :=

@@ -4758,7 +4758,7 @@ def modeLineChecks : List Check :=
     { name := "a listing's order and side win over the segment's own place"
       run :=
         let line :=
-          ModeLine.resolve { left := #["position"], right := #["buffer"] } ModeLine.shipped
+          ModeLine.resolve { left := #["position"], right := #["buffer"] } ModeLine.shipped?
         let fields := line.1.fields loopContext
         pure
           (line.2.isEmpty &&
@@ -4769,7 +4769,7 @@ def modeLineChecks : List Check :=
       run :=
         let (line, unknown) :=
           ModeLine.resolve { left := #["state", "nope", "buffer", "nope"], right := #["gone"] }
-            ModeLine.shipped
+            ModeLine.shipped?
         pure
           (textsAndFaces (line.fields loopContext) ==
               #[("NORMAL", "mode-line.state.normal"), ("Loop.lean", "mode-line.buffer")] &&
