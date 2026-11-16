@@ -181,8 +181,13 @@ handed it, and a Lean loop on a dedicated task pulls it.
   window reports that and stays open; Lean calls the close binding, the
   loop ends, and the request returns. Rust never ends the window by itself.
 - **While the window runs, the main-thread service answers nothing else.**
-  The real editor will need requests that reach the main thread through the
-  window's loop; that is the display pipeline's.
+  Requests to the window go through the window's own loop
+  (`editor_ffi_window_request`: enter or leave fullscreen, minimise), never
+  through the service: the request is put on the adapter's channel and the
+  loop is woken, so it never blocks the Lean thread that asks.
+- **The window's title is the scene's** (`Scene.title`, the selected
+  buffer's name). It is published with every scene, and the library sends
+  it to the window only when it changes.
 - **The window runs once in a process**, which is all winit allows.
 
 The one thing that runs a window today is the keyboard check

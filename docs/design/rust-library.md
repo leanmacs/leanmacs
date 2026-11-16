@@ -245,9 +245,15 @@ built"):
   its options say and runs it on the calling thread until it is closed,
   handing each thing the window reports to one listener, the report, and
   each thing it says of its drawing to another, the drawer; `close` asks a
-  running window to close, from any thread. It grows by data: a new thing a
-  window reports is a variant of `Input`, a new thing it tells the drawer a
-  variant of `Canvas`, and a new way to open it a field of `WindowOptions`.
+  running window to close, from any thread; and `request` asks the running
+  window something (`Request`: enter or leave fullscreen, minimise, a
+  title), from any thread, and does nothing with no window running. It
+  grows by data: a new thing a window reports is a variant of `Input`, a
+  new thing it tells the drawer a variant of `Canvas`, a new thing it is
+  asked a variant of `Request`, and a new way to open it a field of
+  `WindowOptions`. What a request does to a window is held to the port's
+  request contract (`contract::requests`), against the fake's pure model,
+  and the winit adapter's translation runs the same check.
 - **What a window reports today** (`Input`): that it opened, with the
   platform's name; the focus gained or lost; a key pressed or released,
   whether it is a repeat, its logical key (a character, a named key, a dead
@@ -280,19 +286,25 @@ built"):
   known, and a window reports its size straight after it reports that it
   opened. A touch and a tablet tool are not the pointer: they report
   nothing and leave where the pointer is as it was.
-- **Fullscreen is the system's, and asks nothing of Lean.** The window
+- **Fullscreen is the system's, and Lean may ask for it.** The window
   is made with winit's default attributes, so on macOS it has the green
   button, which puts it into the system's fullscreen on a Space of its
-  own. Nothing was written for it: going in and coming out are a burst
-  of resizes, and another Space is the window hidden and shown, each of
-  which the window already reports and tells its drawer
-  ([text-and-display.md](text-and-display.md), "The window, as built").
-  The event loop is built without winit's default menu, so there is no
-  menu item for it and no shortcut of one. A fullscreen command, which a
-  key could be bound to, needs a request from Lean to the window; no
-  request of any kind goes that way yet (`Platform` has `run` and
-  `close`), and no phase builds one. Nobody has seen a window of ours in
-  fullscreen ([concurrency.md](concurrency.md), "Still to verify").
+  own: going in and coming out are a burst of resizes, and another Space
+  is the window hidden and shown, each of which the window already
+  reports and tells its drawer ([text-and-display.md](text-and-display.md),
+  "The window, as built"). Lean asks for fullscreen and for a minimise
+  with `Platform::request` (`editor_ffi_window_request`), which the winit
+  adapter sends on a channel of its own and carries out on the main
+  thread when it wakes the loop through winit's event-loop proxy. Whether
+  the window is in fullscreen comes back on every `Resized`
+  (`Resize::fullscreen`), read after the events that may change it, so
+  Lean knows the state whether a request or the green button made it.
+  The window's title follows the scene Lean publishes: the presenter
+  sends it as a `Request::Title` when it changes. The event loop is built
+  without winit's default menu, so there is no menu item for any of this
+  and Lean's own bindings (`C-s-f`, `s-m`) reach the window. Nobody has
+  seen a window of ours in fullscreen ([concurrency.md](concurrency.md),
+  "Still to verify").
 - **What a window tells whatever draws in it** (`Canvas`): that it
   opened, with its native window (`NativeWindow`: an AppKit view, an Xlib
   window or a Wayland surface, as plain data that names no library), its

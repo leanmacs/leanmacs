@@ -1379,6 +1379,7 @@ The scene is plain Lean data (`lean/Editor/Scene.lean`, `Scene`):
 | `echo` | The echo area's text |
 | `pending` | The pending key prefix, rendered by Lean into a string |
 | `preedit` | The input method's preedit text in the focused view, if it is composing |
+| `title` | The window's title: the selected buffer's name (`EditorState.title`), the focused window's, or the asking window's while a prompt is open, so it does not become the minibuffer's while a prompt is typed into |
 
 Each view (`View`):
 
@@ -2315,8 +2316,19 @@ window is still run with nothing drawing in it. The threads are in
   ([on-demand-checks.md](../dev-practices/on-demand-checks.md), "Scale
   and fullscreen, by hand"). Changing the first is a call on the layer,
   and the second is who lays out on a resize
-  ([concurrency.md](concurrency.md)); neither is built. A fullscreen
-  command needs a request from Lean to the window, which nothing builds.
+  ([concurrency.md](concurrency.md)); neither is built.
+- **Fullscreen and minimise are commands too.** `toggle-fullscreen` and
+  `minimise-window` (`lean/Editor/FrameCommands.lean`), bound by default
+  to `C-s-f` (Ctrl-Cmd-F) and `s-m` (Cmd-M), ask the window through the
+  display interface (`Display.askFrame`), which the real binding sends
+  with `editor_ffi_window_request`. Whether the window is in fullscreen
+  comes back on every resize, which the loop keeps in the frame
+  (`Frame.fullscreen`), so `toggle-fullscreen` knows which way to go after
+  the green button too. The title follows the scene, and is sent to the
+  window only when it changes, so a publish per key does not wake the
+  window's loop per key. None of it has been seen in a real window:
+  that, Ctrl-Cmd-F, the green button, Cmd-M and the title are phase 6's of
+  the macOS app roadmap to see.
 - **The refresh rate is read after the events that can change it.** winit
   has no event for it. A window comes to be on another display by being
   moved, resized or rescaled, so after each the translation asks the
