@@ -981,11 +981,34 @@ def runWatchesOnModel (property : JobContract.FileWatchProperty) : IO (Job.Outco
   let (processes, fileWatches) := watchModelsOf property
   pure ((property.holds watchRoot).runModel { processes, fileWatches }).1
 
+/-- A rig whose services have a fake watch service over `watches` and a fake
+process service over `processes`, whose runs touch the watches with what
+their commands change; and the two services. -/
+def Rig.withWatches (processes : ProcessModel) (watches : FileWatchModel) :
+    BaseIO (Rig × Job.FakeProcesses × Job.FakeFileWatches) := do
+  let rig ← Rig.new
+  let fileWatches ← Job.FakeFileWatches.new rig.services.completions watches
+  let fakeProcesses ← Job.FakeProcesses.new rig.services.completions processes fileWatches.ran
+  return ({ rig with
+        services :=
+          { rig.services with
+            processes := fakeProcesses.processes, fileWatches := fileWatches.fileWatches } },
+      fakeProcesses, fileWatches)
+
+/-- Runs a watch property's job on the runner over a fake clock, the fake of
+the process service and the fake of the watch service: how the job ended. -/
+def runWatchesOnFake (property : JobContract.FileWatchProperty) : IO (Job.Outcome Bool) := do
+  let (processes, fileWatches) := watchModelsOf property
+  let (rig, _, _) ← Rig.withWatches processes fileWatches
+  runOnFake (property.holds watchRoot) (some rig)
+
 /-- The names of the job port's watch properties that do not hold of the job
-model. -/
+model, and of those that do not hold of the runner over the fakes. -/
 def fileWatchFailures : IO (List String) := do
   let onModel ← JobContract.fileWatchFailures runWatchesOnModel JobContract.fileWatchProperties
-  return onModel.map (s!"the job model: {·}")
+  let onFake ← JobContract.fileWatchFailures runWatchesOnFake JobContract.fileWatchProperties
+  return onModel.map (s!"the job model: {·}") ++
+      onFake.map (s!"the job runner over the fake watch service: {·}")
 
 /-- A command that sleeps for ten minutes in `processRoot`, as the process
 checks script it. -/
@@ -19633,6 +19656,94 @@ def fileWatchModelChecks : List Check :=
             whenCancelled == .cancelled &&
             [afterFinished, afterFailed, afterCancelled].all endedOne }]
 
+/-- A watch model with `watchRoot` there, for the runner's watch checks. -/
+def rootWatches : FileWatchModel :=
+  { directories := #[watchRoot] }
+
+/-- A job that watches `watchRoot / "f"` and then sleeps for `ms`. -/
+def watchesThenSleeps (ms : Nat) : JobM Bool := do
+  let .ok _ ← FileWatch.start (.file (watchRoot / "f")) atOnce | return false
+  sleep ms
+  return true
+
+/-- The checks of the runner's watch waits, on the fake of the watch
+service: a watch is named for its job, it ends with its job however the job
+ends, a cancelled job's pending read is withdrawn, and removing an owner
+ends its jobs' watches. -/
+def fileWatchRunnerChecks : List Check :=
+  [{  name := "a watch is named for its job: another job's next of it is noSuchWatch, asked of no service"
+      run := do
+        let (rig, _, watches) ← Rig.withWatches {} rootWatches
+        let holder ← rig.spawn (reporting fun _ => watchesThenSleeps 1000)
+        unless ← eventually (return (← watches.watching) == 1) do
+          return false
+        let id := ((← watches.started)[0]?.map (·.1)).getD 0
+        let other ←
+          rig.spawn
+              (reporting fun _ => do
+                let .error .noSuchWatch ← FileWatch.next ⟨id.toNat⟩ | return false
+                return true)
+        let refused ← other.endedAs (.finished #["true"])
+        holder.handle.cancel
+        let asked :=
+          (← watches.started).any fun (_, request) =>
+            match request with
+            | .next _ => true
+            | _ => false
+        return refused && !asked },
+    { name := "a watch ends with its job, finished, failed or cancelled, through the watch service's cancel"
+      run := do
+        let (rig, _, watches) ← Rig.withWatches {} rootWatches
+        let finished ← rig.spawn (reporting fun _ => watchesThenSleeps 0)
+        let failed ←
+          rig.spawn
+              (reporting fun _ => (do
+                discard <| watchesThenSleeps 0
+                throw "failed" : JobM Bool))
+        let cancelled ← rig.spawn (reporting fun _ => watchesThenSleeps 1000000)
+        let ended ←
+          (return (← finished.endedAs (.finished #["true"])) && (← failed.endedAs (.failed "failed")))
+        unless ← eventually (return (← watches.watching) == 1) do
+          return false
+        cancelled.handle.cancel
+        let cancelledEnded ← cancelled.endedAs .cancelled
+        let ids := (← watches.started).map (·.1)
+        return ended && cancelledEnded && (← watches.watching) == 0 &&
+            (← watches.ended).qsort (· < ·) == (ids.map (·.toNat)).qsort (· < ·) &&
+            ids.all (← watches.withdrawn).contains },
+    { name := "a cancelled job's pending next is withdrawn from the watch service, and its watch ended"
+      run := do
+        let (rig, _, watches) ← Rig.withWatches {} rootWatches
+        let spawned ←
+          rig.spawn
+              (reporting fun _ => do
+                let .ok watch ← FileWatch.start (.file (watchRoot / "f")) atOnce | return false
+                discard <| FileWatch.next watch
+                return true)
+        unless ← eventually (return (← watches.started).size == 2) do
+          return false
+        let started ← watches.started
+        spawned.handle.cancel
+        let ended ← spawned.endedAs .cancelled
+        let withdrawn ← watches.withdrawn
+        return ended && started.all (withdrawn.contains ·.1) && (← watches.watching) == 0 &&
+            (← watches.waiting) == 0 },
+    { name := "Jobs.removeOwner ends the watches of the owner's jobs, and leaves another owner's"
+      run := do
+        let (rig, _, watches) ← Rig.withWatches {} rootWatches
+        let sleeps : Work := reporting fun _ => watchesThenSleeps 1000000
+        let jobs : Job.Jobs := { services := rig.services }
+        let (_, jobs) ← jobs.start anna "watches" sleeps fun _ => pure ()
+        let (_, jobs) ← jobs.start ben "watches" sleeps fun _ => pure ()
+        unless ← eventually (return (← watches.watching) == 2) do
+          return false
+        let (_, jobs) ← jobs.removeOwner anna
+        let annasEnded ← eventually (return (← watches.watching) == 1)
+        let one := (← watches.ended).size == 1
+        jobs.cancelAll
+        let allEnded ← eventually (return (← watches.watching) == 0)
+        return annasEnded && one && allEnded }]
+
 /-- Every check, in the order they run.
 
 The order matters where the process's one pool is measured. `poolChecks` run
@@ -19646,6 +19757,7 @@ def checks : List Check :=
     fileRunnerChecks ++
     processChecks ++
     fileWatchModelChecks ++
+    fileWatchRunnerChecks ++
     setupChecks ++
     registryChecks ++
     storeChecks ++
@@ -19849,6 +19961,6 @@ def main : IO UInt32 := do
     -- returning from `main` would wait for it for ever.
     IO.Process.exit 1
   IO.println
-      s!"model-test: {ModelTest.checks.length} checks passed, {Editor.TextContract.properties.length + Editor.TextContract.adoptProperties.length + ModelTest.commandProperties.length} properties hold of the text model, {Editor.UndoTreeCases.cases.length} cases of the undo tree hold over it, and {Editor.JobContract.properties.length} properties of the job model and of the job runner over the fake clock, and {Editor.JobContract.fileProperties.length} file properties of the job model and of the job runner over the fake file service, and {Editor.JobContract.processProperties.length} process properties of the job model and of the job runner over the fake process service, and {Editor.JobContract.fileWatchProperties.length} watch properties of the job model; {Editor.FileCases.cases.length} cases across the text port and the job port hold of the two models; {(Editor.DisplayContract.properties { advance := 1, lineHeight := 1 }).length} properties of the display interface hold of its model in cells of {ModelTest.displayCells.length} sizes; {Editor.WatchContract.properties.length} properties of the watch port hold of its model; {Editor.ClipboardContract.properties.length} properties of the clipboard interface hold of its model; {Editor.FuzzyContract.properties.length} properties of the fuzzy matching interface hold of its model; {Editor.ApiCases.cases.length} cases of the editor API hold of the editor's models"
+      s!"model-test: {ModelTest.checks.length} checks passed, {Editor.TextContract.properties.length + Editor.TextContract.adoptProperties.length + ModelTest.commandProperties.length} properties hold of the text model, {Editor.UndoTreeCases.cases.length} cases of the undo tree hold over it, and {Editor.JobContract.properties.length} properties of the job model and of the job runner over the fake clock, and {Editor.JobContract.fileProperties.length} file properties of the job model and of the job runner over the fake file service, and {Editor.JobContract.processProperties.length} process properties of the job model and of the job runner over the fake process service, and {Editor.JobContract.fileWatchProperties.length} watch properties of the job model and of the job runner over the fake watch service; {Editor.FileCases.cases.length} cases across the text port and the job port hold of the two models; {(Editor.DisplayContract.properties { advance := 1, lineHeight := 1 }).length} properties of the display interface hold of its model in cells of {ModelTest.displayCells.length} sizes; {Editor.WatchContract.properties.length} properties of the watch port hold of its model; {Editor.ClipboardContract.properties.length} properties of the clipboard interface hold of its model; {Editor.FuzzyContract.properties.length} properties of the fuzzy matching interface hold of its model; {Editor.ApiCases.cases.length} cases of the editor API hold of the editor's models"
   (← IO.getStdout).flush
   IO.Process.exit 0

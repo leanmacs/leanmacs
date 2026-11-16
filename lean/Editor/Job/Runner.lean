@@ -84,6 +84,21 @@ cancellation is built here.
   cancelled while its start is in flight has the start withdrawn, and the
   library kills the child as it registers it.
 
+## A watch does not outlive its job
+
+A watch a start names is the job's (`Handle.watches`), as a streaming child
+is: a `next` of a watch the job does not hold is answered `noSuchWatch` at
+once, with nothing started, so a job cannot read another's watch though the
+ids are plain numbers. `Handle.conclude` ends every watch the job still
+holds, through `FileWatches.cancel`, for every outcome, finished included.
+A job cancelled in a `next` has that wait withdrawn first, then its watches
+ended; one cancelled while its start is in flight has the start withdrawn,
+and the library drops the registration when it returns. So
+`Jobs.removeOwner .config` → `Handle.cancel` → `conclude` → `endWatches` →
+`FileWatches.cancel` → the library drops the registration: a config reload,
+which cancels config's jobs, replaces config's watches and never piles them
+up, with no code of its own.
+
 ## The ports its waits are made of
 
 `Timers` is the clock port: read the clock, start a wait with an id and a
@@ -107,11 +122,18 @@ over the pure model of processes (`FakeProcesses`, `Editor/Job/Fake.lean`)
 and a real implementation over the library's process service
 (`Editor/Job/Real.lean`).
 
-`Services` is what a runner is given: the table, the clock, the files and
-the processes. A runner that is given no file service has `Files.absent`,
+`FileWatches` is the file-watch port, beside them: start a watch request
+(`Editor/FileWatch.lean`) as a wait, take its reply once the wait has
+completed, and withdraw a wait or end a watch. It has a fake over the pure
+model of watches (`FakeFileWatches`, `Editor/Job/Fake.lean`) and a real
+implementation over the library's watch service (`Editor/Job/Real.lean`).
+
+`Services` is what a runner is given: the table, the clock, the files, the
+processes and the file watches. A runner that is given no file service has `Files.absent`,
 and one that is given no process service has `Processes.absent`, each of
 which refuses every request as failed, at once: an error as a value, and
-the job goes on.
+the job goes on; one that is given no watch service has
+`FileWatches.absent`, which does the same.
 
 ## What a job holds
 
@@ -265,6 +287,31 @@ def Processes.absent (completions : Completions) : Processes where
   take _ request := pure (Processes.absentReply request)
   cancel _ := pure ()
 
+/-- The file-watch port: what the runner's watch waits are made of. -/
+structure FileWatches where
+  /-- Asks for `request` to be worked as the wait `id`, and for the wait to
+  be completed when it can be taken: a start once the watch is registered or
+  refused, a `next` once a delivery is due. It returns at once and never
+  blocks. -/
+  start : (id : UInt64) → (request : FileWatchRequest) → BaseIO Unit
+  /-- The reply to `request`, which was started as the wait `id` and has
+  completed. It is asked once, on the job's thread. A `next`'s delivery
+  holds every change recorded up to the take. -/
+  take : (id : UInt64) → (request : FileWatchRequest) → BaseIO request.Reply
+  /-- Withdraws the wait `id`, or ends the watch `id`: the service will not
+  complete it and keeps nothing of it. Safe for any id, a timer's
+  included. -/
+  cancel : (id : UInt64) → BaseIO Unit
+
+/-- No file-watch service: every request completes at once, refused as
+failed, through the table `completions`. It is what a runner has when it was
+given none, so a job that watches a file there gets an error as a value and
+goes on. -/
+def FileWatches.absent (completions : Completions) : FileWatches where
+  start id _ := completions.finish id .completed
+  take _ request := pure (request.refused (.failed "this runner has no file-watch service"))
+  cancel _ := pure ()
+
 /-- What a runner is given. -/
 structure Services where
   /-- The waits in flight. -/
@@ -275,6 +322,9 @@ structure Services where
   files : Files := Files.absent completions
   /-- The processes. A runner that is given none has `Processes.absent`. -/
   processes : Processes := Processes.absent completions
+  /-- The file watches. A runner that is given none has
+  `FileWatches.absent`. -/
+  fileWatches : FileWatches := FileWatches.absent completions
 
 instance {α : Type} : Nonempty (Outcome α) :=
   ⟨.cancelled⟩
@@ -300,6 +350,9 @@ structure Handle where
   /-- The streaming children the job started and still holds, oldest first.
   Every change to it is one atomic step. -/
   children : IO.Ref (Array Process.Id)
+  /-- The watches the job started and still holds, oldest first. Every
+  change to it is one atomic step. -/
+  watches : IO.Ref (Array FileWatch.Id)
 
 namespace Handle
 
@@ -319,15 +372,17 @@ def settle (handle : Handle) : BaseIO Unit := do
   for snapshot in held do
     handle.services.files.release snapshot
 
-/-- Withdraws the wait `id`: tells the clock, the file service and the
-process service to drop it, each of which is safe for an id it does not
-know, and ends it as `cancelled` in the table. The process service kills
-the child of a run it drops. Whichever of this and the service's completion
-comes first wins, and the other does nothing. -/
+/-- Withdraws the wait `id`: tells the clock, the file service, the
+process service and the watch service to drop it, each of which is safe for
+an id it does not know, and ends it as `cancelled` in the table. The process
+service kills the child of a run it drops; the watch service drops a start
+in flight, and the registration it makes. Whichever of this and the
+service's completion comes first wins, and the other does nothing. -/
 def withdraw (handle : Handle) (id : UInt64) : BaseIO Unit := do
   handle.services.timers.cancel id
   handle.services.files.cancel id
   handle.services.processes.cancel id
+  handle.services.fileWatches.cancel id
   handle.services.completions.finish id .cancelled
 
 /-- Cancels the job: sets its token, and withdraws the wait it is in, if it
@@ -357,10 +412,19 @@ def endChildren (handle : Handle) : BaseIO Unit := do
   for child in children do
     handle.services.processes.cancel child.number.toUInt64
 
+/-- Ends every watch the job still holds, through the watch service's
+cancel, which drops its registration once no other watch shares it, and
+leaves it holding none. Safe to call again. -/
+def endWatches (handle : Handle) : BaseIO Unit := do
+  let watches ← handle.watches.modifyGet fun watches => (watches, #[])
+  for watch in watches do
+    handle.services.fileWatches.cancel watch.number.toUInt64
+
 /-- Leaves `outcome` in the handle, then calls `finished`: the job has ended.
 
-Every streaming child the job still holds is ended first, however the job
-ended: a job's command has no request that could use one.
+Every streaming child and every watch the job still holds is ended first,
+however the job ended: a job's command has no request that could use
+one.
 
 A job that failed or was cancelled has no command to take what it holds, so
 what it holds is released here first, on the job's own thread, after its
@@ -369,6 +433,7 @@ whoever runs that command settles the job after it. -/
 def conclude (handle : Handle) (finished : BaseIO Unit) (outcome : Outcome (EditorM Unit)) :
     BaseIO Unit := do
   handle.endChildren
+  handle.endWatches
   match outcome with
   | .finished _ =>
     pure ()
@@ -453,8 +518,22 @@ def answer (handle : Handle) : (request : JobRequest) → BaseIO (Answer request
     let (id, wait) ← handle.services.completions.register
     handle.services.processes.start id (.run command limit)
     return .later id wait (handle.services.processes.take id (.run command limit))
-  | .fileWatch request =>
-    return .now (request.refused (.failed "this runner has no file-watch service"))
+  | .fileWatch (.start target coalescing) => do
+    let (id, wait) ← handle.services.completions.register
+    handle.services.fileWatches.start id (.start target coalescing)
+    return .later id wait do
+        let reply ← handle.services.fileWatches.take id (.start target coalescing)
+        -- The watch is the job's from here: the runner ends it with the job.
+        if let .ok watch := reply then
+          handle.watches.modify (·.push watch)
+        return reply
+  | .fileWatch (.next watch) => do
+    -- A watch is named for the job that started it, and for no other.
+    unless (← handle.watches.get).contains watch do
+      return .now (.error .noSuchWatch)
+    let (id, wait) ← handle.services.completions.register
+    handle.services.fileWatches.start id (.next watch)
+    return .later id wait (handle.services.fileWatches.take id (.next watch))
 
 /-- Runs `program` to its end, a request at a time. A request that is
 answered at once is a direct call, and the loop goes on on the same thread.
@@ -521,7 +600,7 @@ the job has ended and its outcome is in the handle. -/
 def spawn (services : Services) (work : Work) (finished : BaseIO Unit) : BaseIO Handle := do
   let handle : Handle :=
     { services, flags := ← IO.mkRef {}, outcome := ← IO.Promise.new, held := ← IO.mkRef #[]
-      children := ← IO.mkRef #[] }
+      children := ← IO.mkRef #[], watches := ← IO.mkRef #[] }
   discard <| BaseIO.asTask (start handle finished work)
   return handle
 

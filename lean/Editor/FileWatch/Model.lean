@@ -208,6 +208,14 @@ def handle (model : FileWatchModel) (now : Nat) (cancelAt : Option Nat) :
         | none =>
           (.error (.failed "the model's watch waits for a change nothing makes"), model, now)
 
+/-- Ends the watch `id`, as the runner does with its job: recorded as ended,
+and forgotten. Nothing for an id it does not have. -/
+def endWatch (model : FileWatchModel) (id : Nat) : FileWatchModel :=
+  if model.watches.any (·.id == id) then
+    { model with
+      watches := model.watches.filter (·.id != id), ended := model.ended.push id }
+  else model
+
 /-- Ends every watch, as the runner does when their job ends: each is
 recorded as ended, and forgotten. -/
 def endAll (model : FileWatchModel) : FileWatchModel :=
