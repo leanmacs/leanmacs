@@ -884,6 +884,7 @@ uint8_t editor_ffi_window_run(uint8_t platform, bool composition,
                               uint8_t present_mode, uint32_t frame_latency,
                               editor_ffi_raw_refusal *out);
 bool editor_ffi_window_close(uint8_t platform);
+bool editor_ffi_window_request(uint8_t platform, uint8_t request);
 uint64_t editor_ffi_input_clock_now(void);
 bool editor_ffi_window_post_input(uint8_t kind, uint64_t code,
                                   const uint8_t *text, size_t text_len,
@@ -919,6 +920,14 @@ lean_obj_res editor_glue_window_run(uint8_t platform, uint8_t composition,
 // the tag names a platform, which a tag from Lean's `Platform` always does.
 lean_obj_res editor_glue_window_close(uint8_t platform) {
   editor_ffi_window_close(platform);
+  return lean_io_result_mk_ok(lean_box(0));
+}
+
+// `Editor.Ffi.windowRequest : Platform → WindowRequest → IO Unit`. The library
+// returns whether both tags name something, which tags from Lean's `Platform`
+// and `WindowRequest` always do.
+lean_obj_res editor_glue_window_request(uint8_t platform, uint8_t request) {
+  editor_ffi_window_request(platform, request);
   return lean_io_result_mk_ok(lean_box(0));
 }
 
@@ -1224,6 +1233,15 @@ void editor_ffi_window_presentation(editor_ffi_raw_words *out);
 lean_obj_res editor_glue_window_presentation(void) {
   editor_ffi_raw_words raw;
   editor_ffi_window_presentation(&raw);
+  return lean_io_result_mk_ok(raw_words_take(raw));
+}
+
+void editor_ffi_window_asked(uint8_t platform, editor_ffi_raw_words *out);
+
+// `Editor.Ffi.windowAskedRaw : Platform → IO RawWords`
+lean_obj_res editor_glue_window_asked(uint8_t platform) {
+  editor_ffi_raw_words raw;
+  editor_ffi_window_asked(platform, &raw);
   return lean_io_result_mk_ok(raw_words_take(raw));
 }
 

@@ -226,6 +226,14 @@ arrives on the editor queue.
 - Lean closes the window. A window the user asks to close reports
   `closeRequested` and stays open until `windowClose`, which any thread may
   call.
+- Lean asks things of the window with `windowRequest`: enter or leave
+  fullscreen, or minimise (`WindowRequest`, tags 0, 1 and 2). It never
+  blocks, and it goes through the window's own loop, not the main-thread
+  service, which still answers nothing else while the window runs. Whether
+  the window is in fullscreen comes back on every resize, bit 0 of its
+  code. The title is no request: it is the scene's (`Scene.title`), and the
+  library sends it to the window when it changes. `windowAsked` reads what
+  a scripted window was asked, for tests.
 - The platform is an enumeration (`Platform`). The scripted ones are the
   library's fake: they open nothing and need no display, and they are what
   every check runs. One reports a fixed sample; the other cannot open a
@@ -239,7 +247,8 @@ with through `postInput`. The editor's events as one Lean type are
 `Editor/Event.lean`.
 
 Tests: the window checks of `ffi-test` (`FfiTest.windowChecks`), on the
-scripted platforms: the bindings, a run that fails to open among them, and
+scripted platforms: the bindings, a run that fails to open and the requests
+among them, and
 the keyboard check's loop over them; the unit tests of `window.rs` and
 `tests/window.rs`
 in `editor-ffi`, which need no Lean. Nothing in the gate runs the real
@@ -1764,6 +1773,73 @@ returns. Any thread may call it, and it does nothing when that platform runs
 no window. -/
 @[extern "editor_glue_window_close"]
 opaque windowClose (platform : Platform) : IO Unit
+
+/-- What Lean asks of the window (`editor_ffi_window_request`, its tags 0, 1
+and 2, in this order). The title is not one: it is a field of the scene. -/
+inductive WindowRequest where
+  /-- Put the window in the system's fullscreen; one in it stays there. -/
+  | enterFullscreen
+  /-- Take the window out of the system's fullscreen; one out of it stays
+  out. -/
+  | leaveFullscreen
+  /-- Minimise the window. -/
+  | minimise
+  deriving DecidableEq, Repr
+
+/-- Asks the window `platform` is running to do what `request` says. Any
+thread may call it, it never blocks, and it does nothing when that platform
+runs no window. It goes through the window's own loop, not the main-thread
+service. Whether the window is then in fullscreen comes back on the editor
+queue, as a resize. -/
+@[extern "editor_glue_window_request"]
+opaque windowRequest (platform : Platform) (request : WindowRequest) : IO Unit
+
+/-- One thing a scripted window was asked: a request, or a title the
+presenter sent it from a scene. -/
+inductive WindowAsked where
+  /-- A request Lean made. -/
+  | request (request : WindowRequest)
+  /-- A title. -/
+  | title (text : String)
+  deriving DecidableEq, Repr
+
+/-- `windowAsked` as it crosses. -/
+@[extern "editor_glue_window_asked"]
+private opaque windowAskedRaw (platform : Platform) : IO RawWords
+
+/-- What the words of `windowAsked` spell from the index `at_` on, each
+thing asked in order: a request's tag, or the tag 3, a count and the
+scalar values of a title's characters. `none` when they spell nothing. -/
+private partial def askedOf (words : Array UInt64) (at_ : Nat := 0)
+    (asked : Array WindowAsked := #[]) : Option (Array WindowAsked) :=
+  if at_ >= words.size then some asked
+  else
+    match words[at_]! with
+    | 0 => askedOf words (at_ + 1) (asked.push (.request .enterFullscreen))
+    | 1 => askedOf words (at_ + 1) (asked.push (.request .leaveFullscreen))
+    | 2 => askedOf words (at_ + 1) (asked.push (.request .minimise))
+    | 3 => do
+      let count := (← words[at_ + 1]?).toNat
+      let scalars ← (List.range count).mapM fun index => words[at_ + 2 + index]?
+      let chars ←
+        scalars.mapM fun scalar =>
+            if scalar < 0x110000 && (Nat.isValidChar scalar.toNat) then
+              some (Char.ofNat scalar.toNat)
+            else none
+      askedOf words (at_ + 2 + count) (asked.push (.title (String.ofList chars)))
+    | _ => none
+
+/-- What the scripted window of `platform` was asked in its latest run, in
+order: the requests while it ran, and the titles the presenter sent it.
+`none` for the real platform, which records nothing. A readout for tests. -/
+def windowAsked (platform : Platform) : IO (Option (Array WindowAsked)) := do
+  let raw ← windowAskedRaw platform
+  if raw.status != 0 then
+    return none
+  let problem := IO.userError "the library's record of requests is not its words"
+  let some words := wordsOf? raw.words | throw problem
+  let some asked := askedOf words | throw problem
+  return some asked
 
 /-- `postInput` as it crosses: the words as bytes. -/
 @[extern "editor_glue_window_post_input"]

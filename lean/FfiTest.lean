@@ -1178,6 +1178,45 @@ def runScripted (composition : Bool) (platform : Editor.Ffi.Platform := .scripte
       pure none
   return { events := events.toList, stamped, waited, result }
 
+/-- What a run of the scripted window that was asked things showed: the next
+event after the sample, and what the window says it was asked. -/
+structure AskedRun where
+  /-- The run, as `runScripted` gives it. -/
+  ran : WindowRun
+  /-- The first event pulled after the sample's and the requests. -/
+  after : Option Editor.Ffi.Event
+  /-- What the scripted window says it was asked in this run. -/
+  asked : Option (Array Editor.Ffi.WindowAsked)
+
+/-- Runs the scripted window as `runScripted` does, but once its sample has
+been pulled asks it `requests` in order, pulls one more event, and reads what
+the window was asked, before closing it. -/
+def runScriptedAsking (requests : List Editor.Ffi.WindowRequest) : IO AskedRun := do
+  let run ← IO.asTask (prio := .dedicated) (Editor.Ffi.windowRun .scripted true)
+  let mut events := #[]
+  for _ in [0:(windowSample true).length] do
+    let some event ← pull .editor | break
+    events := events.push event
+  for request in requests do
+    Editor.Ffi.windowRequest .scripted request
+  let after ← pull .editor
+  let asked ← Editor.Ffi.windowAsked .scripted
+  Editor.Ffi.windowClose .scripted
+  let result ←
+    if ← eventually (IO.hasFinished run) then
+      some <$> IO.ofExcept run.get
+    else
+      pure none
+  return { ran := { events := events.toList, stamped := true, waited := true, result }, after,
+           asked }
+
+/-- The requests in `asked`, without the titles: a title is the presenter's,
+sent when the window opens if a scene bound to it named one. -/
+def requestsOf (asked : Array Editor.Ffi.WindowAsked) : Array Editor.Ffi.WindowRequest :=
+  asked.filterMap fun
+    | .request request => some request
+    | .title _ => none
+
 /-- Whether `events` are those of `windowSample composition`, in order, each
 from the window source of the window number 1. -/
 def isWindowSample (composition : Bool) (events : List Editor.Ffi.Event) : Bool :=
@@ -1285,6 +1324,26 @@ def windowChecks (_ : Unit) : List Check :=
             event.code == 0 &&
             event.words == words &&
             event.stamp > 0 },
+    { name :=
+        "asked while the scripted window runs, a fullscreen request and a minimise request are what the window was asked, in that order, and entering fullscreen arrives on the editor queue as a resize in fullscreen at the size the window last said"
+      run := do
+        let ran ← runScriptedAsking [.enterFullscreen, .minimise]
+        let resized :=
+          match ran.after.map Editor.Event.ofFfi with
+          | some (.ok { event := .resize size, .. }) =>
+            size == { width := 800, height := 600, scale := 2.0, fullscreen := true }
+          | _ => false
+        return isWindowSample true ran.ran.events &&
+            (ran.asked.map requestsOf) == some #[.enterFullscreen, .minimise] &&
+            resized &&
+            ran.ran.result matches some (.ok _) },
+    { name :=
+        "a request to a window that is not running is not recorded, and the real platform records nothing"
+      run := do
+        Editor.Ffi.windowRequest .scriptedFailing .enterFullscreen
+        Editor.Ffi.windowRequest .scriptedFailing .minimise
+        return (← Editor.Ffi.windowAsked .scriptedFailing) == some #[] &&
+            (← Editor.Ffi.windowAsked .winit) == none },
     { name := "the input clock is never 0 and does not go back"
       run := do
         let first ← Editor.Ffi.inputClock
