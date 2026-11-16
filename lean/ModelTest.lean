@@ -14890,7 +14890,7 @@ def fileCommandChecks : List Check :=
               second.loop.state.findFile lf == none &&
               second.loop.state.buffers.size == 2 },
     { name :=
-        "an open of several paths whose asking view is closed while the first one loads opens every path, in order, in the focused view: the first file's buffer is shown there, a path after it that a buffer holds is shown there at once, the load after that is started for that view, and its buffer is shown there last"
+        "an open of several paths whose asking view is closed while the first one loads opens every path, in order, in the focused view: the first file's buffer is shown there, a path after it that a buffer holds is shown there at once, after it, the load after that is started for that view, and its buffer is shown there last; with no path a buffer holds after the first, the first file's buffer is what the focused view shows once its load is delivered"
       run :=
         pure <|
           match filesDriver with
@@ -14899,17 +14899,25 @@ def fileCommandChecks : List Check :=
             let note := inFiles "note.txt"
             let lf := inFiles "lf.txt"
             let crlf := inFiles "crlf.txt"
-            -- `lf.txt` is open in buffer 1; view 0 is split, and the open is
-            -- asked in view 1, which is then closed.
-            let (split, _) :=
-              fedTo ((fedTo driver (presses "C-o l")).1.finish 1).1 (presses "C-o s")
+            -- `lf.txt` is open in buffer 1 and view 0 shows the scratch
+            -- buffer again; view 0 is split, and the open is asked in view
+            -- 1, which is then closed.
+            let (held, _) := fedTo ((fedTo driver (presses "C-o l")).1.finish 1).1 (presses "C-o 0")
+            let (split, _) := fedTo held (presses "C-o s")
             let (asked, steps) :=
               fedTo split [.openFiles [note.toString, lf.toString, crlf.toString]]
             let (closed, _) := fedTo asked (presses "C-o k")
             let (first, delivered) := closed.finish 2
             let (last, _) := first.finish 3
             let state := last.loop.state
-            split.loop.state.frame.focused == ⟨1⟩ &&
+            -- The same with no path a buffer holds: view 0 shows the scratch
+            -- buffer until the first file's load is delivered.
+            let (alone, _) :=
+              fedTo (fedTo driver (presses "C-o s")).1 [.openFiles [note.toString, crlf.toString]]
+            let (aloneClosed, _) := fedTo alone (presses "C-o k")
+            let (aloneFirst, aloneDelivered) := aloneClosed.finish 1
+            (showing held).map (·.id) == some ⟨0⟩ && (showing split).map (·.id) == some ⟨0⟩ &&
+              split.loop.state.frame.focused == ⟨1⟩ &&
               started steps ==
                 #[{ name := Files.loadJob
                     arguments :=
@@ -14930,7 +14938,15 @@ def fileCommandChecks : List Check :=
               (showing last).map (·.id) == state.findFile crlf &&
               (heldFile last).map (·.path) == some crlf &&
               last.pending.isEmpty &&
-              state.wellFormed },
+              state.wellFormed &&
+              aloneClosed.loop.state.frame.focused == ⟨0⟩ &&
+              (showing aloneClosed).map (·.id) == some ⟨0⟩ &&
+              aloneFirst.loop.state.findFile note == some ⟨1⟩ &&
+              (showing aloneFirst).map (·.id) == some ⟨1⟩ &&
+              (aloneDelivered.map (·.starts)) ==
+                some
+                  #[{ name := Files.loadJob
+                      arguments := Files.LoadOrder.arguments { path := crlf, view := ⟨0⟩ } }] },
     { name :=
         "an interrupted delivery of a load in an open of several paths is rolled back with the rest of the open: wherever the interrupt key arrives in it, no buffer is made, the path after it that a buffer holds is not shown, and no later load is started; run to its end it starts the last load; and once the flag is down the same open opens every path"
       run :=
