@@ -1,5 +1,6 @@
 import Editor.Api.Theorems
 import Editor.Command.Append
+import Editor.Evil.Clipboard
 import Editor.Evil.Operators
 import Editor.Evil.Repeat
 import Editor.Evil.Scroll
@@ -103,7 +104,9 @@ scroll places its anchor (`Editor/Scroll.lean`, which comes with the
 editor API): a command of config's reads and places its window's scroll
 anchor with `Target.anchor` and `Target.scrollTo`, asks the display about
 its view with `Target.onArea`, and sets the scroll margin with
-`setScrollMargin` (`Editor/Api.lean`, "Scrolling"). What is
+`setScrollMargin` (`Editor/Api.lean`, "Scrolling"). The Edit menu's
+clipboard commands, Cut, Copy, Paste and Select All, are in
+`Editor/Evil/Clipboard.lean`. What is
 proved of evil on the text model is in `Editor/Evil/Theorems.lean`, with
 what it needs of the undo tree in `Editor/UndoTree/Theorems.lean`; they
 are imported so that the build checks the proofs.

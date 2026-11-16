@@ -3692,7 +3692,7 @@ def shippedChecks (_ : Unit) : List Check :=
             compiled "toggle-fullscreen" &&
             compiled "minimise-window" },
     { name :=
-        "the executable's hosts publish the standard menu bar, and bind s-o, s-s, s-z and s-Z to open-file, save-buffer, undo and redo for the owner compiled"
+        "the executable's hosts publish the standard menu bar, and bind s-o, s-s, s-z, s-Z, s-x, s-c, s-v and s-a to open-file, save-buffer, undo, redo, clipboard-cut, clipboard-copy, clipboard-paste and select-all for the owner compiled"
       run := do
         let completions ← Job.Completions.new
         let clock ← Job.FakeClock.new completions
@@ -3708,7 +3708,13 @@ def shippedChecks (_ : Unit) : List Check :=
             bound "s-s" == some { command := "save-buffer" } &&
             bound "s-z" == some { command := "undo" } &&
             bound "s-Z" == some { command := "redo" } &&
-            ["open-file", "save-buffer", "undo", "redo"].all compiled }]
+            bound "s-x" == some { command := "clipboard-cut" } &&
+            bound "s-c" == some { command := "clipboard-copy" } &&
+            bound "s-v" == some { command := "clipboard-paste" } &&
+            bound "s-a" == some { command := "select-all" } &&
+            ["open-file", "save-buffer", "undo", "redo", "clipboard-cut", "clipboard-copy",
+                  "clipboard-paste", "select-all"].all
+              compiled }]
 
 /-- A chunk whose `setup` registers `greet` and the job `follow`, which
 watches the made-up file `/watched/f`, waits for its next delivery, and

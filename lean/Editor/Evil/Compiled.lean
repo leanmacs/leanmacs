@@ -1,5 +1,6 @@
 import Editor.Config.Registry
 import Editor.Evil
+import Editor.Evil.Clipboard
 import Editor.Evil.Motions
 import Editor.Evil.Operators
 import Editor.Evil.Repeat
@@ -34,6 +35,9 @@ they hold when config fails to load, and a reload does not replace them.
   | `scroll-down`, `scroll-up` | `Evil.scroll .half`, down and up: the view and its cursor by half the rows the view fits, or by the count (`Editor/Evil/Scroll.lean`) |
   | `scroll-page-down`, `scroll-page-up` | `Evil.scroll .page`, down and up: the view and its cursor by the rows the view fits |
   | `scroll-line-to-top`, `scroll-line-to-center`, `scroll-line-to-bottom` | `Evil.scrollLineTo`, with `.top`, `.middle` and `.bottom`: the view placed so that the cursor's row is the first row shown, the middle one or the last, with nothing else changed |
+  | `clipboard-cut`, `clipboard-copy` (`Evil.cutName`, `Evil.copyName`) | `Evil.cut`, `Evil.copy`: they give up, nothing being selected, where no run table runs `"+d` or `"+y` in their place (`Editor/Evil/Clipboard.lean`) |
+  | `clipboard-paste` (`Evil.pasteName`) | `Evil.paste`: the clipboard's text at the bar where the call's report is exclusive, and before the cursor otherwise |
+  | `select-all` (`Evil.selectAllName`) | `Evil.selectAll`: every line selected, where the call's report selects lines |
 
   The seven of the second and third rows enter a state only when a key
   that enters it runs them: the scheme enters the state, at the key, and
@@ -52,8 +56,9 @@ motions (`Editor/Evil/Motions.lean`), so that config can call them, and
 not this, which is the one module of evil's it leaves out.
 
 Pinned by `ModelTest.evilMotionChecks`, `ModelTest.evilStateChecks` and
-`ModelTest.evilInsertChecks`, on the models, and the scroll commands by
-`ModelTest.viewChecks`.
+`ModelTest.evilInsertChecks`, on the models, the scroll commands by
+`ModelTest.viewChecks`, and the clipboard commands by
+`ModelTest.clipboardCommandChecks`.
 -/
 
 namespace Editor.Evil
@@ -81,6 +86,9 @@ def commands : Array Config.Registration :=
     { name := "scroll-page-up", action := .call (scroll .page false) },
     { name := "scroll-line-to-top", action := .call (scrollLineTo .top) },
     { name := "scroll-line-to-center", action := .call (scrollLineTo .middle) },
-    { name := "scroll-line-to-bottom", action := .call (scrollLineTo .bottom) }]
+    { name := "scroll-line-to-bottom", action := .call (scrollLineTo .bottom) },
+    { name := cutName, action := .call cut }, { name := copyName, action := .call copy },
+    { name := pasteName, action := .call paste },
+    { name := selectAllName, action := .call selectAll }]
 
 end Editor.Evil

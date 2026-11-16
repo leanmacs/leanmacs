@@ -385,8 +385,8 @@ text 2: "counted 42"
 Text 0 is the scratch buffer's: the editor loop makes its frame, and that
 buffer, for the first command it runs. `open-file`, `save-buffer`,
 `minibuffer-accept`, `minibuffer-cancel`, `minibuffer-next`,
-`minibuffer-previous`, evil's twenty-five, from `move` to
-`scroll-line-to-bottom`, and the ex line's four, from `ex` to
+`minibuffer-previous`, evil's twenty-nine, from `move` to
+`select-all`, and the ex line's four, from `ex` to
 `reload-config`, are
 the commands the editor ships, compiled in: `show` lists them before
 config's.

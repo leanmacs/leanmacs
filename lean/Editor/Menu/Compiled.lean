@@ -1,4 +1,5 @@
 import Editor.Config.Registry
+import Editor.Evil.Clipboard
 import Editor.Files
 import Editor.FrameCommands
 import Editor.Menu
@@ -12,23 +13,31 @@ bindings of its editor items, as a host is handed them
 
 - **`Menu.standard`**: the application's menu (About, Services, Hide, Hide
   Others, Show All, Quit, with the system's own key equivalents `s-h`,
-  `M-s-h` and `s-q`), File (Open…, Save), Edit (Undo, Redo) and Window
-  (Minimise, Enter Full Screen). Its command items carry no key: a host
+  `M-s-h` and `s-q`), File (Open…, Save), Edit (Undo, Redo, a separator,
+  Cut, Copy, Paste, a separator, Select All: the clipboard commands of
+  `Editor/Evil/Clipboard.lean`) and Window (Minimise, Enter Full Screen). Its command items carry no key: a host
   fills them from the registry as it is at each step
   (`Config.Registry.menuOf`), so a menu item and its key run the same
   command, and config's rebinding moves the shortcut.
 - **`Menu.bindings`**: `s-o` runs `open-file`, `s-s` `save-buffer`, `s-z`
-  `undo` and `s-Z` (shift is in the character, as a chord says it)
-  `redo`. A host registers them for the owner `compiled` beside
+  `undo`, `s-Z` (shift is in the character, as a chord says it) `redo`,
+  `s-x` `clipboard-cut`, `s-c` `clipboard-copy`, `s-v` `clipboard-paste`
+  and `s-a` `select-all`. A host registers them for the owner `compiled` beside
   `FrameCommands.bindings`, whose `C-s-f` and `s-m` are the Window menu's.
 
 A chord the menu shows never reaches the window as a key on macOS: AppKit
-runs the item first. Since the menu's keys are the keymap's, the two agree.
+runs the item first. Since the menu's keys are the keymap's, the two agree,
+and the loop runs a menu item through the scheme as a key bound to the
+command's name would run (`InputScheme.invoked`, `Editor/Loop.lean`), so
+`s-c` chosen as an item is `"+y` in a visual state as the key is.
 A config binding of a system item's chord (`s-h`, `M-s-h`, `s-q`) is
 shadowed by the item, so `menuOf` shows it on no command item: the command
 shows its next chord, or none.
 
-Pinned by `ModelTest.menuChecks` and `ConfigTest.shippedChecks`.
+Pinned by `ModelTest.menuChecks` and `ConfigTest.shippedChecks` (which runs
+in the `config-test` executable, under `mise run ci`, not under `lake test`
+alone), and what the clipboard items do by
+`ModelTest.clipboardCommandChecks`.
 -/
 
 namespace Editor
@@ -63,7 +72,11 @@ def standard : Menu :=
               .item "Save" none (.command Files.saveName)] },
         -- The names of evil's commands (`Editor/Evil/Compiled.lean`).
         { title := "Edit"
-          items := #[.item "Undo" none (.command "undo"), .item "Redo" none (.command "redo")] },
+          items :=
+            #[.item "Undo" none (.command "undo"), .item "Redo" none (.command "redo"), .separator,
+              .item "Cut" none (.command Evil.cutName), .item "Copy" none (.command Evil.copyName),
+              .item "Paste" none (.command Evil.pasteName), .separator,
+              .item "Select All" none (.command Evil.selectAllName)] },
         { title := "Window", role := some .window
           items :=
             #[.item "Minimise" none (.command FrameCommands.minimiseName),
@@ -74,11 +87,15 @@ private def chord (text : String) : Key :=
   Key.chord { logical := .character text, modifiers := { superKey := true } }
 
 /-- The compiled key bindings of the menu's File and Edit items, as a host
-registers them for the owner `compiled`. -/
+registers them for the owner `compiled`. The clipboard commands' names are
+`Editor/Evil/Clipboard.lean`'s. -/
 def bindings : Array Config.KeyBinding :=
   #[{ keys := [chord "o"], command := Files.openName },
     { keys := [chord "s"], command := Files.saveName }, { keys := [chord "z"], command := "undo" },
-    { keys := [chord "Z"], command := "redo" }]
+    { keys := [chord "Z"], command := "redo" }, { keys := [chord "x"], command := Evil.cutName },
+    { keys := [chord "c"], command := Evil.copyName },
+    { keys := [chord "v"], command := Evil.pasteName },
+    { keys := [chord "a"], command := Evil.selectAllName }]
 
 end Menu
 

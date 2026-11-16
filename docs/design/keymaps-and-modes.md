@@ -295,6 +295,19 @@ report : State → ViewId → InputScheme.Report   -- defaults to the default re
     That no key ran the command does not decide it either: a key bound
     to the name alone enters no state, and a command of config's run by
     name may call `Evil.enter` with a report of its own.
+  - **A state's run table, and a menu item.** A record of the Vim scheme
+    may say that in its state a command name is completed as another
+    edit (`StateRecord.runs`), which can end a selection or enter a
+    state: Copy in a visual state is `"+y`, and Select All enters
+    `visual-line`. It holds for a key bound to the name alone, in any
+    keymap, and for a menu item that names it: the loop tells the scheme
+    of a menu item (`InputScheme.invoked`) and runs what it hands back,
+    with the report of the state it hands back, so on macOS, where AppKit
+    runs the item for `s-c` before the key reaches the window, the menu
+    and the key agree. So a key or a menu item enters a state, and still
+    no command does. A name with no entry runs as named, and config's
+    binding of the chord to another name wins, since the table looks at
+    the name reached.
 - **The first window's selection has the reported shape**: the loop starts
   its state with the scheme's report of the first view
   (`Loop.start`, `EditorState.initial`). A window made later takes its
@@ -1848,8 +1861,13 @@ commands"):
   next; the cursor goes to the first non-blank of the first line put.
   The text is put `count` times. A register that holds nothing, a
   clipboard that holds no text and one that is refused each give the
-  command up. `p` and `P` in a visual state are not built: the visual
-  tables do not bind them.
+  command up. A put in place of a visual selection is the operator
+  `replace`, which the Edit menu's Paste runs there: it fetches the
+  register first, puts its text in place of the selection, and sets the
+  unnamed register to the replaced text without `store`, so that text
+  never reaches the clipboard. The visual tables do not bind `p` and `P`
+  to it. A line-wise text put in place of a character-wise selection goes
+  in as it is, where Vim would split the line.
 
 **Departures from Vim that the checks name**, beside those of "Motions as
 built":
@@ -2022,6 +2040,7 @@ Which names have something behind them:
 | The register prefix's registers | The unnamed register and the clipboard's (`+`) are built; any other name gives the command up |
 | `ex` | Built and registered (`Ex.commands`): `:` opens the ex command line ("The ex command line"). The key hands the command a count and a register, which it does not read |
 | `scroll-down`, `scroll-up`, `scroll-page-down`, `scroll-page-up`; `scroll-line-to-top`, `scroll-line-to-center`, `scroll-line-to-bottom` | Built and registered (`Evil.commands`; "Scrolling as built"). The names are evil's own for these commands, without its prefix |
+| `clipboard-cut`, `clipboard-copy`, `clipboard-paste`, `select-all`, which the run tables name and the Edit menu's items and `s-x`, `s-c`, `s-v`, `s-a` run | Built and registered (`Evil.commands`, `lean/Editor/Evil/Clipboard.lean`); the operator `replace`, which `visualRuns` names, is an entry of `Evil.operators` that no key binds |
 
 | Table | Keys |
 |---|---|
@@ -2032,6 +2051,16 @@ Which names have something behind them:
 | `visualCommands` | `<Escape>` and `v` normal, `V` visual-line, `"` |
 | `visualLineCommands` | `<Escape>` and `V` normal, `v` visual, `"` |
 | `minibufferCommands` | `RET` minibuffer-accept, `<Escape>` minibuffer-cancel, `TAB` and `C-n` minibuffer-next, `S-TAB` and `C-p` minibuffer-previous, `<Backspace>` minibuffer-delete-backward, which deletes the character before the bar and, on an empty minibuffer, cancels the prompt as Vim's `<BS>` does (each enters no state, and none is a change dot repeat replays) |
+
+The run tables (`StateRecord.runs`), which say what a command name is
+completed as in a state, for a key bound to the name and a menu item that
+names it ("So a command enters no state: a key does"):
+
+| Table | Runs |
+|---|---|
+| `normalRuns` | `clipboard-paste` as `"+P`; `select-all` as itself, entering `visual-line` |
+| `insertRuns` | `select-all` as in normal state |
+| `visualRuns`, of both visual states | `clipboard-copy` as `"+y`, `clipboard-cut` as `"+d`, `clipboard-paste` as the operator `replace` from `+`, each over the selection, and `select-all` as in normal state |
 | `scrollCommands` | `C-d` scroll-down, `C-u` scroll-up, `C-f` scroll-page-down, `C-b` scroll-page-up, `z t` scroll-line-to-top, `z z` scroll-line-to-center, `z b` scroll-line-to-bottom (each changes no text and enters no state) |
 
 | State | Keymaps, in precedence order | Cursor | Selection | The grammar reads |
