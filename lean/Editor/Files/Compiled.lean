@@ -12,7 +12,9 @@ for the owner `compiled` when its loop starts, before any config
 - **`Files.commands`**: `open-file` and `save-buffer`, each a command that
   is given what it was called with (`Action.call`).
   - `open-file` opens the path that is its first argument, a string, in
-    the window it was called with (`Files.openCommand`). With no path it
+    the window it was called with (`Files.openCommand`), and then the
+    strings after it, up to the first argument that is not one, one after
+    another, so that the last is shown last. With no path it
     asks for one with a prompt, whose answer it then opens: the prompt's
     continuation is `open-file` itself, which receives the answer as its
     first argument. A host must be handed the minibuffer's commands too

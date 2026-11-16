@@ -82,9 +82,24 @@ are in `Editor/Files/Compiled.lean`.
   it. Its buffer and its window are rolled back, and the text it made is
   not released, as for every command (`Editor/Loop.lean`, "What is not
   undone"). The file is opened again.
+- **Several paths open one after another** (`Files.open view path next`,
+  `openAll`). Jobs run in parallel (`docs/design/concurrency.md`), so
+  starting one load per path would show whichever load finished last.
+  Instead the load order carries the paths still to open (`LoadOrder.next`),
+  and the job's command, whatever became of its own file, opens them in the
+  view its buffer was or would have been shown in. So one load is in flight
+  for each open of several paths, and the last path's buffer is shown last.
+  A path a buffer already holds is shown at once and the next is opened. A
+  refused path in the middle is said, and the rest still open. A refused
+  start is said and opens nothing more: every later start would be refused
+  the same way. An interrupted delivery is rolled back with what it
+  started, so the paths after it are not opened. Two opens of several paths
+  in flight at once load beside each other.
 - **The command as it is called asks for its path when it is given none**
   (`openCommand`). With a string as its first argument it opens that
-  path. With anything else first, or nothing, it asks for the path with a
+  path, and then the strings that follow it, up to the first argument that
+  is not one, one after another. With anything else first, or nothing, it
+  asks for the path with a
   prompt (`prompt`, `Editor/Api.lean`), labelled `openPrompt`, whose
   continuation is the open command itself with no argument of its own:
   when the prompt is accepted the command runs again with the answer as
@@ -208,16 +223,25 @@ structure LoadOrder where
   path : System.FilePath
   /-- The view the open command was called in. -/
   view : ViewId
+  /-- The paths to open after this one, in order. -/
+  next : List System.FilePath := []
   deriving DecidableEq, Repr
 
 /-- The order as the arguments a job is started with: the path, then the
-view's number. -/
+view's number, then each path to open next. An order with none crosses as
+the path and the view alone. -/
 def LoadOrder.arguments (order : LoadOrder) : List Argument :=
-  [.str order.path.toString, .nat order.view.index]
+  [.str order.path.toString, .nat order.view.index] ++ order.next.map (.str ·.toString)
+
+/-- The paths `arguments` are, if each is a string. -/
+def pathsOf? : List Argument → Option (List System.FilePath)
+  | [] => some []
+  | .str path :: rest => (pathsOf? rest).map (path :: ·)
+  | _ :: _ => none
 
 /-- The order `arguments` are, if they are one (`LoadOrder.arguments`). -/
 def LoadOrder.ofArguments? : List Argument → Option LoadOrder
-  | [.str path, .nat view] => some { path, view := ⟨view⟩ }
+  | .str path :: .nat view :: rest => (pathsOf? rest).map fun next => { path, view := ⟨view⟩, next }
   | _ => none
 
 /-- What the echo area says when the file at `path` could not be opened:
@@ -254,17 +278,37 @@ def shownIn (state : EditorState) (view : ViewId) : ViewId :=
   | some asked => if asked.view == view then state.askedFrom asked else view
   | none => view
 
-/-- The command a finished load job hands the loop: what the reply to the
-load of `order.path` becomes ("Open", in the module docs). -/
-def opened (order : LoadOrder) (reply : Except FileError File.Loaded) : EditorM Unit := do
+/-- Opens each of `paths` in `view`, one after another ("Open", in the
+module docs). A path a buffer holds (`EditorState.findFile`) is shown at
+once, in `shownIn`'s view, saying `notShown` on a refusal, and the next path
+is opened. The first path no buffer holds is loaded by the job that loads a
+file, whose order carries the paths after it, so that its result opens them
+(`opened`): one load is in flight at a time, and the last path's buffer is
+shown last. A start that is refused is said (`notOpening`) and opens
+nothing more, since every later start would be refused the same way. -/
+def openAll (view : ViewId) : List System.FilePath → EditorM Unit
+  | [] => pure ()
+  | path :: next => do
+    let state ← editorState
+    if let some buffer := state.findFile path then
+      if let .error _← (shownIn state view).show buffer then
+        message (notShown path)
+      openAll view next
+    else if let .error refusal← startJob loadJob (LoadOrder.arguments { path, view, next }) then
+      message (notOpening path refusal)
+
+/-- What the reply to the load of `order.path` makes of that one file
+("Open", in the module docs): a message on a refusal; on success the
+buffer, shown in `view`, unless a buffer already holds the path. -/
+def takeIn (order : LoadOrder) (view : ViewId) (reply : Except FileError File.Loaded) :
+    EditorM Unit := do
   match reply with
   | .error error =>
     message (notOpened order.path error)
   | .ok loaded =>
     let path := order.path
     let state ← editorState
-    let view :=
-      shownIn state (if (state.window? order.view).isSome then order.view else state.frame.focused)
+    let view := shownIn state view
     -- Another open of the path may have been delivered while this one's
     -- file loaded: the path is matched again, and nothing is taken in.
     if let some buffer := state.findFile path then
@@ -278,6 +322,17 @@ def opened (order : LoadOrder) (reply : Except FileError File.Loaded) : EditorM 
           (loaded.endings.dominant.getD .lf) | message (notShown path)
     let .ok () ← view.show buffer | message (notShown path)
 
+/-- The command a finished load job hands the loop: what the reply to the
+load of `order.path` becomes (`takeIn`), and then, whatever became of the
+file, the paths the order has next, opened one after another (`openAll`).
+Both are in the asking view while it still has a window, and the focused
+view otherwise ("Open", in the module docs). -/
+def opened (order : LoadOrder) (reply : Except FileError File.Loaded) : EditorM Unit := do
+  let view (state : EditorState) : ViewId :=
+    if (state.window? order.view).isSome then order.view else state.frame.focused
+  takeIn order (view (← editorState)) reply
+  openAll (view (← editorState)) order.next
+
 /-- The load job: loads the file its order names, unless it is longer than
 `limit` bytes, and finishes with what the reply becomes (`opened`). A
 refusal is a value in the reply; it fails only for arguments that are not
@@ -287,31 +342,36 @@ def loadWork (limit : Nat := Files.limit) (arguments : List Argument) : Work := 
     LoadOrder.ofArguments? arguments | throw s!"{loadJob}: its arguments are not a load order"
   return opened order (← File.load order.path limit)
 
-/-- Opens the file at `path` in `view`. When a buffer holds the path
-(`EditorState.findFile`), it shows that buffer and starts nothing.
-Otherwise it starts the job that loads the file, whose result makes the
-buffer and shows it ("Open", in the module docs). For the minibuffer's
+/-- Opens the file at `path` in `view`, and then each of `next`, one after
+another (`openAll`). When a buffer holds a path (`EditorState.findFile`),
+it shows that buffer and starts nothing for it. Otherwise it starts the job
+that loads the file, whose result makes the buffer and shows it, and then
+opens the paths after it ("Open", in the module docs). For the minibuffer's
 view the buffer is shown in the window of the tree the prompt was asked
 from (`shownIn`). Where no load job is registered it says so in the echo
 area. -/
-def «open» (view : ViewId) (path : System.FilePath) : EditorM Unit := do
-  let state ← editorState
-  if let some buffer := state.findFile path then
-    let .ok () ← (shownIn state view).show buffer | message (notShown path)
-    return
-  if let .error refusal← startJob loadJob (LoadOrder.arguments { path, view }) then
-    message (notOpening path refusal)
+def «open» (view : ViewId) (path : System.FilePath) (next : List System.FilePath := []) :
+    EditorM Unit :=
+  openAll view (path :: next)
+
+/-- The strings at the front of `arguments`, as paths, up to the first
+argument that is not one. -/
+def leadingPaths : List Argument → List System.FilePath
+  | .str path :: rest => path :: leadingPaths rest
+  | _ => []
 
 /-- The open command as it is called: opens the path that is its first
-argument, a string, in the window it was called with. With anything else
-first, or nothing, it asks for the path (`prompt`, labelled `openPrompt`),
-with itself as the continuation: the answer is then its first argument,
-and it runs in the view it was asked from. Where the prompt is refused,
-because one is open, it says so in the echo area (`notAsking`). -/
+argument, a string, in the window it was called with, and after it the
+strings that follow it, up to the first argument that is not one, one after
+another. With anything else first, or nothing, it asks for the path
+(`prompt`, labelled `openPrompt`), with itself as the continuation: the
+answer is then its first argument, and it runs in the view it was asked
+from. Where the prompt is refused, because one is open, it says so in the
+echo area (`notAsking`). -/
 def openCommand (call : Call) : EditorM Unit := do
   match call.arguments with
-  | .str path :: _ =>
-    Files.open call.target.window.id path
+  | .str path :: rest =>
+    Files.open call.target.window.id path (leadingPaths rest)
   | _ =>
     if let .error refusal← prompt openPrompt { command := openName } then
       message (notAsking refusal)

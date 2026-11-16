@@ -14136,7 +14136,9 @@ def opens (path : System.FilePath) : Invocation :=
 `openKeys`, each bound to the open command with its path, `C-o o` bound to
 the open command with no argument, `C-o V` to the open command with the
 arguments the Vim scheme gives a command a key is bound to, a count and a
-register, and the open command under its name.
+register, and the open command under its name. `C-o 2` is bound to the open
+command with two paths, `note.txt` and then `crlf.txt`, and `C-o 3` with
+`missing.txt` and then `lf.txt`.
 
 `C-o w` is bound to the save command, under its name, `C-o f` to the save
 command with `true` as its argument, and `C-o v` to the save command with
@@ -14159,7 +14161,15 @@ def fileKeys : Loop.Keys TestScheme.scheme :=
         ("C-o K", invoke "shut"), ("C-o w", invoke Files.saveName),
         ("C-o f", { command := Files.saveName, arguments := [.bool true] }),
         ("C-o v", { command := Files.saveName, arguments := [.nat 0, .str ""] }),
-        ("C-o u", invoke "undo"), ("C-o d", invoke "drop"), ("C-o x", invoke "save-absent")])
+        ("C-o u", invoke "undo"), ("C-o d", invoke "drop"), ("C-o x", invoke "save-absent"),
+        ("C-o 2",
+          { command := Files.openName
+            arguments :=
+              [.str (inFiles "note.txt").toString, .str (inFiles "crlf.txt").toString] }),
+        ("C-o 3",
+          { command := Files.openName
+            arguments :=
+              [.str (inFiles "missing.txt").toString, .str (inFiles "lf.txt").toString] })])
     [(Files.openName, fun call => do
         Files.openCommand call
         return none),
@@ -14447,6 +14457,86 @@ def fileCommandChecks : List Check :=
               (fun arguments => Files.LoadOrder.ofArguments? arguments == none) &&
             ((Files.loadWork Files.limit [.nat 1] ()).runModel { files := commandFiles }).1 matches
               .failed _ },
+    { name :=
+        "a load order with paths to open next crosses as arguments and back, and one with none crosses as before"
+      run :=
+        pure <|
+          let order : Files.LoadOrder :=
+            { path := inFiles "note.txt", view := ⟨3⟩, next := [inFiles "crlf.txt", "/a b/é.txt"] }
+          Files.LoadOrder.ofArguments? order.arguments == some order &&
+            order.arguments ==
+              [.str (inFiles "note.txt").toString, .nat 3, .str (inFiles "crlf.txt").toString,
+                .str "/a b/é.txt"] &&
+            ({ path := "/a", view := ⟨0⟩ } : Files.LoadOrder).arguments == [.str "/a", .nat 0] &&
+            Files.LoadOrder.ofArguments? [.str "/a", .nat 0, .str "/b", .nat 1] == none },
+    { name :=
+        "the open command given two paths starts one load, of the first; once it is finished the first file's buffer is shown and the second's load starts; once that is finished two new buffers hold the two files and the view shows the second"
+      run :=
+        pure <|
+          match filesDriver with
+          | none => false
+          | some driver =>
+            let note := inFiles "note.txt"
+            let crlf := inFiles "crlf.txt"
+            let (asked, steps) := fedTo driver (presses "C-o 2")
+            let (first, delivered) := asked.finish 1
+            let (both, _) := first.finish 2
+            let state := both.loop.state
+            started steps ==
+                #[{ name := Files.loadJob
+                    arguments :=
+                      Files.LoadOrder.arguments { path := note, view := ⟨0⟩, next := [crlf] } }] &&
+              asked.pending.size == 1 &&
+              (showing first).map (·.id) == some ⟨1⟩ &&
+              (delivered.map (·.starts)) ==
+                some
+                  #[{ name := Files.loadJob
+                      arguments := Files.LoadOrder.arguments { path := crlf, view := ⟨0⟩ } }] &&
+              first.pending.size == 1 &&
+              state.buffers.size == 3 &&
+              state.findFile note == some ⟨1⟩ &&
+              state.findFile crlf == some ⟨2⟩ &&
+              (showing both).map (·.id) == some ⟨2⟩ &&
+              both.pending.isEmpty &&
+              state.wellFormed },
+    { name :=
+        "the open command given an open path and then another shows the open one and starts the second's load at once"
+      run :=
+        pure <|
+          match noteOpen with
+          | none => false
+          | some noted =>
+            let crlf := inFiles "crlf.txt"
+            let (scratch, _) := fedTo noted (presses "C-o 0")
+            let (asked, steps) := fedTo scratch (presses "C-o 2")
+            let (both, _) := asked.finish 2
+            (showing scratch).map (·.id) == some ⟨0⟩ && (showing asked).map (·.id) == some ⟨1⟩ &&
+              started steps ==
+                #[{ name := Files.loadJob
+                    arguments := Files.LoadOrder.arguments { path := crlf, view := ⟨0⟩ } }] &&
+              both.loop.state.buffers.size == 3 &&
+              (showing both).map (·.id) == both.loop.state.findFile crlf &&
+              (both.loop.state.findFile crlf).isSome },
+    { name :=
+        "the open command given a path that cannot be opened and then one that can says the first cannot be opened and shows the second"
+      run :=
+        pure <|
+          match filesDriver with
+          | none => false
+          | some driver =>
+            let lf := inFiles "lf.txt"
+            let (asked, _) := fedTo driver (presses "C-o 3")
+            let (refused, delivered) := asked.finish 1
+            let (opened, _) := refused.finish 2
+            echoOf refused == some (Files.notOpened (inFiles "missing.txt") .notFound) &&
+              (showing refused).map (·.id) == some ⟨0⟩ &&
+              (delivered.map (·.starts)) ==
+                some
+                  #[{ name := Files.loadJob
+                      arguments := Files.LoadOrder.arguments { path := lf, view := ⟨0⟩ } }] &&
+              opened.loop.state.buffers.size == 2 &&
+              (showing opened).map (·.id) == opened.loop.state.findFile lf &&
+              (opened.loop.state.findFile lf).isSome },
     { name :=
         "the markers of the window that showed the scratch buffer are given up once the file's buffer is shown in it, and not before: they answer while the load is in flight and refuse noSuchMarker after the delivery"
       run :=
