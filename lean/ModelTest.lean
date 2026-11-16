@@ -4558,7 +4558,23 @@ def sceneChecks : List Check :=
       run :=
         pure
           (twoViews == twoViews && twoViews != { twoViews with pending := "" } &&
-            twoViews != { twoViews with views := twoViews.views.pop }) }]
+            twoViews != { twoViews with views := twoViews.views.pop }) },
+    { name :=
+        "a status field is on the left with no padding and a view has no status face, unless they say so"
+      run :=
+        let field : StatusField := { text := "x", face := ⟨"mode-line.buffer"⟩ }
+        let right : StatusField :=
+          { field with
+            side := .right, padding := 4 }
+        match twoViews.views[1]? with
+        | some view =>
+          pure
+            (field.side == .left && field.padding == 0 && right.side == .right &&
+              right.padding == 4 &&
+              field != right &&
+              view.statusFace == none &&
+              { view with statusFace := some ⟨"mode-line.inactive"⟩ } != view)
+        | none => pure false }]
 
 /-- The checks of faces and of the built-in theme, which are plain data
 (`Editor/Face.lean`). What a face looks like in a frame is layout's rule,
@@ -4580,7 +4596,8 @@ def faceChecks : List Check :=
             face.background.isSome &&
             face.underline.isSome &&
             face.strikeThrough.isSome &&
-            face.lineHeight.isSome
+            face.lineHeight.isSome &&
+            face.verticalPadding.isSome
         pure ((Theme.builtin.filter (complete ·.face)).map (·.name.name) == #["default"]) },
     { name :=
         "a face over another takes each attribute from the upper where it sets it and from the lower where it does not"
@@ -4594,7 +4611,10 @@ def faceChecks : List Check :=
               { foreground := some (Color.rgb 1 0 0), weight := some 700
                 background := some (Color.rgb 3 0 0), size := some 12 } &&
             ({} : Face).over lower == lower &&
-            upper.over {} == upper) },
+            upper.over {} == upper &&
+            ({ verticalPadding := some 3 } : Face).over { verticalPadding := some 5 } ==
+              { verticalPadding := some 3 } &&
+            ({} : Face).over { verticalPadding := some 5 } == { verticalPadding := some 5 }) },
     { name :=
         "a theme's merged face of a name defined twice is the later definition's set attributes over the earlier's, ignores other names, and is the empty face for a name it does not define"
       run :=

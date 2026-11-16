@@ -108,7 +108,7 @@ use crate::words::Writer;
 
 mod wire;
 
-pub use wire::{WireFace, WireScene, WireView, decode_definitions, encode_definitions};
+pub use wire::{WireFace, WireField, WireScene, WireView, decode_definitions, encode_definitions};
 
 /// How a display call ended, as it crosses the boundary.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

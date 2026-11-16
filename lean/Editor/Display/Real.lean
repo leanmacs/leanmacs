@@ -179,6 +179,16 @@ def pushOptional (words : Array UInt64) : Option UInt64 → Array UInt64
   | some value => words.push 1 |>.push value
   | none => words.push 0 |>.push 0
 
+/-- The library's tag of a status field's side. -/
+def sideTag : StatusSide → UInt64
+  | .left => 0
+  | .right => 1
+
+/-- The word of a status field's padding: a padding no `u32` holds is sent
+as the largest one does, which is what the library would refuse otherwise. -/
+def paddingWord (padding : Nat) : UInt64 :=
+  (min padding (UInt32.size - 1)).toUInt64
+
 /-- `view` added to `encoded`: its snapshot, found in the table, as the
 next handle when the table holds it. -/
 def encodeView (real : RealDisplay) (encoded : Encoded) (view : View) : IO Encoded := do
@@ -218,8 +228,13 @@ def encodeView (real : RealDisplay) (encoded : Encoded) (view : View) : IO Encod
       { encoded with
         words :=
           encoded.words.push field.text.utf8ByteSize.toUInt64 |>.push
-            field.face.name.utf8ByteSize.toUInt64
+                field.face.name.utf8ByteSize.toUInt64 |>.push
+              (sideTag field.side) |>.push
+            (paddingWord field.padding)
         strings := encoded.strings ++ field.text ++ field.face.name }
+  encoded :=
+    pushText { encoded with words := encoded.words.push view.statusFace.isSome.toUInt64 }
+      ((view.statusFace.map (·.name)).getD "")
   return encoded
 
 /-- The library's tag of a slant. -/
@@ -242,7 +257,7 @@ the nearest end of it, which is what the library would refuse otherwise. -/
 def weightWord (weight : Nat) : UInt64 :=
   (min 1000 (max 1 weight)).toUInt64
 
-/-- One definition of a face added to `encoded`: its 22 words, an absent
+/-- One definition of a face added to `encoded`: its 24 words, an absent
 attribute written as 0, and its name and then its family, when it has one,
 added to the string. -/
 def encodeFace (encoded : Encoded) (definition : FaceDefinition) : Encoded :=
@@ -265,7 +280,8 @@ def encodeFace (encoded : Encoded) (definition : FaceDefinition) : Encoded :=
   let words := words.push face.underline.isSome.toUInt64 |>.push (underlineTag underline.style)
   let words := pushOptional words (underline.color.map color)
   let words := pushOptional words (face.strikeThrough.map (·.toUInt64))
-  { familied with words := words.push face.lineHeight.isSome.toUInt64 |>.push kind |>.push height }
+  let words := words.push face.lineHeight.isSome.toUInt64 |>.push kind |>.push height
+  { familied with words := pushOptional words (face.verticalPadding.map (·.sixtyFourths.toUInt64)) }
 
 /-- The definitions of `theme` added to `encoded`: their count, then each
 (`encodeFace`). After a presence, they are a scene's faces; by themselves,

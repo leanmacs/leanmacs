@@ -16,12 +16,18 @@ the last scene published, on its own thread, so painting never waits on Lean
 - **Faces are named only** (`FaceName`). What a face looks like, themes and
   how faces merge are the display pipeline's (its phase 2).
 - **The scene only carries choices made elsewhere.** Which fields a view's
-  status line holds is the command loop's choice (`Loop.statusOf`,
-  `Editor/Loop.lean`): the fields the input scheme reports of the view,
-  then the buffer's name, and a modified field while the buffer is
-  modified; and, for the minibuffer's view while a prompt is open, the
-  prompt's label and then a field for each candidate the prompt has
-  listed, in the matcher's order, the chosen one in a face of its own.
+  status line holds, on which side and with what padding, is the mode
+  line's choice (`ModeLine.fields`, `Editor/ModeLine.lean`), called by the
+  command loop (`Loop.statusOf`, `Editor/Loop.lean`): the segments config
+  or the default order lists for each side, the input scheme's reported
+  fields drawn by the `state` segment as a badge; and, for a window that
+  is not selected, every field and the row (`View.statusFace`) in
+  `mode-line.inactive`. For the minibuffer's view while a prompt is open
+  it is the prompt's label and then a field for each candidate the prompt
+  has listed, in the matcher's order, the chosen one in a face of its own.
+  Where the fields go across the row, and what is cut when they do not
+  fit, is layout's (`crates/editor-layout/src/frame.rs`, "The mode
+  line").
   The scene has no field of its own for a
   prompt or for its candidates: the minibuffer's view is a view like any
   other, whose text is the input typed so far, and its status line is
@@ -82,12 +88,27 @@ structure Decoration where
   face : FaceName
   deriving DecidableEq, Repr
 
+/-- Which end of a view's status row a field is drawn from: the left fields
+run from the row's start, and the right fields end at its end. -/
+inductive StatusSide where
+  /-- From the row's start, after the left fields before it. -/
+  | left
+  /-- Ending at the row's end, with the right fields after it. -/
+  | right
+  deriving DecidableEq, Repr
+
 /-- One field of a view's status line. -/
 structure StatusField where
   /-- What it says. -/
   text : String
   /-- The face it takes. -/
   face : FaceName
+  /-- The side of the row it is drawn on. -/
+  side : StatusSide := .left
+  /-- The space before and after its text, in whole points (logical pixels),
+  which its face's background fills. Layout multiplies it by the window's
+  scale, as it does a face's lengths. -/
+  padding : Nat := 0
   deriving DecidableEq, Repr
 
 /-- A size, in physical pixels. -/
@@ -137,6 +158,11 @@ structure View where
   decorations : Array Decoration
   /-- Its status line, field by field. -/
   status : Array StatusField
+  /-- The face of its status row, over `mode-line` and under every field's,
+  which gives the row its background: `mode-line.inactive` for a window
+  that is not selected, and none for the selected one and the minibuffer's
+  view. It neither makes the row taller nor moves its line. -/
+  statusFace : Option FaceName := none
   deriving DecidableEq, Repr
 
 /-- Everything the display shows, as published after a command. -/

@@ -2247,7 +2247,8 @@ def SceneFixture.own (index : Nat) : Editor.MarkerId :=
 /-- A scene that takes the branches of the binding's encoding the display
 fixture does not: a pending prefix and a preedit; view 1, of a snapshot the
 table does not hold, before view 2, of the one it holds, scrolled to its
-second row with a selection; and view 3, of the same snapshot, whose scroll
+second row with a selection, a right status field with a padding and a
+status face; and view 3, of the same snapshot, whose scroll
 marker is `scroll` and whose selection markers are `selections`. Each view
 is 4 columns by 3 rows. -/
 def SceneFixture.scene (fixture : SceneFixture) (scroll : Editor.MarkerId)
@@ -2263,7 +2264,10 @@ def SceneFixture.scene (fixture : SceneFixture) (scroll : Editor.MarkerId)
           selections := #[SceneFixture.own fixture.selection]
           cursor := { shape := .bar, face := ⟨"c2"⟩ }
           decorations := #[{ start := 0, stop := 2, face := ⟨"kw"⟩ }]
-          status := #[{ text := "NORMAL", face := ⟨"mode"⟩ }] },
+          status :=
+            #[{ text := "NORMAL", face := ⟨"mode"⟩ },
+              { text := "1:1", face := ⟨"pos"⟩, side := .right, padding := 4 }]
+          statusFace := some ⟨"dim"⟩ },
         { id := ⟨3⟩, rect := rect 96, snapshot := fixture.snapshot, scroll, selections
           cursor := { shape := .underline, face := ⟨"c3"⟩ }, decorations := #[], status := #[] }]
     focused := some ⟨2⟩, echo := "fixture", pending := "g", preedit := some "é"
@@ -2300,7 +2304,8 @@ def everyTheme : Editor.Theme :=
         { family := some "mono", size := some 20, weight := some 700, slant := some .italic
           foreground := some (.rgba 0x11 0x22 0x33 0x44), background := some (.rgb 0xaa 0xbb 0xcc)
           underline := some { style := .curly, color := some (.rgb 0xff 0 0) }
-          strikeThrough := some true, lineHeight := some (.pixels 24) } },
+          strikeThrough := some true, lineHeight := some (.pixels 24)
+          verticalPadding := some 3 } },
     { name := ⟨"unset"⟩, face := {} },
     { name := ⟨"é"⟩
       face :=
@@ -2337,19 +2342,22 @@ def sceneChecks (_ : Unit) : List Check :=
         let selection := fixture.selection.toUInt64
         -- The title's length after the preedit's presence and length.
         let scene : Array UInt64 := #[32, 144, 1, 2, 7, 1, 1, 2, 9, 3]
-        -- No snapshot; its scroll marker; no selection; a block cursor.
-        let first : Array UInt64 := #[1, 0, 0, 32, 48, 0, 0, 1, anchor, 0, 0, 2, 0, 0]
+        -- No snapshot; its scroll marker; no selection; a block cursor; no
+        -- status field and no status face.
+        let first : Array UInt64 := #[1, 0, 0, 32, 48, 0, 0, 1, anchor, 0, 0, 2, 0, 0, 0, 0]
         -- The first handle; its scroll marker and its selection; a bar
-        -- cursor; a decoration and a status field.
+        -- cursor; a decoration; a left status field with no padding and a
+        -- right one padded 4; and a status face.
         let second : Array UInt64 :=
-          #[2, 0, 48, 32, 48, 1, 0, 1, anchor, 1, selection, 1, 2, 1, 0, 2, 2, 1, 6, 4]
+          #[2, 0, 48, 32, 48, 1, 0, 1, anchor, 1, selection, 1, 2, 1, 0, 2, 2, 2, 6, 4, 0, 0, 3, 3,
+            1, 4, 1, 3]
         -- The second handle; no scroll marker and no selection; an
         -- underline cursor.
-        let third : Array UInt64 := #[3, 0, 96, 32, 48, 1, 1, 0, 0, 0, 2, 2, 0, 0]
+        let third : Array UInt64 := #[3, 0, 96, 32, 48, 1, 1, 0, 0, 0, 2, 2, 0, 0, 0, 0]
         -- No faces: as last published.
         let faces : Array UInt64 := #[0]
         return encoded.words == scene ++ first ++ second ++ third ++ faces &&
-            encoded.strings == "fixturegénotes.txtc1c2kwNORMALmodec3" &&
+            encoded.strings == "fixturegénotes.txtc1c2kwNORMALmode1:1posdimc3" &&
             encoded.snapshots.size == 2 },
     { name :=
         "published, that scene comes back as sent; the view of the unknown snapshot shows nothing, the view after it shows its text from its anchor, and the view whose markers are of two texts shows its text from the start with no selection"
@@ -2400,30 +2408,30 @@ def sceneChecks (_ : Unit) : List Check :=
         let faces : Array UInt64 := #[1, 7]
         -- Its name; a family; 20 pixels; weight 700; italic; a foreground
         -- and a background; a curly underline with a colour; struck
-        -- through; a line height of 24 pixels.
+        -- through; a line height of 24 pixels; a vertical padding of 3.
         let all : Array UInt64 :=
           #[3, 1, 4, 1, 1280, 1, 700, 1, 1, 1, 0x11223344, 1, 0xaabbccff, 1, 3, 1, 0xff0000ff, 1, 1,
-            1, 1, 1536]
+            1, 1, 1536, 1, 192]
         -- Its name, and nothing set.
         let unset : Array UInt64 :=
-          #[5, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+          #[5, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
         -- A name of two bytes; upright; no underline, which is set; not
         -- struck through, which is set; one and a half times the font's
         -- own line height.
         let upright : Array UInt64 :=
-          #[2, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1, 0, 96]
+          #[2, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1, 0, 96, 0, 0]
         -- Oblique, and a single underline with no colour of its own.
         let oblique : Array UInt64 :=
-          #[1, 0, 0, 0, 0, 0, 0, 1, 2, 0, 0, 0, 0, 1, 1, 0, 0, 0, 0, 0, 0, 0]
+          #[1, 0, 0, 0, 0, 0, 0, 1, 2, 0, 0, 0, 0, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0]
         -- A weight over 1000, sent as 1000, and a double underline.
         let heavy : Array UInt64 :=
-          #[1, 0, 0, 0, 0, 1, 1000, 0, 0, 0, 0, 0, 0, 1, 2, 0, 0, 0, 0, 0, 0, 0]
+          #[1, 0, 0, 0, 0, 1, 1000, 0, 0, 0, 0, 0, 0, 1, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0]
         -- A weight of 0, sent as 1, and a dotted underline.
         let light : Array UInt64 :=
-          #[1, 0, 0, 0, 0, 1, 1, 0, 0, 0, 0, 0, 0, 1, 4, 0, 0, 0, 0, 0, 0, 0]
+          #[1, 0, 0, 0, 0, 1, 1, 0, 0, 0, 0, 0, 0, 1, 4, 0, 0, 0, 0, 0, 0, 0, 0, 0]
         -- A dashed underline.
         let dashed : Array UInt64 :=
-          #[1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 5, 0, 0, 0, 0, 0, 0, 0]
+          #[1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 5, 0, 0, 0, 0, 0, 0, 0, 0, 0]
         real.publish emptyScene
         let back ← real.display.scene
         return encoded.words ==
@@ -3045,6 +3053,16 @@ def renderChecks (_ : Unit) : List Check :=
         let taller ← (← Editor.Ffi.Display.newCells 8 20).heights
         return heights == { text := 16, status := 16, message := 16 } &&
             taller == { text := 20, status := 20, message := 20 } },
+    { name :=
+        "a theme whose mode line and echo area have a vertical padding reaches layout through the binding: its status row and bottom row are taller by twice it"
+      run := do
+        let padded : Editor.Theme :=
+          #[{ name := ⟨"mode-line"⟩, face := { verticalPadding := some 3 } },
+            { name := ⟨"echo-area"⟩, face := { verticalPadding := some 5 } }]
+        let fixture ← sceneFixture padded
+        let heights ← fixture.real.heights
+        let _ ← fixture.document.read
+        return heights == { text := 16, status := 22, message := 26 } },
     { name :=
         "a bound display is drawn in the scripted window while it is open, the window's session's counters are read once it has closed, and a scene published then reaches nothing"
       run := do

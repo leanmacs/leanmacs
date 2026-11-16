@@ -16,7 +16,7 @@ use std::slice;
 use std::sync::{Mutex, MutexGuard, PoisonError};
 
 use editor_ffi::display::{
-    DisplayStatus, RawPicture, WireFace, WireScene, WireView, editor_ffi_display_define,
+    DisplayStatus, RawPicture, WireFace, WireField, WireScene, WireView, editor_ffi_display_define,
     editor_ffi_display_frame_rows, editor_ffi_display_frame_text, editor_ffi_display_free,
     editor_ffi_display_heights, editor_ffi_display_live, editor_ffi_display_move,
     editor_ffi_display_new_cells, editor_ffi_display_new_font, editor_ffi_display_picture,
@@ -374,7 +374,12 @@ fn a_scene_published_through_c_is_laid_out_as_layout_lays_it_out() {
             cursor_shape: 1,
             cursor_face: "cursor".to_owned(),
             decorations: vec![(0, 2, "keyword".to_owned())],
-            status: vec![("NORMAL".to_owned(), "mode".to_owned())],
+            status: vec![WireField {
+                text: "NORMAL".to_owned(),
+                face: "mode".to_owned(),
+                ..WireField::default()
+            }],
+            status_face: None,
         }],
         faces: None,
     };
@@ -605,7 +610,11 @@ fn faces_defined_through_c_are_the_faces_of_the_heights_and_of_a_frame_published
             id: 1,
             rect: [0, 0, 160, 64],
             snapshot: Some(0),
-            status: vec![("NORMAL".to_owned(), "mode-line".to_owned())],
+            status: vec![WireField {
+                text: "NORMAL".to_owned(),
+                face: "mode-line".to_owned(),
+                ..WireField::default()
+            }],
             ..WireView::default()
         }],
         ..WireScene::default()
@@ -822,7 +831,12 @@ fn published_scene() -> (
             cursor_shape: 1,
             cursor_face: "cursor".to_owned(),
             decorations: vec![(0, 2, "keyword".to_owned())],
-            status: vec![("NORMAL".to_owned(), "mode".to_owned())],
+            status: vec![WireField {
+                text: "NORMAL".to_owned(),
+                face: "mode".to_owned(),
+                ..WireField::default()
+            }],
+            status_face: None,
         }],
         ..WireScene::default()
     };
@@ -904,8 +918,9 @@ fn words_that_spell_no_face_are_refused_and_the_last_frame_and_faces_are_kept() 
     wire.faces = Some(some_faces());
     assert!(publish_wire(display, snapshot, &wire));
     let styled = frame_text(display);
-    // The same scene with other faces, and its last word, a line height's
-    // value, made one no `u32` holds.
+    // The same scene with other faces, and its line height's value, the
+    // third word from the end before the vertical padding's two, made one
+    // no `u32` holds.
     wire.faces = Some(vec![WireFace {
         name: "default".to_owned(),
         face: Face {
@@ -914,8 +929,8 @@ fn words_that_spell_no_face_are_refused_and_the_last_frame_and_faces_are_kept() 
         },
     }]);
     let (mut words, strings) = wire.encode();
-    let last = words.len() - 8;
-    words[last..].copy_from_slice(&(u64::from(u32::MAX) + 1).to_le_bytes());
+    let value = words.len() - 3 * 8;
+    words[value..value + 8].copy_from_slice(&(u64::from(u32::MAX) + 1).to_le_bytes());
     assert!(!publish(display, &words, &strings, &[snapshot]));
     assert_eq!(frame_text(display), styled);
     // Neither the frame nor the faces changed: a publish with absent

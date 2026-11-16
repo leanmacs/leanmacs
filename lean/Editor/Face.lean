@@ -46,7 +46,11 @@ call, and only when the theme changed (`Editor/Display/Real.lean`).
   same apparent size on every display, and nothing here knows a scale: Lean
   multiplies nothing, and reads no scale to state a face. The type keeps
   the name `Pixels` from when a theme stated physical pixels.
-- Only a face's lengths are points. A scene's sizes and rectangles
+- A face's lengths are its size, a line height stated as a length, and its
+  vertical padding. A status field's horizontal padding is the field's own
+  (`StatusField.padding`, `Editor/Scene.lean`), in whole points too.
+- Only a face's lengths and a status field's padding are points. A
+  scene's sizes and rectangles
   (`Editor/Scene.lean`), a pointer's position and a resize's size
   (`Editor/Event.lean`) are physical pixels, as before.
 - A weight is 1 to 1000: 400 is normal and 700 bold. The binding sends a
@@ -77,7 +81,9 @@ colours are placeholders.
 A new attribute is a field of `Face` here, a field of `Face` in
 `crates/editor-layout/src/face.rs`, and two words of a definition as it
 crosses (`crates/editor-ffi/src/display/wire.rs`, written by
-`RealDisplay.encodeFace`), and a line of `Face.over`. A new face a feature
+`RealDisplay.encodeFace`), and a line of `Face.over`. The vertical padding
+was added so: it is neither font nor paint, and layout reads it only where
+it sizes a status row. A new face a feature
 draws is an entry of the vocabulary and a definition in `Palette.theme`.
 A new shipped theme is a `Palette`, its theme plus the theme's own
 definitions after it where it differs from the shared mapping, and a
@@ -187,6 +193,11 @@ structure Face where
   strikeThrough : Option Bool := none
   /-- The line height. -/
   lineHeight : Option LineHeight := none
+  /-- The space above and below the line of a status row drawn in it, in
+  points. Layout reads it only from `mode-line` and `echo-area`, where it
+  makes the status rows taller (`Display.Heights`); a field's face or a
+  view's status face may set it, and it is ignored there. -/
+  verticalPadding : Option Pixels := none
   deriving DecidableEq, Repr
 
 /-- A definition: the attributes a name sets. -/
@@ -216,6 +227,7 @@ def Face.over (upper lower : Face) : Face where
   underline := upper.underline <|> lower.underline
   strikeThrough := upper.strikeThrough <|> lower.strikeThrough
   lineHeight := upper.lineHeight <|> lower.lineHeight
+  verticalPadding := upper.verticalPadding <|> lower.verticalPadding
 
 /-- The face `theme` gives `name`: its definitions of `name` in order, each
 later one over the ones before; the empty face for a name it does not
@@ -292,7 +304,7 @@ def Palette.theme (palette : Palette) : Theme :=
         { family := some "monospace", size := some 16, weight := some 400, slant := some .upright
           foreground := some palette.ink, background := some palette.paper
           underline := some { style := .none }, strikeThrough := some false
-          lineHeight := some (.multiple 64) }] ++
+          lineHeight := some (.multiple 64), verticalPadding := some 0 }] ++
     cursors.map (on · palette.paper palette.cursor) ++
     #[defined "selection" { background := some palette.selected },
       on "mode-line" palette.strong palette.raised, ink "echo-area" palette.strong,
