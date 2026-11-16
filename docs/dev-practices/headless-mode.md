@@ -871,6 +871,59 @@ view 2 0,448 640x32: "", scroll 0, selections 0..0, padding 8 0
 status 2: minibuffer.prompt ":", minibuffer.candidate "w", minibuffer.candidate "w!", minibuffer.candidate "e", minibuffer.candidate "e!", minibuffer.candidate "autoread", minibuffer.candidate "noautoread", minibuffer.candidate "q", minibuffer.candidate "wq", minibuffer.candidate "reload", minibuffer.candidate "b", minibuffer.candidate "ls", minibuffer.candidate "bd"
 ```
 
+A fifteenth, `tests/headless/two-windows/script`, runs on the config in
+`tests/headless/two-windows/config`, which keeps the default layout and
+binds the same two keys as the monocle fixture's (each fixture's config
+directory is self-contained). In a frame of 640 by 120 it types twelve
+lines, more than a window shows, goes back to the first, and splits the
+window: views 0 and 1 are side by side, `0,0 320x104` and `320,0 320x104`,
+on one buffer, both at scroll 0. Then view 1 is focused and `G` takes its
+cursor to the last line, its anchor following it down, and view 0, focused
+again, appends `,world` to its first line. The last scene shows both views
+with the edit; view 0 is still at scroll 0 with its cursor on the first
+line, and view 1 at the last line's start, with its anchor further down,
+each moved by the edit. Its output must be exactly
+`tests/headless/two-windows/expected`:
+
+```console
+$ .lake/build/bin/editor headless "$(lean --print-prefix)" .lake/build/lib/lean ../tests/headless/two-windows/config ../tests/headless/two-windows/script
+reload 1: installed, 1 chunks, 2 commands
+key arrived: i KeyI -
+key arrived: <Enter> Enter -
+key arrived: <Enter> Enter -
+key arrived: <Enter> Enter -
+key arrived: <Enter> Enter -
+key arrived: <Enter> Enter -
+key arrived: <Enter> Enter -
+key arrived: <Enter> Enter -
+key arrived: <Enter> Enter -
+key arrived: <Enter> Enter -
+key arrived: <Enter> Enter -
+key arrived: <Enter> Enter -
+key arrived: <Escape> Escape -
+key arrived: g KeyG -
+key arrived: g KeyG -
+key arrived: c KeyC control
+key arrived: s KeyS -
+scene 640x120, focused 0, echo "", echo padding 8, preedit -, published 30, theme "default"
+view 0 0,0 320x104: "hello\n02\n03\n04\n05\n06\n07\n08\n09\n10\n11\n12", scroll 0, selections 0..0, padding 8 8
+status 0: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4, mode-line.modified "●" +4 | mode-line.secondary "1:1" +4, mode-line.secondary "Top" +4
+view 1 320,0 320x104: "hello\n02\n03\n04\n05\n06\n07\n08\n09\n10\n11\n12", scroll 0, selections 0..0, padding 8 8
+status 1 in mode-line.inactive: mode-line.inactive "scratch" +4, mode-line.inactive "●" +4 | mode-line.inactive "1:1" +4, mode-line.inactive "Top" +4
+key arrived: c KeyC control
+key arrived: o KeyO -
+key arrived: G KeyG shift
+key arrived: c KeyC control
+key arrived: o KeyO -
+key arrived: A KeyA shift
+key arrived: <Escape> Escape -
+scene 640x120, focused 0, echo "", echo padding 8, preedit -, published 39, theme "default"
+view 0 0,0 320x104: "hello,world\n02\n03\n04\n05\n06\n07\n08\n09\n10\n11\n12", scroll 0, selections 10..10, padding 8 8
+status 0: mode-line.state.normal "NORMAL" +8, mode-line.buffer "scratch" +4, mode-line.modified "●" +4 | mode-line.secondary "1:11" +4, mode-line.secondary "Top" +4
+view 1 320,0 320x104: "hello,world\n02\n03\n04\n05\n06\n07\n08\n09\n10\n11\n12", scroll 33, selections 42..42, padding 8 8
+status 1 in mode-line.inactive: mode-line.inactive "scratch" +4, mode-line.inactive "●" +4 | mode-line.inactive "12:1" +4, mode-line.inactive "Bot" +4
+```
+
 Two more runs of the gate are on a real file, and so on a script that
 cannot be checked in whole: the file port takes absolute paths only. Each
 is one entry of the `ffi-test` task, a shell of its own that makes a

@@ -1,0 +1,63 @@
+# The script `mise run ffi-test` has the editor's headless mode run against
+# the config in `config/`, which keeps the default layout and binds `C-c s`
+# to split the window and `C-c o` to focus the next one. It shows two
+# windows on one buffer keeping a cursor and a scroll anchor each, and an
+# edit in one showing in both. What it prints must be exactly `expected`.
+# It touches no file.
+
+reload
+settle
+
+# A frame of 640 by 120, in the recorder's cells of 8 by 16: a window shows
+# only a few rows of text, so a buffer of twelve lines is taller than it.
+resize 640 120
+
+# Twelve lines, `hello` then `02` to `12`, typed in insert state; `<Escape>`
+# returns to normal state and `g g` takes the cursor back to the first
+# line, where the view's anchor follows it.
+key i KeyI -
+commit hello
+key <Enter> Enter -
+commit 02
+key <Enter> Enter -
+commit 03
+key <Enter> Enter -
+commit 04
+key <Enter> Enter -
+commit 05
+key <Enter> Enter -
+commit 06
+key <Enter> Enter -
+commit 07
+key <Enter> Enter -
+commit 08
+key <Enter> Enter -
+commit 09
+key <Enter> Enter -
+commit 10
+key <Enter> Enter -
+commit 11
+key <Enter> Enter -
+commit 12
+key <Escape> Escape -
+key g KeyG -
+key g KeyG -
+
+# `C-c s` splits the window: view 1 is beside view 0, on the same buffer,
+# with copies of its markers, and the focus stays on view 0.
+key c KeyC control
+key s KeyS -
+scene
+
+# `C-c o` focuses view 1, and `G` takes its cursor to the last line, which
+# its anchor follows down; view 0 stays at the top. `C-c o` focuses view 0
+# again, and `A` appends `,world` at the end of its line.
+key c KeyC control
+key o KeyO -
+key G KeyG shift
+key c KeyC control
+key o KeyO -
+key A KeyA shift
+commit ,world
+key <Escape> Escape -
+scene

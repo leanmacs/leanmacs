@@ -249,6 +249,14 @@ run = [
   # focused, and view 1, the asker, above the minibuffer's view with the ex
   # prompt open (`monocle/expected`). It touches no file.
   "out=$(.lake/build/bin/editor headless \"$(lean --print-prefix)\" .lake/build/lib/lean ../tests/headless/monocle/config ../tests/headless/monocle/script) && printf '%s\\n' \"$out\" | diff ../tests/headless/monocle/expected -",
+  # Two windows on one buffer (tests/headless/two-windows), under the
+  # default layout, with the same keys: in a frame of 640 by 120 the window
+  # is split over twelve lines, the second view's cursor goes to the last
+  # line, its anchor following it down, and the first view, at the top,
+  # appends to its first line. The last scene shows both views side by
+  # side with the edit, each with its own cursor and scroll anchor, moved
+  # by the edit (`two-windows/expected`). It touches no file.
+  "out=$(.lake/build/bin/editor headless \"$(lean --print-prefix)\" .lake/build/lib/lean ../tests/headless/two-windows/config ../tests/headless/two-windows/script) && printf '%s\\n' \"$out\" | diff ../tests/headless/two-windows/expected -",
   # Evil, with no config: the script has no `reload`, so nothing of the
   # config directory is loaded, and every command its keys run is one the
   # editor ships. `i` begins an insert and the keys that print are typed

@@ -10582,6 +10582,84 @@ def splitting (call : Call) : EditorM ViewId := do
   | .error _ =>
     throw .noSuchMarker
 
+/-- The text of the checks of two windows on one buffer: a hundred lines,
+`l00` to `l99`, four bytes each with its line feed, so line `n` starts at
+`4 * n`: many more rows than a window of a frame 40 pixels tall shows in
+the display model's pixel cells. -/
+def hundredLines : String :=
+  "\n".intercalate ((List.range 100).map fun line => s!"l{line / 10}{line % 10}")
+
+/-- A state of one window, view 0, over `hundredLines` in a buffer called
+`scratch`, its scroll anchor and its cursor at the text's start, in a frame
+of 640 by 40. -/
+def tallState : TextM EditorState := do
+  let text ← createText hundredLines
+  let scroll ← text.mark (.anchor { offset := 0, bias := .before })
+  let selection ← text.mark (.selection { ranges := #[⟨0, 0⟩] })
+  let history ← UndoTree.over text
+  return {
+      buffers := #[some { name := EditorState.scratchName, text, history }]
+      windows := #[{ id := ⟨0⟩, buffer := ⟨0⟩, scroll, selection }]
+      frame := { size := ⟨640, 40⟩, windows := #[⟨0⟩], focused := ⟨0⟩ }
+      recent := #[⟨0⟩] }
+
+/-- The checks of two windows on one buffer (criterion 4 of the window
+management's phase 1), on the editor's models: each window keeps a cursor
+and a scroll anchor of its own, and an edit in one shows in both. -/
+def twoWindowChecks : List Check :=
+  -- Line 80 starts at byte 320.
+  let deep := 320
+  let keys :=
+    dispatchKeys [("C-c s", invoke "split"), ("C-c o", invoke "other"), ("C-c g", invoke "deep")]
+      [("split", fun call => do
+          discard <| call.target.window.id.split
+          return none),
+        ("other", fun call => do
+          let windows := (← editorState).frame.windows
+          if let some next := windows.find? (· != call.target.window.id) then
+            discard <| next.focus
+          return none),
+        ("deep", fun call => do
+          call.target.select { ranges := #[⟨deep, deep⟩] }
+          call.target.scrollTo deep
+          return none)]
+  [{  name :=
+        "criterion 4, on the models: two windows split on one buffer of a hundred lines in a frame of 640 by 40 keep markers of their own; with view 1's cursor and anchor moved to line 80 and an edit typed in view 0 at the top, view 0's anchor and cursor are at the top and view 1's at line 80, moved by the edit; both views show the one snapshot, which holds the edit"
+      run :=
+        pure <|
+          let program : EditorM (Option (Array Marker × String)) := do
+            let (loop, _) ←
+              stepsWith keys { state := ← tallState }
+                  (presses "C-c s C-c o C-c g C-c o" ++ [.commit "X"])
+            let some zero := loop.state.target? ⟨0⟩ | return none
+            let some one := loop.state.target? ⟨1⟩ | return none
+            let text := zero.buffer.text
+            let markers ←
+              [zero.window.scroll, one.window.scroll, zero.window.selection,
+                      one.window.selection].mapM
+                  fun marker => (text.marker marker : TextM Marker)
+            return some (markers.toArray, ← text.read)
+          match program.runModel editorModel with
+          | (.ok (some (markers, contents)), model) =>
+            let scenes := model.display.scenes
+            match scenes.back? with
+            | some scene =>
+              match scene.views with
+              | #[zero, one] =>
+                let anchor (offset : Nat) : Marker := .anchor { offset, bias := .before }
+                let cursor (at_ : Nat) : Marker := .selection { ranges := #[⟨at_, at_⟩] }
+                zero.id == ⟨0⟩ && one.id == ⟨1⟩ && scene.focused == some ⟨0⟩ &&
+                  zero.scroll != one.scroll &&
+                  zero.selections != one.selections &&
+                  markers == #[anchor 0, anchor (deep + 1), cursor 1, cursor (deep + 1)] &&
+                  zero.snapshot == one.snapshot &&
+                  shownText model zero == some ("X" ++ hundredLines) &&
+                  contents == "X" ++ hundredLines &&
+                  one.rect == { x := 320, y := 0, width := 320, height := 39 }
+              | _ => false
+            | none => false
+          | _ => false }]
+
 /-- The checks of a command's state requests in the loop
 (`Editor/Command/Dispatch.lean`, `Editor/Loop.lean`), on the editor's
 models: the loop answers them from the state it holds, keeps the state a
@@ -11987,6 +12065,7 @@ its view. -/
 def dispatchChecks : List Check :=
   dispatchKeyChecks ++ dispatchRollbackChecks ++ dispatchInterruptChecks ++ dispatchSlowChecks ++
     dispatchStateChecks ++
+    twoWindowChecks ++
     dispatchGiveUpChecks ++
     dispatchCloseViewChecks ++
     dispatchMinibufferNoticeChecks ++
