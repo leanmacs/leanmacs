@@ -128,6 +128,10 @@ commands' registrations (`Editor/Evil/Compiled.lean`) name the registry
 and are not imported, as the file commands' and the minibuffer's are not.
 Pinned by `ConfigTest.evilChecks`, on a config the real elaborator loads.
 
+The window layouts are here too, with the editor state that holds the
+frame's (`Editor/Layout.lean`): master-and-stack and monocle, as values a
+pure function lays a list of windows out by.
+
 Projects, workspaces and locations are here too (`Editor/Workspace.lean`):
 which codebase and which checkout a buffer belongs to, as plain values,
 and the finder that answers a directory's workspace through config, git

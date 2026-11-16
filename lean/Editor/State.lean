@@ -2,6 +2,7 @@ import Editor.Display
 import Editor.Face
 import Editor.File
 import Editor.Invocation
+import Editor.Layout
 import Editor.Scene
 import Editor.UndoTree
 import Editor.Workspace
@@ -701,14 +702,6 @@ structure Window where
   wanted : Option Window.Wanted := none
   deriving DecidableEq, Repr
 
-/-- The axis a split divides its rectangle along. -/
-inductive Axis where
-  /-- One child above the other. -/
-  | rows
-  /-- One child beside the other. -/
-  | columns
-  deriving DecidableEq, Repr
-
 /-- The arrangement of a frame's windows. -/
 inductive Split where
   /-- A window, by the name of its view. -/
@@ -1087,32 +1080,10 @@ def minibuffers : Split → Nat
   | .minibuffer => 1
   | .split _ first second => first.minibuffers + second.minibuffers
 
-/-- The extent of `rect` along `axis`: its height for rows, and its width for
-columns. -/
-def extent (axis : Axis) (rect : Rect) : Nat :=
-  match axis with
-  | .rows => rect.height
-  | .columns => rect.width
-
-/-- `rect` cut in two along `axis`: the first part takes `first` of its
-extent along the axis, or all of it when that is less, and the second the
-rest. -/
-def cut (axis : Axis) (rect : Rect) (first : Nat) : Rect × Rect :=
-  let first := min first (extent axis rect)
-  match axis with
-  | .rows =>
-    ({ rect with height := first },
-      { rect with
-        y := rect.y + first, height := rect.height - first })
-  | .columns =>
-    ({ rect with width := first },
-      { rect with
-        x := rect.x + first, width := rect.width - first })
-
 /-- `rect` cut in two along `axis`: the first part takes half its extent
 along the axis, rounded down, and the second the rest. -/
 def halve (axis : Axis) (rect : Rect) : Rect × Rect :=
-  cut axis rect (extent axis rect / 2)
+  Layout.cut axis rect (Layout.extent axis rect / 2)
 
 /-- Whether the subtree is the minibuffer's place and nothing else: it has
 the minibuffer leaf and no window. -/
@@ -1141,10 +1112,10 @@ def rects (tree : Split) (rect : Rect) (minibuffer : Option ViewId := none) (pla
       if empty second then first.rects rect minibuffer place
       else
         let (one, other) :=
-          if first.isMinibufferPlace then cut axis rect (min place (extent axis rect))
+          if first.isMinibufferPlace then Layout.cut axis rect (min place (Layout.extent axis rect))
           else
             if second.isMinibufferPlace then
-              cut axis rect (extent axis rect - min place (extent axis rect))
+              Layout.cut axis rect (Layout.extent axis rect - min place (Layout.extent axis rect))
             else halve axis rect
         first.rects one minibuffer place ++ second.rects other minibuffer place
 

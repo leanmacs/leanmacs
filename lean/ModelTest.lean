@@ -32,6 +32,7 @@ import Editor.Job.Jobs
 import Editor.Job.Model
 import Editor.Job.Pool
 import Editor.Key.Notation
+import Editor.Layout
 import Editor.Loop.Driver
 import Editor.Menu.Compiled
 import Editor.Minibuffer.Compiled
@@ -123,6 +124,11 @@ shows: its rule of what matches, and that after the candidates that are
 the pattern its order is the candidates'. They also show the contract
 biting on each of the two things it asks: a matcher written here that
 ignores case, and one that does not put an exact match first.
+
+The layouts (`Editor/Layout.lean`) are pure functions, checked by
+enumeration (`layoutChecks`): master-and-stack's rectangles tile the area
+for one to eight windows at every sample size, share and side, with its
+geometry pinned, and monocle gives the whole area to the selected window.
 
 The editor state (`Editor/State.lean`) is checked on the text model
 (`stateChecks`): the initial state, that a split tree's views tile the
@@ -6879,6 +6885,68 @@ def sampleTrees : List Split :=
 /-- Frame sizes for the tiling checks: even, odd, small and zero. -/
 def sampleSizes : List Size :=
   [⟨640, 480⟩, ⟨641, 479⟩, ⟨7, 3⟩, ⟨1, 1⟩, ⟨0, 0⟩, ⟨0, 480⟩, ⟨640, 0⟩]
+
+/-- The windows `0` to `count - 1`, in order. -/
+def windowsUpTo (count : Nat) : Array ViewId :=
+  (Array.range count).map (⟨·⟩)
+
+/-- The rectangles the layout checks lay windows out in: each of
+`sampleSizes`, at the frame's origin and away from it. -/
+def sampleRects : List Rect :=
+  sampleSizes.flatMap fun size =>
+    [frameRect size, { x := 5, y := 7, width := size.width, height := size.height }]
+
+/-- The checks of the layouts (`Editor/Layout.lean`): master-and-stack's
+rectangles tile the area for any number of windows and any size, with its
+geometry pinned, and monocle gives the whole area to one window. -/
+def layoutChecks : List Check :=
+  let rect (x y width height : Nat) : Rect := { x, y, width, height }
+  let shares := [0, 1, 33, 50, 61, 99, 100, 150]
+  let sides := [Side.left, .right, .top, .bottom]
+  [{  name :=
+        "criterion 1: master-and-stack gives each of one to eight windows exactly one rectangle, in list order, and they tile the area: each inside it, no two overlapping, their areas summing to its, at even, odd, small and zero sizes, for every share and every side"
+      run :=
+        pure <|
+          (List.range 8).all fun index =>
+            let windows := windowsUpTo (index + 1)
+            sampleRects.all fun whole =>
+              shares.all fun share =>
+                sides.all fun side =>
+                  let laid := (Layout.masterStack { share, side }).place windows ⟨0⟩ whole
+                  laid.map (·.1) == windows && tiles whole (laid.map (·.2)) },
+    { name :=
+        "master-and-stack's geometry: main takes its share of the extent on its side, rounded down, and the stack the rest, cut the other way into equal parts, the first ones a pixel larger; one window takes the whole area, and no window none"
+      run :=
+        pure <|
+          let three := windowsUpTo 3
+          let whole := rect 0 0 640 480
+          Layout.default.place three ⟨0⟩ whole ==
+              #[(⟨0⟩, rect 0 0 320 480), (⟨1⟩, rect 320 0 320 240), (⟨2⟩, rect 320 240 320 240)] &&
+            (Layout.masterStack { share := 60, side := .right }).place three ⟨0⟩ whole ==
+              #[(⟨0⟩, rect 256 0 384 480), (⟨1⟩, rect 0 0 256 240), (⟨2⟩, rect 0 240 256 240)] &&
+            (Layout.masterStack { side := .top }).place three ⟨0⟩ whole ==
+              #[(⟨0⟩, rect 0 0 640 240), (⟨1⟩, rect 0 240 320 240), (⟨2⟩, rect 320 240 320 240)] &&
+            (Layout.masterStack { side := .bottom }).place three ⟨0⟩ whole ==
+              #[(⟨0⟩, rect 0 240 640 240), (⟨1⟩, rect 0 0 320 240), (⟨2⟩, rect 320 0 320 240)] &&
+            Layout.default.place (windowsUpTo 4) ⟨0⟩ (rect 0 0 640 479) ==
+              #[(⟨0⟩, rect 0 0 320 479), (⟨1⟩, rect 320 0 320 160), (⟨2⟩, rect 320 160 320 160),
+                (⟨3⟩, rect 320 320 320 159)] &&
+            (Layout.masterStack { share := 150 }).place (windowsUpTo 2) ⟨0⟩ whole ==
+              #[(⟨0⟩, whole), (⟨1⟩, rect 640 0 0 480)] &&
+            Layout.default.place #[⟨4⟩] ⟨4⟩ (rect 5 7 30 20) == #[(⟨4⟩, rect 5 7 30 20)] &&
+            Layout.default.place #[] ⟨0⟩ whole == #[] },
+    { name :=
+        "criterion 2: monocle gives the selected window the whole area and no other window any, for one to eight windows, every selected window and every size; a selected window not in the list gives the first window the area, and no window gives none"
+      run :=
+        pure <|
+          (List.range 8).all fun index =>
+            let windows := windowsUpTo (index + 1)
+            sampleRects.all fun whole =>
+              windows.all
+                  (fun selected =>
+                    Layout.monocle.place windows selected whole == #[(selected, whole)]) &&
+                Layout.monocle.place windows ⟨9⟩ whole == #[(⟨0⟩, whole)] &&
+                Layout.monocle.place #[] ⟨0⟩ whole == #[] }]
 
 /-- The initial state at 640 by 480 with two more windows over its one
 buffer, each with markers of its own:
@@ -26740,6 +26808,7 @@ def checks : List Check :=
     scrollChecks ++
     originChecks ++
     heightChecks ++
+    layoutChecks ++
     stateChecks ++
     stateRequestChecks ++
     loopChecks ++
