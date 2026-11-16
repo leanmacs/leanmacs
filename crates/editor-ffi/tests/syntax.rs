@@ -13,6 +13,7 @@ use std::mem::MaybeUninit;
 use std::slice;
 use std::time::Duration;
 
+use editor_diff::Step;
 use editor_ffi::document::{Document, editor_ffi_document_free, editor_ffi_document_new};
 use editor_ffi::log::RawWords;
 use editor_ffi::snapshot::{Snapshot, editor_ffi_document_snapshot, editor_ffi_snapshot_free};
@@ -149,6 +150,21 @@ fn edits_made_through_a_document_are_reparsed_to_the_tree_a_fresh_parse_gives() 
         .unwrap();
     assert!(delivered_is_fresh(&document));
     assert_eq!(document.read(), RUST);
+
+    // An edit script, as a reload applies one, through the document.
+    let base = document.snapshot().revision().get();
+    let source = editor_text::Text::from(format!("{RUST}fn four() {{}}\n").as_str()).snapshot();
+    let steps = [
+        Step::Retain(RUST.len()),
+        Step::Insert {
+            start: RUST.len(),
+            count: source.len() - RUST.len(),
+        },
+    ];
+    document
+        .apply_script(base, &source, &steps, Origin::default())
+        .unwrap();
+    assert!(delivered_is_fresh(&document));
 }
 
 /// A query made through C: the handle, or the refusal's status, kind and

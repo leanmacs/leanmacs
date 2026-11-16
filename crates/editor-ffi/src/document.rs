@@ -38,11 +38,11 @@
 //! document's log and markers while the document lives.
 //!
 //! **Every edit tells the syntax service.** Each path that changes the
-//! text, the replace here, applying a transaction and applying an inverse,
-//! calls `crate::syntax::touched` with the document's key and the
-//! revision the edit produced, once the edit is made and the lock let go;
-//! it does nothing for a document nobody parses. Freeing a document
-//! detaches it (`crate::syntax::detach`).
+//! text, the replace here, applying a transaction, applying an edit script
+//! and applying an inverse, calls `crate::syntax::touched` with the
+//! document's key and the revision the edit produced, once the edit is
+//! made and the lock let go; it does nothing for a document nobody parses.
+//! Freeing a document detaches it (`crate::syntax::detach`).
 
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError, Weak};
