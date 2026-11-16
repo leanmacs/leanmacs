@@ -1233,8 +1233,8 @@ def statusOf (modeLine : ModeLine) (state : EditorState) (id : ViewId)
 of `state`, whose text is shown at `snapshot` and of which the scheme
 reports the fields `reported` (`ModeLine.Context`): its buffer; its cursor,
 the head of the primary range of its selection, as a row and a column in
-cells of the snapshot; the snapshot's rows, less an empty last row after a
-final line break; and whether it is the selected view
+cells of the snapshot; the snapshot's lines (`SnapshotId.lineCount`); and
+whether it is the selected view
 (`EditorState.selectedView`). It is not refused: when the selection marker
 or the snapshot does not answer, there is no cursor and no row. -/
 def contextOf (state : EditorState) (id : ViewId) (target : Target) (snapshot : SnapshotId)
@@ -1244,9 +1244,7 @@ def contextOf (state : EditorState) (id : ViewId) (target : Target) (snapshot : 
     let .selection selection ← marker.text.marker marker | throw .noSuchMarker
     let some range := selection.ranges[selection.primary]? | throw .noSuchMarker
     let point ← snapshot.pointOf range.head .cells
-    let rows ← snapshot.rowCount
-    let last ← snapshot.rowContent (rows - 1)
-    return (point, if rows > 1 && last.isEmpty then rows - 1 else rows)
+    return (point, ← snapshot.lineCount)
   let (cursor, lines) :=
     match ← (observing read : TextM (Except TextError (Point × Nat))) with
     | .ok (point, lines) => (some point, lines)

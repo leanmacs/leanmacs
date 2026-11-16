@@ -9725,13 +9725,15 @@ def exLineChecks : List Check :=
             over { start := .line 5, stop := .line 3 } 1 == .inl (Ex.pastEnd 5 3) &&
             over { start := .line 9, stop := .line 8 } 1 == .inl (Ex.pastEnd 9 3)) },
     { name :=
-        "a buffer's lines are its rows, but for the empty row after a last line feed: three lines and a last line feed are three lines, the empty text is one, and a last line with no line feed counts"
+        "a text's lines are its rows, but for the empty row after a last line feed: three lines and a last line feed are three lines, the empty text is one, and a last line with no line feed counts; a snapshot of the text counts the same"
       run :=
+        let counted (initial : String) : Option (Nat × Nat) :=
+          onTextModel do
+            let text ← createText initial
+            return (← text.lineCount, ← (← text.snapshot).lineCount)
         pure
-          (Ex.lineCount "b\nc\na\n" == 3 && Ex.lineCount "" == 1 && Ex.lineCount "a" == 1 &&
-            Ex.lineCount "a\nb" == 2 &&
-            Ex.lineCount "\n" == 1 &&
-            Ex.lineCount "a\n\n" == 2) }]
+          ([("b\nc\na\n", 3), ("", 1), ("a", 1), ("a\nb", 2), ("\n", 1), ("a\n\n", 2)].all
+            fun (initial, lines) => counted initial == some (lines, lines)) }]
 
 /-- The key strings the scheme fixtures are written with. -/
 def schemeKeyStrings : List String :=

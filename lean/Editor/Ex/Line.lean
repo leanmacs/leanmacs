@@ -58,8 +58,9 @@ Vim's `#` and `:!!` are not built, nor any address but the four above
 `Range.resolve range current count` is the first and the last line a range
 stands for, from 1, over a buffer of `count` lines whose cursor is on line
 `current`. A buffer's lines are its rows, but for the empty row after a last
-line feed (`lineCount`): `b`, `c`, `a`, each with its line feed, is three
-lines, and the empty text is one. It refuses, as a sentence:
+line feed (`TextId.lineCount`, `Editor/Text.lean`): `b`, `c`, `a`, each
+with its line feed, is three lines, and the empty text is one. It refuses,
+as a sentence:
 
 - line 0 (`lineZero`);
 - a line past the last (`pastEnd`): `line 7 is past the end of the buffer
@@ -217,17 +218,6 @@ def pastEnd (line count : Nat) : String :=
 its last, `stop`. -/
 def backwards (start stop : Nat) : String :=
   s!"the range {start},{stop} runs backwards"
-
-/-- How many lines `text` has: its rows, but for the empty row after a last
-line feed ("Resolving a range", in the module docs). -/
-def lineCount (text : String) : Nat :=
-  let rows := (text.toList.filter (· == '\n')).length + 1
-  if text.endsWith "\n" then rows - 1 else rows
-
-/-- How many lines a text of `rows` rows whose last row is `lastRow` has:
-`lineCount` of it, asked of a text's rows. -/
-def lineCountOf (rows : Nat) (lastRow : String) : Nat :=
-  if rows > 1 && lastRow.isEmpty then rows - 1 else rows
 
 /-- The line `address` stands for, with the cursor on line `current` of a
 buffer of `count` lines. -/

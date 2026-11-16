@@ -214,12 +214,11 @@ name. -/
 def notAsking (refusal : PromptRefusal) : String :=
   s!"{name}: {refusal.describe}"
 
-/-- How many lines the text of `target`'s buffer has (`lineCountOf`), and
-the line of its primary cursor, from 1, no further than the last. -/
+/-- How many lines the text of `target`'s buffer has (`TextId.lineCount`),
+and the line of its primary cursor, from 1, no further than the last. -/
 def linesOf (target : Target) : TextM (Nat × Nat) := do
   let text := target.buffer.text
-  let rows ← text.rowCount
-  let count := lineCountOf rows (← text.rowContent (rows - 1))
+  let count ← text.lineCount
   let selection ← target.selection
   let head := (selection.ranges[selection.primary]?).map (·.head) |>.getD 0
   return (count, min count ((← text.pointOf head).row + 1))

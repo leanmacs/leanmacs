@@ -242,6 +242,11 @@ operations as they are: they are lifted into it.
   the text from one position up to, not including, another; it is refused
   with `badRange` unless both are positions and the start is not after the
   stop, as an edit and a trace are.
+- A text's *lines* (`TextSource.lineCount`) are its rows, but for the empty
+  last row after a last line feed, which is no line: `b`, `c`, `a`, each
+  with its line feed, is three lines, and the empty text and a text that is
+  one line feed are each one. It is asked of the row count and the last
+  row, not a query of its own, of a text and of a snapshot alike.
 - A *motion* leads from a position to a position, and is a question of a
   text or a snapshot (`TextQuery.motion`, `Motion`). It is refused with
   `badPosition` from an offset that is not a position, whichever motion it
@@ -1427,6 +1432,23 @@ without its line break. Refused with `badPosition` for a row the text does
 not have. -/
 def SnapshotId.rowContent (snapshot : SnapshotId) (row : Nat) : TextM String :=
   (TextSource.snapshot snapshot).ask (.rowContent row)
+
+/-- How many lines the text of `source` has: its rows, but for the empty
+last row after a last line feed (the rules of the port). The empty text is
+one line. -/
+def TextSource.lineCount (source : TextSource) : TextM Nat := do
+  let rows ← source.ask .rowCount
+  if rows > 1 && (← source.ask (.rowContent (rows - 1))).isEmpty then
+    return rows - 1
+  return rows
+
+/-- How many lines `text` has (`TextSource.lineCount`). -/
+def TextId.lineCount (text : TextId) : TextM Nat :=
+  (TextSource.text text).lineCount
+
+/-- How many lines the text `snapshot` holds has (`TextSource.lineCount`). -/
+def SnapshotId.lineCount (snapshot : SnapshotId) : TextM Nat :=
+  (TextSource.snapshot snapshot).lineCount
 
 /-- The text `snapshot` holds from the byte offset `start` up to, not
 including, `stop`. Refused with `badRange` unless both offsets are positions
