@@ -2156,7 +2156,7 @@ mod streaming {
             }
         }
         assert_eq!(got, [b"x".to_vec(), b"y".to_vec()]);
-        assert_eq!(service.pending(), 0, "both are forgotten");
+        assert!(pending_comes_to(&service, 0), "both are forgotten");
     }
 
     #[test]
@@ -2183,8 +2183,8 @@ mod streaming {
         assert_eq!(all_bytes(&deliveries, Stream::Out), b"a\nb\n");
         assert_eq!(all_bytes(&deliveries, Stream::Err), b"e\n");
         assert!(!service.read(1, 100), "the child is forgotten");
+        assert!(pending_comes_to(&service, 0));
         assert_eq!(service.held(1), None);
-        assert_eq!(service.pending(), 0);
     }
 
     /// Asks for `ask` as the wait `wait` and takes its reply once it is
@@ -2236,7 +2236,7 @@ mod streaming {
             last.last().and_then(|delivered| delivered.ended.clone()),
             Some(End::Exited(Exit::Code(0)))
         );
-        assert_eq!(service.pending(), 0);
+        assert!(pending_comes_to(&service, 0));
     }
 
     #[test]
