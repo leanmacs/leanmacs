@@ -44,15 +44,18 @@ code registers them are in `Editor/Workspace/Compiled.lean`.
 
 ## `workspace-current`
 
-`describe` says the workspace of a buffer: its label, its location, its
-branch and what its location can do; then its project's name and identity;
-then the project's other open workspaces by label. A workspace is open when
-the table has it: found or registered this session. A buffer with no
-workspace says so, with the directory its file is in, which commands use
-instead (`noWorkspace`), or that it has no file (`noFile`).
+`current` says the workspace of a buffer, as a value (`Current`): its
+label, its location, its branch and what its location can do; then its
+project's name and identity; then the project's other open workspaces by
+label (`Description`). A workspace is open when the table has it: found or
+registered this session. A buffer with no workspace says so, with the
+directory its file is in, which commands use instead (`noWorkspace`), or
+that it has no file (`noFile`). `Current.text` says it for a person, and is
+what the command shows.
 
 Pinned by `ModelTest.workspaceChecks`, on the loop's driver over the
-editor's models, the job model and the models of the processes and files.
+editor's models, the job model and the models of the processes and files:
+what is said, on the value, and that the echo is its text.
 -/
 
 namespace Editor.Workspace
@@ -174,22 +177,62 @@ def branchText : Option Branch → String
   | some .detached => "detached"
   | none => "no branch"
 
-/-- What `workspace-current` says of the buffer `id` in `state`
+/-- What `workspace-current` says of a buffer's workspace, as a value. -/
+structure Description where
+  /-- The workspace's label, `name@branch` (`Workspace.label`). -/
+  label : String
+  /-- Where it is. -/
+  location : Location
+  /-- What is checked out there. -/
+  branch : Option Branch
+  /-- What its location lets the editor do. -/
+  can : Location.Capabilities
+  /-- Its project's name. -/
+  projectName : String
+  /-- Its project's identity. -/
+  identity : Project.Identity
+  /-- The labels of its project's other open workspaces. -/
+  others : Array String
+  deriving DecidableEq, Repr
+
+/-- What `workspace-current` says of a buffer, as a value: its workspace,
+or that it has none, with the directory its file is in or that it has no
+file. -/
+inductive Current where
+  /-- The buffer has a workspace. -/
+  | workspace (description : Description)
+  /-- The buffer has no workspace, and its file is in `directory`. -/
+  | noWorkspace (directory : System.FilePath)
+  /-- The buffer has no workspace and no file. -/
+  | noFile
+  deriving DecidableEq, Repr
+
+/-- What `workspace-current` says of the buffer `id` in `state`, as a value
 ("`workspace-current`", in the module docs). -/
-def describe (state : EditorState) (id : BufferId) : String :=
+def current (state : EditorState) (id : BufferId) : Current :=
   match state.workspaceOf? id with
   | some (workspace, project) =>
-    let others := (state.workspaces.others workspace).map label
-    let othersText := if others.isEmpty then "none" else ", ".intercalate others.toList
-    s!"{workspace.label}: {workspace.location.describe}, {branchText workspace.branch}, {workspace.location.can.describe}; project {project.name}, {project.identity.describe}; other workspaces: {othersText}"
+    .workspace
+      { label := workspace.label, location := workspace.location, branch := workspace.branch
+        can := workspace.location.can, projectName := project.name, identity := project.identity
+        others := (state.workspaces.others workspace).map label }
   | none =>
     match ((state.buffer? id).bind (·.file)).bind (·.path.parent) with
-    | some directory => noWorkspace (Process.trimmed directory)
-    | none => noFile
+    | some directory => .noWorkspace (Process.trimmed directory)
+    | none => .noFile
+
+/-- What `workspace-current` says, for a person. -/
+def Current.text : Current → String
+  | .workspace said =>
+    let others := if said.others.isEmpty then "none" else ", ".intercalate said.others.toList
+    s!"{said.label}: {said.location.describe}, {branchText said.branch}, {said.can.describe}; project {said.projectName}, {said.identity.describe}; other workspaces: {others}"
+  | .noWorkspace directory => Workspace.noWorkspace directory
+  | .noFile => Workspace.noFile
 
 /-- `workspace-current`: says the workspace of the buffer of the window it
-was called with in the echo area (`describe`). Its arguments are ignored. -/
+was called with in the echo area (`current`, as text). Its arguments are
+ignored. -/
 def currentCommand (call : Call) : EditorM Unit := do
-  message (describe (← editorState) call.target.window.buffer)
+  message (current (← editorState) call.target.window.buffer).text
 
 end Editor.Workspace

@@ -26571,7 +26571,7 @@ def workspaceChecks : List Check :=
               (showing opened).map (·.buffer.name) == some "a.txt" &&
               echoOf asked == some (Workspace.noWorkspace "/x") },
     { name :=
-        "two open workspaces of one project are labelled name@branch, and workspace-current in /r's buffer says its workspace and lists the project's other open workspace"
+        "two open workspaces of one project are labelled name@branch, and workspace-current in /r's buffer says its label, location, branch and what it can do, its project's name and identity, and the project's other open workspace by label"
       run :=
         pure <|
           match workspaceDriver with
@@ -26582,10 +26582,35 @@ def workspaceChecks : List Check :=
             let asked := settledAfter back "C-o i"
             match showing back, shownWorkspace back, shownWorkspace both with
             | some shown, some (main, _), some (worktree, _) =>
+              let current := Workspace.current back.loop.state shown.id
               main.label == "r@main" && worktree.label == "r@feature" &&
                 back.loop.state.workspaces.others main == #[worktree] &&
-                echoOf asked == some (Workspace.describe back.loop.state shown.id)
+                current ==
+                  .workspace
+                    { label := "r@main", location := .local "/r", branch := some (.named "main")
+                      can := (Location.local "/r").can, projectName := "r"
+                      identity := .remote "github.com/o/r", others := #["r@feature"] } &&
+                echoOf asked == some current.text
             | _, _, _ => false },
+    { name :=
+        "with one open workspace of its project, workspace-current says the buffer's workspace and lists no other"
+      run :=
+        pure <|
+          match workspaceDriver with
+          | none => false
+          | some driver =>
+            let opened := settledAfter driver "C-o a"
+            let asked := settledAfter opened "C-o i"
+            match showing opened with
+            | some shown =>
+              let current := Workspace.current opened.loop.state shown.id
+              current ==
+                  .workspace
+                    { label := "r@main", location := .local "/r", branch := some (.named "main")
+                      can := (Location.local "/r").can, projectName := "r"
+                      identity := .remote "github.com/o/r", others := #[] } &&
+                echoOf asked == some current.text
+            | none => false },
     { name :=
         "a second file in the same directory asks git nothing and starts no find job, and has the workspace; once a reload has installed a new generation, the next file asks git again"
       run :=
