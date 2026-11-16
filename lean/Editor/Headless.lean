@@ -23,6 +23,7 @@ import Editor.Text.Real
 import Editor.Themes.Compiled
 import Editor.Watch.Real
 import Editor.Window
+import Editor.WindowCommands.Compiled
 import Editor.Workspace.Compiled
 
 /-!
@@ -2094,7 +2095,8 @@ the real elaborator over the toolchain in `sysroot` and the editor's
 source, `emit` as the output and stderr as the log, and, as its compiled
 ones, the file commands with their jobs, the minibuffer's commands with its
 mode, evil's commands, the ex line's commands with the ex names that ship,
-the buffer commands, the frame's commands with their bindings, the command that loads a theme
+the buffer commands, the frame's commands with their bindings, the window
+commands, the command that loads a theme
 with the themes that ship, the workspace command with the job that finds a
 file's workspace, and the menu bar (`Menu.standard`) with its
 items' bindings (`Menu.bindings`). Its display is the recorder and its
@@ -2112,6 +2114,7 @@ def shippedOver (sysroot oleanDir configDir : String) (emit : String → IO Unit
     commands :=
       Files.commands ++ Minibuffer.commands ++ Evil.commands ++ Ex.commands ++ Buffers.commands ++
         FrameCommands.commands ++
+        WindowCommands.commands ++
         Themes.commands ++
         Workspace.commands
     bindings := FrameCommands.bindings ++ Menu.bindings, menu := some Menu.standard

@@ -7,12 +7,12 @@ import Editor.Evil.Repeat
 import Editor.Evil.Scroll
 import Editor.Evil.Theorems
 import Editor.Evil.Undo
-import Editor.Ex
 import Editor.FrameCommands
 import Editor.InputScheme.Vim.Default
 import Editor.Minibuffer
 import Editor.Setup
 import Editor.Themes
+import Editor.WindowCommands
 
 /-!
 # The editor
@@ -70,7 +70,11 @@ imported. The frame's commands are here too
 (`Editor/FrameCommands.lean`): `toggle-fullscreen` and `minimise-window`,
 which ask the platform's window through the display; their registrations
 and default bindings (`Editor/FrameCommands/Compiled.lean`) are not
-imported. The command that switches the theme in force is here too
+imported. The window commands are here too (`Editor/WindowCommands.lean`):
+`window-split`, `window-close`, `window-focus-left` and the rest, which
+split, close, focus and arrange the frame's windows, so a config's command
+can call them; their registrations (`Editor/WindowCommands/Compiled.lean`)
+are not imported. The command that switches the theme in force is here too
 (`Editor/Themes.lean`): `load-theme`, which a command of config's calls
 with `Themes.loadThemeCommand`, over `themeNames` and `loadTheme`
 (`Editor/Api.lean`); `setup` registers a theme with `defineTheme` and names

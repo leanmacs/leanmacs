@@ -4152,6 +4152,17 @@ def shippedChecks (_ : Unit) : List Check :=
             ex "ls" == some Buffers.listName &&
             ex "bd" == some Buffers.closeName },
     { name :=
+        "the executable's hosts start with every window command registered for the owner compiled"
+      run := do
+        let completions ← Job.Completions.new
+        let clock ← Job.FakeClock.new completions
+        let shipped :=
+          Headless.shippedOver "" "" "" (fun _ => pure ()) { completions, timers := clock.timers }
+            (← Snapshots.new) (← Job.HeldSnapshots.new)
+        let registry := Headless.compiled shipped
+        let compiled (name : String) : Bool := (registry.find? name).any (·.owner == .compiled)
+        return !WindowCommands.commands.isEmpty && WindowCommands.commands.all (compiled ·.name) },
+    { name :=
         "the executable's hosts start with the command load-theme and the theme default, the built-in one, registered for the owner compiled"
       run := do
         let completions ← Job.Completions.new

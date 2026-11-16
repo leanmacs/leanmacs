@@ -55,6 +55,7 @@ import Editor.UndoTree.Cases
 import Editor.Watch.Contract
 import Editor.Watch.Model
 import Editor.Window
+import Editor.WindowCommands.Compiled
 import Editor.WindowCheck
 import Editor.Workspace.Compiled
 import Editor.Workspace.Contract
@@ -25813,6 +25814,269 @@ def frameCommandChecks : List Check :=
             FrameCommands.commands.map (·.name) == #["toggle-fullscreen", "minimise-window"] &&
             framed (frameDriver rebound) (presses "C-s-f") == some (#[.minimise], false)) }]
 
+/-- The keys the window checks press, each bound to a window command's name
+as config's `bindKey` binds a key to a name (`InputScheme.command`). -/
+def windowTestKeys : List (String × String) :=
+  [("C-w s", WindowCommands.splitName), ("C-w v", WindowCommands.splitVerticallyName),
+    ("C-w C-n", WindowCommands.newName), ("C-w C-c", WindowCommands.closeName),
+    ("C-w q", WindowCommands.quitName), ("C-w o", WindowCommands.onlyName),
+    ("C-w h", WindowCommands.leftName), ("C-w j", WindowCommands.downName),
+    ("C-w k", WindowCommands.upName), ("C-w l", WindowCommands.rightName),
+    ("C-w C-w", WindowCommands.nextName), ("C-w W", WindowCommands.previousName),
+    ("C-w t", WindowCommands.topName), ("C-w b", WindowCommands.bottomName),
+    ("C-w C-p", WindowCommands.lastName), ("C-w x", WindowCommands.exchangeName),
+    ("C-w r", WindowCommands.rotateName), ("C-w R", WindowCommands.rotateBackName),
+    ("C-w =", WindowCommands.balanceName), ("C-w >", WindowCommands.widerName),
+    ("C-w <", WindowCommands.narrowerName), ("C-w z", WindowCommands.zoomName),
+    ("C-w m", WindowCommands.promoteName), ("C-w M", WindowCommands.demoteName),
+    ("C-w ,", WindowCommands.mainMoreName), ("C-w .", WindowCommands.mainFewerName)]
+
+/-- Active keymaps, for every view, that bind each key string of `table` to
+the command name beside it, as config's `bindKey` binds one. -/
+def windowMaps (table : List (String × String)) : EditorState → ViewId → List (Keymap Vim.Bound) :=
+  fun _ _ => [Vim.Default.keymap (table.map fun (text, name) => (text, .command { name }))]
+
+/-- What a step of the window checks is handed: evil's commands, the
+minibuffer's, the ex line's and the window commands, `layout` as config's
+layout, and `maps` as the active keymaps. -/
+def windowHanded (layout : Layout)
+    (maps : EditorState → ViewId → List (Keymap Vim.Bound) := windowMaps windowTestKeys) :
+    Loop.Keys Vim.Default.scheme :=
+  { evilHanded (Ex.commands ++ WindowCommands.commands) with
+    layout := some layout, maps }
+
+/-- A driver of the window checks over `windowsUnder count layout`, with
+config's layout `layout` already applied and the window `focus` focused, on
+the editor's models in cells 16 pixels tall, so that the tiled area of the
+frame of 640 by 480 is 640 by 464. -/
+def windowDriver (count : Nat) (layout : Layout) (focus : Nat := 0)
+    (handed : Loop.Keys Vim.Default.scheme := windowHanded layout) : Option EvilDriver :=
+  let start : TextM EditorState := do
+    let state ← windowsUnder count layout
+    return { state with
+        frame :=
+          { state.frame with
+            chosen := some layout, focused := ⟨focus⟩ } }
+  (Loop.Driver.over handed (fun _ => none) start
+      (.over { advance := 8, lineHeight := 16 })).toOption
+
+/-- The state of the window driver over `count` windows under `layout`,
+`focus` focused, once the keys `typed` name were pressed. -/
+def windowsAfter (count : Nat) (layout : Layout) (typed : String) (focus : Nat := 0) :
+    Option EditorState :=
+  (windowDriver count layout focus).map fun driver => (evilFed driver typed).loop.state
+
+/-- The window list, as indices, and the focus of `state`. -/
+def windowOrder (state : EditorState) : List Nat × Nat :=
+  (state.frame.windows.toList.map (·.index), state.frame.focused.index)
+
+/-- The rectangles of `state`'s windows, each as its view's index and its
+x, y, width and height. -/
+def windowRects (state : EditorState) : List (Nat × Nat × Nat × Nat × Nat) :=
+  state.rects.toList.map fun (view, rect) => (view.index, rect.x, rect.y, rect.width, rect.height)
+
+/-- The checks of the window commands (`Editor/WindowCommands.lean`), by
+key, on the loop's driver over the editor's models, under the Vim scheme
+that ships, with evil's, the minibuffer's, the ex line's and the window
+commands handed: Vim 9.1's `C-w` behaviours under the manual split layout,
+the reorders, zoom and resizes under master-and-stack, focus by direction
+under the three layouts, and the refusals in the echo area. -/
+def windowCommandChecks : List Check :=
+  let manual (count : Nat) (typed : String) (focus : Nat := 0) : Option EditorState :=
+    windowsAfter count Layout.manual typed focus
+  [{  name :=
+        "criterion 1, C-w s: two windows on the same buffer with equal markers at first, the new one above and focused, and the windows of the column equal in height; three from one window at 640 by 464 give four rows of 116"
+      run :=
+        pure <|
+          let split := (windowDriver 1 Layout.manual).map (evilFed · "C-w s")
+          match split, manual 1 "C-w s C-w s C-w s" with
+          | some split, some thrice =>
+            let state := split.loop.state
+            windowOrder state == ([1, 0], 1) &&
+              windowRects state == [(1, 0, 0, 640, 232), (0, 0, 232, 640, 232)] &&
+              state.windows.all (·.buffer == ⟨0⟩) &&
+              evilSelection split ⟨1⟩ == evilSelection split ⟨0⟩ &&
+              (evilSelection split ⟨1⟩).isSome &&
+              (windowRects thrice).map (·.2.2.2.2) == [116, 116, 116, 116] &&
+              thrice.wellFormed
+          | _, _ => false },
+    { name :=
+        "criterion 1, C-w v: the new window on the left and focused; two give three columns equal to a pixel; under a column split, C-w s then C-w v, the heights do not change"
+      run :=
+        pure <|
+          match manual 1 "C-w v", manual 1 "C-w v C-w v", manual 1 "C-w s C-w v" with
+          | some once, some twice, some under =>
+            windowOrder once == ([1, 0], 1) &&
+              windowRects once == [(1, 0, 0, 320, 464), (0, 320, 0, 320, 464)] &&
+              windowRects twice ==
+                [(2, 0, 0, 213, 464), (1, 213, 0, 213, 464), (0, 426, 0, 214, 464)] &&
+              windowRects under ==
+                [(2, 0, 0, 320, 232), (1, 320, 0, 320, 232), (0, 0, 232, 640, 232)]
+          | _, _, _ => false },
+    { name :=
+        "criterion 1, C-w C-n (Vim's CTRL-W n): a new window above, focused, on a new empty buffer with no file; the old window keeps its buffer"
+      run :=
+        pure <|
+          match (windowDriver 1 Layout.manual).map (evilFed · "C-w C-n") with
+          | none => false
+          | some driver =>
+            let state := driver.loop.state
+            let made := state.window? ⟨1⟩
+            windowOrder state == ([1, 0], 1) &&
+              windowRects state == [(1, 0, 0, 640, 232), (0, 0, 232, 640, 232)] &&
+              (state.window? ⟨0⟩).map (·.buffer) == some ⟨0⟩ &&
+              made.any (·.buffer != ⟨0⟩) &&
+              (made.bind fun window => state.buffer? window.buffer).any fun buffer =>
+                buffer.file.isNone &&
+                  (driver.model.texts.texts[buffer.text.index]?).join.map (·.contents) == some "" },
+    { name :=
+        "criterion 1 and 5, C-w C-c (Vim's CTRL-W c): the window leaves the list and the tree, and the windows of its column are equal again; on the last window it is refused, and the echo area says why"
+      run :=
+        pure <|
+          match manual 1 "C-w s C-w s C-w C-c", manual 1 "C-w C-c" with
+          | some closed, some last =>
+            windowOrder closed == ([1, 0], 1) &&
+              windowRects closed == [(1, 0, 0, 640, 232), (0, 0, 232, 640, 232)] &&
+              closed.wellFormed &&
+              windowOrder last == ([0], 0) &&
+              last.echo == s!"{WindowCommands.closeName}: {LayoutRefusal.onlyWindow.describe}"
+          | _, _ => false },
+    { name :=
+        "C-w q: with several windows it closes the window as C-w C-c does; on the last window it asks the editor to quit"
+      run :=
+        pure <|
+          match manual 1 "C-w s C-w q", manual 1 "C-w q" with
+          | some closed, some last =>
+            windowOrder closed == ([0], 0) && !closed.quitting && last.quitting
+          | _, _ => false },
+    { name :=
+        "C-w o: every other window is closed, and the window it was run in takes the whole tiled area; with one window it says so"
+      run :=
+        pure <|
+          match manual 1 "C-w s C-w v C-w o", manual 1 "C-w o" with
+          | some only, some alone =>
+            windowOrder only == ([2], 2) && windowRects only == [(2, 0, 0, 640, 464)] &&
+              only.wellFormed &&
+              alone.echo == WindowCommands.alreadyOnly
+          | _, _ => false },
+    { name :=
+        "criterion 1 and 4, C-w h j k l under manual splits: in a 2 by 2 grid each direction reaches the neighbour and at an edge nothing changes; in a column beside a row, left from the column reaches the top of the row; a count of 2 goes two windows"
+      run :=
+        pure <|
+          let grid :=
+            Splits.split .rows 1 1 (.split .columns 1 1 .tile .tile)
+              (.split .columns 1 1 .tile .tile)
+          let beside := Splits.split .columns 1 1 (.split .rows 1 1 .tile .tile) .tile
+          let row := Splits.even .columns 3
+          let focus (count : Nat) (tree : Splits) (typed : String) (start : Nat := 0) :
+            Option Nat :=
+            (windowsAfter count (.splits tree) typed start).map (·.frame.focused.index)
+          focus 4 grid "C-w l" == some 1 && focus 4 grid "C-w l C-w j" == some 3 &&
+            focus 4 grid "C-w l C-w j C-w h" == some 2 &&
+            focus 4 grid "C-w l C-w j C-w h C-w k" == some 0 &&
+            focus 4 grid "C-w h C-w k" == some 0 &&
+            (windowsAfter 4 (.splits grid) "C-w h").any (·.echo.isEmpty) &&
+            focus 3 beside "C-w l" == some 2 &&
+            focus 3 beside "C-w h" 2 == some 0 &&
+            focus 3 beside "C-w j" == some 1 &&
+            focus 3 row "2 C-w l" == some 2 },
+    { name :=
+        "criterion 1, C-w C-w (Vim's CTRL-W w) and C-w W: the next and the previous window in the tree's order, the last wrapping to the first and the first to the last; with a count, the Nth window"
+      run :=
+        pure <|
+          let focus (typed : String) : Option Nat := (manual 3 typed).map (·.frame.focused.index)
+          focus "C-w C-w" == some 1 && focus "C-w C-w C-w C-w C-w C-w" == some 0 &&
+            focus "3 C-w C-w" == some 2 &&
+            focus "C-w W" == some 2 &&
+            focus "2 C-w W" == some 1 },
+    { name := "criterion 1, C-w t and C-w b: the first and the last window of the tree's order"
+      run :=
+        pure <|
+          (manual 3 "C-w b").map (·.frame.focused.index) == some 2 &&
+            (manual 3 "C-w b C-w t").map (·.frame.focused.index) == some 0 },
+    { name :=
+        "criterion 1, C-w C-p (Vim's CTRL-W p): after C-w s it goes back to the window split, and again forth; with no last window it is refused, and the echo area says why"
+      run :=
+        pure <|
+          match manual 1 "C-w s C-w C-p", manual 1 "C-w s C-w C-p C-w C-p", manual 1 "C-w C-p" with
+          | some back, some forth, some missing =>
+            back.frame.focused == ⟨0⟩ && forth.frame.focused == ⟨1⟩ &&
+              missing.echo ==
+                s!"{WindowCommands.lastName}: {LayoutRefusal.noPreviousWindow.describe}"
+          | _, _, _ => false },
+    { name :=
+        "criterion 1, C-w =: every split back to its slot counts, so a column beside a column gives equal columns, and equal rows in each"
+      run :=
+        pure <|
+          let tree :=
+            Splits.split .columns 7 3 (.split .rows 1 4 .tile .tile) (.split .rows 2 1 .tile .tile)
+          (windowsAfter 4 (.splits tree) "C-w =").map windowRects ==
+            some
+              [(0, 0, 0, 320, 232), (1, 0, 232, 320, 232), (2, 320, 0, 320, 232),
+                (3, 320, 232, 320, 232)] },
+    { name :=
+        "C-w x exchanges the window with the next and puts the focus in the other window; C-w r and C-w R rotate a row of windows, the focus staying in its window"
+      run :=
+        pure <|
+          let row := Layout.splits (Splits.even .columns 3)
+          (manual 3 "C-w x").map windowOrder == some ([1, 0, 2], 1) &&
+            (windowsAfter 3 row "C-w r").map windowOrder == some ([2, 0, 1], 0) &&
+            (windowsAfter 3 row "C-w R").map windowOrder == some ([1, 2, 0], 0) },
+    { name :=
+        "criterion 3, by key under master-and-stack from views 0, 1 and 2 focused on 2: C-w m makes 2 main, C-w M demotes it again, C-w r rotates the stack and C-w R back; C-w z leaves one view in the scene, the focused one, over the tiled area, and C-w z again gives the three views and master-and-stack back"
+      run :=
+        pure <|
+          let after (typed : String) : Option (List Nat × Nat) :=
+            (windowsAfter 3 Layout.default typed 2).map windowOrder
+          let scene (typed : String) : Option (List (Nat × Rect) × Layout) :=
+            (windowDriver 3 Layout.default 2).bind fun driver =>
+              let driver := evilFed driver typed
+              driver.model.display.scenes.back?.map fun scene =>
+                (scene.views.toList.map fun view => (view.id.index, view.rect),
+                  driver.loop.state.frame.layout)
+          let tiled : Rect := { x := 0, y := 0, width := 640, height := 464 }
+          after "C-w m" == some ([2, 0, 1], 2) && after "C-w m C-w M" == some ([0, 2, 1], 2) &&
+            after "C-w m C-w M C-w r" == some ([0, 1, 2], 2) &&
+            after "C-w m C-w M C-w r C-w R" == some ([0, 2, 1], 2) &&
+            scene "C-w z" == some ([(2, tiled)], .monocle) &&
+            (scene "C-w z C-w z").map (fun (views, layout) => (views.map (·.1), layout)) ==
+              some ([0, 1, 2], Layout.default) },
+    { name :=
+        "resize by key under master-and-stack: C-w > on main makes the share 55 and on a stack window 45, with a count 60; C-w , and C-w . change main's count"
+      run :=
+        pure <|
+          let layout (typed : String) (focus : Nat := 0) : Option Layout :=
+            (windowsAfter 2 Layout.default typed focus).map (·.frame.layout)
+          layout "C-w >" == some (.masterStack { share := 55 }) &&
+            layout "C-w >" 1 == some (.masterStack { share := 45 }) &&
+            layout "2 C-w >" == some (.masterStack { share := 60 }) &&
+            layout "C-w <" == some (.masterStack { share := 45 }) &&
+            layout "C-w ," == some (.masterStack { count := 2 }) &&
+            layout "C-w , C-w ." == some Layout.default },
+    { name :=
+        "criterion 4, by key: under master-and-stack C-w l from main reaches the top of the stack, C-w j walks it and C-w h comes back to main; under monocle no window is in any direction and the focus stays"
+      run :=
+        pure <|
+          let focus (layout : Layout) (typed : String) : Option Nat :=
+            (windowsAfter 3 layout typed).map (·.frame.focused.index)
+          focus Layout.default "C-w l" == some 1 && focus Layout.default "C-w l C-w j" == some 2 &&
+            focus Layout.default "C-w l C-w j C-w h" == some 0 &&
+            focus .monocle "C-w l" == some 0 &&
+            focus .monocle "C-w j" == some 0 },
+    { name :=
+        "window-close on the minibuffer's view, by a config's binding that holds there, is refused with ofMinibuffer, the echo area says why, and the prompt stays open"
+      run :=
+        pure <|
+          let handed :=
+            windowHanded Layout.manual (windowMaps [("C-w C-c", WindowCommands.closeName)])
+          match (windowDriver 1 Layout.manual 0 handed).map (evilFed · ": C-w C-c") with
+          | none => false
+          | some driver =>
+            let state := driver.loop.state
+            state.prompt.isSome &&
+              state.echo ==
+                s!"{WindowCommands.closeName}: {(LayoutRefusal.ofMinibuffer ⟨0⟩).describe}" }]
+
 /-- The checks of a request of the window through the display interface,
 on its model. -/
 def frameDisplayChecks : List Check :=
@@ -27688,6 +27952,7 @@ def checks : List Check :=
     evilRepeatChecks ++
     viewChecks ++
     frameCommandChecks ++
+    windowCommandChecks ++
     titleChecks ++
     menuChecks ++
     clipboardCommandChecks ++
