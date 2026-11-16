@@ -2647,6 +2647,19 @@ def setupChecks : List Check :=
               refusal (framePadding 0) == none)
         | _, _ => pure false },
     { name :=
+        "a setup's shell time limit is collected, a setup that sets none has none, and one that sets it twice is refused with a message that says so"
+      run :=
+        let twice : SetupM Unit := do
+          shellTimeLimit 5000
+          shellTimeLimit 100
+        match Config.Registrations.ofSetup (shellTimeLimit 5000),
+          Config.Registrations.ofSetup (command "x" (makes "1")) with
+        | .ok collected, .ok plain =>
+          pure
+            (collected.shellTimeLimit == some 5000 && plain.shellTimeLimit == none &&
+              refusal twice == some Config.Registrations.shellTimeLimitTwice)
+        | _, _ => pure false },
+    { name :=
         "a setup's title bar is collected, a setup that chooses none has none, and one that chooses it twice is refused with a message that says so"
       run :=
         let twice : SetupM Unit := do
@@ -3757,6 +3770,17 @@ def reloadChecks : List Check :=
         pure
           (told (reduce []).1 == (#[], 0) && told loaded == (roots, 1) && told kept == (roots, 1) &&
             told bare == (#[], 2)) },
+    { name :=
+        "an installed reload puts config's shell time limit in the registry, which tells the loop of it; a rejected reload leaves it, and a config that sets none goes back to none"
+      run :=
+        let (loaded, _) := reduce [.requested, .finished (accepted ["a"] (shellTimeLimit 5000))]
+        let (kept, _) := reduceFrom loaded [.requested, .finished (rejected "a")]
+        let (bare, _) := reduceFrom kept [.requested, .finished (accepted ["a"] (greets "1"))]
+        let told (state : Config.State Elaborated) : Option Nat :=
+          state.registry.registered.shellTimeLimit
+        pure
+          (told (reduce []).1 == none && told loaded == some 5000 && told kept == some 5000 &&
+            told bare == none) },
     { name :=
         "an outcome with no base leaves the base as it was: with none known the next job imports again, and a known one is not forgotten"
       run :=
@@ -26550,6 +26574,17 @@ def workspaceStateChecks : List Check :=
             table.cached? "/r/src" 1 == none &&
             table.cached? "/x" 0 == some none &&
             table.cached? "/y" 0 == none) },
+    { name :=
+        "with no loop to answer, the shell time limit is none; a dispatched command that asks is answered the limit the loop was told of"
+      run :=
+        let program : EditorM (Guarded (Option Nat) × EditorState) := do
+          (EditorState.ask .shellTimeLimit).dispatched { shellTimeLimit := some 5000 }
+              (← twoBuffers)
+        pure <|
+          (EditorState.none.handle .shellTimeLimit).1 == none &&
+            match (program.runModel editorModel).1 with
+            | .ok (.finished answer, _) => answer == some 5000
+            | _ => false },
     { name :=
         "with no loop to answer, the workspace settings are config's defaults under generation 0"
       run := pure ((EditorState.none.handle .workspaceSettings).1 == ({}, 0)) },

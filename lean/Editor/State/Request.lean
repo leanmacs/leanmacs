@@ -159,6 +159,8 @@ the models and against the library alike (`Editor/Command/Dispatch.lean`).
   which the loop answers from what it was told of the registry
   (`Editor/Command/Dispatch.lean`). Here, with no registry, it is answered
   no root and generation 0.
+- **Config's shell time limit is asked by one request**, `shellTimeLimit`,
+  which the loop answers the same way; here it is answered `none`.
 
 ## Where an addition goes
 
@@ -306,6 +308,9 @@ inductive StateRequest where
   /-- Have the unscoped store, of the buffers outside any workspace, keep
   `value` under `name`. -/
   | setUnscopedValue (name : String) (value : Value)
+  /-- How long a `:!` or a filter may run, in milliseconds, as config set
+  it, which the loop that runs the command answers with. -/
+  | shellTimeLimit
 
 /-- The type of the reply to each request. -/
 abbrev StateRequest.Reply : StateRequest → Type
@@ -359,6 +364,7 @@ abbrev StateRequest.Reply : StateRequest → Type
   | .setProjectValue .. => Except WorkspaceRefusal Unit
   | .workspaceSettings => Workspace.Settings × Nat
   | .setUnscopedValue .. => Unit
+  | .shellTimeLimit => Option Nat
 
 namespace EditorState
 
@@ -443,6 +449,9 @@ def handle : (request : StateRequest) → EditorState → request.Reply × Edito
   | .workspaceSettings, state => (({}, 0), state)
   | .setUnscopedValue name value, state =>
     ((), { state with workspaces := state.workspaces.setUnscopedValue name value })
+  -- Config's limit is the loop's to answer with (`Program.dispatched`):
+  -- here, with no loop, config set none.
+  | .shellTimeLimit, state => (none, state)
 
 end EditorState
 

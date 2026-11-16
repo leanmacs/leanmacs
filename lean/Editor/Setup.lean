@@ -212,6 +212,11 @@ A relative path is refused, and so is a second `processEnvironment` in one
 `setup`. A reload that installs takes the setting, and drops every
 directory's cached environment.
 
+Config sets how long a `:!` or a filter may run before it is killed with
+`shellTimeLimit`, in milliseconds (`shellTimeLimit 5000`); with none it is
+30 seconds. Setting it twice is refused, and a reload changes it for the
+next run.
+
 Config declares a workspace root with `workspace`, for a directory that is
 not a repository, or to split one, with the name of the project it belongs
 to if it gives one (`Editor/Workspace.lean`):
@@ -299,6 +304,9 @@ inductive SetupRequest where
   /-- Declare `root`, an absolute path, a workspace root, of the project
   called `project` when one is given (`Editor/Workspace.lean`). -/
   | workspace (root : System.FilePath) (project : Option String)
+  /-- Set how long a `:!` or a filter may run, in milliseconds, before it is
+  killed (`Editor/Shell.lean`). -/
+  | shellTimeLimit (milliseconds : Nat)
 
 /-- The type of the reply to each request: nothing, for all of them. -/
 def SetupRequest.Reply : SetupRequest → Type
@@ -320,6 +328,7 @@ def SetupRequest.Reply : SetupRequest → Type
   | .processEnvironment _ => Unit
   | .autoReload _ => Unit
   | .workspace .. => Unit
+  | .shellTimeLimit _ => Unit
 
 /-- The setup port: `SetupRequest` and the reply to each request. -/
 abbrev setupPort : Port :=
@@ -513,6 +522,14 @@ it until the editor stops. A second call in one `setup` is refused, as a
 second face of one name is. -/
 def autoReload (on : Bool := true) : SetupM Unit :=
   ExceptT.lift (Program.request (port := setupPort) (.autoReload on))
+
+/-- Sets how long a `:!` or a filter may run before its child is killed and
+the echo area says so, in milliseconds: 30 000 when config says nothing
+(`Shell.defaultTimeLimit`, `Editor/Shell.lean`). A reload changes it for
+the next run. A second call in one `setup` is refused, as a second frame
+padding is. -/
+def shellTimeLimit (milliseconds : Nat) : SetupM Unit :=
+  ExceptT.lift (Program.request (port := setupPort) (.shellTimeLimit milliseconds))
 
 /-- The message a workspace root is refused with when it is not absolute. -/
 def relativeWorkspace (root : System.FilePath) : String :=

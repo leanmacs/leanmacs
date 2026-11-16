@@ -161,6 +161,10 @@ from the next command.
   was told of (`Loop.Registered.workspaceRoots`, `generation`), the state
   not read and not changed. A file's open asks, for its directory's
   workspace (`Editor/Workspace/Attach.lean`).
+- **Asking for the shell time limit** (`StateRequest.shellTimeLimit`) is
+  answered config's limit the loop was told of
+  (`Loop.Registered.shellTimeLimit`), or `none`, the state not read and
+  not changed. `:!` asks, for its run's limit (`Editor/Shell.lean`).
 - **Running a command inside the asking command**
   (`StateRequest.runCommand`) is answered `false` for a name no command is
   registered under (`Loop.Registered.command`), with nothing run.
@@ -280,6 +284,10 @@ structure Loop.Registered where
   directory's cached workspace is an answer only under the generation it
   was found under (`Editor/Workspace.lean`). -/
   generation : Nat := 0
+  /-- How long a `:!` or a filter may run, in milliseconds, as config set it
+  (`shellTimeLimit`, `Editor/Setup.lean`); `none` for the shell's
+  default. -/
+  shellTimeLimit : Option Nat := none
 
 /-- A program that ends at once, interrupted, with no state: what the
 compiler is shown for `Program.dispatched`, which is `partial`. -/
@@ -338,6 +346,8 @@ partial def Program.dispatched {α : Type} (registered : Loop.Registered) :
     else dispatched registered state (next (.error (.noSuchTheme name)))
   | state, .step (.state .autoReloadMode) next =>
     dispatched registered state (next (state.autoReload.getD registered.autoReload))
+  | state, .step (.state .shellTimeLimit) next =>
+    dispatched registered state (next registered.shellTimeLimit)
   | state, .step (.state .workspaceSettings) next =>
     dispatched registered state
       (next ({ roots := registered.workspaceRoots }, registered.generation))

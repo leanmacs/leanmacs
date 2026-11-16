@@ -307,6 +307,10 @@ it did not, which a host reads as `auto`. -/
   directory's cached workspace was found under (`Editor/Workspace.lean`).
   0 while only compiled code is registered. -/
   generation : Nat := 0
+  /-- How long a `:!` or a filter may run, in milliseconds, as config set it
+  (`shellTimeLimit`, `Editor/Setup.lean`); `none` when it did not, which
+  the shell reads as its default. -/
+  shellTimeLimit : Option Nat := none
 
 namespace Registry
 
@@ -513,7 +517,8 @@ buffer's major mode; whether a job is registered under a name, for a
 command to start; and the ex binding of an ex name (`ex?`) and the ex
 names that are bound (`exNames`), for the ex line; and the names themes
 are registered under (`themeNames`), for the command that loads one; and
-config's workspace roots and the config generation, for the finder. Which command a name stands for, for a command run inside another,
+config's workspace roots and the config generation, for the finder; and
+config's shell time limit, for `:!`. Which command a name stands for, for a command run inside another,
 is not said here: the loop takes it from the lookup it runs an invocation
 by (`Loop.Keys.command?`, `Editor/Loop.lean`, "A command run inside
 another"). -/
@@ -522,7 +527,7 @@ def registered (registry : Registry) : Loop.Registered :=
     jobs := fun name => (registry.findJob? name).isSome, ex := registry.ex?
     exNames := registry.exNames, themeNames := registry.themeNames
     autoReload := registry.autoReload, workspaceRoots := registry.workspaceRoots
-    generation := registry.generation }
+    generation := registry.generation, shellTimeLimit := registry.shellTimeLimit }
 
 end Registry
 
@@ -569,6 +574,9 @@ they were made: one at most, in a `setup` that is not refused. -/
   /-- The workspace roots the `setup` declared, in order: a root once at
   most, in a `setup` that is not refused. -/
   workspaceRoots : Array Workspace.ConfigRoot := #[]
+  /-- The shell time limits `setup` set (`shellTimeLimit`), in order: one at
+  most, in a `setup` that is not refused. -/
+  shellTimeLimits : Array Nat := #[]
 
 namespace Registrations
 
@@ -587,6 +595,14 @@ def framePadding (collected : Registrations) : Option Nat :=
 /-- The title bar a `setup` chose, if it chose one. -/
 def titleBar (collected : Registrations) : Option Window.TitleBar :=
   collected.titleBars[0]?
+
+/-- The shell time limit a `setup` set, in milliseconds, if it set one. -/
+def shellTimeLimit (collected : Registrations) : Option Nat :=
+  collected.shellTimeLimits[0]?
+
+/-- What a `setup` that sets the shell time limit twice is refused with. -/
+def shellTimeLimitTwice : String :=
+  "the shell time limit is set twice"
 
 /-- The handler of the setup port that collects: its answer to each request,
 and what has been registered after it. -/
@@ -625,6 +641,8 @@ def collect : (request : SetupRequest) → Registrations → request.Reply × Re
   | .autoReload on, collected => ((), { collected with autoReload := collected.autoReload.push on })
   | .workspace root project, collected =>
     ((), { collected with workspaceRoots := collected.workspaceRoots.push { root, project } })
+  | .shellTimeLimit milliseconds, collected =>
+    ((), { collected with shellTimeLimits := collected.shellTimeLimits.push milliseconds })
 
 /-- Where a child's environment comes from, as the `setup` set it, or `none`
 when it did not. -/
@@ -654,7 +672,7 @@ theme defined twice, a theme named twice (by its first two names), a
 segment defined twice, the mode line listed twice, the frame padding set
 twice, the title bar chosen twice, a key sequence bound twice, a binding of
 no keys, an ex name bound twice, the process environment set twice,
-auto-reload set twice, a workspace root declared twice, a command over a store that is not declared, a mode name defined twice, or a
+auto-reload set twice, a workspace root declared twice, the shell time limit set twice, a command over a store that is not declared, a mode name defined twice, or a
 mode with a problem under any scheme (`Mode.problems`), of which the first
 is named.
 
@@ -697,6 +715,8 @@ def problem? (collected : Registrations) : Option String := do
     return autoReloadTwice
   if let some root := repeated? (collected.workspaceRoots.map (Process.trimmed ·.root)) then
     return workspaceTwice root
+  if collected.shellTimeLimits.size > 1 then
+    return shellTimeLimitTwice
   for binding in collected.bindings do
     if binding.keys.isEmpty then
       return boundToNoKeys binding.command
