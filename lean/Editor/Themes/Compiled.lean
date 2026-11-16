@@ -30,6 +30,11 @@ drops it.
   (`Themes.problems`, `Editor/Themes/Check.lean`), which
   `ModelTest.faceVocabularyChecks` runs on every theme in this list.
 
+The mode line's shipped segments are handed to a host beside the themes,
+the same way (`Headless.Collaborators.segments`, whose default is
+`ModeLine.shipped`, `Editor/ModeLine.lean`), and registered for the owner
+`compiled` with them.
+
 This module is apart from `Editor/Themes.lean` because it names the
 registry, which is the config session's: `Editor.lean` imports the command,
 so that config can call it, and not this.

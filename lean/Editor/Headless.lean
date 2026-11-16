@@ -135,8 +135,9 @@ as before, so reload and job completion work as they did.
   name. So a reload's modes, bindings and commands hold from the next key.
   What a command over a store asked to be written is written back to the
   stores.
-- **Compiled commands, jobs, bindings, modes, ex bindings and themes are
-  registered when the loop starts** (`compiled`), for the owner `compiled`,
+- **Compiled commands, jobs, bindings, modes, ex bindings, themes and
+  mode-line segments are registered when the loop starts** (`compiled`), for
+  the owner `compiled`,
   before any config: they are what the host's collaborators hand it. A reload replaces
   config's commands, jobs, bindings, modes and ex bindings and never these,
   so they run
@@ -734,6 +735,11 @@ structure Collaborators (σ : Type) (scheme : InputScheme) where
   /-- The compiled themes (`Editor/Themes/Compiled.lean`): registered for
   the owner `compiled` when the loop starts, before any config. -/
   themes : Array NamedTheme := #[]
+  /-- The compiled segments of the mode line (`Editor/ModeLine.lean`):
+  registered for the owner `compiled` when the loop starts, before any
+  config. The default is the shipped set, so every host draws the shipped
+  mode line unless it is told otherwise. -/
+  segments : Array Segment := ModeLine.shipped
   /-- Where a log entry goes: a command that took longer than `slowAfter`.
   The editor thread calls it. It is not `emit`: the output is what a test
   compares, and a log entry depends on how long the machine took. -/
@@ -830,7 +836,8 @@ def severityName : Config.Severity → String
 
 /-- The lines a reload's report is printed as: what it came to, then its
 diagnostics, then, when its config named a theme nobody registered, a line
-that says so. -/
+that says so, and a `segment:` line for each segment its mode line listed
+that nobody registered. -/
 def reportLines (report : Config.Report) : Array String :=
   let outcome :=
     if report.installed then
@@ -840,7 +847,8 @@ def reportLines (report : Config.Report) : Array String :=
     report.diagnostics.map fun diagnostic =>
       s!"diagnostic: {diagnostic.source}:{diagnostic.line}:{diagnostic.column}: {severityName diagnostic.severity}: {(diagnostic.message.splitOn "\n").headD ""}"
   #[outcome] ++ diagnostics ++
-    report.unknownTheme.toArray.map fun name => s!"theme: {Theme.unknown name}"
+    report.unknownTheme.toArray.map (fun name => s!"theme: {Theme.unknown name}") ++
+    report.unknownSegments.map fun name => s!"segment: {ModeLine.unknown name}"
 
 /-- How a job that has ended is reported, after `job <id> <name>: `. -/
 def firstLine (message : String) : String :=
@@ -1033,11 +1041,14 @@ its own state; the lookup an invocation uses (`Config.State.command?`);
 the host's threshold for a slow command; and what a command's state
 requests are told of the registry (`Config.Registry.registered`: the modes
 whose on-enter actions a major mode runs, the jobs' names and the ex
-bindings). It is made for each window
-event, so a reload changes it between two events. -/
+bindings); and the mode line, config's listing or the default order
+resolved over the registry's segments, a name nobody registered left out
+(`Config.Registry.resolve`). It is made for each window event, so a reload
+changes it between two events. -/
 def keys (collaborators : Collaborators σ scheme) (running : Running σ scheme) : Loop.Keys scheme :=
   { maps := running.config.registry.activeMaps scheme, command? := running.config.command?
-    slowAfter := collaborators.slowAfter, registered := running.config.registry.registered }
+    slowAfter := collaborators.slowAfter, registered := running.config.registry.registered
+    modeLine := (running.config.registry.resolve (running.config.modeLine.getD .standard)).1 }
 
 /-- Publishes a scene of the frame's state, if there is a frame, its status
 lines drawn by the mode line the registry and config make (`keys`): what
@@ -1421,16 +1432,17 @@ structure Progress where
   jobs : Nat := 0
 
 /-- The registry a host starts with: what compiled code hands it, its
-commands, jobs, key bindings, modes, ex bindings and themes, for the owner
-`compiled`, before any config. -/
+commands, jobs, key bindings, modes, ex bindings, themes and segments, for
+the owner `compiled`, before any config. -/
 def compiled {σ : Type} {scheme : InputScheme} (collaborators : Collaborators σ scheme) :
     Config.Registry :=
-  (((((({} : Config.Registry).replace .compiled collaborators.commands).replaceJobs .compiled
-                    collaborators.compiledJobs).replaceBindings
-                .compiled collaborators.bindings).replaceModes
-            .compiled collaborators.modes).replaceEx
-        .compiled collaborators.ex).replaceThemes
-    .compiled collaborators.themes
+  ((((((({} : Config.Registry).replace .compiled collaborators.commands).replaceJobs .compiled
+                        collaborators.compiledJobs).replaceBindings
+                    .compiled collaborators.bindings).replaceModes
+                .compiled collaborators.modes).replaceEx
+            .compiled collaborators.ex).replaceThemes
+        .compiled collaborators.themes).replaceSegments
+    .compiled collaborators.segments
 
 /-- What the editor thread holds as its loop starts: the compiled registry
 (`compiled`), no texts, the display its collaborators make over the table of
@@ -1993,7 +2005,8 @@ def shippedOver (sysroot oleanDir configDir : String) (emit : String → IO Unit
         Themes.commands
     bindings := FrameCommands.bindings
     compiledJobs := Files.jobs
-    modes := Minibuffer.modes, ex := Ex.bindings, themes := Themes.shipped, log := IO.eprintln }
+    modes := Minibuffer.modes, ex := Ex.bindings, themes := Themes.shipped
+    segments := ModeLine.shipped, log := IO.eprintln }
 
 /-- The collaborators the executable's hosts are made of, the headless
 mode's and the window mode's: `shippedOver` the library's timer service,

@@ -18,10 +18,11 @@ the model tests run it with outcomes built by hand
   what was just installed, and two reloads cannot install out of order.
 - **Installing is the only place config changes anything.** An accepted
   outcome replaces the chunks, replaces the config's entries in the registry,
-  commands, jobs, key bindings, modes, ex bindings and faces
-  (`Registry.replace`, `Registry.replaceJobs`, `Registry.replaceBindings`,
-  `Registry.replaceModes`, `Registry.replaceEx`, `Registry.replaceFaces`,
-  never an append) and meets the config's stores with the cells there are
+  commands, jobs, key bindings, modes, ex bindings, faces, themes and
+  segments (`Registry.replace`, `Registry.replaceJobs`,
+  `Registry.replaceBindings`, `Registry.replaceModes`, `Registry.replaceEx`,
+  `Registry.replaceFaces`, `Registry.replaceThemes`,
+  `Registry.replaceSegments`, never an append) and meets the config's stores with the cells there are
   (`Cells.install`). A rejected outcome changes none of them: the config that
   was loaded stays.
 - **The theme follows the registry and the theme in force.** The theme in
@@ -45,6 +46,15 @@ the model tests run it with outcomes built by hand
   that loaded one) puts a registered theme in force, with the effect
   `themed`; a name nobody registered changes nothing and has no effect,
   since the command has already said so.
+- **The mode line follows the registry and config's listing.** An install
+  replaces config's segments (`Registry.replaceSegments`) and sets the
+  listing in force (`State.modeLine`) to the one the config made, or none
+  for the default order, so a reload that lists none goes back to the
+  default. A listed name no segment is registered under is left out, and
+  the report names it (`Report.unknownSegments`), which the echo area says
+  after the unknown theme's sentence. The host resolves the listing over
+  the registry for each step (`Headless.keys`). A rejected outcome changes
+  none of it.
 - **A reload cancels the old config's jobs when, and only when, it
   installs.** An accepted outcome's effects begin with `cancelJobs config`,
   before its report and before a follow-up job starts; a rejected outcome has
@@ -89,16 +99,24 @@ structure Report where
   /-- The theme the installed config named that no theme is registered
   under, if it named one: the theme in force stayed. -/
   unknownTheme : Option String := none
+  /-- The segment names the installed config's mode line lists that no
+  segment is registered under, in order, each once: they are left out, and
+  the rest are drawn. -/
+  unknownSegments : Array String := #[]
 
 /-- What a reload says in the echo area: for a rejected one, its first
 error, `reload: <source>:<line>:<column>: error: ` and the first line of its
 message, then ` (and <n> more)` when it has more errors; for one rejected
 with no error to name, `reload: rejected`. A reload that installs says
 nothing, so a working config does not cover what a command said, unless its
-config named a theme nobody registered: then `reload: ` and
-`Theme.unknown`. The whole report is the host's to print. -/
+config named a theme or listed segments nobody registered: then `reload: `
+and the sentences, `Theme.unknown`'s and then each `ModeLine.unknown`,
+joined by `; `. The whole report is the host's to print. -/
 def Report.echo (report : Report) : Option String :=
-  if report.installed then report.unknownTheme.map fun name => s!"reload: {Theme.unknown name}"
+  if report.installed then
+    let sentences :=
+      report.unknownTheme.toArray.map Theme.unknown ++ report.unknownSegments.map ModeLine.unknown
+    if sentences.isEmpty then none else some s!"reload: {"; ".intercalate sentences.toList}"
   else
     let errors := report.diagnostics.filter (·.severity == .error)
     match errors[0]? with
@@ -127,6 +145,10 @@ structure State (σ : Type) where
   /-- The name of the theme in force: set by an install whose config names
   a registered theme, and by `choose`. -/
   themeName : String := Theme.defaultName
+  /-- The listing of the mode line the installed config made, or none for
+  the default order (`ModeLine.Order.standard`): set at every install, so a
+  config that lists none goes back to the default. -/
+  modeLine : Option ModeLine.Order := none
 
 /-- What happened, as far as reloads go. -/
 inductive Event (σ : Type) where
@@ -208,19 +230,23 @@ def install (state : State σ) (outcome : Outcome σ) : State σ × Report :=
       { state with
         chunks := built.chunks,
         registry :=
-          ((((((state.registry.replace .config built.registrations.commands).replaceJobs .config
-                                built.registrations.jobs).replaceBindings
-                            .config built.registrations.bindings).replaceModes
-                        .config built.registrations.modes).replaceEx
-                    .config built.registrations.ex).replaceFaces
-                .config built.registrations.faces).replaceThemes
-            .config built.registrations.themes,
+          (((((((state.registry.replace .config built.registrations.commands).replaceJobs .config
+                                    built.registrations.jobs).replaceBindings
+                                .config built.registrations.bindings).replaceModes
+                            .config built.registrations.modes).replaceEx
+                        .config built.registrations.ex).replaceFaces
+                    .config built.registrations.faces).replaceThemes
+                .config built.registrations.themes).replaceSegments
+            .config built.registrations.segments,
         cells }
     let (themeName, unknownTheme) :=
       chooseAt state.registry state.themeName built.registrations.theme
-    ({ state with themeName },
+    let modeLine := built.registrations.modeLine
+    let unknownSegments := (modeLine.map fun order => (state.registry.resolve order).2).getD #[]
+    ({ state with
+        themeName, modeLine },
       { number := state.finished, installed := true, diagnostics := outcome.diagnostics ++ lost,
-        chunks := state.chunks.size, commands := state.commands, unknownTheme })
+        chunks := state.chunks.size, commands := state.commands, unknownTheme, unknownSegments })
 
 end State
 

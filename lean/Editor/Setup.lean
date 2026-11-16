@@ -4,6 +4,7 @@ import Editor.Face
 import Editor.Job
 import Editor.Key.Notation
 import Editor.Mode
+import Editor.ModeLine
 import Editor.Store
 
 /-!
@@ -121,7 +122,8 @@ The editor refuses a `setup` too, the same way, when what it registered
 cannot be meant: a command name or a job name registered twice (the first
 could never run), a key sequence bound twice (the first binding could never
 run), an ex name bound twice, a store name declared twice, a theme defined
-twice or named twice, a command over a store the `setup`
+twice or named twice, a segment defined twice, the mode line listed twice,
+a command over a store the `setup`
 does not declare, a mode name defined twice, or a mode that cannot be meant
 under any scheme (`Mode.problems`: a role that is not registered, a suffix
 used twice, a suffix that is not keys). The diagnostic names the command,
@@ -161,6 +163,25 @@ or names a theme twice, is refused. A name no theme is registered under is
 not refused: it is looked up when the config is installed, and the theme in
 force then stays, and the echo area says so (`Editor/Config/Reload.lean`).
 A config that names no theme keeps the theme in force.
+
+Config defines segments of the mode line and lists them for each side
+(`Editor/ModeLine.lean`):
+
+```lean
+def setup : SetupM Unit := do
+  defineSegment "greeting" fun _ =>
+    #[{ text := "hi", face := ⟨"mode-line.secondary"⟩, padding := 4 }]
+  modeLine ["state", "buffer", "modified"] ["greeting", "line-column", "position"]
+```
+
+`defineSegment` registers a segment by name, for this config: a function
+from what a window shows (`ModeLine.Context`: its buffer, the scheme's
+reported fields, its cursor, its rows, whether it is selected) to fields.
+`modeLine` lists the segments of each side by name, shipped ones
+(`ModeLine.shipped`) or the config's own. A name no segment is registered
+under is left out, the rest are drawn, and the echo area says so. A config
+that lists none has the default order. A `setup` that defines a segment
+name twice, or lists the mode line twice, is refused.
 
 A request of this port can carry an `EditorM`, which a request of the
 editor's own port could not: the setup port is not the port `EditorM` runs
@@ -215,6 +236,12 @@ inductive SetupRequest where
   /-- Name the theme called `name` as the one in force once the config is
   installed. -/
   | useTheme (name : String)
+  /-- Register `segment` as a segment of the mode line, by its name
+  (`Editor/ModeLine.lean`). -/
+  | segment (segment : Segment)
+  /-- List the segments of the mode line, by name, for each side, once the
+  config is installed. -/
+  | modeLine (order : ModeLine.Order)
 
 /-- The type of the reply to each request: nothing, for all of them. -/
 def SetupRequest.Reply : SetupRequest → Type
@@ -229,6 +256,8 @@ def SetupRequest.Reply : SetupRequest → Type
   | .face .. => Unit
   | .theme _ => Unit
   | .useTheme _ => Unit
+  | .segment _ => Unit
+  | .modeLine _ => Unit
 
 /-- The setup port: `SetupRequest` and the reply to each request. -/
 abbrev setupPort : Port :=
@@ -351,5 +380,25 @@ registered under keeps the theme in force and says so in the echo area. The
 editor refuses the `setup` for naming a theme twice. -/
 def useTheme (name : String) : SetupM Unit :=
   ExceptT.lift (Program.request (port := setupPort) (.useTheme name))
+
+/-- Registers a segment of the mode line called `name`, for this config:
+`fields` gives its fields for what a window shows (`ModeLine.Context`), and
+none when it has nothing to say. A config can then list it (`modeLine`).
+Its fields' sides are the listing's; their faces and paddings are its own.
+The editor refuses the `setup` for a segment name defined twice. -/
+def defineSegment (name : String) (fields : ModeLine.Context → Array StatusField) : SetupM Unit :=
+  ExceptT.lift (Program.request (port := setupPort) (.segment { name, fields }))
+
+/-- Lists the segments of the mode line once the config is installed: `left`
+from the row's start and `right` ending at its end, each by its name, a
+shipped one (`ModeLine.shipped`) or one this `setup` defines. A name nobody
+registered is left out, and the echo area says so; the rest are drawn in
+order. A config that lists none has the default order
+(`ModeLine.Order.standard`). The editor refuses the `setup` for listing the
+mode line twice. -/
+def modeLine (left right : List String) : SetupM Unit :=
+  ExceptT.lift
+    (Program.request (port := setupPort)
+      (.modeLine { left := left.toArray, right := right.toArray }))
 
 end Editor

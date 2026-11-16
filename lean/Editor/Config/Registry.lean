@@ -122,6 +122,24 @@ A `setup` that defines a theme name twice, or names the theme in force
 twice (`useTheme`), is refused (`Registrations.problem?`). Naming a theme
 nobody registered is not refused here: the name is looked up at install.
 
+## Segments
+
+A segment of the mode line (`Segment`, `Editor/ModeLine.lean`) is held by
+owner like a theme, in a `SegmentEntry`, and replaced as a set
+(`replaceSegments`). The latest entry of a name is the one found
+(`segment?`), so config's segment of a shipped segment's name is drawn in
+its place until a reload drops it. Compiled code registers the shipped
+segments (`ModeLine.shipped`, through `Headless.Collaborators.segments`);
+`setup` registers more with `defineSegment` (`Editor/Setup.lean`).
+`resolve` turns a listing (`ModeLine.Order`) into the mode line and the
+names nobody registered. Which listing is in force is not the registry's
+to say: it is the reload reducer's state (`Config.State.modeLine`), and the
+host resolves it for each step (`Headless.keys`).
+
+A `setup` that defines a segment name twice, or lists the mode line twice
+(`modeLine`), is refused. Listing a segment nobody registered is not
+refused here: it is left out at install, and the report names it.
+
 ## Compiled commands
 
 Compiled code is an owner too (`Owner.compiled`). A host registers its
@@ -226,6 +244,14 @@ structure ThemeEntry where
   /-- The theme. -/
   named : NamedTheme
 
+/-- A segment entry of the registry: a segment of the mode line and who
+registered it. -/
+structure SegmentEntry where
+  /-- Who registered it. -/
+  owner : Owner
+  /-- The segment. -/
+  segment : Segment
+
 /-- A face entry of the registry: a definition of a face and who made it. -/
 structure FaceEntry where
   /-- Who set it. -/
@@ -234,7 +260,7 @@ structure FaceEntry where
   definition : FaceDefinition
 
 /-- The editor's table of commands, of jobs, of key bindings, of modes, of
-ex bindings, of faces and of themes, oldest entry first. -/
+ex bindings, of faces, of themes and of segments, oldest entry first. -/
 structure Registry where
   /-- The command entries. -/
   entries : Array Entry := #[]
@@ -250,6 +276,8 @@ structure Registry where
   faces : Array FaceEntry := #[]
   /-- The theme entries. -/
   themes : Array ThemeEntry := #[]
+  /-- The segment entries. -/
+  segments : Array SegmentEntry := #[]
 
 namespace Registry
 
@@ -321,6 +349,24 @@ def themeNames (registry : Registry) : Array String :=
     (fun names entry =>
       if names.contains entry.named.name then names else names.push entry.named.name)
     #[]
+
+/-- `registry` with every segment entry of `owner` removed and `segments`
+added as its segment entries, in their order. -/
+def replaceSegments (registry : Registry) (owner : Owner) (segments : Array Segment) : Registry :=
+  { registry with
+    segments :=
+      registry.segments.filter (·.owner != owner) ++
+        segments.map fun segment => { owner, segment } }
+
+/-- The segment called `name`: the latest entry of that name. -/
+def segment? (registry : Registry) (name : String) : Option Segment :=
+  (registry.segments.findRev? (·.segment.name == name)).map (·.segment)
+
+/-- The mode line `order` lists, each name the latest segment of that name
+(`segment?`), and the names no segment is registered under, in order, each
+once (`ModeLine.resolve`). -/
+def resolve (registry : Registry) (order : ModeLine.Order) : ModeLine × Array String :=
+  ModeLine.resolve order (registry.segments.map (·.segment))
 
 /-- The job entry `name` starts: the latest one of that name. -/
 def findJob? (registry : Registry) (name : String) : Option JobEntry :=
@@ -448,12 +494,22 @@ structure Registrations where
 order: more than one is refused (`problem?`), so a `setup` that is
 accepted names at most one (`theme`). -/
   namedThemes : Array String := #[]
+  /-- The segments of the mode line, in the order they were defined. -/
+  segments : Array Segment := #[]
+  /-- The listings of the mode line `setup` made (`modeLine`), in order:
+  more than one is refused, so a `setup` that is accepted makes at most one
+  (`modeLine`). -/
+  modeLines : Array ModeLine.Order := #[]
 
 namespace Registrations
 
 /-- The theme a `setup` named as the one in force, if it named one. -/
 def theme (collected : Registrations) : Option String :=
   collected.namedThemes[0]?
+
+/-- The listing of the mode line a `setup` made, if it made one. -/
+def modeLine (collected : Registrations) : Option ModeLine.Order :=
+  collected.modeLines[0]?
 
 /-- The handler of the setup port that collects: its answer to each request,
 and what has been registered after it. -/
@@ -479,6 +535,10 @@ def collect : (request : SetupRequest) → Registrations → request.Reply × Re
   | .theme named, collected => ((), { collected with themes := collected.themes.push named })
   | .useTheme name, collected =>
     ((), { collected with namedThemes := collected.namedThemes.push name })
+  | .segment segment, collected =>
+    ((), { collected with segments := collected.segments.push segment })
+  | .modeLine order, collected =>
+    ((), { collected with modeLines := collected.modeLines.push order })
 
 /-- The first of `items` that an earlier one already is, if any. -/
 def repeated? {α : Type} [BEq α] (items : Array α) : Option α := do
@@ -490,7 +550,8 @@ def repeated? {α : Type} [BEq α] (items : Array α) : Option α := do
 
 /-- What is wrong with what was collected, if anything: a store declared
 twice, a command name or a job name registered twice, a face set twice, a
-theme defined twice, a theme named twice (by its first two names), a key
+theme defined twice, a theme named twice (by its first two names), a
+segment defined twice, the mode line listed twice, a key
 sequence bound twice, a binding of no keys, an ex name bound twice, a
 command over a store that is not declared, a mode name defined twice, or a
 mode with a problem under any scheme (`Mode.problems`), of which the first
@@ -521,6 +582,10 @@ def problem? (collected : Registrations) : Option String := do
     return s!"the theme `{name}` is defined twice"
   if let first :: second :: _ := collected.namedThemes.toList then
     return s!"the theme is named twice: `{first}`, then `{second}`"
+  if let some name := repeated? (collected.segments.map (·.name)) then
+    return s!"the segment `{name}` is defined twice"
+  if collected.modeLines.size > 1 then
+    return "the mode line is listed twice"
   for binding in collected.bindings do
     if binding.keys.isEmpty then
       return boundToNoKeys binding.command

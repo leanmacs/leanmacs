@@ -2090,6 +2090,21 @@ def oneFace (red : UInt8) : Theme :=
 def namedTheme (name : String) (red : UInt8) : NamedTheme :=
   { name, theme := oneFace red }
 
+/-- The buffer the mode line checks show: `Loop.lean`, opened as
+`lean/Editor/Loop.lean`, in the major mode `lean`, modified when `modified`
+says. -/
+def loopLean (modified : Bool := true) (path : String := "lean/Editor/Loop.lean") : Buffer :=
+  let history := UndoTree.new ⟨0⟩ 0
+  { name := "Loop.lean", text := ⟨0⟩, history := if modified then history.record 1 else history
+    major := some "lean",
+    file := some { path, stamp := { seconds := 0, nanoseconds := 0, size := 0 } } }
+
+/-- The context of a window on `buffer` in normal state, its cursor on row
+958 at column 4 of 2338 rows, selected when `selected` says. -/
+def loopContext (buffer : Buffer := loopLean) (selected : Bool := true) : ModeLine.Context :=
+  { buffer, reported := #[{ text := "NORMAL", face := Vim.stateFace "normal" }]
+    cursor := some ⟨958, 4⟩, lines := 2338, selected }
+
 /-- The message a `setup` was refused with, if it was. -/
 def refusal (setup : SetupM Unit) : Option String :=
   match Config.Registrations.ofSetup setup with
@@ -2422,7 +2437,40 @@ def setupChecks : List Check :=
         pure
           (refusal twice == some "the theme `first` is defined twice" &&
             refusal named == some "the theme is named twice: `a`, then `b`" &&
-            refusal (useTheme "nope") == none) }]
+            refusal (useTheme "nope") == none) },
+    { name :=
+        "a setup's segments are collected in the order it defined them, with the mode line it lists; a setup that defines and lists none has none"
+      run :=
+        let setup : SetupM Unit := do
+          defineSegment "greeting" fun _ => #[{ text := "hi", face := ⟨"mode-line.secondary"⟩ }]
+          modeLine ["state", "greeting"] ["position"]
+          defineSegment "other" fun _ => #[]
+        match Config.Registrations.ofSetup setup,
+          Config.Registrations.ofSetup (command "x" (makes "1")) with
+        | .ok collected, .ok plain =>
+          pure
+            (collected.segments.map (·.name) == #["greeting", "other"] &&
+              (collected.segments[0]?.map fun segment =>
+                  (segment.fields loopContext).map (·.text)) ==
+                some #["hi"] &&
+              collected.modeLine ==
+                some { left := #["state", "greeting"], right := #["position"] } &&
+              plain.segments.isEmpty &&
+              plain.modeLine == none)
+        | _, _ => pure false },
+    { name :=
+        "a setup that defines a segment twice is refused with a message that names the segment, and one that lists the mode line twice with a message that says so; listing a segment nobody defined is not refused"
+      run :=
+        let twice : SetupM Unit := do
+          defineSegment "greeting" fun _ => #[]
+          defineSegment "greeting" fun _ => #[]
+        let listed : SetupM Unit := do
+          modeLine ["state"] []
+          modeLine [] ["position"]
+        pure
+          (refusal twice == some "the segment `greeting` is defined twice" &&
+            refusal listed == some "the mode line is listed twice" &&
+            refusal (modeLine ["nope"] []) == none) }]
 
 /-- A registration of the plain command `name`, which makes the text `text`. -/
 def registration (name text : String) : Config.Registration :=
@@ -2658,6 +2706,28 @@ def registryChecks : List Check :=
             replaced.names == #["greet"] &&
             replaced.definitions.isEmpty &&
             ({} : Config.Registry).registered.themeNames == #[]) },
+    { name :=
+        "segments are held by owner and replaced as a set: the latest entry of a name is the one found; a mode line resolves in its listing's order, with the names nobody registered listed in order, each once"
+      run :=
+        let mine : Segment :=
+          { name := "buffer", fields := fun _ => #[{ text := "mine", face := ⟨"x"⟩ }] }
+        let registry : Config.Registry :=
+          (({} : Config.Registry).replaceSegments .compiled ModeLine.shipped).replaceSegments
+            .config #[mine]
+        let replaced := registry.replaceSegments .config #[]
+        let texts (registry : Config.Registry) (order : ModeLine.Order) : Array String :=
+          ((registry.resolve order).1.fields loopContext).map (·.text)
+        let (_, unknown) :=
+          registry.resolve { left := #["nope", "buffer", "nope"], right := #["gone", "position"] }
+        pure
+          ((registry.segment? "buffer").map (·.name) == some "buffer" &&
+            texts registry { left := #["buffer"], right := #[] } == #["mine"] &&
+            texts replaced { left := #["buffer"], right := #[] } == #["Loop.lean"] &&
+            replaced.segments.size == ModeLine.shipped.size &&
+            (registry.segment? "nope").isNone &&
+            unknown == #["nope", "gone"] &&
+            texts registry ModeLine.Order.standard ==
+              #["NORMAL", "mine", "●", "lean/Editor", "lean", "959:5", "41%"]) },
     { name :=
         "replacing an owner's ex bindings leaves the commands, the jobs, the key bindings and the modes as they were"
       run :=
@@ -3141,6 +3211,45 @@ def reportFrom (state : Config.State Elaborated) (outcome : Config.Outcome Elabo
 outcomes built by hand. -/
 def reloadChecks : List Check :=
   [{  name :=
+        "an install sets the mode line config lists, and its report names each segment nobody registered, which the echo area says after the unknown theme's sentence; a later install that lists none goes back to the default, and a rejected one changes nothing"
+      run :=
+        let listed : SetupM Unit := modeLine ["state", "nope"] ["position"]
+        let both : SetupM Unit := do
+          useTheme "gone"
+          modeLine ["state", "nope", "nope"] ["lost"]
+        let segmented : Config.State Elaborated :=
+          { themed with registry := themed.registry.replaceSegments .compiled ModeLine.shipped }
+        let (state, _) := reduceFrom segmented [.requested, .finished (accepted ["a"] listed)]
+        let report := reportFrom segmented (accepted ["a"] listed)
+        let (dropped, _) := reduceFrom state [.requested, .finished (accepted ["a"] (pure ()))]
+        let (kept, _) := reduceFrom state [.requested, .finished (rejected "a")]
+        pure
+          (state.modeLine == some { left := #["state", "nope"], right := #["position"] } &&
+            report.unknownSegments == #["nope"] &&
+            report.echo == some "reload: no segment is registered as `nope`" &&
+            (reportFrom segmented (accepted ["a"] both)).echo ==
+              some
+                "reload: no theme is registered as `gone`; no segment is registered as `nope`; no segment is registered as `lost`" &&
+            (reportFrom segmented (accepted ["a"] (modeLine ["state"] []))).echo == none &&
+            dropped.modeLine == none &&
+            kept.modeLine == state.modeLine &&
+            (reportFrom segmented (accepted ["a"] (pure ()))).unknownSegments == #[]) },
+    { name :=
+        "a config's segments are replaced at every install: one it defines can be listed, and is gone once a reload no longer defines it"
+      run :=
+        let own : SetupM Unit := do
+          defineSegment "greeting" fun _ => #[{ text := "hi", face := ⟨"mode-line.secondary"⟩ }]
+          modeLine ["greeting"] []
+        let (state, _) := reduceFrom themed [.requested, .finished (accepted ["a"] own)]
+        let (dropped, _) :=
+          reduceFrom state [.requested, .finished (accepted ["a"] (modeLine ["greeting"] []))]
+        pure
+          ((state.registry.segment? "greeting").isSome &&
+            (reportFrom themed (accepted ["a"] own)).unknownSegments.isEmpty &&
+            (dropped.registry.segment? "greeting").isNone &&
+            (reportFrom state (accepted ["a"] (modeLine ["greeting"] []))).unknownSegments ==
+              #["greeting"]) },
+    { name :=
         "criterion 1: a config that names a registered theme starts in it, with config's faces over it; so does one that names a theme it defines itself, and the report says nothing in the echo area"
       run :=
         let named : SetupM Unit := do
@@ -4576,21 +4685,6 @@ def sceneChecks : List Check :=
               view.statusFace == none &&
               { view with statusFace := some ⟨"mode-line.inactive"⟩ } != view)
         | none => pure false }]
-
-/-- The buffer the mode line checks show: `Loop.lean`, opened as
-`lean/Editor/Loop.lean`, in the major mode `lean`, modified when `modified`
-says. -/
-def loopLean (modified : Bool := true) (path : String := "lean/Editor/Loop.lean") : Buffer :=
-  let history := UndoTree.new ⟨0⟩ 0
-  { name := "Loop.lean", text := ⟨0⟩, history := if modified then history.record 1 else history
-    major := some "lean",
-    file := some { path, stamp := { seconds := 0, nanoseconds := 0, size := 0 } } }
-
-/-- The context of a window on `buffer` in normal state, its cursor on row
-958 at column 4 of 2338 rows, selected when `selected` says. -/
-def loopContext (buffer : Buffer := loopLean) (selected : Bool := true) : ModeLine.Context :=
-  { buffer, reported := #[{ text := "NORMAL", face := Vim.stateFace "normal" }]
-    cursor := some ⟨958, 4⟩, lines := 2338, selected }
 
 /-- The texts of `fields`, each with its face's name. -/
 def textsAndFaces (fields : Array StatusField) : Array (String × String) :=

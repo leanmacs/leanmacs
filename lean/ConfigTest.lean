@@ -1532,6 +1532,29 @@ def scriptChecks (context : Context) : List Check :=
                 #["reload 1: installed, 2 chunks, 1 commands", "key arrived: a KeyA shift+control",
                   "run greet: ok", "key arrived: <Escape> - -"] },
     { name :=
+        "a real config that defines a segment and lists the mode line installs: the reload prints a line for the segment nobody registered, the echo area says it, and each status line is the listing's, in its order and on its sides"
+      run :=
+        IO.FS.withTempDir fun directory => do
+          writeFiles directory
+              [("10-mode-line.lean",
+                  "def setup : SetupM Unit := do\n  defineSegment \"greeting\" fun _ =>\n    #[{ text := \"hi\", face := ⟨\"mode-line.secondary\"⟩, padding := 4 }]\n  modeLine [\"buffer\", \"nope\"] [\"greeting\", \"line-column\"]\n")]
+          let stage ← Stage.new context context.elaborator (Config.Directory.source directory)
+          let failure ←
+            Headless.run stage.collaborators
+                #[⟨1, .request .reload⟩, ⟨2, .settle⟩, ⟨3, .commit "ab"⟩, ⟨4, .request .scene⟩]
+                patience
+          let output ← stage.output.get
+          return failure == none &&
+              output.filter (fun line => !line.startsWith "scene " && !line.startsWith "view ") ==
+                #["reload 1: installed, 1 chunks, 0 commands",
+                  "segment: no segment is registered as `nope`",
+                  "status 0: mode-line.buffer \"scratch\" +4 | mode-line.secondary \"hi\" +4, mode-line.secondary \"1:3\" +4"] &&
+              output.any fun line =>
+                line.startsWith "scene " &&
+                  (line.splitOn
+                        s!"echo {"reload: no segment is registered as `nope`".quote}").length ==
+                    2 },
+    { name :=
         "a script that runs to its end has no failure, and what it asked for was printed before the loop stopped"
       run :=
         IO.FS.withTempDir fun directory => do
