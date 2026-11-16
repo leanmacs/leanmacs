@@ -38,11 +38,8 @@ impl Shared {
 
     /// The text as it is now, as key 1.
     fn now(&self) -> TextRef {
-        TextRef {
-            key: TextKey(1),
-            snapshot: self.0.lock().unwrap().snapshot(),
-            changes: Arc::new(self.clone()),
-        }
+        TextRef::fixed(TextKey(1), self.0.lock().unwrap().snapshot())
+            .with_changes(Arc::new(self.clone()))
     }
 
     /// Puts `text` in place of `range`, as one transaction.

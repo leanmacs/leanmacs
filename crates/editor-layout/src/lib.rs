@@ -27,7 +27,11 @@
 //!   ([`face`]);
 //! - which spans each decoration source gives, that a cursor covers
 //!   nothing, how spans merge into styled runs, and that a run is in the
-//!   font its faces resolve to, lowest layer first ([`decoration`]);
+//!   font its faces resolve to, lowest layer first ([`decoration`]); that
+//!   a text's own spans are drawn under the decorations and the selection,
+//!   asked only for the rows shown, and wrapped by the rows and lines
+//!   queries as the frame wraps them ([`frame`], and this module's tests);
+//!   and the contract of [`scene::TextSpans`] ([`scene::spans_contract`]);
 //! - the scale: a length a face states is in points; a length and a font
 //!   at a scale ([`shaper::Length::scaled`], [`shaper::FontSpec::scaled`]);
 //!   that a font is asked of the shaper at the scale last set
@@ -87,7 +91,7 @@ pub mod wrap;
 use std::collections::HashMap;
 
 use crate::cache::{Counters, StatusKept, Texts, state};
-use crate::decoration::{DecorationSource, Styles, fonts_of};
+use crate::decoration::{DecorationSource, Styles, TextSpansSource, fonts_of};
 use crate::face::{FaceDef, SELECTION_FACE};
 use crate::query::{Moved, QueryError, RowRange, Walker};
 use crate::scene::{Padding, TextKey, TextRef, ViewId};
@@ -296,21 +300,29 @@ impl<S: Shaper> Layout<S> {
     }
 
     /// Runs `ask` on a walker over what is kept of `text` at `width`, with
-    /// the selections and decorations of the last frame that showed it in
-    /// the faces as they are now, and counts the work.
+    /// the text's own spans resolved for its snapshot, as the frame of that
+    /// snapshot resolves them, under the selections and decorations of the
+    /// last frame that showed it, in the faces as they are now, and counts
+    /// the work.
     fn query<T>(
         &mut self,
         text: &TextRef,
         width: f32,
         ask: impl FnOnce(&mut Walker<'_, S>) -> T,
     ) -> T {
+        let own = TextSpansSource::of(&mut self.styles, text);
         let mut state = state(&mut self.texts, text, self.tab_width, Some(width));
         let state = &mut *state;
-        // Lowest layer first: the decorations, then the selections.
-        let sources: Vec<&dyn DecorationSource> = match &state.sources {
-            Some((selections, decorations)) => vec![decorations, selections],
-            None => Vec::new(),
-        };
+        // Lowest layer first: the text's own spans, the decorations, then
+        // the selections.
+        let mut sources: Vec<&dyn DecorationSource> = Vec::new();
+        if let Some(own) = &own {
+            sources.push(own);
+        }
+        if let Some((selections, decorations)) = &state.sources {
+            sources.push(decorations);
+            sources.push(selections);
+        }
         let (styles, shaper, base) = (&self.styles, &self.shaper, self.base);
         let snapshot = &text.snapshot;
         let fonts = |bytes| fonts_of(&sources, snapshot, bytes, styles, shaper, base);
@@ -331,11 +343,15 @@ impl<S: Shaper> Layout<S> {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
     use editor_text::Text;
 
     use crate::Layout;
     use crate::face::{Color, Face, FaceDef};
-    use crate::scene::{Decoration, Padding, Rect, Scene, TextKey, TextRef, View, ViewId};
+    use crate::scene::{
+        Decoration, FixedSpans, Padding, Rect, Scene, TextKey, TextRef, View, ViewId,
+    };
     use crate::shaper::Length;
     use crate::shaper::fake::CellShaper;
 
@@ -356,6 +372,82 @@ mod tests {
             size: Some(Length::pixels(pixels)),
             ..Face::default()
         }
+    }
+
+    /// `abcdefgh` with its own span of `big` over its first four bytes,
+    /// and a layout in which `big` is twice the base size.
+    fn spanned() -> (TextRef, Layout<CellShaper>) {
+        let spans = FixedSpans::new(&["big"], vec![(0..4, 0)]);
+        let text = TextRef::fixed(TextKey(7), Text::from("abcdefgh").snapshot())
+            .with_spans(Arc::new(spans));
+        let mut layout = Layout::new(CellShaper::new(10.0, 16.0));
+        layout.define(&[FaceDef {
+            name: "big".to_owned(),
+            face: sized(32),
+        }]);
+        (text, layout)
+    }
+
+    /// The byte ranges of the rows the frame of a view of `text` 40 wide
+    /// and 160 tall shows.
+    fn frame_rows(layout: &mut Layout<CellShaper>, text: &TextRef) -> Vec<(usize, usize)> {
+        let scene = Scene {
+            views: vec![View {
+                id: ViewId(1),
+                rect: Rect {
+                    x: 0,
+                    y: 0,
+                    width: 40,
+                    height: 160,
+                },
+                text: Some(text.clone()),
+                ..View::default()
+            }],
+            ..Scene::default()
+        };
+        layout.frame(&scene).views[0]
+            .rows
+            .iter()
+            .map(|row| (row.bytes.start, row.bytes.end))
+            .collect()
+    }
+
+    #[test]
+    fn the_rows_query_wraps_text_spans_as_the_frame_does() {
+        let (text, mut layout) = spanned();
+        let asked = |layout: &mut Layout<CellShaper>| {
+            layout
+                .rows_shown(&text, 40.0, 160.0, Padding::default(), 0)
+                .unwrap()
+                .iter()
+                .map(|row| (row.start, row.stop))
+                .collect::<Vec<_>>()
+        };
+        // Before any frame of the text: the big glyphs are two to a row.
+        let before = asked(&mut layout);
+        let framed = frame_rows(&mut layout, &text);
+        assert_eq!(framed, vec![(0, 2), (2, 4), (4, 8)]);
+        assert_eq!(before, framed);
+        // And after one.
+        assert_eq!(asked(&mut layout), framed);
+    }
+
+    #[test]
+    fn the_lines_query_wraps_text_spans_as_the_frame_does() {
+        let (text, mut layout) = spanned();
+        let moved = |layout: &mut Layout<CellShaper>, position: usize, lines: i64| {
+            layout
+                .lines_from(&text, 40.0, 0, position, lines, Some(0.0))
+                .unwrap()
+                .position
+        };
+        // Down from the start, one row at a time, and back up: each lands
+        // on the start of one of the frame's rows.
+        assert_eq!(moved(&mut layout, 0, 1), 2);
+        assert_eq!(moved(&mut layout, 2, 1), 4);
+        assert_eq!(frame_rows(&mut layout, &text), vec![(0, 2), (2, 4), (4, 8)]);
+        assert_eq!(moved(&mut layout, 4, -1), 2);
+        assert_eq!(moved(&mut layout, 2, -1), 0);
     }
 
     #[test]

@@ -5,8 +5,11 @@
 //! snapshot, and is asked only for the rows layout lays out, so what a
 //! source costs is in proportion to what is visible. The first two are
 //! the selections ([`SelectionSource`]) and the faces Lean names in the
-//! scene ([`FaceSpanSource`]). Tree-sitter highlights become a third
-//! source (syntax-tree-sitter), with no change here.
+//! scene ([`FaceSpanSource`]). The third is a text's own spans, a syntax's
+//! highlights, which the text carries through the port
+//! [`TextSpans`](crate::scene::TextSpans) and layout resolves once a frame
+//! or a query (`TextSpansSource`): the lowest layer, under the scene's
+//! decorations and the selections.
 //!
 //! A span names its face by a [`FaceId`] interned from the face's name
 //! ([`Styles::intern`]). Merging says which faces cover which bytes
@@ -30,6 +33,7 @@ use std::ops::Range;
 use editor_text::{Selection, Shape, Snapshot};
 
 use crate::face::{FaceDef, FaceId, Faces, Paint};
+use crate::scene::{SpansAt, TextRef};
 use crate::shaper::{FontId, Length, Shaper};
 
 /// A span of a snapshot drawn in a face.
@@ -238,6 +242,40 @@ impl DecorationSource for SelectionSource {
                 out,
             );
         }
+    }
+}
+
+/// A text's own spans as a source
+/// ([`TextSpans`](crate::scene::TextSpans)): what it draws over one
+/// snapshot, resolved once a frame or a query, with its face names interned
+/// up front so no [`Styles`] is borrowed while spans are gathered. Each
+/// span is cut to the bytes asked, and one that names a face it has not is
+/// left out.
+pub(crate) struct TextSpansSource {
+    /// What the text draws over the snapshot.
+    at: Box<dyn SpansAt>,
+    /// Its face names, interned, by index.
+    faces: Vec<FaceId>,
+}
+
+impl TextSpansSource {
+    /// The source of `text`'s own spans over its snapshot, its faces
+    /// interned in `styles`; none when it has none or draws nothing.
+    pub(crate) fn of(styles: &mut Styles, text: &TextRef) -> Option<Self> {
+        let at = text.spans.as_ref()?.at(&text.snapshot)?;
+        let faces = at.faces().iter().map(|name| styles.intern(name)).collect();
+        Some(Self { at, faces })
+    }
+}
+
+impl DecorationSource for TextSpansSource {
+    fn spans(&self, _snapshot: &Snapshot, bytes: Range<usize>, out: &mut Vec<Span>) {
+        let mut own = Vec::new();
+        self.at.spans(bytes.clone(), &mut own);
+        let faces = own
+            .iter()
+            .filter_map(|(span, face)| Some((span, *self.faces.get(*face)?)));
+        cut_to(faces, &bytes, out);
     }
 }
 

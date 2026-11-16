@@ -137,11 +137,8 @@ impl Changes for Source {
 
 /// The text a snapshot handle stands for, as layout takes it.
 pub fn text_ref(snapshot: &Snapshot) -> TextRef {
-    TextRef {
-        key: TextKey(snapshot.key()),
-        snapshot: snapshot.text().clone(),
-        changes: Arc::new(snapshot.source().clone()),
-    }
+    TextRef::fixed(TextKey(snapshot.key()), snapshot.text().clone())
+        .with_changes(Arc::new(snapshot.source().clone()))
 }
 
 /// What a display asks of its layout, whatever shaper it measures with:

@@ -105,7 +105,10 @@ pub(crate) struct TextState<L> {
     pub wrap: WrapLayer<L>,
     /// The selections and decorations of the last frame that showed it,
     /// so that a query shapes a row in the fonts the frame did. Read only
-    /// while the text is at the revision they were laid out at.
+    /// while the text is at the revision they were laid out at. The text's
+    /// own spans are not kept here: a query resolves them for the snapshot
+    /// it is asked about ([`TextRef::spans`](crate::scene::TextRef::spans)),
+    /// which an edit makes newer than the last frame's.
     pub sources: Option<(SelectionSource, FaceSpanSource)>,
 }
 

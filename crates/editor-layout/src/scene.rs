@@ -13,7 +13,9 @@
 //! changed.
 //!
 //! What is laid out of it: each view's text across its `rect`, from its
-//! scroll anchor, with its selections, cursors and decorations, each run
+//! scroll anchor, with its selections, cursors and decorations over the
+//! text's own spans ([`TextSpans`], a syntax's highlights, which the text
+//! carries and layout asks of only the rows it lays out), each run
 //! in the font its faces resolve to; and a view's `status` as one row at
 //! the bottom of its `rect`, above which its text has what is left, with
 //! each field on its side and padded, the row in the view's
@@ -30,6 +32,10 @@
 //! of a face is [`face`](crate::face)'s.
 //!
 //! # Builders for tests
+//!
+//! [`FixedSpans`] is the fake of [`TextSpans`], spans given as data, and
+//! [`spans_contract::check`] its contract, which every implementation runs
+//! in its own crate's tests.
 //!
 //! [`Scene::of_text`] and [`Scene::selecting`] make a scene of one view
 //! of a text from a string and byte offsets alone. They are published for
@@ -177,8 +183,29 @@ impl Changes for NoChanges {
     }
 }
 
-/// A view's text: which text, the snapshot shown, and where its changes
-/// are pulled from.
+/// The port through which layout asks a text for its own spans: what it
+/// is drawn with whatever the scene says, a syntax's highlights. They are
+/// the lowest layer of a run's faces, under the scene's decorations and
+/// the selections ([`face`](crate::face), "The precedence").
+pub trait TextSpans: Send + Sync {
+    /// What it draws over `snapshot`, fixed for one frame or one query;
+    /// `None` when it draws nothing.
+    fn at(&self, snapshot: &Snapshot) -> Option<Box<dyn SpansAt>>;
+}
+
+/// A text's own spans over one snapshot ([`TextSpans::at`]).
+pub trait SpansAt {
+    /// The names of the faces its spans name, by index.
+    fn faces(&self) -> &[String];
+
+    /// Adds to `out` its spans that cover any of `bytes`, each cut to it,
+    /// with the index of its face, lowest layer first. `bytes` is two
+    /// positions of the snapshot, in order.
+    fn spans(&self, bytes: Range<usize>, out: &mut Vec<(Range<usize>, usize)>);
+}
+
+/// A view's text: which text, the snapshot shown, where its changes are
+/// pulled from, and its own spans.
 #[derive(Clone)]
 pub struct TextRef {
     /// Which text.
@@ -187,15 +214,243 @@ pub struct TextRef {
     pub snapshot: Snapshot,
     /// Its changes.
     pub changes: Arc<dyn Changes>,
+    /// Its own spans, drawn under the scene's decorations; `None` when it
+    /// has none.
+    pub spans: Option<Arc<dyn TextSpans>>,
 }
 
 impl TextRef {
-    /// The text `key` shown at `snapshot`, with nothing to pull.
+    /// The text `key` shown at `snapshot`, with nothing to pull and no
+    /// spans of its own.
     pub fn fixed(key: TextKey, snapshot: Snapshot) -> Self {
         Self {
             key,
             snapshot,
             changes: Arc::new(NoChanges),
+            spans: None,
+        }
+    }
+
+    /// This text, with its changes pulled through `changes`.
+    #[must_use]
+    pub fn with_changes(self, changes: Arc<dyn Changes>) -> Self {
+        Self { changes, ..self }
+    }
+
+    /// This text, with `spans` as its own spans.
+    #[must_use]
+    pub fn with_spans(self, spans: Arc<dyn TextSpans>) -> Self {
+        Self {
+            spans: Some(spans),
+            ..self
+        }
+    }
+}
+
+/// Spans given as data, for tests, this crate's and other crates': the
+/// same spans over any snapshot, cut to the bytes asked. It records the
+/// ranges it is asked for.
+#[derive(Debug, Clone, Default)]
+pub struct FixedSpans {
+    /// The face names.
+    faces: Vec<String>,
+    /// The spans, each with its face's index, lowest layer first.
+    spans: Vec<(Range<usize>, usize)>,
+    /// The ranges asked, in order.
+    asked: Arc<std::sync::Mutex<Vec<Range<usize>>>>,
+}
+
+impl FixedSpans {
+    /// The spans `spans`, naming `faces` by index.
+    pub fn new(faces: &[&str], spans: Vec<(Range<usize>, usize)>) -> Self {
+        Self {
+            faces: faces.iter().map(|face| (*face).to_owned()).collect(),
+            spans,
+            asked: Arc::default(),
+        }
+    }
+
+    /// The ranges it has been asked for so far, in order.
+    pub fn asked(&self) -> Vec<Range<usize>> {
+        self.asked
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()
+    }
+}
+
+impl TextSpans for FixedSpans {
+    fn at(&self, _snapshot: &Snapshot) -> Option<Box<dyn SpansAt>> {
+        Some(Box::new(self.clone()))
+    }
+}
+
+impl SpansAt for FixedSpans {
+    fn faces(&self) -> &[String] {
+        &self.faces
+    }
+
+    fn spans(&self, bytes: Range<usize>, out: &mut Vec<(Range<usize>, usize)>) {
+        self.asked
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .push(bytes.clone());
+        for (span, face) in &self.spans {
+            let cut = span.start.max(bytes.start)..span.end.min(bytes.end);
+            if !cut.is_empty() {
+                out.push((cut, *face));
+            }
+        }
+    }
+}
+
+/// The contract of [`TextSpans`]: what every implementation keeps, as a
+/// check that runs one over a snapshot. [`FixedSpans`] passes it here, and
+/// each implementation in its own crate's tests (`editor-ffi`'s adapter,
+/// in its `tests/highlight.rs`).
+pub mod spans_contract {
+    use std::ops::Range;
+
+    use editor_text::Snapshot;
+
+    use super::TextSpans;
+
+    /// Every span lies within the bytes asked, and is not empty.
+    pub const WITHIN: &str = "every span lies within the bytes asked and is not empty";
+    /// Every span names a face below the count of its face names.
+    pub const FACES: &str = "every span names one of its faces";
+    /// Every span's ends are positions of the snapshot.
+    pub const POSITIONS: &str = "every span's ends are positions of the snapshot";
+
+    /// Every property, by name.
+    pub const PROPERTIES: [&str; 3] = [WITHIN, FACES, POSITIONS];
+
+    /// How many random ranges are asked of each snapshot.
+    const RANDOM: usize = 32;
+
+    /// Holds `spans` to the contract over `snapshot`, asking it the bytes
+    /// of each row and random ranges from a fixed seed, and returns the
+    /// properties that fail: none when it keeps them all, and none when it
+    /// draws nothing over the snapshot.
+    pub fn check(spans: &dyn TextSpans, snapshot: &Snapshot) -> Vec<&'static str> {
+        let Some(at) = spans.at(snapshot) else {
+            return Vec::new();
+        };
+        let mut ranges: Vec<Range<usize>> = (0..snapshot.row_count())
+            .filter_map(|row| snapshot.row_range(row))
+            .collect();
+        let mut seed: u64 = 0x005e_ed0f_5ea5;
+        let mut below = |bound: usize| {
+            seed = seed
+                .wrapping_mul(6_364_136_223_846_793_005)
+                .wrapping_add(1_442_695_040_888_963_407);
+            usize::try_from(seed >> 33).unwrap_or(0) % bound.max(1)
+        };
+        for _ in 0..RANDOM {
+            let a = position(snapshot, below(snapshot.len() + 1));
+            let b = position(snapshot, below(snapshot.len() + 1));
+            ranges.push(a.min(b)..a.max(b));
+        }
+        let (mut within, mut faces, mut positions) = (true, true, true);
+        for bytes in ranges {
+            let mut out = Vec::new();
+            at.spans(bytes.clone(), &mut out);
+            for (span, face) in out {
+                within &=
+                    bytes.start <= span.start && span.end <= bytes.end && span.start < span.end;
+                faces &= face < at.faces().len();
+                positions &= snapshot.is_char_boundary(span.start)
+                    && snapshot.is_char_boundary(span.end)
+                    && span.end <= snapshot.len();
+            }
+        }
+        [(WITHIN, within), (FACES, faces), (POSITIONS, positions)]
+            .into_iter()
+            .filter_map(|(name, holds)| (!holds).then_some(name))
+            .collect()
+    }
+
+    /// The last position of `snapshot` at or before `offset`.
+    fn position(snapshot: &Snapshot, offset: usize) -> usize {
+        let mut offset = offset.min(snapshot.len());
+        while !snapshot.is_char_boundary(offset) {
+            offset -= 1;
+        }
+        offset
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use std::ops::Range;
+
+        use editor_text::{Snapshot, Text};
+
+        use super::*;
+        use crate::scene::{FixedSpans, SpansAt};
+
+        /// Spans that answer what they hold, uncut, whatever is asked.
+        struct Uncut(Vec<(Range<usize>, usize)>, Vec<String>);
+
+        impl TextSpans for Uncut {
+            fn at(&self, _snapshot: &Snapshot) -> Option<Box<dyn SpansAt>> {
+                Some(Box::new(Uncut(self.0.clone(), self.1.clone())))
+            }
+        }
+
+        impl SpansAt for Uncut {
+            fn faces(&self) -> &[String] {
+                &self.1
+            }
+            fn spans(&self, _bytes: Range<usize>, out: &mut Vec<(Range<usize>, usize)>) {
+                out.extend(self.0.iter().cloned());
+            }
+        }
+
+        /// A text with a row of multibyte characters.
+        fn snapshot() -> Snapshot {
+            Text::from(
+                "ab cd
+é漢 x
+
+last",
+            )
+            .snapshot()
+        }
+
+        #[test]
+        fn fixed_spans_keep_the_contract() {
+            let spans = FixedSpans::new(&["a", "b"], vec![(0..2, 0), (3..8, 1), (6..17, 0)]);
+            assert_eq!(check(&spans, &snapshot()), [""; 0]);
+        }
+
+        #[test]
+        fn spans_not_cut_to_the_bytes_asked_are_reported() {
+            let uncut = Uncut(vec![(0..19, 0)], vec!["a".to_owned()]);
+            assert_eq!(check(&uncut, &snapshot()), [WITHIN]);
+        }
+
+        #[test]
+        fn a_span_naming_a_face_it_has_not_is_reported() {
+            let spans = FixedSpans::new(&["a"], vec![(0..2, 1)]);
+            assert_eq!(check(&spans, &snapshot()), [FACES]);
+        }
+
+        #[test]
+        fn a_span_ending_inside_a_character_is_reported() {
+            // 7 is inside `é`, which is 6..8.
+            let spans = FixedSpans::new(&["a"], vec![(3..7, 0)]);
+            assert_eq!(check(&spans, &snapshot()), [POSITIONS]);
+        }
+
+        #[test]
+        fn spans_that_draw_nothing_keep_the_contract() {
+            struct Nothing;
+            impl TextSpans for Nothing {
+                fn at(&self, _snapshot: &Snapshot) -> Option<Box<dyn SpansAt>> {
+                    None
+                }
+            }
+            assert_eq!(check(&Nothing, &snapshot()), [""; 0]);
         }
     }
 }
